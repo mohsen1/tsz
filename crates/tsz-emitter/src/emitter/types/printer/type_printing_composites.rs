@@ -1,7 +1,10 @@
+use super::SolverLiteralValue as LiteralValue;
+use super::ts7_sort_order::{
+    Ts7SortNameSource, ts7_sort_literal, ts7_sort_name_source, ts7_union_sort_rank,
+};
 use super::{TypeId, TypePrinter, TypeSubstitution, instantiate_type_cached, visitor};
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_common::interner::Atom;
-use tsz_solver::types::{LiteralValue, TypeData};
 
 impl<'a> TypePrinter<'a> {
     pub(crate) fn print_union(
@@ -53,25 +56,10 @@ impl<'a> TypePrinter<'a> {
         // `number | string` prints as `string | number`. Non-primitive members
         // keep their original relative order because a sort comparator that
         // returns "equal" for them is stable.
-        const fn primitive_rank(id: TypeId) -> Option<u32> {
-            // Mirrors tsc's TypeFlags bit values in ascending order.
-            match id {
-                TypeId::ANY => Some(1),
-                TypeId::UNKNOWN => Some(2),
-                TypeId::VOID => Some(16),
-                TypeId::STRING => Some(32),
-                TypeId::NUMBER => Some(64),
-                TypeId::BIGINT => Some(128),
-                TypeId::BOOLEAN => Some(256),
-                TypeId::SYMBOL => Some(512),
-                TypeId::OBJECT => Some(1_048_576),
-                _ => None,
-            }
-        }
         real.sort_by(|a, b| {
             let rank_cmp = self
-                .stable_type_order_rank(*a, primitive_rank)
-                .cmp(&self.stable_type_order_rank(*b, primitive_rank));
+                .stable_type_order_rank(*a)
+                .cmp(&self.stable_type_order_rank(*b));
             if rank_cmp != std::cmp::Ordering::Equal {
                 return rank_cmp;
             }
@@ -162,72 +150,18 @@ impl<'a> TypePrinter<'a> {
             .join(" | ")
     }
 
-    fn stable_type_order_rank(
-        &self,
-        type_id: TypeId,
-        primitive_rank: impl Fn(TypeId) -> Option<u32>,
-    ) -> u32 {
-        if let Some(rank) = primitive_rank(type_id) {
-            return rank;
-        }
-        if let Some(literal) = self.stable_type_order_literal(type_id) {
-            return match literal {
-                LiteralValue::String(_) => 1 << 10,
-                LiteralValue::Number(_) => 1 << 11,
-                LiteralValue::BigInt(_) => 1 << 12,
-                LiteralValue::Boolean(_) => 1 << 13,
-            };
-        }
-        match self.interner.lookup(type_id) {
-            Some(TypeData::UniqueSymbol(_)) => 1 << 14,
-            Some(TypeData::Enum(_, _)) => 1 << 15,
-            Some(TypeData::TypeParameter(_) | TypeData::BoundParameter(_) | TypeData::Infer(_)) => {
-                1 << 19
-            }
-            Some(
-                TypeData::Object(_)
-                | TypeData::ObjectWithIndex(_)
-                | TypeData::Array(_)
-                | TypeData::Tuple(_)
-                | TypeData::Function(_)
-                | TypeData::Callable(_)
-                | TypeData::Application(_)
-                | TypeData::Lazy(_)
-                | TypeData::Mapped(_),
-            ) => 1 << 20,
-            Some(TypeData::KeyOf(_)) => 1 << 21,
-            Some(TypeData::TemplateLiteral(_)) => 1 << 22,
-            Some(TypeData::StringIntrinsic { .. }) => 1 << 23,
-            Some(TypeData::Substitution { .. }) => 1 << 24,
-            Some(TypeData::IndexAccess(_, _)) => 1 << 25,
-            Some(TypeData::Conditional(_)) => 1 << 26,
-            Some(TypeData::Union(_)) => 1 << 27,
-            Some(TypeData::Intersection(_)) => 1 << 28,
-            _ => u32::MAX,
-        }
+    fn stable_type_order_rank(&self, type_id: TypeId) -> u32 {
+        ts7_union_sort_rank(self.interner, type_id, &|def_id| {
+            self.type_cache
+                .and_then(|cache| cache.def_types.get(&def_id).copied())
+        })
     }
 
     fn stable_type_order_literal(&self, type_id: TypeId) -> Option<LiteralValue> {
-        let mut current = type_id;
-        let mut seen = rustc_hash::FxHashSet::default();
-        for _ in 0..16 {
-            if !seen.insert(current) {
-                return None;
-            }
-            if let Some(literal) = visitor::literal_value(self.interner, current) {
-                return Some(literal);
-            }
-            match self.interner.lookup(current)? {
-                TypeData::Lazy(def_id) => {
-                    current = *self
-                        .type_cache
-                        .and_then(|cache| cache.def_types.get(&def_id.0))?;
-                }
-                TypeData::Substitution { base_type, .. } => current = base_type,
-                _ => return None,
-            }
-        }
-        None
+        ts7_sort_literal(self.interner, type_id, &|def_id| {
+            self.type_cache
+                .and_then(|cache| cache.def_types.get(&def_id).copied())
+        })
     }
 
     fn stable_template_order_text(&self, type_id: TypeId) -> Option<Vec<String>> {
@@ -245,48 +179,27 @@ impl<'a> TypePrinter<'a> {
     }
 
     fn stable_type_order_name(&self, type_id: TypeId) -> Option<String> {
-        let mut current = type_id;
-        for _ in 0..16 {
-            match self.interner.lookup(current)? {
-                TypeData::Application(app_id) => {
-                    current = self.interner.type_application(app_id).base;
+        match ts7_sort_name_source(self.interner, type_id)? {
+            Ts7SortNameSource::Def(def_id) => {
+                if let Some(name) = self
+                    .type_cache
+                    .and_then(|cache| cache.def_to_name.get(&def_id))
+                {
+                    return Some(name.clone());
                 }
-                TypeData::Lazy(def_id) | TypeData::Enum(def_id, _) => {
-                    if let Some(name) = self
-                        .type_cache
-                        .and_then(|cache| cache.def_to_name.get(&def_id))
-                    {
-                        return Some(name.clone());
-                    }
-                    let symbol = self
-                        .type_cache
-                        .and_then(|cache| cache.def_to_symbol.get(&def_id))?;
-                    return self
-                        .symbol_arena
-                        .and_then(|arena| arena.get(*symbol))
-                        .map(|symbol| symbol.escaped_name.to_string());
-                }
-                TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
-                    let symbol = self.interner.object_shape(shape_id).symbol?;
-                    return self
-                        .symbol_arena
-                        .and_then(|arena| arena.get(symbol))
-                        .map(|symbol| symbol.escaped_name.to_string());
-                }
-                TypeData::Callable(shape_id) => {
-                    let symbol = self.interner.callable_shape(shape_id).symbol?;
-                    return self
-                        .symbol_arena
-                        .and_then(|arena| arena.get(symbol))
-                        .map(|symbol| symbol.escaped_name.to_string());
-                }
-                TypeData::TypeParameter(param) | TypeData::Infer(param) => {
-                    return Some(self.interner.resolve_atom_ref(param.name).to_string());
-                }
-                _ => return None,
+                let symbol = self
+                    .type_cache
+                    .and_then(|cache| cache.def_to_symbol.get(&def_id))?;
+                self.symbol_arena
+                    .and_then(|arena| arena.get(*symbol))
+                    .map(|symbol| symbol.escaped_name.to_string())
             }
+            Ts7SortNameSource::Symbol(symbol) => self
+                .symbol_arena
+                .and_then(|arena| arena.get(symbol))
+                .map(|symbol| symbol.escaped_name.to_string()),
+            Ts7SortNameSource::Atom(atom) => Some(self.interner.resolve_atom_ref(atom).to_string()),
         }
-        None
     }
 
     pub(crate) fn try_print_enum_member_union_as_parent(&self, types: &[TypeId]) -> Option<String> {
