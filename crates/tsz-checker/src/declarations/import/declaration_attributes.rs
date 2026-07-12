@@ -173,7 +173,27 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Step 6: type-only declarations cannot carry attributes.
+        // Step 6: a valid `resolution-mode` override on a NON-type-only
+        // declaration gets tsc's dedicated TS1454 at the attribute name
+        // ("`resolution-mode` can only be set for type-only imports.").
+        if !declaration_is_type_only
+            && self.get_resolution_mode_override(attributes_idx).is_some()
+            && attrs_data.elements.nodes.len() == 1
+        {
+            if let Some(&elem_idx) = attrs_data.elements.nodes.first()
+                && let Some(elem_node) = self.ctx.arena.get(elem_idx)
+                && let Some(attr) = self.ctx.arena.get_import_attribute_data(elem_node)
+            {
+                self.error_at_node(
+                    attr.name,
+                    diagnostic_messages::RESOLUTION_MODE_CAN_ONLY_BE_SET_FOR_TYPE_ONLY_IMPORTS,
+                    diagnostic_codes::RESOLUTION_MODE_CAN_ONLY_BE_SET_FOR_TYPE_ONLY_IMPORTS,
+                );
+                return;
+            }
+        }
+
+        // Step 7: type-only declarations cannot carry attributes.
         if declaration_is_type_only {
             self.report_import_attribute_grammar_error(
                 node_pos,

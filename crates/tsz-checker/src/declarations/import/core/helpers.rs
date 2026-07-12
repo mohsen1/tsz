@@ -103,19 +103,11 @@ impl<'a> CheckerState<'a> {
         attributes_idx: NodeIndex,
         declaration_is_type_only: bool,
     ) -> bool {
-        if self.get_resolution_mode_override(attributes_idx).is_none() {
-            return false;
-        }
-
-        if self
-            .ctx
-            .capabilities
-            .feature_available(FeatureGate::ImportAttributes)
-        {
-            return true;
-        }
-
-        self.ctx.capabilities.module == ModuleKind::Node16
+        // tsc treats a `resolution-mode` attribute as effective only when the
+        // declaration is exclusively type-only AND the attributes contain
+        // exactly one valid resolution-mode entry — uniformly across module
+        // modes (getResolutionModeOverride + isExclusivelyTypeOnlyImportOrExport).
+        self.get_resolution_mode_override(attributes_idx).is_some()
             && declaration_is_type_only
             && self.has_only_valid_resolution_mode_attribute(attributes_idx)
     }
