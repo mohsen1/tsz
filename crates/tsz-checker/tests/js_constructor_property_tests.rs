@@ -409,7 +409,10 @@ class Derived extends Base {
 }
 
 #[test]
-fn test_js_plain_function_this_read_reports_ts2339() {
+fn test_js_plain_function_this_read_reports_ts2683_not_ts2339() {
+    // TypeScript 7 no longer synthesizes an instance type for a plain JS
+    // function, so `this` is implicitly `any` (TS2683 under noImplicitThis) and
+    // unknown-property reads on it are `any` — no TS2339.
     let source = r#"
 function toString() {
     this.yadda;
@@ -422,8 +425,12 @@ function toString() {
         .filter(|(code, msg)| *code == 2339 && msg.contains("'yadda'"))
         .collect();
     assert!(
-        !ts2339.is_empty(),
-        "Expected TS2339 for unknown `this.yadda` in JS function, got: {diagnostics:?}"
+        ts2339.is_empty(),
+        "Expected no TS2339 for `this.yadda` (implicit-any `this`), got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2683),
+        "Expected implicit-any `this` (TS2683), got: {diagnostics:?}"
     );
 }
 
@@ -443,11 +450,10 @@ function toString() {
 ///
 /// Mirrors `compiler/inexistentPropertyInsideToStringType.ts`.
 #[test]
-fn test_js_plain_function_this_read_reports_ts2339_with_lib_name_shadow() {
-    // Use a symbol name that exists in lib defs (e.g., `toString` lives on
-    // Object.prototype / Function.prototype / many DOM types). Without a
-    // direct-function fallback, merged-symbol resolution would steer the
-    // synthesizer toward a body-less ambient lib declaration.
+fn test_js_plain_function_this_read_reports_ts2683_with_lib_name_shadow() {
+    // Even when the function name shadows a lib ambient declaration (e.g.
+    // `toString`), TypeScript 7 leaves the plain function's `this` implicitly
+    // `any`: TS2683 fires and unknown-property reads do not report TS2339.
     let source = r#"
 function toString() {
     this.yadda;
@@ -460,8 +466,12 @@ function toString() {
         .filter(|(code, msg)| *code == 2339 && msg.contains("'yadda'"))
         .collect();
     assert!(
-        !yadda_ts2339.is_empty(),
-        "Expected TS2339 for unknown `this.yadda` even when function name shadows a lib symbol, got: {diagnostics:?}"
+        yadda_ts2339.is_empty(),
+        "Expected no TS2339 for `this.yadda` (implicit-any `this`), got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2683),
+        "Expected implicit-any `this` (TS2683), got: {diagnostics:?}"
     );
 }
 
@@ -777,7 +787,7 @@ test.K.prototype = {
 }
 
 #[test]
-fn test_js_self_defaulting_expando_constructor_is_constructable() {
+fn test_js_self_defaulting_expando_constructor_is_not_constructable() {
     let source = r#"
 var test = {};
 test.K = test.K ||
@@ -789,12 +799,17 @@ test.K.prototype = {
 new test.K().add;
 "#;
 
+    // TypeScript 7 dropped JS constructor-function inference, so the
+    // self-defaulting expando `test.K` is no longer constructable: `new test.K()`
+    // reports an implicit-any diagnostic. (tsc uses TS7022 for the self-reference;
+    // tsz reports the missing-construct-signature TS7009 — both flag the same
+    // implicit-`any` result rather than silently constructing.)
     let diagnostics = check_js(source);
     assert!(
         diagnostics
             .iter()
-            .all(|(code, _)| !matches!(*code, 2351 | 7009 | 2339)),
-        "Expected self-defaulting expando constructor to stay constructable with prototype members, got: {diagnostics:?}"
+            .any(|(code, _)| matches!(*code, 7009 | 7022)),
+        "Expected `new` on a non-constructor expando to report an implicit-any diagnostic, got: {diagnostics:?}"
     );
 }
 
@@ -982,14 +997,16 @@ var f = new Foo(42);
 var s = f.x;
 "#;
     let diagnostics = check_js(source);
-    // f.x is number, assigning to string should produce TS2322
-    let ts2322: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == 2322)
-        .collect();
+    // TypeScript 7: `new Foo(42)` lacks a construct signature (TS7009) and is
+    // typed `any`, so `f.x` is `any` and assigning it to `string` no longer
+    // produces TS2322.
     assert!(
-        !ts2322.is_empty(),
-        "Expected TS2322 for assigning number to string, got: {diagnostics:?}"
+        diagnostics.iter().any(|(code, _)| *code == 7009),
+        "Expected TS7009 for `new` on a non-constructor function, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2322),
+        "Expected no TS2322 (instance members are `any` under TS7), got: {diagnostics:?}"
     );
 }
 
@@ -1027,19 +1044,20 @@ function Actual() {
 new Actual();
 "#;
     let diagnostics = check_js(source);
+    // TypeScript 7 dropped `@constructor` special-casing: the function is not a
+    // constructor, so `this` is implicitly `any` (TS2683, no TS2339 on
+    // `this.missing`) and `new Actual()` reports TS7009.
     assert!(
-        diagnostics
-            .iter()
-            .any(|(code, message)| *code == 2339 && message.contains("'missing'")),
-        "Expected TS2339 for missing @constructor instance property, got: {diagnostics:?}"
+        diagnostics.iter().all(|(code, _)| *code != 2339),
+        "Expected no TS2339 on `this.missing` (implicit-any `this`), got: {diagnostics:?}"
     );
     assert!(
-        diagnostics.iter().all(|(code, _)| *code != 7009),
-        "Expected @constructor function to avoid TS7009, got: {diagnostics:?}"
+        diagnostics.iter().any(|(code, _)| *code == 7009),
+        "Expected `new` on a `@constructor` function to report TS7009, got: {diagnostics:?}"
     );
     assert!(
-        diagnostics.iter().all(|(code, _)| *code != 2683),
-        "Expected @constructor function to suppress TS2683, got: {diagnostics:?}"
+        diagnostics.iter().any(|(code, _)| *code == 2683),
+        "Expected implicit-any `this` (TS2683) inside the function body, got: {diagnostics:?}"
     );
 }
 
@@ -1092,21 +1110,24 @@ var sy = foo.y;
 foo.m()
 "#;
     let diagnostics = check_js(source);
+    // TypeScript 7: `new Foonly()` lacks a construct signature (TS7009) so `foo`
+    // is `any`; `foo.x`/`foo.y` reads are `any` — no TS2339 and no TS2322 from
+    // the `string` annotations.
     let ts2339: Vec<_> = diagnostics
         .iter()
         .filter(|(code, _)| *code == 2339)
         .collect();
-    let ts2322: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == 2322)
-        .collect();
     assert!(
         ts2339.is_empty(),
-        "Expected no TS2339 for plain-function self-alias constructor/prototype members, got: {diagnostics:?}"
+        "Expected no TS2339 for `any`-typed self-alias members, got: {diagnostics:?}"
     );
     assert!(
-        ts2322.len() >= 2,
-        "Expected typed plain-function self-alias members to reject assignment to string, got: {diagnostics:?}"
+        diagnostics.iter().any(|(code, _)| *code == 7009),
+        "Expected TS7009 for `new` on a non-constructor function, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2322),
+        "Expected no TS2322 (instance members are `any` under TS7), got: {diagnostics:?}"
     );
 }
 
@@ -1194,14 +1215,15 @@ F.prototype[_str] = "ok";
 var f = new F();
 "#;
     let diagnostics = check_js(source);
+    // TypeScript 7: a plain function with computed prototype writes is not a
+    // constructor, so `new F()` reports TS7009.
     let ts7009: Vec<_> = diagnostics
         .iter()
         .filter(|(code, _)| *code == 7009)
         .collect();
-    assert_eq!(
-        ts7009.len(),
-        0,
-        "Expected no TS7009 for JS constructor with computed prototype assignments, got: {ts7009:?}"
+    assert!(
+        !ts7009.is_empty(),
+        "Expected TS7009 for `new` on a non-constructor function, got: {diagnostics:?}"
     );
 }
 
@@ -1216,14 +1238,15 @@ Object.defineProperty(F.prototype, _sym, { value: "ok" });
 var f = new F();
 "#;
     let diagnostics = check_js(source);
+    // TypeScript 7: `Object.defineProperty` on a plain function's prototype does
+    // not make it a constructor, so `new F()` reports TS7009.
     let ts7009: Vec<_> = diagnostics
         .iter()
         .filter(|(code, _)| *code == 7009)
         .collect();
-    assert_eq!(
-        ts7009.len(),
-        0,
-        "Expected no TS7009 for JS constructor with Object.defineProperty prototype writes, got: {ts7009:?}"
+    assert!(
+        !ts7009.is_empty(),
+        "Expected TS7009 for `new` on a non-constructor function, got: {diagnostics:?}"
     );
 }
 
@@ -1250,14 +1273,11 @@ a.m(1);
 b.m(2);
 "#;
     let diagnostics = check_js(source);
-    let relevant: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| matches!(*code, 7009 | 2339 | 7006))
-        .collect();
-    assert_eq!(
-        relevant.len(),
-        0,
-        "Expected chained prototype constructors to stay constructable with method members, got: {diagnostics:?}"
+    // TypeScript 7: chained `A.prototype = B.prototype = { ... }` no longer makes
+    // `A`/`B` constructors, so `new A()`/`new B()` report TS7009.
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 7009),
+        "Expected TS7009 for `new` on non-constructor chained functions, got: {diagnostics:?}"
     );
 }
 
@@ -1283,14 +1303,16 @@ a.m("nope");
 b.m("still nope");
 "#;
     let diagnostics = check_js(source);
-    let ts2345: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == 2345)
-        .collect();
-    assert_eq!(
-        ts2345.len(),
-        2,
-        "Expected chained prototype methods to preserve JSDoc parameter types, got: {diagnostics:?}"
+    // TypeScript 7: `new A()`/`new B()` are `any` (TS7009), so the `a.m(...)` /
+    // `b.m(...)` calls are unchecked — no TS2345 from the prototype method's
+    // JSDoc parameter types.
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 7009),
+        "Expected TS7009 for `new` on non-constructor chained functions, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2345),
+        "Expected no TS2345 (instances are `any` under TS7), got: {diagnostics:?}"
     );
 }
 
@@ -1312,19 +1334,16 @@ a.m("nope");
 "#;
 
     let diagnostics = check_js(source);
-    let relevant: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| matches!(*code, 2339 | 2345 | 7009))
-        .collect();
-
-    assert_eq!(
-        relevant.iter().filter(|(code, _)| *code == 2345).count(),
-        1,
-        "Expected prototype object literal method JSDoc to stay intact, got: {diagnostics:?}"
+    // TypeScript 7: `new A()` is `any` (TS7009), so `a.m(...)` is unchecked — no
+    // TS2345 — and the prototype object literal is walked without recursing (no
+    // crash-fallback diagnostics).
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 7009),
+        "Expected TS7009 for `new` on a non-constructor function, got: {diagnostics:?}"
     );
     assert!(
-        relevant.iter().all(|(code, _)| *code == 2345),
-        "Expected no crash-regression fallback diagnostics from prototype object literal methods, got: {diagnostics:?}"
+        diagnostics.iter().all(|(code, _)| *code != 2345),
+        "Expected no TS2345 (instance is `any` under TS7), got: {diagnostics:?}"
     );
 }
 
@@ -1352,6 +1371,8 @@ A.t('not here either')
 a.first = 10
 "#;
     let diagnostics = check_js(source);
+    // TypeScript 7: `new A()` is `any` (TS7009), so instance method calls
+    // `a.y(...)`/`a.z(...)` are unchecked — no `'z' does not exist` diagnostic.
     let z_missing = diagnostics
         .iter()
         .filter(|(code, message)| {
@@ -1360,21 +1381,15 @@ a.first = 10
         .count();
     assert_eq!(
         z_missing, 0,
-        "chained prototype method assignments should expose both y and z on instances; got: {diagnostics:?}"
+        "instance method calls on an `any` receiver must not report missing members; got: {diagnostics:?}"
     );
-    let string_to_number = diagnostics
-        .iter()
-        .filter(|(code, message)| {
-            *code == 2345
-                && message.contains(
-                    "Argument of type 'string' is not assignable to parameter of type 'number'",
-                )
-        })
-        .count();
-    assert_eq!(
-        string_to_number, 2,
-        "expected both annotated prototype method calls to reject string arguments; got: {diagnostics:?}"
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 7009),
+        "expected TS7009 for `new A()` on a non-constructor function; got: {diagnostics:?}"
     );
+    // The static chained assignment `A.s = A.t = function g(m) { ... this.x }`
+    // binds `this` to `typeof A` (the constructor object), so `this.x` reports
+    // TS2339 against `typeof A`.
     assert!(
         diagnostics.iter().any(|(code, message)| {
             *code == 2339 && message.contains("Property 'x' does not exist on type 'typeof A'")

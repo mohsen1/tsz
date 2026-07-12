@@ -215,25 +215,6 @@ impl<'a> CheckerState<'a> {
         };
         let prototype_owner_target = prototype_owner_expr
             .and_then(|owner_expr| self.js_prototype_owner_function_target(owner_expr));
-        let js_constructor_target = if self.is_js_file() && !is_arrow_function {
-            if is_function_declaration {
-                Some(idx)
-            } else if is_closure {
-                self.ctx
-                    .arena
-                    .get_extended(idx)
-                    .map(|ext| ext.parent)
-                    .filter(|parent| {
-                        self.ctx.arena.get(*parent).is_some_and(|node| {
-                            node.kind == tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION
-                        })
-                    })
-            } else {
-                None
-            }
-        } else {
-            None
-        };
         // Extract JSDoc for the function to check for @param/@returns annotations.
         // This suppresses false TS7006/TS7010/TS7011 in JS files with JSDoc type annotations.
         let func_jsdoc = self.get_jsdoc_for_function(idx);
@@ -356,9 +337,15 @@ impl<'a> CheckerState<'a> {
             .and_then(|j| Self::jsdoc_returns_type_expression(j))
             .and_then(|expr| self.resolve_jsdoc_reference(&expr));
 
-        let js_constructor_instance_type = js_constructor_target.and_then(|target_idx| {
-            self.synthesize_js_constructor_instance_type(target_idx, TypeId::ANY, &[])
-        });
+        // TypeScript 7 dropped JS constructor-function inference: a plain function
+        // (even with a `@constructor`/`@class` JSDoc tag or `this.x =` assignments)
+        // no longer gains a synthesized construct signature or an instance-typed
+        // `this`. `new f()` therefore lacks a construct signature (TS7009) and the
+        // constructor body's `this` is implicitly `any` (TS2683). Explicit
+        // `@type {new () => T}` annotations and real classes still supply construct
+        // signatures through separate paths. Prototype-method `this` typing (the
+        // `X.prototype.m = function () { ... }` receiver) is preserved below.
+        let js_constructor_instance_type: Option<TypeId> = None;
         let js_prototype_owner_instance_type = prototype_owner_target.and_then(|owner_target| {
             self.synthesize_js_constructor_instance_type(owner_target, TypeId::ANY, &[])
         });

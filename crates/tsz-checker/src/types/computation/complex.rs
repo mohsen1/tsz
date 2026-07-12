@@ -1631,28 +1631,12 @@ impl<'a> CheckerState<'a> {
                 return_type
             }
             CallResult::VoidFunctionCalledWithNew | CallResult::NonVoidFunctionCalledWithNew => {
-                // In JS/checkJs files, functions with `this.prop = value` assignments
-                // are treated as constructor functions (tsc's isJSConstructor). Synthesize
-                // an instance type from the collected this-property assignments.
-                if self.ctx.is_js_file()
-                    && let Some(instance_type) = self.synthesize_js_constructor_instance_type(
-                        new_expr.expression,
-                        constructor_type,
-                        &arg_types,
-                    )
-                {
-                    return instance_type;
-                }
-
-                // TS7009: 'new' expression whose target lacks a construct signature
-                // implicitly has an 'any' type (only under noImplicitAny).
-                // In JS/checkJs, suppress only when we successfully recognized the
-                // target as a JS constructor via `this`-property synthesis above.
-                if self.ctx.is_js_file()
-                    && self.js_new_target_has_prototype_evidence(new_expr.expression)
-                {
-                    return TypeId::ANY;
-                }
+                // TypeScript 7 no longer treats a plain JS function with
+                // `this.prop = value` or prototype assignments as a constructor
+                // function (the old `isJSConstructor` inference was dropped), so
+                // `new f()` gains no synthesized instance type and is not exempt
+                // from the missing-construct-signature check. Under noImplicitAny
+                // the result is `any` and reported as TS7009.
                 if self.ctx.no_implicit_any() {
                     self.error_at_node(
                         idx,

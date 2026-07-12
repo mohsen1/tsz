@@ -246,13 +246,16 @@ id2(E);
     let ts2345 = diagnostics_with_code(&diags, 2345);
     assert_eq!(ts2345.len(), 1, "Expected one TS2345, got: {diags:?}");
     let message = &ts2345[0].message_text;
+    // TypeScript 7 dropped JS constructor-function inference, so `E` is a plain
+    // function typed from its `@param`; its argument display is the call
+    // signature `(n: number) => void`, not a `typeof E` constructor.
     assert!(
-        message.contains("Argument of type 'typeof E'"),
-        "Expected JS constructor identifier source display to use `typeof E`, got: {message:?}"
+        message.contains("Argument of type '(n: number) => void'"),
+        "Expected the non-constructor function source display, got: {message:?}"
     );
     assert!(
         !message.contains("new (n: number)"),
-        "Expected diagnostic not to expand the constructor signature, got: {message:?}"
+        "Expected diagnostic not to expand a constructor signature for the source, got: {message:?}"
     );
 }
 
