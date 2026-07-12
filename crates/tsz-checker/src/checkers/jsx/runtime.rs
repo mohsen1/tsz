@@ -697,21 +697,67 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // tsc 6.0 skips scope checking when jsxFactory / jsxFragmentFactory is
-        // explicitly set: the option is a name hint rather than a scope
-        // requirement, and other diagnostics (TS17016, TS17017, TS5024) cover
-        // invalid configured names. We still mark the factory symbol referenced
-        // so unused-import checking (TS6192) doesn't flag it.
+        // tsc 7.0.2 resolves a config-set jsxFactory like any other value
+        // name at each JSX element: unresolved gets TS2304/TS2552 (with a
+        // spelling suggestion) at the tag name. Resolved factories are marked
+        // referenced so unused-import checking (TS6192) doesn't flag them.
         let is_fragment = self
             .ctx
             .arena
             .get(node_idx)
             .is_some_and(|n| n.kind == tsz_parser::parser::syntax_kind_ext::JSX_FRAGMENT);
-        if !is_fragment && self.ctx.compiler_options.jsx_factory_from_config {
-            self.mark_jsx_name_as_referenced(
-                &self.ctx.compiler_options.jsx_factory.clone(),
-                node_idx,
-            );
+        let pragma_overrides_config = self
+            .current_jsx_source_text()
+            .and_then(extract_jsx_pragma)
+            .is_some();
+        if !is_fragment
+            && self.ctx.compiler_options.jsx_factory_from_config
+            && !pragma_overrides_config
+        {
+            let jsx_factory = self.ctx.compiler_options.jsx_factory.clone();
+            let jsx_root = jsx_factory
+                .split('.')
+                .next()
+                .unwrap_or(&jsx_factory)
+                .to_string();
+            if !jsx_root.is_empty()
+                && self
+                    .resolve_jsx_factory_symbol_in_scope(&jsx_root, node_idx)
+                    .is_none()
+            {
+                let error_node = self
+                    .ctx
+                    .arena
+                    .get(node_idx)
+                    .and_then(|node| self.ctx.arena.get_jsx_opening(node))
+                    .map(|jsx| jsx.tag_name)
+                    .unwrap_or(node_idx);
+                // The factory is a VALUE reference even though the anchor is
+                // the tag name (a type-ish position): force value-meaning
+                // spelling suggestions so TS2552 matches tsc
+                // (`createElement` suggests `frameElement`).
+                use crate::query_boundaries::name_resolution::{
+                    NameResolutionRequest, ResolutionFailure,
+                };
+                let suggestions = if self.suggestion_scan_eligible(&jsx_root, error_node) {
+                    self.scan_similar_identifiers_for_meaning(
+                        &jsx_root,
+                        error_node,
+                        tsz_binder::symbol_flags::VALUE,
+                    )
+                } else {
+                    Vec::new()
+                };
+                let req = NameResolutionRequest::value(&jsx_root, error_node);
+                let failure = if suggestions.is_empty() {
+                    ResolutionFailure::not_found()
+                } else {
+                    ResolutionFailure::not_found_with_suggestions(suggestions)
+                };
+                self.report_name_resolution_failure(&req, &failure);
+                return;
+            }
+            self.mark_jsx_name_as_referenced(&jsx_factory, node_idx);
             return;
         }
         // For fragments, skip TS2874 whenever EITHER jsxFactory OR
