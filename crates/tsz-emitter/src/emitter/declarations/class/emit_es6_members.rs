@@ -152,30 +152,47 @@ impl<'a> Printer<'a> {
             if !self.private_members_to_skip.is_empty() {
                 let should_skip = self.private_members_to_skip.contains(&member_idx);
                 if should_skip {
-                    // When source has trailing `;` after private method/accessor
-                    // (e.g., `#foo() { };`), tsc preserves the semicolon.
-                    if let Some(mn) = self.arena.get(member_idx) {
-                        let has_trailing_semi = self.source_text.is_some_and(|text| {
-                            let start = mn.pos as usize;
-                            let end = std::cmp::min(mn.end as usize, text.len());
-                            if start >= end {
-                                return false;
-                            }
-                            let member_text = text[start..end].trim_end();
-                            if let Some(before_semi) = member_text.strip_suffix(';') {
-                                before_semi.trim_end().ends_with('}')
-                            } else {
-                                false
-                            }
-                        });
-                        if has_trailing_semi {
-                            if !self.writer.is_at_line_start() {
-                                self.write_line();
-                            }
-                            self.write(";");
-                            self.write_line();
-                            emitted_any_member = true;
+                    // A private method/accessor with a body is extracted to a
+                    // standalone function, but a standalone `;` that directly
+                    // follows it (e.g. `#foo() { };`) stays as an empty class
+                    // element at the member's original position, matching tsc.
+                    // The body node's end absorbs the parser-consumed `;`, so
+                    // reconstruct it the same way as non-extracted members.
+                    let next_is_semicolon_member = class
+                        .members
+                        .nodes
+                        .get(member_i + 1)
+                        .and_then(|&idx| self.arena.get(idx))
+                        .is_some_and(|n| n.kind == syntax_kind_ext::SEMICOLON_CLASS_ELEMENT);
+                    let body_end = match self.arena.get(member_idx).map(|n| n.kind) {
+                        Some(k) if k == syntax_kind_ext::METHOD_DECLARATION => self
+                            .arena
+                            .get(member_idx)
+                            .and_then(|n| self.arena.get_method_decl(n))
+                            .map(|m| m.body),
+                        Some(k)
+                            if k == syntax_kind_ext::GET_ACCESSOR
+                                || k == syntax_kind_ext::SET_ACCESSOR =>
+                        {
+                            self.arena
+                                .get(member_idx)
+                                .and_then(|n| self.arena.get_accessor(n))
+                                .map(|a| a.body)
                         }
+                        _ => None,
+                    }
+                    .and_then(|body_idx| self.arena.get(body_idx))
+                    .map(|body_node| body_node.end as usize);
+                    if !next_is_semicolon_member
+                        && let Some(body_end) = body_end
+                        && self.class_body_absorbs_trailing_semicolon(body_end)
+                    {
+                        if !self.writer.is_at_line_start() {
+                            self.write_line();
+                        }
+                        self.write(";");
+                        self.write_line();
+                        emitted_any_member = true;
                     }
                     if let Some(mn) = self.arena.get(member_idx) {
                         let skip_end = class
@@ -530,79 +547,31 @@ impl<'a> Printer<'a> {
                     .and_then(|&idx| self.arena.get(idx))
                     .is_some_and(|n| n.kind == syntax_kind_ext::SEMICOLON_CLASS_ELEMENT);
 
-                // Check if the member has a body (method/accessor with `{}`).
-                let member_has_body_for_semi = match member_node.kind {
-                    k if k == syntax_kind_ext::METHOD_DECLARATION => self
-                        .arena
-                        .get_method_decl(member_node)
-                        .is_some_and(|m| m.body.is_some()),
+                // A method/accessor with a body owns its closing `}`; a directly
+                // following `;` is a standalone empty class element that tsc keeps
+                // verbatim in JS output. The parser consumes that `;` token via
+                // parse_optional (so no SEMICOLON_CLASS_ELEMENT node exists), so
+                // reconstruct the single empty statement from source. Bodyless
+                // declarations own their terminating `;`; tsc does not re-emit it,
+                // and any genuine extra `;` after them already becomes its own
+                // SEMICOLON_CLASS_ELEMENT node handled by next_is_semicolon_member.
+                let body_end = match member_node.kind {
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                        self.arena.get_method_decl(member_node).map(|m| m.body)
+                    }
                     k if k == syntax_kind_ext::GET_ACCESSOR
                         || k == syntax_kind_ext::SET_ACCESSOR =>
                     {
-                        self.arena
-                            .get_accessor(member_node)
-                            .is_some_and(|a| a.body.is_some())
+                        self.arena.get_accessor(member_node).map(|a| a.body)
                     }
-                    _ => false,
-                };
-                if !next_is_semicolon_member {
-                    let has_source_semicolon = self.source_text.is_some_and(|text| {
-                        let member_end = std::cmp::min(member_node.end as usize, text.len());
-                        // For members WITHOUT bodies, check the gap after the member.
-                        if !member_has_body_for_semi {
-                            let gap_end = class
-                                .members
-                                .nodes
-                                .get(member_i + 1)
-                                .and_then(|&idx| self.arena.get(idx))
-                                .map_or_else(
-                                    || {
-                                        let search_end =
-                                            std::cmp::min(node.end as usize, text.len());
-                                        text[member_end..search_end]
-                                            .rfind('}')
-                                            .map_or(search_end, |pos| member_end + pos)
-                                    },
-                                    |n| n.pos as usize,
-                                );
-                            let gap_end = std::cmp::min(gap_end, text.len());
-                            if member_end < gap_end && text[member_end..gap_end].contains(';') {
-                                return true;
-                            }
-                        }
-                        // For members WITH bodies, the parser may absorb trailing `;`
-                        // into the member span (e.g., `get x() { ... };`).
-                        // Check if the member source ends with `} ;` pattern.
-                        if member_has_body_for_semi && member_end >= 2 {
-                            let tail = &text[member_node.pos as usize..member_end];
-                            let trimmed = tail.trim_end();
-                            if let Some(before_semi) = trimmed.strip_suffix(';')
-                                && before_semi.trim_end().ends_with('}')
-                            {
-                                return true;
-                            }
-                        }
-                        false
-                    });
-                    emit_standalone_class_semicolon = has_source_semicolon;
+                    _ => None,
                 }
+                .and_then(|body_idx| self.arena.get(body_idx))
+                .map(|body_node| body_node.end as usize);
 
-                // Some parser recoveries include the semicolon in member.end without
-                // creating a separate SEMICOLON_CLASS_ELEMENT; preserve it from source.
-                // Only check this for methods/accessors that DON'T have a body (i.e.,
-                // abstract methods or overload signatures like `foo(): void;`).
-                if !member_has_body_for_semi
-                    && self.source_text.is_some_and(|text| {
-                        let start = std::cmp::min(member_node.pos as usize, text.len());
-                        let end = std::cmp::min(member_node.end as usize, text.len());
-                        if start >= end {
-                            return false;
-                        }
-                        let member_text = text[start..end].trim_end();
-                        member_text.ends_with(';')
-                    })
-                {
-                    emit_standalone_class_semicolon = true;
+                if !next_is_semicolon_member && let Some(body_end) = body_end {
+                    emit_standalone_class_semicolon =
+                        self.class_body_absorbs_trailing_semicolon(body_end);
                 }
             }
             if self.writer.len() == before_len
@@ -684,6 +653,26 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+    }
+
+    /// A method/accessor body node's end position absorbs a directly-following
+    /// `;` that the parser consumed via `parse_optional`; tsc keeps that `;` as an
+    /// empty class element in JS output. Detect it from source: the text up to
+    /// `body_end`, ignoring trailing whitespace, ends with `;` whose preceding
+    /// non-whitespace character is the body's closing `}` (so an inner statement
+    /// terminator like `return 1;` inside the body is not mistaken for it).
+    fn class_body_absorbs_trailing_semicolon(&self, body_end: usize) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let Some(head) = text.get(..body_end.min(text.len())) else {
+            return false;
+        };
+        let head = head.trim_end();
+        let Some(before_semi) = head.strip_suffix(';') else {
+            return false;
+        };
+        before_semi.trim_end().ends_with('}')
     }
 
     fn class_member_uses_computed_prop_temp(&self, member_idx: NodeIndex) -> bool {
