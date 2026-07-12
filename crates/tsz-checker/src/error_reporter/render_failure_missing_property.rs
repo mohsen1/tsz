@@ -21,13 +21,19 @@ impl<'a> CheckerState<'a> {
         let source_type_is_object = self.is_object_intrinsic_for_missing_properties(source_type);
         // Primitive sources use TS2322 rather than missing-property wording.
         let display_src_str = if depth == 0 && !source_type_is_object {
-            self.format_type_for_diagnostic_role(
-                source,
-                DiagnosticTypeDisplayRole::AssignmentSource {
-                    target,
-                    anchor_idx: idx,
-                },
-            )
+            // The caller's context may own display policy the renderer cannot
+            // recompute here (argument-path fresh-literal widening).
+            if let Some(display) = ctx.source_display_override.clone() {
+                display
+            } else {
+                self.format_type_for_diagnostic_role(
+                    source,
+                    DiagnosticTypeDisplayRole::AssignmentSource {
+                        target,
+                        anchor_idx: idx,
+                    },
+                )
+            }
         } else {
             self.format_type_diagnostic(source_type)
         };
@@ -446,14 +452,11 @@ impl<'a> CheckerState<'a> {
             let tgt_str = self
                 .checked_js_global_element_access_fallback_target_display(idx)
                 .unwrap_or_else(|| self.format_assignability_type_for_message(target, source));
-            let prop_list: Vec<String> = all_missing
-                .iter()
-                .take(4)
-                .map(|name| self.missing_property_list_name_for_display(*name, target))
-                .collect();
-            let props_joined = prop_list.join(", ");
-            let (message, code) = if all_missing.len() > 4 {
-                let more_count = (all_missing.len() - 4).to_string();
+            // tsc truncates to "and N more" only ABOVE five missing
+            // properties; five or fewer list in full (shared helper rule).
+            let (props_joined, more) = self.truncated_missing_property_list(&all_missing, target);
+            let (message, code) = if let Some(more_count) = more {
+                let more_count = more_count.to_string();
                 (
                     format_message(
                         diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
@@ -536,6 +539,11 @@ impl<'a> CheckerState<'a> {
         let (mut src_str, mut tgt_str_qualified) = if depth == 0 {
             let src = if source_type == TypeId::OBJECT {
                 "{}".to_string()
+            } else if let Some(display) = ctx.source_display_override.clone() {
+                // The caller's context owns display policy the renderer
+                // cannot reproduce here (argument-path fresh-literal
+                // widening through the CallArgument role).
+                display
             } else if let Some(base_display) =
                 self.private_identifier_missing_source_base_display(source, property_name)
             {

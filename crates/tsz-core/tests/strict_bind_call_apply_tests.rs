@@ -330,9 +330,9 @@ k.call(wrongThis, 42);
     assert!(
         diagnostics
             .iter()
-            .any(|diag| diag.code == 2345 && diag.message_text.contains("{ b: number; }")),
-        "thisArg must be checked against the LAST overload's this type, \
-         got: {diagnostics:?}"
+            .any(|diag| diag.code == 2741 && diag.message_text.contains("{ b: number; }")),
+        "thisArg must be checked against the LAST overload's this type \
+         (promoted TS2741 head per tsc 7.0.2), got: {diagnostics:?}"
     );
     assert!(!diagnostics.iter().any(|diag| diag.code == 2769));
 }

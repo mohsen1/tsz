@@ -61,6 +61,21 @@ impl<'a> IRPrinter<'a> {
         })
     }
 
+    /// Whether the plain hugged `{ return __generator(...) }` wrapper may be
+    /// used: tsc preserves the source body's layout, hugging only when the
+    /// original body was single-line. A missing range (no source text, or a
+    /// synthesized body) keeps the historical hug so binder-less transpile
+    /// paths are unchanged.
+    pub(super) fn generator_wrapper_hug_allowed(
+        &self,
+        body_source_range: Option<(u32, u32)>,
+    ) -> bool {
+        if body_source_range.is_none() || self.source_text.is_none() {
+            return true;
+        }
+        self.is_body_source_single_line(body_source_range)
+    }
+
     pub(super) fn is_body_source_single_line(&self, body_source_range: Option<(u32, u32)>) -> bool {
         let (Some((pos, end)), Some(text)) = (body_source_range, self.source_text) else {
             return false;

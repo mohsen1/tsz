@@ -543,8 +543,8 @@ f2({ toString: (s: string) => s });
 
     let diagnostics = check_source_with_strict_null(source);
     assert!(
-        diagnostics.iter().any(|d| d.code == 2345),
-        "expected TS2345 when a real required property is missing, got: {diagnostics:?}"
+        diagnostics.iter().any(|d| d.code == 2741),
+        "expected promoted TS2741 head when a real required property is missing, got: {diagnostics:?}"
     );
 }
 
@@ -1132,24 +1132,24 @@ Component({ items: [{ name: ' string' }], itemKey: 'name' });
 "#;
 
     let diagnostics = check_source_with_strict_null(source);
-    let ts2345: Vec<_> = diagnostics.iter().filter(|d| d.code == 2345).collect();
+    let ts2741: Vec<_> = diagnostics.iter().filter(|d| d.code == 2741).collect();
     assert_eq!(
-        ts2345.len(),
+        ts2741.len(),
         1,
-        "expected exactly one TS2345, got: {diagnostics:?}"
+        "expected exactly one promoted TS2741 head, got: {diagnostics:?}"
     );
     assert!(
         diagnostics.iter().all(|d| d.code != 2322),
         "missing required property should suppress per-property TS2322, got: {diagnostics:?}"
     );
-    let message = &ts2345[0].message_text;
+    let message = &ts2741[0].message_text;
     assert!(
-        message.contains("Argument of type '{ items: { name: string; }[]; itemKey: \"name\"; }'"),
-        "TS2345 source display should widen nested object literals but preserve literal key, got: {message}"
+        message.contains("Property 'prop' is missing in type '{ items: { name: string; }[]; itemKey: \"name\"; }'"),
+        "TS2741 source display should widen nested object literals but preserve literal key, got: {message}"
     );
     assert!(
-        message.contains("parameter of type 'ListProps<{ name: string; }, \"name\">'"),
-        "TS2345 target display should widen the inferred object type argument, got: {message}"
+        message.contains("but required in type 'ListProps<{ name: string; }, \"name\">'"),
+        "TS2741 target display should widen the inferred object type argument, got: {message}"
     );
 }
 

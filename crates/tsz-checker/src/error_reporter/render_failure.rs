@@ -38,6 +38,11 @@ pub(in crate::error_reporter) struct RenderContext {
     pub start: u32,
     pub length: u32,
     pub file_name: String,
+    /// Pre-rendered source display supplied by the caller when its context
+    /// applies display policy the renderer cannot recompute (e.g. the
+    /// argument path's fresh-object-literal widening, whose resolved-env
+    /// widening pass is unavailable once rendering has borrowed the env).
+    pub source_display_override: Option<String>,
 }
 
 impl<'a> CheckerState<'a> {
@@ -781,6 +786,18 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         depth: u32,
     ) -> Diagnostic {
+        self.render_failure_reason_with_source_display(reason, source, target, idx, depth, None)
+    }
+
+    pub(crate) fn render_failure_reason_with_source_display(
+        &mut self,
+        reason: &tsz_solver::SubtypeFailureReason,
+        source: TypeId,
+        target: TypeId,
+        idx: NodeIndex,
+        depth: u32,
+        source_display_override: Option<String>,
+    ) -> Diagnostic {
         use crate::query_boundaries::common::SubtypeFailureReason;
 
         // Discarded-diagnostics children (transient cross-arena delegation
@@ -901,6 +918,7 @@ impl<'a> CheckerState<'a> {
             start,
             length,
             file_name: file_name.clone(),
+            source_display_override,
         };
         match reason {
             SubtypeFailureReason::MissingProperty {

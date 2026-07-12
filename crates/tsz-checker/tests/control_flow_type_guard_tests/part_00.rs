@@ -306,15 +306,17 @@ if (guard(value, true)) {
 
     assert!(
         diagnostics.iter().any(|(code, message)| {
-            *code == 2345
-                && message == "Argument of type 'N' is not assignable to parameter of type 'S'."
+            *code == 2741
+                && message == "Property 's' is missing in type 'N' but required in type 'S'."
         }),
         "expected selected two-argument overload to narrow value to N: {diagnostics:#?}"
     );
     assert!(
         diagnostics.iter().all(|(code, message)| {
-            *code != 2345
-                || message != "Argument of type 'S' is not assignable to parameter of type 'N'."
+            (*code != 2345
+                || message != "Argument of type 'S' is not assignable to parameter of type 'N'.")
+                && (*code != 2741
+                    || message != "Property 'n' is missing in type 'S' but required in type 'N'.")
         }),
         "overloaded type guard used the first predicate instead of the selected overload: {diagnostics:#?}"
     );

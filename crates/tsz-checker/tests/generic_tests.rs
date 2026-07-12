@@ -185,8 +185,8 @@ type Paths = CreateTypeOptions<PathsOptions, BadDefaultPathsOptions>;
     let codes = crate::test_utils::check_source_codes(source);
 
     assert!(
-        codes.contains(&2344),
-        "Expected TS2344 for defaults missing required property, got {codes:?}"
+        codes.contains(&2741),
+        "Expected TS2741 for defaults missing required property, got {codes:?}"
     );
 }
 
@@ -198,7 +198,7 @@ fn test_user_defined_required_with_unrelated_shape_does_not_skip_constraint() {
     // itself even though the user's `Required` requires a `marker`
     // property. Gating the shortcut on the symbol coming from a lib file
     // makes the user redeclaration fall through to the regular constraint
-    // check, which correctly emits TS2344.
+    // check, which correctly emits TS2741 (missing-property head promoted per tsc 7.0.2).
     let source = r#"
 type Required<T> = { marker: string };
 
@@ -213,8 +213,8 @@ type Bad = Box<Source>;
     let codes = crate::test_utils::check_source_codes(source);
 
     assert!(
-        codes.contains(&2344),
-        "Expected TS2344 for `Box<Source>` against unrelated user-defined `Required<Source>`, got {codes:?}"
+        codes.contains(&2741),
+        "Expected TS2741 for `Box<Source>` against unrelated user-defined `Required<Source>`, got {codes:?}"
     );
 }
 

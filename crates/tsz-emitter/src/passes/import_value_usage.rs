@@ -509,15 +509,24 @@ impl<'a> UsageScan<'a> {
                     return Some(NotAReference);
                 }
                 // The receiver of a qualified access through an external
-                // const enum binding is inlined away during emit.
-                if access.expression == ref_idx && self.is_external_const_enum_binding(name) {
+                // const enum binding is inlined away during emit. Namespace
+                // imports and import-equals register DOTTED binding paths
+                // (`X.E`, `X.default`), so check `{name}.{member}` too —
+                // `X.E.A` must not count the `X` receiver as a value use.
+                if access.expression == ref_idx
+                    && (self.is_external_const_enum_binding(name)
+                        || self.qualified_access_is_const_enum(access.name_or_argument, name))
+                {
                     return Some(NotAReference);
                 }
                 None
             }
             syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
                 let access = self.arena.get_access_expr_at(parent_idx)?;
-                if access.expression == ref_idx && self.is_external_const_enum_binding(name) {
+                if access.expression == ref_idx
+                    && (self.is_external_const_enum_binding(name)
+                        || self.qualified_access_is_const_enum(access.name_or_argument, name))
+                {
                     return Some(NotAReference);
                 }
                 None
@@ -818,6 +827,31 @@ impl<'a> UsageScan<'a> {
     fn is_external_const_enum_binding(&self, name: &str) -> bool {
         self.external_const_enum_bindings
             .is_some_and(|set| set.contains(name))
+    }
+
+    /// Whether `{receiver_name}.{member}` names an external const enum, where
+    /// `member` comes from the access's name (or its string-literal argument
+    /// for element access). Matches the dotted paths the driver registers for
+    /// namespace imports and import-equals bindings.
+    fn qualified_access_is_const_enum(
+        &self,
+        name_or_argument: NodeIndex,
+        receiver_name: &str,
+    ) -> bool {
+        if self.external_const_enum_bindings.is_none() {
+            return false;
+        }
+        let Some(member_node) = self.arena.get(name_or_argument) else {
+            return false;
+        };
+        let member = if let Some(ident) = self.arena.get_identifier(member_node) {
+            ident.escaped_text.clone()
+        } else if let Some(lit) = self.arena.get_literal(member_node) {
+            lit.text.clone()
+        } else {
+            return false;
+        };
+        self.is_external_const_enum_binding(&format!("{receiver_name}.{member}"))
     }
 
     // =========================================================================

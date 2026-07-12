@@ -10,7 +10,7 @@ use tsz_solver::{
 pub(crate) use super::common::{
     PropertyAccessResult, TypeResolver, TypeSubstitution, application_info, array_element_type,
     callable_shape_for_type, callable_shape_for_type_extended, collect_referenced_types,
-    construct_signatures_for_type, contains_free_type_parameters,
+    construct_signatures_for_type, contains_error_type, contains_free_type_parameters,
     contains_generic_indexed_access_surface, contains_type_parameter_named,
     contains_type_parameters, enum_def_id, enum_member_type, function_shape_for_type,
     get_indexed_access_type, get_type_query_symbol_ref, has_call_signatures,

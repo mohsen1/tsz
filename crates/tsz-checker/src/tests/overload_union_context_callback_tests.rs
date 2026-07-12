@@ -22,7 +22,7 @@
 
 use crate::test_utils::check_source_strict_codes as check_strict;
 
-const REJECTION_CODES: &[u32] = &[2322, 2345, 2739, 2740, 2769];
+const REJECTION_CODES: &[u32] = &[2322, 2345, 2739, 2740, 2741, 2769];
 
 fn has_rejection(codes: &[u32]) -> bool {
     codes.iter().any(|code| REJECTION_CODES.contains(code))
