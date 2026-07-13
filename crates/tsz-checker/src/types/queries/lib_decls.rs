@@ -225,13 +225,41 @@ fn collect_decl_arenas_from_lib_contexts<'a>(
 /// partial interface (issue #13255 family; a user `interface Error`
 /// augmentation made it user-visible: `RegExpMatchArray`/`RegExpExecArray`
 /// lost their `Array` heritage members). Extend with each lib context's
-/// same-named declarations; pairs already present (same index and same node
-/// storage) are skipped.
+/// same-named declarations.
+///
+/// A lib file can be resident as SEVERAL independently parsed arenas (the
+/// baseline pass re-parses its own copy), so pointer/storage identity
+/// under-detects duplicates. Dedup by the declaring lib FILE identity: a
+/// context whose source file name is already represented among the collected
+/// pairs contributes nothing — its declarations are the same source text, and
+/// re-adding them doubles every member of the merged interface (witness:
+/// duplicated `Document`/`AudioBuffer` overload sets producing a false
+/// TS2430 `Document`-vs-`NonElementParentNode` under a `createElement`
+/// augmentation).
 pub(crate) fn extend_decls_with_lib_context_globals<'a>(
     name: &str,
     lib_contexts: &'a [crate::context::LibContext],
     decls: &mut Vec<(NodeIndex, &'a NodeArena)>,
 ) {
+    let arena_file_name = |arena: &NodeArena| -> Option<String> {
+        arena
+            .source_files
+            .first()
+            .map(|source| source.file_name.clone())
+    };
+    // Only COMPLETE a partial view; never fabricate one. An empty collected
+    // set means the pairs were rejected (foreign-arena collisions) or owned
+    // by another resolution mechanism — extending from name-matched contexts
+    // here would hand this path a body it never owned (witness: `Document`'s
+    // heritage-sensitive TS2430 firing when the empty-set union displaced
+    // the heritage-folded resolution under a `createElement` augmentation).
+    if decls.is_empty() {
+        return;
+    }
+    let mut covered_files: Vec<String> = decls
+        .iter()
+        .filter_map(|(_, arena)| arena_file_name(arena))
+        .collect();
     for lib_ctx in lib_contexts {
         let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name) else {
             continue;
@@ -242,6 +270,13 @@ pub(crate) fn extend_decls_with_lib_context_globals<'a>(
         if lib_symbol.escaped_name != name {
             continue;
         }
+        let Some(ctx_file) = arena_file_name(lib_ctx.arena.as_ref()) else {
+            continue;
+        };
+        if covered_files.iter().any(|file| *file == ctx_file) {
+            continue;
+        }
+        let mut added = false;
         for &decl_idx in &lib_symbol.declarations {
             if lib_ctx.arena.get(decl_idx).is_none() {
                 continue;
@@ -251,7 +286,11 @@ pub(crate) fn extend_decls_with_lib_context_globals<'a>(
             });
             if !already {
                 decls.push((decl_idx, lib_ctx.arena.as_ref()));
+                added = true;
             }
+        }
+        if added {
+            covered_files.push(ctx_file);
         }
     }
 }
