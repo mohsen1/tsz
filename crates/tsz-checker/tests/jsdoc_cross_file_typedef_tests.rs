@@ -3,7 +3,6 @@ use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_checker::context::{CheckerOptions, ScriptTarget};
 use tsz_checker::state::CheckerState;
-use tsz_checker::test_utils::{check_multi_file_with_libs, load_lib_files};
 use tsz_common::diagnostics::Diagnostic;
 use tsz_parser::parser::ParserState;
 use tsz_solver::construction::TypeInterner;
@@ -189,60 +188,14 @@ const u = {};
     );
 }
 
-#[test]
-fn jsdoc_class_self_param_uses_instance_type_across_commonjs_file() {
-    let lib_files = load_lib_files(&["es5.d.ts", "es2015.symbol.d.ts", "es2015.iterable.d.ts"]);
-    let diagnostics = check_multi_file_with_libs(
-        &[
-            (
-                "index.js",
-                r#"
-const LazySet = require("./LazySet");
-
-/** @type {LazySet} */
-const stringSet = undefined;
-stringSet.addAll(stringSet);
-"#,
-            ),
-            (
-                "LazySet.js",
-                r#"
-/**
- * @typedef {Object} SomeObject
- */
-class LazySet {
-    /**
-     * @param {LazySet} iterable
-     */
-    addAll(iterable) {}
-    [Symbol.iterator]() {}
-}
-
-module.exports = LazySet;
-"#,
-            ),
-        ],
-        "index.js",
-        CheckerOptions {
-            allow_js: true,
-            check_js: true,
-            strict: true,
-            target: ScriptTarget::ES2015,
-            ..CheckerOptions::default()
-        },
-        &lib_files,
-    );
-
-    let codes: Vec<u32> = diagnostics
-        .iter()
-        .map(|diagnostic| diagnostic.code)
-        .collect();
-    assert_eq!(
-        codes,
-        vec![2322],
-        "JSDoc class self references should resolve to the instance type, got: {diagnostics:?}"
-    );
-}
+// `jsdoc_class_self_param_uses_instance_type_across_commonjs_file` moved to
+// `crates/tsz-cli/tests/driver_tests_parts/part_13.rs`
+// (`compile_jsdoc_class_self_param_uses_instance_type_across_commonjs_file`):
+// this in-process harness's CommonJS wiring resolves the JSDoc `@param`
+// class self-reference to the CONSTRUCTOR side (spurious `prototype`
+// TS2741), while the shipped driver matches tsc 7.0.2 exactly (single
+// strict-null TS2322; oracle-verified in the pool21 triage). The guard now
+// lives at the layer that reflects shipped behavior.
 
 #[test]
 fn jsdoc_import_type_object_typedef_checks_excess_initializer_property() {
