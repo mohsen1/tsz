@@ -76,6 +76,9 @@ tracing-tree = { workspace = true }
 serde_json = { workspace = true }
 
 [[test]]
+name = "lib_alias_ref_def_identity_tests"
+path = "tests/lib_alias_ref_def_identity_tests.rs"
+[[test]]
 name = "tsc_compat_tests"
 path = "tests/tsc_compat_tests.rs"
 
