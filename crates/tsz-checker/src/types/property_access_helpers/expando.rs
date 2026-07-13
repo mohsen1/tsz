@@ -1579,27 +1579,38 @@ impl<'a> CheckerState<'a> {
         // non-fresh `as const` literal is preserved.
         let expected_key = format!("{root_name}.{property_name}");
         let recursion_key = format!("declared:{}:{expected_key}", self.ctx.current_file_idx);
-        if self
-            .ctx
-            .expando_property_resolution_set
-            .insert(recursion_key.clone())
+        // The walk only applies to expando roots WITHOUT a declared type: a
+        // variable annotated `const c: SFC<P> = ...` gets its member types
+        // from the annotation, and its property assignments are CHECKED
+        // against those declared types (contextually typed), never
+        // synthesized from the RHS. Re-typing the member from the (widened)
+        // assignment RHS both loses the contextual narrowing and replaces a
+        // declared literal member with its base (witness:
+        // expandoFunctionContextualTypes' `defaultProps = { color: "red" }`
+        // failing against `Partial<{ color: "red" | "blue" }>`, and
+        // expandoFunctionExpressionsWithDynamicNames2's `[sym]: true` member
+        // widening to `boolean`).
+        if !self.expando_root_symbol_has_type_annotation(sym_id)
+            && self
+                .ctx
+                .expando_property_resolution_set
+                .insert(recursion_key.clone())
         {
             let mut best_match: Option<(u32, TypeId)> = None;
-            if let Some(source_file) = self
-                .ctx
-                .arena
-                .source_files
-                .get(self.ctx.current_file_idx)
-                .or_else(|| self.ctx.arena.source_files.first())
-            {
-                for &stmt_idx in &source_file.statements.nodes {
-                    self.collect_expando_property_assignment_type(
-                        stmt_idx,
-                        &expected_key,
-                        u32::MAX,
-                        &mut best_match,
-                    );
-                }
+            // Walk from the QUERIED symbol's enclosing lexical scope, not
+            // unconditionally from the top level: a block-scoped shadowing
+            // root (`if (...) { const Y = function Y() {}; Y.test = 42; }`)
+            // must collect the block's assignments, while the outer root's
+            // walk (started at the source file) skips that shadowing block
+            // via `block_shadows_expando_root`.
+            let walk_root = self.expando_assignment_walk_root(sym_id);
+            for stmt_idx in self.expando_walk_statements(walk_root) {
+                self.collect_expando_property_assignment_type(
+                    stmt_idx,
+                    &expected_key,
+                    u32::MAX,
+                    &mut best_match,
+                );
             }
             self.ctx
                 .expando_property_resolution_set
@@ -1807,6 +1818,119 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Whether the expando root symbol's value declaration carries an explicit
+    /// type annotation (`const c: SFC<P> = ...`). Annotated roots get member
+    /// types from the annotation, so the assignment-scan walk must not run.
+    fn expando_root_symbol_has_type_annotation(&self, sym_id: tsz_binder::SymbolId) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let decl_idx = symbol.value_declaration;
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+        self.ctx
+            .arena
+            .get_variable_declaration(node)
+            .is_some_and(|decl| decl.type_annotation.is_some())
+    }
+
+    /// Whether `block_idx` (a `BLOCK`) lexically re-declares `root_name`
+    /// (`let`/`const`/`function`/`class`), shadowing the outer expando root.
+    /// Assignments inside such a block target the SHADOWING binding and must
+    /// not contribute to the outer root's property types (witness:
+    /// expandoFunctionBlockShadowing — a block-local `const Y = function...;
+    /// Y.test = 42` leaking `number` onto the top-level `Y.test: string`).
+    fn block_shadows_expando_root(&self, block_idx: NodeIndex, root_name: &str) -> bool {
+        for stmt_idx in self.ctx.arena.get_children(block_idx) {
+            let Some(stmt) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            match stmt.kind {
+                syntax_kind_ext::VARIABLE_STATEMENT => {
+                    let mut stack = vec![stmt_idx];
+                    while let Some(idx) = stack.pop() {
+                        let Some(node) = self.ctx.arena.get(idx) else {
+                            continue;
+                        };
+                        if node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+                            && let Some(decl) = self.ctx.arena.get_variable_declaration(node)
+                            && self
+                                .ctx
+                                .arena
+                                .get_identifier_at(decl.name)
+                                .is_some_and(|ident| ident.escaped_text == root_name)
+                        {
+                            return true;
+                        }
+                        stack.extend(self.ctx.arena.get_children(idx));
+                    }
+                }
+                syntax_kind_ext::FUNCTION_DECLARATION | syntax_kind_ext::CLASS_DECLARATION => {
+                    let named = self
+                        .ctx
+                        .arena
+                        .get_function(stmt)
+                        .map(|function| function.name)
+                        .or_else(|| self.ctx.arena.get_class(stmt).map(|class| class.name));
+                    if named.is_some_and(|name_idx| {
+                        self.ctx
+                            .arena
+                            .get_identifier_at(name_idx)
+                            .is_some_and(|ident| ident.escaped_text == root_name)
+                    }) {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// The nearest enclosing `BLOCK` of the symbol's value declaration, or
+    /// `NodeIndex::NONE` for a top-level (source-file-scoped) root.
+    fn expando_assignment_walk_root(&self, sym_id: tsz_binder::SymbolId) -> NodeIndex {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return NodeIndex::NONE;
+        };
+        let mut current = symbol.value_declaration;
+        for _ in 0..64 {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return NodeIndex::NONE;
+            };
+            if !ext.parent.is_some() {
+                return NodeIndex::NONE;
+            }
+            let parent = ext.parent;
+            if self
+                .ctx
+                .arena
+                .get(parent)
+                .is_some_and(|node| node.kind == syntax_kind_ext::BLOCK)
+            {
+                return parent;
+            }
+            current = parent;
+        }
+        NodeIndex::NONE
+    }
+
+    /// The statement children to scan for `walk_root`: the block's children
+    /// when scoped, otherwise the current source file's top-level statements.
+    fn expando_walk_statements(&self, walk_root: NodeIndex) -> Vec<NodeIndex> {
+        if walk_root.is_some() {
+            return self.ctx.arena.get_children(walk_root);
+        }
+        self.ctx
+            .arena
+            .source_files
+            .get(self.ctx.current_file_idx)
+            .or_else(|| self.ctx.arena.source_files.first())
+            .map(|source_file| source_file.statements.nodes.clone())
+            .unwrap_or_default()
+    }
+
     fn collect_expando_property_assignment_type(
         &mut self,
         idx: NodeIndex,
@@ -1819,6 +1943,14 @@ impl<'a> CheckerState<'a> {
         };
 
         if self.is_scope_owner_kind(node.kind) || node.kind == syntax_kind_ext::CLASS_DECLARATION {
+            return;
+        }
+        // A block that lexically re-declares the root name shadows the outer
+        // expando root for its whole subtree.
+        if node.kind == syntax_kind_ext::BLOCK
+            && let Some(root_name) = expected_key.split('.').next()
+            && self.block_shadows_expando_root(idx, root_name)
+        {
             return;
         }
 
