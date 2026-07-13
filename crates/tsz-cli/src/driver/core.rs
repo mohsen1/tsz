@@ -174,10 +174,10 @@ pub struct CompilationResult {
     /// Files with their inclusion reasons (for --explainFiles)
     pub file_infos: Vec<FileInfo>,
     /// Resolved `noEmit` option (merged from tsconfig.json + CLI overrides).
-    /// Used by the CLI to pick the correct exit code: tsc returns
-    /// `DiagnosticsPresent_OutputsGenerated` (2) for `--noEmit` regardless of
-    /// where the option originated, since emit was disabled by configuration
-    /// rather than skipped due to errors.
+    /// tsc 7.0.2 exits `DiagnosticsPresent_OutputsSkipped` (1) for `--noEmit`
+    /// with errors (no outputs were generated); the exit-code decision now
+    /// keys on `emitted_files` alone, but the resolved flag stays available
+    /// for other consumers.
     pub no_emit: bool,
     pub request_cache_counters: tsz::checker::context::RequestCacheCounters,
     /// Number of interned types in the shared `TypeInterner` after checking.

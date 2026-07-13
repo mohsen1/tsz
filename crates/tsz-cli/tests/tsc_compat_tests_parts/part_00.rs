@@ -417,7 +417,7 @@ fn invalid_locale_with_explicit_file_reports_ts6048() {
     assert_eq!(code, 1, "invalid locale should exit 1: {output}");
     assert_eq!(
         output,
-        "error TS6048: Locale must be of the form <language> or <language>-<territory>. For example 'en' or 'ja-jp'.\n"
+        "error TS6048: Locale must be an IETF BCP 47 language tag. Examples: 'en', 'ja-jp'.\n"
     );
 }
 
@@ -439,7 +439,7 @@ fn invalid_locale_with_discovered_config_reports_ts6048() {
     assert_eq!(code, 1, "invalid locale should exit 1: {output}");
     assert_eq!(
         output,
-        "error TS6048: Locale must be of the form <language> or <language>-<territory>. For example 'en' or 'ja-jp'.\n"
+        "error TS6048: Locale must be an IETF BCP 47 language tag. Examples: 'en', 'ja-jp'.\n"
     );
 }
 
