@@ -69,7 +69,7 @@ impl<'a> CheckerState<'a> {
             if let Some(name_node) = self.ctx.arena.get(class_data.name)
                 && let Some(ident) = self.ctx.arena.get_identifier(name_node)
             {
-                ident.escaped_text.clone()
+                ident.escaped_text.to_string()
             } else {
                 String::from("<anonymous>")
             }

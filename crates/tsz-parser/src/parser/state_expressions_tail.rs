@@ -68,7 +68,7 @@ impl ParserState {
             end_pos,
             IdentifierData {
                 atom: AstAtom::NONE,
-                escaped_text: String::from("#"),
+                escaped_text: IdentText::from("#"),
                 original_text: None,
             },
         )
@@ -85,7 +85,7 @@ impl ParserState {
             end_pos,
             IdentifierData {
                 atom: AstAtom::NONE,
-                escaped_text: String::from("#"),
+                escaped_text: IdentText::from("#"),
                 original_text: None,
             },
         )
@@ -763,28 +763,31 @@ impl ParserState {
     /// Shared by [`Self::parse_identifier`] and [`Self::parse_identifier_name`]
     /// so identifier text/escape handling stays a single source of truth.
     #[inline]
-    fn read_cooked_identifier_text(&mut self) -> (AstAtom, String, Option<String>) {
+    fn read_cooked_identifier_text(&mut self) -> (AstAtom, IdentText, Option<IdentText>) {
         // OPTIMIZATION: Capture atom for O(1) comparison
         let atom = self.scanner.get_token_atom();
         let has_unicode_escape =
             (self.scanner.get_token_flags() & TokenFlags::UnicodeEscape as u32) != 0;
-        let src = self.scanner.source_text();
-        let start = self.scanner.get_token_start();
-        let end = self.scanner.get_token_end();
-        let source_slice = (start < end && end <= src.len()).then(|| &src[start..end]);
 
-        // Without escapes the raw source slice is the cooked text; otherwise
-        // fall back to the scanner's already-cooked token value.
-        let text = match source_slice {
-            Some(slice) if !has_unicode_escape => slice.to_string(),
-            _ => self.scanner.get_token_value_ref().to_string(),
-        };
+        // The scanner already interned the cooked text (the raw source slice
+        // when there are no escapes, the cooked value otherwise); share that
+        // allocation instead of copying it per identifier occurrence.
+        let text = self.scanner.token_ident_text();
+
         // tsc preserves unicode escape sequences in emitted identifiers: when the
         // scanner detected escapes, keep the original source slice if it differs
         // from the cooked text.
-        let original_text = match source_slice {
-            Some(slice) if has_unicode_escape && slice != text => Some(slice.to_string()),
-            _ => None,
+        let original_text = if has_unicode_escape {
+            let src = self.scanner.source_text();
+            let start = self.scanner.get_token_start();
+            let end = self.scanner.get_token_end();
+            let source_slice = (start < end && end <= src.len()).then(|| &src[start..end]);
+            match source_slice {
+                Some(slice) if slice != text.as_str() => Some(IdentText::from(slice)),
+                _ => None,
+            }
+        } else {
+            None
         };
         self.next_token();
         (atom, text, original_text)
@@ -808,7 +811,7 @@ impl ParserState {
                 end_pos,
                 IdentifierData {
                     atom: AstAtom::NONE,
-                    escaped_text: String::new(),
+                    escaped_text: IdentText::empty(),
                     original_text: None,
                 },
             );
@@ -821,7 +824,7 @@ impl ParserState {
             self.read_cooked_identifier_text()
         } else {
             self.error_identifier_expected();
-            (AstAtom::NONE, String::new(), None)
+            (AstAtom::NONE, IdentText::empty(), None)
         };
 
         self.arena.add_identifier(
@@ -877,7 +880,7 @@ impl ParserState {
             (atom, text, original_text)
         } else {
             self.error_identifier_expected();
-            (AstAtom::NONE, String::new(), None)
+            (AstAtom::NONE, IdentText::empty(), None)
         };
 
         self.arena.add_identifier(
@@ -899,7 +902,7 @@ impl ParserState {
         let end_pos = self.token_end();
         // OPTIMIZATION: Capture atom for O(1) comparison
         let atom = self.scanner.get_token_atom();
-        let text = self.scanner.get_token_value_ref().to_string();
+        let text = self.scanner.token_ident_text();
         self.parse_expected(SyntaxKind::PrivateIdentifier);
 
         self.arena.add_identifier(

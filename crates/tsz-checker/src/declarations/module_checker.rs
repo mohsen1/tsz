@@ -1817,6 +1817,6 @@ impl<'a> CheckerState<'a> {
         // Get the property name
         let name_node = self.ctx.arena.get(access.name_or_argument)?;
         let name_ident = self.ctx.arena.get_identifier(name_node)?;
-        Some(name_ident.escaped_text.clone())
+        Some(name_ident.escaped_text.to_string())
     }
 }

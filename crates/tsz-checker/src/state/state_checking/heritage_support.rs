@@ -27,7 +27,7 @@ impl<'a> CheckerState<'a> {
                             && let Some(name_node) = self.ctx.arena.get(param.name)
                             && let Some(ident) = self.ctx.arena.get_identifier(name_node)
                         {
-                            names.insert(ident.escaped_text.clone());
+                            names.insert(ident.escaped_text.to_string());
                         }
                     }
                 }
@@ -155,7 +155,7 @@ impl<'a> CheckerState<'a> {
             .ctx
             .arena
             .get_identifier_at(right_idx)
-            .map(|ident| ident.escaped_text.clone())
+            .map(|ident| ident.escaped_text.to_string())
         else {
             return false;
         };

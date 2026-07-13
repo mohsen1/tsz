@@ -10,7 +10,7 @@ use crate::char_codes::CharacterCodes;
 use std::sync::Arc;
 use tsz_common::ScriptTarget;
 use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
-use tsz_common::interner::{AstAtom, Interner};
+use tsz_common::interner::{AstAtom, IdentText, Interner};
 use wasm_bindgen::prelude::wasm_bindgen;
 
 mod identifiers;
@@ -1279,6 +1279,26 @@ impl ScannerState {
     #[must_use]
     pub fn get_token_text_ref(&self) -> &str {
         &self.source[self.token_start..self.pos]
+    }
+
+    /// Get the current token's cooked text as a shared [`IdentText`] handle.
+    ///
+    /// For interned tokens (identifiers, keywords, no-escape string literals)
+    /// this clones the interner's existing `Arc<str>` — a refcount bump, no
+    /// allocation. Tokens without an atom (recovery paths, escaped values)
+    /// are interned first so repeated occurrences still share one allocation.
+    #[must_use]
+    pub fn token_ident_text(&mut self) -> IdentText {
+        if self.token_atom != AstAtom::NONE {
+            return self.interner.resolve_text(self.token_atom);
+        }
+        let value = self.get_token_value_ref();
+        if value.is_empty() {
+            return IdentText::empty();
+        }
+        let value = value.to_string();
+        let atom = self.interner.intern_owned(value);
+        self.interner.resolve_text(atom)
     }
 
     /// ZERO-COPY: Get a slice of the source text by positions.

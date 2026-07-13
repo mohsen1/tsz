@@ -135,7 +135,7 @@ impl<'a> CheckerState<'a> {
                         .get(name_idx)
                         .and_then(|n| self.ctx.arena.get_identifier(n))
                 })
-                .map(|ident| ident.escaped_text.clone())
+                .map(|ident| ident.escaped_text.to_string())
                 .or_else(|| {
                     expando_constructor_assignment
                         .as_ref()
@@ -152,7 +152,7 @@ impl<'a> CheckerState<'a> {
                     .arena
                     .get(var_decl.name)
                     .and_then(|n| self.ctx.arena.get_identifier(n))
-                    .map(|ident| ident.escaped_text.clone());
+                    .map(|ident| ident.escaped_text.to_string());
             }
             (func, func_name, analysis_expr_idx)
         } else {
@@ -180,7 +180,7 @@ impl<'a> CheckerState<'a> {
                     .arena
                     .get(func.name)
                     .and_then(|n| self.ctx.arena.get_identifier(n))
-                    .map(|ident| ident.escaped_text.clone());
+                    .map(|ident| ident.escaped_text.to_string());
                 (func, func_name, value_decl)
             } else if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) {
                 let init_node = self.ctx.arena.get(var_decl.initializer)?;
@@ -193,13 +193,13 @@ impl<'a> CheckerState<'a> {
                     .arena
                     .get(func.name)
                     .and_then(|n| self.ctx.arena.get_identifier(n))
-                    .map(|ident| ident.escaped_text.clone())
+                    .map(|ident| ident.escaped_text.to_string())
                     .or_else(|| {
                         self.ctx
                             .arena
                             .get(var_decl.name)
                             .and_then(|n| self.ctx.arena.get_identifier(n))
-                            .map(|ident| ident.escaped_text.clone())
+                            .map(|ident| ident.escaped_text.to_string())
                     });
                 (func, func_name, var_decl.initializer)
             } else {
@@ -234,7 +234,7 @@ impl<'a> CheckerState<'a> {
                     .arena
                     .get(func.name)
                     .and_then(|n| self.ctx.arena.get_identifier(n))
-                    .map(|ident| ident.escaped_text.clone())
+                    .map(|ident| ident.escaped_text.to_string())
                     .or_else(|| self.expression_text(value_decl));
                 (func, func_name, owner_idx)
             }
@@ -282,7 +282,7 @@ impl<'a> CheckerState<'a> {
                             .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
                             .and_then(|param| self.ctx.arena.get(param.name))
                             .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                            .and_then(|ident| fallback.get(&ident.escaped_text).copied())
+                            .and_then(|ident| fallback.get(ident.escaped_text.as_str()).copied())
                             .unwrap_or(TypeId::ANY)
                     })
                     .collect();
@@ -326,7 +326,7 @@ impl<'a> CheckerState<'a> {
                         let param_data = self.ctx.arena.get_parameter(param_node)?;
                         let name_node = self.ctx.arena.get(param_data.name)?;
                         let ident = self.ctx.arena.get_identifier(name_node)?;
-                        Some((ident.escaped_text.clone(), param_info.type_id))
+                        Some((ident.escaped_text.to_string(), param_info.type_id))
                     })
                     .collect()
             } else {
@@ -809,7 +809,7 @@ impl<'a> CheckerState<'a> {
         }
         let name_node = self.ctx.arena.get(access.name_or_argument)?;
         let ident = self.ctx.arena.get_identifier(name_node)?;
-        let prop_name = ident.escaped_text.clone();
+        let prop_name = ident.escaped_text.to_string();
 
         // Determine type: @type annotation > param type > get_type_of_node
         let type_id = if let Some(jsdoc_type) = self.js_statement_declared_type(stmt_idx) {
@@ -819,7 +819,7 @@ impl<'a> CheckerState<'a> {
             let rhs_node = self.ctx.arena.get(rhs_idx)?;
             if rhs_node.kind == SyntaxKind::Identifier as u16 {
                 if let Some(rhs_ident) = self.ctx.arena.get_identifier(rhs_node) {
-                    if let Some(&param_type) = param_type_map.get(&rhs_ident.escaped_text) {
+                    if let Some(&param_type) = param_type_map.get(rhs_ident.escaped_text.as_str()) {
                         param_type
                     } else {
                         self.get_type_of_node(rhs_idx)

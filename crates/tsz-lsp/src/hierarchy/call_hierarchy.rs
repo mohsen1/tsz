@@ -636,7 +636,7 @@ impl<'a> CallHierarchyProvider<'a> {
             } else if let Some(ident_node) = self.arena.get(callee_ident) {
                 // Last-resort fallback: no symbol found at all
                 if let Some(ident_data) = self.arena.get_identifier(ident_node) {
-                    let name = ident_data.escaped_text.clone();
+                    let name = ident_data.escaped_text.to_string();
                     let ident_range =
                         node_range(self.arena, self.line_map, self.source_text, callee_ident);
                     let entry = callees.entry(callee_ident.0).or_insert_with(|| {
@@ -863,7 +863,7 @@ impl<'a> CallHierarchyProvider<'a> {
             && let Some(symbol) = self.binder.symbols.get(sym_id)
             && let Some(&decl) = symbol.declarations.first()
         {
-            return Some((sym_id, decl, name.clone()));
+            return Some((sym_id, decl, name.to_string()));
         }
 
         None

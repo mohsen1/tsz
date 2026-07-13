@@ -2,7 +2,7 @@
 
 use super::state::ParserState;
 use crate::parser::{NodeIndex, NodeList, syntax_kind_ext};
-use tsz_common::interner::AstAtom;
+use tsz_common::interner::{AstAtom, IdentText};
 use tsz_scanner::SyntaxKind;
 
 impl ParserState {
@@ -500,7 +500,7 @@ impl ParserState {
                     q_end,
                     crate::parser::node::IdentifierData {
                         atom: AstAtom::NONE,
-                        escaped_text: String::new(),
+                        escaped_text: IdentText::empty(),
                         original_text: None,
                     },
                 );
@@ -550,7 +550,7 @@ impl ParserState {
                     bang_end,
                     crate::parser::node::IdentifierData {
                         atom: tsz_common::interner::AstAtom::NONE,
-                        escaped_text: String::new(),
+                        escaped_text: IdentText::empty(),
                         original_text: None,
                     },
                 );
@@ -604,7 +604,7 @@ impl ParserState {
                 end,
                 crate::parser::node::IdentifierData {
                     atom: tsz_common::interner::AstAtom::NONE,
-                    escaped_text: String::new(),
+                    escaped_text: IdentText::empty(),
                     original_text: None,
                 },
             );
@@ -627,7 +627,7 @@ impl ParserState {
                 self.token_pos(),
                 crate::parser::node::IdentifierData {
                     atom: AstAtom::NONE,
-                    escaped_text: String::new(),
+                    escaped_text: IdentText::empty(),
                     original_text: None,
                 },
             );
@@ -820,7 +820,7 @@ impl ParserState {
                 name_pos,
                 crate::parser::node::IdentifierData {
                     atom: AstAtom::NONE,
-                    escaped_text: format!("arg{index}"),
+                    escaped_text: format!("arg{index}").into(),
                     original_text: None,
                 },
             );

@@ -172,7 +172,7 @@ impl ParserState {
                 end_pos,
                 IdentifierData {
                     atom: AstAtom::NONE,
-                    escaped_text: String::new(),
+                    escaped_text: IdentText::empty(),
                     original_text: None,
                 },
             )
@@ -439,7 +439,7 @@ impl ParserState {
             let name_start = self.token_pos();
             let name_end = self.token_end();
             let atom = self.scanner.get_token_atom();
-            let text = self.scanner.get_token_value_ref().to_string();
+            let text = self.scanner.token_ident_text();
             self.error_reserved_word_identifier();
             // tsc emits TS1359 + TS1003 specifically when the function name is
             // itself the `function` keyword (e.g. `function function() {}`).

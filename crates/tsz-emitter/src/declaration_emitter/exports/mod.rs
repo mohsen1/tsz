@@ -135,7 +135,7 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(lit.text.clone());
         }
         if let Some(ident) = self.arena.get_identifier(node) {
-            return Some(ident.escaped_text.clone());
+            return Some(ident.escaped_text.to_string());
         }
         self.get_source_slice(node.pos, node.end)
     }
@@ -223,7 +223,7 @@ impl<'a> DeclarationEmitter<'a> {
             && let Some(ident) = self.arena.get_identifier(expr_node)
             && self
                 .emitted_js_export_default_names
-                .contains(&ident.escaped_text)
+                .contains(ident.escaped_text.as_str())
         {
             return;
         }
@@ -508,7 +508,7 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(ident) = self.arena.get_identifier(expr_node)
                 && !self
                     .emitted_js_export_equals_names
-                    .insert(ident.escaped_text.clone())
+                    .insert(ident.escaped_text.to_string())
             {
                 return;
             }
@@ -1166,7 +1166,7 @@ impl<'a> DeclarationEmitter<'a> {
                 .source_is_js_file
                 .then(|| self.arena.get_identifier(expr_node))
                 .flatten()
-                .map(|ident| ident.escaped_text.clone())
+                .map(|ident| ident.escaped_text.to_string())
                 .filter(|name| self.js_export_default_names.contains(name));
             if deferred_name.is_some() {
                 self.emit_jsdoc_default_typedef_aliases_for_js_default_export_in_current_file();

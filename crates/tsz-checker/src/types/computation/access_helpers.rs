@@ -311,7 +311,7 @@ impl<'a> CheckerState<'a> {
                     return Some(format!("__unique_{}", sym_ref.0));
                 }
 
-                Some(name.clone())
+                Some(name.to_string())
             }
             k if k == SyntaxKind::StringLiteral as u16
                 || k == SyntaxKind::NumericLiteral as u16

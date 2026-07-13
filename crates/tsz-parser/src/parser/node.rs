@@ -29,6 +29,7 @@ use super::base::{NodeIndex, NodeList};
 use super::node_pools::for_each_node_pool;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+pub use tsz_common::interner::IdentText;
 use tsz_common::interner::{AstAtom, Interner};
 
 /// A thin 16-byte node header for cache-efficient AST storage.
@@ -230,9 +231,13 @@ pub struct IdentifierData {
     /// the field became serialised).
     #[serde(default = "AstAtom::none")]
     pub atom: AstAtom,
-    /// The identifier text (DEPRECATED: kept for backward compatibility during migration)
-    pub escaped_text: String,
-    pub original_text: Option<String>,
+    /// The identifier's cooked text as a shared handle into the arena
+    /// interner's string table: all occurrences of the same identifier in a
+    /// file share one allocation instead of each node owning a `String` copy.
+    pub escaped_text: IdentText,
+    /// The original source spelling when it differs from the cooked text
+    /// (identifiers written with unicode escapes); `None` otherwise.
+    pub original_text: Option<IdentText>,
 }
 
 /// Data for string literals (`StringLiteral`, template parts)
@@ -1232,11 +1237,13 @@ impl NodeArenaInner {
 
         // ---- Heap strings inside pool elements ----
 
-        // IdentifierData: escaped_text + original_text
+        // IdentifierData: escaped_text is a shared handle into the interner's
+        // string table (counted by the interner's own estimate below), so only
+        // original_text — a standalone shared string — adds heap here
+        // (16-byte Arc header + string bytes).
         for id in &self.identifiers {
-            size += id.escaped_text.capacity();
             if let Some(ref s) = id.original_text {
-                size += s.capacity();
+                size += 16 + s.len();
             }
         }
 

@@ -94,7 +94,7 @@ impl<'a> CheckerState<'a> {
         match node.kind {
             k if k == SyntaxKind::Identifier as u16 => arena
                 .get_identifier(node)
-                .map(|ident| ident.escaped_text.clone()),
+                .map(|ident| ident.escaped_text.to_string()),
             syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                 let access = arena.get_access_expr(node)?;
                 let left = Self::expando_assignment_access_key_in_arena(arena, access.expression)?;
@@ -610,7 +610,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .arena
                 .get_identifier(name_node)
-                .map(|ident| ident.escaped_text.clone()),
+                .map(|ident| ident.escaped_text.to_string()),
             k if k == SyntaxKind::StringLiteral as u16
                 || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
             {
@@ -1465,7 +1465,7 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .arena
                     .get_identifier_at(access.name_or_argument)
-                    .map(|ident| ident.escaped_text.clone())
+                    .map(|ident| ident.escaped_text.to_string())
                 else {
                     return true;
                 };
@@ -1793,7 +1793,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx
                     .arena
                     .get_identifier_at(access.name_or_argument)
-                    .map(|ident| ident.escaped_text.clone())
+                    .map(|ident| ident.escaped_text.to_string())
             }
             syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
                 let access = self.ctx.arena.get_access_expr(node)?;
@@ -1880,7 +1880,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .arena
                 .get_identifier(node)
-                .map(|ident| ident.escaped_text.clone()),
+                .map(|ident| ident.escaped_text.to_string()),
             syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                 let access = self.ctx.arena.get_access_expr(node)?;
                 let left = self.expando_assignment_access_key(access.expression)?;
@@ -1961,7 +1961,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx
                     .arena
                     .get_identifier_at(access.name_or_argument)
-                    .map(|ident| ident.escaped_text.clone())
+                    .map(|ident| ident.escaped_text.to_string())
             }
             syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
                 let access = self.ctx.arena.get_access_expr(node)?;
@@ -2116,7 +2116,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx
                     .arena
                     .get_identifier_at(access.name_or_argument)
-                    .map(|ident| ident.escaped_text.clone())
+                    .map(|ident| ident.escaped_text.to_string())
             }
             syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
                 let access = self.ctx.arena.get_access_expr(node)?;

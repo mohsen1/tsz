@@ -537,7 +537,7 @@ fn collect_binding_pattern_names(arena: &NodeArena, name_idx: NodeIndex, out: &m
     };
     if name_node.is_identifier() {
         if let Some(ident) = arena.get_identifier(name_node) {
-            out.push(ident.escaped_text.clone());
+            out.push(ident.escaped_text.to_string());
         }
     } else if matches!(
         name_node.kind,
@@ -726,8 +726,8 @@ fn check_closure_capture(
                 && let Some(ident) = arena.get_identifier(node)
                 && loop_vars.contains(ident.escaped_text.as_str())
             {
-                if !info.captured_vars.contains(&ident.escaped_text) {
-                    info.captured_vars.push(ident.escaped_text.clone());
+                if !info.captured_vars.iter().any(|v| *v == ident.escaped_text) {
+                    info.captured_vars.push(ident.escaped_text.to_string());
                 }
                 info.needs_capture = true;
             }
@@ -1014,7 +1014,7 @@ pub fn collect_loop_vars(arena: &NodeArena, initializer_idx: NodeIndex) -> Vec<S
                 && name_node.is_identifier()
                 && let Some(ident) = arena.get_identifier(name_node)
             {
-                vars.push(ident.escaped_text.clone());
+                vars.push(ident.escaped_text.to_string());
             }
         }
     }

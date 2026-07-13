@@ -449,7 +449,7 @@ impl<'a> CheckerState<'a> {
             // Get the attribute name (identifier or string literal)
             let name = if let Some(name_node) = self.ctx.arena.get(attr_data.name) {
                 if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                    Some(ident.escaped_text.clone())
+                    Some(ident.escaped_text.to_string())
                 } else {
                     self.ctx
                         .arena

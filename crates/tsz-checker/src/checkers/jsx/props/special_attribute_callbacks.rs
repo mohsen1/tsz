@@ -45,7 +45,7 @@ impl<'a> CheckerState<'a> {
                     && let Some(name_node) = self.ctx.arena.get(param.name)
                     && let Some(name) = self.ctx.arena.get_identifier(name_node)
                 {
-                    param_contexts.push((name.escaped_text.clone(), param_type));
+                    param_contexts.push((name.escaped_text.to_string(), param_type));
                 }
                 param_type
             })

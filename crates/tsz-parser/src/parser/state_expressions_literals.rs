@@ -14,7 +14,7 @@ use crate::parser::{
     syntax_kind_ext,
 };
 use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-use tsz_common::interner::AstAtom;
+use tsz_common::interner::{AstAtom, IdentText};
 use tsz_scanner::SyntaxKind;
 use tsz_scanner::keyword_text_len;
 use tsz_scanner::scanner_impl::TokenFlags;
@@ -111,7 +111,7 @@ impl ParserState {
                             end,
                             IdentifierData {
                                 atom: AstAtom::NONE,
-                                escaped_text: String::new(),
+                                escaped_text: IdentText::empty(),
                                 original_text: None,
                             },
                         )
@@ -1672,7 +1672,7 @@ impl ParserState {
             {
                 let msg = format_message(
                     diagnostic_messages::IS_NOT_A_VALID_META_PROPERTY_FOR_KEYWORD_DID_YOU_MEAN,
-                    &[&ident.escaped_text.to_string(), "new", "target"],
+                    &[ident.escaped_text.as_ref(), "new", "target"],
                 );
                 self.parse_error_at(
                     name_node.pos,

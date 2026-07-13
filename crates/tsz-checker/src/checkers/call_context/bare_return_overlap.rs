@@ -195,7 +195,7 @@ impl CheckerState<'_> {
                 .ctx
                 .arena
                 .get_identifier(node)
-                .is_some_and(|ident| pinned_param_names.contains(&ident.escaped_text));
+                .is_some_and(|ident| pinned_param_names.contains(ident.escaped_text.as_str()));
         }
         if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
@@ -260,6 +260,6 @@ impl CheckerState<'_> {
         }
         let name_node = self.ctx.arena.get(param.name)?;
         let ident = self.ctx.arena.get_identifier(name_node)?;
-        Some(ident.escaped_text.clone())
+        Some(ident.escaped_text.to_string())
     }
 }

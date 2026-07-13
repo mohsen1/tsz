@@ -1262,7 +1262,7 @@ impl<'a> DeclarationEmitter<'a> {
                     continue;
                 };
                 if !names.iter().any(|name| name == &name_ident.escaped_text) {
-                    names.push(name_ident.escaped_text.clone());
+                    names.push(name_ident.escaped_text.to_string());
                 }
             }
         }

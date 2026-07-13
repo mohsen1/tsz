@@ -80,7 +80,7 @@ impl<'a> CheckerState<'a> {
 
         let right_name = if let Some(right_node) = self.ctx.arena.get(qn.right) {
             if let Some(id) = self.ctx.arena.get_identifier(right_node) {
-                id.escaped_text.clone()
+                id.escaped_text.to_string()
             } else {
                 return TypeId::ERROR; // Missing identifier data - propagate error
             }
@@ -195,7 +195,7 @@ impl<'a> CheckerState<'a> {
                             let right_name = if let Some(right_node) = self.ctx.arena.get(qn.right)
                                 && let Some(id) = self.ctx.arena.get_identifier(right_node)
                             {
-                                id.escaped_text.clone()
+                                id.escaped_text.to_string()
                             } else {
                                 String::new()
                             };
@@ -209,7 +209,7 @@ impl<'a> CheckerState<'a> {
                                     if let Some(rn) = self.ctx.arena.get(left_qn.right)
                                         && let Some(id) = self.ctx.arena.get_identifier(rn)
                                     {
-                                        id.escaped_text.clone()
+                                        id.escaped_text.to_string()
                                     } else {
                                         left_name.clone()
                                     }

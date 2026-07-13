@@ -374,7 +374,7 @@ impl<'a> CheckerState<'a> {
         let mut segments = self.import_type_member_segments(qn.left)?;
         let right_node = self.ctx.arena.get(qn.right)?;
         let right_ident = self.ctx.arena.get_identifier(right_node)?;
-        segments.push(right_ident.escaped_text.clone());
+        segments.push(right_ident.escaped_text.to_string());
         Some(segments)
     }
 

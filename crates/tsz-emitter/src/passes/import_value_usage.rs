@@ -276,7 +276,7 @@ impl<'a> UsageScan<'a> {
         let Some(name) = self
             .arena
             .get_identifier_at(import.import_clause)
-            .map(|ident| ident.escaped_text.clone())
+            .map(|ident| ident.escaped_text.to_string())
             .filter(|name| !name.is_empty())
         else {
             return;
@@ -845,7 +845,7 @@ impl<'a> UsageScan<'a> {
             return false;
         };
         let member = if let Some(ident) = self.arena.get_identifier(member_node) {
-            ident.escaped_text.clone()
+            ident.escaped_text.to_string()
         } else if let Some(lit) = self.arena.get_literal(member_node) {
             lit.text.clone()
         } else {

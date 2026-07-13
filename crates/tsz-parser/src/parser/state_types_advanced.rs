@@ -2,6 +2,7 @@
 
 use super::state::ParserState;
 use crate::parser::{NodeIndex, NodeList, node, syntax_kind_ext};
+use tsz_common::interner::IdentText;
 use tsz_scanner::SyntaxKind;
 
 impl ParserState {
@@ -1503,7 +1504,7 @@ impl ParserState {
                 question_end,
                 crate::parser::node::IdentifierData {
                     atom: tsz_common::interner::AstAtom::NONE,
-                    escaped_text: String::new(),
+                    escaped_text: IdentText::empty(),
                     original_text: None,
                 },
             );
@@ -1523,7 +1524,7 @@ impl ParserState {
                 question_end,
                 crate::parser::node::IdentifierData {
                     atom: tsz_common::interner::AstAtom::NONE,
-                    escaped_text: String::new(),
+                    escaped_text: IdentText::empty(),
                     original_text: None,
                 },
             );

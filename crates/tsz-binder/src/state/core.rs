@@ -1602,8 +1602,8 @@ impl BinderState {
                 let Some(id) = arena.get_identifier(expr_node) else {
                     continue;
                 };
-                if !targets.contains(&id.escaped_text) {
-                    targets.push(id.escaped_text.clone());
+                if !targets.iter().any(|t| *t == id.escaped_text) {
+                    targets.push(id.escaped_text.to_string());
                 }
             }
 

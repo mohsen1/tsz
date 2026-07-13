@@ -602,7 +602,7 @@ impl<'a> CheckerState<'a> {
         match node.kind {
             k if k == SyntaxKind::Identifier as u16 => arena
                 .get_identifier(node)
-                .map(|ident| ident.escaped_text.clone()),
+                .map(|ident| ident.escaped_text.to_string()),
             syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                 let access = arena.get_access_expr(node)?;
                 let left = Self::commonjs_expando_assignment_access_key(arena, access.expression)?;

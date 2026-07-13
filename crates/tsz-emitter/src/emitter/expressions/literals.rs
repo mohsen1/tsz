@@ -1037,7 +1037,7 @@ impl<'a> Printer<'a> {
                 let next_ident = self.arena.get_identifier(next_name)?;
                 let after_dot = cursor + 1;
                 let dot_tail = crate::safe_slice::slice(source, after_dot, search_end).ok()?;
-                let next_rel = dot_tail.find(&next_ident.escaped_text)?;
+                let next_rel = dot_tail.find(next_ident.escaped_text.as_str())?;
                 if dot_tail[..next_rel].contains('\n') {
                     return None;
                 }
@@ -1133,7 +1133,7 @@ impl<'a> Printer<'a> {
                 let has_import_subst = !self.suppress_commonjs_named_import_substitution
                     && self
                         .commonjs_named_import_substitutions
-                        .contains_key(&ident.escaped_text);
+                        .contains_key(ident.escaped_text.as_str());
                 let has_export_var = !self.suppress_ns_qualification
                     && self
                         .commonjs_exported_var_names
@@ -1325,7 +1325,7 @@ impl<'a> Printer<'a> {
             let has_import_subst = !self.suppress_commonjs_named_import_substitution
                 && self
                     .commonjs_named_import_substitutions
-                    .contains_key(&ident.escaped_text);
+                    .contains_key(ident.escaped_text.as_str());
             let has_export_var = !self.suppress_ns_qualification
                 && self
                     .commonjs_exported_var_names
@@ -1429,7 +1429,7 @@ impl<'a> Printer<'a> {
             || name_node.kind == SyntaxKind::PrivateIdentifier as u16
         {
             let ident = self.arena.get_identifier(name_node)?;
-            return (!ident.escaped_text.is_empty()).then(|| ident.escaped_text.clone());
+            return (!ident.escaped_text.is_empty()).then(|| ident.escaped_text.to_string());
         }
         if name_node.kind == SyntaxKind::StringLiteral as u16
             || name_node.kind == SyntaxKind::NumericLiteral as u16

@@ -549,7 +549,7 @@ impl<'a> DeclarationEmitter<'a> {
                         .arena
                         .get(import_eq.import_clause)
                         .and_then(|n| self.arena.get_identifier(n))
-                        .map(|id| id.escaped_text.clone())
+                        .map(|id| id.escaped_text.to_string())
                     else {
                         continue;
                     };

@@ -171,7 +171,7 @@ impl<'a> CheckerState<'a> {
                 && let Some(ident) = arena.get_identifier(name_node)
             {
                 decls.push(JsdocNamedDecl {
-                    name: ident.escaped_text.clone(),
+                    name: ident.escaped_text.to_string(),
                     pos: name_node.pos,
                     len: name_node.end.saturating_sub(name_node.pos),
                     file_idx: target_file_idx,
@@ -247,7 +247,7 @@ impl<'a> CheckerState<'a> {
             && rhs_node.kind == SyntaxKind::Identifier as u16
             && let Some(ident) = arena.get_identifier(rhs_node)
         {
-            roots.insert(ident.escaped_text.clone());
+            roots.insert(ident.escaped_text.to_string());
         }
 
         Self::collect_commonjs_export_object_roots_from_expression(arena, binary.right, roots);
@@ -370,7 +370,7 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|ident| export_object_roots.contains(ident.escaped_text.as_str()));
         base_is_export_root.then(|| {
             (
-                name_ident.escaped_text.clone(),
+                name_ident.escaped_text.to_string(),
                 name_node.pos,
                 name_node.end.saturating_sub(name_node.pos),
             )

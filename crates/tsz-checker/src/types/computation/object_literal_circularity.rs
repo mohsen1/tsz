@@ -931,7 +931,7 @@ impl<'a> CheckerState<'a> {
         }
         let name_node = self.ctx.arena.get(var_decl.name)?;
         let ident = self.ctx.arena.get_identifier(name_node)?;
-        Some(ident.escaped_text.clone())
+        Some(ident.escaped_text.to_string())
     }
 
     /// Whether the expression subtree contains an identifier with the given

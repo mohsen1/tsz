@@ -28,7 +28,9 @@ impl<'a> CheckerState<'a> {
         match node.kind {
             k if k == SyntaxKind::Identifier as u16 => {
                 if let Some(ident) = self.ctx.arena.get_identifier(node)
-                    && class_type_param_names.contains(&ident.escaped_text)
+                    && class_type_param_names
+                        .iter()
+                        .any(|n| *n == ident.escaped_text)
                 {
                     self.error_at_node(
                         type_idx,
@@ -42,7 +44,9 @@ impl<'a> CheckerState<'a> {
                     // Check if type_name is an identifier matching a class type param
                     if let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
                         && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                        && class_type_param_names.contains(&ident.escaped_text)
+                        && class_type_param_names
+                            .iter()
+                            .any(|n| *n == ident.escaped_text)
                     {
                         self.error_at_node(
                             type_idx,
@@ -227,7 +231,7 @@ impl<'a> CheckerState<'a> {
                 && let Some(name_node) = self.ctx.arena.get(param.name)
                 && let Some(ident) = self.ctx.arena.get_identifier(name_node)
             {
-                names.push(ident.escaped_text.clone());
+                names.push(ident.escaped_text.to_string());
             }
         }
         names

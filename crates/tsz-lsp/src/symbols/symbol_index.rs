@@ -352,15 +352,15 @@ impl SymbolIndex {
 
             // Add to name_to_files index
             self.name_to_files
-                .entry(text.clone())
+                .entry(text.to_string())
                 .or_default()
                 .insert(file_name_owned.clone());
 
             // Add to sorted names for prefix search
-            self.insert_sorted_name(text.clone());
+            self.insert_sorted_name(text.to_string());
 
             // Track in reverse mapping for efficient cleanup
-            file_symbol_names.insert(text.clone());
+            file_symbol_names.insert(text.to_string());
         }
 
         // Index all symbols in file_locals (top-level symbols/declarations)

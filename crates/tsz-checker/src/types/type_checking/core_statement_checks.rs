@@ -724,7 +724,7 @@ impl<'a> CheckerState<'a> {
                 && let Some(name_node) = self.ctx.arena.get(tp_data.name)
                 && let Some(ident) = self.ctx.arena.get_identifier(name_node)
             {
-                infer_params.push((ident.escaped_text.clone(), tp_data.name));
+                infer_params.push((ident.escaped_text.to_string(), tp_data.name));
             }
             for child in self.ctx.arena.get_children(idx) {
                 stack.push(child);
@@ -817,7 +817,7 @@ impl<'a> CheckerState<'a> {
         let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
             return;
         };
-        let name = ident.escaped_text.clone();
+        let name = ident.escaped_text.to_string();
         let atom = self.ctx.types.intern_string(&name);
         let provisional_type_id = query::user_type_param(self.ctx.types, atom, None, None, false);
         let previous = self
@@ -829,7 +829,7 @@ impl<'a> CheckerState<'a> {
         // rather than the whole mapped type, to avoid side effects.
         let mut constraint_type = self.get_type_from_type_node(tp_data.constraint);
         if constraint_type == TypeId::ERROR {
-            self.ctx.type_parameter_scope.remove(&name);
+            self.ctx.type_parameter_scope.remove(name.as_str());
             if let Some(prev_type) = previous {
                 self.ctx.type_parameter_scope.insert(name, prev_type);
             }
@@ -882,7 +882,7 @@ impl<'a> CheckerState<'a> {
                 message,
                 2313,
             );
-            self.ctx.type_parameter_scope.remove(&name);
+            self.ctx.type_parameter_scope.remove(name.as_str());
             if let Some(prev_type) = previous {
                 self.ctx.type_parameter_scope.insert(name, prev_type);
             }
@@ -924,7 +924,7 @@ impl<'a> CheckerState<'a> {
                 message,
                 2313,
             );
-            self.ctx.type_parameter_scope.remove(&name);
+            self.ctx.type_parameter_scope.remove(name.as_str());
             if let Some(prev_type) = previous {
                 self.ctx.type_parameter_scope.insert(name, prev_type);
             }
@@ -1017,14 +1017,14 @@ impl<'a> CheckerState<'a> {
                 message,
                 2313,
             );
-            self.ctx.type_parameter_scope.remove(&name);
+            self.ctx.type_parameter_scope.remove(name.as_str());
             if let Some(prev_type) = previous {
                 self.ctx.type_parameter_scope.insert(name, prev_type);
             }
             return;
         }
         if is_deferred_index_access {
-            self.ctx.type_parameter_scope.remove(&name);
+            self.ctx.type_parameter_scope.remove(name.as_str());
             if let Some(prev_type) = previous {
                 self.ctx.type_parameter_scope.insert(name, prev_type);
             }
@@ -1081,7 +1081,7 @@ impl<'a> CheckerState<'a> {
             .type_parameter_scope
             .insert(name.clone(), constrained_type_id);
 
-        self.ctx.type_parameter_scope.remove(&name);
+        self.ctx.type_parameter_scope.remove(name.as_str());
         if let Some(prev_type) = previous {
             self.ctx.type_parameter_scope.insert(name, prev_type);
         }

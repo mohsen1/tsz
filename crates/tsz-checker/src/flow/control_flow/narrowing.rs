@@ -1096,7 +1096,7 @@ impl<'a> FlowAnalyzer<'a> {
         // Get the member name — identifier for En.B, string literal for En["B"]
         let member_name_owned: String;
         if let Some(member_ident) = self.arena.get_identifier_at(member_name_node) {
-            member_name_owned = member_ident.escaped_text.clone();
+            member_name_owned = member_ident.escaped_text.to_string();
         } else {
             let member_node = self.arena.get(member_name_node)?;
             if member_node.kind != tsz_scanner::SyntaxKind::StringLiteral as u16

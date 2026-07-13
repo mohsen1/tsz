@@ -160,6 +160,6 @@ impl<'a> CheckerState<'a> {
         }
 
         let ident = self.ctx.arena.get_identifier_at(class.name)?;
-        Some(ident.escaped_text.clone())
+        Some(ident.escaped_text.to_string())
     }
 }

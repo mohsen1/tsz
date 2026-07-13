@@ -1315,7 +1315,7 @@ pub fn collect_export_names_categorized(
     let mut reserved_default_names: FxHashSet<String> = arena
         .identifiers
         .iter()
-        .map(|ident| ident.escaped_text.clone())
+        .map(|ident| ident.escaped_text.to_string())
         .collect();
 
     // First pass: collect all function declaration names in the file (including

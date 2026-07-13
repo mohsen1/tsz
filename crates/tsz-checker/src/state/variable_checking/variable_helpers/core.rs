@@ -86,7 +86,7 @@ impl<'a> CheckerState<'a> {
         let mut bound_names: Vec<(String, NodeIndex)> = Vec::new();
         if name_node.kind == SyntaxKind::Identifier as u16 {
             if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                bound_names.push((ident.escaped_text.clone(), var_decl.name));
+                bound_names.push((ident.escaped_text.to_string(), var_decl.name));
             }
         } else {
             // Destructuring pattern — collect all binding element names
@@ -355,7 +355,7 @@ impl<'a> CheckerState<'a> {
 
         if node.kind == SyntaxKind::Identifier as u16 {
             if let Some(ident) = self.ctx.arena.get_identifier(node) {
-                names.push((ident.escaped_text.clone(), node_idx));
+                names.push((ident.escaped_text.to_string(), node_idx));
             }
             return;
         }

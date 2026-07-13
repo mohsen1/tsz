@@ -830,7 +830,7 @@ impl<'a> Printer<'a> {
             let Some(ident) = self.arena.get_identifier(name_node) else {
                 return Vec::new();
             };
-            let local_name = ident.escaped_text.clone();
+            let local_name = ident.escaped_text.to_string();
             let Some(export_name) = bindings.get(&local_name).cloned() else {
                 return Vec::new();
             };
@@ -884,7 +884,7 @@ impl<'a> Printer<'a> {
             let Some(ident) = self.arena.get_identifier(name_node) else {
                 return Vec::new();
             };
-            let local_name = ident.escaped_text.clone();
+            let local_name = ident.escaped_text.to_string();
             let Some(export_name) = bindings.get(&local_name).cloned() else {
                 return Vec::new();
             };

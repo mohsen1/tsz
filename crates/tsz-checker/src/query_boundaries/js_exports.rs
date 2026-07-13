@@ -1731,7 +1731,7 @@ impl<'a> CheckerState<'a> {
 
         // Get the member name (rightmost part: `.member`)
         let member_ident = arena.get_identifier_at(outer_access.name_or_argument)?;
-        let member_name = member_ident.escaped_text.clone();
+        let member_name = member_ident.escaped_text.to_string();
 
         // Check that the expression is `Ctor.prototype`
         let proto_node = arena.get(outer_access.expression)?;
@@ -1753,7 +1753,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let ctor_ident = arena.get_identifier(ctor_node)?;
-        let ctor_name = ctor_ident.escaped_text.clone();
+        let ctor_name = ctor_ident.escaped_text.to_string();
 
         Some((ctor_name, member_name))
     }

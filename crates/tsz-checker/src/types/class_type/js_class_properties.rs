@@ -268,7 +268,7 @@ impl CheckerState<'_> {
                 self.jsdoc_type_annotation_for_node(param_idx)
             };
             if let Some(param_type) = param_type {
-                param_type_map.insert(name_ident.escaped_text.clone(), param_type);
+                param_type_map.insert(name_ident.escaped_text.to_string(), param_type);
             }
         }
 
@@ -887,7 +887,7 @@ impl CheckerState<'_> {
                         if let Some(name_node) = self.ctx.arena.get(var_decl.name)
                             && let Some(ident) = self.ctx.arena.get_identifier(name_node)
                         {
-                            aliases.push(ident.escaped_text.clone());
+                            aliases.push(ident.escaped_text.to_string());
                         }
                     }
                 }
@@ -1055,7 +1055,7 @@ impl CheckerState<'_> {
             let ident = self.ctx.arena.get_identifier(name_node)?;
             let is_private = name_node.kind == SyntaxKind::PrivateIdentifier as u16;
             Some((
-                ident.escaped_text.clone(),
+                ident.escaped_text.to_string(),
                 binary.right,
                 is_private,
                 access.name_or_argument,
@@ -1124,7 +1124,11 @@ impl CheckerState<'_> {
             return Some((String::new(), true, access.name_or_argument));
         }
         let ident = self.ctx.arena.get_identifier(name_node)?;
-        Some((ident.escaped_text.clone(), false, access.name_or_argument))
+        Some((
+            ident.escaped_text.to_string(),
+            false,
+            access.name_or_argument,
+        ))
     }
 
     fn js_statement_has_direct_jsdoc_type_annotation(&self, idx: NodeIndex) -> bool {

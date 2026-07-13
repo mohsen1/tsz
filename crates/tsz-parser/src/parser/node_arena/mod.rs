@@ -281,6 +281,7 @@ impl NodeArenaInner {
 mod tests {
     use super::super::node::NodeArena;
     use super::*;
+    use tsz_common::interner::IdentText;
 
     #[test]
     fn estimated_size_bytes_is_nonzero_for_empty_arena() {
@@ -358,7 +359,7 @@ mod tests {
 
         let data = IdentifierData {
             atom: stale_atom,
-            escaped_text: "uniquely_named_identifier".to_string(),
+            escaped_text: IdentText::from("uniquely_named_identifier"),
             original_text: None,
         };
 
@@ -391,7 +392,7 @@ mod tests {
             atom,
             // escaped_text intentionally differs from the canonical so we
             // can confirm which branch was taken.
-            escaped_text: "stale_escaped_form".to_string(),
+            escaped_text: IdentText::from("stale_escaped_form"),
             original_text: None,
         };
 

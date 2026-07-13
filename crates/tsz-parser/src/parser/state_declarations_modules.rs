@@ -6,7 +6,7 @@ use crate::parser::{
     node::{IdentifierData, ImportClauseData, ImportDeclData, NamedImportsData, SpecifierData},
     node_flags, syntax_kind_ext,
 };
-use tsz_common::interner::AstAtom;
+use tsz_common::interner::{AstAtom, IdentText};
 use tsz_scanner::SyntaxKind;
 
 impl ParserState {
@@ -34,7 +34,7 @@ impl ParserState {
                 name_end,
                 IdentifierData {
                     atom: self.scanner.interner_mut().intern("global"),
-                    escaped_text: "global".to_string(),
+                    escaped_text: IdentText::from("global"),
                     original_text: None,
                 },
             )
@@ -58,7 +58,7 @@ impl ParserState {
                     name_end,
                     IdentifierData {
                         atom: AstAtom::NONE,
-                        escaped_text: String::new(),
+                        escaped_text: IdentText::empty(),
                         original_text: None,
                     },
                 )
@@ -83,7 +83,7 @@ impl ParserState {
                     name_end,
                     IdentifierData {
                         atom: AstAtom::NONE,
-                        escaped_text: String::new(),
+                        escaped_text: IdentText::empty(),
                         original_text: None,
                     },
                 )
@@ -130,7 +130,7 @@ impl ParserState {
                         name_end,
                         IdentifierData {
                             atom: AstAtom::NONE,
-                            escaped_text: String::new(),
+                            escaped_text: IdentText::empty(),
                             original_text: None,
                         },
                     )
@@ -210,7 +210,7 @@ impl ParserState {
                 name_end,
                 IdentifierData {
                     atom: self.scanner.interner_mut().intern("global"),
-                    escaped_text: "global".to_string(),
+                    escaped_text: IdentText::from("global"),
                     original_text: None,
                 },
             )
@@ -234,7 +234,7 @@ impl ParserState {
                     name_end,
                     IdentifierData {
                         atom: AstAtom::NONE,
-                        escaped_text: String::new(),
+                        escaped_text: IdentText::empty(),
                         original_text: None,
                     },
                 )
@@ -259,7 +259,7 @@ impl ParserState {
                     name_end,
                     IdentifierData {
                         atom: AstAtom::NONE,
-                        escaped_text: String::new(),
+                        escaped_text: IdentText::empty(),
                         original_text: None,
                     },
                 )
@@ -293,7 +293,7 @@ impl ParserState {
                         name_end,
                         IdentifierData {
                             atom: AstAtom::NONE,
-                            escaped_text: String::new(),
+                            escaped_text: IdentText::empty(),
                             original_text: None,
                         },
                     )
@@ -926,7 +926,7 @@ impl ParserState {
                 name_end,
                 IdentifierData {
                     atom: AstAtom::NONE,
-                    escaped_text: String::new(),
+                    escaped_text: IdentText::empty(),
                     original_text: None,
                 },
             )
@@ -1164,7 +1164,7 @@ impl ParserState {
                 start_pos,
                 IdentifierData {
                     atom: AstAtom::NONE,
-                    escaped_text: String::new(),
+                    escaped_text: IdentText::empty(),
                     original_text: None,
                 },
             );
@@ -1178,7 +1178,7 @@ impl ParserState {
             end_pos,
             IdentifierData {
                 atom: AstAtom::NONE,
-                escaped_text: String::new(),
+                escaped_text: IdentText::empty(),
                 original_text: None,
             },
         )

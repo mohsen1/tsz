@@ -657,7 +657,7 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
-        Some(name.clone())
+        Some(name.to_string())
     }
 
     pub(in crate::declaration_emitter) fn initializer_references_elided_namespace_require_import(

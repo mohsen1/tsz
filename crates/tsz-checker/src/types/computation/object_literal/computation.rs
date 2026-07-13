@@ -1135,7 +1135,7 @@ impl<'a> CheckerState<'a> {
                         );
                     }
 
-                    let name = ident.escaped_text.clone();
+                    let name = ident.escaped_text.to_string();
                     let shorthand_name_idx = shorthand.name;
 
                     // Get contextual type for this property

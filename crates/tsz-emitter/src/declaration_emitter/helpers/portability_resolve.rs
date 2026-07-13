@@ -752,7 +752,7 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> Option<String> {
         let node = arena.get(idx)?;
         if let Some(ident) = arena.get_identifier(node) {
-            return Some(ident.escaped_text.clone());
+            return Some(ident.escaped_text.to_string());
         }
         if let Some(qn) = arena.get_qualified_name(node) {
             return Self::rightmost_name_text_in_arena(arena, qn.right);

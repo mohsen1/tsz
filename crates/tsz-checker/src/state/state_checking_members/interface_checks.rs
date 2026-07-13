@@ -427,7 +427,7 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
                 method_groups
-                    .entry(ident.escaped_text.clone())
+                    .entry(ident.escaped_text.to_string())
                     .or_default()
                     .push((member_idx, sig.question_token));
             }
@@ -625,7 +625,7 @@ impl<'a> CheckerState<'a> {
                 .arena
                 .get(param.name)
                 .and_then(|n| self.ctx.arena.get_identifier(n))
-                .map(|id| id.escaped_text.clone())
+                .map(|id| id.escaped_text.to_string())
                 .unwrap_or_default();
 
             let atom = self.ctx.types.intern_string(&param_name);
@@ -705,7 +705,7 @@ impl<'a> CheckerState<'a> {
                 let param = self.ctx.arena.get_type_parameter(param_node)?;
                 let name_node = self.ctx.arena.get(param.name)?;
                 let ident = self.ctx.arena.get_identifier(name_node)?;
-                Some(ident.escaped_text.clone())
+                Some(ident.escaped_text.to_string())
             })
             .collect();
 
@@ -1369,7 +1369,7 @@ impl<'a> CheckerState<'a> {
 
         // Identifier — same as canonical
         if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-            return Some(ident.escaped_text.clone());
+            return Some(ident.escaped_text.to_string());
         }
 
         // String literal — wrap in single quotes like TSC's declarationNameToString

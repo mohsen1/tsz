@@ -59,7 +59,7 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .arena
                 .get_identifier_at(access.name_or_argument)
-                .map(|ident| ident.escaped_text.clone())
+                .map(|ident| ident.escaped_text.to_string())
                 .or_else(|| self.get_literal_string_from_node(access.name_or_argument))
                 .or_else(|| {
                     self.get_literal_index_from_node(access.name_or_argument)

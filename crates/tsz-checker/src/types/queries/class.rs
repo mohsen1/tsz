@@ -81,7 +81,7 @@ impl<'a> CheckerState<'a> {
         if let Some(ident) = self.ctx.arena.get_identifier(node) {
             self.ctx
                 .type_param_constraint_excluded_params
-                .insert(ident.escaped_text.clone());
+                .insert(ident.escaped_text.to_string());
             return;
         }
         if let Some(pattern) = self.ctx.arena.get_binding_pattern(node) {
@@ -137,7 +137,7 @@ impl<'a> CheckerState<'a> {
                 .arena
                 .get(data.name)
                 .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                .map(|id_data| id_data.escaped_text.clone())
+                .map(|id_data| id_data.escaped_text.to_string())
                 .unwrap_or_default();
             if !name.is_empty() && !name.starts_with('_') {
                 params.push((name, data.name, param_idx));
@@ -512,7 +512,7 @@ impl<'a> CheckerState<'a> {
                 return display_name;
             }
             if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                return ident.escaped_text.clone();
+                return ident.escaped_text.to_string();
             }
             if let Some(lit) = self.ctx.arena.get_literal(name_node) {
                 return lit.text.clone();
@@ -666,7 +666,7 @@ impl<'a> CheckerState<'a> {
                     .get_shorthand_property(elem_node)
                     .and_then(|shorthand| self.ctx.arena.get(shorthand.name))
                     .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                    .map(|ident| ident.escaped_text.clone())
+                    .map(|ident| ident.escaped_text.to_string())
             } else {
                 None
             };
@@ -815,7 +815,8 @@ impl<'a> CheckerState<'a> {
                 binding_sym,
                 receiver_aliases,
             )
-            && (ident.escaped_text == name || !object_member_names.contains(&ident.escaped_text))
+            && (ident.escaped_text == name
+                || !object_member_names.contains(ident.escaped_text.as_str()))
         {
             return true;
         }
@@ -1067,7 +1068,7 @@ impl<'a> CheckerState<'a> {
             && let Some(name_node) = self.ctx.arena.get(access.name_or_argument)
             && let Some(ident) = self.ctx.arena.get_identifier(name_node)
         {
-            refs.push((access.name_or_argument, ident.escaped_text.clone()));
+            refs.push((access.name_or_argument, ident.escaped_text.to_string()));
         }
 
         match node.kind {

@@ -73,7 +73,7 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
                 let access = self.parameter_access_modifier(prop_data.modifiers.as_ref());
-                explicit_props.push((ident.escaped_text.clone(), prop_data.name, access));
+                explicit_props.push((ident.escaped_text.to_string(), prop_data.name, access));
             }
 
             let mut seen_param_props: FxHashSet<String> = FxHashSet::default();
@@ -197,7 +197,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            if !seen_param_props.insert(param_ident.escaped_text.clone()) {
+            if !seen_param_props.insert(param_ident.escaped_text.to_string()) {
                 let dup_msg = format_message(
                     diagnostic_messages::DUPLICATE_IDENTIFIER,
                     &[&param_ident.escaped_text],

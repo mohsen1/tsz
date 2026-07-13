@@ -49,7 +49,7 @@ impl<'a> CheckerState<'a> {
                     && let Some(ident) = self.ctx.arena.get_identifier(name_node)
                 {
                     params.push((
-                        ident.escaped_text.clone(),
+                        ident.escaped_text.to_string(),
                         param.constraint,
                         infer.type_parameter,
                     ));
@@ -240,7 +240,7 @@ impl<'a> CheckerState<'a> {
                     && let Some(name_node) = self.ctx.arena.get(param.name)
                     && let Some(ident) = self.ctx.arena.get_identifier(name_node)
                 {
-                    let name = ident.escaped_text.clone();
+                    let name = ident.escaped_text.to_string();
                     if !params.contains(&name) {
                         params.push(name);
                     }
@@ -453,7 +453,7 @@ impl<'a> CheckerState<'a> {
                         && let Some(name_node) = self.ctx.arena.get(tp_data.name)
                         && let Some(ident) = self.ctx.arena.get_identifier(name_node)
                     {
-                        let name = ident.escaped_text.clone();
+                        let name = ident.escaped_text.to_string();
                         if seen.insert(name.clone()) {
                             let constraint =
                                 span_infer_nodes.contains(&idx).then_some(TypeId::STRING);

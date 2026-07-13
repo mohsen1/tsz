@@ -1,4 +1,5 @@
 use tsz_common::diagnostics::diagnostic_codes;
+use tsz_common::interner::IdentText;
 
 /// Parser state - unary, postfix, await, and yield expression parsing
 use super::state::{CONTEXT_FLAG_ARROW_PARAMETERS, ParserState};
@@ -215,7 +216,7 @@ impl ParserState {
                     end_pos,
                     crate::parser::node::IdentifierData {
                         atom,
-                        escaped_text: String::from("await"),
+                        escaped_text: IdentText::from("await"),
                         original_text: None,
                     },
                 );
@@ -402,7 +403,7 @@ impl ParserState {
                 end_pos,
                 IdentifierData {
                     atom,
-                    escaped_text: String::from("yield"),
+                    escaped_text: IdentText::from("yield"),
                     original_text: None,
                 },
             );

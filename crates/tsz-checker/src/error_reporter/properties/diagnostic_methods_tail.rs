@@ -1003,7 +1003,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .arena
                 .get_identifier(node)
-                .map(|ident| ident.escaped_text.clone());
+                .map(|ident| ident.escaped_text.to_string());
         }
 
         if node.kind == SyntaxKind::ThisKeyword as u16 {

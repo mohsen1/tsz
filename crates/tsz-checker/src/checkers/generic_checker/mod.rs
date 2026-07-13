@@ -521,10 +521,10 @@ impl<'a> CheckerState<'a> {
             let tr = self.ctx.arena.get_type_ref(arg_node)?;
             let name_node = self.ctx.arena.get(tr.type_name)?;
             let ident = self.ctx.arena.get_identifier(name_node)?;
-            Some(ident.escaped_text.clone())
+            Some(ident.escaped_text.to_string())
         } else if arg_node.kind == SyntaxKind::Identifier as u16 {
             let ident = self.ctx.arena.get_identifier(arg_node)?;
-            Some(ident.escaped_text.clone())
+            Some(ident.escaped_text.to_string())
         } else {
             None
         }

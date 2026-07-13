@@ -686,7 +686,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .arena
                 .get_identifier(name_node)
-                .map(|ident| ident.escaped_text.clone());
+                .map(|ident| ident.escaped_text.to_string());
         }
         if receiver_node.kind != SyntaxKind::Identifier as u16 {
             return None;
@@ -718,7 +718,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .arena
                 .get_identifier(ctor_node)
-                .map(|ident| ident.escaped_text.clone());
+                .map(|ident| ident.escaped_text.to_string());
         }
 
         if ctor_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
@@ -728,7 +728,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .arena
                 .get_identifier(name)
-                .map(|ident| ident.escaped_text.clone());
+                .map(|ident| ident.escaped_text.to_string());
         }
 
         None

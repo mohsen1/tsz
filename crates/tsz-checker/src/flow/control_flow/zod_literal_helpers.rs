@@ -29,7 +29,7 @@ impl<'a> FlowAnalyzer<'a> {
         let name = self.skip_parens_and_assertions(name);
         let node = self.arena.get(name)?;
         if let Some(ident) = self.arena.get_identifier(node) {
-            return Some(ident.escaped_text.clone());
+            return Some(ident.escaped_text.to_string());
         }
         if node.kind == SyntaxKind::StringLiteral as u16
             || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16

@@ -12,6 +12,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, RwLock};
 
+mod ident_text;
+pub use ident_text::IdentText;
+
 // Interned string handle types. Each handle type names a distinct atom
 // namespace: handles minted by one interner kind must not be resolved by or
 // compared against another, and the distinct types make such cross-namespace
@@ -243,6 +246,20 @@ impl Interner {
     #[inline]
     pub fn try_resolve(&self, atom: AstAtom) -> Option<&str> {
         self.strings.get(atom.0 as usize).map(AsRef::as_ref)
+    }
+
+    /// Resolve an `AstAtom` to a shared [`IdentText`] handle.
+    ///
+    /// Clones the interner's existing `Arc<str>` (a refcount bump, no string
+    /// copy), so every resolution of the same atom shares one allocation.
+    /// Returns the empty text for out-of-bounds atoms, mirroring
+    /// [`Self::resolve`].
+    #[must_use]
+    #[inline]
+    pub fn resolve_text(&self, atom: AstAtom) -> IdentText {
+        self.strings
+            .get(atom.0 as usize)
+            .map_or_else(IdentText::empty, |s| IdentText::from_arc(Arc::clone(s)))
     }
 
     /// Get the number of interned strings.

@@ -1638,7 +1638,7 @@ impl<'a> CheckerState<'a> {
                             .binder
                             .get_symbol_with_libs(sym_id, &lib_binders)
                             .map_or_else(
-                                || ident.escaped_text.clone(),
+                                || ident.escaped_text.to_string(),
                                 |symbol| symbol.escaped_name.clone(),
                             )
                     };

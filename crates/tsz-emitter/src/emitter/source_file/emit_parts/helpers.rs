@@ -45,7 +45,7 @@ impl<'a> Printer<'a> {
         // This mirrors TypeScript's `sourceFile.identifiers` used by `makeUniqueName`.
         self.file_identifiers.clear();
         for ident in &self.arena.identifiers {
-            self.file_identifiers.insert(ident.escaped_text.clone());
+            self.file_identifiers.insert(ident.escaped_text.to_string());
         }
         if !self.ctx.is_inside_module_wrapper_body() {
             self.commonjs_named_import_substitutions.clear();

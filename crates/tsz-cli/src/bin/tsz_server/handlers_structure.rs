@@ -901,7 +901,7 @@ impl Server {
                             && let Some(name_node) = arena.get(clause.name)
                             && let Some(ident) = arena.get_identifier(name_node)
                         {
-                            local_bindings.push((clause.name, ident.escaped_text.clone()));
+                            local_bindings.push((clause.name, ident.escaped_text.to_string()));
                         }
                         // Namespace import (`import * as ns from "./a"`):
                         // record the local namespace identifier so the
@@ -959,7 +959,7 @@ impl Server {
                                     };
                                     let local = arena
                                         .get_identifier(name_node)
-                                        .map(|i| i.escaped_text.clone())
+                                        .map(|i| i.escaped_text.to_string())
                                         .unwrap_or_else(|| target_name.clone());
                                     local_bindings.push((specifier.name, local));
                                 }

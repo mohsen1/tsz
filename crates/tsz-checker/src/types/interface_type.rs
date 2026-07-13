@@ -268,7 +268,7 @@ impl<'a> CheckerState<'a> {
                                     .arena
                                     .get(param.name)
                                     .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                                    .map(|ident| ident.escaped_text.clone())
+                                    .map(|ident| ident.escaped_text.to_string())
                             })
                     })
                     .collect()

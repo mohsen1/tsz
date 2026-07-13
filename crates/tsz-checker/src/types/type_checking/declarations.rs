@@ -60,7 +60,7 @@ impl<'a> CheckerState<'a> {
                 && let Some(ident) = self.ctx.arena.get_identifier(expr_node)
             {
                 if self.identifier_refers_to_unique_symbol(computed.expression) {
-                    return Some(ident.escaped_text.clone());
+                    return Some(ident.escaped_text.to_string());
                 }
 
                 // Plain identifiers that are not unique symbols are not
@@ -177,7 +177,7 @@ impl<'a> CheckerState<'a> {
             let name_node = self.ctx.arena.get(method.name)?;
 
             if let Some(id) = self.ctx.arena.get_identifier(name_node) {
-                return Some(id.escaped_text.clone());
+                return Some(id.escaped_text.to_string());
             }
 
             if let Some(lit) = self.ctx.arena.get_literal(name_node) {
@@ -1902,7 +1902,7 @@ impl<'a> CheckerState<'a> {
         let name_idx = self.get_declaration_name_node(decl_idx)?;
         let name_node = self.ctx.arena.get(name_idx)?;
         if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-            return Some(ident.escaped_text.clone());
+            return Some(ident.escaped_text.to_string());
         }
         if let Some(lit) = self.ctx.arena.get_literal(name_node) {
             return Some(lit.text.clone());

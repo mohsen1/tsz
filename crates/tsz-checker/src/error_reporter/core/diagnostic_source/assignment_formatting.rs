@@ -1784,7 +1784,7 @@ impl<'a> CheckerState<'a> {
                 Some((
                     file_idx == current_file_idx,
                     decl_node.pos,
-                    ident.escaped_text.clone(),
+                    ident.escaped_text.to_string(),
                 ))
             })
             .max_by_key(|(same_file, decl_pos, _)| (*same_file, *decl_pos))

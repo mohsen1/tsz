@@ -30,7 +30,7 @@ impl<'a> CheckerState<'a> {
             && name_node.kind == SyntaxKind::Identifier as u16
             && let Some(ident) = self.ctx.arena.get_identifier(name_node)
         {
-            namespaces.insert(ident.escaped_text.clone(), module_decl.name);
+            namespaces.insert(ident.escaped_text.to_string(), module_decl.name);
             return;
         }
 
@@ -42,7 +42,8 @@ impl<'a> CheckerState<'a> {
                 && exported_node.kind == SyntaxKind::Identifier as u16
                 && let Some(ident) = self.ctx.arena.get_identifier(exported_node)
             {
-                default_export_names.push((ident.escaped_text.clone(), export_decl.export_clause));
+                default_export_names
+                    .push((ident.escaped_text.to_string(), export_decl.export_clause));
                 return;
             }
             // `export function foo(){}` / `export class C {}` / `export const x = ...`
@@ -63,7 +64,7 @@ impl<'a> CheckerState<'a> {
             && let Some(func) = self.ctx.arena.get_function(node)
             && let Some(ident) = self.ctx.arena.get_identifier_at(func.name)
         {
-            sibling_value_names.insert(ident.escaped_text.clone());
+            sibling_value_names.insert(ident.escaped_text.to_string());
             return;
         }
 
@@ -71,7 +72,7 @@ impl<'a> CheckerState<'a> {
             && let Some(class) = self.ctx.arena.get_class(node)
             && let Some(ident) = self.ctx.arena.get_identifier_at(class.name)
         {
-            sibling_value_names.insert(ident.escaped_text.clone());
+            sibling_value_names.insert(ident.escaped_text.to_string());
             return;
         }
 
@@ -93,7 +94,7 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
                     if let Some(ident) = self.ctx.arena.get_identifier_at(var_decl.name) {
-                        sibling_value_names.insert(ident.escaped_text.clone());
+                        sibling_value_names.insert(ident.escaped_text.to_string());
                     }
                 }
             }

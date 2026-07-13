@@ -203,7 +203,7 @@ impl<'a> CheckerState<'a> {
                 {
                     names.push(keyword.to_string());
                 } else if let Some(ident) = self.ctx.arena.get_identifier(prop_node) {
-                    names.push(ident.escaped_text.clone());
+                    names.push(ident.escaped_text.to_string());
                 } else if let Some(lit) = self.ctx.arena.get_literal(prop_node) {
                     names.push(lit.text.clone());
                 } else if let Some(computed) = self.ctx.arena.get_computed_property(prop_node) {
@@ -226,7 +226,7 @@ impl<'a> CheckerState<'a> {
                 .get(element_data.name)
                 .and_then(|n| self.ctx.arena.get_identifier(n))
             {
-                names.push(ident.escaped_text.clone());
+                names.push(ident.escaped_text.to_string());
             }
         }
 

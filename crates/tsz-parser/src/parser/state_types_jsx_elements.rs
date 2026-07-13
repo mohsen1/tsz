@@ -781,7 +781,7 @@ impl ParserState {
                 missing_pos,
                 node::IdentifierData {
                     atom: AstAtom::NONE,
-                    escaped_text: String::new(),
+                    escaped_text: IdentText::empty(),
                     original_text: None,
                 },
             );
@@ -889,7 +889,7 @@ impl ParserState {
                     end,
                     crate::parser::node::IdentifierData {
                         atom: AstAtom::NONE,
-                        escaped_text: String::new(),
+                        escaped_text: IdentText::empty(),
                         original_text: None,
                     },
                 )

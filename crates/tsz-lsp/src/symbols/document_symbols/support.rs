@@ -70,13 +70,13 @@ impl<'a> DocumentSymbolProvider<'a> {
                     if id.escaped_text.is_empty() {
                         None
                     } else {
-                        Some(id.escaped_text.clone())
+                        Some(id.escaped_text.to_string())
                     }
                 });
             } else if node.kind == SyntaxKind::PrivateIdentifier as u16 {
                 return self.arena.get_identifier(node).map(|id| {
                     if id.escaped_text.starts_with('#') {
-                        id.escaped_text.clone()
+                        id.escaped_text.to_string()
                     } else {
                         format!("#{}", id.escaped_text)
                     }

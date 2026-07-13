@@ -628,7 +628,9 @@ pub(crate) fn identifier_emit_text_or_empty(arena: &NodeArena, idx: NodeIndex) -
 pub(crate) fn specifier_name_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
     let node = arena.get(idx)?;
     if node.kind == SyntaxKind::Identifier as u16 {
-        arena.get_identifier(node).map(|id| id.escaped_text.clone())
+        arena
+            .get_identifier(node)
+            .map(|id| id.escaped_text.to_string())
     } else if node.kind == SyntaxKind::StringLiteral as u16 {
         arena.get_literal(node).map(|lit| lit.text.clone())
     } else {
@@ -651,7 +653,7 @@ pub(crate) fn enum_member_name(arena: &NodeArena, idx: NodeIndex) -> String {
         return String::new();
     }
     if let Some(ident) = arena.get_identifier(node) {
-        return ident.escaped_text.clone();
+        return ident.escaped_text.to_string();
     }
     if let Some(lit) = arena.get_literal(node) {
         return lit.text.clone();

@@ -420,7 +420,7 @@ impl<'a> ES5ClassTransformer<'a> {
             }
         } else if name_node.kind == SyntaxKind::Identifier as u16 {
             if let Some(ident) = self.arena.get_identifier(name_node) {
-                return Some(PropertyNameIR::Identifier(ident.escaped_text.clone()));
+                return Some(PropertyNameIR::Identifier(ident.escaped_text.to_string()));
             }
         } else if name_node.kind == SyntaxKind::StringLiteral as u16 {
             if let Some(lit) = self.arena.get_literal(name_node) {

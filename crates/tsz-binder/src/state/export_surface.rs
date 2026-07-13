@@ -282,7 +282,8 @@ impl ExportSurface {
                             && let Some(name_node) = arena.get(func.name)
                             && let Some(ident) = arena.get_identifier(name_node)
                         {
-                            self.overloaded_functions.insert(ident.escaped_text.clone());
+                            self.overloaded_functions
+                                .insert(ident.escaped_text.to_string());
                         }
                     }
                 }

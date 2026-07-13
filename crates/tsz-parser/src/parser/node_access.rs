@@ -969,7 +969,7 @@ impl Node {
 mod is_missing_recovery_identifier_tests {
     use super::*;
     use crate::parser::node::NodeArena;
-    use tsz_common::interner::AstAtom;
+    use tsz_common::interner::{AstAtom, IdentText};
     use tsz_scanner::SyntaxKind;
 
     #[test]
@@ -981,7 +981,7 @@ mod is_missing_recovery_identifier_tests {
             0,
             IdentifierData {
                 atom: AstAtom::NONE,
-                escaped_text: String::new(),
+                escaped_text: IdentText::empty(),
                 original_text: None,
             },
         );
@@ -999,7 +999,7 @@ mod is_missing_recovery_identifier_tests {
             3,
             IdentifierData {
                 atom: AstAtom(1),
-                escaped_text: "foo".to_string(),
+                escaped_text: IdentText::from("foo"),
                 original_text: None,
             },
         );
@@ -1015,7 +1015,7 @@ mod is_missing_recovery_identifier_tests {
             0,
             IdentifierData {
                 atom: AstAtom(1),
-                escaped_text: String::new(),
+                escaped_text: IdentText::empty(),
                 original_text: None,
             },
         );
@@ -1031,7 +1031,7 @@ mod is_missing_recovery_identifier_tests {
             3,
             IdentifierData {
                 atom: AstAtom::NONE,
-                escaped_text: "x".to_string(),
+                escaped_text: IdentText::from("x"),
                 original_text: None,
             },
         );

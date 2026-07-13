@@ -741,7 +741,7 @@ impl<'a> ES5DestructuringTransformer<'a> {
         };
 
         if let Some(ident) = self.arena.get_identifier(node) {
-            return ident.escaped_text.clone();
+            return ident.escaped_text.to_string();
         }
         if let Some(lit) = self.arena.get_literal(node) {
             return lit.text.clone();

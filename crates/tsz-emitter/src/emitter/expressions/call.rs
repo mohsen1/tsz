@@ -324,7 +324,7 @@ impl<'a> Printer<'a> {
             && let Some(ident) = self.arena.get_identifier(expr_node)
             && let Some(subst) = self
                 .commonjs_named_import_substitutions
-                .get(&ident.escaped_text)
+                .get(ident.escaped_text.as_str())
         {
             let subst = subst.clone();
             // In System modules, import substitutions are already property accesses

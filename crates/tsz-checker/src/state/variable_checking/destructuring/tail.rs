@@ -434,7 +434,7 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .arena
                 .get_identifier(name_node)
-                .map(|ident| ident.escaped_text.clone())
+                .map(|ident| ident.escaped_text.to_string())
         }
     }
 
@@ -564,7 +564,7 @@ impl<'a> CheckerState<'a> {
                                 .arena
                                 .get(elem.name)
                                 .and_then(|n| self.ctx.arena.get_identifier(n))
-                                .map(|id| id.escaped_text.clone())
+                                .map(|id| id.escaped_text.to_string())
                         })
                 })
                 .collect();

@@ -795,7 +795,7 @@ impl<'a> CheckerState<'a> {
                     };
                     let member_name = arena
                         .get_identifier(name_node)
-                        .map(|ident| ident.escaped_text.clone())
+                        .map(|ident| ident.escaped_text.to_string())
                         .or_else(|| arena.get_literal(name_node).map(|lit| lit.text.clone()));
                     let Some(member_name) = member_name else {
                         continue;
@@ -1372,7 +1372,7 @@ impl<'a> CheckerState<'a> {
         use tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME;
         let name_node = arena.get(name_idx)?;
         if let Some(ident) = arena.get_identifier(name_node) {
-            return Some(ident.escaped_text.clone());
+            return Some(ident.escaped_text.to_string());
         }
         if let Some(lit) = arena.get_literal(name_node) {
             return Some(lit.text.clone());

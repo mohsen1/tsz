@@ -1332,7 +1332,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     let name = decl_arena
                         .get(param_data.name)
                         .and_then(|n| decl_arena.get_identifier(n))
-                        .map_or_else(|| "T".to_string(), |id| id.escaped_text.clone());
+                        .map_or_else(|| "T".to_string(), |id| id.escaped_text.to_string());
 
                     let atom = self.ctx.types.intern_string(&name);
                     let placeholder = tsz_solver::TypeParamInfo {
@@ -1358,7 +1358,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     let name = decl_arena
                         .get(param_data.name)
                         .and_then(|n| decl_arena.get_identifier(n))
-                        .map_or_else(|| "T".to_string(), |id| id.escaped_text.clone());
+                        .map_or_else(|| "T".to_string(), |id| id.escaped_text.to_string());
                     let atom = self.ctx.types.intern_string(&name);
 
                     let lowering = make_lowering(bindings.clone());

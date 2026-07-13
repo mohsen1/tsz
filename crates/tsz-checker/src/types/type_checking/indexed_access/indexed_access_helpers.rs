@@ -1714,11 +1714,11 @@ impl<'a> CheckerState<'a> {
             let type_ref = self.ctx.arena.get_type_ref(node)?;
             let name_node = self.ctx.arena.get(type_ref.type_name)?;
             let ident = self.ctx.arena.get_identifier(name_node)?;
-            return Some(ident.escaped_text.clone());
+            return Some(ident.escaped_text.to_string());
         }
         if node.kind == SyntaxKind::Identifier as u16 {
             let ident = self.ctx.arena.get_identifier(node)?;
-            return Some(ident.escaped_text.clone());
+            return Some(ident.escaped_text.to_string());
         }
         None
     }

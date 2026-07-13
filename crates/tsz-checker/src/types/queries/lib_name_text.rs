@@ -10,7 +10,7 @@ pub(super) fn entity_name_text_in_arena(arena: &NodeArena, idx: NodeIndex) -> Op
     if node.kind == SyntaxKind::Identifier as u16 {
         return arena
             .get_identifier(node)
-            .map(|ident| ident.escaped_text.clone());
+            .map(|ident| ident.escaped_text.to_string());
     }
 
     if node.kind == syntax_kind_ext::QUALIFIED_NAME {

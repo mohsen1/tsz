@@ -255,7 +255,7 @@ impl<'a> Printer<'a> {
     fn binding_element_export_name(&self, idx: NodeIndex) -> Option<String> {
         let node = self.arena.get(idx)?;
         if let Some(ident) = self.arena.get_identifier(node) {
-            return Some(ident.escaped_text.clone());
+            return Some(ident.escaped_text.to_string());
         }
         self.arena.get_literal(node).map(|lit| lit.text.clone())
     }
@@ -314,7 +314,7 @@ impl<'a> Printer<'a> {
                     && let Some(name_node) = self.arena.get(func.name)
                     && let Some(ident) = self.arena.get_identifier(name_node)
                 {
-                    return vec![ident.escaped_text.clone()];
+                    return vec![ident.escaped_text.to_string()];
                 }
             }
             k if k == syntax_kind_ext::CLASS_DECLARATION => {
@@ -322,7 +322,7 @@ impl<'a> Printer<'a> {
                     && let Some(name_node) = self.arena.get(class.name)
                     && let Some(ident) = self.arena.get_identifier(name_node)
                 {
-                    return vec![ident.escaped_text.clone()];
+                    return vec![ident.escaped_text.to_string()];
                 }
             }
             k if k == syntax_kind_ext::ENUM_DECLARATION => {
@@ -330,7 +330,7 @@ impl<'a> Printer<'a> {
                     && let Some(name_node) = self.arena.get(enum_decl.name)
                     && let Some(ident) = self.arena.get_identifier(name_node)
                 {
-                    return vec![ident.escaped_text.clone()];
+                    return vec![ident.escaped_text.to_string()];
                 }
             }
             k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {

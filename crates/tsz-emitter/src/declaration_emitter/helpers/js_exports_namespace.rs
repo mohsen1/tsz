@@ -342,7 +342,7 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         };
         self.js_named_export_names
-            .contains(&name_ident.escaped_text)
+            .contains(name_ident.escaped_text.as_str())
     }
 
     pub(in crate::declaration_emitter) fn record_js_require_property_import_alias_statement(
@@ -752,7 +752,7 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         };
         self.js_export_equals_names
-            .contains(&name_ident.escaped_text)
+            .contains(name_ident.escaped_text.as_str())
     }
 
     pub(crate) fn emit_js_namespace_export_aliases_for_name(
@@ -890,7 +890,7 @@ impl<'a> DeclarationEmitter<'a> {
         };
         if !self
             .emitted_js_export_equals_names
-            .insert(name_ident.escaped_text.clone())
+            .insert(name_ident.escaped_text.to_string())
         {
             return;
         }

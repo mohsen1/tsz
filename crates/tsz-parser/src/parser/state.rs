@@ -819,7 +819,7 @@ impl ParserState {
             end_pos,
             IdentifierData {
                 atom: AstAtom::NONE,
-                escaped_text: recovered,
+                escaped_text: recovered.into(),
                 original_text: None,
             },
         )

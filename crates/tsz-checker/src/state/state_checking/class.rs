@@ -887,10 +887,10 @@ impl<'a> CheckerState<'a> {
         // interface that has heritage must report static-side incompatibility with `null`.
         if self.class_extends_null(class) && self.class_has_merged_interface_extends(class) {
             let class_name = if let Some(name_node) = self.ctx.arena.get(class.name) {
-                self.ctx
-                    .arena
-                    .get_identifier(name_node)
-                    .map_or_else(|| "<anonymous>".to_string(), |id| id.escaped_text.clone())
+                self.ctx.arena.get_identifier(name_node).map_or_else(
+                    || "<anonymous>".to_string(),
+                    |id| id.escaped_text.to_string(),
+                )
             } else {
                 "<anonymous>".to_string()
             };

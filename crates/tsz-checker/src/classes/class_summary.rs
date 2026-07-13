@@ -1459,7 +1459,7 @@ impl<'a> CheckerState<'a> {
                     let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
                         continue;
                     };
-                    aliases.insert(ident.escaped_text.clone());
+                    aliases.insert(ident.escaped_text.to_string());
                 }
             }
         }
@@ -1542,8 +1542,8 @@ impl<'a> CheckerState<'a> {
             }
             let ident = self.ctx.arena.get_identifier(name_node)?;
             Some(JsImplicitMemberName {
-                lookup_name: ident.escaped_text.clone(),
-                display_name: ident.escaped_text.clone(),
+                lookup_name: ident.escaped_text.to_string(),
+                display_name: ident.escaped_text.to_string(),
             })
         }
     }

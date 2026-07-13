@@ -569,7 +569,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx
                     .arena
                     .get_identifier_at(access.name_or_argument)
-                    .map(|ident| ident.escaped_text.clone())
+                    .map(|ident| ident.escaped_text.to_string())
             }
             syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
                 let access = self.ctx.arena.get_access_expr(node)?;
@@ -797,7 +797,7 @@ impl<'a> CheckerState<'a> {
             && Self::is_exports_or_module_exports_or_chain_in_arena(arena, var_decl.initializer)
             && let Some(name_ident) = arena.get_identifier_at(var_decl.name)
         {
-            aliases.insert(name_ident.escaped_text.clone());
+            aliases.insert(name_ident.escaped_text.to_string());
         }
     }
 

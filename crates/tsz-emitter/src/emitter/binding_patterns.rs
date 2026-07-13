@@ -1328,7 +1328,7 @@ impl<'a> Printer<'a> {
         if elem.property_name.is_some() {
             if let Some(prop_node) = self.arena.get(elem.property_name) {
                 if let Some(ident) = self.arena.get_identifier(prop_node) {
-                    return (ident.escaped_text.clone(), false);
+                    return (ident.escaped_text.to_string(), false);
                 }
                 if let Some(lit) = self.arena.get_literal(prop_node) {
                     return (lit.text.clone(), false);

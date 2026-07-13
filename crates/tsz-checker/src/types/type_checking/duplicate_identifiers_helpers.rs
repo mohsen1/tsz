@@ -894,7 +894,7 @@ impl<'a> CheckerState<'a> {
 
                 let member_name =
                     if let Some(ident) = self.ctx.arena.get_identifier(member_name_node) {
-                        ident.escaped_text.clone()
+                        ident.escaped_text.to_string()
                     } else if let Some(literal) = self.ctx.arena.get_literal(member_name_node) {
                         literal.text.clone()
                     } else {
@@ -1000,7 +1000,7 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
                 let name = if let Some(ident) = self.ctx.arena.get_identifier(name_data) {
-                    ident.escaped_text.clone()
+                    ident.escaped_text.to_string()
                 } else if let Some(literal) = self.ctx.arena.get_literal(name_data) {
                     literal.text.clone()
                 } else {

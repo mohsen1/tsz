@@ -196,7 +196,7 @@ impl<'a> Printer<'a> {
         if name_node.is_identifier()
             && let Some(ident) = self.arena.get_identifier(name_node)
         {
-            out.push(ident.escaped_text.clone());
+            out.push(ident.escaped_text.to_string());
             return;
         }
         if matches!(

@@ -142,7 +142,7 @@ impl BinderState {
         let node = arena.get(idx)?;
         // Simple identifier
         if let Some(id) = arena.get_identifier(node) {
-            return Some(id.escaped_text.clone());
+            return Some(id.escaped_text.to_string());
         }
         // Property access expression: expression.name (e.g., ns.Base)
         if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION

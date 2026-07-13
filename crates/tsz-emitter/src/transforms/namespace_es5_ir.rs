@@ -934,7 +934,7 @@ impl<'a> NamespaceES5Transformer<'a> {
         } else if node.kind == SyntaxKind::Identifier as u16
             && let Some(ident) = self.arena.get_identifier(node)
         {
-            parts.push(ident.escaped_text.clone());
+            parts.push(ident.escaped_text.to_string());
         }
     }
 
@@ -960,7 +960,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             // Get the name of this level
             let name_node = self.arena.get(ns_data.name)?;
             if let Some(ident) = self.arena.get_identifier(name_node) {
-                parts.push(ident.escaped_text.clone());
+                parts.push(ident.escaped_text.to_string());
             }
 
             // Check if body is another MODULE_DECLARATION (nested namespace) or MODULE_BLOCK

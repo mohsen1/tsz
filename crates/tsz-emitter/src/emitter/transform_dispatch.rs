@@ -1712,7 +1712,7 @@ impl<'a> Printer<'a> {
                             self.arena
                                 .identifiers
                                 .get(export_name as usize)
-                                .map(|ident| ident.escaped_text.clone())
+                                .map(|ident| ident.escaped_text.to_string())
                                 .unwrap_or_default()
                         } else {
                             String::new()

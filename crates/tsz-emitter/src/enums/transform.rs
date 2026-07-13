@@ -325,7 +325,7 @@ impl<'a> EnumTransformer<'a> {
             }
             k if k == SyntaxKind::Identifier as u16 => {
                 if let Some(ident) = self.arena.get_identifier(node) {
-                    ident.escaped_text.clone()
+                    ident.escaped_text.to_string()
                 } else {
                     "undefined".to_string()
                 }

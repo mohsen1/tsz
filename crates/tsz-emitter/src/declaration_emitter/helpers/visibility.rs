@@ -226,14 +226,14 @@ impl<'a> DeclarationEmitter<'a> {
             self.arena
                 .get(ni)
                 .and_then(|n| self.arena.get_identifier(n))
-                .map(|ident| ident.escaped_text.clone())
+                .map(|ident| ident.escaped_text.to_string())
         } else if let Some(ident) = self.arena.get_identifier(decl_node) {
-            Some(ident.escaped_text.clone())
+            Some(ident.escaped_text.to_string())
         } else if let Some(clause_idx) = import_clause_idx {
             self.arena
                 .get(clause_idx)
                 .and_then(|n| self.arena.get_identifier(n))
-                .map(|ident| ident.escaped_text.clone())
+                .map(|ident| ident.escaped_text.to_string())
         } else {
             None
         };
@@ -1258,7 +1258,7 @@ impl<'a> DeclarationEmitter<'a> {
                 return self
                     .arena
                     .get_identifier(node)
-                    .map(|id| id.escaped_text.clone());
+                    .map(|id| id.escaped_text.to_string());
             }
         }
     }
@@ -1298,7 +1298,7 @@ impl<'a> DeclarationEmitter<'a> {
         // Extract identifier names directly
         if name_node.is_identifier() {
             let ident = self.arena.get_identifier(name_node)?;
-            Some(ident.escaped_text.clone())
+            Some(ident.escaped_text.to_string())
         } else {
             // For computed property names and other non-identifier names,
             // use the source text span as a key for overload tracking
@@ -1744,7 +1744,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Try identifier first
         if let Some(ident) = self.arena.get_identifier(decl_node) {
-            return Some(ident.escaped_text.clone());
+            return Some(ident.escaped_text.to_string());
         }
 
         // For class/function/interface, the name is in a specific field
@@ -1752,7 +1752,7 @@ impl<'a> DeclarationEmitter<'a> {
             && let Some(name_node) = self.arena.get(func.name)
         {
             if let Some(ident) = self.arena.get_identifier(name_node) {
-                return Some(ident.escaped_text.clone());
+                return Some(ident.escaped_text.to_string());
             }
             if let Some(lit) = self.arena.get_literal(name_node) {
                 return Some(lit.text.clone());
@@ -1762,7 +1762,7 @@ impl<'a> DeclarationEmitter<'a> {
             && let Some(name_node) = self.arena.get(class.name)
         {
             if let Some(ident) = self.arena.get_identifier(name_node) {
-                return Some(ident.escaped_text.clone());
+                return Some(ident.escaped_text.to_string());
             }
             if let Some(lit) = self.arena.get_literal(name_node) {
                 return Some(lit.text.clone());
@@ -1772,7 +1772,7 @@ impl<'a> DeclarationEmitter<'a> {
             && let Some(name_node) = self.arena.get(iface.name)
         {
             if let Some(ident) = self.arena.get_identifier(name_node) {
-                return Some(ident.escaped_text.clone());
+                return Some(ident.escaped_text.to_string());
             }
             if let Some(lit) = self.arena.get_literal(name_node) {
                 return Some(lit.text.clone());
@@ -1782,7 +1782,7 @@ impl<'a> DeclarationEmitter<'a> {
             && let Some(name_node) = self.arena.get(alias.name)
         {
             if let Some(ident) = self.arena.get_identifier(name_node) {
-                return Some(ident.escaped_text.clone());
+                return Some(ident.escaped_text.to_string());
             }
             if let Some(lit) = self.arena.get_literal(name_node) {
                 return Some(lit.text.clone());
@@ -1792,7 +1792,7 @@ impl<'a> DeclarationEmitter<'a> {
             && let Some(name_node) = self.arena.get(enum_data.name)
         {
             if let Some(ident) = self.arena.get_identifier(name_node) {
-                return Some(ident.escaped_text.clone());
+                return Some(ident.escaped_text.to_string());
             }
             if let Some(lit) = self.arena.get_literal(name_node) {
                 return Some(lit.text.clone());

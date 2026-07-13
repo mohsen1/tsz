@@ -301,12 +301,12 @@ impl<'a> Printer<'a> {
                     .ctx
                     .module_state
                     .iife_exported_names
-                    .contains(&name_str)
+                    .contains(name_str.as_str())
                     || self
                         .ctx
                         .module_state
                         .inline_exported_names
-                        .contains(&name_str)
+                        .contains(name_str.as_str())
                 {
                     continue;
                 }
@@ -1274,7 +1274,7 @@ impl<'a> Printer<'a> {
                     return None;
                 }
                 let ident = self.arena.get_identifier(name_node)?;
-                let decoded_name = ident.escaped_text.clone();
+                let decoded_name = ident.escaped_text.to_string();
                 // Use original_text (preserving unicode escapes) when available,
                 // falling back to escaped_text (decoded name). TSC preserves
                 // unicode escape sequences in emitted CJS inline exports.

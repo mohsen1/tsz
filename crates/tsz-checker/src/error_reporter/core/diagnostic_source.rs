@@ -1154,7 +1154,7 @@ impl<'a> CheckerState<'a> {
                     .arena
                     .get_identifier(name_node)?
                     .escaped_text
-                    .clone(),
+                    .to_string(),
                 k if k == tsz_scanner::SyntaxKind::StringLiteral as u16
                     || k == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
                 {

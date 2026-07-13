@@ -37,7 +37,7 @@ impl<'a> CheckerState<'a> {
             && self
                 .ctx
                 .type_parameter_scope
-                .contains_key(&identifier.escaped_text)
+                .contains_key(identifier.escaped_text.as_str())
         {
             return true;
         }

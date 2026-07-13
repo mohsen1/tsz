@@ -1315,7 +1315,7 @@ impl<'a> LoweringPass<'a> {
     pub(super) fn get_module_root_name_text(&self, name_idx: NodeIndex) -> Option<String> {
         let id = self.get_module_root_name(name_idx)?;
         let ident = self.arena.identifiers.get(id as usize)?;
-        Some(ident.escaped_text.clone())
+        Some(ident.escaped_text.to_string())
     }
 
     pub(super) fn get_block_like(
