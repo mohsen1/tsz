@@ -648,56 +648,24 @@ impl CheckerContext<'_> {
     /// `get_lib_def_id(canonical_sym)` remains the fallback for names not yet
     /// registered under a lib def in the store.
     pub fn get_canonical_lib_def_id(&self, name: &str, per_lib_sym_id: SymbolId) -> DefId {
-        if name == "FlatArray" || name == "ReadonlyArray" {
-            let r = self.get_canonical_lib_def_id_probe_inner(name, per_lib_sym_id);
-            let resolved_name = self
-                .definition_store
-                .get(r)
-                .map(|info| self.types.resolve_atom(info.name).to_string());
-            tracing::warn!(
-                name,
-                ?per_lib_sym_id,
-                ?r,
-                ?resolved_name,
-                "canonical result"
-            );
-            return r;
-        }
-        self.get_canonical_lib_def_id_probe_inner(name, per_lib_sym_id)
-    }
-
-    fn get_canonical_lib_def_id_probe_inner(&self, name: &str, per_lib_sym_id: SymbolId) -> DefId {
         let canonical_sym = self.canonical_lib_sym_id(name, per_lib_sym_id);
         let atom = self.types.intern_string(name);
-        if let Some(def_id) = self
-            .definition_store
+        self.definition_store
             .find_defs_by_name(atom)
             .and_then(|defs| {
                 defs.into_iter()
                     .filter(|def_id| {
                         self.definition_store.get(*def_id).is_some_and(|info| {
-                            // Accept a def whose symbol is an actual/cloned lib
-                            // symbol OR one registered under the `u32::MAX`
-                            // declaration-file sentinel (a lib def, incl. one
-                            // minted by `register_named_lib_def`). The bare
-                            // actual-lib check alone rejects a minted def whose
-                            // per-lib-relative `symbol_id` resolves the wrong
-                            // symbol in the primary binder, which made the fallback
-                            // re-mint on every resolution (def explosion). It still
-                            // excludes user-file defs (real `file_id`, non-lib
-                            // symbol), so a user interface named like a lib type is
-                            // not mistaken for the lib def here.
-                            (info.symbol_id.is_some_and(|sym_id| {
+                            info.symbol_id.is_some_and(|sym_id| {
                                 self.symbol_is_from_actual_or_cloned_lib(SymbolId(sym_id))
-                            }) || info.file_id == Some(u32::MAX))
-                                && matches!(
-                                    info.kind,
-                                    tsz_solver::def::DefKind::TypeAlias
-                                        | tsz_solver::def::DefKind::Interface
-                                        | tsz_solver::def::DefKind::Class
-                                        | tsz_solver::def::DefKind::Enum
-                                        | tsz_solver::def::DefKind::Namespace
-                                )
+                            }) && matches!(
+                                info.kind,
+                                tsz_solver::def::DefKind::TypeAlias
+                                    | tsz_solver::def::DefKind::Interface
+                                    | tsz_solver::def::DefKind::Class
+                                    | tsz_solver::def::DefKind::Enum
+                                    | tsz_solver::def::DefKind::Namespace
+                            )
                         })
                     })
                     .max_by_key(|def_id| {
@@ -707,98 +675,7 @@ impl CheckerContext<'_> {
                             .unwrap_or_default()
                     })
             })
-        {
-            // TEMP diagnostic (lib-interface-merge collision). Fires only when
-            // the name index itself returns a def whose name disagrees with the
-            // request — i.e. a mis-registered/colliding entry. Remove once the
-            // fix is confirmed.
-            if !self.def_name_matches(def_id, name).unwrap_or(true) {
-                tracing::warn!(
-                    target: "tsz_checker::lib_def_collision",
-                    name,
-                    branch = "name_index",
-                    resolved = ?self.definition_store.get(def_id).map(|i| self.types.resolve_atom(i.name)),
-                    "get_canonical_lib_def_id returned a mismatched def"
-                );
-            }
-            return def_id;
-        }
-
-        // The name index does not yet hold a lib def for `name` (e.g. the first
-        // `Array` lowering in `register_boxed_types` resolves `FlatArray` /
-        // `ReadonlyArray` inside member signatures before those interfaces'
-        // own defs register). `get_lib_def_id` then resolves `canonical_sym`
-        // through the raw `SymbolId -> DefId` path; because every lib-binder
-        // symbol carries the `u32::MAX` declaration-file sentinel, a
-        // merged/binder-relative `canonical_sym` (chosen from the primary
-        // binder's `file_locals` once a user interface declaration-merges into
-        // a lib interface) resolves to an UNRELATED lib def whose raw index
-        // collides — `FlatArray -> eval`, `ReadonlyArray -> isNaN`. Trust the
-        // raw result only when it actually names `name`; on a sentinel collision
-        // resolve name-verified against the real lib symbol (found by the
-        // collision-free lib-context name scan) so the wrong def cannot leak.
-        let raw = self.get_lib_def_id(canonical_sym);
-        if self.def_name_matches(raw, name).unwrap_or(false) {
-            // TEMP diagnostic (lib-interface-merge collision): catch the case
-            // where `def_name_matches` reports a match yet the resolved def's
-            // stored name actually differs (an atom-collision false-positive).
-            // Remove once the fix is confirmed.
-            let raw_name = self
-                .definition_store
-                .get(raw)
-                .map(|i| self.types.resolve_atom(i.name));
-            if raw_name.as_deref() != Some(name) {
-                tracing::warn!(
-                    target: "tsz_checker::lib_def_collision",
-                    name,
-                    branch = "raw_match_name_differs",
-                    resolved = ?raw_name,
-                    "def_name_matches passed but the resolved def name differs"
-                );
-            }
-            return raw;
-        }
-        // `canonical_sym` collided with an unrelated lib def under the
-        // `u32::MAX` sentinel. Register a fresh def for the real lib symbol,
-        // found by a collision-free scan of each lib binder's `file_locals`
-        // (name-keyed). `register_named_lib_def` uses `DefinitionStore::register`
-        // (keyed by the name index) rather than `register_for_symbol` (keyed by
-        // `(SymbolId, u32::MAX)`, which would just hand back the colliding def —
-        // `DeclSiteKey` is disabled for the sentinel file, so decl-site
-        // disambiguation cannot separate them). It never re-enters this function
-        // (unlike `get_or_create_def_id_for_symbol_name`, whose "find another lib
-        // symbol named X and re-canonicalize" hunt would recurse and overflow the
-        // stack), and it publishes into `name_to_defs`, so the on-demand body
-        // resolution and this reference converge on the same `DefId`. The
-        // name-index probe above makes it idempotent across repeated resolutions.
-        for lib_ctx in self.lib_contexts.iter() {
-            if let Some(sym_id) = lib_ctx.binder.file_locals.get(name)
-                && let Some(symbol) = lib_ctx.binder.get_symbol(sym_id)
-                && symbol.escaped_name == name
-            {
-                // TEMP diagnostic (lib-interface-merge collision). Remove once
-                // the fix is confirmed.
-                tracing::warn!(
-                    target: "tsz_checker::lib_def_collision",
-                    name,
-                    branch = "mint",
-                    lib_sym = sym_id.0,
-                    "get_canonical_lib_def_id minting fresh name-keyed def"
-                );
-                return self.register_named_lib_def(sym_id, symbol, symbol.decl_file_idx);
-            }
-        }
-        // TEMP diagnostic (lib-interface-merge collision). Reached only when the
-        // raw def mismatched AND no lib context declares `name`. Remove once the
-        // fix is confirmed.
-        tracing::warn!(
-            target: "tsz_checker::lib_def_collision",
-            name,
-            branch = "raw_fallback",
-            resolved = ?self.definition_store.get(raw).map(|i| self.types.resolve_atom(i.name)),
-            "get_canonical_lib_def_id fell through to raw (no lib-context name match)"
-        );
-        raw
+            .unwrap_or_else(|| self.get_lib_def_id(canonical_sym))
     }
 
     /// Resolve a lib symbol's `DefId`, verifying the def actually names
