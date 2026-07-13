@@ -633,11 +633,16 @@ fn handle_show_config(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     } else {
         (None, Vec::new())
     };
-    if config_diagnostics.iter().any(|d| {
-        d.code == diagnostic_codes::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE
-            || d.code
-                == diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION
-    }) {
+    // A removed option (TS5102/TS5108 family) does NOT block --showConfig:
+    // tsc 7.0.2 prints the resolved configuration — including the removed
+    // option, normalized — with exit 0, and only a normal compile reports
+    // the removal (oracle: a tsconfig with 'baseUrl' shows
+    // '"baseUrl": "./"' under --showConfig). Only malformed VALUES still
+    // abort the render.
+    if config_diagnostics
+        .iter()
+        .any(|d| d.code == diagnostic_codes::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE)
+    {
         let pretty = args
             .pretty
             .unwrap_or_else(|| std::io::stdout().is_terminal());
