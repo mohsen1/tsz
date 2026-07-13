@@ -183,6 +183,11 @@ pub enum SubtypeFailureReason {
     /// can reproduce the exact chain shape.
     TupleElementTypeMismatch {
         index: usize,
+        /// Target-side position. Differs from `index` when the failing target
+        /// element trails a rest slot (`[...number[], boolean]`: a one-element
+        /// source fails at source position 0 against TARGET position 1 —
+        /// tsc numbers the positions independently).
+        target_index: usize,
         source_element: TypeId,
         target_element: TypeId,
         nested_reason: Option<Box<Self>>,
@@ -1119,6 +1124,7 @@ impl SubtypeFailureReason {
 
             Self::TupleElementTypeMismatch {
                 index,
+                target_index,
                 source_element,
                 target_element,
                 nested_reason,
@@ -1134,7 +1140,7 @@ impl SubtypeFailureReason {
                 if *multi_element {
                     diag = diag.with_related(PendingDiagnostic::error(
                         codes::TUPLE_ELEMENT_POSITION_MISMATCH,
-                        vec![(*index).into(), (*index).into()],
+                        vec![(*index).into(), (*target_index).into()],
                     ));
                 }
                 Self::with_element_relation(diag, nested_reason, *source_element, *target_element)

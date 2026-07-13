@@ -683,6 +683,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         ctx: &RenderContext,
         index: usize,
+        target_index: usize,
         source_element: TypeId,
         target_element: TypeId,
         nested_reason: Option<&tsz_solver::SubtypeFailureReason>,
@@ -699,12 +700,13 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        let index_str = index.to_string();
-        // TS2626: source and target positions are both the element index for a
-        // fixed tuple element mismatch.
+        // TS2626: the source and target positions coincide for a fixed
+        // element, but a failing element that trails a rest slot reports its
+        // own TARGET position (`[...number[], boolean]` fails at source 0
+        // vs target 1).
         let detail = format_message(
             diagnostic_messages::TYPE_AT_POSITION_IN_SOURCE_IS_NOT_COMPATIBLE_WITH_TYPE_AT_POSITION_IN_TARGET,
-            &[&index_str, &index_str],
+            &[&index.to_string(), &target_index.to_string()],
         );
         self.render_tuple_positional_chain(
             ctx,

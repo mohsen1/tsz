@@ -1273,6 +1273,7 @@ impl<'a> CheckerState<'a> {
             }
             SubtypeFailureReason::TupleElementTypeMismatch {
                 index,
+                target_index,
                 source_element,
                 target_element,
                 nested_reason,
@@ -1280,6 +1281,7 @@ impl<'a> CheckerState<'a> {
             } => self.render_tuple_element_type_mismatch(
                 &rctx,
                 *index,
+                *target_index,
                 *source_element,
                 *target_element,
                 nested_reason.as_deref(),
