@@ -190,12 +190,10 @@ impl<'a> CheckerState<'a> {
         )
         .with_builtin_iterator_return_type(self.builtin_iterator_return_intrinsic_type())
         .with_name_def_id_resolver(&name_resolver);
-        let lowering =
-            if self.ctx.all_binders.is_some() || self.ctx.global_file_locals_index.is_some() {
-                lowering.prefer_name_def_id_resolution()
-            } else {
-                lowering
-            };
+        // Name-first unconditionally: lib declarations reference global lib
+        // type names cross-arena, and the priming phase runs without the
+        // parallel-only indices (see `resolve_lib_type_with_params`).
+        let lowering = lowering.prefer_name_def_id_resolution();
 
         let deduped = dedup_decl_arenas(&decls_with_arenas);
         let (mut ty, params) =

@@ -788,6 +788,10 @@ impl<'a> CheckerState<'a> {
 
         // Handle cross-file symbol resolution via delegation
         if let Some(result) = self.delegate_cross_arena_symbol_resolution(sym_id) {
+            // TEMP lib-def-collision probe (remove after diagnosis).
+            if std::env::var("TSZ_PROBE_SYM_ID").is_ok_and(|v| v == sym_id.0.to_string()) {
+                tracing::warn!(target: "tsz_flatarray_probe", sym = sym_id.0, n_params = result.1.len(), ty = result.0.0, "compute: cross-arena delegation result");
+            }
             tracing::trace!(
                 sym_id = sym_id.0,
                 result_type = result.0.0,
@@ -795,6 +799,10 @@ impl<'a> CheckerState<'a> {
                 "compute_type_of_symbol: delegated to cross-arena"
             );
             return result;
+        }
+        // TEMP lib-def-collision probe (remove after diagnosis).
+        if std::env::var("TSZ_PROBE_SYM_ID").is_ok_and(|v| v == sym_id.0.to_string()) {
+            tracing::warn!(target: "tsz_flatarray_probe", sym = sym_id.0, "compute: no delegation, local path");
         }
 
         // Use get_symbol_globally to find symbols in lib files and other files

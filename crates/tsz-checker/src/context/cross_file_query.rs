@@ -195,7 +195,18 @@ impl<'a> CheckerContext<'a> {
                     // index to a *different* symbol (or none) and stays foreign.
                     || self.binder.get_node_symbol(decl_idx) == Some(sym_id)
             }
-            None => true,
+            // No provenance entry only means "bound locally" for a symbol this
+            // binder actually recorded. A checker whose current binder is a
+            // per-lib binder (e.g. the lib-baseline pass) resolves foreign
+            // symbols through the cross-file/global registry; its provenance
+            // map is silent about them, and treating that silence as local
+            // lowers whatever unrelated node sits at `decl_idx` in the current
+            // arena into the foreign symbol's type (a generic impostor
+            // stamping `<T>` onto a non-generic lib interface). Require the
+            // local symbol to actually list `decl_idx` among its declarations.
+            None => self.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                symbol.value_declaration == decl_idx || symbol.declarations.contains(&decl_idx)
+            }),
         }
     }
 

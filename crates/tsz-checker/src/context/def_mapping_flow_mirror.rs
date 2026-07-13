@@ -56,6 +56,13 @@ impl CheckerContext<'_> {
         ty: TypeId,
         params: Vec<tsz_solver::TypeParamInfo>,
     ) {
+        // TEMP lib-def-collision probe (remove after diagnosis).
+        if !params.is_empty()
+            && std::env::var("TSZ_PROBE_SYM_ID").is_ok_and(|v| v == symbol.0.to_string())
+        {
+            tracing::warn!(target: "tsz_flatarray_probe", sym = symbol.0, n_params = params.len(), "symbol-row params write");
+            tracing::warn!(target: "tsz_flatarray_probe", bt = %std::backtrace::Backtrace::force_capture(), "symbol-row write backtrace");
+        }
         if params.is_empty() {
             env.insert(symbol, ty);
         } else {

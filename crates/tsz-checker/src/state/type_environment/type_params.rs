@@ -202,6 +202,38 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// TRUE when the node at `decl_idx` in `arena` is a type-alias, class, or
+    /// interface declaration whose name is `sym_escaped_name`.
+    ///
+    /// Guards consumption of `cross_file_type_params_cache` memos: the cache
+    /// is keyed by `(file_idx, decl_idx)` with no symbol identity, and the
+    /// `(sym_id, decl_idx)` pairing that led here can be collided (raw
+    /// `SymbolId`s are per-binder). A memo is only honest *for this symbol*
+    /// when the underlying declaration actually names it — the same #13599
+    /// rule the extractors apply, which the cache path would otherwise skip.
+    /// Legitimate memo entries are only ever written for name-verified
+    /// alias/class/interface declarations, so any other node kind here is
+    /// itself evidence of a collided pairing.
+    fn cached_params_decl_matches_symbol(
+        arena: &tsz_parser::parser::node::NodeArena,
+        decl_idx: NodeIndex,
+        sym_escaped_name: &str,
+    ) -> bool {
+        let Some(node) = arena.get(decl_idx) else {
+            return false;
+        };
+        if let Some(alias) = arena.get_type_alias(node) {
+            return Self::decl_name_matches_in_arena(arena, alias.name, sym_escaped_name);
+        }
+        if let Some(class) = arena.get_class(node) {
+            return Self::decl_name_matches_in_arena(arena, class.name, sym_escaped_name);
+        }
+        if let Some(iface) = arena.get_interface(node) {
+            return Self::decl_name_matches_in_arena(arena, iface.name, sym_escaped_name);
+        }
+        false
+    }
+
     pub(crate) fn extract_simple_type_params_from_decl_in_arena(
         &self,
         arena: &tsz_parser::parser::node::NodeArena,
@@ -589,12 +621,20 @@ impl<'a> CheckerState<'a> {
                             .get_file_idx_for_arena(arena.as_ref())
                             .map(|i| i as u32);
                         let cached = if let Some(file_idx) = cache_file_idx {
-                            self.ctx
-                                .cross_file_type_params_cache
-                                .as_ref()
-                                .and_then(|cache| {
-                                    cache.get(&(file_idx, decl_idx)).map(|e| e.value().clone())
-                                })
+                            Self::cached_params_decl_matches_symbol(
+                                arena.as_ref(),
+                                decl_idx,
+                                &sym_escaped_name,
+                            )
+                            .then(|| {
+                                self.ctx
+                                    .cross_file_type_params_cache
+                                    .as_ref()
+                                    .and_then(|cache| {
+                                        cache.get(&(file_idx, decl_idx)).map(|e| e.value().clone())
+                                    })
+                            })
+                            .flatten()
                         } else {
                             None
                         };
@@ -720,15 +760,19 @@ impl<'a> CheckerState<'a> {
                         }
                         continue;
                     }
-                    let cached = self
-                        .ctx
-                        .cross_file_type_params_cache
-                        .as_ref()
-                        .and_then(|cache| {
-                            cache
-                                .get(&(file_idx as u32, decl_idx))
-                                .map(|e| e.value().clone())
-                        });
+                    let cached =
+                        Self::cached_params_decl_matches_symbol(arena, decl_idx, &sym_escaped_name)
+                            .then(|| {
+                                self.ctx
+                                    .cross_file_type_params_cache
+                                    .as_ref()
+                                    .and_then(|cache| {
+                                        cache
+                                            .get(&(file_idx as u32, decl_idx))
+                                            .map(|e| e.value().clone())
+                                    })
+                            })
+                            .flatten();
                     let params = if let Some(memo) = cached {
                         tsz_common::perf_counters::record_cross_file_type_params_cache_hit();
                         Some(memo)

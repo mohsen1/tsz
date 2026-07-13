@@ -71,6 +71,24 @@ impl<'a> CheckerState<'a> {
             &no_value_resolver,
         )
         .with_name_def_id_resolver(&name_resolver);
+        // Sibling-lib declarations reach this path when a user global
+        // augmentation forces re-merging a lib interface (e.g. `interface
+        // Error { ... }` re-merges `Array`, whose es2019 `flat()` references
+        // `FlatArray`). Their identifiers name GLOBAL lib types, but the
+        // node resolver is arena-local: under a merged global the shifted
+        // `SymbolId` can alias an unrelated lib symbol and mint a
+        // wrong-identity def. Resolve lib-arena references name-first;
+        // user-file augmentation decls keep node-first so local bindings
+        // stay exact (same per-decl policy as
+        // `lower_merged_interface_declarations`).
+        let lowering =
+            if crate::state_type_analysis::cross_file_direct::is_builtin_lib_declaration_arena(
+                arena_ref,
+            ) {
+                lowering.prefer_name_def_id_resolution()
+            } else {
+                lowering
+            };
         lowering.lower_interface_declarations(decls)
     }
 

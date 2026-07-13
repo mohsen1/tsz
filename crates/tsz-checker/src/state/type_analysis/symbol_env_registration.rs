@@ -28,7 +28,18 @@ impl CheckerState<'_> {
             .then(|| self.merged_interface_value_typeof_type(sym_id))
             .flatten();
 
-        let def_id = self.ctx.get_existing_def_id(sym_id);
+        // `get_existing_def_id` is a raw-id lookup into `symbol_to_def`, which
+        // is shared across binder id spaces: in a checker whose LOCAL `sym_id`
+        // names a different symbol, the returned def belongs to another type
+        // entirely. Publishing this symbol's result/params under it corrupts
+        // the def for every consumer (e.g. a generic interface stamping its
+        // `<T>` onto a non-generic lib interface's def). Verify identity
+        // before any def-keyed registration; the symbol-keyed registration
+        // below stays unconditional.
+        let def_id = self
+            .ctx
+            .get_existing_def_id(sym_id)
+            .filter(|&d| self.def_write_identity_verified(d, sym_id));
         let symbol_ref = SymbolRef(sym_id.0);
         let env_params = if type_params.is_empty() {
             def_id
