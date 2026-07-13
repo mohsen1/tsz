@@ -493,6 +493,29 @@ fn assertion_signatures_are_comparable(
         }
     }
 
+    // An erasure-minted opaque-reference RETURN pair (`Thenable<any>` vs
+    // `Promise<any>`: `Application`/`Lazy` whose base this resolver-free
+    // query layer cannot materialize) has no extractable properties, so the
+    // structural walk below could never find overlap and would sink valid
+    // thenable casts into TS2352 (zustand `Thenable<undefined> as
+    // Promise<void>`). With every shared-arity parameter pair already
+    // comparable, treat such a return pair as overlapping — the same
+    // conservative both-opaque policy the Lazy/Lazy rule applies. Scoped to
+    // the signature RETURN leg only: an opaque pair in PROPERTY position
+    // (`{ p: Promise<void> } as { p: Map<string, number> }`) still decomposes
+    // strictly and correctly fails.
+    let source_return_is_opaque = matches!(
+        db.lookup(source_return),
+        Some(TypeData::Application(_) | TypeData::Lazy(_))
+    );
+    let target_return_is_opaque = matches!(
+        db.lookup(target_return),
+        Some(TypeData::Application(_) | TypeData::Lazy(_))
+    );
+    if source_return_is_opaque && target_return_is_opaque {
+        return true;
+    }
+
     types_are_comparable_for_assertion_inner(db, source_return, target_return, depth + 1, true)
 }
 
