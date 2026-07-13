@@ -229,9 +229,13 @@ const { c, d, e, f, g } = {
         .next()
         .unwrap_or_else(|| panic!("Expected TS2339 for missing g, got {diagnostics:#?}"));
 
+    // tsc 7.0.2 oracle: nested inline spreads flatten in SOURCE order —
+    // '{ c: number; d: number; e: number; f: number; }' (each spread batch
+    // interleaves by declaration position; the old reversed expectation was
+    // an artifact of the descending SPREAD_DISPLAY_ORDER_OFFSET scheme).
     assert!(
         ts2339.message_text.contains(
-            "Property 'g' does not exist on type '{ f: number; e: number; d: number; c: number; }'."
+            "Property 'g' does not exist on type '{ c: number; d: number; e: number; f: number; }'."
         ),
         "Expected nested spread receiver display to match tsc order, got: {}",
         ts2339.message_text

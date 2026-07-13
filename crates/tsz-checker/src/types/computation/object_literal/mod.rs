@@ -17,6 +17,12 @@ mod conditional_mapped_annotation;
 mod spread_element;
 mod symbol_key_routing;
 
+// The synthetic-`this` builders in `object_literal_circularity` stamp
+// spliced-in trailing members and pre-scanned methods with display-order
+// slots drawn from the same direct-member range as the incrementally-built
+// properties, so re-export the base for cross-module use.
+pub(crate) use computation_support::LITERAL_DISPLAY_ORDER_BASE;
+
 use crate::context::TypingRequest;
 use crate::query_boundaries::construct_signatures as signature_construction;
 use crate::query_boundaries::signature_building as signature_building_boundary;

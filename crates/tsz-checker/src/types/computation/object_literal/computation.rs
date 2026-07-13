@@ -19,7 +19,7 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
-use super::computation_support::SPREAD_DISPLAY_ORDER_OFFSET;
+use super::computation_support::{LITERAL_DISPLAY_ORDER_BASE, direct_member_display_order};
 use super::spread_element::{ObjectLiteralSpreadContext, ObjectLiteralSpreadState};
 
 struct ObjectLiteralRequestFacts {
@@ -279,8 +279,11 @@ impl<'a> CheckerState<'a> {
         // Skip duplicate property checks for destructuring assignment targets.
         // `({ x, y: y1, "y": y1 } = obj)` is valid - same property extracted twice.
         let skip_duplicate_check = self.ctx.in_destructuring_target;
-        let mut prop_order: u32 = 1;
-        let mut spread_display_order_base = SPREAD_DISPLAY_ORDER_OFFSET;
+        // Direct members and inline `...{ ... }` spreads share this counter
+        // (the high display range); `...expr` spreads use `ident_spread_display_order`
+        // (the low range) so they sort ahead, matching tsc's member layout.
+        let mut prop_order: u32 = LITERAL_DISPLAY_ORDER_BASE;
+        let mut ident_spread_display_order: u32 = 1;
 
         let obj_all_method_names = self.object_literal_callable_member_names(&obj.elements.nodes);
         // Non-method members declared after the first `this`-capturing callable.
@@ -869,6 +872,7 @@ impl<'a> CheckerState<'a> {
                     }
 
                     let name_atom = self.ctx.types.intern_string(&name);
+                    let name_already_written = explicit_property_names.contains(&name_atom);
 
                     // Check for duplicate property (skip in destructuring targets).
                     // TS1117: duplicate properties are an error in object literals.
@@ -911,8 +915,12 @@ impl<'a> CheckerState<'a> {
                                     )
                             });
 
-                    let order = prop_order;
-                    prop_order += 1;
+                    let order = direct_member_display_order(
+                        &properties,
+                        name_atom,
+                        name_already_written,
+                        &mut prop_order,
+                    );
                     // Determine if this property was declared with a string key
                     // that looks numeric (e.g. "404" vs 404). This affects DTS
                     // emit quoting: `"404": ...` vs `404: ...`.
@@ -1340,6 +1348,7 @@ impl<'a> CheckerState<'a> {
                     // auto-accessors, and binary expressions.
 
                     let name_atom = self.ctx.types.intern_string(&name);
+                    let name_already_written = explicit_property_names.contains(&name_atom);
 
                     // Check for duplicate property (skip in destructuring targets)
                     // TS1117: duplicate properties are an error in object literals.
@@ -1369,8 +1378,12 @@ impl<'a> CheckerState<'a> {
                     let is_optional_shorthand =
                         self.ctx.in_destructuring_target && shorthand.equals_token;
 
-                    let order = prop_order;
-                    prop_order += 1;
+                    let order = direct_member_display_order(
+                        &properties,
+                        name_atom,
+                        name_already_written,
+                        &mut prop_order,
+                    );
                     let prop_info = object_literal_query::object_literal_member_property(
                         ObjectLiteralMemberProperty {
                             name: name_atom,
@@ -1744,6 +1757,7 @@ impl<'a> CheckerState<'a> {
                     });
 
                     let name_atom = self.ctx.types.intern_string(&name);
+                    let name_already_written = explicit_property_names.contains(&name_atom);
 
                     // Check for duplicate property (skip in destructuring targets and computed names)
                     // TS1117: duplicate properties are an error in object literals.
@@ -1764,8 +1778,12 @@ impl<'a> CheckerState<'a> {
                     }
                     explicit_property_names.insert(name_atom);
 
-                    let order = prop_order;
-                    prop_order += 1;
+                    let order = direct_member_display_order(
+                        &properties,
+                        name_atom,
+                        name_already_written,
+                        &mut prop_order,
+                    );
                     let (is_string_named, is_symbol_named, single_quoted_name) =
                         self.object_literal_member_naming_flags(method.name);
                     let prop_info = object_literal_query::object_literal_member_property(
@@ -1946,7 +1964,8 @@ impl<'a> CheckerState<'a> {
                         has_spread: &mut has_spread,
                         has_any_spread: &mut has_any_spread,
                         has_union_spread: &mut has_union_spread,
-                        spread_display_order_base: &mut spread_display_order_base,
+                        direct_display_order: &mut prop_order,
+                        ident_spread_display_order: &mut ident_spread_display_order,
                     },
                 ) {
                     return spread_type;

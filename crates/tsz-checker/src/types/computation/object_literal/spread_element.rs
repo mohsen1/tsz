@@ -2,8 +2,7 @@
 
 use super::super::object_literal_support::UnionSpreadBranch;
 use super::computation_support::{
-    SPREAD_DISPLAY_ORDER_STRIDE, rebase_spread_display_property_order,
-    remove_synthetic_missing_union_spread_props,
+    assign_spread_display_property_order, remove_synthetic_missing_union_spread_props,
 };
 use crate::context::TypingRequest;
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
@@ -36,7 +35,12 @@ pub(super) struct ObjectLiteralSpreadState<'b> {
     pub(super) has_spread: &'b mut bool,
     pub(super) has_any_spread: &'b mut bool,
     pub(super) has_union_spread: &'b mut bool,
-    pub(super) spread_display_order_base: &'b mut u32,
+    /// Display-order counter shared with direct members and inline `...{ ... }`
+    /// spreads (starts at [`super::computation_support::LITERAL_DISPLAY_ORDER_BASE`]).
+    pub(super) direct_display_order: &'b mut u32,
+    /// Display-order counter for `...expr` spreads that are not syntactic object
+    /// literals; starts at `1`, so these members sort ahead of direct members.
+    pub(super) ident_spread_display_order: &'b mut u32,
 }
 
 impl<'a> CheckerState<'a> {
@@ -63,7 +67,8 @@ impl<'a> CheckerState<'a> {
         let has_spread = state.has_spread;
         let has_any_spread = state.has_any_spread;
         let has_union_spread = state.has_union_spread;
-        let spread_display_order_base = state.spread_display_order_base;
+        let direct_display_order = state.direct_display_order;
+        let ident_spread_display_order = state.ident_spread_display_order;
 
         let elem_node = self.ctx.arena.get(elem_idx)?;
         *has_spread = true;
@@ -118,6 +123,15 @@ impl<'a> CheckerState<'a> {
                     || node.kind == syntax_kind_ext::NEW_EXPRESSION
                     || node.kind == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION
             });
+            // tsc inlines a syntactic object-literal spread (`...{ ... }`) into
+            // the surrounding literal's member order; every other spread
+            // (`...ident`, `...call()`, `...a.b`) stays a batch that sorts ahead
+            // of the direct members. Route the two into disjoint display ranges.
+            let spread_is_inline_object_literal = self
+                .ctx
+                .arena
+                .get(unwrapped_spread)
+                .is_some_and(|node| node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION);
             let spread_request = if spread_is_call_like {
                 base_request.contextual_opt(None)
             } else {
@@ -335,14 +349,23 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                let spread_order_base = *spread_display_order_base;
-                *spread_display_order_base =
-                    (*spread_display_order_base).saturating_sub(SPREAD_DISPLAY_ORDER_STRIDE);
+                // Every branch of one union spread occupies the same display
+                // slot range (they are alternatives, not sequential writers), so
+                // each branch stamps from the same start and the counter advances
+                // once, past the longest branch.
+                let branch_order_start = if spread_is_inline_object_literal {
+                    *direct_display_order
+                } else {
+                    *ident_spread_display_order
+                };
+                let mut branch_order_end = branch_order_start;
                 for (member_props, member_indexes) in
                     all_member_props.into_iter().zip(all_member_indexes)
                 {
+                    let mut member_order = branch_order_start;
                     let member_props =
-                        rebase_spread_display_property_order(&member_props, spread_order_base);
+                        assign_spread_display_property_order(&member_props, &mut member_order);
+                    branch_order_end = branch_order_end.max(member_order);
                     if union_spread_branches.is_empty() {
                         // First union spread: fork from the main properties
                         let mut branch = UnionSpreadBranch::new(
@@ -378,6 +401,11 @@ impl<'a> CheckerState<'a> {
                             new_branches.push(branch);
                         }
                     }
+                }
+                if spread_is_inline_object_literal {
+                    *direct_display_order = branch_order_end;
+                } else {
+                    *ident_spread_display_order = branch_order_end;
                 }
                 *union_spread_branches = new_branches;
                 // Clear main properties so post-union properties
@@ -485,10 +513,11 @@ impl<'a> CheckerState<'a> {
                     named_property_nodes.remove(&prop.name);
                 }
 
-                let spread_props_for_display =
-                    rebase_spread_display_property_order(&spread_props, *spread_display_order_base);
-                *spread_display_order_base =
-                    (*spread_display_order_base).saturating_sub(SPREAD_DISPLAY_ORDER_STRIDE);
+                let spread_props_for_display = if spread_is_inline_object_literal {
+                    assign_spread_display_property_order(&spread_props, direct_display_order)
+                } else {
+                    assign_spread_display_property_order(&spread_props, ident_spread_display_order)
+                };
                 for prop in &spread_props_for_display {
                     self.merge_spread_property(properties, prop);
                 }
