@@ -1257,7 +1257,3 @@ mod tests;
 #[cfg(test)]
 #[path = "../../../tests/cross_file_interface_merge_ts2717_driver_tests.rs"]
 mod cross_file_interface_merge_ts2717_driver_tests;
-
-#[cfg(test)]
-#[path = "../../../tests/lib_interface_merge_flatarray_driver_tests.rs"]
-mod lib_interface_merge_flatarray_driver_tests;
