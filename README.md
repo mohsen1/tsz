@@ -73,7 +73,8 @@ test suite against it.
 
 <!-- CONFORMANCE_START -->
 ```
-Progress: [████████████████████] 100.0% (12,585/12,585 tests)
+Progress: [██████████████████░░] 91.5% (11,019/12,043 runnable tests)
+Candidates: 12,585 (12,043 runnable, 507 unsupported, 35 skipped)
 ```
 <!-- CONFORMANCE_END -->
 
