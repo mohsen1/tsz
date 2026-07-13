@@ -229,6 +229,15 @@ pub(crate) fn lib_def_id_from_node(
     fallback_arena: &NodeArena,
 ) -> Option<tsz_solver::DefId> {
     let sym_id = resolve_lib_node_in_arenas(binder, node_idx, decl_arenas, fallback_arena)?;
+    // TEMP diagnostic (lib-interface-merge collision). Remove after diagnosis.
+    let dbg_sym_name = binder
+        .get_symbol_with_libs(sym_id, &[])
+        .map(|s| s.escaped_name.to_string());
+    let dbg_entity = entity_name_text_from_decl_arenas(node_idx, decl_arenas, fallback_arena);
+    let dbg = dbg_sym_name.as_deref() == Some("FlatArray")
+        || dbg_sym_name.as_deref() == Some("ReadonlyArray")
+        || dbg_entity.as_deref() == Some("FlatArray")
+        || dbg_entity.as_deref() == Some("ReadonlyArray");
     if let Some(symbol) = binder
         .get_symbol_with_libs(sym_id, &[])
         .filter(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_PARAMETER))
@@ -237,7 +246,14 @@ pub(crate) fn lib_def_id_from_node(
         // name-verified against that binder's symbol name so a raw-id
         // collision with another lib binder cannot answer with an unrelated
         // def.
-        return Some(ctx.get_or_create_def_id_for_symbol_name(sym_id, &symbol.escaped_name));
+        let d = ctx.get_or_create_def_id_for_symbol_name(sym_id, &symbol.escaped_name);
+        if dbg {
+            tracing::warn!(target: "tsz_checker::lib_def_collision", branch = "node_typeparam",
+                sym = sym_id.0, sym_name = ?dbg_sym_name, entity = ?dbg_entity, def = d.0,
+                resolved = ?ctx.definition_store.get(d).map(|i| ctx.types.resolve_atom(i.name)),
+                "lib_def_id_from_node");
+        }
+        return Some(d);
     }
 
     if let Some(name) = entity_name_text_from_decl_arenas(node_idx, decl_arenas, fallback_arena) {
@@ -248,17 +264,44 @@ pub(crate) fn lib_def_id_from_node(
             .next()
             .unwrap_or(&name);
         if let Some(def_id) = ctx.actual_lib_def_id_for_bare_name(expected_name) {
+            if dbg {
+                tracing::warn!(target: "tsz_checker::lib_def_collision", branch = "entity_actual_lib",
+                    sym = sym_id.0, entity = ?dbg_entity, def = def_id.0,
+                    resolved = ?ctx.definition_store.get(def_id).map(|i| ctx.types.resolve_atom(i.name)),
+                    "lib_def_id_from_node");
+            }
             return Some(def_id);
         }
-        return Some(ctx.get_canonical_lib_def_id(expected_name, sym_id));
+        let d = ctx.get_canonical_lib_def_id(expected_name, sym_id);
+        if dbg {
+            tracing::warn!(target: "tsz_checker::lib_def_collision", branch = "entity_get_canonical",
+                sym = sym_id.0, entity = ?dbg_entity, def = d.0,
+                resolved = ?ctx.definition_store.get(d).map(|i| ctx.types.resolve_atom(i.name)),
+                "lib_def_id_from_node");
+        }
+        return Some(d);
     }
 
     // No syntactic name available; verify against the owning binder's symbol
     // name instead of trusting the raw-id resolution.
     if let Some(symbol) = binder.get_symbol_with_libs(sym_id, &[]) {
-        return Some(ctx.get_or_create_def_id_for_symbol_name(sym_id, &symbol.escaped_name));
+        let d = ctx.get_or_create_def_id_for_symbol_name(sym_id, &symbol.escaped_name);
+        if dbg {
+            tracing::warn!(target: "tsz_checker::lib_def_collision", branch = "symbol_name_fallback",
+                sym = sym_id.0, sym_name = ?dbg_sym_name, def = d.0,
+                resolved = ?ctx.definition_store.get(d).map(|i| ctx.types.resolve_atom(i.name)),
+                "lib_def_id_from_node");
+        }
+        return Some(d);
     }
-    Some(ctx.get_lib_def_id(sym_id))
+    let d = ctx.get_lib_def_id(sym_id);
+    if dbg {
+        tracing::warn!(target: "tsz_checker::lib_def_collision", branch = "raw_get_lib_def_id",
+            sym = sym_id.0, def = d.0,
+            resolved = ?ctx.definition_store.get(d).map(|i| ctx.types.resolve_atom(i.name)),
+            "lib_def_id_from_node");
+    }
+    Some(d)
 }
 
 /// Resolve a `NodeIndex` directly to a `DefId` via lib-context binders.
