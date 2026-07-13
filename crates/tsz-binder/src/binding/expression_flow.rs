@@ -802,6 +802,24 @@ impl BinderState {
                     return;
                 }
             }
+            // In JS files, a nested object chain (`a.b.…x.p = e`, `obj_key` has a
+            // dot) declares an expando member only when the immediate base link
+            // (`a.b.…x`) is itself an assignment-declared expando.
+            // `Object.defineProperty(root, 'seg', …)` never records into
+            // `expando_properties`, so a defineProperty-only base does not
+            // qualify — tsc types it as `{}` and reports TS2339 on the nested
+            // write. `prototype` chains are exempt: `prototype` is a built-in
+            // member handled by the dedicated prototype-expando paths.
+            if is_js_like_source
+                && !obj_key.split('.').any(|segment| segment == "prototype")
+                && let Some((parent_key, member_name)) = obj_key.rsplit_once('.')
+                && !self
+                    .expando_properties
+                    .get(parent_key)
+                    .is_some_and(|members| members.contains(member_name))
+            {
+                return;
+            }
             // Nearest function-like/module container, `NONE` for the source
             // file itself (blocks and loop/if heads are transparent).
             fn nearest_expando_container(arena: &NodeArena, start: NodeIndex) -> NodeIndex {
@@ -875,6 +893,22 @@ impl BinderState {
                     && (init_node.kind == syntax_kind_ext::CLASS_EXPRESSION
                         || init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION));
             if is_expando_init {
+                // Mirror the function-root branch: in a JS file a nested chain
+                // declares its member only when the immediate base link is an
+                // assignment-declared expando. This blocks
+                // `Object.defineProperty(root, 'seg', …)` bases, which tsc types
+                // as `{}` and rejects the nested write with TS2339. `prototype`
+                // chains are exempt (dedicated prototype-expando handling).
+                if is_js_like_source
+                    && !obj_key.split('.').any(|segment| segment == "prototype")
+                    && let Some((parent_key, member_name)) = obj_key.rsplit_once('.')
+                    && !self
+                        .expando_properties
+                        .get(parent_key)
+                        .is_some_and(|members| members.contains(member_name))
+                {
+                    return;
+                }
                 Arc::make_mut(&mut self.expando_properties)
                     .entry(obj_key)
                     .or_default()
