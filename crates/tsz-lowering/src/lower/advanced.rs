@@ -760,24 +760,43 @@ impl TypeLowering<'_> {
                 if let Some(scoped_name) = self.scoped_identifier_name_text(node_idx)
                     && let Some(def_id) = self.resolve_def_id_by_name(&scoped_name)
                 {
+                    // TEMP FlatArray-collision probe (remove after diagnosis).
+                    if name == "FlatArray" {
+                        tracing::warn!(target: "tsz_flatarray_probe", prefer_name = true, branch = "pn_scoped_name", ?def_id, "FlatArray base def resolved (construction)");
+                    }
                     return self.lower_lazy_def_reference(def_id);
                 }
                 if let Some(def_id) = self.resolve_def_id_by_name(name) {
+                    if name == "FlatArray" {
+                        tracing::warn!(target: "tsz_flatarray_probe", prefer_name = true, branch = "pn_name", ?def_id, "FlatArray base def resolved (construction)");
+                    }
                     return self.lower_lazy_def_reference(def_id);
                 }
                 if let Some(def_id) = self.resolve_def_id(node_idx) {
+                    if name == "FlatArray" {
+                        tracing::warn!(target: "tsz_flatarray_probe", prefer_name = true, branch = "pn_node", ?def_id, "FlatArray base def resolved (construction)");
+                    }
                     return self.lower_lazy_def_reference(def_id);
                 }
             } else {
                 if let Some(def_id) = self.resolve_def_id(node_idx) {
+                    if name == "FlatArray" {
+                        tracing::warn!(target: "tsz_flatarray_probe", prefer_name = false, branch = "alt_node", ?def_id, "FlatArray base def resolved (construction)");
+                    }
                     return self.lower_lazy_def_reference(def_id);
                 }
                 if let Some(scoped_name) = self.scoped_identifier_name_text(node_idx)
                     && let Some(def_id) = self.resolve_def_id_by_name(&scoped_name)
                 {
+                    if name == "FlatArray" {
+                        tracing::warn!(target: "tsz_flatarray_probe", prefer_name = false, branch = "alt_scoped_name", ?def_id, "FlatArray base def resolved (construction)");
+                    }
                     return self.lower_lazy_def_reference(def_id);
                 }
                 if let Some(def_id) = self.resolve_def_id_by_name(name) {
+                    if name == "FlatArray" {
+                        tracing::warn!(target: "tsz_flatarray_probe", prefer_name = false, branch = "alt_name", ?def_id, "FlatArray base def resolved (construction)");
+                    }
                     return self.lower_lazy_def_reference(def_id);
                 }
             }
