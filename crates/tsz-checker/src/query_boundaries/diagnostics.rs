@@ -157,7 +157,13 @@ pub(crate) fn generalized_literal_source_for_display(
     source: TypeId,
     target: TypeId,
 ) -> TypeId {
-    if tsz_solver::type_queries::is_literal_type(db, source)
+    // A `never` target keeps the raw literal: tsc renders
+    // `Argument of type '10' is not assignable to parameter of type 'never'`
+    // (the widen-to-base rule only applies when the target could hold SOME
+    // non-singleton type; nothing is assignable to `never`, so widening
+    // would misattribute the failure to the literal's base type).
+    if target != TypeId::NEVER
+        && tsz_solver::type_queries::is_literal_type(db, source)
         && !tsz_solver::type_queries::type_could_have_top_level_singleton_types(db, target)
     {
         tsz_solver::operations::widening::widen_type(db, source)

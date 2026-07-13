@@ -1148,10 +1148,13 @@ impl<'a> CheckerState<'a> {
             /// Fewer than 2 argument-error candidates, or a candidate without
             /// a declared signature: historical flat rendering.
             Flat,
-            /// 2-3 argument-error candidates: one `TS2772` header each.
-            PerOverload,
-            /// 4+ argument-error candidates: one `TS2770` header wrapping only
-            /// the last candidate.
+            /// 2+ argument-error candidates: one `TS2770` header wrapping only
+            /// the last candidate. tsc 7.0.2 (the native tsgo port) renders
+            /// EVERY multi-candidate overload failure this way — the 6.0.x
+            /// per-candidate `Overload {i} of {N}` (TS2772) elaboration for
+            /// 2-3 candidates is unreachable in the pinned compiler (verified
+            /// against the pinned binary across 2/3/4/5-overload calls,
+            /// constructors, duplicates, generics, and union-combined sets).
             LastOverload,
         }
         let shape = if !every_candidate_signed {
@@ -1159,13 +1162,11 @@ impl<'a> CheckerState<'a> {
         } else {
             match chain_candidates.len() {
                 0 | 1 => ChainShape::Flat,
-                2 | 3 => ChainShape::PerOverload,
                 _ => ChainShape::LastOverload,
             }
         };
         let wrapped_candidates: &[&tsz_solver::PendingDiagnostic] = match shape {
             ChainShape::Flat => &[],
-            ChainShape::PerOverload => &chain_candidates,
             ChainShape::LastOverload => &chain_candidates[chain_candidates.len() - 1..],
         };
 
@@ -1176,12 +1177,40 @@ impl<'a> CheckerState<'a> {
         // path — never at the call node: the renderer's display probes climb
         // from their anchor to enclosing initializers and would type the
         // surrounding expression mid-flight.
-        let candidate_chains: Vec<Vec<DiagnosticRelatedInformation>> = wrapped_candidates
+        // Each candidate's reason chain plus whether its applicability failure
+        // HEAD-PROMOTES: exactly as on the single-signature path, a failure
+        // whose top elaboration is a property-level diagnostic
+        // (TS2741/TS2739/TS2740, the `reportUnmatchedProperty` family) renders
+        // that diagnostic directly under the overload header with no
+        // `Argument of type ... is not assignable` wrapper:
+        //   The last overload gave the following error.
+        //     Property 'beta' is missing in type ... .
+        // Decided here, before the type formatter takes its context borrow
+        // (the promotion predicate needs `&mut self`).
+        let candidate_chains: Vec<(Vec<DiagnosticRelatedInformation>, bool)> = wrapped_candidates
             .iter()
             .map(|failure| {
-                self.overload_failure_argument_node(idx, failure)
+                let chain = self
+                    .overload_failure_argument_node(idx, failure)
                     .map(|arg_idx| self.overload_candidate_reason_chain(failure, arg_idx, &span))
-                    .unwrap_or_default()
+                    .unwrap_or_default();
+                let source_target = (failure.code
+                    == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE)
+                    .then(|| match (failure.args.first(), failure.args.get(1)) {
+                        (
+                            Some(&tsz_solver::DiagnosticArg::Type(source)),
+                            Some(&tsz_solver::DiagnosticArg::Type(target)),
+                        ) => Some((source, target)),
+                        _ => None,
+                    })
+                    .flatten();
+                let promoted = chain
+                    .first()
+                    .is_some_and(|line| matches!(line.code, 2741 | 2739 | 2740))
+                    && source_target.is_some_and(|(source, target)| {
+                        self.missing_property_head_promotion_applies(source, target)
+                    });
+                (chain, promoted)
             })
             .collect();
 
@@ -1212,7 +1241,7 @@ impl<'a> CheckerState<'a> {
             }
             RelatedInformationPolicy::OVERLOAD_FAILURES
         } else {
-            for (ordinal, (failure, chain)) in
+            for (ordinal, (failure, (chain, promoted))) in
                 wrapped_candidates.iter().zip(candidate_chains).enumerate()
             {
                 let (header_message, header_code) = if matches!(shape, ChainShape::LastOverload) {
@@ -1244,24 +1273,35 @@ impl<'a> CheckerState<'a> {
                     )
                 };
                 related.push(related_line(&span, header_message, header_code, 0));
-                let pending = self.overload_failure_generalized_pending(failure, &span);
-                let diag = formatter.render(&pending);
-                let diag_span = diag.span.as_ref().unwrap_or(&span);
-                // The candidate's applicability error nests one level under its
-                // TS2772 header; any deeper chain it carries nests below that.
-                related.push(related_line(diag_span, diag.message, diag.code, 1));
-                for nested in &diag.related {
-                    related.push(related_line(
-                        &nested.span,
-                        nested.message.clone(),
-                        0,
-                        nested.depth.saturating_add(2),
-                    ));
-                }
-                // The reason chain nests under the applicability error.
-                for mut line in chain {
-                    line.depth = line.depth.saturating_add(2);
-                    related.push(line);
+                if promoted {
+                    for (position, mut line) in chain.into_iter().enumerate() {
+                        line.depth = if position == 0 {
+                            1
+                        } else {
+                            line.depth.saturating_add(1)
+                        };
+                        related.push(line);
+                    }
+                } else {
+                    let pending = self.overload_failure_generalized_pending(failure, &span);
+                    let diag = formatter.render(&pending);
+                    let diag_span = diag.span.as_ref().unwrap_or(&span);
+                    // The candidate's applicability error nests one level under
+                    // its header; any deeper chain it carries nests below that.
+                    related.push(related_line(diag_span, diag.message, diag.code, 1));
+                    for nested in &diag.related {
+                        related.push(related_line(
+                            &nested.span,
+                            nested.message.clone(),
+                            0,
+                            nested.depth.saturating_add(2),
+                        ));
+                    }
+                    // The reason chain nests under the applicability error.
+                    for mut line in chain {
+                        line.depth = line.depth.saturating_add(2);
+                        related.push(line);
+                    }
                 }
             }
             RelatedInformationPolicy::OVERLOAD_CHAINS

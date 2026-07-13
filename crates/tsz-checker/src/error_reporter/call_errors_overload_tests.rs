@@ -35,25 +35,25 @@ fn(true);
         diag.length, 4,
         "TS2769 should cover only the argument token"
     );
-    assert!(
-        diag.related_information.len() >= 2,
-        "expected overload related info, got: {diag:?}"
-    );
-    // Verify both overload failures are present in the related info.
-    // Note: tsc shows them in declaration order (string, number), but our
-    // current overload resolution may produce them in a different order
-    // depending on the call resolution path taken.
-    let has_string = diag
+    // tsc 7.0.2 renders one TS2770 last-overload header holding only the LAST
+    // argument-error candidate (the number overload); the string candidate
+    // does not appear (differential-verified against the pinned binary).
+    let chain: Vec<(u8, u32, &str)> = diag
         .related_information
         .iter()
-        .any(|info| info.message_text.contains("parameter of type 'string'"));
-    let has_number = diag
-        .related_information
-        .iter()
-        .any(|info| info.message_text.contains("parameter of type 'number'"));
-    assert!(
-        has_string && has_number,
-        "expected both overload failures in related info, got: {diag:?}"
+        .map(|r| (r.depth, r.code, r.message_text.as_str()))
+        .collect();
+    assert_eq!(
+        chain,
+        vec![
+            (0, 2770, "The last overload gave the following error."),
+            (
+                1,
+                2345,
+                "Argument of type 'boolean' is not assignable to parameter of type 'number'."
+            ),
+        ],
+        "expected the last-overload chain, got: {diag:?}"
     );
 }
 

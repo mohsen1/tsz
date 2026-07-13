@@ -1,27 +1,23 @@
-//! Regression tests for the relation failure-reason sub-chain nested under each
-//! candidate's argument line in a TS2769 ("No overload matches this call")
-//! elaboration.
+//! Regression tests for the relation failure-reason sub-chain nested under the
+//! last candidate's argument line in a TS2769 ("No overload matches this
+//! call") elaboration.
 //!
-//! When 2-3 candidates fail argument checking, tsc wraps each candidate in a
-//! depth-0 `Overload N of M, '<signature>', gave the following error.` (TS2772)
-//! header with the candidate's `Argument of type … is not assignable …`
+//! tsc 7.0.2 wraps every multi-candidate failure in a single depth-0
+//! `The last overload gave the following error.` (TS2770) header with the LAST
+//! argument-error candidate's `Argument of type … is not assignable …`
 //! (TS2345) line nested one level beneath it. When that argument mismatch has
 //! an elaborable relation failure reason (e.g. a contravariant
 //! callback-parameter incompatibility), tsc nests the full reason chain under
 //! the argument line — the same `checkTypeRelatedToAndOptionallyElaborate`
 //! chain the single-signature TS2345 path renders
 //! (`getSignatureApplicabilityError` reuses the single-signature relation
-//! elaboration). Previously tsz rendered each candidate from a bare
-//! two-argument solver diagnostic and dropped the reason chain, so an
-//! overloaded callback mismatch printed only the flat `Argument of type … is
-//! not assignable …` line while the identical single-signature call printed
-//! the nested `Types of parameters 'a' and 'x' are incompatible.` sub-chain.
+//! elaboration).
 //!
-//! The fix routes each candidate's argument failure through the shared
-//! `related_from_failure_reason` gateway (owner:
-//! `crates/tsz-checker/src/error_reporter/call_errors/error_emission.rs`,
-//! `error_no_overload_matches_at`) and re-anchors the chain two nesting levels
-//! beneath the candidate's TS2772 header (header 0, argument line 1, chain 2+).
+//! The chain routes through the shared `related_from_failure_reason` gateway
+//! (owner: `crates/tsz-checker/src/error_reporter/call_errors/error_emission.rs`,
+//! `error_no_overload_matches_at`), anchored two nesting levels beneath the
+//! TS2770 header (header 0, argument line 1, chain 2+). Every expectation is
+//! differential-verified against the pinned tsc 7.0.2 binary.
 
 use crate::test_utils::check_source_diagnostics;
 
@@ -49,11 +45,8 @@ fn overload_related_chain(source: &str) -> Vec<RelatedLine> {
         .collect()
 }
 
-/// Assert the per-candidate TS2772 wrapper shape: every depth-0 entry is an
-/// `Overload N of M, '…', gave the following error.` header, there are at
-/// least two of them (both overloads contribute), and each header is
-/// immediately followed by its depth-1 TS2345 argument line (no interleaving
-/// of the candidates' chains).
+/// Assert the last-overload wrapper shape: exactly one depth-0 `TS2770`
+/// header, immediately followed by its depth-1 `TS2345` argument line.
 fn assert_overload_wrapper_shape(chain: &[RelatedLine]) {
     let header_positions: Vec<usize> = chain
         .iter()
@@ -61,26 +54,22 @@ fn assert_overload_wrapper_shape(chain: &[RelatedLine]) {
         .filter(|(_, (d, _, _))| *d == 0)
         .map(|(i, _)| i)
         .collect();
-    assert!(
-        header_positions.len() >= 2,
-        "both overloads must contribute a depth-0 header line, got: {chain:?}"
+    assert_eq!(
+        header_positions,
+        vec![0],
+        "exactly one depth-0 TS2770 header, got: {chain:?}"
     );
-    for &pos in &header_positions {
-        let (_, code, msg) = &chain[pos];
-        assert!(
-            *code == 2772
-                && msg.starts_with("Overload ")
-                && msg.ends_with("gave the following error."),
-            "each depth-0 entry must be a TS2772 overload header, got: {chain:?}"
-        );
-        let followup = chain.get(pos + 1);
-        assert!(
-            followup.is_some_and(|(depth, code, msg)| *depth == 1
-                && *code == 2345
-                && msg.starts_with("Argument of type")),
-            "each TS2772 header must be directly followed by its depth-1 TS2345 argument line, got: {chain:?}"
-        );
-    }
+    let (_, code, msg) = &chain[0];
+    assert!(
+        *code == 2770 && msg == "The last overload gave the following error.",
+        "the depth-0 entry must be the TS2770 last-overload header, got: {chain:?}"
+    );
+    assert!(
+        chain.get(1).is_some_and(|(depth, code, msg)| *depth == 1
+            && *code == 2345
+            && msg.starts_with("Argument of type")),
+        "the header must be directly followed by its depth-1 TS2345 argument line, got: {chain:?}"
+    );
 }
 
 /// Assert the contravariant callback-parameter sub-chain nests beneath a
@@ -95,11 +84,13 @@ fn assert_contravariant_nesting(chain: &[RelatedLine], param_frame: &str) {
         chain
             .iter()
             .any(|(depth, _, msg)| *depth >= 2 && msg == param_frame),
-        "expected the nested parameter-incompatibility frame `{param_frame}` under a candidate's argument line, got: {chain:?}"
+        "expected the nested parameter-incompatibility frame `{param_frame}` under the last candidate's argument line, got: {chain:?}"
     );
+    // The shown candidate is the LAST overload (the number-typed callback),
+    // so the contravariant leaf names `number`.
     assert!(
         chain.iter().any(|(depth, _, msg)| *depth >= 3
-            && msg == "Type 'string' is not assignable to type 'boolean'."),
+            && msg == "Type 'number' is not assignable to type 'boolean'."),
         "expected the contravariant leaf under the parameter frame, got: {chain:?}"
     );
 }
@@ -184,13 +175,22 @@ save(partial);
 "#,
     );
 
-    // At least one candidate nests a missing-property reason (TS2741)
-    // beneath its argument line instead of leaving a bare argument line.
-    assert!(
+    // The missing-property reason HEAD-PROMOTES: it replaces the argument
+    // line directly under the TS2770 header (tsc renders no
+    // `Argument of type ...` wrapper for this shape).
+    assert_eq!(
         chain
             .iter()
-            .any(|(depth, _, msg)| *depth >= 2 && msg.contains("is missing in type")),
-        "expected a nested missing-property reason under a candidate's argument line, got: {chain:?}"
+            .map(|(depth, _, msg)| (*depth, msg.as_str()))
+            .collect::<Vec<_>>(),
+        vec![
+            (0, "The last overload gave the following error."),
+            (
+                1,
+                "Property 'id' is missing in type '{ tag: string; }' but required in type 'WithBoth'."
+            ),
+        ],
+        "expected the promoted missing-property reason directly under the header, got: {chain:?}"
     );
 }
 
@@ -216,7 +216,7 @@ f(true);
     assert!(
         chain.iter().any(|(depth, _, msg)| *depth == 1
             && msg
-                == "Argument of type 'boolean' is not assignable to parameter of type 'number'."),
-        "expected the widened boolean argument line against the number overload, got: {chain:?}"
+                == "Argument of type 'boolean' is not assignable to parameter of type 'string'."),
+        "expected the widened boolean argument line against the LAST (string) overload, got: {chain:?}"
     );
 }
