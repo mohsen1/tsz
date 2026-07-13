@@ -17,15 +17,12 @@ pub(super) fn handle_clap_error(err: clap::Error, args: &[OsString]) -> Result<(
                 println!("error TS5023: Unknown compiler option.");
             } else {
                 for flag in &unknown_flags {
-                    // Try to find a close match for TS5025
-                    if let Some(suggestion) = find_closest_option(flag) {
-                        let suggestion_name = suggestion.strip_prefix("--").unwrap_or(suggestion);
-                        println!(
-                            "error TS5025: Unknown compiler option '{flag}'. Did you mean '{suggestion_name}'?"
-                        );
-                    } else {
-                        println!("error TS5023: Unknown compiler option '{flag}'.");
-                    }
+                    // tsc 7.0.2 (native) reports every unknown option as a
+                    // bare TS5023 — the TS5025 "Did you mean" suggestion was
+                    // dropped (oracle: `tsc --targett esnext` and
+                    // `tsc --tagret esnext` both emit TS5023 with no
+                    // suggestion). Match it.
+                    println!("error TS5023: Unknown compiler option '{flag}'.");
                 }
             }
             std::process::exit(1);
@@ -348,59 +345,3 @@ pub(super) const KNOWN_TSC_OPTIONS: &[&str] = &[
     "--watchDirectory",
     "--watchFile",
 ];
-
-/// Compute Levenshtein edit distance between two strings (case-insensitive).
-fn edit_distance(a: &str, b: &str) -> usize {
-    let a_lower = a.to_lowercase();
-    let b_lower = b.to_lowercase();
-    let a_chars: Vec<char> = a_lower.chars().collect();
-    let b_chars: Vec<char> = b_lower.chars().collect();
-    let m = a_chars.len();
-    let n = b_chars.len();
-
-    let mut dp = vec![vec![0usize; n + 1]; m + 1];
-    for (i, row) in dp.iter_mut().enumerate().take(m + 1) {
-        row[0] = i;
-    }
-    for (j, val) in dp[0].iter_mut().enumerate().take(n + 1) {
-        *val = j;
-    }
-    for i in 1..=m {
-        for j in 1..=n {
-            let cost = if a_chars[i - 1] == b_chars[j - 1] {
-                0
-            } else {
-                1
-            };
-            dp[i][j] = (dp[i - 1][j] + 1)
-                .min(dp[i][j - 1] + 1)
-                .min(dp[i - 1][j - 1] + cost);
-        }
-    }
-    dp[m][n]
-}
-
-/// Find the closest known tsc option to the given unknown flag.
-/// Returns `Some(suggestion)` if a reasonably close match exists (edit distance <= 3).
-fn find_closest_option(unknown: &str) -> Option<&'static str> {
-    let mut best: Option<(&str, usize)> = None;
-    for &known in KNOWN_TSC_OPTIONS {
-        let dist = edit_distance(unknown, known);
-        if let Some((_, best_dist)) = best {
-            if dist < best_dist {
-                best = Some((known, dist));
-            }
-        } else {
-            best = Some((known, dist));
-        }
-    }
-
-    // Only suggest if the distance is small enough to be a plausible typo.
-    // tsc uses a threshold proportional to the option name length.
-    // We use max(unknown_len, candidate_len) * 0.4 as the cutoff, with a minimum of 1.
-    best.and_then(|(name, dist)| {
-        let max_len = unknown.len().max(name.len());
-        let threshold = (max_len * 2 / 5).max(1); // ~40% of the longer name
-        if dist <= threshold { Some(name) } else { None }
-    })
-}

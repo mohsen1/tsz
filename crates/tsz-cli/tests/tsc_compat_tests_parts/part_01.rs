@@ -635,18 +635,21 @@ fn unknown_flag_ts5023_format() {
 
 #[test]
 fn unknown_flag_ts5025_suggestion_format() {
+    // Oracle-adjudicated (tsc 7.0.2): the native compiler dropped the TS5025
+    // "Did you mean" suggestion — every unknown option is a bare TS5023
+    // (`tsc --strct` emits `error TS5023: Unknown compiler option '--strct'.`).
     let temp = TempDir::new("unknown_flag_ts5025").expect("temp dir");
-    // --strct is close to --strict, should trigger TS5025 with suggestion
     let (code, output) =
         run_tsz_with_exit_code(&temp.path, &["--strct"]).expect("tsz binary not found");
 
-    assert_eq!(
-        code, 1,
-        "Expected exit code 1 for unknown flag with suggestion, got {code}"
+    assert_eq!(code, 1, "Expected exit code 1 for unknown flag, got {code}");
+    assert!(
+        output.contains("error TS5023: Unknown compiler option '--strct'."),
+        "Expected the bare TS5023 diagnostic (7.0.2 parity), got:\n{output}"
     );
     assert!(
-        output.contains("error TS5025: Unknown compiler option '--strct'. Did you mean 'strict'?"),
-        "Expected TS5025 diagnostic with suggestion, got:\n{output}"
+        !output.contains("TS5025"),
+        "tsc 7.0.2 emits no TS5025 suggestion, got:\n{output}"
     );
 }
 
