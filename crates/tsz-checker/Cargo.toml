@@ -221,6 +221,10 @@ path = "tests/mapped_type_diagnostic_display_tests.rs"
 name = "cross_file_lib_generic_heritage_tests"
 path = "tests/cross_file_lib_generic_heritage_tests.rs"
 [[test]]
+name = "lib_interface_augmentation_heritage_fold_tests"
+path = "tests/lib_interface_augmentation_heritage_fold_tests.rs"
+
+[[test]]
 name = "lib_heritage_cycle_dom_tests"
 path = "tests/lib_heritage_cycle_dom_tests.rs"
 [[test]]
