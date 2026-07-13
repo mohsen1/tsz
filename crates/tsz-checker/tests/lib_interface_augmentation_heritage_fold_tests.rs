@@ -1,29 +1,31 @@
 //! Regression: declaration-merging a user `interface` into an existing lib
-//! interface must not corrupt unrelated lib interfaces' heritage folds.
+//! interface must not corrupt unrelated lib interfaces' member/heritage
+//! resolution.
 //!
 //! Rule under test:
 //!
 //! > When a program declaration-merges a user `interface X {}` into a lib
-//! > interface `X`, the merge hoists lib globals into the primary binder's
-//! > `file_locals`. A later lib type-name reference (e.g. `Array<string>` in
-//! > `RegExpMatchArray extends Array<string>`, or `FlatArray` inside
-//! > `Array.flat`) must still resolve to its own lib def. tsc resolves it; tsz
-//! > previously canonicalized the reference through a binder-relative
-//! > `SymbolId`, and because every lib-binder symbol shares the `u32::MAX`
-//! > declaration-file sentinel, a raw `SymbolId -> DefId` lookup answered with
-//! > an UNRELATED lib def whose raw index collided (`FlatArray -> eval`,
-//! > `ReadonlyArray -> isNaN`, and the whole `Array<string>` numeric-index /
-//! > `map` / `length` surface dropped). The fix keys
-//! > `get_canonical_lib_def_id` on the collision-free `DefinitionStore` name
-//! > index instead of the raw canonical `SymbolId`.
+//! > interface `X` (a bare global `interface Error {}` or a
+//! > `declare global { interface Error {} }`), lib globals are hoisted into the
+//! > primary binder's `file_locals`. A later lib type-name reference — e.g.
+//! > `Array<string>` in `RegExpMatchArray extends Array<string>`, or
+//! > `FlatArray`/`ReadonlyArray` inside `Array.flat`/`Array.flatMap` — must
+//! > still resolve to its own lib def. tsc resolves it; tsz previously
+//! > canonicalized the reference through a binder-relative `SymbolId`, and
+//! > because every lib-binder symbol shares the `u32::MAX` declaration-file
+//! > sentinel, the raw `SymbolId -> DefId` lookup answered with an UNRELATED
+//! > lib def whose raw index collided (`FlatArray -> eval`,
+//! > `ReadonlyArray -> isNaN`), dropping the `Array<string>` numeric-index /
+//! > `map` / `length` surface from `RegExpMatchArray`'s heritage fold. The fix
+//! > keys `get_canonical_lib_def_id` on the collision-free `DefinitionStore`
+//! > name index, and name-verifies the raw fallback for the early window (the
+//! > `register_boxed_types` `Array` lowering) before the referenced defs
+//! > register.
 //!
 //! The trigger is *structural* (any user interface merging into any lib
 //! interface), not name-bound: the cases below vary the merged binder name and
-//! include a fresh (non-lib) control, so the behavior cannot be a fixture-name
-//! fast path. All cases run through the multi-file pipeline (`set_all_binders`
-//! → name-first lib lowering), which is the configuration where the collision
-//! surfaced; the single-file libs harness never builds the cross-file index and
-//! so would not exercise the path.
+//! include a control that never merges, so the behavior cannot be a
+//! fixture-name fast path.
 
 use tsz_checker::context::{CheckerOptions, ScriptTarget};
 use tsz_checker::test_utils::{check_multi_file_with_libs, load_default_lib_files};
@@ -41,11 +43,11 @@ fn check(source: &str) -> Vec<Diagnostic> {
     check_multi_file_with_libs(&[("test.ts", source)], "test.ts", options(), &libs)
 }
 
-/// Diagnostic codes emitted when the `RegExpMatchArray -> Array<string>`
-/// heritage fold is dropped: `m[1]` loses the numeric index signature
-/// (TS7053), `m.map` / `m.length` lose the inherited members (TS2339, with a
-/// downstream TS7006 on the now-untyped callback parameter), and the folded
-/// element type no longer matches its annotation (TS2322).
+/// Codes emitted when the `RegExpMatchArray -> Array<string>` heritage fold is
+/// dropped by the collision: `m[1]` loses the numeric index signature (TS7053),
+/// `m.map` / `m.length` lose the inherited members (TS2339, with a downstream
+/// TS7006 on the now-untyped callback parameter), and the folded element type
+/// no longer matches its annotation (TS2322).
 const FOLD_LOSS_CODES: &[u32] = &[7053, 2339, 7006, 2322];
 
 fn fold_loss_offenders(diags: &[Diagnostic]) -> Vec<(u32, String)> {
@@ -56,17 +58,18 @@ fn fold_loss_offenders(diags: &[Diagnostic]) -> Vec<(u32, String)> {
         .collect()
 }
 
-/// The `String.prototype.match` result is `RegExpMatchArray | null`, and
+/// `String.prototype.match` returns `RegExpMatchArray | null`, and
 /// `RegExpMatchArray extends Array<string>`. Narrowed to `RegExpMatchArray`,
 /// its Array heritage must fold in: the numeric index signature (so `m[1]` is
 /// `string`, not TS7053) and `map` / `length` (so they resolve, not TS2339).
-/// A bare `interface Error { extra?: number }` merges into the lib `Error`,
-/// which used to corrupt this unrelated fold.
+/// A `declare global { interface Error {} }` merges into the lib `Error`, which
+/// used to corrupt this unrelated fold.
 #[test]
 fn lib_interface_merge_keeps_regexp_match_array_heritage() {
     let diags = check(
         r#"
-interface Error { extra?: number }
+export {};
+declare global { interface Error { extra?: number } }
 const m = "x".match(/x/);
 if (m) {
     const first: string = m[1];
@@ -92,7 +95,8 @@ if (m) {
 fn different_lib_interface_merge_keeps_heritage() {
     let diags = check(
         r#"
-interface String { customFlag?: boolean }
+export {};
+declare global { interface String { customFlag?: boolean } }
 const m = "y".match(/y/);
 if (m) {
     const first: string = m[0];
@@ -109,14 +113,15 @@ if (m) {
     );
 }
 
-/// Control: augmenting a *fresh* (non-lib) interface never triggered the merge
+/// Control: augmenting a *fresh* (non-lib) interface never triggers the merge
 /// hoist, so it was always clean. Keeping it green guards against a fix that
 /// only suppresses the symptom for known lib names.
 #[test]
 fn fresh_non_lib_interface_stays_clean() {
     let diags = check(
         r#"
-interface MyOwnFreshThing { extra?: number }
+export {};
+declare global { interface MyOwnFreshThing { extra?: number } }
 const m = "z".match(/z/);
 if (m) {
     const first: string = m[1];

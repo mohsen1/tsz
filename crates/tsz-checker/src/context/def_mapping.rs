@@ -650,7 +650,8 @@ impl CheckerContext<'_> {
     pub fn get_canonical_lib_def_id(&self, name: &str, per_lib_sym_id: SymbolId) -> DefId {
         let canonical_sym = self.canonical_lib_sym_id(name, per_lib_sym_id);
         let atom = self.types.intern_string(name);
-        self.definition_store
+        if let Some(def_id) = self
+            .definition_store
             .find_defs_by_name(atom)
             .and_then(|defs| {
                 defs.into_iter()
@@ -675,7 +676,31 @@ impl CheckerContext<'_> {
                             .unwrap_or_default()
                     })
             })
-            .unwrap_or_else(|| self.get_lib_def_id(canonical_sym))
+        {
+            return def_id;
+        }
+
+        // The name index does not yet hold a lib def for `name` (e.g. the first
+        // `Array` lowering in `register_boxed_types` resolves `FlatArray` /
+        // `ReadonlyArray` inside member signatures before those interfaces'
+        // own defs register). `get_lib_def_id` then resolves `canonical_sym`
+        // through the raw `SymbolId -> DefId` path; because every lib-binder
+        // symbol carries the `u32::MAX` declaration-file sentinel, a
+        // merged/binder-relative `canonical_sym` (chosen from the primary
+        // binder's `file_locals` once a user interface declaration-merges into
+        // a lib interface) resolves to an UNRELATED lib def whose raw index
+        // collides — `FlatArray -> eval`, `ReadonlyArray -> isNaN`. Trust the
+        // raw result only when it actually names `name`; on a sentinel collision
+        // resolve name-verified against the real lib symbol (found by the
+        // collision-free lib-context name scan) so the wrong def cannot leak.
+        let raw = self.get_lib_def_id(canonical_sym);
+        if self.def_name_matches(raw, name).unwrap_or(false) {
+            return raw;
+        }
+        if let Some(real_lib_sym) = self.actual_lib_global_type_symbol_id(name) {
+            return self.get_or_create_def_id_for_symbol_name(real_lib_sym, name);
+        }
+        raw
     }
 
     /// Resolve a lib symbol's `DefId`, verifying the def actually names
