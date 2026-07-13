@@ -279,7 +279,11 @@ fn compile_emit_bom_prefixes_output_files() {
 }
 
 #[test]
-fn compile_single_source_amd_outfile_emits_bundle() {
+fn compile_single_source_amd_outfile_reports_removed_options() {
+    // TS 7.0.2 removed `module: amd` (TS5108) and `outFile` (TS5102), and the
+    // default `moduleResolution: bundler` is incompatible with AMD (TS5095,
+    // anchored at the "compilerOptions" key since the option is defaulted).
+    // No bundle is emitted.
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -303,33 +307,27 @@ fn compile_single_source_amd_outfile_emits_bundle() {
         compile(&args, base).expect("compile should succeed")
     });
 
-    assert!(result.diagnostics.is_empty());
+    let mut codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    codes.sort_unstable();
+    assert_eq!(
+        codes,
+        [5095, 5102, 5108],
+        "expected bundler-conflict + removed-option rejections: {:?}",
+        result.diagnostics
+    );
     assert!(
-        base.join("dist/bundle.js").is_file(),
-        "expected outFile bundle, emitted: {:?}",
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.message_text
+                == "Option 'module=AMD' has been removed. Please remove it from your configuration."),
+        "expected the module=AMD removal message: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !base.join("dist").exists() && !base.join("main.js").exists(),
+        "removed-option config must not emit, emitted: {:?}",
         result.emitted_files
-    );
-    assert!(
-        !base.join("main.js").exists(),
-        "single-source outFile should not emit per-file main.js"
-    );
-    let bundle = std::fs::read_to_string(base.join("dist/bundle.js")).expect("read bundle");
-    // tsc does NOT prepend a top-level `"use strict";` to AMD outFile bundles
-    // when every chunk is a module wrapped in `define(...)` — each chunk
-    // emits its own strict directive inside the wrapper callback. The
-    // top-level prologue is reserved for bundles that include at least one
-    // script chunk (a non-module file) which has no enclosing wrapper.
-    assert!(
-        bundle.starts_with("define(\"main\","),
-        "AMD all-modules outFile bundle should start with the `define(...)` wrapper, got:\n{bundle}"
-    );
-    assert!(
-        bundle.contains("    \"use strict\";"),
-        "expected the inner strict prologue inside the AMD wrapper, got:\n{bundle}"
-    );
-    assert!(
-        bundle.contains("define(\"main\", [\"require\", \"exports\"], function"),
-        "expected named AMD outFile wrapper, got:\n{bundle}"
     );
 }
 
@@ -446,7 +444,10 @@ fn compile_module_none_outfile_cache_keeps_rejection_stable() {
 }
 
 #[test]
-fn compile_single_source_amd_declaration_outfile_wraps_module_name() {
+fn compile_single_source_amd_declaration_outfile_reports_removed_options() {
+    // Declaration-only variant of the AMD outFile pin: TS 7.0.2 rejects the
+    // removed `module: amd`/`outFile` pair (plus the TS5095 bundler default
+    // conflict) before any declaration bundling happens.
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -471,19 +472,26 @@ fn compile_single_source_amd_declaration_outfile_wraps_module_name() {
         compile(&args, base).expect("compile should succeed")
     });
 
-    assert!(result.diagnostics.is_empty());
-    let bundle =
-        std::fs::read_to_string(base.join("dist/bundle.d.ts")).expect("read declaration bundle");
+    let mut codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    codes.sort_unstable();
     assert_eq!(
-        bundle,
-        r#"declare module "index" {
-    export const value = 1;
-}"#
+        codes,
+        [5095, 5102, 5108],
+        "expected bundler-conflict + removed-option rejections: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !base.join("dist").exists(),
+        "removed-option config must not emit a declaration bundle, emitted: {:?}",
+        result.emitted_files
     );
 }
 
 #[test]
-fn compile_amd_declaration_outfile_uses_source_name_with_dependency_directive() {
+fn compile_amd_declaration_outfile_with_dependency_directive_reports_removed_options() {
+    // An `amd-dependency` triple-slash directive in the source does not
+    // change the outcome: the removed `module: amd`/`outFile` pair is
+    // rejected up front and no declaration bundle is produced.
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -512,15 +520,18 @@ export const value = 1;"#,
         compile(&args, base).expect("compile should succeed")
     });
 
-    assert!(result.diagnostics.is_empty());
-    let bundle =
-        std::fs::read_to_string(base.join("dist/bundle.d.ts")).expect("read declaration bundle");
+    let mut codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    codes.sort_unstable();
     assert_eq!(
-        bundle,
-        r#"/// <amd-dependency name="legacyAlias" path="legacy/module" />
-declare module "index" {
-    export const value = 1;
-}"#
+        codes,
+        [5095, 5102, 5108],
+        "expected bundler-conflict + removed-option rejections: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !base.join("dist").exists(),
+        "removed-option config must not emit a declaration bundle, emitted: {:?}",
+        result.emitted_files
     );
 }
 

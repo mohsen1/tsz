@@ -125,8 +125,8 @@ fn exported_generator_preserves_mixed_literal_yield_union() {
     };
 
     assert!(
-        dts.contains("mix(): Generator<1 | \"s\", void, unknown>"),
-        "mixed literal yield union must be preserved:\n{dts}"
+        dts.contains("mix(): Generator<\"s\" | 1, void, unknown>"),
+        "mixed literal yield union must be preserved (TS7 ranks string literals before number literals):\n{dts}"
     );
 }
 

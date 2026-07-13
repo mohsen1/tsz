@@ -828,8 +828,8 @@ fn positional_file_no_lib_no_emit_returns_from_binary() {
 
     assert_eq!(
         output.status.code(),
-        Some(2),
-        "expected diagnostics-with-no-emit exit\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        Some(1),
+        "expected diagnostics-with-outputs-skipped exit (tsc 7.0.2 exits 1 for noEmit runs with errors)\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     assert!(
         stdout.contains("error TS2318: Cannot find global type 'Array'."),
@@ -852,8 +852,6 @@ fn declaration_emit_expands_foreign_import_mapped_keys_from_nested_package() {
             "rootDir": "r",
             "target": "es2017",
             "module": "commonjs",
-            "moduleResolution": "node",
-            "ignoreDeprecations": "6.0",
             "skipLibCheck": true,
             "strict": true,
             "typeRoots": ["./empty-types"]
@@ -902,6 +900,72 @@ export const x = foo();
     );
 }
 
+/// Adjacent negative case to the mapped-key expansion above: a foreign type
+/// in the mapped VALUE position does get printed, so tsc reports TS2883 for
+/// it even though the key alias from the same nested package stays silent.
+/// Binder and package names differ from the positive case (anti-hardcoding).
+#[test]
+fn declaration_emit_reports_foreign_mapped_value_from_nested_package() {
+    let temp = TempDir::new("foreign_mapped_value").expect("temp dir");
+
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "declaration": true,
+            "emitDeclarationOnly": true,
+            "outDir": "dist",
+            "rootDir": "r",
+            "target": "es2017",
+            "module": "commonjs",
+            "skipLibCheck": true,
+            "strict": true,
+            "typeRoots": ["./empty-types"]
+          },
+          "files": ["r/entry.ts"]
+        }"#,
+    );
+    std::fs::create_dir_all(temp.path.join("empty-types")).expect("empty typeRoots");
+    write_file(
+        &temp.path.join("r/entry.ts"),
+        r#"import { makeTable } from "tablepkg";
+
+export const table = makeTable();
+"#,
+    );
+    write_file(
+        &temp.path.join("r/node_modules/tablepkg/index.d.ts"),
+        r#"export function makeTable(): { [C in import("cols").Col]?: import("cells").CellInfo };
+"#,
+    );
+    write_file(
+        &temp
+            .path
+            .join("r/node_modules/tablepkg/node_modules/cols/index.d.ts"),
+        r#"export type Col = "left" | "right";
+"#,
+    );
+    write_file(
+        &temp
+            .path
+            .join("r/node_modules/tablepkg/node_modules/cells/index.d.ts"),
+        r#"export interface CellInfo { width: number; }
+"#,
+    );
+
+    let (code, output) =
+        run_tsz_with_exit_code(&temp.path, &["-p", "tsconfig.json"]).expect("tsz should run");
+    assert_ne!(code, 0, "tsz should report TS2883, got output:\n{output}");
+    assert!(
+        output.contains("TS2883") && output.contains("CellInfo"),
+        "expected TS2883 for the mapped VALUE position type, got:\n{output}",
+    );
+    assert!(
+        !output.contains("'Col'"),
+        "the key alias must not be reported — keys serialize as property names:\n{output}",
+    );
+}
+
 #[test]
 fn declaration_emit_reports_single_quoted_transitive_import_type() {
     let temp = TempDir::new("single_quoted_transitive_import_type").expect("temp dir");
@@ -916,8 +980,6 @@ fn declaration_emit_reports_single_quoted_transitive_import_type() {
             "rootDir": "r",
             "target": "es2017",
             "module": "commonjs",
-            "moduleResolution": "node",
-            "ignoreDeprecations": "6.0",
             "skipLibCheck": true,
             "strict": true,
             "typeRoots": ["./empty-types"]
@@ -969,8 +1031,6 @@ fn declaration_emit_default_object_assign_reports_namespace_alias_for_default_on
             "rootDir": "r",
             "target": "es2017",
             "module": "commonjs",
-            "moduleResolution": "node",
-            "ignoreDeprecations": "6.0",
             "skipLibCheck": true,
             "strict": true,
             "typeRoots": ["./empty-types"]
@@ -1062,8 +1122,6 @@ fn declaration_emit_preserves_template_literal_type_text_from_dependency() {
             "rootDir": "r",
             "target": "es2017",
             "module": "commonjs",
-            "moduleResolution": "node",
-            "ignoreDeprecations": "6.0",
             "skipLibCheck": true,
             "strict": true,
             "typeRoots": ["./empty-types"]

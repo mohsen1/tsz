@@ -282,86 +282,77 @@ fn jsdoc_dot_generic_type_reference_does_not_cascade_into_qualified_name() {
 
 #[test]
 fn jsdoc_legacy_function_type_with_bare_types_does_not_cascade() {
-    // `function(T1, T2): R` is tsc's JSDoc-legacy function-type form.  tsc
-    // treats the bare types as positional parameters with synthetic `argN`
-    // names (`(arg0: T1, arg1: T2) => R`) and emits only TS8020.  Our parser
-    // must mirror that — emitting TS7051 or TS2300 would be a cascade.
+    // TS 7.0.2 dropped the JSDoc-legacy `function(...)` type recovery:
+    // `function` parses as a plain type-reference identifier and the `(`
+    // re-enters declarator recovery. tsc reports exactly `','` expected at
+    // the `(` and `';'` expected at the second `:` — no TS8020.
     let source = "var g: function(number, number): number = (n, m) => n + m;";
     let (parser, _root) = parse_source(source);
     let diagnostics = parser.get_diagnostics();
 
-    assert!(
-        diagnostics.iter().any(|d| d.code == 8020),
-        "Expected TS8020 for JSDoc legacy function type, got {diagnostics:?}"
-    );
-    assert!(
-        diagnostics
-            .iter()
-            .all(|d| d.code != 17019 && d.code != 17020),
-        "Bare-type parameter list should not trigger postfix/prefix nullable diagnostics, got {diagnostics:?}"
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(
+        codes,
+        vec![1005, 1005],
+        "expected tsc 7.0.2's two TS1005 recoveries, got {diagnostics:?}"
     );
 }
 
 #[test]
 fn jsdoc_legacy_function_type_with_this_binding_preserves_it() {
-    // `function(this: T, string)` — `this:` is a this-binding (index 0), and
-    // the bare `string` should be parsed as the 1-based `arg1: string` so the
-    // resulting call-site arity is 1, matching tsc.
+    // TS 7.0.2: after the TS1005 at `(`, the `(this: number, string)` tail
+    // speculates as arrow-function parameters (`this` is a valid parameter
+    // name), so recovery ends with `'=>' expected` — never TS8020.
     let source = "var f: function(this: number, string): string;";
     let (parser, _root) = parse_source(source);
     let diagnostics = parser.get_diagnostics();
 
-    assert!(
-        diagnostics.iter().any(|d| d.code == 8020),
-        "Expected TS8020 for JSDoc legacy function type, got {diagnostics:?}"
-    );
-    // Only TS8020 should surface.  A cascading TS7051 for the bare `string`
-    // parameter would indicate the parameter lost its type annotation.
-    let unexpected: Vec<_> = diagnostics.iter().filter(|d| d.code != 8020).collect();
-    assert!(
-        unexpected.is_empty(),
-        "JSDoc `function(this: T, X)` should only emit TS8020, got {unexpected:?}"
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(
+        codes,
+        vec![1005, 1005],
+        "expected tsc 7.0.2's `','`/`'=>'` TS1005 pair, got {diagnostics:?}"
     );
 }
 
 #[test]
 fn jsdoc_legacy_function_type_with_new_marker_is_parsed_as_constructor() {
-    // `function(new: R, A)` denotes a constructor type whose return type is R.
-    // Without the `new:` shortcut the parser would model it as a 2-arity
-    // function `(new: R, A)`, which cascades into TS2554 at call sites such
-    // as `new ctor('hi')`.  The parser should only emit TS8020.
+    // TS 7.0.2: `new` is a reserved word, so `(new: number, string)` cannot
+    // be arrow parameters — the parens reparse as a parenthesized expression
+    // whose `new` lacks an operand: `','` expected, `Expression expected`,
+    // then `';'` expected. Never TS8020, never a constructor type.
     let source = "var c: function(new: number, string);";
     let (parser, _root) = parse_source(source);
     let diagnostics = parser.get_diagnostics();
 
-    assert!(
-        diagnostics.iter().any(|d| d.code == 8020),
-        "Expected TS8020 for JSDoc legacy constructor function type, got {diagnostics:?}"
-    );
-    let unexpected: Vec<_> = diagnostics.iter().filter(|d| d.code != 8020).collect();
-    assert!(
-        unexpected.is_empty(),
-        "JSDoc `function(new: R, A)` should only emit TS8020, got {unexpected:?}"
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(
+        codes,
+        vec![1005, 1109, 1005],
+        "expected tsc 7.0.2's paren-expression recovery, got {diagnostics:?}"
     );
 }
 
 #[test]
 fn jsdoc_legacy_constructor_function_suffix_does_not_cascade() {
-    // `function(new: R): T` is still legacy JSDoc syntax. The `new:` marker
-    // already supplies the constructor return type, so the trailing `: T`
-    // should be consumed for recovery but not leak into the outer declaration.
+    // TS 7.0.2 parses `function` as a type-reference identifier and the
+    // reserved `new` rejects the arrow speculation: `','` expected at `(`
+    // and `Expression expected` at the `:` after `new`. tsc additionally
+    // recovers the tail as garbage statements (TS1434/TS1128); tsz's
+    // remaining tail recovery differs there (known gap) — this pin holds the
+    // prefix and the absence of the removed TS8020 path.
     let source = "var c: function(new: number): string;";
     let (parser, _root) = parse_source(source);
     let diagnostics = parser.get_diagnostics();
 
+    let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        diagnostics.iter().any(|d| d.code == 8020),
-        "Expected TS8020 for JSDoc legacy constructor function type, got {diagnostics:?}"
+        codes.starts_with(&[1005, 1109]),
+        "expected the TS1005 + TS1109 recovery prefix, got {diagnostics:?}"
     );
-    let unexpected: Vec<_> = diagnostics.iter().filter(|d| d.code != 8020).collect();
     assert!(
-        unexpected.is_empty(),
-        "JSDoc `function(new: R): T` should only emit TS8020, got {unexpected:?}"
+        !codes.contains(&8020),
+        "the removed TS8020 JSDoc-legacy recovery must not fire, got {diagnostics:?}"
     );
 }
 

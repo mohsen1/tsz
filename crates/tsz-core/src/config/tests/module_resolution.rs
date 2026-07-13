@@ -1,8 +1,8 @@
 //! Module and module-resolution diagnostic tests
-//! (TS6046 enum options, module + resolution defaults, TS5095 / TS5070 /
-//! TS5071 / TS5098 `resolveJsonModule` and `package.json` resolution, TS5102 /
-//! TS5103 `ignoreDeprecations` validation, TS5110, inherited `extends`
-//! anchoring).
+//! (TS6046 enum options, module + resolution defaults, TS5095 bundler
+//! compatibility, TS5098 `package.json` resolution, TS5102 / TS5103
+//! `ignoreDeprecations` validation, TS5108 removed options, TS5110,
+//! inherited `extends` anchoring).
 //!
 //! Split from `config/mod.rs` to keep each file under the 2000-line limit
 //! (§19; ratchet tracked by #8280).
@@ -1269,13 +1269,19 @@ fn test_resolve_compiler_options_check_js_implies_allow_js() {
 }
 
 #[test]
-fn test_ts5070_resolve_json_module_with_classic_module_resolution() {
+fn test_classic_module_resolution_is_rejected_as_removed() {
+    // TS7 removed `moduleResolution: classic`; the TS5070 resolveJsonModule
+    // conflict is never layered on top of the removal.
     let source = r#"{"compilerOptions":{"resolveJsonModule":true,"moduleResolution":"classic"}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&5070),
-        "Expected TS5070 for resolveJsonModule with classic moduleResolution, got: {codes:?}"
+        codes.contains(&5108),
+        "Expected TS5108 for removed classic moduleResolution, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&5070) && !codes.contains(&5071),
+        "TS5070/TS5071 are unreachable in TS7, got: {codes:?}"
     );
 }
 
@@ -1310,43 +1316,55 @@ fn test_resolve_json_module_implied_by_bundler_resolution() {
 }
 
 #[test]
-fn test_ts5070_resolve_json_module_with_amd_module() {
-    // module=amd defaults to moduleResolution=classic
+fn test_amd_module_reports_removal_and_default_bundler_conflict() {
+    // TS7 removed `module: amd` (TS5108) and its default
+    // `moduleResolution: bundler` is incompatible with AMD (TS5095); the old
+    // TS5070 classic-resolution conflict is gone.
     let source = r#"{"compilerOptions":{"resolveJsonModule":true,"module":"amd"}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&5070),
-        "Expected TS5070 for resolveJsonModule with module=amd (implies classic), got: {codes:?}"
+        codes.contains(&5108) && codes.contains(&5095),
+        "Expected TS5108 + TS5095 for module=amd, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&5070) && !codes.contains(&5071),
+        "TS5070/TS5071 are unreachable in TS7, got: {codes:?}"
     );
 }
 
 #[test]
-fn test_ts5071_resolve_json_module_with_system_module() {
-    // module=system without explicit moduleResolution implies classic resolution →
-    // tsc emits TS5070 (not TS5071) because the moduleResolution-based check takes precedence.
+fn test_system_module_reports_removal_and_default_bundler_conflict() {
+    // module=system without explicit moduleResolution: TS5108 for the
+    // removed module kind plus TS5095 for the defaulted bundler resolution.
     let source = r#"{"compilerOptions":{"resolveJsonModule":true,"module":"system"}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&5070),
-        "Expected TS5070 (not TS5071) for resolveJsonModule with module=system (implies classic), got: {codes:?}"
+        codes.contains(&5108) && codes.contains(&5095),
+        "Expected TS5108 + TS5095 for module=system, got: {codes:?}"
     );
     assert!(
-        !codes.contains(&5071),
-        "Should NOT emit TS5071 when effective moduleResolution is classic (TS5070 takes precedence), got: {codes:?}"
+        !codes.contains(&5070) && !codes.contains(&5071),
+        "TS5070/TS5071 are unreachable in TS7, got: {codes:?}"
     );
 }
 
 #[test]
-fn test_ts5071_resolve_json_module_with_system_module_explicit_resolution() {
-    // module=system with explicit non-classic moduleResolution → TS5071 fires
+fn test_system_module_with_explicit_bundler_resolution_reports_both() {
+    // Explicit `moduleResolution: bundler` anchors TS5095 at the option
+    // value instead of the "compilerOptions" key; the outcome is the same
+    // TS5108 + TS5095 pair, never TS5071.
     let source = r#"{"compilerOptions":{"resolveJsonModule":true,"module":"system","moduleResolution":"bundler"}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&5071),
-        "Expected TS5071 for resolveJsonModule with module=system + moduleResolution=bundler, got: {codes:?}"
+        codes.contains(&5108) && codes.contains(&5095),
+        "Expected TS5108 + TS5095 for module=system + explicit bundler, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&5071),
+        "TS5071 is unreachable in TS7, got: {codes:?}"
     );
 }
 

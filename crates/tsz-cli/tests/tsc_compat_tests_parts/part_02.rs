@@ -603,11 +603,10 @@ fn tsc_parity_ts2427_any_alone_still_reported() {
     );
 }
 
-/// Regression for #3908: when `noEmit` comes from tsconfig.json (not the
-/// CLI flag), tsz must exit with `DiagnosticsPresent_OutputsGenerated` (2),
-/// matching tsc. Previously the exit-code branch only consulted the CLI
-/// arg, so config-only `noEmit` fell through to the outputs-skipped path
-/// (1).
+/// tsc 7.0.2 exits `DiagnosticsPresent_OutputsSkipped` (1) when `noEmit`
+/// comes from tsconfig.json and the program has errors: nothing was
+/// written, so the outputs-generated code (2) of the 6.x era no longer
+/// applies. CLI-driven and config-driven `noEmit` agree (companion below).
 #[test]
 fn tsconfig_no_emit_with_errors_exits_outputs_generated() {
     let Some(_) = find_tsz_binary() else {
@@ -629,8 +628,8 @@ fn tsconfig_no_emit_with_errors_exits_outputs_generated() {
         "expected TS2322 diagnostic, got:\n{output}"
     );
     assert_eq!(
-        code, 2,
-        "tsconfig noEmit with errors should exit 2 (DiagnosticsPresent_OutputsGenerated), got {code}\n{output}"
+        code, 1,
+        "tsconfig noEmit with errors should exit 1 (DiagnosticsPresent_OutputsSkipped), got {code}\n{output}"
     );
 }
 
@@ -660,8 +659,8 @@ fn cli_no_emit_with_errors_exits_outputs_generated() {
         "expected TS2322 diagnostic, got:\n{output}"
     );
     assert_eq!(
-        code, 2,
-        "CLI --noEmit with errors should exit 2 (DiagnosticsPresent_OutputsGenerated), got {code}\n{output}"
+        code, 1,
+        "CLI --noEmit with errors should exit 1 (DiagnosticsPresent_OutputsSkipped), got {code}\n{output}"
     );
 }
 

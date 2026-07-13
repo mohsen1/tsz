@@ -94,26 +94,35 @@ fn test_ts6082_not_emitted_without_outfile() {
 }
 
 #[test]
-fn test_ts5071_bundler_implied_resolve_json_module_with_umd() {
-    // moduleResolution: bundler implies resolveJsonModule=true.
-    // Combined with module=umd, this should emit TS5071.
+fn test_bundler_with_umd_module_reports_removal_and_conflict() {
+    // TS7: module=umd is removed (TS5108) and incompatible with bundler
+    // resolution (TS5095); the old bundler-implied-resolveJsonModule TS5071
+    // conflict is unreachable.
     let source = r#"{"compilerOptions":{"moduleResolution":"bundler","module":"umd"}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&5071),
-        "Expected TS5071 for bundler-implied resolveJsonModule with module=umd, got: {codes:?}"
+        codes.contains(&5108) && codes.contains(&5095),
+        "Expected TS5108 + TS5095 for bundler + module=umd, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&5071),
+        "TS5071 is unreachable in TS7, got: {codes:?}"
     );
 }
 
 #[test]
-fn test_ts5071_bundler_implied_resolve_json_module_with_system() {
+fn test_bundler_with_system_module_reports_removal_and_conflict() {
     let source = r#"{"compilerOptions":{"moduleResolution":"bundler","module":"system"}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&5071),
-        "Expected TS5071 for bundler-implied resolveJsonModule with module=system, got: {codes:?}"
+        codes.contains(&5108) && codes.contains(&5095),
+        "Expected TS5108 + TS5095 for bundler + module=system, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&5071),
+        "TS5071 is unreachable in TS7, got: {codes:?}"
     );
 }
 

@@ -406,8 +406,37 @@ impl ReferencedTypeWalkState {
 }
 
 /// The callback is invoked once per unique reachable type (including `root`).
-pub fn walk_referenced_types<F>(types: &dyn TypeDatabase, root: TypeId, mut f: F)
+pub fn walk_referenced_types<F>(types: &dyn TypeDatabase, root: TypeId, f: F)
 where
+    F: FnMut(TypeId),
+{
+    walk_referenced_types_with_policy(types, root, &ChildPolicy::FULL, f);
+}
+
+/// [`walk_referenced_types`] for declaration-emit portability checks
+/// (TS2883 and friends): mapped key positions (`constraint`/`name_type`)
+/// are not treated as references — declaration emit serializes a mapped
+/// type's keys as property names, never as printed type references. Value
+/// positions (`template`) are still walked.
+pub fn walk_declaration_portability_referenced_types<F>(
+    types: &dyn TypeDatabase,
+    root: TypeId,
+    f: F,
+) where
+    F: FnMut(TypeId),
+{
+    walk_referenced_types_with_policy(types, root, &ChildPolicy::DECLARATION_PORTABILITY, f);
+}
+
+/// [`walk_referenced_types`] with an explicit [`ChildPolicy`] selecting which
+/// child positions count as references. The callback is invoked once per
+/// unique reachable type (including `root`).
+pub(crate) fn walk_referenced_types_with_policy<F>(
+    types: &dyn TypeDatabase,
+    root: TypeId,
+    policy: &ChildPolicy,
+    mut f: F,
+) where
     F: FnMut(TypeId),
 {
     let mut pool = WALK_POOL
@@ -437,7 +466,7 @@ where
         let Some(key) = types.lookup(current) else {
             continue;
         };
-        for_each_child(types, &key, |child| stack.push(child));
+        for_each_child_with_policy(types, &key, policy, |child| stack.push(child));
     }
 
     // Return the pool, keeping whichever allocation has the larger visited-set

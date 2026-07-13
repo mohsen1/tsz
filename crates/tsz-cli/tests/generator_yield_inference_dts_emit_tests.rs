@@ -10,7 +10,8 @@
 //! one unique yield type, so it over-widened `yield "x"; yield "y"` to
 //! `Generator<string>` and collapsed mixed operands (`yield "x"; yield 1`) all the
 //! way to `Generator<any>`. These guards pin the corrected behavior against
-//! `tsc` 6.0.2.
+//! `tsc` 7.0.2, whose display rank orders union members independently of the
+//! source yield order.
 //!
 //! Every case uses a distinct generator/binder name so the assertions track the
 //! structural rule, not any identifier (anti-hardcoding gate).
@@ -97,8 +98,8 @@ fn distinct_string_literal_yields_preserve_the_union() {
     };
 
     assert!(
-        dts.contains("greetings(): Generator<\"hi\" | \"bye\", void, unknown>"),
-        "two distinct string-literal yields must stay a literal union:\n{dts}"
+        dts.contains("greetings(): Generator<\"bye\" | \"hi\", void, unknown>"),
+        "two distinct string-literal yields must stay a literal union (TS7 display rank, not source order):\n{dts}"
     );
 }
 

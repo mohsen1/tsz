@@ -275,10 +275,29 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
 
         // Check moduleResolution/module compatibility (TS5095)
         // `moduleResolution: "bundler"` requires `module` to be "preserve" or ES2015+.
-        if let Some(serde_json::Value::String(mr_value)) = compiler_opts.get("moduleResolution") {
-            let mr_normalized =
-                normalize_enum_option_value(mr_value.split(',').next().unwrap_or(mr_value));
-            if mr_normalized == "bundler" {
+        // In TS7 `bundler` is also the default resolution, so the check applies
+        // when the option is absent; tsc then anchors the diagnostic at the
+        // "compilerOptions" key instead of an explicit option value.
+        {
+            let mr_explicit = if let Some(serde_json::Value::String(mr_value)) =
+                compiler_opts.get("moduleResolution")
+            {
+                Some((
+                    normalize_enum_option_value(mr_value.split(',').next().unwrap_or(mr_value)),
+                    mr_value.len() as u32,
+                ))
+            } else {
+                None
+            };
+            let bundler_effective = match &mr_explicit {
+                Some((mr_normalized, _)) => mr_normalized == "bundler",
+                // moduleResolution not set — TS7 defaults to bundler. Module
+                // kinds that imply their own resolution (node16/nodenext/...)
+                // are all in the compatible list below, so treating the
+                // default as bundler cannot misfire for them.
+                None => true,
+            };
+            if bundler_effective {
                 let module_ok = if let Some(serde_json::Value::String(mod_value)) =
                     compiler_opts.get("module")
                 {
@@ -309,8 +328,18 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                     true
                 };
                 if !module_ok {
-                    let start = find_value_offset_in_source(&stripped, "moduleResolution");
-                    let value_len = mr_value.len() as u32 + 2; // include quotes
+                    // Explicit option → point at its value; defaulted option →
+                    // point at the "compilerOptions" key (matching tsc).
+                    let (start, value_len) = if let Some((_, raw_len)) = mr_explicit {
+                        (
+                            find_value_offset_in_source(&stripped, "moduleResolution"),
+                            raw_len + 2, // include quotes
+                        )
+                    } else {
+                        let search = "\"compilerOptions\"";
+                        let s = stripped.find(search).map_or(0, |p| p as u32);
+                        (s, search.len() as u32)
+                    };
                     let msg = "Option 'bundler' can only be used when 'module' is set to 'preserve', 'commonjs', or 'es2015' or later.".to_string();
                     diagnostics.push(Diagnostic::error(
                         file_path,
@@ -849,88 +878,11 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             ));
         }
 
-        // TS5070: Option '--resolveJsonModule' cannot be specified when 'moduleResolution' is set to 'classic'.
-        // TS5071: Option '--resolveJsonModule' cannot be specified when 'module' is set to 'none', 'system', or 'umd'.
-        // Note: moduleResolution: bundler implies resolveJsonModule=true even when not explicitly set.
-        let resolve_json_explicit = option_is_truthy(compiler_opts.get("resolveJsonModule"));
-        let resolve_json_implied_by_bundler = !resolve_json_explicit
-            && compiler_opts.get("resolveJsonModule").is_none()
-            && matches!(
-                compiler_opts.get("moduleResolution").and_then(|v| v.as_str()).map(normalize_option),
-                Some(ref mr) if mr == "bundler"
-            );
-        if resolve_json_explicit || resolve_json_implied_by_bundler {
-            // Compute effective moduleResolution from raw JSON options
-            let effective_mr = if let Some(serde_json::Value::String(mr_value)) =
-                compiler_opts.get("moduleResolution")
-            {
-                normalize_enum_option_value(mr_value.split(',').next().unwrap_or(mr_value))
-            } else {
-                // Default moduleResolution based on module setting
-                let effective_module = if let Some(serde_json::Value::String(mod_value)) =
-                    compiler_opts.get("module")
-                {
-                    normalize_enum_option_value(mod_value.split(',').next().unwrap_or(mod_value))
-                } else {
-                    String::new() // no module set
-                };
-                match effective_module.as_str() {
-                    // Only map EXPLICITLY-set classic-implying module values to "classic".
-                    // When module is not set (""), tsc determines the default from target
-                    // (typically commonjs → node resolution), so do not assume "classic".
-                    "none" | "amd" | "umd" | "system" => "classic".to_string(),
-                    "commonjs" => "node".to_string(),
-                    "node16" => "node16".to_string(),
-                    "nodenext" => "nodenext".to_string(),
-                    _ => "bundler".to_string(),
-                }
-            };
-
-            if resolve_json_explicit && effective_mr == "classic" {
-                push_key_diagnostic(
-                    &mut diagnostics,
-                    file_path,
-                    &stripped,
-                    "resolveJsonModule",
-                    diagnostic_messages::OPTION_RESOLVEJSONMODULE_CANNOT_BE_SPECIFIED_WHEN_MODULERESOLUTION_IS_SET_TO_CLA,
-                    diagnostic_codes::OPTION_RESOLVEJSONMODULE_CANNOT_BE_SPECIFIED_WHEN_MODULERESOLUTION_IS_SET_TO_CLA,
-                );
-            }
-
-            // TS5071: fires when module=none/system/umd but ONLY when effective_mr is NOT
-            // "classic". When effective_mr IS "classic" (implied or explicit), TS5070 already
-            // covers the resolveJsonModule restriction; tsc never emits both errors at once.
-            if effective_mr != "classic"
-                && let Some(serde_json::Value::String(mod_value)) = compiler_opts.get("module")
-            {
-                let mod_normalized =
-                    normalize_enum_option_value(mod_value.split(',').next().unwrap_or(mod_value));
-                if matches!(mod_normalized.as_str(), "none" | "system" | "umd") {
-                    let msg = diagnostic_messages::OPTION_RESOLVEJSONMODULE_CANNOT_BE_SPECIFIED_WHEN_MODULE_IS_SET_TO_NONE_SYSTEM_O;
-                    let code = diagnostic_codes::OPTION_RESOLVEJSONMODULE_CANNOT_BE_SPECIFIED_WHEN_MODULE_IS_SET_TO_NONE_SYSTEM_O;
-                    // tsc reports the invalid pairing on both participating options when
-                    // resolveJsonModule is explicitly present in the config.
-                    push_key_diagnostic(
-                        &mut diagnostics,
-                        file_path,
-                        &stripped,
-                        "module",
-                        msg,
-                        code,
-                    );
-                    if resolve_json_explicit {
-                        push_key_diagnostic(
-                            &mut diagnostics,
-                            file_path,
-                            &stripped,
-                            "resolveJsonModule",
-                            msg,
-                            code,
-                        );
-                    }
-                }
-            }
-        }
+        // TS5070/TS5071 (`resolveJsonModule` vs classic resolution or
+        // none/system/umd modules) are unreachable in TS7: every module or
+        // resolution kind that could trigger them is itself removed (TS5108)
+        // or invalid (TS6046), and tsc does not layer the resolveJsonModule
+        // conflict on top of those reports.
 
         // TS5098: Option '{0}' can only be used when 'moduleResolution' is set to 'node16', 'nodenext', or 'bundler'.
         let requires_modern_mr: &[&str] = &[

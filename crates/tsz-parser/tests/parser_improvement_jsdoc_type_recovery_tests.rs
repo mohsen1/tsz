@@ -159,6 +159,10 @@ type T = Array.<string>;
 
 #[test]
 fn test_jsdoc_legacy_function_type_reports_ts8020_without_parse_cascade() {
+    // TS 7.0.2 removed the JSDoc-legacy `function(...)` type recovery: in a
+    // parameter type position each `function` parses as a type-reference
+    // identifier and the following `(` re-enters normal recovery, so the
+    // parser reports plain TS1005 recoveries and never TS8020.
     let source = r#"
 function hof(ctor: function(new: number, string)) {
     return new ctor('hi');
@@ -172,28 +176,16 @@ function hof2(f: function(this: number, string): string) {
 
     let diagnostics: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
 
-    let ts8020_count = diagnostics
-        .iter()
-        .filter(|code| {
-            **code == diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS
-        })
-        .count();
-    assert_eq!(
-        ts8020_count,
-        2,
-        "Expected TS8020 for both legacy function types, got {:?}",
+    assert!(
+        !diagnostics.contains(
+            &diagnostic_codes::JSDOC_TYPES_CAN_ONLY_BE_USED_INSIDE_DOCUMENTATION_COMMENTS
+        ),
+        "The removed TS8020 JSDoc-legacy recovery must not fire, got {:?}",
         parser.get_diagnostics()
     );
-
-    // TS2554 (too many arguments) is a checker-level diagnostic; it cannot appear
-    // in parser diagnostics. The parser's job is to recover JSDoc `function(...)` into
-    // a well-formed FunctionType so the checker can later produce TS2554.
-
     assert!(
-        !diagnostics
-            .iter()
-            .any(|code| *code == 1003 || *code == 1005 || *code == 1109),
-        "Did not expect parser-level recovery diagnostics for legacy function types, got {:?}",
+        diagnostics.iter().filter(|code| **code == 1005).count() >= 2,
+        "Expected a TS1005 recovery at each `function(` parameter type, got {:?}",
         parser.get_diagnostics()
     );
 }
