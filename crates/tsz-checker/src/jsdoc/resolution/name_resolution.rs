@@ -27,6 +27,20 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
+/// How a JSDoc name reference consumes the resolved symbol.
+///
+/// TypeScript 7 dropped JS constructor-function inference, so a *bare* type
+/// reference to a function-valued binding (`@param {fn}`) is the TS2749
+/// value-used-as-type error, while a `typeof` query over the same binding
+/// still legitimately yields the function's value type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::jsdoc) enum JsdocNameMode {
+    /// A bare type-position reference (`@param {Name}`).
+    BareTypeReference,
+    /// A value-position consumer (`typeof Name`, internal export walks).
+    ValuePosition,
+}
+
 /// Strip a leading and matching trailing `"` or `'` from `s` if both are
 /// present. Returns the bare inner string when stripped, otherwise `None`.
 fn strip_quoted_string(s: &str) -> Option<&str> {
@@ -1075,14 +1089,16 @@ impl<'a> CheckerState<'a> {
 
         // 3c. File-local symbols (classes, interfaces, type aliases, enums, imports)
         if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
-            let resolved = self.resolve_jsdoc_symbol_type(sym_id);
+            let resolved =
+                self.resolve_jsdoc_symbol_type_with_mode(sym_id, JsdocNameMode::BareTypeReference);
             if resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN {
                 return Some(resolved);
             }
         }
 
         if let Some(sym_id) = self.resolve_jsdoc_entity_name_symbol(name) {
-            let resolved = self.resolve_jsdoc_symbol_type(sym_id);
+            let resolved =
+                self.resolve_jsdoc_symbol_type_with_mode(sym_id, JsdocNameMode::BareTypeReference);
             if resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN {
                 return Some(resolved);
             }
@@ -1530,7 +1546,16 @@ impl<'a> CheckerState<'a> {
         );
         let mut surface_fallback = None;
         if let Some(export_type) = surface_export_type {
-            if let Some(instance_type) = self.instance_type_from_constructor_type(export_type) {
+            // Synthesize an instance type only for class-like exports (a
+            // class constructor type carries construct signatures and no
+            // call signatures). An expando-exported plain function
+            // (`exports.f = function () { this.q = 1 }`) also carries a
+            // synthesized construct signature, but TS7 dropped
+            // constructor-function inference: the caller's bare-reference
+            // gate must see the raw function type and report TS2749.
+            if !self.jsdoc_value_is_plain_callable(export_type)
+                && let Some(instance_type) = self.instance_type_from_constructor_type(export_type)
+            {
                 return Some(instance_type);
             }
             if export_type != TypeId::ERROR && export_type != TypeId::UNKNOWN {
@@ -1590,6 +1615,14 @@ impl<'a> CheckerState<'a> {
         &mut self,
         sym_id: tsz_binder::SymbolId,
     ) -> TypeId {
+        self.resolve_jsdoc_symbol_type_with_mode(sym_id, JsdocNameMode::ValuePosition)
+    }
+
+    pub(in crate::jsdoc) fn resolve_jsdoc_symbol_type_with_mode(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+        mode: JsdocNameMode,
+    ) -> TypeId {
         let Some(symbol) = self
             .get_cross_file_symbol(sym_id)
             .or_else(|| self.ctx.binder.get_symbol(sym_id))
@@ -1607,7 +1640,7 @@ impl<'a> CheckerState<'a> {
                     // symbol would recurse forever and overflow the stack.
                     return TypeId::ERROR;
                 }
-                return self.resolve_jsdoc_symbol_type(target);
+                return self.resolve_jsdoc_symbol_type_with_mode(target, mode);
             }
         }
 
@@ -1658,9 +1691,29 @@ impl<'a> CheckerState<'a> {
                     symbol.escaped_name.as_str(),
                 )
             {
+                // TS7 dropped constructor-function inference: a binding whose
+                // resolved export is a plain function (call signatures — a
+                // class constructor type has only construct signatures) has
+                // no meaning as a bare JSDoc type; failing here routes the
+                // reference to the TS2749 value-used-as-type terminal.
+                // `typeof` queries (ValuePosition) still get the value type.
+                if mode == JsdocNameMode::BareTypeReference
+                    && self.jsdoc_value_is_plain_callable(instance_type)
+                {
+                    return TypeId::ERROR;
+                }
                 return instance_type;
             }
             let value_type = self.get_type_of_symbol(sym_id);
+            // A variable initialized with a class EXPRESSION is value-only in
+            // a bare JSDoc type position (tsc 7 reports TS2749), unlike a
+            // require()-initialized variable, which is an import-like alias
+            // that keeps the class's type meaning.
+            if mode == JsdocNameMode::BareTypeReference
+                && self.jsdoc_variable_initializer_is_class_expression(symbol.value_declaration)
+            {
+                return TypeId::ERROR;
+            }
             let prefer_value_type = symbol.value_declaration.is_some()
                 && self.jsdoc_declared_value_symbol_prefers_value_type(
                     sym_id,
@@ -1675,12 +1728,63 @@ impl<'a> CheckerState<'a> {
             // Note: this fallback is also load-bearing for `typeof` queries, which
             // route through here for the variable's value type, so it must remain
             // even though a bare variable is not a valid JSDoc type on its own.
+            if mode == JsdocNameMode::BareTypeReference
+                && self.jsdoc_value_is_plain_callable(value_type)
+            {
+                return TypeId::ERROR;
+            }
             if value_type != TypeId::ERROR && value_type != TypeId::UNKNOWN {
                 return value_type;
             }
         }
 
         TypeId::ERROR
+    }
+
+    /// Whether a value type is a plain callable — it carries call signatures,
+    /// unlike a class constructor type (construct signatures only). Under
+    /// TypeScript 7, such a value has no instance type, so a *bare* JSDoc type
+    /// reference to it is the TS2749 value-used-as-type error; only `typeof`
+    /// queries may still consume the value type.
+    fn jsdoc_value_is_plain_callable(&mut self, value_type: TypeId) -> bool {
+        let resolved = self.resolve_lazy_type(value_type);
+        crate::query_boundaries::common::function_shape_for_type(self.ctx.types, resolved).is_some()
+            || crate::query_boundaries::common::call_signatures_for_type(self.ctx.types, resolved)
+                .is_some_and(|sigs| !sigs.is_empty())
+    }
+
+    /// Whether a value symbol's declaration is a variable initialized with a
+    /// class expression (`const C = class { ... }`).
+    fn jsdoc_variable_initializer_is_class_expression(&self, value_decl: NodeIndex) -> bool {
+        if !value_decl.is_some() {
+            return false;
+        }
+        let Some(node) = self.ctx.arena.get(value_decl) else {
+            return false;
+        };
+        let decl_idx = if node.kind == SyntaxKind::Identifier as u16 {
+            let Some(ext) = self.ctx.arena.get_extended(value_decl) else {
+                return false;
+            };
+            ext.parent
+        } else {
+            value_decl
+        };
+        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return false;
+        }
+        let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+            return false;
+        };
+        var_decl.initializer.is_some()
+            && self
+                .ctx
+                .arena
+                .get(var_decl.initializer)
+                .is_some_and(|init| init.kind == syntax_kind_ext::CLASS_EXPRESSION)
     }
 
     /// Returns `true` when a bare JSDoc type-position name resolves to a symbol

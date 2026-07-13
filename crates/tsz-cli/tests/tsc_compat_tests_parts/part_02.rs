@@ -184,6 +184,80 @@ fn tsc_parity_jsdoc_constructor_function_suffix() {
     );
 }
 
+/// TS 7.0.2 dropped JS constructor-function inference: a bare JSDoc type
+/// reference to a function-valued binding (function declaration, function
+/// expression in a var, arrow function, require-destructured function
+/// export) or to a class-EXPRESSION variable is TS2749 value-used-as-type,
+/// while class declarations, require-destructured class exports,
+/// whole-module require variables, and `typeof` queries keep resolving.
+/// Differential against the pinned tsc; binder names vary per case.
+#[test]
+fn tsc_parity_jsdoc_ctor_fn_value_as_type_matrix() {
+    if !tsc_available() {
+        return;
+    }
+    let temp = TempDir::new("jsdoc_ctor_fn_matrix").expect("temp dir");
+    write_file(
+        &temp.path.join("fndecl.js"),
+        "function Gadget() { this.x = 1; }\n/** @param {Gadget} p */\nfunction useG(p) { p.x; }\n",
+    );
+    write_file(
+        &temp.path.join("varfn.js"),
+        "var Fixture = function () { this.y = 1; };\n/** @param {Fixture} p */\nfunction useF(p) { p.y; }\n",
+    );
+    write_file(
+        &temp.path.join("arrowfn.js"),
+        "var makeIt = (n) => ({ v: n });\n/** @param {makeIt} p */\nfunction useA(p) { p.v; }\n",
+    );
+    write_file(
+        &temp.path.join("classexpr.js"),
+        "const Crate = class { constructor() { this.w = 1; } };\n/** @param {Crate} p */\nfunction useC(p) { p.w; }\n",
+    );
+    write_file(
+        &temp.path.join("classdecl.js"),
+        "class Hull { constructor() { this.k = 1; } }\n/** @param {Hull} p */\nfunction useH(p) { p.k; }\n",
+    );
+    write_file(
+        &temp.path.join("typeofok.js"),
+        "var build = function () { return 1; };\n/** @param {typeof build} p */\nfunction useT(p) { var n = p(); }\n",
+    );
+    write_file(
+        &temp.path.join("dep-fn.js"),
+        "exports.assemble = function () {\n    this.q = 1;\n};\n",
+    );
+    write_file(
+        &temp.path.join("usedep-fn.js"),
+        "const { assemble } = require(\"./dep-fn\");\n/** @param {assemble} p */\nfunction useD(p) { p.q; }\n",
+    );
+    write_file(
+        &temp.path.join("dep-class.js"),
+        "exports.Rig = class {\n    constructor() {\n        this.r = 1;\n    }\n};\n",
+    );
+    write_file(
+        &temp.path.join("usedep-class.js"),
+        "const { Rig } = require(\"./dep-class\");\n/** @param {Rig} p */\nfunction useR(p) { p.r; }\n",
+    );
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "module": "commonjs",
+    "strict": true
+  },
+  "include": ["*.js"]
+}"#,
+    );
+    assert_tsc_tsz_match(
+        &temp.path,
+        &["-p", "tsconfig.json", "--pretty", "false"],
+        "JSDoc ctor-fn value-as-type matrix",
+    );
+}
+
 // ---------------------------------------------------------------------------
 // TS1005: Syntax errors
 // ---------------------------------------------------------------------------
