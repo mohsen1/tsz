@@ -89,6 +89,18 @@ impl<'a> CheckerState<'a> {
         ) -> bool {
             crate::query_boundaries::dispatch::is_object_like_type(db, ty)
                 || crate::query_boundaries::dispatch::is_callable_type(db, ty)
+                // A UNION-bodied generic alias (`type ValueOrArray<E> =
+                // E | ValueOrArray<E>[]`, `type Maybe<T> = T | undefined`)
+                // instantiates to a union; tsc keeps BOTH alias applications
+                // at the top of the TS2322 (`'ValueOrArray<string>' is not
+                // assignable to 'ValueOrArray<number>'`) exactly as for
+                // object/callable instantiations. Without this arm the
+                // renderer collapsed the target to the failing type ARGUMENT
+                // (`'number'`). Transparent aliases (`type Id<T> = T`) never
+                // reach this predicate (their evaluation is not an
+                // application mismatch), so bare-argument display for those
+                // is unaffected.
+                || crate::query_boundaries::common::is_union_type(db, ty)
         }
 
         let source_eval = self.evaluate_type_for_assignability(source);
