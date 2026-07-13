@@ -643,7 +643,12 @@ impl<'a> CheckerState<'a> {
     ) {
         self.prime_lib_type_params(name);
         if let Some(ref_sym_id) = self.ctx.binder.file_locals.get(name) {
-            let def_id = self.ctx.get_lib_def_id(ref_sym_id);
+            // A user interface merging into a lib interface hoists lib globals
+            // into the primary binder's file_locals, so this SymbolId is a
+            // merged identity: the raw lookup can answer with a colliding def
+            // from another lib binder (FlatArray -> eval; the lib-def identity
+            // collision family). Verify against the requested name.
+            let def_id = self.ctx.lib_def_id_verified(name, ref_sym_id);
             if let Some(params) = self.ctx.get_def_type_params(def_id)
                 && !params.is_empty()
             {
