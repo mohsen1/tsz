@@ -676,16 +676,28 @@ impl CheckerContext<'_> {
                 defs.into_iter()
                     .filter(|def_id| {
                         self.definition_store.get(*def_id).is_some_and(|info| {
-                            info.symbol_id.is_some_and(|sym_id| {
+                            // Accept a def whose symbol is an actual/cloned lib
+                            // symbol OR one registered under the `u32::MAX`
+                            // declaration-file sentinel (a lib def, incl. one
+                            // minted by `register_named_lib_def`). The bare
+                            // actual-lib check alone rejects a minted def whose
+                            // per-lib-relative `symbol_id` resolves the wrong
+                            // symbol in the primary binder, which made the fallback
+                            // re-mint on every resolution (def explosion). It still
+                            // excludes user-file defs (real `file_id`, non-lib
+                            // symbol), so a user interface named like a lib type is
+                            // not mistaken for the lib def here.
+                            (info.symbol_id.is_some_and(|sym_id| {
                                 self.symbol_is_from_actual_or_cloned_lib(SymbolId(sym_id))
-                            }) && matches!(
-                                info.kind,
-                                tsz_solver::def::DefKind::TypeAlias
-                                    | tsz_solver::def::DefKind::Interface
-                                    | tsz_solver::def::DefKind::Class
-                                    | tsz_solver::def::DefKind::Enum
-                                    | tsz_solver::def::DefKind::Namespace
-                            )
+                            }) || info.file_id == Some(u32::MAX))
+                                && matches!(
+                                    info.kind,
+                                    tsz_solver::def::DefKind::TypeAlias
+                                        | tsz_solver::def::DefKind::Interface
+                                        | tsz_solver::def::DefKind::Class
+                                        | tsz_solver::def::DefKind::Enum
+                                        | tsz_solver::def::DefKind::Namespace
+                                )
                         })
                     })
                     .max_by_key(|def_id| {
