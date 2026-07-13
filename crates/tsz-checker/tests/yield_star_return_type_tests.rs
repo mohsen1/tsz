@@ -18,7 +18,7 @@ use crate::test_utils::check_source;
 /// via `is_generator_like_name`.
 const GENERATOR_STUBS: &str = r#"
 interface SymbolConstructor {
-    readonly iterator: symbol;
+    readonly iterator: unique symbol;
 }
 declare var Symbol: SymbolConstructor;
 interface ReadonlyArray<T> {
@@ -255,6 +255,20 @@ function* g(): Iterator<Iterable<(x: string) => number>> {
 
 #[test]
 fn yield_star_generator_callback_mismatch_reports_outer_ts2345() {
+    // This fixture needs the REAL es2015 lib: its component type declares a
+    // `[Symbol.iterator]()` member, and the checker recognizes well-known
+    // symbol keys by the BUILTIN lib `Symbol` identity — the file-local
+    // `SymbolConstructor` stub cannot stand in for it, so under the stub the
+    // member never registers as the iterator method and the case degrades to
+    // TS2488. The CLI (real lib) has always produced the expected 2x TS2345.
+    let libs = crate::test_utils::load_compiled_lib_files(&[
+        "lib.es5.d.ts",
+        "lib.es2015.core.d.ts",
+        "lib.es2015.symbol.d.ts",
+        "lib.es2015.symbol.wellknown.d.ts",
+        "lib.es2015.iterable.d.ts",
+        "lib.es2015.generator.d.ts",
+    ]);
     let source = r#"
 declare const inner3: {
   <A>(value: A): {
@@ -278,7 +292,16 @@ outer3(function* <T>(value: T) {
   yield* x;
 });
 "#;
-    let diags = check_with_strict(source);
+    let options = crate::context::CheckerOptions {
+        strict_null_checks: true,
+        no_implicit_any: true,
+        ..crate::context::CheckerOptions::default()
+    };
+    let diags: Vec<(u32, String)> =
+        crate::test_utils::check_source_with_libs(source, "test.ts", options, &libs)
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect();
     let ts2345_count = diags.iter().filter(|(code, _)| *code == 2345).count();
     let ts2488_count = diags.iter().filter(|(code, _)| *code == 2488).count();
     assert_eq!(

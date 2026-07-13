@@ -122,11 +122,41 @@ import.defer("./a.js");
 
 #[test]
 fn import_defer_then_callback_is_contextually_typed() {
-    let diagnostics = import_defer_diagnostics(ModuleKind::ES2020);
+    // Oracle-adjudicated rewrite (tsc 7.0.2): the previous single-file
+    // fixture pinned a scenario tsc REJECTS outright — `import.defer` under
+    // `--module es2020` is TS18060 (esnext/preserve only), and its
+    // `declare module "./a.js"` relative ambient name is TS2436 — so the
+    // no-TS7006 expectation held only degenerately. The valid form (module
+    // esnext, a real sibling module, the real es2015 Promise) is clean in
+    // BOTH compilers with the callback contextually typed; the CLI matches.
+    let libs = crate::test_utils::load_compiled_lib_files(&[
+        "lib.es5.d.ts",
+        "lib.es2015.promise.d.ts",
+        "lib.es2015.symbol.d.ts",
+        "lib.es2015.symbol.wellknown.d.ts",
+    ]);
+    let diagnostics = crate::test_utils::diagnostic_code_messages(
+        crate::test_utils::check_multi_file_with_libs_stamped(
+            &[
+                ("a.ts", "export function foo(): void {}\n"),
+                (
+                    "b.ts",
+                    "import.defer(\"./a.js\").then(ns => {\n  ns.foo();\n});\nexport {};\n",
+                ),
+            ],
+            "b.ts",
+            CheckerOptions {
+                strict: true,
+                module: ModuleKind::ESNext,
+                ..CheckerOptions::default()
+            },
+            &libs,
+        ),
+    );
 
     assert!(
         diagnostics.iter().all(|(code, _)| *code != 7006),
-        "Expected import.defer(...).then callback to be contextually typed, got: {diagnostics:?}"
+        "the import.defer(...).then callback must be contextually typed, got: {diagnostics:?}"
     );
 }
 
