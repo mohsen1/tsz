@@ -943,3 +943,68 @@ fn triple_slash_reference_dot_dot_slash_prefix_probes_extensions() {
         result.diagnostics
     );
 }
+
+/// Full-driver guard for JSDoc `@param {LazySet}` self-references in a
+/// CommonJS-required JS class: the type-position reference must resolve to
+/// the INSTANCE type, so `stringSet.addAll(stringSet)` is clean and only the
+/// deliberate `@type {LazySet} = undefined` strict-null TS2322 remains.
+/// tsc 7.0.2 emits exactly that one diagnostic. Moved from the in-process
+/// `jsdoc_cross_file_typedef_tests` harness, whose CommonJS wiring resolves
+/// the self-reference to the CONSTRUCTOR side (spurious `prototype` TS2741)
+/// while the shipped driver matches tsc.
+#[test]
+fn compile_jsdoc_class_self_param_uses_instance_type_across_commonjs_file() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "module": "commonjs",
+            "allowJs": true,
+            "checkJs": true,
+            "strict": true,
+            "noEmit": true
+          },
+          "files": ["index.js", "LazySet.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.js"),
+        r#"const LazySet = require("./LazySet");
+
+/** @type {LazySet} */
+const stringSet = undefined;
+stringSet.addAll(stringSet);
+"#,
+    );
+    write_file(
+        &base.join("LazySet.js"),
+        r#"/**
+ * @typedef {Object} SomeObject
+ */
+class LazySet {
+    /**
+     * @param {LazySet} iterable
+     */
+    addAll(iterable) {}
+    [Symbol.iterator]() {}
+}
+
+module.exports = LazySet;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(
+        codes,
+        vec![2322],
+        "JSDoc class self references must resolve to the instance type \
+         (exactly the strict-null TS2322, no ctor-side TS2741). Diagnostics: {:?}",
+        result.diagnostics
+    );
+}
