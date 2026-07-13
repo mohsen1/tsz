@@ -1372,7 +1372,13 @@ class Text extends Component<{{}}, {{}}> {{
 }
 
 #[test]
-fn test_ts2604_this_tag_not_suppressed_by_component_union_this_annotation() {
+fn test_this_tag_with_component_union_this_annotation_is_valid() {
+    // Oracle-adjudicated (tsc 7.0.2): a `<this/>` tag whose `this` is
+    // annotated as a union of valid component function types is a VALID JSX
+    // component — tsc emits nothing. The previous pin asserted TS2604, which
+    // was the unconditional this-tag hardcode's behavior, not tsc's; this-tag
+    // classification now flows through the normal component path (callable ->
+    // return validation; non-callable -> TS2604).
     let source = format!(
         r#"
 {JSX_PREAMBLE}
@@ -1386,11 +1392,15 @@ function render(this: C1 | C2) {{
     );
     let diags = jsx_diagnostics(&source);
     assert!(
-        has_code(
+        !has_code(
             &diags,
             diagnostic_codes::JSX_ELEMENT_TYPE_DOES_NOT_HAVE_ANY_CONSTRUCT_OR_CALL_SIGNATURES
         ),
-        "Expected TS2604 for <this/> even when `this` annotation is a component-union, got: {diags:?}"
+        "tsc accepts <this/> for a component-union `this` annotation (no TS2604), got: {diags:?}"
+    );
+    assert!(
+        !has_code(&diags, diagnostic_codes::CANNOT_BE_USED_AS_A_JSX_COMPONENT),
+        "tsc accepts <this/> for a component-union `this` annotation (no TS2786), got: {diags:?}"
     );
 }
 

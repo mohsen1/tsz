@@ -366,29 +366,17 @@ impl<'a> CheckerState<'a> {
         tag_name_idx: NodeIndex,
     ) {
         let tag_text = self.get_jsx_tag_name_text(tag_name_idx);
+        // A `<this/>` tag classifies like any component-typed tag — callable
+        // `this` takes the function-component path (return validation, TS2786
+        // with a reason chain when invalid), non-callable `this` falls through
+        // to TS2604 below. Its tag text is lowercase, so it must bypass the
+        // intrinsic-tag early return that swallows `<div/>`-style names.
         let is_this_tag = tag_text == "this";
-        if is_this_tag {
-            use crate::diagnostics::diagnostic_codes;
-
-            if let Some((start, _)) = self.get_node_span(tag_name_idx)
-                && self.ctx.diagnostics.iter().any(|diag| {
-                    diag.code == diagnostic_codes::CANNOT_BE_USED_AS_A_JSX_COMPONENT
-                        && diag.start == start
-                })
-            {
-                return;
-            }
-            self.error_at_node_msg(
-                tag_name_idx,
-                diagnostic_codes::JSX_ELEMENT_TYPE_DOES_NOT_HAVE_ANY_CONSTRUCT_OR_CALL_SIGNATURES,
-                &[&tag_text],
-            );
-            return;
-        }
-        if tag_text
-            .as_bytes()
-            .first()
-            .is_some_and(|ch| ch.is_ascii_lowercase())
+        if !is_this_tag
+            && tag_text
+                .as_bytes()
+                .first()
+                .is_some_and(|ch| ch.is_ascii_lowercase())
         {
             return;
         }
@@ -419,14 +407,14 @@ impl<'a> CheckerState<'a> {
             return;
         }
         // If props extraction succeeds, the type is already recognized as a
-        // valid JSX component shape (callable/constructable in JSX context).
-        // Keep `this` tags strict: `<this/>` should still report TS2604.
+        // valid JSX component shape (callable/constructable in JSX context) —
+        // including a callable `this` tag, whose validity is then owned by
+        // return validation (TS2786), not TS2604.
         // Pass `None` for element_idx so this probe doesn't emit its own
         // TS2607 — the call is purely a "did extraction succeed?" check.
-        if !is_this_tag
-            && self
-                .get_jsx_props_type_for_component_member(component_type, None)
-                .is_some()
+        if self
+            .get_jsx_props_type_for_component_member(component_type, None)
+            .is_some()
         {
             return;
         }
@@ -478,8 +466,12 @@ impl<'a> CheckerState<'a> {
                 || crate::query_boundaries::common::contains_type_parameters(self.ctx.types, ty)
                 || self.is_generic_jsx_component(ty)
             {
-                if is_this_tag || crate::query_boundaries::common::is_this_type(self.ctx.types, ty)
-                {
+                // A raw `this`-type marker is not yet a callable; a generic
+                // CALLABLE `this` (an expando function receiver) counts as
+                // having signatures like any other generic component — its
+                // validity is owned by return validation (TS2786), so forcing
+                // TS2604 here would double-report.
+                if crate::query_boundaries::common::is_this_type(self.ctx.types, ty) {
                     return false;
                 }
                 return true;
@@ -495,9 +487,7 @@ impl<'a> CheckerState<'a> {
             // Callable types with call/construct signatures.  Treat them as potentially
             // having signatures to avoid false TS2604.  The actual signature checking
             // happens during props extraction where these types are fully evaluated.
-            if !is_this_tag
-                && crate::query_boundaries::common::needs_evaluation_for_merge(self.ctx.types, ty)
-            {
+            if crate::query_boundaries::common::needs_evaluation_for_merge(self.ctx.types, ty) {
                 return true;
             }
             let direct_has_signatures =

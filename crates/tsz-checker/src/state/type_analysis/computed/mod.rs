@@ -1429,6 +1429,18 @@ impl<'a> CheckerState<'a> {
                 TypeId::UNKNOWN
             };
 
+            // Pre-cache the base function type before collecting expando
+            // members. Collecting a member like `F.useThis = function() {...}`
+            // checks the RHS body, whose implicit `this` binding forces
+            // `typeof F` while F is still on the resolution stack; without a
+            // cache entry that re-entry takes the circular-guard FUNCTION
+            // branch and yields the provisional no-return-inference signature
+            // (`() => any`), which then poisons every `this`-based read in the
+            // body (the jsxComponentTypeErrors `<this/>` TS2786 chain needs
+            // the real inferred return). The final augmented type overwrites
+            // this entry when the symbol's resolution completes. Mirrors the
+            // namespace-merge pre-cache below.
+            self.ctx.symbol_types.insert(sym_id, function_type);
             let function_type =
                 self.augment_callable_type_with_expandos(&escaped_name, sym_id, function_type);
 
