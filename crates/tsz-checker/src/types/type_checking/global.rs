@@ -139,6 +139,24 @@ impl<'a> CheckerState<'a> {
             let _ = self.resolve_lib_type_by_name("ArrayIterator");
         }
 
+        // Pre-resolve the lib types Array's own member signatures reference
+        // (`concat`'s `ConcatArray`, `flat`/`flatMap`'s `FlatArray` and
+        // `ReadonlyArray`) so their name-keyed defs exist BEFORE the Array
+        // base is baked below. The bake permanently interns those referents
+        // into the shared display base; a referent whose name is not yet in
+        // the definition store resolves through the raw binder-relative
+        // `SymbolId` fallback, and under a user interface merging into a lib
+        // global the shifted merged id aliases an unrelated lib symbol
+        // (`ReadonlyArray -> isNaN`), baking a collided referent into every
+        // checker's Array. Witness: `[1].flatMap(x => [[x]])` inferring
+        // `number[][][]` (the callback-return `ReadonlyArray<U>` position
+        // stops matching, so `U` falls back to the whole return type).
+        // Follows the `ArrayIterator` pre-resolve pattern above; these are
+        // true built-ins resolved through binder-owned lib lookup.
+        for array_member_referent in ["ReadonlyArray", "ConcatArray", "FlatArray"] {
+            let _ = self.resolve_lib_type_by_name(array_member_referent);
+        }
+
         // For Array<T>, resolve the merged lib type once, then reuse the type
         // parameters registered for its canonical symbol. Re-running the
         // per-lib parameter resolver in every project checker repeatedly lowers
@@ -267,7 +285,25 @@ impl<'a> CheckerState<'a> {
         // PropertyAccessEvaluator runs through multiple database backends
         // (query cache, interner, binder-backed resolver). Register Array<T>
         // through the query database so all backends see the same base type.
-        if let Some(ty) = array_instance_type {
+        //
+        // Do NOT let a lib-baseline checker (current arena IS a builtin lib
+        // file — those passes only run when a user augmentation touches a lib
+        // global) freeze the shared base: it is first-use via the reuse fast
+        // path in `resolve_lib_type_with_params`, so a baseline-baked
+        // instance type becomes every sibling checker's Array. A base baked
+        // in that pass's environment carries member signatures whose
+        // inference positions do not behave in the main program checkers
+        // (witness: `[1].flatMap(x => [[x]])` inferring `number[][][]` under
+        // an `interface ErrorConstructor` augmentation because the baked
+        // `ReadonlyArray<U>` candidate stopped matching). The main checkers
+        // bake it instead, exactly as in the unaugmented program.
+        let current_arena_is_builtin_lib =
+            crate::state_type_analysis::cross_file_direct::is_builtin_lib_declaration_arena(
+                self.ctx.arena,
+            );
+        if let Some(ty) = array_instance_type
+            && !current_arena_is_builtin_lib
+        {
             self.ctx
                 .types
                 .register_array_base_type(ty, array_type_params.clone());
@@ -313,12 +349,13 @@ impl<'a> CheckerState<'a> {
         // resolve_lib_type_by_name which processes global augmentation heritage
         // and type argument substitution. resolve_lib_type_with_params only reads
         // from lib binders and misses user augmentations.
-        if self
-            .ctx
-            .binder
-            .global_augmentations
-            .get("Array")
-            .is_some_and(|v| !v.is_empty())
+        if !current_arena_is_builtin_lib
+            && self
+                .ctx
+                .binder
+                .global_augmentations
+                .get("Array")
+                .is_some_and(|v| !v.is_empty())
             && let Some(augmented_type) = self.resolve_lib_type_by_name("Array")
         {
             let augmented_prop_count = crate::query_boundaries::common::object_shape_for_type(
@@ -446,7 +483,23 @@ impl<'a> CheckerState<'a> {
 
         // Register the Array<T> interface for array property resolution. Use
         // the instance type (Array<T> interface), not the constructor (Callable).
-        if let Some(ty) = array_instance_type {
+        //
+        // Do NOT let a lib-baseline checker (current arena IS a builtin lib
+        // file — those passes only run when a user augmentation touches a lib
+        // global) freeze the SHARED base: `set_array_base_type` is first-use
+        // via the reuse fast path in `resolve_lib_type_with_params`, so a
+        // baseline-baked instance type becomes every sibling checker's Array.
+        // A base baked in that pass's environment carries member signatures
+        // whose inference positions do not behave in the main checkers
+        // (witness: `[1].flatMap(x => [[x]])` inferring `number[][][]` under
+        // an `interface ErrorConstructor` augmentation because the baked
+        // `ReadonlyArray<U>` candidate stopped matching). The main program
+        // checkers bake it instead, exactly as in the unaugmented program.
+        if let Some(ty) = array_instance_type
+            && !crate::state_type_analysis::cross_file_direct::is_builtin_lib_declaration_arena(
+                self.ctx.arena,
+            )
+        {
             self.ctx
                 .register_array_base_type_in_envs(ty, array_type_params);
         }

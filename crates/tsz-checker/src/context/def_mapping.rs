@@ -475,6 +475,35 @@ impl CheckerContext<'_> {
             return def_id;
         }
 
+        // A checker whose current arena IS a builtin lib file (the lib-baseline
+        // diagnostics passes) re-binds that lib's own declarations under its
+        // LOCAL file index, so the `is_current_file_local_symbol` attribution
+        // above yields a per-pass file id for a lib type that already has a
+        // pre-populated `u32::MAX`-sentinel def in the shared store. Minting
+        // there creates a SECOND identity for the lib type; member references
+        // baked into shared bases (e.g. `Array.prototype.flatMap`'s
+        // `ReadonlyArray<U>`) then bind to whichever copy an election sees,
+        // and the split breaks Application evaluation downstream (witness:
+        // `[1].flatMap(x => [[x]])` inferring `number[][][]` under a user
+        // lib-global augmentation because `ReadonlyArray<U>` stopped
+        // matching). Adopt the pre-populated sentinel def instead.
+        if crate::state_type_analysis::cross_file_direct::is_builtin_lib_declaration_arena(
+            self.arena,
+        ) {
+            let atom = self.types.intern_string(expected_name);
+            if let Some(defs) = self.definition_store.find_defs_by_name(atom)
+                && let Some(&sentinel_def) = defs.iter().find(|&&candidate| {
+                    self.definition_store.get(candidate).is_some_and(|info| {
+                        info.file_id == Some(u32::MAX) && info.symbol_id == Some(sym_id.0)
+                    })
+                })
+            {
+                self.symbol_to_def.borrow_mut().insert(sym_id, sentinel_def);
+                self.def_to_symbol.borrow_mut().insert(sentinel_def, sym_id);
+                return sentinel_def;
+            }
+        }
+
         self.mint_def_for_symbol_in_file(sym_id, symbol, file_idx)
     }
 
