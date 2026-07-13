@@ -123,7 +123,7 @@ default: false
 
 --jsx
 Specify what JSX code is generated.
-one of: preserve, react, react-native, react-jsx, react-jsxdev
+one of: preserve, react-native, react-jsx, react-jsxdev, react
 default: undefined
 
 --outFile
@@ -171,6 +171,9 @@ Show all compiler options.
 --build, -b
 Build one or more projects and their dependencies, if out of date
 
+--checkers
+Set the number of checkers per project.
+
 --help, -h
 Print this message.
 
@@ -189,11 +192,20 @@ Print names of files that are part of the compilation and then stop processing.
 --locale
 Set the language of the messaging from TypeScript. This does not affect emit.
 
+--pprofDir
+Generate pprof CPU/memory profiles to the given directory.
+
 --project, -p
 Compile the project given the path to its configuration file, or to a folder with a 'tsconfig.json'.
 
+--quiet, -q
+Do not print diagnostics.
+
 --showConfig
 Print the final configuration instead of building.
+
+--singleThreaded
+Run in single threaded mode.
 
 --version, -v
 Print the compiler's version.
@@ -363,6 +375,11 @@ Ensure 'use strict' is always emitted.
 type: boolean
 default: true
 
+--deduplicatePackages
+Deduplicate packages with the same name and version.
+type: boolean
+default: true
+
 --exactOptionalPropertyTypes
 Interpret optional property types as written, rather than adding 'undefined'.
 type: boolean
@@ -413,6 +430,11 @@ Raise an error when a function parameter isn't read.
 type: boolean
 default: false
 
+--stableTypeOrdering
+Ensure types are ordered stably and deterministically across compilations.
+type: boolean
+default: true
+
 --strict
 Enable all strict type-checking options.
 type: boolean
@@ -452,51 +474,6 @@ default: `true`, unless `strict` is `false`
 
 --assumeChangesOnlyAffectDirectDependencies
 Have recompiles in projects that use 'incremental' and 'watch' mode assume that changes within a file will only affect files directly depending on it.
-type: boolean
-default: false
-
-### Backwards Compatibility
-
---charset
-No longer supported. In early versions, manually set the text encoding for reading files.
-type: string
-default: utf8
-
---importsNotUsedAsValues
-Specify emit/checking behavior for imports that are only used for types.
-one of: remove, preserve, error
-default: remove
-
---keyofStringsOnly
-Make keyof only return strings instead of string, numbers or symbols. Legacy option.
-type: boolean
-default: false
-
---noImplicitUseStrict
-Disable adding 'use strict' directives in emitted JavaScript files.
-type: boolean
-default: false
-
---noStrictGenericChecks
-Disable strict checking of generic signatures in function types.
-type: boolean
-default: false
-
---out
-Deprecated setting. Use 'outFile' instead.
-
---preserveValueImports
-Preserve unused imported values in the JavaScript output that would otherwise be removed.
-type: boolean
-default: false
-
---suppressExcessPropertyErrors
-Disable reporting of excess property errors during the creation of object literals.
-type: boolean
-default: false
-
---suppressImplicitAnyIndexErrors
-Suppress 'noImplicitAny' errors when indexing objects that lack index signatures.
 type: boolean
 default: false
 
@@ -646,7 +623,7 @@ type: boolean
 default: false
 
 --generateCpuProfile
-Unsupported in tsz; use --generateTrace for native trace output.
+Emit a v8 CPU profile of the compiler run for debugging.
 type: string
 default: profile.cpuprofile
 
@@ -699,7 +676,7 @@ default: false
 
 --jsx
 Specify what JSX code is generated.
-one of: preserve, react, react-native, react-jsx, react-jsxdev
+one of: preserve, react-native, react-jsx, react-jsxdev, react
 default: undefined
 
 --jsxFactory
@@ -729,7 +706,7 @@ default: false
 
 --moduleDetection
 Control what method is used to detect module-format JS files.
-one of: legacy, auto, force
+one of: auto, legacy, force
 default: \"auto\": Treat files with imports, exports, import.meta, jsx (with jsx: react-jsx), or esm format (with module: node16+) as modules.
 
 --noLib
@@ -787,6 +764,11 @@ WATCH OPTIONS
 
 Including --watch, -w will start watching the current project for the file changes. Once set, you can config watch mode with:
 
+--watchInterval
+
+type: number
+default: undefined
+
 --watchFile
 Specify how the TypeScript watch mode works.
 one of: fixedpollinginterval, prioritypollinginterval, dynamicprioritypolling, fixedchunksizepolling, usefsevents, usefseventsonparentdirectory
@@ -828,6 +810,9 @@ Build all projects, including those that appear to be up to date.
 
 --clean
 Delete the outputs of all projects.
+
+--builders
+Set the number of projects to build concurrently.
 
 --stopBuildOnErrors
 Skip building downstream projects on error in upstream project.
