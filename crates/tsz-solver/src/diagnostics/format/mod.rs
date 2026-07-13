@@ -679,6 +679,46 @@ impl<'a> TypeFormatter<'a> {
             .is_some_and(|def| def.kind == crate::def::DefKind::TypeAlias)
     }
 
+    /// Whether `alias_origin` is an application whose base resolves to an
+    /// interface or class definition. Combined with the empty-object guard at
+    /// the read site, this recognizes a marker instantiation: an application
+    /// only records a display alias on the shared empty object `{}` when
+    /// instantiating its base produced `{}`, so at this read the base
+    /// contributed no members for these arguments — a pure marker such as the
+    /// lib's `interface ThisType<T> {}`. `tsc` treats `ThisType` as a
+    /// contextual-`this` marker and never renders a value as `ThisType<...>`;
+    /// more generally it prints the shared empty object structurally as `{}`.
+    /// Following the alias here would repaint every empty object in the file
+    /// with the marker's name — the `Object.defineProperty`
+    /// `PropertyDescriptor & ThisType<any>` witness. Genuinely named generic
+    /// interfaces/classes whose instantiation is non-empty never intern to
+    /// `{}` and never reach this read; those carrying a def registered against
+    /// the `{}` `TypeId` are resolved earlier by the def-name path, which keeps
+    /// their application display (e.g. `AsyncGenerator<number, void, unknown>`).
+    fn display_alias_application_base_is_marker_interface(&self, alias_origin: TypeId) -> bool {
+        let Some(TypeData::Application(app_id)) = self.interner.lookup(alias_origin) else {
+            return false;
+        };
+        let app = self.interner.type_application(app_id);
+        let Some(def_store) = self.def_store else {
+            return false;
+        };
+
+        let def_id = match self.interner.lookup(app.base) {
+            Some(TypeData::Lazy(def_id)) => Some(def_id),
+            _ => def_store.find_def_for_type(app.base),
+        };
+
+        def_id
+            .and_then(|def_id| def_store.get(def_id))
+            .is_some_and(|def| {
+                matches!(
+                    def.kind,
+                    crate::def::DefKind::Interface | crate::def::DefKind::Class
+                )
+            })
+    }
+
     fn display_alias_application_base_has_conditional_body(&self, alias_origin: TypeId) -> bool {
         let Some(TypeData::Application(app_id)) = self.interner.lookup(alias_origin) else {
             return false;
@@ -1500,7 +1540,8 @@ impl<'a> TypeFormatter<'a> {
                             | TypeData::Mapped(_)
                     ))
                 || (is_empty_object
-                    && self.display_alias_application_base_is_type_alias(alias_origin));
+                    && (self.display_alias_application_base_is_type_alias(alias_origin)
+                        || self.display_alias_application_base_is_marker_interface(alias_origin)));
             if (!is_simple_type
                 || use_keyof_alias
                 || use_application_alias
@@ -1544,4 +1585,44 @@ impl<'a> TypeFormatter<'a> {
     fn strip_module_extension(module_name: &str) -> &str {
         tsz_common::file_extensions::strip_known_extension(module_name)
     }
+}
+
+/// Standalone form of the marker-instantiation rule for non-formatter
+/// consumers (e.g. the checker's property-receiver display): an EMPTY-object
+/// `evaluated` whose display alias is an application of an interface/class
+/// base is a marker render — tsc prints the shared `{}` structurally, never
+/// the marker's name (`ThisType<any>` from `Object.defineProperty`).
+pub fn empty_object_display_alias_is_marker_render(
+    interner: &dyn crate::construction::TypeDatabase,
+    def_store: &crate::def::DefinitionStore,
+    evaluated: TypeId,
+    alias_origin: TypeId,
+) -> bool {
+    let empty = match interner.lookup(evaluated) {
+        Some(TypeData::Object(shape_id)) => interner.object_shape(shape_id).properties.is_empty(),
+        Some(TypeData::ObjectWithIndex(shape_id)) => {
+            let shape = interner.object_shape(shape_id);
+            shape.properties.is_empty()
+                && shape.string_index.is_none()
+                && shape.number_index.is_none()
+        }
+        _ => false,
+    };
+    if !empty {
+        return false;
+    }
+    let Some(TypeData::Application(app_id)) = interner.lookup(alias_origin) else {
+        return false;
+    };
+    let app = interner.type_application(app_id);
+    let def_id = match interner.lookup(app.base) {
+        Some(TypeData::Lazy(def_id)) => Some(def_id),
+        _ => def_store.find_def_for_type(app.base),
+    };
+    def_id.and_then(|d| def_store.get(d)).is_some_and(|def| {
+        matches!(
+            def.kind,
+            crate::def::DefKind::Interface | crate::def::DefKind::Class
+        )
+    })
 }

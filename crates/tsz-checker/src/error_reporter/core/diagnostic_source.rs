@@ -696,6 +696,12 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types.get_display_alias(ty).filter(|&alias| {
                         crate::query_boundaries::common::type_application(self.ctx.types, alias)
                             .is_some()
+                            && !crate::query_boundaries::diagnostics::empty_object_display_alias_is_marker_render(
+                                self.ctx.types,
+                                &self.ctx.definition_store,
+                                ty,
+                                alias,
+                            )
                     })
                 });
         if let Some(application_display) = application_display

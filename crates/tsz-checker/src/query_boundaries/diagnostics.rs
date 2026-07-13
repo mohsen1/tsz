@@ -1378,3 +1378,16 @@ mod tests {
         ));
     }
 }
+
+/// An empty-object `evaluated` whose display alias is an application of an
+/// interface/class base is a marker render (`ThisType<any>` from
+/// `Object.defineProperty`): tsc prints the shared `{}` structurally, never
+/// the marker's name.
+pub(crate) fn empty_object_display_alias_is_marker_render(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    def_store: &tsz_solver::def::DefinitionStore,
+    evaluated: tsz_solver::TypeId,
+    alias_origin: tsz_solver::TypeId,
+) -> bool {
+    tsz_solver::empty_object_display_alias_is_marker_render(db, def_store, evaluated, alias_origin)
+}

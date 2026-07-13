@@ -303,7 +303,8 @@ pub use diagnostics::builders::{
 };
 pub use diagnostics::format::tracing_helpers::{RelationDisplay, TypeDisplay};
 pub use diagnostics::format::{
-    TypeFormatter, application_reduces_to_displayable_shape, format_excess_property_name,
+    TypeFormatter, application_reduces_to_displayable_shape,
+    empty_object_display_alias_is_marker_render, format_excess_property_name,
     type_alias_displayed_as_underlying,
 };
 pub use diagnostics::reduce::deep_reduce_for_display;

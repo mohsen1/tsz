@@ -28,25 +28,6 @@ impl TypeInterner {
         self.display_properties.get(&type_id).map(|r| r.clone())
     }
 
-    /// The empty object type `{}` is a shared display sentinel: every widened
-    /// empty object literal in the program interns to the same `TypeId`, so a
-    /// display alias recorded on it would repaint every unrelated empty object.
-    /// Like intrinsics, it must never carry an alias. A shape with an index
-    /// signature is a distinct, meaningful surface and is not the bare-`{}`
-    /// sentinel. Mirrors `visitors::visitor_predicates::is_empty_object_type`.
-    fn is_empty_object_display_sentinel(&self, type_id: TypeId) -> bool {
-        match self.lookup(type_id) {
-            Some(TypeData::Object(shape_id)) => self.object_shape(shape_id).properties.is_empty(),
-            Some(TypeData::ObjectWithIndex(shape_id)) => {
-                let shape = self.object_shape(shape_id);
-                shape.properties.is_empty()
-                    && shape.string_index.is_none()
-                    && shape.number_index.is_none()
-            }
-            _ => false,
-        }
-    }
-
     /// Store a reverse mapping from an evaluated Application result to its
     /// original Application TypeId for diagnostic display.
     ///
@@ -114,16 +95,6 @@ impl TypeInterner {
         if evaluated.is_intrinsic() {
             return;
         }
-        // The empty object type `{}` is a shared structural sentinel for the
-        // same reason: every widened empty object literal in the program
-        // interns to it. Recording `{} -> Alias<...>` — e.g. `ThisType<any>`,
-        // whose empty interface body is evaluated when the checker resolves the
-        // `PropertyDescriptor & ThisType<any>` parameter of `Object.defineProperty`
-        // — repaints EVERY empty object in the file. tsc always renders an empty
-        // object as `{}`, never the alias.
-        if self.is_empty_object_display_sentinel(evaluated) {
-            return;
-        }
         // Guard against self-referential cycles: if the Application's args
         // contain the evaluated type itself, storing this alias would create
         // a formatting cycle (e.g., `Wrap<T> = T | T[]` where evaluating
@@ -157,11 +128,6 @@ impl TypeInterner {
             return;
         }
         if evaluated == application || evaluated.is_intrinsic() {
-            return;
-        }
-        // See `store_display_alias`: the empty object type is a shared display
-        // sentinel and must never be repainted by a named application.
-        if self.is_empty_object_display_sentinel(evaluated) {
             return;
         }
         if matches!(self.lookup(evaluated), Some(TypeData::TypeParameter(_))) {
