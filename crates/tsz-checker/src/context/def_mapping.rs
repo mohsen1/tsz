@@ -697,8 +697,25 @@ impl CheckerContext<'_> {
         if self.def_name_matches(raw, name).unwrap_or(false) {
             return raw;
         }
-        if let Some(real_lib_sym) = self.actual_lib_global_type_symbol_id(name) {
-            return self.get_or_create_def_id_for_symbol_name(real_lib_sym, name);
+        // `canonical_sym` collided with an unrelated lib def under the
+        // `u32::MAX` sentinel. Mint the def directly from the real lib symbol,
+        // found by a collision-free scan of each lib binder's `file_locals`
+        // (name-keyed). `mint_def_for_symbol_in_file` routes through
+        // `register_for_symbol`, which disambiguates by DECL SITE (span): it
+        // returns a fresh def for THIS symbol rather than the colliding one, and
+        // registers it in `name_to_defs`, so the later body resolution and this
+        // reference converge on the same `DefId`. Minting directly (rather than
+        // `get_or_create_def_id_for_symbol_name`) avoids that helper's
+        // "find another lib symbol named X and re-canonicalize" hunt, which
+        // would recurse back into this function and, paired with this fallback,
+        // spin until the stack overflows.
+        for lib_ctx in self.lib_contexts.iter() {
+            if let Some(sym_id) = lib_ctx.binder.file_locals.get(name)
+                && let Some(symbol) = lib_ctx.binder.get_symbol(sym_id)
+                && symbol.escaped_name == name
+            {
+                return self.mint_def_for_symbol_in_file(sym_id, symbol, symbol.decl_file_idx);
+            }
         }
         raw
     }
