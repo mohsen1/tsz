@@ -21,7 +21,10 @@ use tsz_solver::{PropertyInfo, TypeId};
 /// from this base, so an ascending sort interleaves exactly as tsc prints. The
 /// base sits far above any realistic identifier-spread member count, and the
 /// final display is renumbered to `1..N`, so the raw value never reaches output.
-pub(super) const LITERAL_DISPLAY_ORDER_BASE: u32 = 1 << 20;
+///
+/// Re-exported from the `object_literal` module so `object_literal_circularity`
+/// can place spliced synthetic-`this` members into the same range.
+pub(crate) const LITERAL_DISPLAY_ORDER_BASE: u32 = 1 << 20;
 
 impl<'a> CheckerState<'a> {
     pub(super) fn contextual_type_requires_authoritative_evaluation(

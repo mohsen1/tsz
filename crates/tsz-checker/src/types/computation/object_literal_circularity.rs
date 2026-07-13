@@ -1,3 +1,4 @@
+use super::object_literal::LITERAL_DISPLAY_ORDER_BASE;
 use crate::query_boundaries::object_literal_context as object_context_query;
 use crate::query_boundaries::signature_building as signature_building_boundary;
 use crate::state::CheckerState;
@@ -138,7 +139,11 @@ impl<'a> CheckerState<'a> {
                     type_id,
                     readonly || in_const,
                     false,
-                    (pos + 1) as u32,
+                    // Trailing members share the direct-member display range with
+                    // the incrementally-built `properties` (which start at
+                    // `LITERAL_DISPLAY_ORDER_BASE`), so the synthetic `this` type
+                    // renders every member in source order (tsc parity).
+                    LITERAL_DISPLAY_ORDER_BASE.saturating_add(pos as u32),
                 ),
             );
         }
@@ -234,6 +239,12 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Map each callable member (method shorthand or `function`/arrow property
+    /// initializer) to its declaration node and a display-order slot. The slot
+    /// is `LITERAL_DISPLAY_ORDER_BASE + <source index>` so that when a
+    /// synthetic-`this` type splices these methods next to the incrementally
+    /// built `properties` (which occupy the same direct-member range), every
+    /// member sorts in source order for diagnostic display.
     pub(super) fn object_literal_callable_member_names(
         &mut self,
         elements: &[NodeIndex],
@@ -248,7 +259,10 @@ impl<'a> CheckerState<'a> {
                     let name = self.get_property_name(method.name)?;
                     return Some((
                         self.ctx.types.intern_string(&name),
-                        (elem_idx, (pos + 1) as u32),
+                        (
+                            elem_idx,
+                            LITERAL_DISPLAY_ORDER_BASE.saturating_add(pos as u32),
+                        ),
                     ));
                 }
 
@@ -267,7 +281,10 @@ impl<'a> CheckerState<'a> {
                 let name = self.get_property_name_resolved(prop.name)?;
                 Some((
                     self.ctx.types.intern_string(&name),
-                    (elem_idx, (pos + 1) as u32),
+                    (
+                        elem_idx,
+                        LITERAL_DISPLAY_ORDER_BASE.saturating_add(pos as u32),
+                    ),
                 ))
             })
             .collect()
