@@ -630,39 +630,52 @@ impl CheckerContext<'_> {
     /// `resolve_lib_type_with_params`) where the `SymbolId` comes from an
     /// individual lib binder and must be mapped to the merged-binder identity
     /// before creating/looking up the `DefId`.
+    ///
+    /// Resolution is keyed on `name` through the collision-free
+    /// `DefinitionStore` name index, NOT on the binder-relative
+    /// `canonical_sym`. Every lib-binder symbol shares the `u32::MAX`
+    /// declaration-file sentinel, so a raw `SymbolId -> DefId` lookup
+    /// ([`get_lib_def_id`]) can answer with a def a *different* lib binder
+    /// registered for an unrelated name whose raw index collides. That misfires
+    /// when a canonical symbol is chosen from a merged/global index — e.g. after
+    /// a user `interface Error {}` merges into the lib `Error`, hoisting lib
+    /// globals into the primary binder's `file_locals` so
+    /// [`canonical_lib_sym_id`] returns a merged identity that differs from the
+    /// per-lib input — producing `FlatArray -> eval`, `ReadonlyArray -> isNaN`
+    /// inside re-lowered lib member signatures. The name index is keyed on the
+    /// interned name, so it resolves the intended lib def regardless of which
+    /// binder the canonical `SymbolId` is relative to. The raw
+    /// `get_lib_def_id(canonical_sym)` remains the fallback for names not yet
+    /// registered under a lib def in the store.
     pub fn get_canonical_lib_def_id(&self, name: &str, per_lib_sym_id: SymbolId) -> DefId {
         let canonical_sym = self.canonical_lib_sym_id(name, per_lib_sym_id);
-        if canonical_sym == per_lib_sym_id {
-            let atom = self.types.intern_string(name);
-            self.definition_store
-                .find_defs_by_name(atom)
-                .and_then(|defs| {
-                    defs.into_iter()
-                        .filter(|def_id| {
-                            self.definition_store.get(*def_id).is_some_and(|info| {
-                                info.symbol_id.is_some_and(|sym_id| {
-                                    self.symbol_is_from_actual_or_cloned_lib(SymbolId(sym_id))
-                                }) && matches!(
-                                    info.kind,
-                                    tsz_solver::def::DefKind::TypeAlias
-                                        | tsz_solver::def::DefKind::Interface
-                                        | tsz_solver::def::DefKind::Class
-                                        | tsz_solver::def::DefKind::Enum
-                                        | tsz_solver::def::DefKind::Namespace
-                                )
-                            })
+        let atom = self.types.intern_string(name);
+        self.definition_store
+            .find_defs_by_name(atom)
+            .and_then(|defs| {
+                defs.into_iter()
+                    .filter(|def_id| {
+                        self.definition_store.get(*def_id).is_some_and(|info| {
+                            info.symbol_id.is_some_and(|sym_id| {
+                                self.symbol_is_from_actual_or_cloned_lib(SymbolId(sym_id))
+                            }) && matches!(
+                                info.kind,
+                                tsz_solver::def::DefKind::TypeAlias
+                                    | tsz_solver::def::DefKind::Interface
+                                    | tsz_solver::def::DefKind::Class
+                                    | tsz_solver::def::DefKind::Enum
+                                    | tsz_solver::def::DefKind::Namespace
+                            )
                         })
-                        .max_by_key(|def_id| {
-                            self.definition_store
-                                .get(*def_id)
-                                .and_then(|info| info.symbol_id)
-                                .unwrap_or_default()
-                        })
-                })
-                .unwrap_or_else(|| self.get_lib_def_id(canonical_sym))
-        } else {
-            self.get_lib_def_id(canonical_sym)
-        }
+                    })
+                    .max_by_key(|def_id| {
+                        self.definition_store
+                            .get(*def_id)
+                            .and_then(|info| info.symbol_id)
+                            .unwrap_or_default()
+                    })
+            })
+            .unwrap_or_else(|| self.get_lib_def_id(canonical_sym))
     }
 
     /// Resolve a lib symbol's `DefId`, verifying the def actually names
