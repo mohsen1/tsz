@@ -900,7 +900,7 @@ impl<'a> CheckerState<'a> {
                     self.ctx.arena,
                 );
 
-                let decls_with_arenas = collect_lib_decls_with_arenas_in_contexts(
+                let mut decls_with_arenas = collect_lib_decls_with_arenas_in_contexts(
                     selected_binder,
                     sym_id,
                     &symbol.declarations,
@@ -908,6 +908,22 @@ impl<'a> CheckerState<'a> {
                     &lib_contexts,
                     Some(self.ctx.arena),
                 );
+                // A single-lib current binder (lib-baseline diagnostics pass)
+                // owns only its own file's declarations for a merged global;
+                // union in the sibling lib contexts' same-named declarations
+                // so the lowered body is the full cross-lib merge, not a
+                // partial view that then gets published as canonical.
+                if !selected_from_lib_context
+                    && crate::state_type_analysis::cross_file_direct::is_builtin_lib_declaration_arena(
+                        self.ctx.arena,
+                    )
+                {
+                    super::lib_decls::extend_decls_with_lib_context_globals(
+                        name,
+                        &lib_contexts,
+                        &mut decls_with_arenas,
+                    );
+                }
                 let interface_canonical_sym_id = canonical_interface_symbol_id(
                     &self.ctx,
                     name,

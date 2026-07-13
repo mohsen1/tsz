@@ -216,6 +216,46 @@ fn collect_decl_arenas_from_lib_contexts<'a>(
     out
 }
 
+/// Union same-named global declarations from every lib context into `decls`.
+///
+/// A checker whose current binder is a SINGLE-lib binder (the lib-baseline
+/// diagnostics passes) resolves a global like `Array` to its local symbol,
+/// whose declaration list covers only that one file. Lowering that partial
+/// set and publishing it as the canonical lib body hands every consumer a
+/// partial interface (issue #13255 family; a user `interface Error`
+/// augmentation made it user-visible: `RegExpMatchArray`/`RegExpExecArray`
+/// lost their `Array` heritage members). Extend with each lib context's
+/// same-named declarations; pairs already present (same index and same node
+/// storage) are skipped.
+pub(crate) fn extend_decls_with_lib_context_globals<'a>(
+    name: &str,
+    lib_contexts: &'a [crate::context::LibContext],
+    decls: &mut Vec<(NodeIndex, &'a NodeArena)>,
+) {
+    for lib_ctx in lib_contexts {
+        let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name) else {
+            continue;
+        };
+        let Some(lib_symbol) = lib_ctx.binder.get_symbol(lib_sym_id) else {
+            continue;
+        };
+        if lib_symbol.escaped_name != name {
+            continue;
+        }
+        for &decl_idx in &lib_symbol.declarations {
+            if lib_ctx.arena.get(decl_idx).is_none() {
+                continue;
+            }
+            let already = decls.iter().any(|(idx, arena)| {
+                *idx == decl_idx && arena.shares_node_storage_with(lib_ctx.arena.as_ref())
+            });
+            if !already {
+                decls.push((decl_idx, lib_ctx.arena.as_ref()));
+            }
+        }
+    }
+}
+
 fn is_current_file_global_augmentation_decl(
     binder: &tsz_binder::BinderState,
     sym_id: tsz_binder::SymbolId,

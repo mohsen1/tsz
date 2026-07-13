@@ -227,6 +227,23 @@ impl ProgramContext {
     /// repeated at every checker creation site. The order of operations matches
     /// the original driver pattern: skeleton indices are set before `set_all_binders`
     /// so the binder scan can be skipped for `declared_modules` and expando.
+    /// Apply project-level shared state WITHOUT installing the shared
+    /// `DefinitionStore`.
+    ///
+    /// The lib-baseline diagnostics passes check each lib file with a
+    /// per-lib binder whose raw `SymbolId` space differs from the merged
+    /// program's. A checker in that space resolves globals like `Array`
+    /// from its single-lib view, so publishing its def bodies into the
+    /// shared store would seed PARTIAL lib-interface bodies (e.g. an
+    /// `Array` containing only es2019's `flat`/`flatMap`) that the user
+    /// checkers then consume as already-resolved. Those passes are
+    /// diagnostics-only consumers; they keep their own store.
+    pub fn apply_to_isolated_store(&self, ctx: &mut CheckerContext<'_>) {
+        let mut without_store = self.clone();
+        without_store.shared_definition_store = None;
+        without_store.apply_to(ctx);
+    }
+
     pub fn apply_to(&self, ctx: &mut CheckerContext<'_>) {
         if !self.lib_contexts.is_empty() {
             ctx.set_lib_contexts_shared(Arc::clone(&self.lib_contexts));

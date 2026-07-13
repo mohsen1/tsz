@@ -58,6 +58,11 @@ pub(crate) fn register_selected_lib_def_resolved(
     ty: TypeId,
     params: Vec<TypeParamInfo>,
 ) -> DefId {
+    // TEMP lib-def-collision probe (remove after diagnosis).
+    if std::env::var("TSZ_PROBE_TYPE_NAME").is_ok_and(|v| v == name) {
+        tracing::warn!(target: "tsz_flatarray_probe", %name, sym = sym_id.0, selected_from_lib_context, ty = ty.0, n_params = params.len(), "register_selected_lib_def_resolved");
+        tracing::warn!(target: "tsz_flatarray_probe", bt = %std::backtrace::Backtrace::force_capture(), "register_selected backtrace");
+    }
     if !selected_from_lib_context {
         return ctx.register_lib_def_resolved(name, sym_id, ty, params);
     }
