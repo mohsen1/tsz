@@ -101,6 +101,62 @@ impl CheckerContext<'_> {
         symbol: &tsz_binder::Symbol,
         file_idx: u32,
     ) -> DefId {
+        let info = self.build_symbol_def_info(sym_id, symbol, file_idx);
+        let kind = info.kind;
+        // Atomic mint — see `get_or_create_def_id`: concurrent checkers
+        // stabilizing the same `(symbol, file)` identity converge on one
+        // `DefId` instead of each minting its own.
+        let (def_id, _minted) = self
+            .definition_store
+            .register_for_symbol(sym_id.0, file_idx, info);
+        self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
+        self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
+        self.register_def_kind_in_envs(def_id, kind);
+        def_id
+    }
+
+    /// Register a FRESH `DefId` for a lib `symbol`, keyed only by the
+    /// collision-free NAME index — bypassing the `(SymbolId, file)`
+    /// `symbol_def_index` used by [`Self::mint_def_for_symbol_in_file`].
+    ///
+    /// Every lib-binder symbol carries the `u32::MAX` declaration-file
+    /// sentinel, so two lib binders' symbols that share a raw index collide in
+    /// `register_for_symbol`; and `DeclSiteKey` is disabled for the sentinel
+    /// file, so decl-site disambiguation does not rescue it (it returns the
+    /// already-registered, wrongly-named def). When
+    /// [`Self::get_canonical_lib_def_id`] has already observed such a collision
+    /// (the raw-id resolution names the wrong symbol) and the name index has no
+    /// entry yet, it mints here instead. `DefinitionStore::register` allocates a
+    /// fresh id and populates `name_to_defs`, so this reference and the later
+    /// on-demand body resolution converge through the name index and
+    /// `def_symbol_identity` (which re-verifies the symbol by name). Idempotent
+    /// in practice: the caller's name-index probe runs first, so a second
+    /// resolution of the same name returns the already-registered def rather
+    /// than minting again.
+    pub(crate) fn register_named_lib_def(
+        &self,
+        sym_id: SymbolId,
+        symbol: &tsz_binder::Symbol,
+        file_idx: u32,
+    ) -> DefId {
+        let info = self.build_symbol_def_info(sym_id, symbol, file_idx);
+        let kind = info.kind;
+        let def_id = self.definition_store.register(info);
+        self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
+        self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
+        self.register_def_kind_in_envs(def_id, kind);
+        def_id
+    }
+
+    /// Build the [`DefinitionInfo`] for a symbol/file identity, shared by
+    /// [`Self::mint_def_for_symbol_in_file`] and
+    /// [`Self::register_named_lib_def`].
+    fn build_symbol_def_info(
+        &self,
+        sym_id: SymbolId,
+        symbol: &tsz_binder::Symbol,
+        file_idx: u32,
+    ) -> tsz_solver::def::DefinitionInfo {
         use tsz_solver::def::DefinitionInfo;
 
         let name = self.types.intern_string(&symbol.escaped_name);
@@ -134,7 +190,7 @@ impl CheckerContext<'_> {
             }
         });
 
-        let info = DefinitionInfo {
+        DefinitionInfo {
             kind,
             name,
             type_params: Vec::new(),
@@ -154,17 +210,6 @@ impl CheckerContext<'_> {
             is_exported: false,
             is_global_augmentation: false,
             is_declare: false,
-        };
-
-        // Atomic mint — see `get_or_create_def_id`: concurrent checkers
-        // stabilizing the same `(symbol, file)` identity converge on one
-        // `DefId` instead of each minting its own.
-        let (def_id, _minted) = self
-            .definition_store
-            .register_for_symbol(sym_id.0, file_idx, info);
-        self.symbol_to_def.borrow_mut().insert(sym_id, def_id);
-        self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
-        self.register_def_kind_in_envs(def_id, kind);
-        def_id
+        }
     }
 }

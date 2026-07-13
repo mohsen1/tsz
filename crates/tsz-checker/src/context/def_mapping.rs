@@ -698,23 +698,24 @@ impl CheckerContext<'_> {
             return raw;
         }
         // `canonical_sym` collided with an unrelated lib def under the
-        // `u32::MAX` sentinel. Mint the def directly from the real lib symbol,
+        // `u32::MAX` sentinel. Register a fresh def for the real lib symbol,
         // found by a collision-free scan of each lib binder's `file_locals`
-        // (name-keyed). `mint_def_for_symbol_in_file` routes through
-        // `register_for_symbol`, which disambiguates by DECL SITE (span): it
-        // returns a fresh def for THIS symbol rather than the colliding one, and
-        // registers it in `name_to_defs`, so the later body resolution and this
-        // reference converge on the same `DefId`. Minting directly (rather than
-        // `get_or_create_def_id_for_symbol_name`) avoids that helper's
-        // "find another lib symbol named X and re-canonicalize" hunt, which
-        // would recurse back into this function and, paired with this fallback,
-        // spin until the stack overflows.
+        // (name-keyed). `register_named_lib_def` uses `DefinitionStore::register`
+        // (keyed by the name index) rather than `register_for_symbol` (keyed by
+        // `(SymbolId, u32::MAX)`, which would just hand back the colliding def —
+        // `DeclSiteKey` is disabled for the sentinel file, so decl-site
+        // disambiguation cannot separate them). It never re-enters this function
+        // (unlike `get_or_create_def_id_for_symbol_name`, whose "find another lib
+        // symbol named X and re-canonicalize" hunt would recurse and overflow the
+        // stack), and it publishes into `name_to_defs`, so the on-demand body
+        // resolution and this reference converge on the same `DefId`. The
+        // name-index probe above makes it idempotent across repeated resolutions.
         for lib_ctx in self.lib_contexts.iter() {
             if let Some(sym_id) = lib_ctx.binder.file_locals.get(name)
                 && let Some(symbol) = lib_ctx.binder.get_symbol(sym_id)
                 && symbol.escaped_name == name
             {
-                return self.mint_def_for_symbol_in_file(sym_id, symbol, symbol.decl_file_idx);
+                return self.register_named_lib_def(sym_id, symbol, symbol.decl_file_idx);
             }
         }
         raw
