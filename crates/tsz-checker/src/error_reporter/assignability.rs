@@ -562,6 +562,30 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // A target annotated by a type REFERENCE keeps its name only when the
+        // referenced alias body is already in tuple normal form:
+        // `type Rested = [...number[], boolean]; const bad: Rested = ["a"]`
+        // renders `'[string]' is not assignable to type 'Rested'` in tsc,
+        // while `type Unbounded = [...Numbers, boolean]` (spread of a NAMED
+        // array alias) normalizes the variadic element away, mints a fresh
+        // tuple without the alias identity, and renders the structural form
+        // (variadicTuples1.ts line 415). Both alias bodies EVALUATE to the
+        // same `TypeId` as an anonymous annotation of the same shape, so the
+        // alias declaration's AST is the only authoritative signal. The probe
+        // is resolution-free (syntax reads plus the binder's memoized
+        // read-only scope walk): mid-render SYMBOL resolution perturbs the
+        // checked program (the hazard `chain_rendering_does_not_leak_
+        // diagnostics_into_enclosing_call` guards). Spread-FLATTENED aliases
+        // never reach this hook — their evaluation has no rest element, so
+        // the structural-display probe below declines them.
+        if self
+            .direct_assignment_target_annotation_node(anchor_idx)
+            .is_some_and(|annotation_idx| {
+                self.annotation_references_normal_form_tuple_alias(annotation_idx)
+            })
+        {
+            return;
+        }
         let Some(target_str) = self.variadic_tuple_alias_structural_display(target, source) else {
             return;
         };
@@ -575,6 +599,99 @@ impl<'a> CheckerState<'a> {
             diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
             &[&source_str, &target_str],
         );
+    }
+
+    /// Whether `annotation_idx` is a plain (argument-free) type reference to
+    /// a type alias whose declared tuple body is in syntactic normal form:
+    /// every spread element's operand is written as an ARRAY type
+    /// (`...number[]`). tsc keeps the alias identity for such tuples because
+    /// `getTupleElementFlags` classifies an array-operand spread as `Rest`
+    /// (no normalization runs), while a named-operand spread (`...Numbers`)
+    /// is `Variadic` and `createNormalizedTupleType` mints a fresh tuple
+    /// without the alias symbol, so tsc displays the structural form there.
+    /// Resolution-free: the name lookup is `Binder::resolve_identifier`, a
+    /// memoized read-only scope walk. Lookup failures (qualified names,
+    /// generic references, imported aliases) return `false`, falling back to
+    /// the structural rewrite.
+    fn annotation_references_normal_form_tuple_alias(&self, annotation_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(annotation_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return false;
+        }
+        let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
+            return false;
+        };
+        if type_ref
+            .type_arguments
+            .as_ref()
+            .is_some_and(|args| !args.nodes.is_empty())
+        {
+            return false;
+        }
+        let Some(sym_id) = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, type_ref.type_name)
+        else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS) {
+            return false;
+        }
+        let decl_idx = symbol.primary_declaration().unwrap_or(NodeIndex::NONE);
+        if decl_idx.is_none() {
+            return false;
+        }
+        let Some(alias) = self.ctx.arena.get_type_alias_at(decl_idx) else {
+            return false;
+        };
+        self.tuple_type_node_is_syntactic_normal_form(alias.type_node)
+    }
+
+    /// Whether a tuple type NODE is already in tsc's tuple normal form: each
+    /// spread element (`RestType` or a `...`-marked `NamedTupleMember`) has a
+    /// syntactic ARRAY-type operand. Purely syntactic — no symbol or type
+    /// resolution.
+    fn tuple_type_node_is_syntactic_normal_form(&self, type_node_idx: NodeIndex) -> bool {
+        let Some(body) = self.ctx.arena.get(type_node_idx) else {
+            return false;
+        };
+        if body.kind != syntax_kind_ext::TUPLE_TYPE {
+            return false;
+        }
+        let Some(tuple) = self.ctx.arena.get_tuple_type(body) else {
+            return false;
+        };
+        tuple.elements.nodes.iter().all(|&elem_idx| {
+            let Some(elem) = self.ctx.arena.get(elem_idx) else {
+                return true;
+            };
+            let spread_operand = if elem.kind == syntax_kind_ext::REST_TYPE {
+                self.ctx
+                    .arena
+                    .get_wrapped_type(elem)
+                    .map(|wrapped| wrapped.type_node)
+            } else if elem.kind == syntax_kind_ext::NAMED_TUPLE_MEMBER {
+                self.ctx
+                    .arena
+                    .get_named_tuple_member(elem)
+                    .filter(|member| member.dot_dot_dot_token)
+                    .map(|member| member.type_node)
+            } else {
+                None
+            };
+            spread_operand.is_none_or(|operand_idx| {
+                self.ctx
+                    .arena
+                    .get(operand_idx)
+                    .is_some_and(|operand| operand.kind == syntax_kind_ext::ARRAY_TYPE)
+            })
+        })
     }
 
     /// Internal helper that reports a detailed assignability failure using an

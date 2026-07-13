@@ -12,7 +12,7 @@ impl<'a> CheckerState<'a> {
     /// `anchor_idx` (variable declaration, parameter, or — for a return-value
     /// source — the enclosing function's return annotation). Node-based
     /// sibling of [`Self::direct_assignment_target_annotation_text`].
-    pub(super) fn direct_assignment_target_annotation_node(
+    pub(in crate::error_reporter) fn direct_assignment_target_annotation_node(
         &self,
         anchor_idx: NodeIndex,
     ) -> Option<NodeIndex> {
