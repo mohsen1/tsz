@@ -153,3 +153,63 @@ fn no_augmentation_control_keeps_lib_array_surfaces_clean() {
         "control: exec() keeps its Array surface with no augmentation"
     );
 }
+
+/// The multi-file facet: a user global augmentation in a SEPARATE .d.ts
+/// (here `ErrorConstructor`) triggers the lib-baseline passes, and the first
+/// of those must not freeze the shared `Array<T>` base — a baseline-baked
+/// base broke `flatMap`'s `ReadonlyArray<U>` inference position so the
+/// callback return stopped flattening (`number[][][]` instead of
+/// `number[][]`). Assert the flatten via an exact reveal-type mismatch.
+#[test]
+fn declaration_file_augmentation_keeps_flatmap_flattening() {
+    let files = [
+        (
+            "globals.d.ts",
+            "interface ErrorConstructor {\n\
+             \x20   captureStackTrace?(targetObject: object, constructorOpt?: Function): void;\n\
+             }\n",
+        ),
+        (
+            "main.ts",
+            "const r = [1, 2, 3].flatMap(x => [[x]]);\n\
+             const reveal: null = r;\n",
+        ),
+    ];
+    let diags = compile_files(&files);
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "expected exactly the reveal-type mismatch, got: {diags:?}"
+    );
+    assert!(
+        ts2322[0].message_text.contains("'number[][]'"),
+        "flatMap must flatten one level under a lib-global augmentation \
+         (tsc infers number[][]); got: {}",
+        ts2322[0].message_text
+    );
+}
+
+/// Control for the flatMap facet: without the augmentation the same program
+/// already flattens, pinning that the guard above measures the augmentation
+/// effect.
+#[test]
+fn no_augmentation_control_keeps_flatmap_flattening() {
+    let files = [(
+        "main.ts",
+        "const r = [1, 2, 3].flatMap(x => [[x]]);\n\
+         const reveal: null = r;\n",
+    )];
+    let diags = compile_files(&files);
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "control: one reveal mismatch, got: {diags:?}"
+    );
+    assert!(
+        ts2322[0].message_text.contains("'number[][]'"),
+        "control: flatMap flattens with no augmentation; got: {}",
+        ts2322[0].message_text
+    );
+}
