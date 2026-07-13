@@ -648,6 +648,25 @@ impl CheckerContext<'_> {
     /// `get_lib_def_id(canonical_sym)` remains the fallback for names not yet
     /// registered under a lib def in the store.
     pub fn get_canonical_lib_def_id(&self, name: &str, per_lib_sym_id: SymbolId) -> DefId {
+        if name == "FlatArray" || name == "ReadonlyArray" {
+            let r = self.get_canonical_lib_def_id_probe_inner(name, per_lib_sym_id);
+            let resolved_name = self
+                .definition_store
+                .get(r)
+                .map(|info| self.types.resolve_atom(info.name).to_string());
+            tracing::warn!(
+                name,
+                ?per_lib_sym_id,
+                ?r,
+                ?resolved_name,
+                "canonical result"
+            );
+            return r;
+        }
+        self.get_canonical_lib_def_id_probe_inner(name, per_lib_sym_id)
+    }
+
+    fn get_canonical_lib_def_id_probe_inner(&self, name: &str, per_lib_sym_id: SymbolId) -> DefId {
         let canonical_sym = self.canonical_lib_sym_id(name, per_lib_sym_id);
         let atom = self.types.intern_string(name);
         if let Some(def_id) = self
@@ -677,6 +696,19 @@ impl CheckerContext<'_> {
                     })
             })
         {
+            // TEMP diagnostic (lib-interface-merge collision). Fires only when
+            // the name index itself returns a def whose name disagrees with the
+            // request — i.e. a mis-registered/colliding entry. Remove once the
+            // fix is confirmed.
+            if !self.def_name_matches(def_id, name).unwrap_or(true) {
+                tracing::warn!(
+                    target: "tsz_checker::lib_def_collision",
+                    name,
+                    branch = "name_index",
+                    resolved = ?self.definition_store.get(def_id).map(|i| self.types.resolve_atom(i.name)),
+                    "get_canonical_lib_def_id returned a mismatched def"
+                );
+            }
             return def_id;
         }
 
@@ -695,6 +727,23 @@ impl CheckerContext<'_> {
         // collision-free lib-context name scan) so the wrong def cannot leak.
         let raw = self.get_lib_def_id(canonical_sym);
         if self.def_name_matches(raw, name).unwrap_or(false) {
+            // TEMP diagnostic (lib-interface-merge collision): catch the case
+            // where `def_name_matches` reports a match yet the resolved def's
+            // stored name actually differs (an atom-collision false-positive).
+            // Remove once the fix is confirmed.
+            let raw_name = self
+                .definition_store
+                .get(raw)
+                .map(|i| self.types.resolve_atom(i.name));
+            if raw_name.as_deref() != Some(name) {
+                tracing::warn!(
+                    target: "tsz_checker::lib_def_collision",
+                    name,
+                    branch = "raw_match_name_differs",
+                    resolved = ?raw_name,
+                    "def_name_matches passed but the resolved def name differs"
+                );
+            }
             return raw;
         }
         // `canonical_sym` collided with an unrelated lib def under the
@@ -715,9 +764,28 @@ impl CheckerContext<'_> {
                 && let Some(symbol) = lib_ctx.binder.get_symbol(sym_id)
                 && symbol.escaped_name == name
             {
+                // TEMP diagnostic (lib-interface-merge collision). Remove once
+                // the fix is confirmed.
+                tracing::warn!(
+                    target: "tsz_checker::lib_def_collision",
+                    name,
+                    branch = "mint",
+                    lib_sym = sym_id.0,
+                    "get_canonical_lib_def_id minting fresh name-keyed def"
+                );
                 return self.register_named_lib_def(sym_id, symbol, symbol.decl_file_idx);
             }
         }
+        // TEMP diagnostic (lib-interface-merge collision). Reached only when the
+        // raw def mismatched AND no lib context declares `name`. Remove once the
+        // fix is confirmed.
+        tracing::warn!(
+            target: "tsz_checker::lib_def_collision",
+            name,
+            branch = "raw_fallback",
+            resolved = ?self.definition_store.get(raw).map(|i| self.types.resolve_atom(i.name)),
+            "get_canonical_lib_def_id fell through to raw (no lib-context name match)"
+        );
         raw
     }
 
