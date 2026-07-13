@@ -170,10 +170,16 @@ fn accessor_modifier_below_es2015_reports_ts18045() {
         return;
     };
 
-    assert_ne!(code, 0, "ES5 accessor property should fail");
+    // Oracle-adjudicated (tsc 7.0.2): 'target=ES5' was REMOVED — the native
+    // compiler reports TS5108 (exit 1) before any checking runs, so TS18045
+    // (which required a sub-ES2015 target) can no longer fire. tsz matches
+    // byte-for-byte (verified side by side on this exact fixture).
+    assert_ne!(code, 0, "a removed-option report is an error exit");
     assert!(
-        output.contains("error TS18045: Properties with the 'accessor' modifier are only available when targeting ECMAScript 2015 and higher."),
-        "expected TS18045 for ES5 accessor property, got:\n{output}"
+        output.contains(
+            "error TS5108: Option 'target=ES5' has been removed. Please remove it from your configuration."
+        ),
+        "expected the 7.0.2 removed-option report, got:\n{output}"
     );
 }
 
@@ -251,15 +257,16 @@ fn async_function_without_promise_constructor_reports_ts2705() {
         return;
     };
 
-    assert_ne!(
-        code, 0,
-        "ES5 async function without Promise constructor should fail"
-    );
+    // Oracle-adjudicated (tsc 7.0.2): 'target=ES5' was REMOVED — the native
+    // compiler reports TS5108 (exit 1) before checking, so the ES5-specific
+    // TS2705 can no longer fire (an es2017 target with lib=es5 is silent in
+    // both compilers). tsz matches byte-for-byte.
+    assert_ne!(code, 0, "a removed-option report is an error exit");
     assert!(
         output.contains(
-            "error TS2705: An async function or method in ES5 requires the 'Promise' constructor."
+            "error TS5108: Option 'target=ES5' has been removed. Please remove it from your configuration."
         ),
-        "expected TS2705 for async function without Promise constructor, got:\n{output}"
+        "expected the 7.0.2 removed-option report, got:\n{output}"
     );
 }
 
