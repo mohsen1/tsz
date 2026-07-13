@@ -122,6 +122,33 @@ const bad: Rested = ["a"];
     );
 }
 
+/// A variadic spread whose operand is a NAMED array alias (`[...Nums, boolean]`
+/// where `Nums = number[]`) drops the alias name: tsc classifies a
+/// named-operand spread as `Variadic` (only a syntactic array-type operand is
+/// `Rest`), and normalizing the variadic element mints a fresh tuple without
+/// the alias symbol, so the structural form is rendered
+/// (`variadicTuples1.ts` line 415, TypeScript issue #40235 repro).
+#[test]
+fn named_array_operand_spread_alias_displays_structural_tuple() {
+    let messages = ts2322_messages(
+        r#"
+type Nums = number[];
+type Chain = [...Nums, boolean];
+const bad: Chain = [false, false];
+"#,
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("[...number[], boolean]")),
+        "a named-array-operand spread alias should display structurally, got: {messages:?}"
+    );
+    assert!(
+        !messages.iter().any(|m| m.contains("Chain")),
+        "the alias name must not leak into the message, got: {messages:?}"
+    );
+}
+
 /// Per-def keying witness: a spread-flattened alias still drops its name even
 /// when a directly-written fixed tuple alias of the *same* interned shape
 /// coexists in the program. A body-`TypeId`-keyed flag could not do this — the
