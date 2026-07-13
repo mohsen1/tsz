@@ -185,6 +185,10 @@ fn accessor_modifier_below_es2015_reports_ts18045() {
 
 #[test]
 fn bigint_and_symbol_availability_follow_target_and_lib() {
+    // Oracle-adjudicated (tsc 7.0.2): 'target=es5' was removed, so the
+    // below-ES2020 premise now uses es2017 — the oracle still reports both
+    // TS2737 (BigInt below ES2020) and TS2585 (Symbol value without an
+    // es2015+ lib) on these flags, byte-matched by tsz.
     let temp = TempDir::new("bigint_symbol_target_lib").expect("temp dir");
     write_file(
         &temp.path.join("test.ts"),
@@ -199,9 +203,7 @@ const sym = Symbol("unique");
             "--noEmit",
             "--strict",
             "--target",
-            "es5",
-            "--ignoreDeprecations",
-            "6.0",
+            "es2017",
             "--lib",
             "es5",
             "--pretty",
@@ -213,7 +215,7 @@ const sym = Symbol("unique");
         return;
     };
 
-    assert_ne!(code, 0, "ES5 BigInt/Symbol availability should fail");
+    assert_ne!(code, 0, "BigInt/Symbol availability below ES2020/es2015-lib should fail");
     assert!(
         output.contains(
             "error TS2737: BigInt literals are not available when targeting lower than ES2020."
@@ -623,7 +625,9 @@ fn trace_resolution_prints_relative_import_resolution() {
     let temp = TempDir::new("trace_resolution_relative_import").expect("temp dir");
     write_file(
         &temp.path.join("tsconfig.json"),
-        r#"{"compilerOptions":{"noEmit":true,"moduleResolution":"node","ignoreDeprecations":"6.0"},"files":["index.ts"]}"#,
+        // tsc 7.0.2 removed 'moduleResolution=node10' (TS5108); 'bundler' is
+        // the supported kind whose trace shape both compilers share.
+        r#"{"compilerOptions":{"noEmit":true,"moduleResolution":"bundler","module":"esnext"},"files":["index.ts"]}"#,
     );
     write_file(&temp.path.join("dep.ts"), "export const dep = 2;\n");
     write_file(
@@ -654,7 +658,7 @@ fn trace_resolution_prints_relative_import_resolution() {
         "expected trace to include module resolution start, got:\n{stdout}"
     );
     assert!(
-        stdout.contains("Explicitly specified module resolution kind: 'Node10'."),
+        stdout.contains("Explicitly specified module resolution kind: 'Bundler'."),
         "expected trace to include effective module resolution kind, got:\n{stdout}"
     );
     assert!(
