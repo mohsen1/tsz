@@ -693,7 +693,26 @@ impl CheckerContext<'_> {
         // keep collided ids from publishing (see `queries/lib*.rs` and
         // `insert_type_env_symbol`).
         if canonical_sym != per_lib_sym_id {
-            return self.get_lib_def_id(canonical_sym);
+            let via_canonical = self.get_lib_def_id(canonical_sym);
+            // The canonical symbol can come from the largest-`SymbolId`
+            // HEURISTIC in `canonical_lib_sym_id` (ROBUSTNESS_AUDIT item #4):
+            // a raw id picked by name in ONE binder's numbering and resolved
+            // by `get_lib_def_id` against ANOTHER's. When the mapped def's
+            // recorded name CONTRADICTS the requested name, the identity is a
+            // collision artifact — a lib alias body ref to
+            // `XMLHttpRequestBodyInit` elected `AudioSampleFormat`'s def and
+            // baked its literal union into `BodyInit`, the ofetch canary
+            // false TS2322 (#15778). Fall through to the name-verified
+            // election below instead of committing the collided identity.
+            // A def with no recorded info keeps the fast path (fresh sentinel
+            // mints have no name to contradict).
+            let recorded_name_contradicts = self
+                .definition_store
+                .get(via_canonical)
+                .is_some_and(|info| &*self.types.resolve_atom_ref(info.name) != name);
+            if !recorded_name_contradicts {
+                return via_canonical;
+            }
         }
         let atom = self.types.intern_string(name);
         self.definition_store
