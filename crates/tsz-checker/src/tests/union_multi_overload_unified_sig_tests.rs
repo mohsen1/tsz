@@ -70,12 +70,16 @@ const r = f(10);
     );
 }
 
-/// Negative lock: when the multi-overload member has NO sig matching the
-/// single-overload member (e.g. M1=`(a: number)` vs M2=`(a: boolean)/(a: string)`),
-/// the union is not callable at all (TS2349). This was already correct prior
-/// to the fix; locked here so the unified-sig path doesn't regress it.
+/// When the multi-overload member has NO sig matching the single-overload
+/// member (M1=`(a: number)` vs M2=`(a: boolean)/(a: string)`), tsc 7.0.2's
+/// `getUnionSignatures` pass 2 combines each of M2's overloads with M1's sig,
+/// intersecting the params to `never` — so the union IS callable, both
+/// combined candidates fail on the argument, and the failure reports as one
+/// TS2769 with the last-overload TS2770 header and the `never`-param TS2345
+/// (the literal `10` is preserved against `never`). Differential-verified
+/// against the pinned tsc 7.0.2 binary.
 #[test]
-fn union_single_plus_multi_overload_no_match_emits_ts2349() {
+fn union_single_plus_multi_overload_no_match_reports_ts2769_last_overload() {
     let diags = check_source_diagnostics(
         r#"
 declare var f: { (a: number): number; } | { (a: boolean): string; (a: string): boolean; };
@@ -83,14 +87,36 @@ f(10);
 "#,
     );
 
-    let ts2349: Vec<_> = diags.iter().filter(|d| d.code == 2349).collect();
+    let ts2769: Vec<_> = diags.iter().filter(|d| d.code == 2769).collect();
     assert_eq!(
-        ts2349.len(),
+        ts2769.len(),
         1,
-        "Expected TS2349 — no compatible sig pair across union members. Got: {:?}",
+        "Expected one TS2769 for the union combined-signature failure. Got: {:?}",
         diags
             .iter()
             .map(|d| (d.code, &d.message_text))
             .collect::<Vec<_>>()
+    );
+    let chain: Vec<(u8, u32, &str)> = ts2769[0]
+        .related_information
+        .iter()
+        .map(|r| (r.depth, r.code, r.message_text.as_str()))
+        .collect();
+    assert_eq!(
+        chain,
+        vec![
+            (0, 2770, "The last overload gave the following error."),
+            (
+                1,
+                2345,
+                "Argument of type '10' is not assignable to parameter of type 'never'."
+            ),
+        ],
+        "expected the last-overload chain with the raw literal preserved against 'never'"
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 2349),
+        "the union IS callable through the combined signatures; TS2349 must not fire. Got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }

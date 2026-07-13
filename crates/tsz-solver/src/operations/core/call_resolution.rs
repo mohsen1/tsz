@@ -1573,13 +1573,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // tsc reports TS2345 (the inner type error) rather than TS2769 (no overload matched).
         let mut type_mismatch_count: usize = 0;
         let mut first_type_mismatch: Option<(usize, TypeId, TypeId)> = None; // (index, expected, actual)
-        let mut all_mismatches_identical = true;
         let mut has_non_count_non_type_failure = false;
         // Also track this-type mismatches for TS2345 optimization (tsc reports TS2345 not TS2769
         // when all failures are identical this-type mismatches)
         let mut this_mismatch_count: usize = 0;
         let mut first_this_mismatch: Option<(TypeId, TypeId)> = None; // (expected, actual)
-        let mut all_this_mismatches_identical = true;
         // Snapshot incoming generic-instantiation params so a *failed* overload attempt's `cache_generic_result` `unknown[]` params can't leak into the winner/caller; a generic winner re-populates them (#14963).
         let saved_instantiated_params = self.last_instantiated_params.clone();
 
@@ -1609,8 +1607,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     type_mismatch_count += 1;
                     if type_mismatch_count == 1 {
                         first_type_mismatch = Some((index, expected, actual));
-                    } else if first_type_mismatch != Some((index, expected, actual)) {
-                        all_mismatches_identical = false;
                     }
                     failures.push(
                         crate::diagnostics::PendingDiagnosticBuilder::argument_not_assignable(
@@ -1652,8 +1648,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     this_mismatch_count += 1;
                     if this_mismatch_count == 1 {
                         first_this_mismatch = Some((expected_this, actual_this));
-                    } else if first_this_mismatch != Some((expected_this, actual_this)) {
-                        all_this_mismatches_identical = false;
                     }
                     failures.push(
                         crate::diagnostics::PendingDiagnosticBuilder::this_type_mismatch(
@@ -1706,12 +1700,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             };
         }
 
-        // If all type mismatches are identical (or there's exactly one), and no other failures occurred,
-        // report TS2345 (the inner type error) instead of TS2769. This handles duplicate signatures
-        // or overloads where the failing parameter has the exact same type in all matching overloads.
+        // Exactly ONE arity-compatible candidate failing on an argument type
+        // reports the plain inner TS2345. Two or more failing candidates are
+        // an overload failure (TS2769) even when every candidate fails
+        // identically — tsc 7.0.2 wraps duplicate signatures and
+        // union-combined signature sets (e.g. two `(a: never)` combined
+        // sigs from `getUnionSignatures` pass 2) in `No overload matches
+        // this call.`; collapsing them here discarded the candidate count
+        // before the checker's overload emitter could see it.
         if !has_non_count_non_type_failure
-            && type_mismatch_count > 0
-            && all_mismatches_identical
+            && type_mismatch_count == 1
             && let Some((index, expected, actual)) = first_type_mismatch
         {
             return CallResult::ArgumentTypeMismatch {
@@ -1722,11 +1720,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             };
         }
 
-        // If all this-type mismatches are identical (or there's exactly one), and no other failures
-        // occurred, report TS2345 instead of TS2769. Use index 0 for the this-type mismatch.
+        // Same single-candidate rule for `this`-type mismatches.
         if !has_non_count_non_type_failure
-            && this_mismatch_count > 0
-            && all_this_mismatches_identical
+            && this_mismatch_count == 1
             && type_mismatch_count == 0
             && let Some((expected_this, actual_this)) = first_this_mismatch
         {

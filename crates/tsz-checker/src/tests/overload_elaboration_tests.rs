@@ -1,22 +1,22 @@
-//! Regression tests for tsc's per-overload `TS2772`/`TS2770` elaboration under
+//! Regression tests for tsc 7.0.2's `TS2770` last-overload elaboration under
 //! a `TS2769` ("No overload matches this call.") diagnostic.
 //!
-//! When a call matches no overload, tsc elaborates the candidates that matched
-//! arity but failed argument checks (`candidatesForArgumentError`): 2 or 3
-//! such candidates each get an `Overload {i} of {N}, '{signature}', gave the
-//! following error.` chain node (`TS2772`) — in declaration order, with the
-//! applicability error nested one level deeper — and four or more collapse to
-//! a single `The last overload gave the following error.` node (`TS2770`)
-//! wrapping only the last candidate. `{i}` is the candidate's 1-based position
-//! among the argument-error candidates while `{N}` counts every overload;
-//! arity-failing overloads never appear in the chain but still count toward
-//! `{N}`. A single argument-error candidate collapses to a plain `TS2345`
-//! (no `TS2769`).
-//!
-//! Before the fix tsz defined the `TS2772`/`TS2770` strings but never emitted
-//! them: it flattened every candidate's argument error directly under `TS2769`
-//! and, due to the related-info `(file, start, depth, message)` sort, rendered
-//! them out of declaration order.
+//! When a call matches no overload, tsc 7.0.2 (the native port) wraps EVERY
+//! multi-candidate failure — 2, 3, or more argument-error candidates alike —
+//! in a single `The last overload gave the following error.` chain node
+//! (`TS2770`) holding only the LAST argument-error candidate's applicability
+//! error and its relation reason chain. The 6.0.x per-candidate
+//! `Overload {i} of {N}, '{signature}', gave the following error.` (`TS2772`)
+//! elaboration is unreachable in the pinned compiler (verified against the
+//! pinned binary across 2/3/4/5-overload calls, constructors, duplicates,
+//! generics, and union-combined signature sets). Arity-failing overloads are
+//! excluded from the candidate set, and a SINGLE argument-error candidate
+//! collapses to a plain `TS2345` (no `TS2769`). When the last candidate's
+//! failure head-promotes to a property-level diagnostic
+//! (`TS2741`/`TS2739`/`TS2740`), that diagnostic replaces the
+//! `Argument of type ...` line directly under the header, exactly as on the
+//! single-signature path. Every expectation below is differential-verified
+//! against the pinned tsc 7.0.2 binary.
 //!
 //! See `crates/tsz-checker/src/error_reporter/call_errors/error_emission.rs`
 //! (`error_no_overload_matches_at`) and
@@ -46,12 +46,10 @@ fn overload_chain(source: &str) -> Vec<(u8, u32, String)> {
         .collect()
 }
 
-/// Two failing overloads: both wrapped in `TS2772`, in declaration order, each
-/// header at depth 0 with its applicability error nested at depth 1. The
-/// signature is the `signatureToString` colon form, not the `=>` function-type
-/// form.
+/// Two failing overloads collapse to a single `TS2770` header wrapping only
+/// the LAST candidate's applicability error.
 #[test]
-fn two_failing_overloads_wrap_each_candidate_in_declaration_order() {
+fn two_failing_overloads_collapse_to_last_overload_header() {
     let chain = overload_chain(
         r#"
 declare function f(x: number): number;
@@ -65,19 +63,8 @@ f(true);
         vec![
             (
                 0,
-                2772,
-                "Overload 1 of 2, '(x: number): number', gave the following error.".to_string()
-            ),
-            (
-                1,
-                2345,
-                "Argument of type 'boolean' is not assignable to parameter of type 'number'."
-                    .to_string()
-            ),
-            (
-                0,
-                2772,
-                "Overload 2 of 2, '(x: string): string', gave the following error.".to_string()
+                2770,
+                "The last overload gave the following error.".to_string()
             ),
             (
                 1,
@@ -86,16 +73,15 @@ f(true);
                     .to_string()
             ),
         ],
-        "expected two declaration-ordered TS2772 chains with the colon signature form"
+        "expected a single TS2770 chain holding only the last candidate's error"
     );
 }
 
-/// Three failing overloads: all wrapped, `of 3`, and declaration order is
-/// preserved rather than re-sorted. The bodies' alphabetical order
-/// (`boolean` < `number` < `string`) differs from declaration order
-/// (`number`, `string`, `boolean`); the fix must keep declaration order.
+/// Three failing overloads: still one `TS2770` header, and the shown
+/// candidate is the LAST in declaration order (`boolean`), not the
+/// alphabetically-first — proving the selection keys on declaration order.
 #[test]
-fn three_failing_overloads_preserve_declaration_order() {
+fn three_failing_overloads_show_last_in_declaration_order() {
     let chain = overload_chain(
         r#"
 declare function g(x: number): number;
@@ -105,42 +91,28 @@ g({});
 "#,
     );
 
-    let headers: Vec<&String> = chain
-        .iter()
-        .filter(|(_, code, _)| *code == 2772)
-        .map(|(_, _, m)| m)
-        .collect();
     assert_eq!(
-        headers,
+        chain,
         vec![
-            "Overload 1 of 3, '(x: number): number', gave the following error.",
-            "Overload 2 of 3, '(x: string): string', gave the following error.",
-            "Overload 3 of 3, '(x: boolean): boolean', gave the following error.",
+            (
+                0,
+                2770,
+                "The last overload gave the following error.".to_string()
+            ),
+            (
+                1,
+                2345,
+                "Argument of type '{}' is not assignable to parameter of type 'boolean'."
+                    .to_string()
+            ),
         ],
-        "expected declaration-ordered `of 3` headers, got: {chain:?}"
-    );
-
-    // Bodies stay under their header in declaration order (number, string,
-    // boolean) — not the alphabetical (boolean, number, string) the old
-    // unconditional sort produced.
-    let bodies: Vec<&String> = chain
-        .iter()
-        .filter(|(_, code, _)| *code == 2345)
-        .map(|(_, _, m)| m)
-        .collect();
-    assert_eq!(
-        bodies,
-        vec![
-            "Argument of type '{}' is not assignable to parameter of type 'number'.",
-            "Argument of type '{}' is not assignable to parameter of type 'string'.",
-            "Argument of type '{}' is not assignable to parameter of type 'boolean'.",
-        ],
-        "expected declaration-ordered bodies, got: {chain:?}"
+        "expected the LAST declaration's error (boolean, not the alphabetical \
+         or first candidate) under the single TS2770 header, got: {chain:?}"
     );
 }
 
-/// Anti-hardcoding: the wrapping is structural, independent of the callee and
-/// parameter binder names. Renaming them only changes the rendered signature.
+/// Anti-hardcoding: the collapse is structural, independent of the callee and
+/// parameter binder names.
 #[test]
 fn wrapping_is_independent_of_binder_names() {
     let chain = overload_chain(
@@ -151,26 +123,29 @@ pick(true);
 "#,
     );
 
-    let headers: Vec<&String> = chain
-        .iter()
-        .filter(|(_, code, _)| *code == 2772)
-        .map(|(_, _, m)| m)
-        .collect();
     assert_eq!(
-        headers,
+        chain,
         vec![
-            "Overload 1 of 2, '(value: number): number', gave the following error.",
-            "Overload 2 of 2, '(other: string): string', gave the following error.",
+            (
+                0,
+                2770,
+                "The last overload gave the following error.".to_string()
+            ),
+            (
+                1,
+                2345,
+                "Argument of type 'boolean' is not assignable to parameter of type 'string'."
+                    .to_string()
+            ),
         ],
-        "signature renders the declared parameter names, got: {chain:?}"
+        "renamed binders change nothing but the rendered types, got: {chain:?}"
     );
 }
 
-/// Constructor (`new`) overloads are wrapped identically, and tsc's
-/// `signatureToString` renders them in the call-signature colon form
-/// (`(x: number): C`) — no `new` prefix.
+/// Constructor (`new`) overload sets collapse through the same last-overload
+/// policy as call overloads.
 #[test]
-fn constructor_overloads_wrap_in_call_signature_form() {
+fn constructor_overloads_collapse_like_call_overloads() {
     let chain = overload_chain(
         r#"
 declare class C {
@@ -181,22 +156,22 @@ new C(true);
 "#,
     );
 
-    let headers: Vec<&String> = chain
-        .iter()
-        .filter(|(_, code, _)| *code == 2772)
-        .map(|(_, _, m)| m)
-        .collect();
     assert_eq!(
-        headers,
+        chain,
         vec![
-            "Overload 1 of 2, '(x: number): C', gave the following error.",
-            "Overload 2 of 2, '(x: string): C', gave the following error.",
+            (
+                0,
+                2770,
+                "The last overload gave the following error.".to_string()
+            ),
+            (
+                1,
+                2345,
+                "Argument of type 'boolean' is not assignable to parameter of type 'string'."
+                    .to_string()
+            ),
         ],
-        "constructor overloads render as call signatures returning the class, got: {chain:?}"
-    );
-    assert!(
-        headers.iter().all(|h| !h.contains("new ")),
-        "constructor overload headers must not carry a `new` prefix, got: {headers:?}"
+        "expected the last constructor candidate under a single TS2770 header, got: {chain:?}"
     );
 }
 
@@ -279,12 +254,12 @@ fn lines_at_depth(chain: &[(u8, String)], depth: u8) -> Vec<&str> {
 }
 
 /// The witness from #15387: a callback parameter incompatibility nests the
-/// full relation reason chain under each candidate's `TS2772` header — the
-/// `Types of parameters 'a' and 'x' are incompatible.` frame and the
-/// contravariant leaf — exactly as the single-signature `TS2345` path
-/// renders them (differential-verified against tsc 6.0.2).
+/// full relation reason chain — the `Types of parameters 'a' and 'x' are
+/// incompatible.` frame and the contravariant leaf — under the last
+/// candidate's applicability error, exactly as the single-signature `TS2345`
+/// path renders them.
 #[test]
-fn callback_parameter_mismatch_nests_reason_chain_per_candidate() {
+fn callback_parameter_mismatch_nests_reason_chain_under_last_candidate() {
     let chain = chain_lines(
         r#"
 declare function each(cb: (x: string) => void): void;
@@ -296,20 +271,7 @@ each((a: boolean) => {});
     assert_eq!(
         as_pairs(&chain),
         vec![
-            (
-                0,
-                "Overload 1 of 2, '(cb: (x: string) => void): void', gave the following error."
-            ),
-            (
-                1,
-                "Argument of type '(a: boolean) => void' is not assignable to parameter of type '(x: string) => void'."
-            ),
-            (2, "Types of parameters 'a' and 'x' are incompatible."),
-            (3, "Type 'string' is not assignable to type 'boolean'."),
-            (
-                0,
-                "Overload 2 of 2, '(cb: (x: number, i: number) => void): void', gave the following error."
-            ),
+            (0, "The last overload gave the following error."),
             (
                 1,
                 "Argument of type '(a: boolean) => void' is not assignable to parameter of type '(x: number, i: number) => void'."
@@ -317,15 +279,15 @@ each((a: boolean) => {});
             (2, "Types of parameters 'a' and 'x' are incompatible."),
             (3, "Type 'number' is not assignable to type 'boolean'."),
         ],
-        "expected the full per-candidate reason chain under each TS2772 header"
+        "expected the last candidate's full reason chain under the TS2770 header"
     );
 }
 
-/// A missing-property failure nests its `Property 'p' is missing …` line
-/// under each candidate, and the two candidates keep their distinct leaves
-/// (dedupe is off under `OVERLOAD_CHAINS`).
+/// A missing-property failure HEAD-PROMOTES under the header: the property
+/// diagnostic replaces the `Argument of type ...` wrapper entirely, exactly
+/// as on the single-signature path (which reports TS2741 directly).
 #[test]
-fn missing_property_reason_chain_nests_under_each_header() {
+fn missing_property_promotes_directly_under_last_overload_header() {
     let chain = chain_lines(
         r#"
 declare function take(o: { alpha: string }): void;
@@ -336,12 +298,16 @@ take(arg);
     );
 
     assert_eq!(
-        lines_at_depth(&chain, 2),
+        as_pairs(&chain),
         vec![
-            "Property 'alpha' is missing in type '{ gamma: boolean; }' but required in type '{ alpha: string; }'.",
-            "Property 'beta' is missing in type '{ gamma: boolean; }' but required in type '{ beta: number; }'.",
+            (0, "The last overload gave the following error."),
+            (
+                1,
+                "Property 'beta' is missing in type '{ gamma: boolean; }' but required in type '{ beta: number; }'."
+            ),
         ],
-        "expected one missing-property leaf under each header, got: {chain:?}"
+        "expected the promoted property diagnostic directly under the header \
+         (no `Argument of type ...` wrapper), got: {chain:?}"
     );
 }
 
@@ -359,19 +325,18 @@ new Widget((a: boolean) => {});
 "#,
     );
 
-    let depth2plus: Vec<(u8, &str)> = as_pairs(&chain)
-        .into_iter()
-        .filter(|(depth, _)| *depth >= 2)
-        .collect();
     assert_eq!(
-        depth2plus,
+        as_pairs(&chain),
         vec![
-            (2, "Types of parameters 'a' and 'x' are incompatible."),
-            (3, "Type 'string' is not assignable to type 'boolean'."),
+            (0, "The last overload gave the following error."),
+            (
+                1,
+                "Argument of type '(a: boolean) => void' is not assignable to parameter of type '(x: number) => void'."
+            ),
             (2, "Types of parameters 'a' and 'x' are incompatible."),
             (3, "Type 'number' is not assignable to type 'boolean'."),
         ],
-        "expected reason chains under both constructor candidates, got: {chain:?}"
+        "expected the last constructor candidate's reason chain, got: {chain:?}"
     );
 }
 
@@ -394,11 +359,8 @@ invoke((a: boolean) => {});
 
     assert_eq!(
         lines_at_depth(&chain, 0),
-        vec![
-            "Overload 1 of 2, '(cb: (x: string) => void): void', gave the following error.",
-            "Overload 2 of 2, '(cb: (x: number, i: number) => void): void', gave the following error.",
-        ],
-        "expected TS2772 headers on the callable-interface path, got: {chain:?}"
+        vec!["The last overload gave the following error."],
+        "expected the TS2770 header on the callable-interface path, got: {chain:?}"
     );
     assert!(
         chain
@@ -441,14 +403,14 @@ visit((row: boolean) => {});
 
     assert!(
         chain.iter().any(|(depth, m)| *depth == 2
-            && m == "Types of parameters 'row' and 'item' are incompatible."),
-        "expected the renamed-binder parameter frame, got: {chain:?}"
+            && m == "Types of parameters 'row' and 'entry' are incompatible."),
+        "expected the renamed-binder parameter frame for the LAST candidate, got: {chain:?}"
     );
     assert!(
         chain
             .iter()
             .any(|(depth, m)| *depth == 3
-                && m == "Type 'string' is not assignable to type 'boolean'."),
+                && m == "Type 'number' is not assignable to type 'boolean'."),
         "expected the contravariant leaf under the renamed frame, got: {chain:?}"
     );
 }
@@ -468,18 +430,15 @@ pair(t);
 
     assert_eq!(
         lines_at_depth(&chain, 2),
-        vec![
-            "Type at position 0 in source is not compatible with type at position 0 in target.",
-            "Type at position 0 in source is not compatible with type at position 0 in target.",
-        ],
-        "expected a positional disambiguator under each header, got: {chain:?}"
+        vec!["Type at position 0 in source is not compatible with type at position 0 in target."],
+        "expected the positional disambiguator under the single header, got: {chain:?}"
     );
     assert!(
         chain
             .iter()
             .any(|(depth, m)| *depth == 3
-                && m == "Type 'boolean' is not assignable to type 'string'."),
-        "expected the position-0 leaf under the first header, got: {chain:?}"
+                && m == "Type 'boolean' is not assignable to type 'number'."),
+        "expected the LAST candidate's position-0 leaf, got: {chain:?}"
     );
 }
 
@@ -563,10 +522,10 @@ f(sym);
 
 /// Shared scenario for the arity-exclusion rule: a `string`/arity/`boolean`
 /// overload triple called with a `symbol` argument. The arity candidate is
-/// excluded from the chain but still counts toward `{N}`, so the third
-/// declaration renders as `Overload 2 of 3` and the arity error line
-/// disappears entirely (differential-verified against tsc 6.0.2). Invoked
-/// with two distinct binder-name sets so the rule is proven structural.
+/// excluded from the argument-error set, leaving TWO candidates, so the set
+/// still wraps in the single `TS2770` header showing the LAST argument-error
+/// candidate (`boolean`); the arity error line never appears. Invoked with
+/// two distinct binder-name sets so the rule is proven structural.
 fn assert_arity_exclusion_chain(callee: &str, param: &str, extra: &str) {
     let chain = overload_chain(&format!(
         r#"
@@ -578,24 +537,14 @@ declare const sym: symbol;
 "#
     ));
 
+    let _ = param;
     assert_eq!(
         chain,
         vec![
             (
                 0,
-                2772,
-                format!("Overload 1 of 3, '({param}: string): void', gave the following error.")
-            ),
-            (
-                1,
-                2345,
-                "Argument of type 'symbol' is not assignable to parameter of type 'string'."
-                    .to_string()
-            ),
-            (
-                0,
-                2772,
-                format!("Overload 2 of 3, '({param}: boolean): void', gave the following error.")
+                2770,
+                "The last overload gave the following error.".to_string()
             ),
             (
                 1,
@@ -604,7 +553,8 @@ declare const sym: symbol;
                     .to_string()
             ),
         ],
-        "expected the arity candidate dropped from the chain yet counted in {{N}}"
+        "expected the arity candidate excluded and the last argument-error \
+         candidate under a single TS2770 header"
     );
 }
 

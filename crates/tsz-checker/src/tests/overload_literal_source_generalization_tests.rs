@@ -2,12 +2,12 @@
 //! failure in a TS2769 ("No overload matches this call") elaboration.
 //!
 //! tsc's `reportRelationError` generalizes a fresh literal source to its base
-//! type unless the target could hold a top-level singleton type. This rule is
-//! already applied on the single-overload TS2345 path; before the fix the
-//! multi-overload TS2769 path rendered the raw literal source, so a boolean
-//! literal argument against a `number`/`string` parameter showed `'true'`
-//! instead of `'boolean'` (and `1` against `string` showed `'1'` instead of
-//! `'number'`), diverging from tsc and from the single-overload display.
+//! type unless the target could hold a top-level singleton type (a `never`
+//! target also preserves the raw literal). tsc 7.0.2 renders only the LAST
+//! argument-error candidate under the single `The last overload gave the
+//! following error.` header, so the assertions below key on that candidate's
+//! message. Every expectation is differential-verified against the pinned
+//! tsc 7.0.2 binary.
 //!
 //! See `crates/tsz-checker/src/error_reporter/call_errors/error_emission.rs`
 //! (`error_no_overload_matches_at`) and
@@ -52,15 +52,8 @@ f(true);
         messages
             .iter()
             .any(|m| m
-                == "Argument of type 'boolean' is not assignable to parameter of type 'number'."),
-        "expected widened 'boolean' source against the number overload, got: {messages:?}"
-    );
-    assert!(
-        messages
-            .iter()
-            .any(|m| m
                 == "Argument of type 'boolean' is not assignable to parameter of type 'string'."),
-        "expected widened 'boolean' source against the string overload, got: {messages:?}"
+        "expected widened 'boolean' source against the LAST (string) overload, got: {messages:?}"
     );
     assert!(
         !messages
@@ -86,15 +79,8 @@ f(1);
         messages
             .iter()
             .any(|m| m
-                == "Argument of type 'number' is not assignable to parameter of type 'string'."),
-        "expected widened 'number' source against the string overload, got: {messages:?}"
-    );
-    assert!(
-        messages
-            .iter()
-            .any(|m| m
                 == "Argument of type 'number' is not assignable to parameter of type 'boolean'."),
-        "expected widened 'number' source against the boolean overload, got: {messages:?}"
+        "expected widened 'number' source against the LAST (boolean) overload, got: {messages:?}"
     );
 }
 
@@ -114,8 +100,8 @@ f(true);
     assert!(
         messages
             .iter()
-            .any(|m| m == "Argument of type 'true' is not assignable to parameter of type '1'."),
-        "literal source must be preserved against a literal target, got: {messages:?}"
+            .any(|m| m == "Argument of type 'true' is not assignable to parameter of type '2'."),
+        "literal source must be preserved against the LAST literal target, got: {messages:?}"
     );
     assert!(
         !messages.iter().any(|m| m.contains("'boolean'")),
@@ -167,7 +153,7 @@ pick(false);
         messages
             .iter()
             .any(|m| m
-                == "Argument of type 'boolean' is not assignable to parameter of type 'number'."),
+                == "Argument of type 'boolean' is not assignable to parameter of type 'string'."),
         "expected widened 'boolean' regardless of binder names, got: {messages:?}"
     );
 }
