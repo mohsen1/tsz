@@ -1374,6 +1374,43 @@ impl<'a> RestParameterExtractor<'a> {
     }
 
     pub(crate) fn extract(&mut self, type_id: TypeId) -> Option<TypeId> {
+        // A multi-signature (overloaded) contextual callable types a rest
+        // parameter from the COMBINED signature — the parameter-wise union
+        // across same-arity overloads (tsc's `getIntersectedSignatures`
+        // feeding the effective rest tuple) — not from the first overload.
+        // Witness (zustand devtools): `StoreApi<S>['setState']` with two
+        // `setState` overloads must type `(...a)` as `[S, boolean |
+        // undefined]` so the arrow satisfies BOTH overloads; the
+        // first-overload tuple `[S, false | undefined]` fails the second and
+        // produced the canary's false TS2322. Single-signature callables and
+        // non-combinable sets (mixed arity / generic members — the combiner
+        // returns `None` for those, matching tsc) keep the visitor path.
+        if let Some(TypeData::Callable(shape_id)) = self.db.lookup(type_id) {
+            let shape = self.db.callable_shape(shape_id);
+            let sigs = &shape.call_signatures;
+            if sigs.len() > 1
+                && sigs.iter().all(|sig| {
+                    sig.type_params.is_empty()
+                        && sig.params.len() == sigs[0].params.len()
+                        && !sig.params.iter().any(|p| p.rest)
+                })
+            {
+                let merged: Vec<ParamInfo> = (0..sigs[0].params.len())
+                    .map(|i| {
+                        let types: Vec<TypeId> =
+                            sigs.iter().map(|sig| sig.params[i].type_id).collect();
+                        let optional = sigs.iter().any(|sig| sig.params[i].optional);
+                        ParamInfo {
+                            name: None,
+                            type_id: self.db.union_literal_reduce(types),
+                            optional,
+                            rest: false,
+                        }
+                    })
+                    .collect();
+                return extract_rest_param_type_at(self.db, &merged, self.index);
+            }
+        }
         self.visit_type(self.db, type_id)
     }
 }
