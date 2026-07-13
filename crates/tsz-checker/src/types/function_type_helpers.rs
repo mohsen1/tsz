@@ -1452,7 +1452,17 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Pass 2: Resolve constraints now that all type parameters are in scope
+        // Pass 2: Resolve constraints AND defaults now that all type
+        // parameters are in scope. The refined intern must carry the
+        // declaration's DEFAULT as well: the canonical `push_type_parameters`
+        // mint for the same declaration includes it, and the decl-scoped
+        // cache is keyed on the full `TypeParamInfo`, so omitting the default
+        // here gives the enclosing-scope entry a DIFFERENT `TypeId` from the
+        // one the enclosing function's member types reference. The dangling-
+        // parameter fill (`resolve_unbound_property_member_defaults`) then
+        // treats the enclosing parameter as unbound and collapses e.g.
+        // `Box<R>.get`'s `R` to its declared default inside nested-function
+        // bodies (`f<R = unknown>(box: Box<R>) { () => box.get() }`).
         for param_idx in added_params {
             let Some(node) = self.ctx.arena.get(param_idx) else {
                 continue;
@@ -1461,7 +1471,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            if data.constraint == NodeIndex::NONE {
+            if data.constraint == NodeIndex::NONE && data.default == NodeIndex::NONE {
                 continue;
             }
 
@@ -1476,19 +1486,22 @@ impl<'a> CheckerState<'a> {
                 );
             let atom = self.ctx.types.intern_string(&name);
 
-            let constraint_type = self.get_type_from_type_node(data.constraint);
-            let constraint = (constraint_type != TypeId::ERROR).then_some(constraint_type);
+            let constraint = (data.constraint != NodeIndex::NONE)
+                .then(|| self.get_type_from_type_node(data.constraint))
+                .filter(|&constraint_type| constraint_type != TypeId::ERROR);
+            let default = (data.default != NodeIndex::NONE)
+                .then(|| self.get_type_from_type_node(data.default))
+                .filter(|&default_type| default_type != TypeId::ERROR);
 
             let is_const = self
                 .ctx
                 .arena
                 .has_modifier(&data.modifiers, tsz_scanner::SyntaxKind::ConstKeyword);
-            let info =
-                signature_building_boundary::user_type_param_info(atom, constraint, None, is_const);
-            let constrained_type_id = self.intern_type_param_for_decl(data.name, info);
-            self.ctx
-                .type_parameter_scope
-                .insert(name, constrained_type_id);
+            let info = signature_building_boundary::user_type_param_info(
+                atom, constraint, default, is_const,
+            );
+            let refined_type_id = self.intern_type_param_for_decl(data.name, info);
+            self.ctx.type_parameter_scope.insert(name, refined_type_id);
         }
 
         updates
