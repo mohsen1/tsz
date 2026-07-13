@@ -88,7 +88,7 @@ if (m) {
 }
 
 /// Same structural rule, different merged binder name: `interface String`
-/// merges into the lib `String`. The unrelated RegExpMatchArray fold must stay
+/// merges into the lib `String`. The unrelated `RegExpMatchArray` fold must stay
 /// intact. Varying the name proves the fix is not keyed to a specific lib
 /// interface.
 #[test]

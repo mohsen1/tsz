@@ -1607,7 +1607,7 @@ impl<'a> CheckerState<'a> {
                                 &candidate_snap,
                                 sig_arg_types.clone(),
                                 return_type,
-                                selected_type_predicate.clone(),
+                                selected_type_predicate,
                             );
                             return Some(self.commit_callback_body_only_candidate(
                                 candidate,

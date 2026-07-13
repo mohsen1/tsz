@@ -79,6 +79,9 @@ serde_json = { workspace = true }
 name = "lib_alias_ref_def_identity_tests"
 path = "tests/lib_alias_ref_def_identity_tests.rs"
 [[test]]
+name = "zod_cross_file_partial_omit_tests"
+path = "tests/zod_cross_file_partial_omit_tests.rs"
+[[test]]
 name = "tsc_compat_tests"
 path = "tests/tsc_compat_tests.rs"
 

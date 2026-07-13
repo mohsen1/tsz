@@ -1469,8 +1469,11 @@ export const vec = new Vec(1);
 
     let dts = std::fs::read_to_string(base.join("out/source.d.ts"))
         .expect("source declaration should be emitted");
+    // tsc 7.0.2: `@param {Vec}` is a value-used-as-type (TS2749), so the
+    // self-reference types as `any` and the method returns `any` — the old
+    // `: number` came from the removed JS constructor-function class synthesis.
     assert!(
-        dts.contains("dot(other: Vec): number;"),
+        dts.contains("dot(other: Vec): any;"),
         "expected self-referential prototype method parameter to print by name: {dts}"
     );
 }

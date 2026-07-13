@@ -77,12 +77,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let combined_suffix: Vec<(usize, TupleElement)> = expansion
                     .tail
                     .iter()
-                    .map(|element| (i, element.clone()))
+                    .map(|element| (i, *element))
                     .chain(
                         outer_tail
                             .iter()
                             .enumerate()
-                            .map(|(k, element)| (i + 1 + k, element.clone())),
+                            .map(|(k, element)| (i + 1 + k, *element)),
                     )
                     .collect();
 

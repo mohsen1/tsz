@@ -1043,7 +1043,7 @@ pub fn compute_best_common_type_cached<R: TypeResolver>(
         // purposes when it genuinely derives from it. Without this,
         // `[new A(), new B()]` for unrelated same-shape classes crowns one of
         // them BCT winner where tsc keeps `(A | B)[]`.
-        let mut related = |checker: &mut SubtypeChecker<_>, source: TypeId, target: TypeId| {
+        let related = |checker: &mut SubtypeChecker<_>, source: TypeId, target: TypeId| {
             if let (Some(src_def), Some(tgt_def)) = (
                 class_ref_def(interner, res, source),
                 class_ref_def(interner, res, target),

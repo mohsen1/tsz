@@ -273,7 +273,7 @@ pub(crate) fn extend_decls_with_lib_context_globals<'a>(
         let Some(ctx_file) = arena_file_name(lib_ctx.arena.as_ref()) else {
             continue;
         };
-        if covered_files.iter().any(|file| *file == ctx_file) {
+        if covered_files.contains(&ctx_file) {
             continue;
         }
         let mut added = false;

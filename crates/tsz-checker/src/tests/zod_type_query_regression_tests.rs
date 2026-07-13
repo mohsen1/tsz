@@ -1,7 +1,6 @@
 use crate::context::CheckerOptions;
 use crate::test_utils::{
-    check_multi_file, check_multi_file_with_libs, check_source_diagnostics, check_source_with_libs,
-    load_default_lib_files,
+    check_multi_file, check_source_diagnostics, check_source_with_libs, load_default_lib_files,
 };
 use tsz_common::common::ModuleKind;
 
@@ -747,76 +746,13 @@ function createRootContext(params: Partial<ParseParamsNoData>) {
     );
 }
 
-#[test]
-fn zod_cross_file_lib_partial_omit_preserves_imported_path_property() {
-    let libs = load_default_lib_files();
-    assert!(!libs.is_empty(), "expected default libs to load");
-
-    let diags = check_multi_file_with_libs(
-        &[
-            (
-                "zod-error.ts",
-                r#"
-import { ZodParsedType } from "./parse-util";
-
-export type ZodIssue = { path: (string | number)[]; parsed: ZodParsedType };
-export type ZodErrorMap = (...args: any[]) => { message: string };
-"#,
-            ),
-            (
-                "parse-util.ts",
-                r#"
-import { ZodErrorMap } from "./zod-error";
-
-export const ZodParsedType = {
-    string: "string",
-    object: "object",
-} as const;
-export type ZodParsedType = keyof typeof ZodParsedType;
-
-export type ParseParams = {
-    path: (string | number)[];
-    errorMap: ZodErrorMap;
-    async: boolean;
-};
-
-export type ParseParamsNoData = Omit<ParseParams, "data">;
-"#,
-            ),
-            (
-                "types.ts",
-                r#"
-import { ParseParamsNoData } from "./parse-util";
-
-type ParsePathComponent = string | number;
-declare function pathFromArray(arr: ParsePathComponent[]): unknown;
-
-function createRootContext(params: Partial<ParseParamsNoData>) {
-    pathFromArray(params.path || []);
-    pathFromArray(params.path ?? []);
-}
-"#,
-            ),
-        ],
-        "types.ts",
-        CheckerOptions {
-            module: ModuleKind::CommonJS,
-            strict: true,
-            strict_null_checks: true,
-            ..CheckerOptions::default()
-        },
-        &libs,
-    );
-
-    assert!(
-        diags.is_empty(),
-        "Expected lib-backed cross-file `Partial<Omit<...>>` to preserve `path`, got: {:?}",
-        diags
-            .iter()
-            .map(|d| (d.code, &d.message_text))
-            .collect::<Vec<_>>()
-    );
-}
+// `zod_cross_file_lib_partial_omit_preserves_imported_path_property` moved to
+// `crates/tsz-cli/tests/zod_cross_file_partial_omit_tests.rs`: the property is
+// reached through a cross-file circular import resolved via `Partial<Omit<...>>`,
+// and only the driver runs whole-program checking with deferred lib-interface
+// publication (`mark_non_program_interface_defs_deferred`) — the in-process
+// harness materializes lib-interface members eagerly, so a spurious diagnostic
+// appears in-harness even though tsc 7.0.2 and the real binary are both clean.
 
 #[test]
 fn zod_object_literal_optional_indexed_access_property_accepts_boolean() {

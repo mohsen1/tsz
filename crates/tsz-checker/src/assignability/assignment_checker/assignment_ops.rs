@@ -1737,10 +1737,10 @@ impl<'a> CheckerState<'a> {
                 if let Some(prop) = self.ctx.arena.get_property_assignment(element_node) {
                     self.check_rest_element_trailing_comma(prop.initializer);
                 }
-            } else if let Some(bin) = self.ctx.arena.get_binary_expr(element_node) {
-                if bin.operator_token == SyntaxKind::EqualsToken as u16 {
-                    self.check_rest_element_trailing_comma(bin.left);
-                }
+            } else if let Some(bin) = self.ctx.arena.get_binary_expr(element_node)
+                && bin.operator_token == SyntaxKind::EqualsToken as u16
+            {
+                self.check_rest_element_trailing_comma(bin.left);
             }
         }
     }

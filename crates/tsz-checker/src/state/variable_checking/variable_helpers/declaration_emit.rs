@@ -373,23 +373,46 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Check intersection/union direct members in declared order before the
-        // deep collect_referenced_types traversal. This ensures outer named types
+        // Check intersection/union members in declared order before the deep
+        // collect_referenced_types traversal. This ensures outer named types
         // (e.g., NonReactStatics<T>) are found before types nested inside their
         // definitions (e.g., Statics referenced in NonReactStatics's mapped-type body).
-        if let Some(members) = query::intersection_members(self.ctx.types, inferred_type) {
-            for &member in members.iter() {
-                if let Some(info) = check_type(self, member) {
-                    return Some(info);
-                }
+        //
+        // Members are traversed through display aliases as well: an evaluated
+        // member (e.g. a flattened `Object.assign` result) may retain its named
+        // form only as a display alias whose members are what declaration emit
+        // will actually print.
+        let composite_members = |state: &Self, type_id: TypeId| {
+            query::intersection_members(state.ctx.types, type_id)
+                .or_else(|| query::union_members(state.ctx.types, type_id))
+        };
+        let mut worklist: Vec<TypeId> = Vec::new();
+        let mut visited = FxHashSet::default();
+        visited.insert(inferred_type);
+        let enqueue = |worklist: &mut Vec<TypeId>,
+                       visited: &mut FxHashSet<TypeId>,
+                       state: &Self,
+                       type_id: TypeId| {
+            if let Some(members) = composite_members(state, type_id) {
+                worklist.extend(members.iter().copied().filter(|m| visited.insert(*m)));
             }
-        }
-        if let Some(members) = query::union_members(self.ctx.types, inferred_type) {
-            for &member in members.iter() {
-                if let Some(info) = check_type(self, member) {
-                    return Some(info);
-                }
+            if let Some(alias) = state.ctx.types.get_display_alias(type_id)
+                && alias != type_id
+                && visited.insert(alias)
+                && let Some(members) = composite_members(state, alias)
+            {
+                worklist.extend(members.iter().copied().filter(|m| visited.insert(*m)));
             }
+        };
+        enqueue(&mut worklist, &mut visited, self, inferred_type);
+        let mut cursor = 0;
+        while cursor < worklist.len() {
+            let member = worklist[cursor];
+            cursor += 1;
+            if let Some(info) = check_type(self, member) {
+                return Some(info);
+            }
+            enqueue(&mut worklist, &mut visited, self, member);
         }
 
         // Portability walk: mapped key positions are excluded — declaration

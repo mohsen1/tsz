@@ -179,18 +179,16 @@ impl<'a> CheckerState<'a> {
         if !declaration_is_type_only
             && self.get_resolution_mode_override(attributes_idx).is_some()
             && attrs_data.elements.nodes.len() == 1
+            && let Some(&elem_idx) = attrs_data.elements.nodes.first()
+            && let Some(elem_node) = self.ctx.arena.get(elem_idx)
+            && let Some(attr) = self.ctx.arena.get_import_attribute_data(elem_node)
         {
-            if let Some(&elem_idx) = attrs_data.elements.nodes.first()
-                && let Some(elem_node) = self.ctx.arena.get(elem_idx)
-                && let Some(attr) = self.ctx.arena.get_import_attribute_data(elem_node)
-            {
-                self.error_at_node(
-                    attr.name,
-                    diagnostic_messages::RESOLUTION_MODE_CAN_ONLY_BE_SET_FOR_TYPE_ONLY_IMPORTS,
-                    diagnostic_codes::RESOLUTION_MODE_CAN_ONLY_BE_SET_FOR_TYPE_ONLY_IMPORTS,
-                );
-                return;
-            }
+            self.error_at_node(
+                attr.name,
+                diagnostic_messages::RESOLUTION_MODE_CAN_ONLY_BE_SET_FOR_TYPE_ONLY_IMPORTS,
+                diagnostic_codes::RESOLUTION_MODE_CAN_ONLY_BE_SET_FOR_TYPE_ONLY_IMPORTS,
+            );
+            return;
         }
 
         // Step 7: type-only declarations cannot carry attributes.

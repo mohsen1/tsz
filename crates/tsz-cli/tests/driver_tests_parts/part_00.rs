@@ -253,7 +253,8 @@ fn resolve_json_module_not_defaulted_for_node_resolution() {
     // TS7 removed `moduleResolution: node10` (TS5108), so only the node16
     // resolution family still requires an explicit `resolveJsonModule` opt-in.
     // (The TS7 default/bundler resolution resolves `.json` imports without it.)
-    for (module, module_resolution) in [("node16", "node16")] {
+    {
+        let (module, module_resolution) = ("node16", "node16");
         let temp = TempDir::new().expect("temp dir");
         let base = &temp.path;
 

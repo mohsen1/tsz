@@ -1343,7 +1343,7 @@ fn widen_nullish_to_any_deep_inner(
                 .iter()
                 .map(|&m| widen_nullish_to_any_deep_inner(db, m, depth + 1))
                 .collect();
-            if mapped.iter().any(|&m| m == TypeId::ANY) {
+            if mapped.contains(&TypeId::ANY) {
                 return TypeId::ANY;
             }
             if mapped.as_slice() == &members[..] {
@@ -1370,7 +1370,7 @@ fn widen_nullish_to_any_deep_inner(
                     if new_ty != e.type_id {
                         changed = true;
                     }
-                    let mut ne = e.clone();
+                    let mut ne = *e;
                     ne.type_id = new_ty;
                     ne
                 })

@@ -1206,7 +1206,7 @@ impl<'a> CheckerState<'a> {
                     .flatten();
                 let promoted = chain
                     .first()
-                    .is_some_and(|line| matches!(line.code, 2741 | 2739 | 2740))
+                    .is_some_and(|line| matches!(line.code, 2739..=2741))
                     && source_target.is_some_and(|(source, target)| {
                         self.missing_property_head_promotion_applies(source, target)
                     });
