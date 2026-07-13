@@ -361,7 +361,12 @@ impl ParserState {
                         | SyntaxKind::OpenBracketToken
                         | SyntaxKind::OpenBraceToken
                 )
-                && !self.is_identifier_or_keyword()
+                // tsc's lookahead accepts an identifier (including contextual
+                // keywords) or `this` as a parameter name; a reserved word
+                // (`new`, `typeof`, ...) rejects the arrow interpretation and
+                // the parens reparse as a parenthesized expression.
+                && !self.is_identifier()
+                && !self.is_token(SyntaxKind::ThisKeyword)
             {
                 self.scanner.restore_state(snapshot);
                 self.current_token = current;
