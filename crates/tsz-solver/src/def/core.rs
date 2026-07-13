@@ -1820,6 +1820,23 @@ impl DefinitionStore {
         self.name_to_defs.get(&name).map(|r| r.clone())
     }
 
+    /// TEMP diagnostic: scan `name_to_defs` comparing resolved name strings,
+    /// to detect atom-identity mismatches between the registering interner
+    /// and a querying interner. Remove after the lib-def collision diagnosis.
+    pub fn probe_defs_named_str(
+        &self,
+        wanted: &str,
+        resolve: impl Fn(Atom) -> String,
+    ) -> Vec<(Atom, Vec<DefId>)> {
+        let mut hits = Vec::new();
+        for entry in self.name_to_defs.iter() {
+            if resolve(*entry.key()) == wanted {
+                hits.push((*entry.key(), entry.value().clone()));
+            }
+        }
+        hits
+    }
+
     pub fn all_type_alias_defs(&self) -> Vec<DefId> {
         self.definitions
             .iter()

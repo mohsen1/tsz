@@ -656,16 +656,28 @@ impl CheckerContext<'_> {
                 defs.into_iter()
                     .filter(|def_id| {
                         self.definition_store.get(*def_id).is_some_and(|info| {
-                            info.symbol_id.is_some_and(|sym_id| {
+                            // Lib provenance is recognized two ways: the def's
+                            // symbol resolves as a lib symbol in this binder
+                            // context, OR the def carries the `u32::MAX`
+                            // lib declaration-file sentinel — the form the
+                            // parallel driver's composed semantic-def store
+                            // produces (its symbol_id is a merged-binder id
+                            // that `symbol_is_from_actual_or_cloned_lib`
+                            // cannot recognize here; rejecting it sent lib
+                            // type refs like `FlatArray` through the raw
+                            // fallback, which collides under an interface
+                            // merge into a lib global: FlatArray -> alert).
+                            (info.symbol_id.is_some_and(|sym_id| {
                                 self.symbol_is_from_actual_or_cloned_lib(SymbolId(sym_id))
-                            }) && matches!(
-                                info.kind,
-                                tsz_solver::def::DefKind::TypeAlias
-                                    | tsz_solver::def::DefKind::Interface
-                                    | tsz_solver::def::DefKind::Class
-                                    | tsz_solver::def::DefKind::Enum
-                                    | tsz_solver::def::DefKind::Namespace
-                            )
+                            }) || info.file_id == Some(u32::MAX))
+                                && matches!(
+                                    info.kind,
+                                    tsz_solver::def::DefKind::TypeAlias
+                                        | tsz_solver::def::DefKind::Interface
+                                        | tsz_solver::def::DefKind::Class
+                                        | tsz_solver::def::DefKind::Enum
+                                        | tsz_solver::def::DefKind::Namespace
+                                )
                         })
                     })
                     .max_by_key(|def_id| {
@@ -675,7 +687,16 @@ impl CheckerContext<'_> {
                             .unwrap_or_default()
                     })
             })
-            .unwrap_or_else(|| self.get_lib_def_id(canonical_sym))
+            .unwrap_or_else(|| {
+                if name == "FlatArray" {
+                    let atom = self.types.intern_string(name);
+                    let hits = self
+                        .definition_store
+                        .probe_defs_named_str(name, |a| self.types.resolve_atom(a).to_string());
+                    tracing::warn!(?atom, ?hits, "FlatArray empty-find fallback probe");
+                }
+                self.get_lib_def_id(canonical_sym)
+            })
     }
 
     /// Resolve a lib symbol's `DefId`, verifying the def actually names
