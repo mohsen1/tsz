@@ -828,8 +828,8 @@ fn positional_file_no_lib_no_emit_returns_from_binary() {
 
     assert_eq!(
         output.status.code(),
-        Some(2),
-        "expected diagnostics-with-no-emit exit\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        Some(1),
+        "expected diagnostics-with-outputs-skipped exit (tsc 7.0.2 exits 1 for noEmit runs with errors)\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
     assert!(
         stdout.contains("error TS2318: Cannot find global type 'Array'."),
@@ -852,8 +852,6 @@ fn declaration_emit_expands_foreign_import_mapped_keys_from_nested_package() {
             "rootDir": "r",
             "target": "es2017",
             "module": "commonjs",
-            "moduleResolution": "node",
-            "ignoreDeprecations": "6.0",
             "skipLibCheck": true,
             "strict": true,
             "typeRoots": ["./empty-types"]
@@ -916,8 +914,6 @@ fn declaration_emit_reports_single_quoted_transitive_import_type() {
             "rootDir": "r",
             "target": "es2017",
             "module": "commonjs",
-            "moduleResolution": "node",
-            "ignoreDeprecations": "6.0",
             "skipLibCheck": true,
             "strict": true,
             "typeRoots": ["./empty-types"]
@@ -969,8 +965,6 @@ fn declaration_emit_default_object_assign_reports_namespace_alias_for_default_on
             "rootDir": "r",
             "target": "es2017",
             "module": "commonjs",
-            "moduleResolution": "node",
-            "ignoreDeprecations": "6.0",
             "skipLibCheck": true,
             "strict": true,
             "typeRoots": ["./empty-types"]
@@ -1062,8 +1056,6 @@ fn declaration_emit_preserves_template_literal_type_text_from_dependency() {
             "rootDir": "r",
             "target": "es2017",
             "module": "commonjs",
-            "moduleResolution": "node",
-            "ignoreDeprecations": "6.0",
             "skipLibCheck": true,
             "strict": true,
             "typeRoots": ["./empty-types"]

@@ -512,7 +512,7 @@ impl Reporter {
             // tsc adds a trailing blank line after single-file summaries
             out.push('\n');
         } else {
-            // "Found N errors in M files." + file table (no trailing blank line)
+            // "Found N errors in M files." + file table + trailing blank line
             let _ = write!(
                 out,
                 "Found {error_count} {error_word} in {unique_file_count} files."
@@ -536,6 +536,9 @@ impl Reporter {
                     let _ = write!(out, "{count:>6}  {file}:{first_line}");
                 }
             }
+            out.push('\n');
+            // tsc 7.0.2 ends the table with a trailing blank line, matching
+            // the single-file summaries above.
             out.push('\n');
         }
     }

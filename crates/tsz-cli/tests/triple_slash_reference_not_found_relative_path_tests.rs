@@ -1,11 +1,12 @@
 //! End-to-end regression for issue #14855 — TS6053 ("File '...' not found.")
-//! for an unresolved `/// <reference path="..." />` must report the path
-//! relative to the program's current directory, matching `tsc`. tsz previously
-//! interpolated the resolved *absolute* path into the message.
+//! for an unresolved `/// <reference path="..." />` must report the reference
+//! path exactly as written in the source, matching `tsc` 7.0.2 (which dropped
+//! the 6.x cwd-relative/resolved-path display). tsz previously interpolated
+//! the resolved *absolute* path into the message.
 //!
 //! These tests run the real binary in a subprocess with `current_dir` set to a
 //! temp project, exercising the full driver → checker wiring that supplies the
-//! program's current directory used for relativization.
+//! diagnostic's display path.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -129,11 +130,11 @@ fn unresolved_reference_paths_are_reported_relative_to_cwd() {
     );
 }
 
-/// Project/config mode stores root files as resolved paths. `tsc --project`
-/// therefore reports the normalized resolved reference path, not the
-/// cwd-relative spelling used by explicit `tsc entry.ts`.
+/// `tsc --project` prints the same as-written reference path as explicit-file
+/// mode: tsc 7.0.2 no longer substitutes the resolved (absolute) path that
+/// 6.x project mode used.
 #[test]
-fn project_mode_reports_resolved_reference_path() {
+fn project_mode_reports_reference_path_as_written() {
     let temp = TempDir::new("project").expect("temp dir");
     write_file(
         &temp.path.join("pkg/entry.ts"),
@@ -150,33 +151,20 @@ fn project_mode_reports_resolved_reference_path() {
         return;
     };
 
-    let expected = temp
-        .path
-        .join("escaped-parent.d.ts")
-        .to_string_lossy()
-        .replace('\\', "/");
-    let canonical_expected = temp
-        .path
-        .canonicalize()
-        .expect("canonicalize temp dir")
-        .join("escaped-parent.d.ts")
-        .to_string_lossy()
-        .replace('\\', "/");
     assert!(
-        out.contains(&format!("File '{expected}' not found."))
-            || out.contains(&format!("File '{canonical_expected}' not found.")),
-        "project-mode reference must use resolved path; got:\n{out}"
+        out.contains("File '../escaped-parent.d.ts' not found."),
+        "project-mode reference must print the path as written in the source; got:\n{out}"
     );
     assert!(
-        !out.contains("File 'escaped-parent.d.ts' not found."),
-        "project-mode reference must not use explicit-file cwd-relative display; got:\n{out}"
+        !out.contains(&format!("File '{}", temp.path.display())),
+        "TS6053 must not contain an absolute path; got:\n{out}"
     );
 }
 
-/// When the entry file sits in a subdirectory, a sibling reference resolves to a
-/// path prefixed with that subdirectory — matching tsc's cwd-relative output.
+/// When the entry file sits in a subdirectory, tsc 7.0.2 still prints the
+/// sibling reference exactly as written — no subdirectory prefix is added.
 #[test]
-fn reference_from_nested_entry_keeps_subdir_prefix() {
+fn reference_from_nested_entry_prints_path_as_written() {
     let temp = TempDir::new("nested").expect("temp dir");
     write_file(
         &temp.path.join("pkg/entry.ts"),
@@ -190,8 +178,12 @@ fn reference_from_nested_entry_keeps_subdir_prefix() {
     };
 
     assert!(
-        out.contains("File 'pkg/absent-neighbor.d.ts' not found."),
-        "reference from a nested entry must carry the subdir prefix; got:\n{out}"
+        out.contains("File 'absent-neighbor.d.ts' not found."),
+        "reference from a nested entry must print the path as written; got:\n{out}"
+    );
+    assert!(
+        !out.contains("File 'pkg/absent-neighbor.d.ts' not found."),
+        "the 6.x subdir-prefixed display must not come back; got:\n{out}"
     );
     assert!(
         !out.contains(&format!("File '{}", temp.path.display())),
