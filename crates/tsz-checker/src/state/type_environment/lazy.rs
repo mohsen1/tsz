@@ -1350,51 +1350,6 @@ impl CheckerState<'_> {
         }
     }
 
-    /// TRUE when `def_id`'s registered name matches the name `sym_id`
-    /// resolves to in the FIRST binder space that can resolve it (current
-    /// binder, then the cross-file registry). A def with no registered info
-    /// or an empty name cannot be cross-checked and is treated as verified.
-    ///
-    /// Resolution-precedence matters: `symbol_to_def` is shared across
-    /// binder id spaces, so a checker whose LOCAL `sym_id` names a different
-    /// symbol must not publish under this def even if some other space maps
-    /// the same numeric id to the def's name — that other mapping belongs to
-    /// a different checker's write, not this one.
-    ///
-    /// This guards def-keyed environment writes against raw `SymbolId`
-    /// collisions across binder id spaces (see `insert_type_env_symbol` and
-    /// `publish_symbol_result_to_type_envs`).
-    pub(crate) fn def_write_identity_verified(
-        &mut self,
-        def_id: tsz_solver::def::DefId,
-        sym_id: tsz_binder::SymbolId,
-    ) -> bool {
-        let Some(info) = self.ctx.definition_store.get(def_id) else {
-            return true;
-        };
-        let def_name = self.ctx.types.resolve_atom(info.name);
-        if def_name.is_empty() {
-            return true;
-        }
-        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-            return symbol.escaped_name == def_name;
-        }
-        if let Some(symbol) = self.get_cross_file_symbol(sym_id) {
-            return symbol.escaped_name == def_name;
-        }
-        let mut resolved_in_lib = false;
-        for lib_ctx in self.ctx.lib_contexts.iter() {
-            if let Some(symbol) = lib_ctx.binder.get_symbol(sym_id) {
-                resolved_in_lib = true;
-                if symbol.escaped_name == def_name {
-                    return true;
-                }
-            }
-        }
-        // Unresolvable in every space: nothing to verify against; allow.
-        !resolved_in_lib
-    }
-
     pub(crate) fn insert_type_env_symbol(
         &mut self,
         sym_id: tsz_binder::SymbolId,
@@ -1416,17 +1371,7 @@ impl CheckerState<'_> {
         }
 
         let symbol_ref = SymbolRef(sym_id.0);
-        // Def-keyed writes must not cross symbol identities. Raw `SymbolId`s
-        // are only unique within one binder, while `symbol_to_def` (behind
-        // `get_existing_def_id`) is shared across binder id spaces: a
-        // lib-context-local id can numerically collide with a merged-global
-        // id and hand this symbol another type's `DefId`. Publishing this
-        // symbol's params/body under that def corrupts it for every consumer
-        // (e.g. a generic impostor stamping `<T>` onto a non-generic lib
-        // interface). Verify the def's registered name against every name
-        // this raw id resolves to before allowing def-keyed writes; the
-        // symbol-keyed writes below stay unconditional.
-        let def_id = current_def_id.filter(|&d| self.def_write_identity_verified(d, sym_id));
+        let def_id = current_def_id;
 
         // Reuse cached params already in the environment when available.
         let mut cached_env_params: Option<Vec<tsz_solver::TypeParamInfo>> = None;
@@ -1459,27 +1404,10 @@ impl CheckerState<'_> {
             self.get_type_params_for_symbol(sym_id)
         };
 
-        // Def-keyed publications must not inherit params read from the shared
-        // env under a raw `SymbolRef`: that key collides across binder id
-        // spaces, so the env row can carry ANOTHER symbol's params (a generic
-        // impostor stamping `<T>` onto a non-generic lib interface). When the
-        // env was the params source, recompute the def-side params through
-        // `get_type_params_for_symbol`, whose declaration walk name-verifies
-        // every candidate (#13599). An empty recompute publishes nothing and
-        // leaves the def's params to its rightful owner. Symbol-keyed writes
-        // keep the env params: they live under the same raw key they came
-        // from.
-        let def_type_params = if had_env_params && def_id.is_some() && !type_params.is_empty() {
-            self.get_type_params_for_symbol(sym_id)
-        } else {
-            type_params.clone()
-        };
-
         if let Some(def_id) = def_id
-            && !def_type_params.is_empty()
+            && !type_params.is_empty()
         {
-            self.ctx
-                .insert_def_type_params(def_id, def_type_params.clone());
+            self.ctx.insert_def_type_params(def_id, type_params.clone());
         }
 
         // Already fully registered with params (or not generic), nothing to do.
@@ -1510,22 +1438,18 @@ impl CheckerState<'_> {
                     type_params.clone(),
                 );
                 if let Some(def_id) = def_id {
-                    if def_type_params.is_empty() {
-                        env.insert_def(def_id, resolved);
-                    } else {
-                        env.insert_def_with_params(def_id, resolved, def_type_params.clone());
-                    }
+                    env.insert_def_with_params(def_id, resolved, type_params.clone());
                 }
             }
             drop(env);
-            self.mirror_application_def_resolution(def_id, resolved, &def_type_params);
+            self.mirror_application_def_resolution(def_id, resolved, &type_params);
             true
         } else {
             self.ctx
                 .register_symbol_type_in_envs(symbol_ref, resolved, type_params.clone());
             if let Some(def_id) = def_id {
                 self.ctx
-                    .register_def_auto_params_in_envs(def_id, resolved, def_type_params);
+                    .register_def_auto_params_in_envs(def_id, resolved, type_params);
             }
             false
         }
@@ -1554,35 +1478,6 @@ impl CheckerState<'_> {
         }
 
         let (sym_id, owner_file_idx) = self.ctx.def_symbol_identity(def_id)?;
-        // The def -> symbol bridge is keyed by raw `SymbolId`, which is only
-        // unique per binder. In a context whose id space differs from the
-        // bridge's origin (e.g. a lib-baseline checker), the same numeric id
-        // can name a DIFFERENT symbol; computing the def body through it
-        // publishes that other type's body and params under this def (a
-        // generic impostor stamping `<T>` onto a non-generic lib interface,
-        // or replacing a merged interface's body wholesale). When the def has
-        // a recorded name and the bridged symbol resolves to a DIFFERENT
-        // name in this context, do not publish through the bridge — leave
-        // the def lazy so on-demand name-based resolution owns its body.
-        if let Some(info) = self.ctx.definition_store.get(def_id) {
-            let def_name = self.ctx.types.resolve_atom(info.name);
-            if !def_name.is_empty() {
-                let bridged_name = self
-                    .get_cross_file_symbol(sym_id)
-                    .map(|symbol| symbol.escaped_name.clone())
-                    .or_else(|| {
-                        self.ctx
-                            .binder
-                            .get_symbol(sym_id)
-                            .map(|symbol| symbol.escaped_name.clone())
-                    });
-                if let Some(bridged_name) = bridged_name
-                    && bridged_name != def_name
-                {
-                    return Some(self.ctx.types.lazy(def_id));
-                }
-            }
-        }
         if let Some(file_idx) = owner_file_idx
             && file_idx != self.ctx.current_file_idx
         {
