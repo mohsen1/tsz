@@ -392,7 +392,15 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let referenced_types = collect_referenced_types(self.ctx.types, inferred_type);
+        // Portability walk: mapped key positions are excluded — declaration
+        // emit serializes a concrete-keyed mapped type's keys as property
+        // names (see `collect_portability_referenced_types`), so an alias
+        // referenced only from a key constraint is never a printed reference.
+        let referenced_types =
+            crate::query_boundaries::common::collect_portability_referenced_types(
+                self.ctx.types,
+                inferred_type,
+            );
         for &type_id in &referenced_types {
             if let Some(info) = check_type(self, type_id) {
                 return Some(info);

@@ -1879,8 +1879,18 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         // Collect all types referenced by this type (deeply walks into
-        // objects, tuples, unions, intersections, etc.)
-        let referenced_types = tsz_solver::visitor::collect_referenced_types(interner, type_id);
+        // objects, tuples, unions, intersections, etc.). Mapped key positions
+        // are excluded: a concrete-keyed mapped type serializes its keys as
+        // property names (`expand_mapped_type_to_portable_properties`), so an
+        // alias referenced only from a key constraint is never printed.
+        let mut referenced_types = rustc_hash::FxHashSet::default();
+        tsz_solver::visitor::walk_declaration_portability_referenced_types(
+            interner,
+            type_id,
+            |t| {
+                referenced_types.insert(t);
+            },
+        );
         for &ref_type_id in &referenced_types {
             if let Some(symbol_ref) = tsz_solver::visitor::type_query_symbol(interner, ref_type_id)
                 && let Some(sym_id) = binder

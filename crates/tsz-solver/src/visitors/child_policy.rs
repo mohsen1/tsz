@@ -42,8 +42,17 @@ pub struct ChildPolicy {
     pub type_param_default: bool,
     /// Visit a mapped type's iteration-variable `constraint`/`default`
     /// metadata (`mapped.type_param`); the mapped `constraint`, `template`,
-    /// and `name_type` are always visited.
+    /// and `name_type` are visited per [`Self::FULL`] unless
+    /// `mapped_key_positions` turns the key positions off.
     pub mapped_type_param_metadata: bool,
+    /// Visit a mapped type's key positions (`constraint` and `name_type`).
+    ///
+    /// Declaration-emit portability walks turn this off: a mapped type with a
+    /// concrete key constraint serializes its keys as property *names*
+    /// (evaluation regime), so an alias referenced only from a key position is
+    /// never an emit-time type reference. The `template` (value position) is
+    /// always visited.
+    pub mapped_key_positions: bool,
     /// Skip the entire body (params, return, `this`, predicate, metadata) of a
     /// *generic* signature. Free-occurrence walkers use this: a generic
     /// signature binds its own type parameters, so references inside its body
@@ -83,6 +92,7 @@ impl ChildPolicy {
         type_param_constraint: true,
         type_param_default: false,
         mapped_type_param_metadata: true,
+        mapped_key_positions: true,
         skip_generic_signature_bodies: false,
         property_write_types: true,
         index_key_types: true,
@@ -119,6 +129,7 @@ impl ChildPolicy {
         type_param_constraint: true,
         type_param_default: true,
         mapped_type_param_metadata: true,
+        mapped_key_positions: true,
         skip_generic_signature_bodies: false,
         property_write_types: false,
         index_key_types: false,
@@ -227,6 +238,22 @@ impl ChildPolicy {
         type_param_constraint: false,
         type_param_default: false,
         ..Self::STRUCTURAL_USES
+    };
+
+    /// Declaration-emit portability walks (TS2883 and friends): the full
+    /// surface minus mapped key positions. When declaration emit serializes a
+    /// mapped type with a concrete key constraint, the keys become property
+    /// *names* (tsc's evaluation regime), so an alias that appears only in a
+    /// key position (`constraint`/`name_type`) is never a printed type
+    /// reference. Value positions (`template`) are still walked — a
+    /// non-portable type there does get printed and must keep reporting.
+    pub const DECLARATION_PORTABILITY: Self = Self {
+        mapped_key_positions: false,
+        // The iteration variable's declared constraint/default duplicate the
+        // key positions (`K in Key` stores Key both as the mapped constraint
+        // and as K's metadata) — exclude them for the same reason.
+        mapped_type_param_metadata: false,
+        ..Self::FULL
     };
 }
 
@@ -468,9 +495,13 @@ pub fn try_for_each_child_with_policy<B, F: FnMut(TypeId) -> ControlFlow<B>>(
                     f(default)?;
                 }
             }
-            f(mapped.constraint)?;
+            if policy.mapped_key_positions {
+                f(mapped.constraint)?;
+            }
             f(mapped.template)?;
-            if let Some(name_type) = mapped.name_type {
+            if policy.mapped_key_positions
+                && let Some(name_type) = mapped.name_type
+            {
                 f(name_type)?;
             }
             ControlFlow::Continue(())

@@ -872,6 +872,24 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
+        if let Some(mapped) = arena.get_mapped_type(node) {
+            // Mapped key positions (the iteration variable's constraint and
+            // the `as` name type) serialize as property names — declaration
+            // emit evaluates a concrete-keyed mapped type into its members
+            // (`expand_mapped_type_to_portable_properties`), so an alias
+            // referenced only from a key position is never a printed type
+            // reference. Only the value position can force a foreign name
+            // into the output.
+            self.collect_non_portable_references_in_type_node(
+                arena,
+                mapped.type_node,
+                source_path,
+                collect,
+                visit,
+            );
+            return;
+        }
+
         if let Some(indexed) = arena.get_indexed_access_type(node) {
             let mut collected_object_refs = false;
             if let Some(sym_id) =
