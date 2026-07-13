@@ -649,6 +649,23 @@ impl CheckerContext<'_> {
     /// registered under a lib def in the store.
     pub fn get_canonical_lib_def_id(&self, name: &str, per_lib_sym_id: SymbolId) -> DefId {
         let canonical_sym = self.canonical_lib_sym_id(name, per_lib_sym_id);
+        // When the canonical symbol DIFFERS from the per-lib input, the merged
+        // identity is authoritative and `SymbolId`-keyed: resolve through it
+        // directly. Electing from the name index here instead can return a
+        // sibling same-named def that the `SymbolId`-keyed paths
+        // (`get_or_create_def_id`, semantic-def prepopulation, env
+        // publication) do not use, splitting one lib type into two identities
+        // (witness: `Parameters`/`ReturnType` utilities diverging until
+        // `Plugin[]` failed against `Plugin[]` in
+        // thislessFunctionsNotContextSensitive3). The interface-merge
+        // collision family a name-index election here once compensated for
+        // (`FlatArray -> alert`/`eval`) is owned upstream: lib member refs
+        // lower name-first unconditionally and identity-verified def writes
+        // keep collided ids from publishing (see `queries/lib*.rs` and
+        // `insert_type_env_symbol`).
+        if canonical_sym != per_lib_sym_id {
+            return self.get_lib_def_id(canonical_sym);
+        }
         let atom = self.types.intern_string(name);
         self.definition_store
             .find_defs_by_name(atom)
@@ -681,21 +698,33 @@ impl CheckerContext<'_> {
                         })
                     })
                     .max_by_key(|def_id| {
-                        // A user `interface` merging into a lib global can leave a
-                        // lib-named def whose recorded `symbol_id` is a merged-global
-                        // id that aliases an UNRELATED lib symbol in some binder
-                        // (e.g. a `FlatArray` def whose id collides with `alert`/
-                        // `eval`). Preferring the raw-highest `symbol_id` then lets
-                        // that colliding duplicate outbid the genuine lib def.
-                        // Prefer instead a candidate whose `symbol_id` actually
-                        // resolves to a symbol NAMED `name`; only among equally
-                        // name-verified (or equally unverifiable) candidates does the
-                        // historical highest-`symbol_id` tiebreak apply.
+                        // Election among same-named lib defs, in precedence order:
+                        //
+                        // 1. `canonical_match`: the def whose recorded `symbol_id`
+                        //    IS the canonical merged symbol. That is the def every
+                        //    `SymbolId`-keyed path (`get_or_create_def_id`,
+                        //    semantic-def prepopulation, env publication) uses;
+                        //    electing any sibling here splits one lib type into
+                        //    two identities (witness: `Parameters`/`ReturnType`
+                        //    utilities diverging until `Plugin[]` failed against
+                        //    `Plugin[]` in thislessFunctionsNotContextSensitive3).
+                        //
+                        // 2. `name_verified`: a user `interface` merging into a
+                        //    lib global can leave a lib-named def whose recorded
+                        //    `symbol_id` is a merged-global id aliasing an
+                        //    UNRELATED lib symbol (a `FlatArray` def colliding
+                        //    with `alert`/`eval`). Preferring the raw-highest
+                        //    `symbol_id` let that duplicate outbid the genuine
+                        //    def; require the `symbol_id` to resolve to a symbol
+                        //    actually NAMED `name`.
+                        //
+                        // 3. Historical highest-`symbol_id` tiebreak.
                         let sym_id = self
                             .definition_store
                             .get(*def_id)
                             .and_then(|info| info.symbol_id)
                             .map(SymbolId);
+                        let canonical_match = sym_id == Some(canonical_sym);
                         let name_verified = sym_id.is_some_and(|sym| {
                             self.binder
                                 .get_symbol(sym)
@@ -707,7 +736,11 @@ impl CheckerContext<'_> {
                                         .is_some_and(|s| s.escaped_name.as_str() == name)
                                 })
                         });
-                        (name_verified, sym_id.map(|s| s.0).unwrap_or_default())
+                        (
+                            canonical_match,
+                            name_verified,
+                            sym_id.map(|s| s.0).unwrap_or_default(),
+                        )
                     })
             })
             .unwrap_or_else(|| self.get_lib_def_id(canonical_sym))
