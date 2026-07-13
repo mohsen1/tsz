@@ -783,11 +783,16 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            let target_prop_type_for_check = self.evaluate_type_for_assignability(target_prop_type);
+            // Type the initializer under the per-property contextual target,
+            // exactly like the real assignment does: without it a fresh
+            // literal widens (`"str"` → `string`) and the probe reports a
+            // false mismatch against a literal member type (e.g. the bare-`K`
+            // identity mapped type `{ [K in keyof V]: K }`).
             let source_type = self.get_type_of_node_with_request(
                 prop.initializer,
-                &crate::context::TypingRequest::NONE,
+                &crate::context::TypingRequest::with_contextual_type(target_prop_type_for_check),
             );
-            let target_prop_type_for_check = self.evaluate_type_for_assignability(target_prop_type);
             if matches!(source_type, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN) {
                 continue;
             }

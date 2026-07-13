@@ -436,6 +436,80 @@ const bad: Mc = { str: 123 };
         );
     }
 
+    /// Fresh-literal object-literal assignment to a bare-`K` identity mapped
+    /// type: the per-property probe must type the initializer under the
+    /// per-property contextual target, or the fresh literal widens
+    /// (`"lo"` → `string`) and a false TS2322 fires against the literal
+    /// member type. Adjacent matrix: multi-key, single-key, non-fresh
+    /// source, and the negative (wrong literal / wrong primitive) which must
+    /// keep erroring. Binder names vary per case (anti-hardcoding).
+    #[test]
+    fn fresh_literal_object_to_identity_mapped_type_matrix() {
+        // Positive: two keys, fresh string literals.
+        let diagnostics = collect_test_diagnostics(&[(
+            "main.ts",
+            r#"
+type Cfg = { lo: number; hi: boolean };
+type Names = { [K in keyof Cfg]: K };
+const ok: Names = { lo: "lo", hi: "hi" };
+"#,
+        )]);
+        assert!(
+            diagnostics.is_empty(),
+            "fresh literals must satisfy the identity mapped type: {diagnostics:?}"
+        );
+
+        // Positive: single key (the `keyof` collapses to one literal).
+        let diagnostics = collect_test_diagnostics(&[(
+            "main.ts",
+            r#"
+const seed = { field: 1 };
+type S = typeof seed;
+type Keys = { [P in keyof S]: P };
+const ok: Keys = { field: "field" };
+"#,
+        )]);
+        assert!(
+            diagnostics.is_empty(),
+            "single-key identity mapped type must accept its literal: {diagnostics:?}"
+        );
+
+        // Positive: non-fresh sources behave identically.
+        let diagnostics = collect_test_diagnostics(&[(
+            "main.ts",
+            r#"
+type Rec = { alpha: string };
+type Ident = { [Q in keyof Rec]: Q };
+declare const a: "alpha";
+const ok1: Ident = { alpha: a };
+const ok2: Ident = { alpha: "alpha" as const };
+"#,
+        )]);
+        assert!(
+            diagnostics.is_empty(),
+            "non-fresh literal sources must also pass: {diagnostics:?}"
+        );
+
+        // Negative: a wrong literal and a wrong primitive must still error.
+        let diagnostics = collect_test_diagnostics(&[(
+            "main.ts",
+            r#"
+type Row = { cell: number };
+type Tags = { [K in keyof Row]: K };
+const bad1: Tags = { cell: "other" };
+const bad2: Tags = { cell: 42 };
+"#,
+        )]);
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diag| diag.code == 2322)
+                .count(),
+            2,
+            "wrong values must keep failing against the literal member type: {diagnostics:?}"
+        );
+    }
+
     /// Same shape with different binder names (anti-hardcoding): the behavior
     /// follows the structural pattern, not the spellings
     /// `Validator`/`Requireable`/`str`/`P`.
