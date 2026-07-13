@@ -306,7 +306,16 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                             .arena
                             .get(clause_idx)
                             .is_some_and(|node| node.kind == syntax_kind_ext::CALL_EXPRESSION);
-                        let inferred_reference = (!clause_is_call)
+                        // Calls defer to the emitter's authoritative
+                        // call-return portability check — except Object.assign,
+                        // whose flattened result can expose a non-portable
+                        // alias application (e.g. an intersection member from
+                        // a nested node_modules package) that the emitter's
+                        // callee-return walk never sees. tsc reports exactly
+                        // one TS2883 on 'default' for that shape.
+                        let walk_whole_type =
+                            !clause_is_call || self.expression_is_object_assign_call(clause_idx);
+                        let inferred_reference = walk_whole_type
                             .then(|| {
                                 self.first_non_portable_type_reference(expr_type)
                                     .or_else(|| {
