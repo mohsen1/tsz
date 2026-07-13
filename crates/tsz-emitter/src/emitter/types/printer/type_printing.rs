@@ -797,18 +797,6 @@ impl<'a> TypePrinter<'a> {
         } else {
             self.print_type(app.base)
         };
-        // TEMP FlatArray-collision probe (remove after diagnosis): if the base
-        // def is FlatArray-named but the application head renders otherwise, the
-        // collision surfaces at print time on the application base.
-        if let Some(def_id) = base_def_id
-            && self
-                .type_cache
-                .and_then(|c| c.def_to_name.get(&def_id))
-                .is_some_and(|n| n.as_str() == "FlatArray")
-            && base_text.as_str() != "FlatArray"
-        {
-            tracing::warn!(target: "tsz_flatarray_probe", ?def_id, base_text = %base_text, "FlatArray application head printed as non-FlatArray (print-time)");
-        }
         if Self::is_parameters_utility_name(&base_text)
             && app.args.len() == 1
             && let Some(tuple_text) = self.print_parameters_utility_tuple(app.args[0])

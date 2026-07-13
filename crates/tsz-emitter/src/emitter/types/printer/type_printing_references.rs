@@ -394,15 +394,6 @@ impl<'a> TypePrinter<'a> {
             && let Some(arena) = self.symbol_arena
             && let Some(symbol) = arena.get(sym_id)
         {
-            // TEMP FlatArray-collision probe (remove after diagnosis): does the
-            // printer resolve a FlatArray-named def through a mismatched arena
-            // symbol (i.e. is the wrong name print-time rather than construction-time)?
-            if let Some(expected) = self.type_cache.and_then(|c| c.def_to_name.get(&def_id))
-                && expected.as_str() == "FlatArray"
-                && symbol.escaped_name.as_str() != "FlatArray"
-            {
-                tracing::warn!(target: "tsz_flatarray_probe", ?def_id, sym = sym_id.0, arena_name = %symbol.escaped_name, "FlatArray def printed via mismatched arena symbol (print-time)");
-            }
             // Lazy(DefId) for value-space entities (enums, modules, functions) represents
             // the VALUE side of the symbol. In .d.ts output, these must be prefixed with
             // `typeof` to distinguish from the type-side meaning.

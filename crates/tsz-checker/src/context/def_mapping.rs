@@ -710,16 +710,7 @@ impl CheckerContext<'_> {
                         (name_verified, sym_id.map(|s| s.0).unwrap_or_default())
                     })
             })
-            .unwrap_or_else(|| {
-                if name == "FlatArray" {
-                    let atom = self.types.intern_string(name);
-                    let hits = self
-                        .definition_store
-                        .probe_defs_named_str(name, |a| self.types.resolve_atom(a).to_string());
-                    tracing::warn!(?atom, ?hits, "FlatArray empty-find fallback probe");
-                }
-                self.get_lib_def_id(canonical_sym)
-            })
+            .unwrap_or_else(|| self.get_lib_def_id(canonical_sym))
     }
 
     /// Resolve a lib symbol's `DefId`, verifying the def actually names
@@ -1335,12 +1326,6 @@ impl CheckerContext<'_> {
             return;
         }
 
-        // TEMP lib-def-collision probe (remove after diagnosis).
-        if std::env::var("TSZ_PROBE_DEF_ID").is_ok_and(|v| v == def_id.0.to_string()) {
-            tracing::warn!(target: "tsz_flatarray_probe", ?def_id, n_params = params.len(), "insert_def_type_params on probe-target def");
-            tracing::warn!(target: "tsz_flatarray_probe", bt = %std::backtrace::Backtrace::force_capture(), "insert_def_type_params call-site backtrace");
-        }
-
         let existing = self
             .def_type_params
             .borrow()
@@ -1375,24 +1360,12 @@ impl CheckerContext<'_> {
     /// `DefIds` (e.g., lib types like `PromiseLike` that get different `DefIds` in
     /// different contexts).
     pub fn get_def_type_params(&self, def_id: DefId) -> Option<Vec<tsz_solver::TypeParamInfo>> {
-        // TEMP lib-def-collision probe (remove after diagnosis).
-        let probing = std::env::var("TSZ_PROBE_DEF_ID").is_ok_and(|v| v == def_id.0.to_string());
         // ---- Step 1: local cache fast path ----
         let params = self.def_type_params.borrow();
         if let Some(result) = params.get(&def_id) {
-            if probing && !result.is_empty() {
-                tracing::warn!(target: "tsz_flatarray_probe", ?def_id, n = result.len(), "get_def_type_params step1 local cache");
-            }
             return Some(result.clone());
         }
         drop(params);
-        if probing {
-            let store_n = self
-                .definition_store
-                .get_type_params(def_id)
-                .map(|p| p.len());
-            tracing::warn!(target: "tsz_flatarray_probe", ?def_id, ?store_n, "get_def_type_params step2 store lookup");
-        }
 
         // ---- Step 2: DefinitionStore direct lookup (O(1)) ----
         // The store has type params for this exact DefId if they were set via

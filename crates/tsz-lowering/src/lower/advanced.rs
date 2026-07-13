@@ -12,16 +12,6 @@ use tsz_solver::types::{
     TypeParamInfo, TypeParamOrigin, TypePredicate, TypePredicateTarget,
 };
 
-/// TEMP lib-def-collision probe target (remove after diagnosis). Matches the
-/// type name in `TSZ_PROBE_TYPE_NAME` (default `FlatArray`).
-fn probe_target_matches(name: &str) -> bool {
-    static TARGET: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    let target = TARGET.get_or_init(|| {
-        std::env::var("TSZ_PROBE_TYPE_NAME").unwrap_or_else(|_| "FlatArray".into())
-    });
-    name == target
-}
-
 impl TypeLowering<'_> {
     fn lower_lazy_def_reference(&self, def_id: tsz_solver::def::DefId) -> TypeId {
         let lazy = self.interner.lazy(def_id);
@@ -770,55 +760,24 @@ impl TypeLowering<'_> {
                 if let Some(scoped_name) = self.scoped_identifier_name_text(node_idx)
                     && let Some(def_id) = self.resolve_def_id_by_name(&scoped_name)
                 {
-                    // TEMP FlatArray-collision probe (remove after diagnosis).
-                    if probe_target_matches(name) {
-                        let n_params = self.host.resolve_lazy_type_params(def_id).map(|p| p.len());
-                        tracing::warn!(target: "tsz_flatarray_probe", prefer_name = true, branch = "pn_scoped_name", ?def_id, ?n_params, "probe base def resolved (construction)");
-                        tracing::warn!(target: "tsz_flatarray_probe", bt = %std::backtrace::Backtrace::force_capture(), "pn_scoped_name call-site backtrace");
-                    }
                     return self.lower_lazy_def_reference(def_id);
                 }
                 if let Some(def_id) = self.resolve_def_id_by_name(name) {
-                    if probe_target_matches(name) {
-                        let n_params = self.host.resolve_lazy_type_params(def_id).map(|p| p.len());
-                        tracing::warn!(target: "tsz_flatarray_probe", prefer_name = true, branch = "pn_name", ?def_id, ?n_params, "probe base def resolved (construction)");
-                        tracing::warn!(target: "tsz_flatarray_probe", bt = %std::backtrace::Backtrace::force_capture(), "pn_name call-site backtrace");
-                    }
                     return self.lower_lazy_def_reference(def_id);
                 }
                 if let Some(def_id) = self.resolve_def_id(node_idx) {
-                    if probe_target_matches(name) {
-                        let n_params = self.host.resolve_lazy_type_params(def_id).map(|p| p.len());
-                        tracing::warn!(target: "tsz_flatarray_probe", prefer_name = true, branch = "pn_node", ?def_id, ?n_params, "probe base def resolved (construction)");
-                        tracing::warn!(target: "tsz_flatarray_probe", bt = %std::backtrace::Backtrace::force_capture(), "pn_node call-site backtrace");
-                    }
                     return self.lower_lazy_def_reference(def_id);
                 }
             } else {
                 if let Some(def_id) = self.resolve_def_id(node_idx) {
-                    if probe_target_matches(name) {
-                        let n_params = self.host.resolve_lazy_type_params(def_id).map(|p| p.len());
-                        tracing::warn!(target: "tsz_flatarray_probe", prefer_name = false, branch = "alt_node", ?def_id, ?n_params, "probe base def resolved (construction)");
-                        tracing::warn!(target: "tsz_flatarray_probe", bt = %std::backtrace::Backtrace::force_capture(), "alt_node call-site backtrace");
-                    }
                     return self.lower_lazy_def_reference(def_id);
                 }
                 if let Some(scoped_name) = self.scoped_identifier_name_text(node_idx)
                     && let Some(def_id) = self.resolve_def_id_by_name(&scoped_name)
                 {
-                    if probe_target_matches(name) {
-                        let n_params = self.host.resolve_lazy_type_params(def_id).map(|p| p.len());
-                        tracing::warn!(target: "tsz_flatarray_probe", prefer_name = false, branch = "alt_scoped_name", ?def_id, ?n_params, "probe base def resolved (construction)");
-                        tracing::warn!(target: "tsz_flatarray_probe", bt = %std::backtrace::Backtrace::force_capture(), "alt_scoped_name call-site backtrace");
-                    }
                     return self.lower_lazy_def_reference(def_id);
                 }
                 if let Some(def_id) = self.resolve_def_id_by_name(name) {
-                    if probe_target_matches(name) {
-                        let n_params = self.host.resolve_lazy_type_params(def_id).map(|p| p.len());
-                        tracing::warn!(target: "tsz_flatarray_probe", prefer_name = false, branch = "alt_name", ?def_id, ?n_params, "probe base def resolved (construction)");
-                        tracing::warn!(target: "tsz_flatarray_probe", bt = %std::backtrace::Backtrace::force_capture(), "alt_name call-site backtrace");
-                    }
                     return self.lower_lazy_def_reference(def_id);
                 }
             }

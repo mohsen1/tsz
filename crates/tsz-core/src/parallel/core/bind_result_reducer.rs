@@ -513,15 +513,6 @@ impl BindResultReducer {
             let lib_binder = Arc::clone(&self.lib_binders[lib_binder_idx]);
             let lib_binder_ptr = Arc::as_ptr(&lib_binder) as usize;
             for (&old_sym_id, entry) in lib_binder.semantic_defs.iter() {
-                if entry.name == "FlatArray" {
-                    tracing::warn!(
-                        ?old_sym_id,
-                        remap_hit = self
-                            .lib_symbol_remap
-                            .contains_key(&(lib_binder_ptr, old_sym_id)),
-                        "propagate FlatArray semantic_def"
-                    );
-                }
                 if let Some(&global_id) = self.lib_symbol_remap.get(&(lib_binder_ptr, old_sym_id)) {
                     // Keep first occurrence (declaration merging keeps first identity).
                     self.semantic_defs.entry(global_id).or_insert_with(|| {

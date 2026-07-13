@@ -1076,13 +1076,6 @@ impl TypeEnvironment {
         {
             return;
         }
-        // TEMP lib-def-collision probe (remove after diagnosis).
-        if !params.is_empty()
-            && std::env::var("TSZ_PROBE_DEF_ID").is_ok_and(|v| v == def_id.0.to_string())
-        {
-            tracing::warn!(target: "tsz_flatarray_probe", def = def_id.0, n = params.len(), "solver insert_def_with_params");
-            tracing::warn!(target: "tsz_flatarray_probe", bt = %std::backtrace::Backtrace::force_capture(), "solver insert_def_with_params backtrace");
-        }
         self.def_types.insert(def_id.0, type_id);
         if !params.is_empty() {
             self.def_type_params.insert(def_id.0, params.clone());

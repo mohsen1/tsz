@@ -1369,12 +1369,7 @@ impl CheckerState<'_> {
         def_id: tsz_solver::def::DefId,
         sym_id: tsz_binder::SymbolId,
     ) -> bool {
-        // TEMP lib-def-collision probe (remove after diagnosis).
-        let probing = std::env::var("TSZ_PROBE_DEF_ID").is_ok_and(|v| v == def_id.0.to_string());
         let Some(info) = self.ctx.definition_store.get(def_id) else {
-            if probing {
-                tracing::warn!(target: "tsz_flatarray_probe", def = def_id.0, sym = sym_id.0, "guard: no def info -> allow");
-            }
             return true;
         };
         let def_name = self.ctx.types.resolve_atom(info.name);
@@ -1382,18 +1377,10 @@ impl CheckerState<'_> {
             return true;
         }
         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-            if probing {
-                tracing::warn!(target: "tsz_flatarray_probe", def = def_id.0, sym = sym_id.0, %def_name, local = %symbol.escaped_name, verdict = symbol.escaped_name == def_name, "guard: local");
-            }
             return symbol.escaped_name == def_name;
         }
         if let Some(symbol) = self.get_cross_file_symbol(sym_id) {
-            let verdict = symbol.escaped_name == def_name;
-            if probing {
-                let xname = symbol.escaped_name.to_string();
-                tracing::warn!(target: "tsz_flatarray_probe", def = def_id.0, sym = sym_id.0, %def_name, xfile = %xname, verdict, "guard: xfile");
-            }
-            return verdict;
+            return symbol.escaped_name == def_name;
         }
         let mut resolved_in_lib = false;
         for lib_ctx in self.ctx.lib_contexts.iter() {
@@ -1471,36 +1458,6 @@ impl CheckerState<'_> {
         } else {
             self.get_type_params_for_symbol(sym_id)
         };
-
-        // TEMP lib-def-collision probe (remove after diagnosis).
-        if let Ok(target) = std::env::var("TSZ_PROBE_TYPE_NAME")
-            && let Some(def_id) = def_id
-            && self
-                .ctx
-                .definition_store
-                .get(def_id)
-                .is_some_and(|info| self.ctx.types.resolve_atom(info.name) == target)
-        {
-            let cur_sym_name = self
-                .ctx
-                .binder
-                .get_symbol(sym_id)
-                .map(|s| s.escaped_name.clone());
-            let lib_sym_names: Vec<String> = self
-                .ctx
-                .lib_contexts
-                .iter()
-                .filter_map(|lc| {
-                    lc.binder
-                        .get_symbol(sym_id)
-                        .map(|s| s.escaped_name.to_string())
-                })
-                .collect();
-            let xfile_sym_name = self
-                .get_cross_file_symbol(sym_id)
-                .map(|s| s.escaped_name.to_string());
-            tracing::warn!(target: "tsz_flatarray_probe", ?sym_id, ?cur_sym_name, ?lib_sym_names, ?xfile_sym_name, ?def_id, had_env_params, n_params = type_params.len(), "insert_type_env_symbol identity");
-        }
 
         // Def-keyed publications must not inherit params read from the shared
         // env under a raw `SymbolRef`: that key collides across binder id
