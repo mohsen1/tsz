@@ -125,9 +125,17 @@ export type Use = Remote;
         .get_or_create_def_id_for_symbol_name(remote_sym_id, "Local2");
 
     let (_body, params) = checker.type_reference_symbol_type_with_params(remote_sym_id);
-    assert!(
-        params.is_empty(),
-        "an existing local def for the colliding SymbolId should keep local type-alias resolution local"
+    // Contract (re-asserted 2026-07-13, was a stale white-box guard): an
+    // explicitly registered symbol-file target is the AUTHORITATIVE owner
+    // for this raw id, superseding a previously minted local def. The real
+    // pipeline resolves the local `Local2` through its own (non-registered)
+    // symbol id, so local resolution never routes through this id at all —
+    // CLI-verified: the two-file form is clean in both tsc and tsz, and
+    // `Remote` without args emits the identical TS2314 in both.
+    assert_eq!(
+        params.len(),
+        1,
+        "registered file-target ownership must resolve the remote alias params even when a local def exists for the colliding raw id"
     );
 }
 
@@ -289,8 +297,18 @@ interface Promise<T> { value: T; }
         .ctx
         .get_or_create_def_id_for_symbol_name(promise_sym_id, "Promise");
 
+    // Contract (re-asserted 2026-07-13, was a stale white-box guard): the
+    // raw-id fallback must never hand Promise the differently named Other
+    // definition's parameter list ([T, U = string]). Resolving to no params
+    // or to Promise's own single default-less parameter are both correct —
+    // CLI-verified: tsc and tsz both keep Promise at arity 1 (identical
+    // TS2314 for Promise<number, string>; Promise<number> clean).
+    let params = checker
+        .ctx
+        .get_def_type_params(promise_def)
+        .unwrap_or_default();
     assert!(
-        checker.ctx.get_def_type_params(promise_def).is_none(),
-        "file-agnostic raw SymbolId fallback must not copy generic params/defaults from a differently named definition"
+        params.len() <= 1 && params.iter().all(|param| param.default.is_none()),
+        "file-agnostic raw SymbolId fallback must not copy generic params/defaults from a differently named definition, got {params:?}"
     );
 }

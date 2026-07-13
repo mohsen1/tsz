@@ -33,7 +33,22 @@ impl DefinitionStore {
             Entry::Occupied(existing) => {
                 let existing_def_id = *existing.get();
                 if Self::decl_site_key_for_info(&info).is_none() {
-                    return (existing_def_id, false);
+                    // Raw `(symbol, file)` keys collide across binder id
+                    // spaces (each test/per-file binder numbers privately).
+                    // Without a decl site to disambiguate, only converge on
+                    // the occupant when it records the SAME name; a
+                    // different-named occupant belongs to another
+                    // declaration, and adopting it hands this symbol that
+                    // definition's identity (generic params/defaults leak
+                    // through the symbol-keyed fallbacks).
+                    let same_name = self
+                        .get(existing_def_id)
+                        .is_some_and(|existing_info| existing_info.name == info.name);
+                    if same_name {
+                        return (existing_def_id, false);
+                    }
+                    drop(existing);
+                    return (self.register(info), true);
                 }
 
                 let existing_matches_decl_site =
