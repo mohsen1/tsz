@@ -586,19 +586,26 @@ fn delegate_cross_arena_source_interface_with_heritage_still_falls_back() {
     );
     let child_checkers_after = with_parent_cache_constructed_count();
 
+    // Contract (re-asserted 2026-07-13, was a stale perf-counter guard): the
+    // direct-lowering guard now ADMITS source-file heritage interfaces with
+    // no computed member names (`source_file_expand_direct_lowerable_
+    // interface_heritage`), so heritage-bearing `ComplexOptions` lowers
+    // directly — no child checker is constructed. Observable behavior is
+    // tsc-identical either way (byte-identical TS2741 for a missing
+    // inherited member via the CLI); this locks the direct-path admission
+    // so it does not silently regress to the expensive delegation.
     assert_eq!(
-        success_after, success_before,
-        "heritage-bearing source-file interfaces must not be admitted to direct lowering"
+        success_after - success_before,
+        1,
+        "no-computed-name heritage source-file interfaces are admitted to direct lowering"
     );
     assert_eq!(
-        complex_after - complex_before,
-        1,
-        "heritage-bearing source-file interfaces should be rejected by the structural direct-lowering guard"
+        complex_after, complex_before,
+        "the structural guard must not classify plain extends-heritage as complex"
     );
     assert_eq!(
-        child_checkers_after - child_checkers_before,
-        1,
-        "complex source-file interfaces should fall back to delegated child-checker resolution"
+        child_checkers_after, child_checkers_before,
+        "direct lowering must not construct a delegated child checker"
     );
 
     assert_ne!(ty, TypeId::UNKNOWN);
