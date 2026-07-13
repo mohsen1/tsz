@@ -20,6 +20,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     fn tuple_element_type_mismatch(
         &mut self,
         index: usize,
+        target_index: usize,
         source_element: TypeId,
         target_element: TypeId,
         multi_element: bool,
@@ -29,6 +30,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             .map(Box::new);
         SubtypeFailureReason::TupleElementTypeMismatch {
             index,
+            target_index,
             source_element,
             target_element,
             nested_reason,
@@ -67,16 +69,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if t_elem.rest {
                 let expansion = self.expand_tuple_rest(t_elem.type_id);
                 let outer_tail = &target[i + 1..];
-                // Combined suffix = expansion.tail + outer_tail
-                let combined_suffix: Vec<_> = expansion
+                // Combined suffix = expansion.tail + outer_tail, each paired
+                // with its TARGET position: elements expanded out of the rest
+                // slot report the slot's own position `i` (tsc numbers the
+                // target as written), while outer-tail elements keep their
+                // written index after the rest slot.
+                let combined_suffix: Vec<(usize, TupleElement)> = expansion
                     .tail
                     .iter()
-                    .chain(outer_tail.iter())
-                    .cloned()
+                    .map(|element| (i, element.clone()))
+                    .chain(
+                        outer_tail
+                            .iter()
+                            .enumerate()
+                            .map(|(k, element)| (i + 1 + k, element.clone())),
+                    )
                     .collect();
 
                 let mut source_end = source.len();
-                for tail_elem in combined_suffix.iter().rev() {
+                for (tail_target_pos, tail_elem) in combined_suffix.iter().rev() {
                     if source_end <= i {
                         if !tail_elem.optional {
                             return Some(SubtypeFailureReason::TupleElementMismatch {
@@ -94,6 +105,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             if !self.check_subtype(s_elem.type_id, tp_array).is_true() {
                                 return Some(self.tuple_element_type_mismatch(
                                     source_end - 1,
+                                    *tail_target_pos,
                                     s_elem.type_id,
                                     tail_elem.type_id,
                                     // Rest/variadic tuples are multi-position;
@@ -128,6 +140,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     if !assignable {
                         return Some(self.tuple_element_type_mismatch(
                             source_end - 1,
+                            *tail_target_pos,
                             s_elem.type_id,
                             tail_elem.type_id,
                             true,
@@ -153,6 +166,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             {
                                 return Some(self.tuple_element_type_mismatch(
                                     j,
+                                    i,
                                     s_elem.type_id,
                                     t_fixed.type_id,
                                     true,
@@ -187,6 +201,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             if !self.check_subtype(s_elem.type_id, variadic_array).is_true() {
                                 return Some(self.tuple_element_type_mismatch(
                                     j,
+                                    i,
                                     s_elem.type_id,
                                     variadic_array,
                                     true,
@@ -266,6 +281,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     }
                     return Some(SubtypeFailureReason::TupleElementTypeMismatch {
                         index: i,
+                        target_index: i,
                         source_element: s_elem.type_id,
                         target_element: t_elem.type_id,
                         nested_reason: nested.map(Box::new),
