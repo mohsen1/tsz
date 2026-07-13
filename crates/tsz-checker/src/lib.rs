@@ -961,6 +961,9 @@ mod dynamic_import_relation_routing_arch_tests;
 #[path = "../tests/dynamic_import_ts2307_per_callsite_tests.rs"]
 mod dynamic_import_ts2307_per_callsite_tests;
 #[cfg(test)]
+#[path = "tests/enclosing_type_param_default_scope_tests.rs"]
+mod enclosing_type_param_default_scope_tests;
+#[cfg(test)]
 #[path = "../tests/enum_indexed_access_tests.rs"]
 mod enum_indexed_access_tests;
 #[cfg(test)]
