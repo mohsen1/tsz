@@ -1439,6 +1439,9 @@ mod overload_two_pass_any_source_tests;
 #[path = "tests/overload_union_context_callback_tests.rs"]
 mod overload_union_context_callback_tests;
 #[cfg(test)]
+#[path = "tests/overloaded_contextual_rest_tuple_tests.rs"]
+mod overloaded_contextual_rest_tuple_tests;
+#[cfg(test)]
 #[path = "tests/partial_pick_indexed_access_write_tests.rs"]
 mod partial_pick_indexed_access_write_tests;
 #[cfg(test)]
