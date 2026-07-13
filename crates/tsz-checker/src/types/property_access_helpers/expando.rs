@@ -404,16 +404,20 @@ impl<'a> CheckerState<'a> {
         checker.ctx.current_file_idx = file_idx;
 
         let source_file = arena.source_files.first()?;
-        let mut best_match: Option<(u32, TypeId)> = None;
+        let mut collected: Vec<(u32, TypeId)> = Vec::new();
         for &stmt_idx in &source_file.statements.nodes {
             checker.collect_expando_property_assignment_type(
                 stmt_idx,
                 expected_key,
                 u32::MAX,
-                &mut best_match,
+                &mut collected,
             );
         }
-        best_match.map(|(_, ty)| ty)
+        // Historical last-position-wins semantics for the JS cross-file reader.
+        collected
+            .into_iter()
+            .max_by_key(|&(pos, _)| pos)
+            .map(|(_, ty)| ty)
     }
 
     fn js_expando_property_read_type_from_all_files(
@@ -1517,17 +1521,19 @@ impl<'a> CheckerState<'a> {
             .source_files
             .get(self.ctx.current_file_idx)
             .or_else(|| self.ctx.arena.source_files.first())?;
-        let mut best_match: Option<(u32, TypeId)> = None;
+        let mut collected: Vec<(u32, TypeId)> = Vec::new();
 
         for &stmt_idx in &source_file.statements.nodes {
             self.collect_expando_property_assignment_type(
                 stmt_idx,
                 &expected_key,
                 read_node.pos,
-                &mut best_match,
+                &mut collected,
             );
         }
 
+        // Historical last-position-wins semantics for the prior-assignment read.
+        let best_match = collected.into_iter().max_by_key(|&(pos, _)| pos);
         if let Some((_, ty)) = best_match {
             self.ctx
                 .expando_property_resolution_set
@@ -1596,7 +1602,7 @@ impl<'a> CheckerState<'a> {
                 .expando_property_resolution_set
                 .insert(recursion_key.clone())
         {
-            let mut best_match: Option<(u32, TypeId)> = None;
+            let mut collected: Vec<(u32, TypeId)> = Vec::new();
             // Walk from the QUERIED symbol's enclosing lexical scope, not
             // unconditionally from the top level: a block-scoped shadowing
             // root (`if (...) { const Y = function Y() {}; Y.test = 42; }`)
@@ -1609,17 +1615,35 @@ impl<'a> CheckerState<'a> {
                     stmt_idx,
                     &expected_key,
                     u32::MAX,
-                    &mut best_match,
+                    &mut collected,
                 );
             }
             self.ctx
                 .expando_property_resolution_set
                 .remove(&recursion_key);
-            if let Some((_, ty)) = best_match {
-                return crate::query_boundaries::widening::widen_type_for_display_preserving_non_fresh(
-                    self.ctx.types,
-                    ty,
-                );
+            if !collected.is_empty() {
+                // Every assignment is a DECLARATION of the property; the
+                // property type is the union of the (widened) assignment
+                // types, exactly as tsc merges multi-branch expando
+                // assignments (`if (b) { g.both = 'hi' } else { g.both = 0 }`
+                // gives `string | number`, and neither branch is checked
+                // against the other).
+                let mut widened: Vec<TypeId> = collected
+                    .iter()
+                    .map(|&(_, ty)| {
+                        crate::query_boundaries::widening::widen_type_for_display_preserving_non_fresh(
+                            self.ctx.types,
+                            ty,
+                        )
+                    })
+                    .collect();
+                widened.sort_unstable_by_key(|ty| ty.0);
+                widened.dedup();
+                return if widened.len() == 1 {
+                    widened[0]
+                } else {
+                    self.ctx.types.factory().union_from_slice(&widened)
+                };
             }
         }
 
@@ -1936,7 +1960,7 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         expected_key: &str,
         read_pos: u32,
-        best_match: &mut Option<(u32, TypeId)>,
+        collected: &mut Vec<(u32, TypeId)>,
     ) {
         let Some(node) = self.ctx.arena.get(idx) else {
             return;
@@ -1976,9 +2000,8 @@ impl<'a> CheckerState<'a> {
                 if rhs_type != TypeId::ANY
                     && rhs_type != TypeId::ERROR
                     && rhs_type != TypeId::UNDEFINED
-                    && best_match.is_none_or(|(best_pos, _)| node.pos >= best_pos)
                 {
-                    *best_match = Some((node.pos, rhs_type));
+                    collected.push((node.pos, rhs_type));
                 }
             }
         }
@@ -1988,7 +2011,7 @@ impl<'a> CheckerState<'a> {
                 child_idx,
                 expected_key,
                 read_pos,
-                best_match,
+                collected,
             );
         }
     }
