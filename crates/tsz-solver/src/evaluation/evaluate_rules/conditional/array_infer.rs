@@ -228,13 +228,47 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let mut checker = self.conditional_subtype_checker();
         checker.allow_bivariant_rest = true;
         match super::classify_branch_relation(|| checker.is_subtype_of(check_elem, target_elem)) {
-            super::BranchRelation::Holds => Some(self.evaluate(cond.true_type)),
-            super::BranchRelation::Fails => Some(self.evaluate(cond.false_type)),
+            // A SELF-RECURSIVE application branch must join the tail-call
+            // growth loop (bounded at `MAX_TAIL_RECURSION_DEPTH`, which
+            // reports TS2589 on exhaustion) instead of nesting through
+            // `evaluate_application` here: for an `infer`-substituted growing
+            // tuple (`Push<[...X, 1]>`), each nested expansion's structural
+            // walk trips the depth-100 per-`TypeId` guard BELOW the
+            // `def_depth` escalation floor, and the silent-bail arm returns
+            // an opaque type with no TS2589 (issue #9777 witness). Falling
+            // through (`None`) re-runs the cheap cached element relation in
+            // the full pipeline, whose result branch reaches
+            // `try_dispatch_tail_call`.
+            super::BranchRelation::Holds => {
+                if self.branch_is_self_recursive_application(cond.true_type) {
+                    return None;
+                }
+                Some(self.evaluate(cond.true_type))
+            }
+            super::BranchRelation::Fails => {
+                if self.branch_is_self_recursive_application(cond.false_type) {
+                    return None;
+                }
+                Some(self.evaluate(cond.false_type))
+            }
             // The element relation's `false` depended on an unregistered `Lazy`
             // body, so it is undetermined. Fall through (`None`) to the full
             // conditional pipeline, which defers rather than committing the
             // spurious false branch (issue #14238).
             super::BranchRelation::Undetermined => None,
+        }
+    }
+
+    /// TRUE when `branch` is an `Application` whose base def is currently
+    /// in-flight (a recursive back-edge). Keyed on `DefId`s, never names.
+    fn branch_is_self_recursive_application(&self, branch: TypeId) -> bool {
+        let Some(TypeData::Application(app_id)) = self.interner().lookup(branch) else {
+            return false;
+        };
+        let base = self.interner().type_application(app_id).base;
+        match self.interner().lookup(base) {
+            Some(TypeData::Lazy(def_id)) => self.def_application_in_flight(def_id),
+            _ => false,
         }
     }
 

@@ -489,6 +489,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     const REAL_INSTANTIATION_BAILOUT_THRESHOLD: u32 =
         crate::limits::REAL_INSTANTIATION_BAILOUT_THRESHOLD;
 
+    /// Whether `def_id`'s application is currently in-flight (a recursive
+    /// back-edge). Used by the conditional array-arm fast paths to route a
+    /// self-recursive branch through the shared tail-call loop instead of
+    /// nesting through `evaluate_application` (see
+    /// `eval_conditional_array_concrete`).
+    pub(in crate::evaluation) fn def_application_in_flight(&self, def_id: DefId) -> bool {
+        self.def_depth.get(&def_id).is_some_and(|&depth| depth > 0)
+    }
+
     fn increment_def_depth(&mut self, def_id: DefId) -> bool {
         let depth = self.def_depth.entry(def_id).or_insert(0);
         // #14101 step-2 probe: a non-zero prior depth means this def's application
