@@ -224,13 +224,14 @@ fn tsc_parity_build_missing_tsconfig() {
         tsc_code, tsz_code,
         "build missing tsconfig exit code: tsc={tsc_code}, tsz={tsz_code}"
     );
-    // Both should mention TS5083
+    // tsc 7.0.2 reports the missing build tsconfig as TS6053 "File ... not
+    // found." (the 6.x TS5083 "Cannot read file" is gone) and exits 0.
     assert!(
-        tsc_out.contains("TS5083") || tsc_out.contains("Cannot read file"),
+        tsc_out.contains("TS6053") || tsc_out.contains("not found"),
         "tsc should report missing file: {tsc_out}"
     );
     assert!(
-        tsz_out.contains("TS5083") || tsz_out.contains("Cannot read file"),
+        tsz_out.contains("TS6053") || tsz_out.contains("not found"),
         "tsz should report missing file: {tsz_out}"
     );
 }

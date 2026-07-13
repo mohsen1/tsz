@@ -867,29 +867,32 @@ fn handle_build(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     use tsz_cli::build;
     use tsz_cli::project_refs::ProjectReferenceGraph;
 
+    // `tsc --build [projects...]` takes its project paths POSITIONALLY; a
+    // directory means `<dir>/tsconfig.json`. Fall back to -p/--project, then
+    // to the cwd default.
     let tsconfig_path = args
-        .project
-        .as_ref()
+        .files
+        .first()
+        .map(std::path::PathBuf::from)
+        .or_else(|| args.project.clone())
         .map(|p| {
             if p.is_dir() {
                 p.join("tsconfig.json")
             } else {
-                p.clone()
+                p
             }
         })
         .unwrap_or_else(|| cwd.join("tsconfig.json"));
 
     if !tsconfig_path.exists() {
-        // Match tsc behavior: TS5083 to stdout, exit code 1
+        // tsc 7.0.2 reports a missing build tsconfig as TS6053 "File ... not
+        // found." (the 6.x TS5083 "Cannot read file" is retired), exit 1.
         let display_path = if tsconfig_path.is_absolute() {
             tsconfig_path
         } else {
             cwd.join(&tsconfig_path)
         };
-        println!(
-            "error TS5083: Cannot read file '{}'.",
-            display_path.display()
-        );
+        println!("error TS6053: File '{}' not found.", display_path.display());
         std::process::exit(EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED);
     }
 
