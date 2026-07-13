@@ -681,10 +681,33 @@ impl CheckerContext<'_> {
                         })
                     })
                     .max_by_key(|def_id| {
-                        self.definition_store
+                        // A user `interface` merging into a lib global can leave a
+                        // lib-named def whose recorded `symbol_id` is a merged-global
+                        // id that aliases an UNRELATED lib symbol in some binder
+                        // (e.g. a `FlatArray` def whose id collides with `alert`/
+                        // `eval`). Preferring the raw-highest `symbol_id` then lets
+                        // that colliding duplicate outbid the genuine lib def.
+                        // Prefer instead a candidate whose `symbol_id` actually
+                        // resolves to a symbol NAMED `name`; only among equally
+                        // name-verified (or equally unverifiable) candidates does the
+                        // historical highest-`symbol_id` tiebreak apply.
+                        let sym_id = self
+                            .definition_store
                             .get(*def_id)
                             .and_then(|info| info.symbol_id)
-                            .unwrap_or_default()
+                            .map(SymbolId);
+                        let name_verified = sym_id.is_some_and(|sym| {
+                            self.binder
+                                .get_symbol(sym)
+                                .is_some_and(|s| s.escaped_name.as_str() == name)
+                                || self.lib_contexts.iter().any(|lib_ctx| {
+                                    lib_ctx
+                                        .binder
+                                        .get_symbol(sym)
+                                        .is_some_and(|s| s.escaped_name.as_str() == name)
+                                })
+                        });
+                        (name_verified, sym_id.map(|s| s.0).unwrap_or_default())
                     })
             })
             .unwrap_or_else(|| {
