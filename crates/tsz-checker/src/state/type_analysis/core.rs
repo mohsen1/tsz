@@ -637,7 +637,10 @@ impl CheckerState<'_> {
                 .arena
                 .get(data.name)
                 .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                .map_or_else(|| "T".to_string(), |id_data| id_data.escaped_text.clone());
+                .map_or_else(
+                    || "T".to_string(),
+                    |id_data| id_data.escaped_text.to_string(),
+                );
 
             // Check for duplicate type parameter names (TS2300)
             if !seen_names.insert(name.clone()) {
@@ -697,7 +700,10 @@ impl CheckerState<'_> {
                     .arena
                     .get(data.name)
                     .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                    .map_or_else(|| "T".to_string(), |id_data| id_data.escaped_text.clone());
+                    .map_or_else(
+                        || "T".to_string(),
+                        |id_data| id_data.escaped_text.to_string(),
+                    );
                 let atom = self.ctx.types.intern_string(&name);
 
                 let constraint = if data.constraint != NodeIndex::NONE {

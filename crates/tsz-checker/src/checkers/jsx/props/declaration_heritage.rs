@@ -175,7 +175,7 @@ impl<'a> CheckerState<'a> {
         if node.kind == SyntaxKind::Identifier as u16 {
             return arena
                 .get_identifier(node)
-                .map(|ident| ident.escaped_text.clone());
+                .map(|ident| ident.escaped_text.to_string());
         }
         if node.kind == syntax_kind_ext::QUALIFIED_NAME {
             let qn = arena.get_qualified_name(node)?;

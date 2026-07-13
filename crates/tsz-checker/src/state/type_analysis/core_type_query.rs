@@ -1157,7 +1157,7 @@ impl<'a> CheckerState<'a> {
         let name = self.ctx.arena.skip_parenthesized_and_assertions(name);
         let node = self.ctx.arena.get(name)?;
         if let Some(ident) = self.ctx.arena.get_identifier(node) {
-            return Some(ident.escaped_text.clone());
+            return Some(ident.escaped_text.to_string());
         }
         if node.kind == SyntaxKind::StringLiteral as u16
             || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
@@ -1352,14 +1352,14 @@ impl<'a> CheckerState<'a> {
                     let access = self.ctx.arena.get_access_expr(node)?;
                     let name_node = self.ctx.arena.get(access.name_or_argument)?;
                     let ident = self.ctx.arena.get_identifier(name_node)?;
-                    segments.push((access.name_or_argument, ident.escaped_text.clone()));
+                    segments.push((access.name_or_argument, ident.escaped_text.to_string()));
                     current = access.expression;
                 }
                 tsz_parser::parser::syntax_kind_ext::QUALIFIED_NAME => {
                     let name = self.ctx.arena.get_qualified_name(node)?;
                     let right_node = self.ctx.arena.get(name.right)?;
                     let ident = self.ctx.arena.get_identifier(right_node)?;
-                    segments.push((name.right, ident.escaped_text.clone()));
+                    segments.push((name.right, ident.escaped_text.to_string()));
                     current = name.left;
                 }
                 tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION => {

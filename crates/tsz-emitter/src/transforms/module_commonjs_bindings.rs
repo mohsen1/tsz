@@ -40,7 +40,7 @@ fn collect_binding_names(arena: &NodeArena, name_idx: NodeIndex, exports: &mut V
 
     if node.kind == SyntaxKind::Identifier as u16 {
         if let Some(id) = arena.get_identifier(node) {
-            exports.push(id.escaped_text.clone());
+            exports.push(id.escaped_text.to_string());
         }
         return;
     }

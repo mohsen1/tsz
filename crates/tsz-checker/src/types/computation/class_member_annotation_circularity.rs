@@ -228,7 +228,7 @@ impl CheckerState<'_> {
                 .arena
                 .get_identifier_at(qn.right)?
                 .escaped_text
-                .clone();
+                .to_string();
             return Some((side, MemberKey::Named(name)));
         }
 

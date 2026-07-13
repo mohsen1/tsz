@@ -162,7 +162,7 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .arena
             .get_identifier(node)
-            .map(|ident| ident.escaped_text.clone())
+            .map(|ident| ident.escaped_text.to_string())
     }
 
     /// Get identifier text from a node index, if it's an identifier.
@@ -300,7 +300,7 @@ impl<'a> CheckerState<'a> {
             }
 
             let name_text = if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                ident.escaped_text.clone()
+                ident.escaped_text.to_string()
             } else {
                 continue;
             };
@@ -1069,7 +1069,7 @@ impl<'a> CheckerState<'a> {
                 ) && self
                     .ctx
                     .type_parameter_scope
-                    .contains_key(&identifier.escaped_text)
+                    .contains_key(identifier.escaped_text.as_str())
             }
             k if k == syntax_kind_ext::PARENTHESIZED_TYPE => {
                 self.ctx.arena.get_wrapped_type(node).is_some_and(|paren| {

@@ -319,7 +319,7 @@ impl<'a> CheckerState<'a> {
                         .and_then(|n| self.ctx.arena.get_identifier(n))
                         .map_or_else(
                             || String::from("(Anonymous class)"),
-                            |id| id.escaped_text.clone(),
+                            |id| id.escaped_text.to_string(),
                         )
                 } else {
                     String::from("(Anonymous class)")
@@ -419,7 +419,7 @@ impl<'a> CheckerState<'a> {
                         && let Some(name_node) = self.ctx.arena.get(cls.name)
                         && let Some(ident) = self.ctx.arena.get_identifier(name_node)
                     {
-                        base_class_name = ident.escaped_text.clone();
+                        base_class_name = ident.escaped_text.to_string();
                     } else {
                         base_class_name = String::from("(Anonymous class)");
                     }
@@ -427,13 +427,13 @@ impl<'a> CheckerState<'a> {
                     // Get the class name from the expression (identifier or property access)
                     if let Some(expr_node) = self.ctx.arena.get(expr_idx) {
                         if let Some(ident) = self.ctx.arena.get_identifier(expr_node) {
-                            base_class_name = ident.escaped_text.clone();
+                            base_class_name = ident.escaped_text.to_string();
                         } else if let Some(access) = self.ctx.arena.get_access_expr(expr_node)
                             && let Some(name_node) = self.ctx.arena.get(access.name_or_argument)
                             && let Some(name_ident) = self.ctx.arena.get_identifier(name_node)
                         {
                             // e.g., `extends React.Component` — show rightmost name.
-                            base_class_name = name_ident.escaped_text.clone();
+                            base_class_name = name_ident.escaped_text.to_string();
                         }
                     }
 
@@ -464,7 +464,7 @@ impl<'a> CheckerState<'a> {
         let derived_class_name = if class_data.name.is_some() {
             if let Some(name_node) = self.ctx.arena.get(class_data.name) {
                 if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                    let mut name = ident.escaped_text.clone();
+                    let mut name = ident.escaped_text.to_string();
                     // Append type parameters for tsc parity: "Foo<T, U>"
                     self.append_type_param_names(&mut name, &class_data.type_parameters);
                     name

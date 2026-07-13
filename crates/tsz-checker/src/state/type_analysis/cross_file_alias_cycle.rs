@@ -365,7 +365,7 @@ impl<'a> CheckerState<'a> {
                         && let Some(name_node) = owner_arena.get(tp.name)
                         && let Some(ident) = owner_arena.get_identifier(name_node)
                     {
-                        tp_names.insert(ident.escaped_text.clone());
+                        tp_names.insert(ident.escaped_text.to_string());
                     }
                 }
             }

@@ -2,6 +2,7 @@
 
 use super::state::{ParseDiagnostic, ParserState};
 use crate::parser::{NodeArena, NodeIndex, NodeList, node, syntax_kind_ext};
+use tsz_common::interner::IdentText;
 use tsz_scanner::SyntaxKind;
 
 impl ParserState {
@@ -390,7 +391,7 @@ impl ParserState {
 
             // Advance manually because we are returning early in this branch.
             let atom = self.scanner.get_token_atom();
-            let text = self.scanner.get_token_value_ref().to_string();
+            let text = self.scanner.token_ident_text();
             self.next_token();
             return self.arena.add_identifier(
                 SyntaxKind::Identifier as u16,
@@ -408,7 +409,7 @@ impl ParserState {
         let end_pos = self.token_end();
         // OPTIMIZATION: Capture atom for O(1) comparison
         let atom = self.scanner.get_token_atom();
-        let text = self.scanner.get_token_value_ref().to_string();
+        let text = self.scanner.token_ident_text();
         self.next_token();
 
         self.arena.add_identifier(
@@ -499,7 +500,7 @@ impl ParserState {
                             dot_end,
                             crate::parser::node::IdentifierData {
                                 atom: tsz_common::interner::AstAtom::NONE,
-                                escaped_text: String::new(),
+                                escaped_text: IdentText::empty(),
                                 original_text: None,
                             },
                         )

@@ -716,7 +716,7 @@ impl<'a> CheckerState<'a> {
 
         if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
             if let Some(ident) = self.ctx.arena.get_identifier(node) {
-                refs.push((ident.escaped_text.clone(), node_idx));
+                refs.push((ident.escaped_text.to_string(), node_idx));
             }
             return;
         }

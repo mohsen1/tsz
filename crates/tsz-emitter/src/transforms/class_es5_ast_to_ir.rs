@@ -606,7 +606,7 @@ impl<'a> AstToIr<'a> {
                             .arena
                             .get(qn.right)
                             .and_then(|n| self.arena.get_identifier(n))
-                            .map_or_else(String::new, |id| id.escaped_text.clone())
+                            .map_or_else(String::new, |id| id.escaped_text.to_string())
                             .into(),
                     }
                 } else {
@@ -786,7 +786,10 @@ impl<'a> AstToIr<'a> {
                 return None; // Handled via ASTRef
             }
             // Try getting identifier via IdentifierData
-            self.arena.get_identifier(name_node)?.escaped_text.clone()
+            self.arena
+                .get_identifier(name_node)?
+                .escaped_text
+                .to_string()
         };
 
         let initializer = if var_decl.initializer.is_none() {

@@ -1191,13 +1191,13 @@ impl<'a> CheckerState<'a> {
                     .arena
                     .get_identifier(prop_node)?
                     .escaped_text
-                    .clone();
+                    .to_string();
 
                 // Recursively collect the object chain.
                 let obj_node = self.ctx.arena.get(access.expression)?;
                 if obj_node.kind == SyntaxKind::Identifier as u16 {
                     let ident = self.ctx.arena.get_identifier(obj_node)?;
-                    Some((vec![ident.escaped_text.clone()], member_name))
+                    Some((vec![ident.escaped_text.to_string()], member_name))
                 } else if obj_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
                     let (mut segments, last_segment) =
                         self.collect_access_chain(access.expression)?;
@@ -1223,7 +1223,7 @@ impl<'a> CheckerState<'a> {
                 let obj_node = self.ctx.arena.get(access.expression)?;
                 if obj_node.kind == SyntaxKind::Identifier as u16 {
                     let ident = self.ctx.arena.get_identifier(obj_node)?;
-                    Some((vec![ident.escaped_text.clone()], member_name))
+                    Some((vec![ident.escaped_text.to_string()], member_name))
                 } else if obj_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
                     let (mut segments, last_segment) =
                         self.collect_access_chain(access.expression)?;

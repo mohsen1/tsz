@@ -499,12 +499,12 @@ impl BinderState {
                                             && let Some(name_node) = arena.get(decl.name)
                                             && let Some(ident) = arena.get_identifier(name_node)
                                         {
-                                            exported_names.push(ident.escaped_text.clone());
+                                            exported_names.push(ident.escaped_text.to_string());
                                             if let Some(&sym_id) =
                                                 self.node_symbols.get(&decl.name.0)
                                             {
                                                 exported_symbols
-                                                    .push((ident.escaped_text.clone(), sym_id));
+                                                    .push((ident.escaped_text.to_string(), sym_id));
                                             }
                                         }
                                     }
@@ -513,9 +513,10 @@ impl BinderState {
                                     && let Some(name_node) = arena.get(decl.name)
                                     && let Some(ident) = arena.get_identifier(name_node)
                                 {
-                                    exported_names.push(ident.escaped_text.clone());
+                                    exported_names.push(ident.escaped_text.to_string());
                                     if let Some(&sym_id) = self.node_symbols.get(&decl.name.0) {
-                                        exported_symbols.push((ident.escaped_text.clone(), sym_id));
+                                        exported_symbols
+                                            .push((ident.escaped_text.to_string(), sym_id));
                                     }
                                 }
                             }
@@ -842,8 +843,9 @@ impl BinderState {
                                                             && let Some(ident) =
                                                                 arena.get_identifier(name_node)
                                                         {
-                                                            exported_names
-                                                                .push(ident.escaped_text.clone());
+                                                            exported_names.push(
+                                                                ident.escaped_text.to_string(),
+                                                            );
                                                         }
                                                     }
                                                 }

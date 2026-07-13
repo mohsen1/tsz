@@ -508,7 +508,7 @@ impl<'a> CheckerState<'a> {
         let name_idx = self.get_declaration_name_node(decl_idx)?;
         let name_node = self.ctx.arena.get(name_idx)?;
         let ident = self.ctx.arena.get_identifier(name_node)?;
-        ident.original_text.clone()
+        ident.original_text.as_ref().map(|t| t.to_string())
     }
 
     /// Check if a node is within a parameter's default value initializer.

@@ -301,7 +301,7 @@ impl<'a> CheckerState<'a> {
         target_arena.get(value_decl)?;
         target_arena
             .is_const_variable_declaration(value_decl)
-            .then_some(name)
+            .then_some(name.to_string())
     }
 
     /// Strip wrappers that preserve assignment target identity for symbol checks.

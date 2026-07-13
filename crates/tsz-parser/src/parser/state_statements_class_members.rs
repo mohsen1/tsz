@@ -11,7 +11,7 @@ use crate::parser::{
     syntax_kind_ext,
 };
 use tsz_common::diagnostics::diagnostic_codes;
-use tsz_common::interner::AstAtom;
+use tsz_common::interner::{AstAtom, IdentText};
 use tsz_scanner::SyntaxKind;
 
 /// Pre-classified modifier flags for a single class member, computed in one
@@ -1753,7 +1753,7 @@ impl ParserState {
                 pos,
                 node::IdentifierData {
                     atom: AstAtom::NONE,
-                    escaped_text: String::new(),
+                    escaped_text: IdentText::empty(),
                     original_text: None,
                 },
             )
@@ -1975,7 +1975,7 @@ impl ParserState {
             .get_identifier(name_node)
             .and_then(|ident| ident.original_text.clone())
         {
-            return Some(original);
+            return Some(String::from(original));
         }
         let text = self.arena.identifier_text(name)?;
         if text.is_empty() {

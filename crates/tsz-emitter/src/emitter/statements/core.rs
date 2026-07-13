@@ -1476,7 +1476,7 @@ impl<'a> Printer<'a> {
                     let Some(ident) = self.arena.get_identifier(name_node) else {
                         continue;
                     };
-                    deferred_names.push(ident.escaped_text.clone());
+                    deferred_names.push(ident.escaped_text.to_string());
                 }
             }
 

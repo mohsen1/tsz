@@ -492,7 +492,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            let name = name_ident.escaped_text.clone();
+            let name = name_ident.escaped_text.to_string();
             let type_id = class_type_boundary::enclosing_function_type_param_type(
                 self.ctx.types,
                 self.ctx.types.intern_string(&name),

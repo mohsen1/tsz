@@ -203,9 +203,9 @@ fn collect_lib_interface_node_symbols(
         if stmt_node.kind == tsz::parser::syntax_kind_ext::INTERFACE_DECLARATION {
             if let Some(interface) = arena.get_interface(stmt_node)
                 && let Some(name) = arena.get_identifier_at(interface.name)
-                && affected_interfaces.contains(&name.escaped_text)
+                && affected_interfaces.contains(name.escaped_text.as_str())
                 && let Some(sym_id) = globals
-                    .get(&name.escaped_text)
+                    .get(name.escaped_text.as_str())
                     .or_else(|| fallback_node_symbols.get(&stmt_idx.0).copied())
             {
                 node_symbols.insert(stmt_idx.0, sym_id);
@@ -288,7 +288,7 @@ fn interface_name_text(arena: &NodeArena, stmt_idx: NodeIndex) -> Option<String>
     let node = arena.get(stmt_idx)?;
     let interface = arena.get_interface(node)?;
     let ident = arena.get_identifier_at(interface.name)?;
-    Some(ident.escaped_text.clone())
+    Some(ident.escaped_text.to_string())
 }
 
 fn entity_name_text_in_arena(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
@@ -301,7 +301,7 @@ fn entity_name_text_in_arena(arena: &NodeArena, idx: NodeIndex) -> Option<String
     if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
         return arena
             .get_identifier(node)
-            .map(|ident| ident.escaped_text.clone());
+            .map(|ident| ident.escaped_text.to_string());
     }
     if node.kind == tsz::parser::syntax_kind_ext::QUALIFIED_NAME {
         let qn = arena.get_qualified_name(node)?;
@@ -422,13 +422,13 @@ fn member_name_text(arena: &NodeArena, member_idx: NodeIndex) -> Option<String> 
         return arena
             .get(sig.name)
             .and_then(|name_node| arena.get_identifier(name_node))
-            .map(|ident| ident.escaped_text.clone());
+            .map(|ident| ident.escaped_text.to_string());
     }
     if let Some(accessor) = arena.get_accessor(member_node) {
         return arena
             .get(accessor.name)
             .and_then(|name_node| arena.get_identifier(name_node))
-            .map(|ident| ident.escaped_text.clone());
+            .map(|ident| ident.escaped_text.to_string());
     }
     None
 }

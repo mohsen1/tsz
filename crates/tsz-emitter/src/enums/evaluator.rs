@@ -317,7 +317,7 @@ impl<'a> EnumEvaluator<'a> {
             k if k == SyntaxKind::Identifier as u16 => {
                 if let Some(ident) = self.arena.get_identifier(node) {
                     // Check current enum members first
-                    if let Some(value) = self.member_values.get(&ident.escaped_text) {
+                    if let Some(value) = self.member_values.get(ident.escaped_text.as_str()) {
                         return value.clone();
                     }
                     // Check prior blocks of the same merged enum (e.g.,
@@ -325,7 +325,7 @@ impl<'a> EnumEvaluator<'a> {
                     // are from earlier `enum Animals` blocks)
                     if let Some(ref enum_name) = self.current_enum_name
                         && let Some(prior) = self.all_enum_values.get(enum_name)
-                        && let Some(value) = prior.get(&ident.escaped_text)
+                        && let Some(value) = prior.get(ident.escaped_text.as_str())
                     {
                         return value.clone();
                     }
@@ -711,7 +711,7 @@ impl<'a> EnumEvaluator<'a> {
         };
 
         let prop_name = if let Some(ident) = self.arena.get_identifier(prop_node) {
-            ident.escaped_text.clone()
+            ident.escaped_text.to_string()
         } else if (prop_node.kind == SyntaxKind::StringLiteral as u16
             || prop_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16)
             && let Some(lit) = self.arena.get_literal(prop_node)

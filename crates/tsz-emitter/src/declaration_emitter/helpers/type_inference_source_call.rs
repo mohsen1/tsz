@@ -1268,7 +1268,7 @@ fn arena_property_name_text(source_arena: &NodeArena, idx: NodeIndex) -> Option<
     match node.kind {
         k if k == SyntaxKind::Identifier as u16 => source_arena
             .get_identifier(node)
-            .map(|ident| ident.escaped_text.clone()),
+            .map(|ident| ident.escaped_text.to_string()),
         k if k == SyntaxKind::StringLiteral as u16 || k == SyntaxKind::NumericLiteral as u16 => {
             source_arena.get_literal(node).map(|lit| lit.text.clone())
         }

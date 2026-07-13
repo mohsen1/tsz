@@ -890,7 +890,7 @@ impl ParserState {
         if let Some(label_name) = label_name
             && let Some(current_scope) = self.label_scopes.last_mut()
         {
-            current_scope.remove(&label_name);
+            current_scope.remove(label_name.as_str());
         }
 
         let end_pos = self.token_end();
@@ -941,7 +941,7 @@ impl ParserState {
                 name_end,
                 IdentifierData {
                     atom: AstAtom::NONE,
-                    escaped_text: String::new(),
+                    escaped_text: IdentText::empty(),
                     original_text: None,
                 },
             )

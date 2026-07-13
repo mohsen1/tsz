@@ -42,7 +42,7 @@ impl<'a> DeclarationEmitter<'a> {
     pub(crate) fn get_enum_member_name(&self, name_idx: NodeIndex) -> String {
         if let Some(name_node) = self.arena.get(name_idx) {
             if let Some(ident) = self.arena.get_identifier(name_node) {
-                return ident.escaped_text.clone();
+                return ident.escaped_text.to_string();
             }
             if let Some(lit) = self.arena.get_literal(name_node) {
                 return lit.text.clone();

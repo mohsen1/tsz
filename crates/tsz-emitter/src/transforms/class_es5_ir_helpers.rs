@@ -507,7 +507,7 @@ pub(super) fn collect_auto_accessor_fields(
             if name_node.kind == SyntaxKind::Identifier as u16 {
                 let Some(name) = arena
                     .get_identifier(name_node)
-                    .map(|id| id.escaped_text.clone())
+                    .map(|id| id.escaped_text.to_string())
                 else {
                     continue;
                 };

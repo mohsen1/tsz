@@ -125,7 +125,9 @@ impl CheckerState<'_> {
                 if let Some(type_ref) = self.ctx.arena.get_type_ref(node) {
                     if let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
                         && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                        && class_type_param_names.contains(&ident.escaped_text)
+                        && class_type_param_names
+                            .iter()
+                            .any(|n| *n == ident.escaped_text)
                     {
                         return Some(type_ref.type_name);
                     }
@@ -207,7 +209,7 @@ impl CheckerState<'_> {
                 && let Some(name_node) = self.ctx.arena.get(param.name)
                 && let Some(ident) = self.ctx.arena.get_identifier(name_node)
             {
-                names.push(ident.escaped_text.clone());
+                names.push(ident.escaped_text.to_string());
             }
         }
         names

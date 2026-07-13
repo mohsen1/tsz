@@ -853,7 +853,7 @@ impl CheckerState<'_> {
                 && object_name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
                 && let Some(object_ident) = decl_arena.get_identifier(object_name_node)
             {
-                indexed_object_names.push(object_ident.escaped_text.clone());
+                indexed_object_names.push(object_ident.escaped_text.to_string());
             }
 
             stack.extend(decl_arena.get_children(node_idx));

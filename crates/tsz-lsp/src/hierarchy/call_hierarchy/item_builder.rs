@@ -180,7 +180,7 @@ impl<'a> CallHierarchyProvider<'a> {
                     && let Some(prop_node) = self.arena.get(specifier.property_name)
                     && let Some(ident) = self.arena.get_identifier(prop_node)
                 {
-                    exported_name = Some(ident.escaped_text.clone());
+                    exported_name = Some(ident.escaped_text.to_string());
                 }
             }
             saw_import_kind = true;
@@ -226,7 +226,7 @@ impl<'a> CallHierarchyProvider<'a> {
                     && let Some(prop_node) = self.arena.get(specifier.property_name)
                     && let Some(ident) = self.arena.get_identifier(prop_node)
                 {
-                    exported_name = Some(ident.escaped_text.clone());
+                    exported_name = Some(ident.escaped_text.to_string());
                 }
                 saw_import_kind = true;
             }

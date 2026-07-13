@@ -514,7 +514,7 @@ impl ParserState {
             pos,
             IdentifierData {
                 atom: AstAtom::NONE,
-                escaped_text: String::new(),
+                escaped_text: IdentText::empty(),
                 original_text: None,
             },
         )

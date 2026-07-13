@@ -244,7 +244,7 @@ impl TsSourceFile {
         let arena = self.arena.as_ref()?;
         let node = arena.get(NodeIndex(handle))?;
         let ident = arena.get_identifier(node)?;
-        Some(ident.escaped_text.clone())
+        Some(ident.escaped_text.to_string())
     }
 
     /// Check if a node is a specific kind

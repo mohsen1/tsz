@@ -118,7 +118,7 @@ impl<'a> Printer<'a> {
             && let Some(ident) = self.arena.get_identifier(tag_node)
         {
             self.commonjs_named_import_substitutions
-                .get(&ident.escaped_text)
+                .get(ident.escaped_text.as_str())
                 .cloned()
         } else {
             None

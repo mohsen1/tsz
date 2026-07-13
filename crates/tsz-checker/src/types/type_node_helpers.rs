@@ -159,7 +159,7 @@ fn collect_names_in_type(
         if let Some(name) = ctx
             .arena
             .get_identifier(node)
-            .map(|i| i.escaped_text.clone())
+            .map(|i| i.escaped_text.to_string())
             && !seen.insert(name.clone())
         {
             let msg = crate::diagnostics::format_message(
@@ -514,7 +514,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 .arena
                 .get(data.name)
                 .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                .map_or_else(|| "T".to_string(), |id_data| id_data.escaped_text.clone());
+                .map_or_else(
+                    || "T".to_string(),
+                    |id_data| id_data.escaped_text.to_string(),
+                );
             let atom = self.ctx.types.intern_string(&name);
             let info = signature_building_boundary::user_type_param_info(atom, None, None, false);
             let type_id = signature_building_boundary::user_type_param(self.ctx.types, info);
@@ -536,7 +539,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 .arena
                 .get(data.name)
                 .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                .map_or_else(|| "T".to_string(), |id_data| id_data.escaped_text.clone());
+                .map_or_else(
+                    || "T".to_string(),
+                    |id_data| id_data.escaped_text.to_string(),
+                );
             let atom = self.ctx.types.intern_string(&name);
             let constraint =
                 (data.constraint != NodeIndex::NONE).then(|| self.check(data.constraint));

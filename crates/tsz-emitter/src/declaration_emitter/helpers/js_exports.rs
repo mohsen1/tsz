@@ -329,7 +329,7 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(ident) = self.arena.get_identifier(expr_node) else {
                 continue;
             };
-            names.insert(ident.escaped_text.clone());
+            names.insert(ident.escaped_text.to_string());
         }
 
         if !self.source_file_has_native_esm_syntax(source_file) {
@@ -421,10 +421,10 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(ident) = self.arena.get_identifier(expr_node) else {
                 continue;
             };
-            if !top_level_names.contains(&ident.escaped_text) {
+            if !top_level_names.contains(ident.escaped_text.as_str()) {
                 continue;
             }
-            names.insert(ident.escaped_text.clone());
+            names.insert(ident.escaped_text.to_string());
         }
 
         names
@@ -986,7 +986,7 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(ident) = self.arena.get_identifier(expr_node) else {
                 continue;
             };
-            names.insert(ident.escaped_text.clone());
+            names.insert(ident.escaped_text.to_string());
         }
 
         names

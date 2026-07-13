@@ -91,7 +91,7 @@ impl<'a> CheckerState<'a> {
                     };
                     let Some(member_name) = self.ctx.arena.get(member.name).and_then(|name_node| {
                         if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                            Some(ident.escaped_text.clone())
+                            Some(ident.escaped_text.to_string())
                         } else {
                             self.ctx
                                 .arena

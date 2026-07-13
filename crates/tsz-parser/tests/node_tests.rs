@@ -3,6 +3,7 @@ use crate::parser::test_fixture::parse_source;
 use crate::{ParserState, syntax_kind_ext};
 use std::mem::size_of;
 use tsz_common::interner::AstAtom;
+use tsz_common::interner::IdentText;
 use tsz_scanner::SyntaxKind;
 
 #[test]
@@ -35,7 +36,7 @@ fn test_node_arena_basic() {
         15,
         IdentifierData {
             atom: AstAtom::NONE,
-            escaped_text: "hello".to_string(),
+            escaped_text: IdentText::from("hello"),
             original_text: None,
         },
     );
@@ -86,7 +87,7 @@ fn test_node_view() {
         15,
         IdentifierData {
             atom: AstAtom::NONE,
-            escaped_text: "myVar".to_string(),
+            escaped_text: IdentText::from("myVar"),
             original_text: None,
         },
     );
@@ -140,7 +141,7 @@ fn test_node_access_trait() {
         20,
         IdentifierData {
             atom: AstAtom::NONE,
-            escaped_text: "testVar".to_string(),
+            escaped_text: IdentText::from("testVar"),
             original_text: None,
         },
     );
@@ -192,7 +193,7 @@ fn test_parent_mapping() {
         1,
         IdentifierData {
             atom: AstAtom::NONE,
-            escaped_text: "a".to_string(),
+            escaped_text: IdentText::from("a"),
             original_text: None,
         },
     );
@@ -203,7 +204,7 @@ fn test_parent_mapping() {
         5,
         IdentifierData {
             atom: AstAtom::NONE,
-            escaped_text: "b".to_string(),
+            escaped_text: IdentText::from("b"),
             original_text: None,
         },
     );
@@ -316,7 +317,7 @@ fn test_parent_mapping_nested() {
         1,
         IdentifierData {
             atom: AstAtom::NONE,
-            escaped_text: "a".to_string(),
+            escaped_text: IdentText::from("a"),
             original_text: None,
         },
     );
@@ -326,7 +327,7 @@ fn test_parent_mapping_nested() {
         5,
         IdentifierData {
             atom: AstAtom::NONE,
-            escaped_text: "b".to_string(),
+            escaped_text: IdentText::from("b"),
             original_text: None,
         },
     );
@@ -347,7 +348,7 @@ fn test_parent_mapping_nested() {
         10,
         IdentifierData {
             atom: AstAtom::NONE,
-            escaped_text: "c".to_string(),
+            escaped_text: IdentText::from("c"),
             original_text: None,
         },
     );
@@ -415,7 +416,7 @@ fn test_parent_mapping_function() {
         12,
         IdentifierData {
             atom: AstAtom::NONE,
-            escaped_text: "foo".to_string(),
+            escaped_text: IdentText::from("foo"),
             original_text: None,
         },
     );
@@ -572,7 +573,7 @@ fn estimated_size_bytes_grows_with_identifiers() {
             10,
             IdentifierData {
                 atom: AstAtom::NONE,
-                escaped_text: name,
+                escaped_text: name.into(),
                 original_text: None,
             },
         );

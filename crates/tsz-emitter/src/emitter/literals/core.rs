@@ -159,7 +159,9 @@ impl<'a> Printer<'a> {
             self.write("exports.");
             self.write_identifier(emit_text);
         } else if !self.suppress_commonjs_named_import_substitution
-            && let Some(subst) = self.commonjs_named_import_substitutions.get(original_text)
+            && let Some(subst) = self
+                .commonjs_named_import_substitutions
+                .get(original_text.as_str())
         {
             let subst = subst.clone();
             self.write(&subst);

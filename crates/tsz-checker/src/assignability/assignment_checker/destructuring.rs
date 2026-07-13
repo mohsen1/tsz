@@ -140,7 +140,7 @@ impl<'a> CheckerState<'a> {
                         .arena
                         .get(shorthand.name)
                         .and_then(|node| self.ctx.arena.get_identifier(node))
-                        .map(|ident| ident.escaped_text.clone());
+                        .map(|ident| ident.escaped_text.to_string());
                     // Use the non-tracking resolver: this shorthand appears as a
                     // destructuring-assignment WRITE target (`({x} = expr)`), not a
                     // read. The tracking resolver would mark `x` as referenced and
@@ -284,7 +284,7 @@ impl<'a> CheckerState<'a> {
                                 .arena
                                 .get(shorthand.name)
                                 .and_then(|node| self.ctx.arena.get_identifier(node))
-                                .map(|ident| ident.escaped_text.clone()),
+                                .map(|ident| ident.escaped_text.to_string()),
                             shorthand.name,
                         )
                     } else {
@@ -390,7 +390,7 @@ impl<'a> CheckerState<'a> {
                 && let Some(name_node) = self.ctx.arena.get(shorthand.name)
                 && let Some(ident) = self.ctx.arena.get_identifier(name_node)
             {
-                named_properties.push(ident.escaped_text.clone());
+                named_properties.push(ident.escaped_text.to_string());
             }
         }
 

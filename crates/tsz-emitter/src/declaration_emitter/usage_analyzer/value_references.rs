@@ -97,7 +97,7 @@ impl UsageAnalyzer<'_> {
             let ident = self.arena.get_identifier(expr_node)?;
             return self
                 .import_name_map
-                .get(&ident.escaped_text)
+                .get(ident.escaped_text.as_str())
                 .copied()
                 .or_else(|| self.binder.file_locals.get(&ident.escaped_text));
         }

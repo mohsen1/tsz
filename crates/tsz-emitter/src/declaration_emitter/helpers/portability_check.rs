@@ -1008,7 +1008,7 @@ impl<'a> DeclarationEmitter<'a> {
                         collect.results.push(result);
                     }
                     if let Some(from_path) = self.check_nested_transitive_import(sym_id, binder) {
-                        let result = (from_path, identifier.escaped_text.clone());
+                        let result = (from_path, identifier.escaped_text.to_string());
                         if collect.seen.insert(result.clone()) {
                             collect.results.push(result);
                         }

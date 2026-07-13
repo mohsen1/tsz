@@ -474,7 +474,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx
                     .arena
                     .get_identifier(name_node)
-                    .map(|ident| ident.escaped_text.clone())
+                    .map(|ident| ident.escaped_text.to_string())
             } else {
                 None
             }

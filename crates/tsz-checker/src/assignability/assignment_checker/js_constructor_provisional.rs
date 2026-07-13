@@ -84,7 +84,7 @@ impl<'a> CheckerState<'a> {
             .arena
             .get(access.name_or_argument)
             .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-            .map(|ident| ident.escaped_text.clone())
+            .map(|ident| ident.escaped_text.to_string())
     }
 
     fn direct_this_property_assignment(&self, stmt_idx: NodeIndex) -> Option<(String, NodeIndex)> {

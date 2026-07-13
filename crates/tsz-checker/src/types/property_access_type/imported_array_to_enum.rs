@@ -18,7 +18,7 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .arena
                 .get_identifier(member_node)
-                .map(|ident| ident.escaped_text.clone())?
+                .map(|ident| ident.escaped_text.to_string())?
         } else if member_node.kind == SyntaxKind::StringLiteral as u16 {
             self.ctx
                 .arena

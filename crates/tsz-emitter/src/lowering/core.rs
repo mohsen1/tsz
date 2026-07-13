@@ -155,7 +155,7 @@ impl<'a> LoweringPass<'a> {
                             self.arena
                                 .identifiers
                                 .get(*id as usize)
-                                .map(|ident| ident.escaped_text.clone())
+                                .map(|ident| ident.escaped_text.to_string())
                         })
                         .filter(|name| !name.is_empty())
                         .collect();

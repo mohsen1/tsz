@@ -551,7 +551,7 @@ impl<'a> HoverProvider<'a> {
                     break self
                         .arena
                         .get_identifier(name_node)
-                        .map(|id| id.escaped_text.clone())
+                        .map(|id| id.escaped_text.to_string())
                         .filter(|s| !s.is_empty())
                         .unwrap_or_else(|| "this".to_string());
                 }
@@ -665,7 +665,7 @@ impl<'a> HoverProvider<'a> {
             let name_node = self.arena.get(class_data.name)?;
             self.arena
                 .get_identifier(name_node)
-                .map(|id| id.escaped_text.clone())
+                .map(|id| id.escaped_text.to_string())
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "(Anonymous class)".to_string())
         } else {

@@ -93,7 +93,7 @@ fn member_access_parts(arena: &NodeArena, expr_idx: NodeIndex) -> Option<MemberA
 
     let name_node = arena.get(name)?;
     let member = if let Some(ident) = arena.get_identifier(name_node) {
-        Some(ident.escaped_text.clone())
+        Some(ident.escaped_text.to_string())
     } else if matches!(
         name_node.kind,
         k if k == SyntaxKind::StringLiteral as u16
@@ -108,7 +108,7 @@ fn member_access_parts(arena: &NodeArena, expr_idx: NodeIndex) -> Option<MemberA
 
     Some(MemberAccessParts {
         base,
-        base_text: base_ident.escaped_text.clone(),
+        base_text: base_ident.escaped_text.to_string(),
         member,
     })
 }

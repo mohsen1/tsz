@@ -89,7 +89,7 @@ impl<'a> Printer<'a> {
             return self
                 .arena
                 .get_identifier(node)
-                .map(|ident| ident.escaped_text.clone());
+                .map(|ident| ident.escaped_text.to_string());
         }
         if node.kind == SyntaxKind::StringLiteral as u16
             || node.kind == SyntaxKind::NumericLiteral as u16

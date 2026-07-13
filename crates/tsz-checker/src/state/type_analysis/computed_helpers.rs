@@ -1039,7 +1039,7 @@ impl<'a> CheckerState<'a> {
             if let Some(name_node) = self.ctx.arena.get(type_param.name)
                 && let Some(ident) = self.ctx.arena.get_identifier(name_node)
             {
-                let name = ident.escaped_text.clone();
+                let name = ident.escaped_text.to_string();
                 let atom = self.ctx.types.intern_string(&name);
                 let provisional = self
                     .ctx
@@ -1089,7 +1089,7 @@ impl<'a> CheckerState<'a> {
             }
 
             if let Some((name, previous)) = local_update {
-                self.ctx.type_parameter_scope.remove(&name);
+                self.ctx.type_parameter_scope.remove(name.as_str());
                 if let Some(previous) = previous {
                     self.ctx.type_parameter_scope.insert(name, previous);
                 }
@@ -1143,7 +1143,7 @@ impl<'a> CheckerState<'a> {
             && let Some(name_node) = self.ctx.arena.get(type_param.name)
             && let Some(ident) = self.ctx.arena.get_identifier(name_node)
         {
-            let name = ident.escaped_text.clone();
+            let name = ident.escaped_text.to_string();
             if shadowed_params.insert(name.clone()) {
                 inserted_shadow = Some(name);
             }
@@ -1157,14 +1157,14 @@ impl<'a> CheckerState<'a> {
                 shadowed_params,
             ) {
                 if let Some(name) = inserted_shadow {
-                    shadowed_params.remove(&name);
+                    shadowed_params.remove(name.as_str());
                 }
                 return true;
             }
         }
 
         if let Some(name) = inserted_shadow {
-            shadowed_params.remove(&name);
+            shadowed_params.remove(name.as_str());
         }
 
         false

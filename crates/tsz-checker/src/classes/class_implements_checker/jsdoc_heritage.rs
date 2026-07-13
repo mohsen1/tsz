@@ -1243,7 +1243,7 @@ impl<'a> CheckerState<'a> {
         let class_name = if class_data.name.is_some() {
             if let Some(name_node) = self.ctx.arena.get(class_data.name) {
                 if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                    ident.escaped_text.clone()
+                    ident.escaped_text.to_string()
                 } else {
                     String::from("<anonymous>")
                 }

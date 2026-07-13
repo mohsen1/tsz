@@ -920,9 +920,9 @@ impl<'a> CheckerState<'a> {
 
         if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
             if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
-                return Some(PropertyKey::Private(ident.escaped_text.clone()));
+                return Some(PropertyKey::Private(ident.escaped_text.to_string()));
             }
-            return Some(PropertyKey::Ident(ident.escaped_text.clone()));
+            return Some(PropertyKey::Ident(ident.escaped_text.to_string()));
         }
 
         if matches!(
@@ -964,9 +964,9 @@ impl<'a> CheckerState<'a> {
             let name_node = self.ctx.arena.get(access.name_or_argument)?;
             if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
                 if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
-                    return Some(PropertyKey::Private(ident.escaped_text.clone()));
+                    return Some(PropertyKey::Private(ident.escaped_text.to_string()));
                 }
-                return Some(PropertyKey::Ident(ident.escaped_text.clone()));
+                return Some(PropertyKey::Ident(ident.escaped_text.to_string()));
             }
             return None;
         }
@@ -985,7 +985,7 @@ impl<'a> CheckerState<'a> {
         let expr_node = self.ctx.arena.get(expr_idx)?;
 
         if let Some(ident) = self.ctx.arena.get_identifier(expr_node) {
-            return Some(ComputedKey::Ident(ident.escaped_text.clone()));
+            return Some(ComputedKey::Ident(ident.escaped_text.to_string()));
         }
 
         if let Some(lit) = self.ctx.arena.get_literal(expr_node) {

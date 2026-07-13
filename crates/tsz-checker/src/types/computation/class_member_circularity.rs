@@ -338,7 +338,7 @@ impl CheckerState<'_> {
             .ctx
             .arena
             .get_identifier_at(access.name_or_argument)
-            .map(|ident| ident.escaped_text.clone())?;
+            .map(|ident| ident.escaped_text.to_string())?;
         Some((target_static, name))
     }
 }

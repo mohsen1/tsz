@@ -1424,7 +1424,10 @@ impl<'a> CheckerState<'a> {
                     .arena
                     .get(data.name)
                     .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                    .map_or_else(|| "T".to_string(), |id_data| id_data.escaped_text.clone());
+                    .map_or_else(
+                        || "T".to_string(),
+                        |id_data| id_data.escaped_text.to_string(),
+                    );
                 let atom = self.ctx.types.intern_string(&name);
 
                 let is_const = self
@@ -1467,7 +1470,10 @@ impl<'a> CheckerState<'a> {
                 .arena
                 .get(data.name)
                 .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                .map_or_else(|| "T".to_string(), |id_data| id_data.escaped_text.clone());
+                .map_or_else(
+                    || "T".to_string(),
+                    |id_data| id_data.escaped_text.to_string(),
+                );
             let atom = self.ctx.types.intern_string(&name);
 
             let constraint_type = self.get_type_from_type_node(data.constraint);

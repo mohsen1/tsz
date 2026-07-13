@@ -726,7 +726,7 @@ impl<'a> CheckerState<'a> {
             let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
                 continue;
             };
-            let name = ident.escaped_text.clone();
+            let name = ident.escaped_text.to_string();
             let atom = self.ctx.types.intern_string(&name);
             let is_const = self
                 .ctx
@@ -809,7 +809,7 @@ impl<'a> CheckerState<'a> {
             let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
                 continue;
             };
-            let name = ident.escaped_text.clone();
+            let name = ident.escaped_text.to_string();
             self.ctx
                 .typeof_param_scope
                 .insert(name.clone(), TypeId::ANY);

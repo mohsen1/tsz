@@ -30,7 +30,7 @@ fn collect_identifier_atom_text(arena: &NodeArena) -> Vec<(AstAtom, String, Stri
         };
         out.push((
             data.atom,
-            data.escaped_text.clone(),
+            data.escaped_text.to_string(),
             arena.resolve_identifier_text(data).to_string(),
         ));
     }

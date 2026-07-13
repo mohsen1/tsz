@@ -49,7 +49,7 @@ impl UsageAnalyzer<'_> {
             return Some(sym_id);
         }
 
-        if let Some(&sym_id) = self.import_name_map.get(&ident.escaped_text)
+        if let Some(&sym_id) = self.import_name_map.get(ident.escaped_text.as_str())
             && let Some(sym_id) = self.type_query_value_dependency_symbol(sym_id)
         {
             return Some(sym_id);
@@ -212,7 +212,7 @@ impl UsageAnalyzer<'_> {
                             return;
                         }
                     }
-                    if let Some(&sym_id) = self.import_name_map.get(&ident.escaped_text) {
+                    if let Some(&sym_id) = self.import_name_map.get(ident.escaped_text.as_str()) {
                         if !self.is_current_ambient_module_self_import(sym_id, &ident.escaped_text)
                         {
                             self.mark_symbol_used(sym_id, kind);
@@ -289,7 +289,7 @@ impl UsageAnalyzer<'_> {
                     self.mark_symbol_used(sym_id, kind);
                 }
                 if let Some(ident) = self.arena.get_identifier(name_node) {
-                    if let Some(&sym_id) = self.import_name_map.get(&ident.escaped_text) {
+                    if let Some(&sym_id) = self.import_name_map.get(ident.escaped_text.as_str()) {
                         self.mark_symbol_used(sym_id, kind);
                     }
                     if let Some(sym_id) = self.binder.file_locals.get(&ident.escaped_text) {

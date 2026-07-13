@@ -21,7 +21,7 @@ impl<'a> CheckerState<'a> {
         let name_node = self.ctx.arena.get(param.name)?;
         let ident = self.ctx.arena.get_identifier(name_node)?;
         let atom = self.ctx.types.intern_string(&ident.escaped_text);
-        let name = ident.escaped_text.clone();
+        let name = ident.escaped_text.to_string();
         let constraint_type = if param.constraint != NodeIndex::NONE {
             match self.get_type_from_type_node(param.constraint) {
                 TypeId::ERROR => TypeId::UNKNOWN,

@@ -807,12 +807,12 @@ impl<'a> CheckerState<'a> {
                 k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
                     let alias = self.ctx.arena.get_type_alias(node)?;
                     let ident = self.ctx.arena.get_identifier_at(alias.name)?;
-                    return Some(ident.escaped_text.clone());
+                    return Some(ident.escaped_text.to_string());
                 }
                 k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
                     let decl = self.ctx.arena.get_variable_declaration(node)?;
                     let ident = self.ctx.arena.get_identifier_at(decl.name)?;
-                    return Some(ident.escaped_text.clone());
+                    return Some(ident.escaped_text.to_string());
                 }
                 _ => {}
             }

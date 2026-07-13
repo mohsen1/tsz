@@ -11,7 +11,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let name = self.ctx.arena.skip_parenthesized_and_assertions(name);
         let node = self.ctx.arena.get(name)?;
         if let Some(ident) = self.ctx.arena.get_identifier(node) {
-            return Some(ident.escaped_text.clone());
+            return Some(ident.escaped_text.to_string());
         }
         if node.kind == SyntaxKind::StringLiteral as u16
             || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16

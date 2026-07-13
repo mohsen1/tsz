@@ -253,7 +253,7 @@ impl<'a> CheckerState<'a> {
                 );
                 self.ctx
                     .type_parameter_scope
-                    .insert(ident.escaped_text.clone(), constrained_param);
+                    .insert(ident.escaped_text.to_string(), constrained_param);
             }
         }
         record_type_alias_phase_timing(
@@ -1091,7 +1091,7 @@ impl<'a> CheckerState<'a> {
                         && let Some(name_node) = self.ctx.arena.get(tp_data.name)
                         && let Some(ident) = self.ctx.arena.get_identifier(name_node)
                     {
-                        let name = ident.escaped_text.clone();
+                        let name = ident.escaped_text.to_string();
                         if !infer_names.contains(&name) {
                             infer_names.push(name);
                         }
@@ -1659,7 +1659,7 @@ impl<'a> CheckerState<'a> {
                         && let Some(name_node) = self.ctx.arena.get(tp_data.name)
                         && let Some(ident) = self.ctx.arena.get_identifier(name_node)
                     {
-                        let name = ident.escaped_text.clone();
+                        let name = ident.escaped_text.to_string();
                         let atom = self.ctx.types.intern_string(&name);
                         let mut constraint_type = TypeId::UNKNOWN;
                         if tp_data.constraint != tsz_parser::parser::NodeIndex::NONE {
@@ -1960,7 +1960,10 @@ impl<'a> CheckerState<'a> {
                 let param = self.ctx.arena.get_type_parameter(param_node)?;
                 let name_node = self.ctx.arena.get(param.name)?;
                 let ident = self.ctx.arena.get_identifier(name_node)?;
-                let type_id = self.ctx.type_parameter_scope.get(&ident.escaped_text)?;
+                let type_id = self
+                    .ctx
+                    .type_parameter_scope
+                    .get(ident.escaped_text.as_str())?;
                 crate::query_boundaries::checkers::generic::named_type_param_info(
                     self.ctx.types,
                     *type_id,

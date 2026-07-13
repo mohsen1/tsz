@@ -338,7 +338,7 @@ impl<'a> Printer<'a> {
         match expr_node.kind {
             k if k == SyntaxKind::Identifier as u16 => {
                 if let Some(ident) = self.arena.get_identifier(expr_node) {
-                    return ident.escaped_text.clone();
+                    return ident.escaped_text.to_string();
                 }
             }
             k if k == syntax_kind_ext::CALL_EXPRESSION => {

@@ -631,7 +631,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(expr_node) = self.ctx.arena.get(expr_idx)
                     && let Some(ident) = self.ctx.arena.get_identifier(expr_node)
                 {
-                    base_class_name = ident.escaped_text.clone();
+                    base_class_name = ident.escaped_text.to_string();
 
                     if let Some(sym_id) = self.resolve_heritage_symbol(expr_idx) {
                         base_class_idx = self.get_class_declaration_from_symbol(sym_id);
@@ -760,7 +760,7 @@ impl<'a> CheckerState<'a> {
             let derived_class_name = if class_data.name.is_some() {
                 if let Some(name_node) = self.ctx.arena.get(class_data.name) {
                     if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                        ident.escaped_text.clone()
+                        ident.escaped_text.to_string()
                     } else {
                         String::from("<anonymous>")
                     }
@@ -944,7 +944,7 @@ impl<'a> CheckerState<'a> {
                 let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
                     continue;
                 };
-                class_type_param_names.insert(ident.escaped_text.clone());
+                class_type_param_names.insert(ident.escaped_text.to_string());
             }
         }
 
@@ -1066,7 +1066,7 @@ impl<'a> CheckerState<'a> {
                     && let Some(expr_node) = self.ctx.arena.get(expr_idx)
                     && expr_node.kind == SyntaxKind::Identifier as u16
                     && let Some(ident) = self.ctx.arena.get_identifier(expr_node)
-                    && class_type_param_names.contains(&ident.escaped_text)
+                    && class_type_param_names.contains(ident.escaped_text.as_str())
                 {
                     self.error_at_node(
                         expr_idx,

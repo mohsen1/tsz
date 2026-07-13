@@ -878,7 +878,7 @@ impl<'a> Printer<'a> {
                     && let Some(name_node) = self.arena.get(decl.name)
                     && let Some(ident) = self.arena.get_identifier(name_node)
                 {
-                    names.push(ident.escaped_text.clone());
+                    names.push(ident.escaped_text.to_string());
                 }
             }
         }

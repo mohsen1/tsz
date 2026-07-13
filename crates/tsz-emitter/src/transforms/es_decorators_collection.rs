@@ -364,7 +364,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 let text = self
                     .arena
                     .get_identifier(name_node)
-                    .map(|id| id.escaped_text.clone())
+                    .map(|id| id.escaped_text.to_string())
                     .unwrap_or_default();
                 (MemberName::Identifier(text), false)
             }
@@ -372,7 +372,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 let text = self
                     .arena
                     .get_identifier(name_node)
-                    .map(|id| id.escaped_text.clone())
+                    .map(|id| id.escaped_text.to_string())
                     .unwrap_or_default();
                 (MemberName::Private(text), true)
             }

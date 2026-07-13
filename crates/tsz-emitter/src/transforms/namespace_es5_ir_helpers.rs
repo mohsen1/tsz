@@ -278,7 +278,7 @@ fn collect_binding_names(
     };
 
     if let Some(ident) = arena.get_identifier(node) {
-        names.insert(ident.escaped_text.clone());
+        names.insert(ident.escaped_text.to_string());
         return;
     }
 
@@ -391,7 +391,7 @@ fn collect_identifier_references_outside_blocks(
     match node.kind {
         k if k == SyntaxKind::Identifier as u16 => {
             if let Some(ident) = arena.get_identifier(node) {
-                names.insert(ident.escaped_text.clone());
+                names.insert(ident.escaped_text.to_string());
             }
         }
         k if k == syntax_kind_ext::BLOCK
@@ -813,7 +813,7 @@ fn namespace_assignment(ns_name: &str, name: &str, value: IRNode) -> IRNode {
 fn binding_property_name_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
     let node = arena.get(idx)?;
     if let Some(ident) = arena.get_identifier(node) {
-        return Some(ident.escaped_text.clone());
+        return Some(ident.escaped_text.to_string());
     }
     arena.get_literal(node).map(|lit| lit.text.clone())
 }
@@ -1310,7 +1310,7 @@ pub(super) fn collect_qualified_name_parts(
 
     if node.is_identifier() {
         if let Some(id) = arena.get_identifier(node) {
-            return Some(vec![id.escaped_text.clone()]);
+            return Some(vec![id.escaped_text.to_string()]);
         }
         return None;
     }
@@ -1603,7 +1603,7 @@ pub(super) fn collect_module_decl_parts_for_body_lookup(
         if let Some(name_node) = arena.get(ns_data.name)
             && let Some(id) = arena.get_identifier(name_node)
         {
-            parts.push(id.escaped_text.clone());
+            parts.push(id.escaped_text.to_string());
         }
 
         let body_node = arena.get(ns_data.body)?;

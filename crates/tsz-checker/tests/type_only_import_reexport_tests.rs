@@ -124,7 +124,7 @@ fn check_two_files_collect_export_specifiers(
                 let Some(ident) = arena.get_identifier(name_node) else {
                     continue;
                 };
-                specifiers.push((ident.escaped_text.clone(), spec_idx));
+                specifiers.push((ident.escaped_text.to_string(), spec_idx));
             }
         }
     }

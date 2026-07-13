@@ -938,7 +938,7 @@ impl<'a> EnumES5Transformer<'a> {
                     let obj = self.transform_expression(access.expression);
                     let prop = if let Some(prop_node) = self.arena.get(access.name_or_argument) {
                         if let Some(ident) = self.arena.get_identifier(prop_node) {
-                            ident.escaped_text.clone()
+                            ident.escaped_text.to_string()
                         } else if let Some(lit) = self.arena.get_literal(prop_node) {
                             lit.text.clone()
                         } else {

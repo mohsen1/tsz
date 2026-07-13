@@ -1373,13 +1373,13 @@ impl<'a> CheckerState<'a> {
                 object_key.is_some_and(|object_key| {
                     let has_expando_property = self
                         .collect_expando_properties_for_root(&object_key)
-                        .contains(&member_name);
+                        .contains(member_name.as_str());
                     let has_last_segment_property =
                         object_key
                             .rsplit_once('.')
                             .is_some_and(|(_, last_segment)| {
                                 self.collect_expando_properties_for_root(last_segment)
-                                    .contains(&member_name)
+                                    .contains(member_name.as_str())
                             });
                     has_expando_property || has_last_segment_property
                 })

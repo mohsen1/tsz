@@ -6,7 +6,7 @@ use crate::parser::{
     node::{EnumData, EnumMemberData, IdentifierData, ParameterData},
     syntax_kind_ext,
 };
-use tsz_common::interner::AstAtom;
+use tsz_common::interner::{AstAtom, IdentText};
 use tsz_scanner::SyntaxKind;
 
 fn is_reserved_interface_type_name(name: &str) -> bool {
@@ -115,7 +115,7 @@ impl ParserState {
                 name_end,
                 IdentifierData {
                     atom: AstAtom::NONE,
-                    escaped_text: String::new(),
+                    escaped_text: IdentText::empty(),
                     original_text: None,
                 },
             )
@@ -1210,7 +1210,7 @@ impl ParserState {
             let id_start = self.token_pos();
             let id_end = self.token_end();
             let atom = self.scanner.get_token_atom();
-            let text = self.scanner.get_token_value_ref().to_string();
+            let text = self.scanner.token_ident_text();
             self.next_token(); // consume `void`
             // Emit TS1109 at the `=` position (matching TSC behavior)
             use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
@@ -1247,7 +1247,7 @@ impl ParserState {
                 id_end,
                 crate::parser::node::IdentifierData {
                     atom: AstAtom::NONE,
-                    escaped_text: String::new(),
+                    escaped_text: IdentText::empty(),
                     original_text: None,
                 },
             )
@@ -1386,7 +1386,7 @@ impl ParserState {
                 end_pos,
                 IdentifierData {
                     atom: AstAtom::NONE,
-                    escaped_text: String::new(),
+                    escaped_text: IdentText::empty(),
                     original_text: None,
                 },
             );

@@ -31,7 +31,7 @@ impl<'a> CheckerState<'a> {
             && self
                 .ctx
                 .type_parameter_scope
-                .contains_key(&identifier.escaped_text)
+                .contains_key(identifier.escaped_text.as_str())
         {
             return true;
         }
@@ -586,7 +586,7 @@ impl<'a> CheckerState<'a> {
 
         self.ctx
             .type_parameter_scope
-            .contains_key(&identifier.escaped_text)
+            .contains_key(identifier.escaped_text.as_str())
             || self
                 .identifier_references_enclosing_infer_binding(name_idx, &identifier.escaped_text)
     }
@@ -782,7 +782,7 @@ impl<'a> CheckerState<'a> {
             .ctx
             .arena
             .get_identifier(node)
-            .is_some_and(|identifier| names.contains(&identifier.escaped_text))
+            .is_some_and(|identifier| names.iter().any(|n| *n == identifier.escaped_text))
         {
             return true;
         }

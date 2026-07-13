@@ -491,7 +491,7 @@ impl<'a> CheckerState<'a> {
         let param = self.ctx.arena.get_type_parameter(param_node)?;
         let name_node = self.ctx.arena.get(param.name)?;
         let ident = self.ctx.arena.get_identifier(name_node)?;
-        Some(ident.escaped_text.clone())
+        Some(ident.escaped_text.to_string())
     }
 
     fn type_member_missing_name_coverage_is_safe(

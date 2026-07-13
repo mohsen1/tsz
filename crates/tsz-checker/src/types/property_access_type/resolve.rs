@@ -236,7 +236,7 @@ impl<'a> CheckerState<'a> {
             && self
                 .ctx
                 .import_conflict_names
-                .contains(&base_ident.escaped_text)
+                .contains(base_ident.escaped_text.as_str())
             && let Some(namespace_sym_id) = self
                 .ctx
                 .binder
@@ -680,7 +680,7 @@ impl<'a> CheckerState<'a> {
             .ctx
             .arena
             .get_identifier(name_node)
-            .map(|ident| ident.escaped_text.clone())
+            .map(|ident| ident.escaped_text.to_string())
             .or_else(|| self.current_file_commonjs_static_member_name(access.name_or_argument));
 
         if self.is_js_file()

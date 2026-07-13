@@ -1165,7 +1165,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                             && let Some(name_node) = self.ctx.arena.get(mod_data.name)
                             && let Some(ident) = self.ctx.arena.get_identifier(name_node)
                         {
-                            names.push(ident.escaped_text.clone());
+                            names.push(ident.escaped_text.to_string());
                         }
                     }
                     names.reverse(); // outermost first

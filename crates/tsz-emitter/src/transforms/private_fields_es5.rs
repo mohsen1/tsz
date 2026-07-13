@@ -193,7 +193,7 @@ pub fn get_private_field_name(arena: &NodeArena, name_idx: NodeIndex) -> Option<
         return None;
     }
     let ident = arena.get_identifier(node)?;
-    Some(ident.escaped_text.clone())
+    Some(ident.escaped_text.to_string())
 }
 
 /// Collect top-level value bindings visible to generated private-name helpers.
@@ -430,7 +430,7 @@ fn collect_identifier_binding_name(
     if node.kind == SyntaxKind::Identifier as u16
         && let Some(identifier) = arena.get_identifier(node)
     {
-        names.insert(identifier.escaped_text.clone());
+        names.insert(identifier.escaped_text.to_string());
     }
 }
 

@@ -599,7 +599,7 @@ impl<'a> CheckerState<'a> {
                         &message,
                         diagnostic_codes::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL_DECLARATION_OF,
                     );
-                    self.ctx.import_conflict_names.insert(name.clone());
+                    self.ctx.import_conflict_names.insert(name.to_string());
                     return;
                 }
             }
@@ -721,7 +721,7 @@ impl<'a> CheckerState<'a> {
                             &message,
                             diagnostic_codes::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL_DECLARATION_OF,
                         );
-                        self.ctx.import_conflict_names.insert(name.clone());
+                        self.ctx.import_conflict_names.insert(name.to_string());
                         return; // Don't emit further errors for this import
                     }
                 }
@@ -1628,7 +1628,7 @@ impl<'a> CheckerState<'a> {
         let node = self.ctx.arena.get(idx)?;
         if node.kind == SyntaxKind::Identifier as u16 {
             let ident = self.ctx.arena.get_identifier(node)?;
-            return Some(ident.escaped_text.clone());
+            return Some(ident.escaped_text.to_string());
         }
         if node.kind == syntax_kind_ext::QUALIFIED_NAME {
             let qn = self.ctx.arena.get_qualified_name(node)?;

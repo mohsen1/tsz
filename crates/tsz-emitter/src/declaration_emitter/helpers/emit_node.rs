@@ -615,7 +615,7 @@ impl<'a> DeclarationEmitter<'a> {
                     let Some(name_ident) = self.arena.get_identifier(name_node) else {
                         continue;
                     };
-                    targets.insert(name_ident.escaped_text.clone(), stmt_idx);
+                    targets.insert(name_ident.escaped_text.to_string(), stmt_idx);
                 }
                 k if k == syntax_kind_ext::CLASS_DECLARATION => {
                     let Some(class) = self.arena.get_class(stmt_node) else {
@@ -627,7 +627,7 @@ impl<'a> DeclarationEmitter<'a> {
                     let Some(name_ident) = self.arena.get_identifier(name_node) else {
                         continue;
                     };
-                    targets.insert(name_ident.escaped_text.clone(), stmt_idx);
+                    targets.insert(name_ident.escaped_text.to_string(), stmt_idx);
                 }
                 k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                     let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
@@ -666,7 +666,7 @@ impl<'a> DeclarationEmitter<'a> {
                                 supported = false;
                                 break;
                             };
-                            declaration_names.push(name_ident.escaped_text.clone());
+                            declaration_names.push(name_ident.escaped_text.to_string());
                         }
                         if !supported {
                             break;

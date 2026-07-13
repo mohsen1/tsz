@@ -45,7 +45,7 @@ impl CheckerState<'_> {
                     self.ctx
                         .arena
                         .get_identifier(prop_node)
-                        .map(|ident| ident.escaped_text.clone())
+                        .map(|ident| ident.escaped_text.to_string())
                 } else {
                     None
                 }
@@ -54,7 +54,7 @@ impl CheckerState<'_> {
                 self.ctx
                     .arena
                     .get_identifier(name_node)
-                    .map(|ident| ident.escaped_text.clone())
+                    .map(|ident| ident.escaped_text.to_string())
             };
 
             let Some(prop_atom) = prop_name else {
@@ -203,7 +203,7 @@ impl CheckerState<'_> {
                             self.ctx
                                 .arena
                                 .get_identifier(prop_node)
-                                .map(|ident| ident.escaped_text.clone())
+                                .map(|ident| ident.escaped_text.to_string())
                                 .unwrap_or_default()
                         } else {
                             String::new()
@@ -212,7 +212,7 @@ impl CheckerState<'_> {
                         self.ctx
                             .arena
                             .get_identifier(name_node)
-                            .map(|ident| ident.escaped_text.clone())
+                            .map(|ident| ident.escaped_text.to_string())
                             .unwrap_or_default()
                     }
                 } else {

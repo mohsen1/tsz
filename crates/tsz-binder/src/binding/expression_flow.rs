@@ -668,7 +668,7 @@ impl BinderState {
                     let name_node = arena.get(access.name_or_argument)?;
                     arena
                         .get_identifier(name_node)
-                        .map(|ident| ident.escaped_text.clone())
+                        .map(|ident| ident.escaped_text.to_string())
                 }
                 syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
                     let access = arena.get_access_expr(node)?;
@@ -682,7 +682,7 @@ impl BinderState {
                                 .and_then(|sym_id| {
                                     resolved_const_expando_key(binder, arena, sym_id, 0)
                                 })
-                                .or_else(|| Some(ident.escaped_text.clone()))
+                                .or_else(|| Some(ident.escaped_text.to_string()))
                         }
                         k if k == SyntaxKind::StringLiteral as u16
                             || k == SyntaxKind::NumericLiteral as u16

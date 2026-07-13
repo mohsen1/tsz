@@ -575,7 +575,7 @@ impl<'a> Printer<'a> {
                 self.arena
                     .identifiers
                     .get(*name_id as usize)
-                    .map(|ident| ident.escaped_text.clone())
+                    .map(|ident| ident.escaped_text.to_string())
             })
             .filter(|name| !name.is_empty())
             .collect();
@@ -622,7 +622,7 @@ impl<'a> Printer<'a> {
                 self.arena
                     .identifiers
                     .get(*name_id as usize)
-                    .map(|ident| ident.escaped_text.clone())
+                    .map(|ident| ident.escaped_text.to_string())
             })
             .filter(|name| !name.is_empty() && seen.insert(name.clone()))
             .collect()

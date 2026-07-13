@@ -658,7 +658,7 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> Option<String> {
         let expr_node = self.arena.get(expr_idx)?;
         if let Some(identifier) = self.arena.get_identifier(expr_node) {
-            return Some(identifier.escaped_text.clone());
+            return Some(identifier.escaped_text.to_string());
         }
         self.arena
             .get_literal(expr_node)

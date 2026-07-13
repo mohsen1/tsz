@@ -832,7 +832,7 @@ impl<'a> CheckerState<'a> {
                             );
                         // Record so TS2456 can be suppressed for type aliases
                         // whose apparent circularity is caused by this conflict.
-                        self.ctx.import_conflict_names.insert(name.clone());
+                        self.ctx.import_conflict_names.insert(name.to_string());
                     }
                 }
             }

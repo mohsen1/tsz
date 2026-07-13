@@ -131,7 +131,7 @@ fn collect_export_equals_targets(
             && let Some(expr_node) = arena.get(assign.expression)
             && let Some(id) = arena.get_identifier(expr_node)
         {
-            out.push(id.escaped_text.clone());
+            out.push(id.escaped_text.to_string());
         }
         return;
     }
@@ -273,7 +273,7 @@ impl<'a> CheckerContext<'a> {
                             continue;
                         };
                         if let Some(id) = arena.get_identifier(expr_node) {
-                            return Some(id.escaped_text.clone());
+                            return Some(id.escaped_text.to_string());
                         }
                     }
 

@@ -137,7 +137,7 @@ impl<'a> CheckerState<'a> {
             let param = self.ctx.arena.get_parameter(param_node)?;
             let name = if let Some(name_node) = self.ctx.arena.get(param.name) {
                 if let Some(name_data) = self.ctx.arena.get_identifier(name_node) {
-                    name_data.escaped_text.clone()
+                    name_data.escaped_text.to_string()
                 } else if matches!(
                     name_node.kind,
                     k if k == tsz_parser::parser::syntax_kind_ext::OBJECT_BINDING_PATTERN

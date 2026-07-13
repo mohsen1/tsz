@@ -677,12 +677,12 @@ impl<'a> CheckerState<'a> {
 
         let has_root_prop = self
             .collect_expando_properties_for_root(&object_key)
-            .contains(&prop_name);
+            .contains(prop_name.as_str());
         let has_last_segment_prop = object_key
             .rsplit_once('.')
             .is_some_and(|(_, last_segment)| {
                 self.collect_expando_properties_for_root(last_segment)
-                    .contains(&prop_name)
+                    .contains(prop_name.as_str())
             });
         has_root_prop || has_last_segment_prop
     }

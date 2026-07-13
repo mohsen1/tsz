@@ -707,7 +707,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     && let Some(name_node) = self.ctx.arena.get(tp_data.name)
                     && let Some(ident) = self.ctx.arena.get_identifier(name_node)
                 {
-                    local_type_params.insert(ident.escaped_text.clone());
+                    local_type_params.insert(ident.escaped_text.to_string());
                 }
             }
         }
@@ -784,14 +784,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             && let Some(name_node) = self.ctx.arena.get(tr.type_name)
             && let Some(ident) = self.ctx.arena.get_identifier(name_node)
         {
-            let name = &ident.escaped_text;
+            let name = ident.escaped_text.as_str();
             let is_builtin = is_builtin_type(name);
             let is_local_type_param = local_type_params.contains(name);
             let is_type_param = self.ctx.type_parameter_scope.contains_key(name);
             let in_scope = is_name_resolvable(self.ctx, name, tr.type_name);
 
             if !is_builtin && !is_local_type_param && !is_type_param && !in_scope {
-                undefined_types.push((tr.type_name, name.clone()));
+                undefined_types.push((tr.type_name, name.to_string()));
             }
         }
 
@@ -812,14 +812,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 && let Some(name_node) = self.ctx.arena.get(tr.type_name)
                 && let Some(ident) = self.ctx.arena.get_identifier(name_node)
             {
-                let name = &ident.escaped_text;
+                let name = ident.escaped_text.as_str();
                 let is_builtin = is_builtin_type(name);
                 let is_local_type_param = local_type_params.contains(name);
                 let is_type_param = self.ctx.type_parameter_scope.contains_key(name);
                 let in_scope = is_name_resolvable(self.ctx, name, tr.type_name);
 
                 if !is_builtin && !is_local_type_param && !is_type_param && !in_scope {
-                    undefined_types.push((tr.type_name, name.clone()));
+                    undefined_types.push((tr.type_name, name.to_string()));
                 }
             }
         }
@@ -1719,7 +1719,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         && name_node.kind == SyntaxKind::Identifier as u16
                         && let Some(name_ident) = self.ctx.arena.get_identifier(name_node)
                     {
-                        prefixes.push(name_ident.escaped_text.clone());
+                        prefixes.push(name_ident.escaped_text.to_string());
                     }
 
                     parent = self

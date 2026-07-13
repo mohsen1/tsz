@@ -1686,7 +1686,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .arena
                 .get_identifier(node)
-                .map(|ident| ident.escaped_text.clone()),
+                .map(|ident| ident.escaped_text.to_string()),
             k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                 let access = self.ctx.arena.get_access_expr(node)?;
                 let left = self.expression_text(access.expression)?;

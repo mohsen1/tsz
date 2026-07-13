@@ -70,7 +70,7 @@ pub(crate) fn get_literal_property_name(arena: &NodeArena, name_idx: NodeIndex) 
 
     // Identifier
     if let Some(ident) = arena.get_identifier(name_node) {
-        return Some(ident.escaped_text.clone());
+        return Some(ident.escaped_text.to_string());
     }
 
     // String literal, no-substitution template literal, or numeric literal
@@ -468,7 +468,7 @@ impl<'a> CheckerState<'a> {
                         .arena
                         .get(class_data.name)
                         .and_then(|node| self.ctx.arena.get_identifier(node))
-                        .map(|ident| ident.escaped_text.clone())
+                        .map(|ident| ident.escaped_text.to_string())
                         .unwrap_or_default()
                 } else {
                     // Anonymous class expression — infer the name from an
@@ -513,7 +513,7 @@ impl<'a> CheckerState<'a> {
         }
         let name_node = self.ctx.arena.get(var_decl.name)?;
         let ident = self.ctx.arena.get_identifier(name_node)?;
-        Some(ident.escaped_text.clone())
+        Some(ident.escaped_text.to_string())
     }
 
     /// Returns true when `idx` is inside an instance property initializer of the
@@ -1567,7 +1567,7 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .arena
                 .get_identifier(node)
-                .map(|ident| ident.escaped_text.clone())
+                .map(|ident| ident.escaped_text.to_string())
                 .or_else(|| {
                     (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION)
                         .then(|| self.expression_text(idx))
@@ -1697,7 +1697,7 @@ impl<'a> CheckerState<'a> {
                     .arena
                     .get(class.name)
                     .and_then(|n| self.ctx.arena.get_identifier(n))
-                    .map(|ident| ident.escaped_text.clone())
+                    .map(|ident| ident.escaped_text.to_string())
             });
         if let Some(name) = syntactic {
             return name;
@@ -1711,7 +1711,7 @@ impl<'a> CheckerState<'a> {
                 .arena
                 .get(var_decl.name)
                 .and_then(|n| self.ctx.arena.get_identifier(n))
-                .map(|ident| ident.escaped_text.clone())
+                .map(|ident| ident.escaped_text.to_string())
         {
             return name;
         }

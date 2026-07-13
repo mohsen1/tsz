@@ -324,7 +324,7 @@ impl<'a> CheckerState<'a> {
                     .arena
                     .get(name_idx)
                     .and_then(|n| self.ctx.arena.get_identifier(n))
-                    .map(|ident| ident.escaped_text.clone())
+                    .map(|ident| ident.escaped_text.to_string())
             })
             && let Some(sym_id) = self.ctx.binder.get_node_symbol(func_idx)
         {
@@ -342,7 +342,7 @@ impl<'a> CheckerState<'a> {
             .arena
             .get(var_decl.name)
             .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-            .map(|ident| ident.escaped_text.clone())?;
+            .map(|ident| ident.escaped_text.to_string())?;
         let sym_id = self.ctx.binder.get_node_symbol(parent)?;
         Some((name, sym_id))
     }

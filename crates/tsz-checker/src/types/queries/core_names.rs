@@ -578,7 +578,7 @@ impl<'a> CheckerState<'a> {
         self.ctx.arena.get_identifier(base_node)?;
         let name_node = self.ctx.arena.get(access.name_or_argument)?;
         if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-            return Some((access.expression, ident.escaped_text.clone()));
+            return Some((access.expression, ident.escaped_text.to_string()));
         }
         if matches!(
             name_node.kind,
@@ -710,7 +710,7 @@ impl<'a> CheckerState<'a> {
             && let Some(name_node) = self.ctx.arena.get(class.name)
             && let Some(ident) = self.ctx.arena.get_identifier(name_node)
         {
-            return Some(ident.escaped_text.clone());
+            return Some(ident.escaped_text.to_string());
         }
 
         let parent_idx = self
@@ -724,7 +724,7 @@ impl<'a> CheckerState<'a> {
         }
         let var_decl = self.ctx.arena.get_variable_declaration(parent_node)?;
         let name_ident = self.ctx.arena.get_identifier_at(var_decl.name)?;
-        Some(name_ident.escaped_text.clone())
+        Some(name_ident.escaped_text.to_string())
     }
 
     /// Get class name from a class declaration node.
@@ -904,7 +904,7 @@ impl<'a> CheckerState<'a> {
         {
             let name_node = self.ctx.arena.get(func.name)?;
             if let Some(id) = self.ctx.arena.get_identifier(name_node) {
-                return Some(id.escaped_text.clone());
+                return Some(id.escaped_text.to_string());
             }
         }
 
@@ -915,6 +915,6 @@ impl<'a> CheckerState<'a> {
     /// Returns None for destructuring patterns.
     pub(crate) fn get_parameter_name(&self, name_idx: NodeIndex) -> Option<String> {
         let ident = self.ctx.arena.get_identifier_at(name_idx)?;
-        Some(ident.escaped_text.clone())
+        Some(ident.escaped_text.to_string())
     }
 }

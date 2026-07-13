@@ -589,13 +589,13 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .arena
                     .get_identifier(clause_node)
-                    .map(|ident| ident.escaped_text.clone());
+                    .map(|ident| ident.escaped_text.to_string());
             }
         }
 
         self.get_declaration_name_node_in_arena(self.ctx.arena, decl_idx)
             .and_then(|name_idx| self.ctx.arena.get_identifier_at(name_idx))
-            .map(|ident| ident.escaped_text.clone())
+            .map(|ident| ident.escaped_text.to_string())
             .or_else(|| {
                 self.ctx
                     .binder

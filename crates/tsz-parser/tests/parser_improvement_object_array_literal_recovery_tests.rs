@@ -414,7 +414,9 @@ fn first_object_literal_members(parser: &crate::parser::ParserState) -> Vec<Node
 fn identifier_text(parser: &crate::parser::ParserState, node: NodeIndex) -> Option<String> {
     let arena = parser.get_arena();
     let n = arena.get(node)?;
-    arena.get_identifier(n).map(|id| id.escaped_text.clone())
+    arena
+        .get_identifier(n)
+        .map(|id| id.escaped_text.to_string())
 }
 
 /// Structural rule: when a reserved word is used as an object-literal property
