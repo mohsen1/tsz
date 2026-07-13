@@ -285,13 +285,21 @@ impl<'a> CheckerState<'a> {
                 .with_builtin_iterator_return_type(self.builtin_iterator_return_intrinsic_type())
                 .with_lazy_type_params_resolver(&lazy_type_params_resolver)
                 .with_name_def_id_resolver(&name_resolver);
-                let lowering = if self.ctx.all_binders.is_some()
-                    || self.ctx.global_file_locals_index.is_some()
-                {
-                    lowering.prefer_name_def_id_resolution()
-                } else {
-                    lowering
-                };
+                // Lib member signatures live in per-lib arenas but reference
+                // GLOBAL lib type names (e.g. `Array.prototype.flat`'s `FlatArray`
+                // result). Those references are inherently cross-arena, so resolve
+                // them by name through the shared definition store. The
+                // `NodeIndex`-based path is arena-local and, under a user
+                // `interface` merging into a lib global, can resolve a lib name
+                // through a merged-global `SymbolId` that collides with an
+                // unrelated lib symbol (`FlatArray -> alert`/`eval`). The name
+                // resolver is always installed here (`with_name_def_id_resolver`
+                // above), so prefer it unconditionally rather than gating on the
+                // parallel-only `all_binders`/`global_file_locals_index`, which are
+                // absent during shared-lib priming — the exact phase that lowered
+                // `Array`'s members with node-first resolution and produced the
+                // collision.
+                let lowering = lowering.prefer_name_def_id_resolution();
 
                 if !symbol.declarations.is_empty() {
                     // Type aliases (e.g. `type ElementTagNameMap = HTMLElementTagNameMap & ...`,

@@ -630,19 +630,64 @@ impl CheckerContext<'_> {
     /// `resolve_lib_type_with_params`) where the `SymbolId` comes from an
     /// individual lib binder and must be mapped to the merged-binder identity
     /// before creating/looking up the `DefId`.
+    ///
+    /// Resolution is keyed on `name` through the collision-free
+    /// `DefinitionStore` name index, NOT on the binder-relative
+    /// `canonical_sym`. Every lib-binder symbol shares the `u32::MAX`
+    /// declaration-file sentinel, so a raw `SymbolId -> DefId` lookup
+    /// ([`get_lib_def_id`]) can answer with a def a *different* lib binder
+    /// registered for an unrelated name whose raw index collides. That misfires
+    /// when a canonical symbol is chosen from a merged/global index — e.g. after
+    /// a user `interface Error {}` merges into the lib `Error`, hoisting lib
+    /// globals into the primary binder's `file_locals` so
+    /// [`canonical_lib_sym_id`] returns a merged identity that differs from the
+    /// per-lib input — producing `FlatArray -> eval`, `ReadonlyArray -> isNaN`
+    /// inside re-lowered lib member signatures. The name index is keyed on the
+    /// interned name, so it resolves the intended lib def regardless of which
+    /// binder the canonical `SymbolId` is relative to. The raw
+    /// `get_lib_def_id(canonical_sym)` remains the fallback for names not yet
+    /// registered under a lib def in the store.
     pub fn get_canonical_lib_def_id(&self, name: &str, per_lib_sym_id: SymbolId) -> DefId {
         let canonical_sym = self.canonical_lib_sym_id(name, per_lib_sym_id);
-        if canonical_sym == per_lib_sym_id {
-            let atom = self.types.intern_string(name);
-            self.definition_store
-                .find_defs_by_name(atom)
-                .and_then(|defs| {
-                    defs.into_iter()
-                        .filter(|def_id| {
-                            self.definition_store.get(*def_id).is_some_and(|info| {
-                                info.symbol_id.is_some_and(|sym_id| {
-                                    self.symbol_is_from_actual_or_cloned_lib(SymbolId(sym_id))
-                                }) && matches!(
+        // When the canonical symbol DIFFERS from the per-lib input, the merged
+        // identity is authoritative and `SymbolId`-keyed: resolve through it
+        // directly. Electing from the name index here instead can return a
+        // sibling same-named def that the `SymbolId`-keyed paths
+        // (`get_or_create_def_id`, semantic-def prepopulation, env
+        // publication) do not use, splitting one lib type into two identities
+        // (witness: `Parameters`/`ReturnType` utilities diverging until
+        // `Plugin[]` failed against `Plugin[]` in
+        // thislessFunctionsNotContextSensitive3). The interface-merge
+        // collision family a name-index election here once compensated for
+        // (`FlatArray -> alert`/`eval`) is owned upstream: lib member refs
+        // lower name-first unconditionally and identity-verified def writes
+        // keep collided ids from publishing (see `queries/lib*.rs` and
+        // `insert_type_env_symbol`).
+        if canonical_sym != per_lib_sym_id {
+            return self.get_lib_def_id(canonical_sym);
+        }
+        let atom = self.types.intern_string(name);
+        self.definition_store
+            .find_defs_by_name(atom)
+            .and_then(|defs| {
+                defs.into_iter()
+                    .filter(|def_id| {
+                        self.definition_store.get(*def_id).is_some_and(|info| {
+                            // Lib provenance is recognized two ways: the def's
+                            // symbol resolves as a lib symbol in this binder
+                            // context, OR the def carries the `u32::MAX`
+                            // lib declaration-file sentinel — the form the
+                            // parallel driver's composed semantic-def store
+                            // produces (its symbol_id is a merged-binder id
+                            // that `symbol_is_from_actual_or_cloned_lib`
+                            // cannot recognize here; rejecting it sent lib
+                            // type refs like `FlatArray` through the raw
+                            // fallback, which collides under an interface
+                            // merge into a lib global: FlatArray -> alert).
+                            (info.symbol_id.is_some_and(|sym_id| {
+                                self.symbol_is_from_actual_or_cloned_lib(SymbolId(sym_id))
+                            }) || info.file_id == Some(u32::MAX))
+                                && matches!(
                                     info.kind,
                                     tsz_solver::def::DefKind::TypeAlias
                                         | tsz_solver::def::DefKind::Interface
@@ -650,19 +695,55 @@ impl CheckerContext<'_> {
                                         | tsz_solver::def::DefKind::Enum
                                         | tsz_solver::def::DefKind::Namespace
                                 )
-                            })
                         })
-                        .max_by_key(|def_id| {
-                            self.definition_store
-                                .get(*def_id)
-                                .and_then(|info| info.symbol_id)
-                                .unwrap_or_default()
-                        })
-                })
-                .unwrap_or_else(|| self.get_lib_def_id(canonical_sym))
-        } else {
-            self.get_lib_def_id(canonical_sym)
-        }
+                    })
+                    .max_by_key(|def_id| {
+                        // Election among same-named lib defs, in precedence order:
+                        //
+                        // 1. `canonical_match`: the def whose recorded `symbol_id`
+                        //    IS the canonical merged symbol. That is the def every
+                        //    `SymbolId`-keyed path (`get_or_create_def_id`,
+                        //    semantic-def prepopulation, env publication) uses;
+                        //    electing any sibling here splits one lib type into
+                        //    two identities (witness: `Parameters`/`ReturnType`
+                        //    utilities diverging until `Plugin[]` failed against
+                        //    `Plugin[]` in thislessFunctionsNotContextSensitive3).
+                        //
+                        // 2. `name_verified`: a user `interface` merging into a
+                        //    lib global can leave a lib-named def whose recorded
+                        //    `symbol_id` is a merged-global id aliasing an
+                        //    UNRELATED lib symbol (a `FlatArray` def colliding
+                        //    with `alert`/`eval`). Preferring the raw-highest
+                        //    `symbol_id` let that duplicate outbid the genuine
+                        //    def; require the `symbol_id` to resolve to a symbol
+                        //    actually NAMED `name`.
+                        //
+                        // 3. Historical highest-`symbol_id` tiebreak.
+                        let sym_id = self
+                            .definition_store
+                            .get(*def_id)
+                            .and_then(|info| info.symbol_id)
+                            .map(SymbolId);
+                        let canonical_match = sym_id == Some(canonical_sym);
+                        let name_verified = sym_id.is_some_and(|sym| {
+                            self.binder
+                                .get_symbol(sym)
+                                .is_some_and(|s| s.escaped_name.as_str() == name)
+                                || self.lib_contexts.iter().any(|lib_ctx| {
+                                    lib_ctx
+                                        .binder
+                                        .get_symbol(sym)
+                                        .is_some_and(|s| s.escaped_name.as_str() == name)
+                                })
+                        });
+                        (
+                            canonical_match,
+                            name_verified,
+                            sym_id.map(|s| s.0).unwrap_or_default(),
+                        )
+                    })
+            })
+            .unwrap_or_else(|| self.get_lib_def_id(canonical_sym))
     }
 
     /// Resolve a lib symbol's `DefId`, verifying the def actually names

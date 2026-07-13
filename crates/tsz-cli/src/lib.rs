@@ -74,6 +74,9 @@ mod interface_extends_generic_alias_cli_tests;
 #[path = "../tests/lib_heritage_import_order_cli_tests.rs"]
 mod lib_heritage_import_order_cli_tests;
 #[cfg(test)]
+#[path = "../tests/lib_interface_merge_flatarray_cli_tests.rs"]
+mod lib_interface_merge_flatarray_cli_tests;
+#[cfg(test)]
 #[path = "../tests/lib_shadow_cli_tests.rs"]
 mod lib_shadow_cli_tests;
 #[cfg(test)]

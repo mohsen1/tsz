@@ -361,12 +361,12 @@ impl CheckerState<'_> {
         .with_builtin_iterator_return_type(self.builtin_iterator_return_intrinsic_type())
         .with_lazy_type_params_resolver(&lazy_type_params_resolver)
         .with_name_def_id_resolver(&name_resolver);
-        let lowering =
-            if self.ctx.all_binders.is_some() || self.ctx.global_file_locals_index.is_some() {
-                lowering.prefer_name_def_id_resolution()
-            } else {
-                lowering
-            };
+        // Lib member annotations reference global lib type names cross-arena;
+        // resolve them by name unconditionally (see `resolve_lib_type_with_params`
+        // in `queries/lib.rs`). Gating on the parallel-only indices left the
+        // shared-lib priming phase on node-first resolution, where a merged
+        // global's shifted `SymbolId` can alias an unrelated lib symbol.
+        let lowering = lowering.prefer_name_def_id_resolution();
 
         let member_type = lowering
             .with_arena(member_arena)
@@ -441,12 +441,9 @@ impl CheckerState<'_> {
         .with_builtin_iterator_return_type(self.builtin_iterator_return_intrinsic_type())
         .with_lazy_type_params_resolver(&lazy_type_params_resolver)
         .with_name_def_id_resolver(&name_resolver);
-        let lowering =
-            if self.ctx.all_binders.is_some() || self.ctx.global_file_locals_index.is_some() {
-                lowering.prefer_name_def_id_resolution()
-            } else {
-                lowering
-            };
+        // Name-first unconditionally; see the sibling comment in
+        // `lower_simple_lib_interface_member` above.
+        let lowering = lowering.prefer_name_def_id_resolution();
         lowering
             .with_arena(member_arena)
             .lower_method_signature_group(methods)

@@ -643,7 +643,12 @@ impl<'a> CheckerState<'a> {
     ) {
         self.prime_lib_type_params(name);
         if let Some(ref_sym_id) = self.ctx.binder.file_locals.get(name) {
-            let def_id = self.ctx.get_lib_def_id(ref_sym_id);
+            // A user interface merging into a lib interface hoists lib globals
+            // into the primary binder's file_locals, so this SymbolId is a
+            // merged identity: the raw lookup can answer with a colliding def
+            // from another lib binder (FlatArray -> eval; the lib-def identity
+            // collision family). Verify against the requested name.
+            let def_id = self.ctx.lib_def_id_verified(name, ref_sym_id);
             if let Some(params) = self.ctx.get_def_type_params(def_id)
                 && !params.is_empty()
             {
@@ -895,7 +900,7 @@ impl<'a> CheckerState<'a> {
                     self.ctx.arena,
                 );
 
-                let decls_with_arenas = collect_lib_decls_with_arenas_in_contexts(
+                let mut decls_with_arenas = collect_lib_decls_with_arenas_in_contexts(
                     selected_binder,
                     sym_id,
                     &symbol.declarations,
@@ -903,6 +908,22 @@ impl<'a> CheckerState<'a> {
                     &lib_contexts,
                     Some(self.ctx.arena),
                 );
+                // A single-lib current binder (lib-baseline diagnostics pass)
+                // owns only its own file's declarations for a merged global;
+                // union in the sibling lib contexts' same-named declarations
+                // so the lowered body is the full cross-lib merge, not a
+                // partial view that then gets published as canonical.
+                if !selected_from_lib_context
+                    && crate::state_type_analysis::cross_file_direct::is_builtin_lib_declaration_arena(
+                        self.ctx.arena,
+                    )
+                {
+                    super::lib_decls::extend_decls_with_lib_context_globals(
+                        name,
+                        &lib_contexts,
+                        &mut decls_with_arenas,
+                    );
+                }
                 let interface_canonical_sym_id = canonical_interface_symbol_id(
                     &self.ctx,
                     name,
@@ -1049,13 +1070,12 @@ impl<'a> CheckerState<'a> {
                 .with_builtin_iterator_return_type(self.builtin_iterator_return_intrinsic_type())
                 .with_lazy_type_params_resolver(&lazy_type_params_resolver)
                 .with_name_def_id_resolver(&name_resolver);
-                let lowering = if self.ctx.all_binders.is_some()
-                    || self.ctx.global_file_locals_index.is_some()
-                {
-                    lowering.prefer_name_def_id_resolution()
-                } else {
-                    lowering
-                };
+                // Name-first unconditionally: lib declarations reference global
+                // lib type names cross-arena, and the priming phase runs without
+                // the parallel-only indices (see `resolve_lib_type_with_params`).
+                // This matches the parallel path, where `all_binders` made the
+                // old gate always true.
+                let lowering = lowering.prefer_name_def_id_resolution();
 
                 // Try to lower as interface first (handles declaration merging)
                 if !symbol.declarations.is_empty() {
