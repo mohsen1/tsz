@@ -144,3 +144,72 @@ export function relay(api: StoreApi<S>) {{
             .collect::<Vec<_>>()
     );
 }
+
+/// The full zustand devtools chain (canary Family A, final leg): an arrow
+/// with NAMED parameters cast to `NamedSet<S>` — a conditional that captures
+/// the two `setState` overloads with `infer` and rebuilds them with
+/// `[...TakeTwo<Sa>, action?: Action]` variadic rest tuples. The multi-sig
+/// contextual callable must keep its overload set (no mono-collapse) and
+/// each signature's deferred rest tuple must env-evaluate so the parameters
+/// contextually type (tsc reports nothing here; tsz emitted 2x TS7006).
+#[test]
+fn named_params_arrow_casts_to_infer_rebuilt_overload_set() {
+    let source = r#"
+type SetStateInternal<T> = {
+  _(
+    partial: T | Partial<T> | { _(state: T): T | Partial<T> }['_'],
+    replace?: false,
+  ): void
+  _(state: T | { _(state: T): T }['_'], replace: true): void
+}['_']
+interface StoreApi<T> {
+  setState: SetStateInternal<T>
+}
+type Cast<T, U> = T extends U ? T : U
+type TakeTwo<T> = T extends { length: 2 }
+  ? T
+  : T extends [infer A0, (infer A1)?, ...unknown[]]
+    ? [A0, A1?]
+    : never
+type Action = string | { type: string }
+type StoreDevtools<S> = S extends {
+  setState: {
+    (...args: infer Sa1): infer Sr1
+    (...args: infer Sa2): infer Sr2
+  }
+}
+  ? {
+      setState(...args: [...args: TakeTwo<Sa1>, action?: Action]): Sr1
+      setState(...args: [...args: TakeTwo<Sa2>, action?: Action]): Sr2
+    }
+  : never
+export type NamedSet<T> = StoreDevtools<StoreApi<T>>['setState']
+type S = { a: number }
+export function wire(api: StoreApi<S>) {
+  api.setState = ((state, replace, nameOrAction: Action) => {
+    void state
+    void replace
+    void nameOrAction
+  }) as NamedSet<S>
+}
+"#;
+    let diags = check_source_diagnostics(source);
+    let implicit_any = diags.iter().filter(|d| d.code == 7006).count();
+    assert_eq!(
+        implicit_any,
+        0,
+        "state/replace must be contextually typed through the rebuilt overload set, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 2352),
+        "the cast must sufficiently overlap, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}

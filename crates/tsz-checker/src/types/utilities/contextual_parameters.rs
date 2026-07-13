@@ -1107,6 +1107,48 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // A MULTI-signature callable keeps its overload set. Collapsing it to
+        // the combined mono shape (the get_contextual_signature +
+        // function_type_from_shape path below) replaces per-overload
+        // positional extraction — which unions parameter types across the
+        // set — with a single signature whose merged rest tuple defeats
+        // positional mapping (probe: the pre-collapse callable extracts every
+        // position; the collapsed form loses parameter 1 and emitted false
+        // TS7006 on the zustand devtools `as NamedSet<S>` arrow). Instead,
+        // env-evaluate each signature's parameter types in place — the same
+        // service the mono path below provides — so deferred forms like the
+        // rebuilt overloads' `[...TakeTwo<Sa>, action?: Action]` rest tuples
+        // reduce (and spread-of-tuple normalization flattens them) while the
+        // overload set survives for the per-signature extractors.
+        if let Some(shape_id) =
+            crate::query_boundaries::common::callable_shape_id(self.ctx.types, expected)
+        {
+            let shape = self.ctx.types.callable_shape(shape_id);
+            if shape.call_signatures.len() > 1 {
+                let mut rebuilt = shape.as_ref().clone();
+                let mut changed = false;
+                for sig in &mut rebuilt.call_signatures {
+                    if !sig.type_params.is_empty() {
+                        continue;
+                    }
+                    for param in &mut sig.params {
+                        let evaluated = self.evaluate_type_with_env(param.type_id);
+                        if evaluated != param.type_id
+                            && evaluated != TypeId::ERROR
+                            && evaluated != TypeId::UNKNOWN
+                        {
+                            param.type_id = evaluated;
+                            changed = true;
+                        }
+                    }
+                }
+                if changed {
+                    return self.ctx.types.callable(rebuilt);
+                }
+                return expected;
+            }
+        }
+
         let Some(mut shape) = crate::query_boundaries::checkers::call::get_contextual_signature(
             self.ctx.types,
             expected,
