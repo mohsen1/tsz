@@ -967,7 +967,10 @@ export function copy(a: number[]): number[] {
 }
 
 #[test]
-fn compile_es5_downlevel_iteration_single_call_spread_uses_read() {
+fn compile_es5_downlevel_iteration_config_reports_removed_options() {
+    // TS 7.0.2 removed `target: es5` (TS5108) and `downlevelIteration`
+    // (TS5102): the config is rejected and nothing is emitted, regardless of
+    // `ignoreDeprecations`.
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -999,25 +1002,43 @@ export const value = f(...s);
     let args = default_args();
     let result = compile(&args, base).expect("compile should succeed");
 
-    assert!(
-        result.diagnostics.is_empty(),
-        "Should compile without errors: {:?}",
+    let mut codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    codes.sort_unstable();
+    assert_eq!(
+        codes,
+        [5102, 5108],
+        "expected removed-option rejections: {:?}",
         result.diagnostics
     );
-
-    let js = std::fs::read_to_string(base.join("dist/src/calls.js")).expect("read js");
     assert!(
-        js.contains("f.apply(void 0, __spreadArray([], __read(s), false))"),
-        "single call spread with downlevelIteration should read iterables before apply:\n{js}"
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.message_text
+                == "Option 'target=ES5' has been removed. Please remove it from your configuration."),
+        "expected the target=ES5 removal message: {:?}",
+        result.diagnostics
     );
     assert!(
-        !js.contains("f.apply(void 0, s)"),
-        "single call spread must not pass iterable directly to apply:\n{js}"
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.message_text
+                == "Option 'downlevelIteration' has been removed. Please remove it from your configuration."),
+        "expected the downlevelIteration removal message: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !base.join("dist").exists(),
+        "removed-option config must not emit, emitted: {:?}",
+        result.emitted_files
     );
 }
 
 #[test]
-fn compile_es5_array_spread_packs_sparse_spread_segments() {
+fn compile_es5_target_config_is_rejected_as_removed() {
+    // TS 7.0.2 removed `target: es5`: the sole diagnostic is TS5108 (the
+    // other options here are all still valid) and nothing is emitted.
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -1047,20 +1068,21 @@ export const middle = [1, ...xs, 4];
     let args = default_args();
     let result = compile(&args, base).expect("compile should succeed");
 
-    assert!(
-        result.diagnostics.is_empty(),
-        "Should compile without errors: {:?}",
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(
+        codes,
+        [5108],
+        "expected only the target=ES5 removal: {:?}",
         result.diagnostics
     );
-
-    let js = std::fs::read_to_string(base.join("dist/src/arrays.js")).expect("read js");
-    assert!(
-        js.contains("__spreadArray(__spreadArray([], xs, true), [4], false)"),
-        "leading sparse spread should pack holes before appending literals:\n{js}"
+    assert_eq!(
+        result.diagnostics[0].message_text,
+        "Option 'target=ES5' has been removed. Please remove it from your configuration."
     );
     assert!(
-        js.contains("__spreadArray(__spreadArray([1], xs, true), [4], false)"),
-        "middle sparse spread should pack holes between literal segments:\n{js}"
+        !base.join("dist").exists(),
+        "removed-option config must not emit, emitted: {:?}",
+        result.emitted_files
     );
 }
 
@@ -1369,7 +1391,11 @@ export function getSecond(arr: number[]): number {
 }
 
 #[test]
-fn compile_es5_downlevel_iteration_array_rest_reads_full_iterator() {
+fn compile_es5_downlevel_iteration_rejection_suppresses_emit() {
+    // Adjacent case to the removed-option pins above: a different option
+    // spelling order and an explicit `lib` list must not change the outcome —
+    // TS 7.0.2 rejects `target: es5` (TS5108) plus `downlevelIteration`
+    // (TS5102) and emits nothing.
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -1400,24 +1426,18 @@ console.log(first, rest.join(","));
     let args = default_args();
     let result = compile(&args, base).expect("compile should succeed");
 
-    assert!(
-        result.diagnostics.is_empty(),
-        "Should compile without errors: {:?}",
+    let mut codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    codes.sort_unstable();
+    assert_eq!(
+        codes,
+        [5102, 5108],
+        "expected removed-option rejections: {:?}",
         result.diagnostics
     );
-
-    let js = std::fs::read_to_string(base.join("dist/src/rest.js")).expect("read js");
     assert!(
-        js.contains("__read(iter)"),
-        "array rest binding should read the full iterator: {js}"
-    );
-    assert!(
-        !js.contains("__read(iter, 1)"),
-        "array rest binding must not truncate the iterator read: {js}"
-    );
-    assert!(
-        js.contains("rest = _a.slice(1)") || js.contains("rest = _b.slice(1)"),
-        "array rest binding should slice after the fixed element: {js}"
+        !base.join("dist").exists(),
+        "removed-option config must not emit, emitted: {:?}",
+        result.emitted_files
     );
 }
 

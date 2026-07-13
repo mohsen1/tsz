@@ -256,7 +256,11 @@ fn outfile_non_amd_system_skips_external_module_js_chunk() {
 }
 
 #[test]
-fn outfile_skips_node_modules_source_js_chunk() {
+fn outfile_reports_removed_options_and_bundler_conflict() {
+    // TS 7.0.2 removed `--module system` (TS5108) and `--outFile` (TS5102),
+    // and `--moduleResolution bundler` is incompatible with the System module
+    // kind (TS5095). The command-line form is rejected exactly like the
+    // tsconfig form and nothing is bundled.
     let temp = tempdir().unwrap();
     let dep = temp.path().join("node_modules/projB/index.ts");
     std::fs::create_dir_all(dep.parent().unwrap()).unwrap();
@@ -282,13 +286,19 @@ fn outfile_skips_node_modules_source_js_chunk() {
         "a.ts",
     ])
     .unwrap();
-    compile(&args, temp.path()).unwrap();
-    let output = std::fs::read_to_string(temp.path().join("out.js")).unwrap();
+    let result = compile(&args, temp.path()).unwrap();
 
-    assert!(!output.contains("projB/index"));
+    let mut codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    codes.sort_unstable();
     assert_eq!(
-        output,
-        "System.register(\"a\", [], function (exports_1, context_1) {\n    \"use strict\";\n    var __moduleName = context_1 && context_1.id;\n    return {\n        setters: [],\n        execute: function () {\n        }\n    };\n});"
+        codes,
+        [5095, 5102, 5108],
+        "expected bundler-conflict + removed-option rejections: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !temp.path().join("out.js").exists(),
+        "removed-option command line must not emit a bundle"
     );
 }
 
