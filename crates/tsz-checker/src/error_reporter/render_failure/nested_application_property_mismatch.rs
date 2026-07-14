@@ -9,13 +9,13 @@ impl<'a> CheckerState<'a> {
         // Resolve to the application form, either directly or through the type's
         // display alias (the structural value may carry an `Id<…>` alias).
         let (app_type, base) = if let Some((base, _)) =
-            crate::query_boundaries::common::application_info(self.ctx.types, type_id)
+            crate::query_boundaries::diagnostics::application_info(self.ctx.types, type_id)
         {
             (type_id, base)
         } else {
             let alias = self.ctx.types.get_display_alias(type_id)?;
             let (base, _) =
-                crate::query_boundaries::common::application_info(self.ctx.types, alias)?;
+                crate::query_boundaries::diagnostics::application_info(self.ctx.types, alias)?;
             (alias, base)
         };
         // Homomorphic/structural mapped-type aliases (`Partial<X>`, `Readonly<X>`,
@@ -100,11 +100,26 @@ impl<'a> CheckerState<'a> {
                 // reach this predicate (their evaluation is not an
                 // application mismatch), so bare-argument display for those
                 // is unaffected.
-                || crate::query_boundaries::common::is_union_type(db, ty)
+                || crate::query_boundaries::diagnostics::is_union_type(db, ty)
         }
 
         let source_eval = self.evaluate_type_for_assignability(source);
         let target_eval = self.evaluate_type_for_assignability(target);
+        // A TRANSPARENT alias chain (`type Wrap<V> = Inner<V>; type Inner<V> =
+        // V`) evaluates to its own type ARGUMENT; tsc collapses the display to
+        // the underlying type (`'1 | 2' is not assignable to '1'`), so the
+        // union arm below must not keep such applications at the head merely
+        // because the argument happens to be a union.
+        let transparent =
+            |db: &dyn tsz_solver::construction::TypeDatabase, app: TypeId, eval: TypeId| {
+                crate::query_boundaries::diagnostics::application_info(db, app)
+                    .is_some_and(|(_, args)| args.contains(&eval))
+            };
+        if transparent(self.ctx.types, source, source_eval)
+            && transparent(self.ctx.types, target, target_eval)
+        {
+            return false;
+        }
         structural_display_type(self.ctx.types, source_eval)
             || structural_display_type(self.ctx.types, target_eval)
     }
@@ -214,7 +229,7 @@ impl<'a> CheckerState<'a> {
         TypeId,
         TypeId,
     ) {
-        use crate::query_boundaries::common::SubtypeFailureReason as R;
+        use crate::query_boundaries::diagnostics::SubtypeFailureReason as R;
         let mut names = vec![self.ctx.types.resolve_atom_ref(first_name)];
         let mut cur_src = first_src;
         let mut cur_tgt = first_tgt;
@@ -335,9 +350,12 @@ impl<'a> CheckerState<'a> {
             let outer_is_structural = {
                 let eval_source = self.evaluate_type_for_assignability(source);
                 let eval_target = self.evaluate_type_for_assignability(target);
-                crate::query_boundaries::common::object_shape_for_type(self.ctx.types, eval_source)
-                    .is_some()
-                    || crate::query_boundaries::common::object_shape_for_type(
+                crate::query_boundaries::diagnostics::object_shape_for_type(
+                    self.ctx.types,
+                    eval_source,
+                )
+                .is_some()
+                    || crate::query_boundaries::diagnostics::object_shape_for_type(
                         self.ctx.types,
                         eval_target,
                     )
@@ -646,9 +664,12 @@ impl<'a> CheckerState<'a> {
     /// historical `<name>()` suffix.
     fn call_signature_param_count(&mut self, type_id: TypeId) -> usize {
         let evaluated = self.evaluate_type_for_assignability(type_id);
-        crate::query_boundaries::common::callable_shape_for_type_extended(self.ctx.types, evaluated)
-            .and_then(|shape| shape.call_signatures.first().map(|sig| sig.params.len()))
-            .unwrap_or(0)
+        crate::query_boundaries::diagnostics::callable_shape_for_type_extended(
+            self.ctx.types,
+            evaluated,
+        )
+        .and_then(|shape| shape.call_signatures.first().map(|sig| sig.params.len()))
+        .unwrap_or(0)
     }
 
     /// Append the inner return-type relation beneath the member header at

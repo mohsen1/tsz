@@ -36,8 +36,13 @@ pub(crate) use super::common::{
 // `error_reporter/` missing-property presentation depends on `diagnostics`
 // exclusively for its display-shape reads (issue #12947). The boundary owns the
 // `IndexSignatureResolver`; call sites ask for the fact, not the resolver.
+pub(crate) use super::common::{
+    SubtypeFailureReason, contains_lazy_or_recursive, split_nullish_type, unique_symbol_ref,
+    walk_referenced_types,
+};
 pub(crate) use super::index_signature::{IndexKind, has_index_signature};
 pub(crate) use tsz_solver::type_queries::AssignmentNumericDisplayChildren;
+pub(crate) use tsz_solver::type_queries::is_this_type;
 
 /// Resolve the binder symbol backing an object type, for diagnostic
 /// elaboration (spelling suggestions, missing-property anchors). Used only by

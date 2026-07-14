@@ -1408,7 +1408,10 @@ ROOT_SOLVER_EXPLICIT_REEXPORT_COUNT_CHECKS = [
 # instantiation / parameter-list / redeclaration-widening callers now route
 # through their domain boundaries instead of the common barrel, and the
 # arch-smoke run caught remaining live-count slack.
-QUERY_BOUNDARY_COMMON_REFERENCE_BASELINE = 3050
+# Ratcheted 3050 -> 3049 by the 2026-07-14 goal campaign: the declaration-emit
+# portability walk, nested-application display, and object-literal request-facts
+# callers now route through the `diagnostics` boundary.
+QUERY_BOUNDARY_COMMON_REFERENCE_BASELINE = 3049
 
 # Temporary green-campaign headroom for #14351. Guard tests keep the baseline
 # tight underneath this reserve, so reductions still force ratchets while urgent

@@ -391,7 +391,9 @@ objAndReadonly({ x: 0, y: 0 }, { x: 1 });
         },
     );
 
-    let message = diagnostic_message(&diagnostics, 2345).expect("expected TS2345");
+    // tsc 7.0.2 promotes the sole missing-property failure to the TS2741 head;
+    // the widened application display is unchanged.
+    let message = diagnostic_message(&diagnostics, 2741).expect("expected TS2741");
     assert!(
         message.contains("MyReadonly<{ x: number; y: number; }>"),
         "Expected mapped application target display to widen fresh object args.\nActual diagnostics: {diagnostics:#?}"

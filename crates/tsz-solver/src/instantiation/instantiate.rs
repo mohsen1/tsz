@@ -1149,6 +1149,7 @@ impl<'a> TypeInstantiator<'a> {
 }
 
 mod api;
+mod api_lazy;
 mod cache_stability;
 mod conditional;
 mod display_properties;
@@ -1160,7 +1161,7 @@ mod signatures;
 mod substitution;
 
 pub use self::api::*;
-use self::api::{
+use self::api_lazy::{
     conditional_condition_needs_resolver, index_access_operand_needs_resolver,
     mapped_constraint_needs_resolver, template_has_lazy_application_in_composite,
     type_contains_lazy_application,

@@ -29,7 +29,11 @@ class B extends A {
 }
 
 #[test]
-fn empty_augments_prevents_base_property_merge() {
+fn empty_augments_keeps_base_property_merge() {
+    // Oracle-refuted premise (#15752): an empty `@augments` does NOT sever the
+    // real `extends A` clause — tsc 7.0.2 keeps the heritage edge (it reports
+    // only the malformed-tag TS8023/TS1003), so `this.x` resolves through the
+    // base with no TS2339.
     let source = r#"
 class A { constructor() { this.x = 0; } }
 /** @augments */
@@ -42,8 +46,8 @@ class B extends A {
     let diags = check_js_with_jsdoc(source);
     let codes: Vec<u32> = diags.iter().map(|(c, _)| *c).collect();
     assert!(
-        codes.contains(&2339),
-        "expected TS2339 for this.x on B with empty @augments, got {codes:?}"
+        !codes.contains(&2339),
+        "empty @augments keeps the extends edge, so base property access is allowed, got {codes:?}"
     );
 }
 

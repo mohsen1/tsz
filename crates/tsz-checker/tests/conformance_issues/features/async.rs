@@ -336,11 +336,10 @@ class Test {
 
     assert!(
         diagnostics.iter().any(|(code, message)| {
-            *code == 2345
-                && message.contains("Argument of type")
-                && message.contains("is not assignable to parameter of type 'State'")
+            *code == 2739
+                && message.contains("is missing the following properties from type 'State': a, b")
         }),
-        "Expected TS2345 for computed object literal argument mismatch.\nActual diagnostics: {diagnostics:#?}"
+        "Expected TS2739 (tsc 7.0.2 promotes the missing-property head) for computed object literal argument mismatch.\nActual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -371,9 +370,8 @@ setState({
 
     assert!(
         diagnostics.iter().any(|(code, message)| {
-            *code == 2345
-                && message.contains("Argument of type")
-                && message.contains("is not assignable to parameter of type 'State'")
+            *code == 2739
+                && message.contains("is missing the following properties from type 'State': a, b")
         }),
         "Expected TS2345 for direct computed object literal argument mismatch.\nActual diagnostics: {diagnostics:#?}"
     );
@@ -410,9 +408,8 @@ class Test {
 
     assert!(
         diagnostics.iter().any(|(code, message)| {
-            *code == 2345
-                && message.contains("Argument of type")
-                && message.contains("is not assignable to parameter of type 'State'")
+            *code == 2739
+                && message.contains("is missing the following properties from type 'State': a, b")
         }),
         "Expected TS2345 for computed object literal mismatch in class field arrow Object.entries path.\nActual diagnostics: {diagnostics:#?}"
     );

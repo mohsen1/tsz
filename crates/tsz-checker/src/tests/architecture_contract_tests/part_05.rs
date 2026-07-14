@@ -144,7 +144,7 @@ fn test_enum_arithmetic_and_widening_facts_use_enum_analysis_boundary() {
         // `types/utilities/core.rs` (the fresh enum-member-access probe and
         // the member-to-parent `DefId` resolution the widening helpers share).
         (
-            "src/types/utilities/core.rs",
+            "src/types/utilities/widening.rs",
             "enum_query::enum_member_parent_def_id(",
         ),
         (

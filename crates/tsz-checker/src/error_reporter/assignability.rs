@@ -28,15 +28,41 @@ impl<'a> CheckerState<'a> {
     /// Get the declaring type name for a property in a target type.
     /// For inherited properties (e.g., from a base class), returns the base class name.
     /// Falls back to formatting the target type if no parent info is available.
+    ///
+    /// Returns `None` when the property is declared on the target type ITSELF:
+    /// tsc then renders the full target display (`A<unknown>`, not the bare
+    /// class symbol `A`) — the declaring-type shortcut is only for genuinely
+    /// inherited members.
     pub(super) fn property_declaring_type_name(
         &self,
         target_type: TypeId,
         property_name: tsz_common::interner::Atom,
     ) -> Option<String> {
         let prop_info = self.property_info_for_display(target_type, property_name)?;
-        prop_info
-            .parent_id
-            .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+        let parent_id = prop_info.parent_id?;
+        let own_symbol = crate::query_boundaries::diagnostics::object_shape_for_type(
+            self.ctx.types,
+            target_type,
+        )
+        .and_then(|shape| shape.symbol)
+        .or_else(|| {
+            crate::query_boundaries::diagnostics::callable_shape_for_type(
+                self.ctx.types,
+                target_type,
+            )
+            .and_then(|shape| shape.symbol)
+        })
+        .or_else(|| {
+            crate::query_boundaries::diagnostics::lazy_def_id(self.ctx.types, target_type)
+                .and_then(|def_id| self.ctx.def_symbol_identity(def_id))
+                .map(|(sym_id, _)| sym_id)
+        });
+        if own_symbol == Some(parent_id) {
+            return None;
+        }
+        self.ctx
+            .binder
+            .get_symbol(parent_id)
             .map(|sym| sym.escaped_name.clone())
     }
 

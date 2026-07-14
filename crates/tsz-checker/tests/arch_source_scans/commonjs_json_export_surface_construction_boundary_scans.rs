@@ -10,6 +10,7 @@ use std::path::Path;
 
 const EXPORTS_DETECTION: &str = "src/state/type_analysis/computed_commonjs/exports_detection.rs";
 const JS_EXPORTS_BOUNDARY: &str = "src/query_boundaries/js_exports.rs";
+const JS_EXPORTS_JSON_BOUNDARY: &str = "src/query_boundaries/js_exports_json.rs";
 
 fn checker_path(relative: &str) -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(relative)
@@ -72,8 +73,13 @@ fn commonjs_json_export_surface_construction_routes_through_boundary() {
 
 #[test]
 fn js_exports_boundary_owns_commonjs_json_surface_helpers() {
-    let source = fs::read_to_string(checker_path(JS_EXPORTS_BOUNDARY))
+    // The boundary spans `js_exports.rs` plus its `js_exports_json.rs` split
+    // (the JSON-module construction helpers). A helper owned by either file
+    // satisfies the boundary-ownership contract.
+    let core = fs::read_to_string(checker_path(JS_EXPORTS_BOUNDARY))
         .expect("failed to read query_boundaries/js_exports.rs");
+    let json = fs::read_to_string(checker_path(JS_EXPORTS_JSON_BOUNDARY))
+        .expect("failed to read query_boundaries/js_exports_json.rs");
 
     for helper in [
         "json_module_union",
@@ -90,8 +96,8 @@ fn js_exports_boundary_owns_commonjs_json_surface_helpers() {
         "commonjs_empty_namespace_type",
     ] {
         assert!(
-            defines_fn(&source, helper),
-            "query_boundaries::js_exports must own `{helper}`"
+            defines_fn(&core, helper) || defines_fn(&json, helper),
+            "query_boundaries::js_exports (or its js_exports_json split) must own `{helper}`"
         );
     }
 
@@ -103,7 +109,7 @@ fn js_exports_boundary_owns_commonjs_json_surface_helpers() {
         "Visibility::Public",
     ] {
         assert!(
-            source.contains(construction_pattern),
+            core.contains(construction_pattern) || json.contains(construction_pattern),
             "query_boundaries::js_exports should own `{construction_pattern}`"
         );
     }

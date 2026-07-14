@@ -113,13 +113,16 @@ fn missing_property_satisfies_nests_specific_message() {
              const r = o satisfies { a: string; ready: boolean };\n",
         ),
     ] {
-        let diag = single_satisfies_diagnostic(source);
+        // tsc 7.0.2 promotes the sole missing-property failure to a FLAT
+        // TS2741 head (no TS1360 satisfies wrapper; related info carries only
+        // the "'{prop}' is declared here." note).
+        let diags = check_source(source, "test.ts", CheckerOptions::default());
         assert!(
-            diag.related_information.iter().any(|info| info
-                .message_text
-                .contains(&format!("Property '{prop}' is missing"))),
-            "missing-property message must be nested under the satisfies head, got: {:?}",
-            diag.related_information
+            diags.iter().any(|diag| diag.code == 2741
+                && diag
+                    .message_text
+                    .contains(&format!("Property '{prop}' is missing"))),
+            "expected the flat missing-property TS2741 head, got: {diags:?}"
         );
     }
 }

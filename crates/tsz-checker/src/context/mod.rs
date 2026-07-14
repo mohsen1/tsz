@@ -29,6 +29,7 @@ pub use cross_file_type_params_cache::{
 };
 pub(crate) mod constructors;
 mod core;
+mod core_module_resolution;
 pub use core::build_lib_file_local_names;
 mod cross_file_query;
 mod diagnostic_indices;

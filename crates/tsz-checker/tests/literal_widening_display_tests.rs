@@ -386,12 +386,14 @@ declare const Component: <T, K extends keyof T>(x: ListProps<T, K>) => void;
 Component({ items: [{ name: ' string' }], itemKey: 'name' });
 "#;
     let msgs = check_source_code_messages(source);
+    // tsc 7.0.2 promotes the sole missing-property failure to the TS2741 head;
+    // the widened displays are unchanged.
     assert_eq!(
         msgs,
         vec![(
-            2345_u32,
-            "Argument of type '{ items: { name: string; }[]; itemKey: \"name\"; }' is not \
-             assignable to parameter of type 'ListProps<{ name: string; }, \"name\">'."
+            2741_u32,
+            "Property 'prop' is missing in type '{ items: { name: string; }[]; itemKey: \"name\"; }' \
+             but required in type 'ListProps<{ name: string; }, \"name\">'."
                 .to_string()
         )],
     );
@@ -407,18 +409,16 @@ const arg = { a: "x", m() { return "y"; } };
 g(arg);
 "#;
     let diags = check_source_diagnostics(source);
-    let mut related: Vec<String> = Vec::new();
-    for diag in &diags {
-        for info in &diag.related_information {
-            related.push(info.message_text.clone());
-        }
-    }
-    assert_eq!(
-        related,
-        vec![
-            "Property 'b' is missing in type '{ a: string; m(): string; }' but required in type \
-             '{ a: string; b: number; m(): string; }'."
-                .to_string()
-        ],
+    // tsc 7.0.2 promotes the missing-property text to the TS2741 HEAD (the
+    // related information carries only the "'b' is declared here." note); the
+    // widened displays are unchanged.
+    assert!(
+        diags.iter().any(|diag| {
+            diag.code == 2741
+                && diag.message_text
+                    == "Property 'b' is missing in type '{ a: string; m(): string; }' but \
+                        required in type '{ a: string; b: number; m(): string; }'."
+        }),
+        "expected the widened missing-property TS2741 head, got: {diags:?}"
     );
 }

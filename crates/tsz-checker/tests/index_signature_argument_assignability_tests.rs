@@ -31,12 +31,15 @@ fn assert_none(code: u32, source: &str) {
 }
 
 const TS2345: u32 = diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE;
+// tsc 7.0.2 promotes the missing-property head for single-object targets
+// (TS2739 when 2+ properties are missing).
+const TS2739: u32 = diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE;
 const TS2322: u32 = diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE;
 
 #[test]
 fn string_index_unknown_to_concrete_type_is_ts2345() {
     assert_has(
-        TS2345,
+        TS2739,
         r#"
 type State = { a: number; b: string };
 declare function processState(state: State): void;
@@ -50,7 +53,7 @@ processState(data);
 #[test]
 fn computed_key_destructuring_then_pass_source_is_ts2345() {
     assert_has(
-        TS2345,
+        TS2739,
         r#"
 type State = { a: number; b: string };
 declare function processState(state: State): void;
@@ -65,7 +68,7 @@ processState(data);
 #[test]
 fn string_literal_computed_key_destructure_then_pass_source_is_ts2345() {
     assert_has(
-        TS2345,
+        TS2739,
         r#"
 type State = { a: number; b: string };
 declare function processState(state: State): void;

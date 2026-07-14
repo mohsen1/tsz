@@ -37,8 +37,8 @@ fn duplicate_private_untyped_member_emits_ts7008_once() {
     );
     assert_eq!(
         count(&codes, TS2300),
-        1,
-        "duplicate still flagged: {codes:?}"
+        2,
+        "duplicate flagged at every declaration site: {codes:?}"
     );
 }
 
@@ -47,7 +47,7 @@ fn duplicate_public_untyped_member_emits_ts7008_once_renamed() {
     // Same shape, public field, different binder names: still one TS7008.
     let codes = check_source_strict_codes("class Widget { handle; handle; }");
     assert_eq!(count(&codes, TS7008), 1, "{codes:?}");
-    assert_eq!(count(&codes, TS2300), 1, "{codes:?}");
+    assert_eq!(count(&codes, TS2300), 2, "{codes:?}");
 }
 
 #[test]
@@ -55,7 +55,7 @@ fn triple_untyped_member_emits_ts7008_once() {
     // Three declarations: TS7008 once, TS2300 on each redeclaration.
     let codes = check_source_strict_codes("class Box { slot; slot; slot; }");
     assert_eq!(count(&codes, TS7008), 1, "{codes:?}");
-    assert_eq!(count(&codes, TS2300), 2, "{codes:?}");
+    assert_eq!(count(&codes, TS2300), 3, "{codes:?}");
 }
 
 #[test]
@@ -64,7 +64,7 @@ fn interleaved_distinct_names_each_get_one_ts7008() {
     // the second `p` is the redeclaration (TS2300 only).
     let codes = check_source_strict_codes("class Grid { row; col; row; }");
     assert_eq!(count(&codes, TS7008), 2, "{codes:?}");
-    assert_eq!(count(&codes, TS2300), 1, "{codes:?}");
+    assert_eq!(count(&codes, TS2300), 2, "{codes:?}");
 }
 
 #[test]
@@ -80,7 +80,7 @@ fn duplicate_static_untyped_member_emits_ts7008_once() {
     // `static t; static t;` is a duplicate static symbol: TS7008 once + TS2300.
     let codes = check_source_strict_codes("class Pool { static node; static node; }");
     assert_eq!(count(&codes, TS7008), 1, "{codes:?}");
-    assert_eq!(count(&codes, TS2300), 1, "{codes:?}");
+    assert_eq!(count(&codes, TS2300), 2, "{codes:?}");
 }
 
 #[test]
@@ -89,7 +89,7 @@ fn redeclaration_after_initialized_member_has_no_ts7008() {
     // implicit-any; the un-annotated redeclaration must not get TS7008.
     let codes = check_source_strict_codes("class Acc { total = 1; total; }");
     assert_eq!(count(&codes, TS7008), 0, "{codes:?}");
-    assert_eq!(count(&codes, TS2300), 1, "{codes:?}");
+    assert_eq!(count(&codes, TS2300), 2, "{codes:?}");
 }
 
 #[test]
@@ -97,7 +97,7 @@ fn redeclaration_after_typed_member_has_no_ts7008() {
     // First decl is typed; the un-annotated redeclaration must not get TS7008.
     let codes = check_source_strict_codes("class Pt { value: number; value; }");
     assert_eq!(count(&codes, TS7008), 0, "{codes:?}");
-    assert_eq!(count(&codes, TS2300), 1, "{codes:?}");
+    assert_eq!(count(&codes, TS2300), 2, "{codes:?}");
 }
 
 #[test]

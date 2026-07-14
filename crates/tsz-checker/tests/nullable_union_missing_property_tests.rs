@@ -167,21 +167,20 @@ function make(): Result0 | undefined { return { ok: true }; }
 }
 
 #[test]
-fn argument_position_nullable_union_stays_ts2345() {
-    // The argument path keeps TS2345 with the missing-property elaboration —
-    // promotion to TS2741 is only for the assignment/return contexts.
+fn argument_position_nullable_union_is_ts2741() {
+    // tsc 7.0.2 promotes the missing-property head in the argument context
+    // too: the nullable union strips to the single member `Opts`, so the
+    // promotion is licensed and the head is TS2741.
     let src = r#"
 interface Opts { a: number; b: string; }
 declare function run(o: Opts | null): void;
 run({ a: 1 });
 "#;
-    assert_eq!(codes(src), vec![2345]);
-    // The argument header stays TS2345 and the parameter is shown as the
-    // single non-nullish member `Opts`, not the nullable union.
+    assert_eq!(codes(src), vec![2741]);
     assert!(has_code_message(
         src,
-        2345,
-        "Argument of type '{ a: number; }' is not assignable to parameter of type 'Opts'.",
+        2741,
+        "Property 'b' is missing in type '{ a: number; }' but required in type 'Opts'.",
     ));
 }
 

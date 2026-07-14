@@ -173,5 +173,8 @@ class C { children: C[] = []; m(): void {} }
 const n = new C();
 n.children.push(new A());
 "#;
-    assert_eq!(ts2345(source), 1);
+    // From outside, the receiver resolves `this` to the CONCRETE `C`, so tsc
+    // 7.0.2 promotes the missing-property head: TS2739 (children, m), not the
+    // generic TS2345 kept for polymorphic `this` targets.
+    assert_eq!(diagnostic_count(&check(source), 2739), 1);
 }

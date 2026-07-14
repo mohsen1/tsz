@@ -264,24 +264,30 @@ impl<'a> CheckerState<'a> {
         // the synthetic `{ default: T }` shape instead of erroring, so the 7.0.2
         // corpus contains no TS2497 at all. The branch stays for explicit
         // interop-off configs until removed-option (TS5108) modeling lands.
-        if !self.ctx.allow_synthetic_default_imports()
-            && (has_namespace_import || has_non_default_named_imports)
+        if (has_namespace_import || has_non_default_named_imports)
             && !clause.is_type_only
             && let Some(ref table) = exports_table
             && table.has("export=")
             && self.export_equals_target_is_not_module_or_variable(table)
             && !named_imports_resolve_via_export_equals_target
         {
-            let flag_name = self.ctx.synthetic_default_import_flag_name();
-            let message = format_message(
+            // The module-level TS2497 stays gated on interop being off, but
+            // the per-specifier TS2616/TS2595/TS2597 below fire regardless:
+            // tsc 7.0.2 still rejects a NAMED import of an `export =`
+            // non-module/non-variable target with esModuleInterop on
+            // (`import { Foo } from "./a"` over `export = Foo` is TS2616).
+            if !self.ctx.allow_synthetic_default_imports() {
+                let flag_name = self.ctx.synthetic_default_import_flag_name();
+                let message = format_message(
                     diagnostic_messages::THIS_MODULE_CAN_ONLY_BE_REFERENCED_WITH_ECMASCRIPT_IMPORTS_EXPORTS_BY_TURNING_ON,
                     &[flag_name],
                 );
-            self.error_at_node(
+                self.error_at_node(
                     import.module_specifier,
                     &message,
                     diagnostic_codes::THIS_MODULE_CAN_ONLY_BE_REFERENCED_WITH_ECMASCRIPT_IMPORTS_EXPORTS_BY_TURNING_ON,
                 );
+            }
 
             // For each named import specifier, emit an additional diagnostic
             // alongside TS2497 explaining how the symbol should be imported.

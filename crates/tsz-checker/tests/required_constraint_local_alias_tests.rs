@@ -60,7 +60,7 @@ type Use = Box<Source>;
 /// Sanity: a local alias unrelated to `Required` must keep the normal
 /// constraint check unchanged.
 #[test]
-fn local_marker_alias_constraint_emits_ts2344() {
+fn local_marker_alias_constraint_emits_ts2741() {
     let source = r#"
 type Marker<T> = { marker: string };
 
@@ -72,10 +72,12 @@ type Box<T extends Marker<Source>> = T;
 type Use = Box<Source>;
 "#;
     let diags = check_with_es2015(source);
-    let ts2344: Vec<&Diagnostic> = diags.iter().filter(|d| d.code == 2344).collect();
+    // tsc 7.0.2 promotes the missing-property head in the type-argument
+    // constraint context: TS2741 (Property 'marker' is missing).
+    let ts2741: Vec<&Diagnostic> = diags.iter().filter(|d| d.code == 2741).collect();
     assert!(
-        !ts2344.is_empty(),
-        "expected TS2344 for unrelated local alias, got: {diags:?}"
+        !ts2741.is_empty(),
+        "expected TS2741 for unrelated local alias, got: {diags:?}"
     );
 }
 

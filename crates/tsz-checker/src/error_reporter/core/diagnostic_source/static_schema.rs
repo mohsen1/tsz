@@ -346,7 +346,14 @@ impl<'a> CheckerState<'a> {
         }
         if let Some(schema_type) = self.static_schema_application_schema_type(type_id) {
             let schema_type = self.evaluate_type_for_assignability(schema_type);
-            return self.typebox_schema_static_type(schema_type, depth + 1);
+            if let Some(reduced) = self.typebox_schema_static_type(schema_type, depth + 1) {
+                return Some(reduced);
+            }
+            // A self-referential schema alias (`type X = Static<typeof X>`)
+            // evaluates to a body whose display alias unwraps back to the SAME
+            // schema, so the projection above ping-pongs to the depth cap and
+            // yields nothing. The evaluated body is already the projected
+            // object — fall through and reduce its members structurally.
         }
 
         let type_id = self.evaluate_type_for_assignability(type_id);
@@ -492,6 +499,18 @@ impl<'a> CheckerState<'a> {
         other: TypeId,
     ) -> String {
         let rebuilt = self.static_schema_array_display_type(static_type);
-        self.format_assignability_type_for_message(rebuilt, other)
+        // The reduced element of a self-referential `Static<typeof X>` schema
+        // IS the alias body, so it carries a `display_alias` back to `X` and
+        // the alias-respecting formatter collapses the whole display to
+        // `X[]`. Render the structural shape; keep the peer-aware formatter
+        // for alias-free reductions (identical output there).
+        let display = self.format_type_for_assignability_message_skip_object_display_alias(rebuilt);
+        if display.ends_with("[]") && !display.contains('{') {
+            // The skip-alias render still produced a bare name (e.g. the
+            // element reduced to a named non-object): fall back to the
+            // peer-aware formatter for the historical display.
+            return self.format_assignability_type_for_message(rebuilt, other);
+        }
+        display
     }
 }

@@ -43,19 +43,20 @@ function test(x: A | B) {
 }
 "#;
     let diags = diagnostic_messages(src);
-    let ts2345 = diags
+    // tsc 7.0.2 promotes the sole missing-property failure to the TS2741 head.
+    let ts2741 = diags
         .iter()
-        .find(|(code, _)| *code == 2345)
-        .expect("expected TS2345 for acceptA(x) under instanceof B narrowing");
+        .find(|(code, _)| *code == 2741)
+        .expect("expected TS2741 for acceptA(x) under instanceof B narrowing");
     assert!(
-        ts2345.1.contains("Argument of type 'B'"),
-        "TS2345 argument should display the narrowed 'B', got: {}",
-        ts2345.1
+        ts2741.1.contains("missing in type 'B'"),
+        "TS2741 argument should display the narrowed 'B', got: {}",
+        ts2741.1
     );
     assert!(
-        !ts2345.1.contains("'A | B'"),
-        "TS2345 must not display the pre-narrowing union 'A | B', got: {}",
-        ts2345.1
+        !ts2741.1.contains("'A | B'"),
+        "TS2741 must not display the pre-narrowing union 'A | B', got: {}",
+        ts2741.1
     );
 }
 
@@ -75,24 +76,26 @@ function test<T>(x: A<T> | B<T>) {
 }
 "#;
     let diags = diagnostic_messages(src);
-    let ts2345 = diags
+    // tsc 7.0.2 promotes the sole missing-property failure to the TS2741 head;
+    // the "required in" target keeps the instantiated form (`A<unknown>`).
+    let ts2741 = diags
         .iter()
-        .find(|(code, _)| *code == 2345)
-        .expect("expected TS2345 for acceptA(x) under generic instanceof B narrowing");
+        .find(|(code, _)| *code == 2741)
+        .expect("expected TS2741 for acceptA(x) under generic instanceof B narrowing");
     assert!(
-        ts2345.1.contains("Argument of type 'B<T>'"),
-        "TS2345 argument should display the narrowed 'B<T>', got: {}",
-        ts2345.1
+        ts2741.1.contains("missing in type 'B<T>'"),
+        "TS2741 argument should display the narrowed 'B<T>', got: {}",
+        ts2741.1
     );
     assert!(
-        ts2345.1.contains("parameter of type 'A<unknown>'"),
-        "TS2345 parameter should default unbound T to 'unknown', got: {}",
-        ts2345.1
+        ts2741.1.contains("required in type 'A<unknown>'"),
+        "TS2741 target should default unbound T to 'unknown', got: {}",
+        ts2741.1
     );
     assert!(
-        !ts2345.1.contains("'A<T> | B<T>'") && !ts2345.1.contains("'A<unknown> | B<T>'"),
-        "TS2345 must not display the pre-narrowing union, got: {}",
-        ts2345.1
+        !ts2741.1.contains("'A<T> | B<T>'") && !ts2741.1.contains("'A<unknown> | B<T>'"),
+        "TS2741 must not display the pre-narrowing union, got: {}",
+        ts2741.1
     );
 }
 
@@ -113,18 +116,19 @@ function dispatch<W>(value: Alpha<W> | Beta<W>) {
 }
 "#;
     let diags = diagnostic_messages(src);
-    let ts2345 = diags
+    // tsc 7.0.2 promotes the sole missing-property failure to the TS2741 head.
+    let ts2741 = diags
         .iter()
-        .find(|(code, _)| *code == 2345)
-        .expect("expected TS2345 for take(value) under instanceof Beta narrowing");
+        .find(|(code, _)| *code == 2741)
+        .expect("expected TS2741 for take(value) under instanceof Beta narrowing");
     assert!(
-        ts2345.1.contains("Argument of type 'Beta<W>'"),
-        "TS2345 argument should display the narrowed 'Beta<W>', got: {}",
-        ts2345.1
+        ts2741.1.contains("missing in type 'Beta<W>'"),
+        "TS2741 argument should display the narrowed 'Beta<W>', got: {}",
+        ts2741.1
     );
     assert!(
-        ts2345.1.contains("parameter of type 'Alpha<unknown>'"),
-        "TS2345 parameter should default unbound Z to 'unknown', got: {}",
-        ts2345.1
+        ts2741.1.contains("required in type 'Alpha<unknown>'"),
+        "TS2741 target should default unbound Z to 'unknown', got: {}",
+        ts2741.1
     );
 }

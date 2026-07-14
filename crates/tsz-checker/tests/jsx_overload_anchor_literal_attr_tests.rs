@@ -60,21 +60,19 @@ const b4 = <MainButton goTo="home" extra />;
         !ts2769.is_empty(),
         "Expected at least one TS2769. Got: {diags:?}"
     );
-    // Determine the byte offset of `MainButton` (the JSX tag identifier
-    // after the `<`) — that's where tsc anchors when overloads disagree
-    // on which attribute fails.
-    let main_button_open = source
-        .rfind("<MainButton")
-        .expect("repro must contain `<MainButton goTo=\"home\" extra />`");
-    let tag_start = main_button_open + "<".len();
-    // Find the `goTo` attribute name position too — that's where tsz
-    // used to (incorrectly) anchor before the fix.
-    let go_to_pos = source.rfind("goTo=").expect("repro must contain goTo=");
+    // tsc 7.0.2 anchors TS2769 at the attribute that fails the *last*
+    // overload. `goTo="home"` satisfies LinkProps, so only the excess `extra`
+    // attribute fails and tsc points at `extra` (verified against upstream
+    // fixture contextuallyTypedStringLiteralsInJsxAttributes02.tsx b4:
+    // `(40,36)`).
+    let extra_pos = source
+        .rfind("extra ")
+        .expect("repro must contain the `extra ` attribute");
 
     for (_, start, _) in &ts2769 {
         assert!(
-            *start as usize == tag_start,
-            "TS2769 must anchor at the `MainButton` tag (offset {tag_start}), not the `goTo` attribute (offset {go_to_pos}). Got start={start}."
+            *start as usize == extra_pos,
+            "TS2769 must anchor at the failing `extra` attribute (offset {extra_pos}). Got start={start}."
         );
     }
 }
@@ -105,13 +103,16 @@ const e4 = <TestingOptional y1="hello" y2={{1000}}>Hi</TestingOptional>;
         "Body text should reject every SFC overload and emit one TS2769. Got: {diags:?}"
     );
 
-    let tag_start = source
-        .rfind("<TestingOptional")
-        .expect("repro must contain `<TestingOptional`")
-        + "<".len();
+    // tsc 7.0.2 anchors TS2769 at the attribute that fails the *last*
+    // overload. The last SFC overload requires `y1: boolean`, so `y1="hello"`
+    // (string) is the failing attribute and tsc points at `y1` (verified:
+    // `(14,29)`).
+    let y1_pos = source
+        .rfind("y1=")
+        .expect("repro must contain the `y1=` attribute");
     let (_, start, _) = ts2769[0];
     assert_eq!(
-        *start as usize, tag_start,
-        "TS2769 should anchor at the JSX tag when synthesized children participate in SFC overload resolution"
+        *start as usize, y1_pos,
+        "TS2769 should anchor at the failing `y1` attribute for SFC overload resolution"
     );
 }

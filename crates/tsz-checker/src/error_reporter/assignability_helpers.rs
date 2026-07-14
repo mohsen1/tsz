@@ -1308,8 +1308,73 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
     ) -> bool {
         crate::query_boundaries::diagnostics::tuple_elements(self.ctx.types, target).is_none()
+            && !self.target_is_multi_member_object_union(target)
+            && !self.target_keeps_generic_head_for_promotion(target)
             && !crate::query_boundaries::diagnostics::contains_error_type(self.ctx.types, source)
             && !self.source_class_heritage_chain_errored(source)
+    }
+
+    /// Targets for which tsc keeps the generic TS2345/TS2344 head even when
+    /// the failure is a sole missing property: a polymorphic `this` type and
+    /// an intersection (including a type parameter whose constraint is an
+    /// intersection — `T extends Named & Aged` nests the missing-property
+    /// line instead of promoting it).
+    fn target_keeps_generic_head_for_promotion(&mut self, target: TypeId) -> bool {
+        if crate::query_boundaries::diagnostics::is_this_type(self.ctx.types, target) {
+            return true;
+        }
+        let constrained =
+            crate::query_boundaries::diagnostics::type_parameter_constraint(self.ctx.types, target)
+                .unwrap_or(target);
+        // The constraint may already be flattened into a single object that
+        // carries only a display alias back to the written intersection
+        // (`Named & Aged`); judge the promotion by the written form.
+        let named = self
+            .ctx
+            .types
+            .get_display_alias(constrained)
+            .unwrap_or(constrained);
+        crate::query_boundaries::diagnostics::intersection_members(self.ctx.types, constrained)
+            .is_some()
+            || crate::query_boundaries::diagnostics::intersection_members(self.ctx.types, named)
+                .is_some()
+    }
+
+    /// True when `target` is a union that still has two or more members after
+    /// stripping nullish members. tsc licenses the missing-property head
+    /// promotion (TS2741/2739/2740) only when the target reduces to a SINGLE
+    /// object type — a nullable union that nullish-strips to one member
+    /// (`Opts | null`) still promotes, but a genuine multi-member object union
+    /// (`Subscribable<any> | Subscribable<never>`) keeps the generic
+    /// TS2345/TS2344 head even when the property is missing in every member.
+    fn target_is_multi_member_object_union(&mut self, target: TypeId) -> bool {
+        let evaluated = self.evaluate_type_for_assignability(target);
+        let members = diagnostic_query::union_members(self.ctx.types, evaluated).or_else(|| {
+            // The union may have been merged into a single evaluated
+            // object that carries only a display alias back to the alias
+            // APPLICATION (`ObservableInput<any>`); the alias def's BODY
+            // union carries the member arity tsc judges the promotion by.
+            let named = self
+                .ctx
+                .types
+                .get_display_alias(evaluated)
+                .unwrap_or(evaluated);
+            let (base, _) = diagnostic_query::application_info(self.ctx.types, named)?;
+            let def_id = diagnostic_query::lazy_def_id(self.ctx.types, base)?;
+            let def = self.ctx.definition_store.get(def_id)?;
+            if def.kind != tsz_solver::def::DefKind::TypeAlias {
+                return None;
+            }
+            diagnostic_query::union_members(self.ctx.types, def.body?)
+        });
+        let Some(members) = members else {
+            return false;
+        };
+        members
+            .iter()
+            .filter(|&&m| m != TypeId::NULL && m != TypeId::UNDEFINED)
+            .count()
+            > 1
     }
 
     /// True when `source` is a class-instance type whose declared `extends`

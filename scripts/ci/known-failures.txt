@@ -12,10 +12,7 @@
 # this list may only shrink; a deliberate re-reconcile must bump the marker's
 # `r<N>` generation in the same diff (`--update --bump-generation`), which is
 # what scripts/ci/check-known-failures-growth.py accepts as authorization.
-# baseline-status: reconciled r2
-tsz-checker::async_iterable_type_param_element_tests::for_await_renamed_type_parameter_constraint_provides_element_type
-tsz-checker::async_iterable_type_param_element_tests::for_await_type_parameter_constraint_provides_element_type
-tsz-checker::async_return_widening_tests::async_arrow_returning_promise_expression_preserves_inner
+# baseline-status: reconciled r3
 tsz-checker::conditional_application_display_tests::deferred_generic_conditional_keeps_branch_union
 tsz-checker::conformance_issues_types::types::fp_repro_audit_2026::issue_14944_genuine_widening_self_assignment_still_errors
 tsz-checker::contravariant_app_constrained_type_param_target_tests::same_base_mapped_record_alias_keeps_tsc_variance_quirk
@@ -32,9 +29,7 @@ tsz-checker::import_type_utility_identity_tests::import_type_extends_structural_
 tsz-checker::import_type_utility_identity_tests::import_type_member_feeds_conditional_type
 tsz-checker::import_type_utility_identity_tests::nested_import_type_argument_feeds_conditional_type
 tsz-checker::indexed_access_resolved_union_property_tests::quickinfo_return_position_conformance_shape_keeps_only_expected_missing_property
-tsz-checker::jsdoc_cross_file_typedef_tests::jsdoc_class_self_param_uses_instance_type_across_commonjs_file
 tsz-checker::kysely_callback_context_tests::kysely_schemable_identifier_factory_preserves_nested_imported_literal_kind
-tsz-checker::lib_global_namespace_shadowing_tests::module_local_interface_regexp_does_not_augment_lib_constructor_return
 tsz-checker::mapped_keyof_index_access_tests::mapped_keyof_typeof_inferred_value_resolves_in_relation_path
 tsz-checker::mapped_keyof_index_access_tests::mapped_keyof_typeof_inferred_value_resolves_with_renamed_binders
 tsz-checker::mapped_keyof_index_access_tests::spy_obj_key_and_returnvalue_emits_ts2339
@@ -47,9 +42,26 @@ tsz-cli::driver::core::check::check_tests::program_mode_conditional_over_unresol
 tsz-cli::driver::core::check::check_tests::program_mode_conditional_over_unresolved_namespace_member_renamed_binders
 tsz-cli::driver::core::check::check_tests::project_mode_imported_class_with_then_method_is_promise_like
 tsz-cli::driver::core::check::check_tests::skip_lib_check_skips_default_lib_recheck_after_global_merge
-tsz-cli::driver_tests::checked_js_declaration_emit_self_referential_prototype_method_type_does_not_recurse
 tsz-cli::driver_tests::declaration_emit_expands_foreign_import_mapped_keys_from_nested_package
 tsz-cli::parallel_sequential_agreement_tests::forced_parallel_dom_heritage_matches_sequential_witness
 tsz-cli::parallel_sequential_agreement_tests::forced_parallel_webworker_global_augmentation_matches_sequential_witness
-tsz-cli::tsc_compat_tests::declaration_emit_default_object_assign_reports_namespace_alias_for_default_only
 tsz-cli::tsc_compat_tests::declaration_emit_expands_foreign_import_mapped_keys_from_nested_package
+
+# 2026-07-14 re-reconcile (r3): five rows surfaced once the unit job stopped
+# dying at its first failing suite. Adjudicated in the goal campaign
+# (scratchpad adj-* reports; tasks remain open for the two real gaps):
+# - issue_14123 / kysely / js_export_surface: HARNESS-ARTIFACTS — the real
+#   binary matches the tsc 7.0.2 oracle on the exact fixtures; the in-process
+#   harness diverges (full-lib parse cost + TS2589 fuel, cross-file resolution
+#   fidelity, two-binder IdentText identity).
+# - js_constructor_property: TS7 half-migration — Ctor.prototype = { m() {} }
+#   methods must contextually type `this` as the object literal (oracle emits
+#   TS2339s; tsz emits neither old TS2322 nor new TS2339s).
+# - inferred_from_satisfies_target: `satisfies` target is not seeded as the
+#   generic call's contextual type (oracle infers from it; tsz falls back to
+#   the default type argument).
+tsz-checker::issue_14123_repro_tests::issue_14123_alias_array_infer_reports_mismatch
+tsz-checker::js_constructor_property_more_tests::test_generic_constructor_prototype_object_methods_keep_existing_member_checks
+tsz-checker::js_export_surface_tests::part_00::test_js_export_surface_preserves_default_before_late_exports_assignment
+tsz-checker::kysely_callback_context_tests::cross_file_kysely_subclass_inherits_generic_builder_callback_context
+tsz-checker::return_only_defaulted_intersection_contextual_inference_tests::inferred_from_satisfies_target

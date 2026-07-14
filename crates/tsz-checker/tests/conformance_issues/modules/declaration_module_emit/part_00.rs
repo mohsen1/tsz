@@ -215,7 +215,7 @@ export { default as def } from "./a";
 }
 
 #[test]
-fn test_ts2344_concrete_type_ref_constraint() {
+fn test_ts2741_concrete_type_ref_constraint() {
     let diagnostics = compile_and_get_diagnostics(
         r"
 interface A {
@@ -234,10 +234,12 @@ declare var v1: C<A>;
 declare var v2: C<B>;
         ",
     );
-    let ts2344_count = diagnostics.iter().filter(|(code, _)| *code == 2344).count();
+    // tsc 7.0.2 promotes the missing-property head in the type-argument
+    // constraint context: exactly one TS2741 for C<B>.
+    let ts2741_count = diagnostics.iter().filter(|(code, _)| *code == 2741).count();
     assert_eq!(
-        ts2344_count, 1,
-        "Should emit exactly 1 TS2344 for C<B>. Actual: {diagnostics:?}"
+        ts2741_count, 1,
+        "Should emit exactly 1 TS2741 for C<B>. Actual: {diagnostics:?}"
     );
 }
 

@@ -234,19 +234,22 @@ ok; bad;
         CheckerOptions::default(),
     );
 
-    let ts2345: Vec<&(u32, String)> = diagnostics
+    // tsc 7.0.2 reports the instance-where-`typeof Class` mismatch as TS2741
+    // (the constructor type requires `prototype`, which the instance lacks),
+    // not a generic TS2345. The constructor-where-constructor case stays clean.
+    let ts2741: Vec<&(u32, String)> = diagnostics
         .iter()
-        .filter(|(code, _)| *code == 2345)
+        .filter(|(code, _)| *code == 2741)
         .collect();
     assert_eq!(
-        ts2345.len(),
+        ts2741.len(),
         1,
-        "Expected exactly one TS2345 (instance-where-constructor), not for the constructor-where-constructor case. Got: {diagnostics:#?}"
+        "Expected exactly one TS2741 (instance-where-constructor), not for the constructor-where-constructor case. Got: {diagnostics:#?}"
     );
-    let (_, msg) = ts2345[0];
+    let (_, msg) = ts2741[0];
     assert!(
         msg.contains("VendorRequest") && msg.contains("typeof"),
-        "TS2345 must report the typeof-vs-instance mismatch on VendorRequest. Got: {diagnostics:#?}"
+        "TS2741 must report the typeof-vs-instance mismatch on VendorRequest. Got: {diagnostics:#?}"
     );
 }
 

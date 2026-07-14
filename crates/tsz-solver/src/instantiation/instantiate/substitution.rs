@@ -1,4 +1,5 @@
-use super::api::{instantiate_type, maybe_evaluate_concrete_conditional, type_references_param};
+use super::api::instantiate_type;
+use super::api_lazy::{maybe_evaluate_concrete_conditional, type_references_param};
 use crate::construction::TypeDatabase;
 use crate::types::{TypeId, TypeParamInfo};
 use rustc_hash::FxHashMap;

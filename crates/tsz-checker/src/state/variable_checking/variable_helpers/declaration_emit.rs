@@ -1,7 +1,7 @@
 //! Declaration emit helpers: type query resolution, symbol accessibility,
 //! unique symbol nameability, and module path resolution utilities.
 
-use crate::query_boundaries::common::{collect_referenced_types, lazy_def_id};
+use crate::query_boundaries::diagnostics::{collect_referenced_types, lazy_def_id};
 use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
@@ -187,7 +187,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<(String, String)> {
         let mut result = None;
 
-        crate::query_boundaries::common::walk_referenced_types(
+        crate::query_boundaries::diagnostics::walk_referenced_types(
             self.ctx.types,
             inferred_type,
             |type_id| {
@@ -218,7 +218,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<SymbolId> {
         let mut result = None;
 
-        crate::query_boundaries::common::walk_referenced_types(
+        crate::query_boundaries::diagnostics::walk_referenced_types(
             self.ctx.types,
             inferred_type,
             |type_id| {
@@ -226,9 +226,10 @@ impl<'a> CheckerState<'a> {
                     return;
                 }
 
-                let Some(sym_ref) =
-                    crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, type_id)
-                else {
+                let Some(sym_ref) = crate::query_boundaries::diagnostics::unique_symbol_ref(
+                    self.ctx.types,
+                    type_id,
+                ) else {
                     return;
                 };
 
@@ -304,7 +305,7 @@ impl<'a> CheckerState<'a> {
                     return Some(info);
                 }
                 if let Some((base, _)) =
-                    crate::query_boundaries::common::application_info(state.ctx.types, alias)
+                    crate::query_boundaries::diagnostics::application_info(state.ctx.types, alias)
                     && let Some(info) = check_base(state, base)
                 {
                     return Some(info);
@@ -312,7 +313,7 @@ impl<'a> CheckerState<'a> {
             }
 
             if let Some((base, _)) =
-                crate::query_boundaries::common::application_info(state.ctx.types, type_id)
+                crate::query_boundaries::diagnostics::application_info(state.ctx.types, type_id)
                 && let Some(info) = check_base(state, base)
             {
                 return Some(info);
@@ -442,7 +443,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let Some((base, args)) =
-            crate::query_boundaries::common::application_info(self.ctx.types, type_id)
+            crate::query_boundaries::diagnostics::application_info(self.ctx.types, type_id)
         else {
             return false;
         };
