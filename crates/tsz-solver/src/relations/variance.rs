@@ -1244,7 +1244,14 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
                 self.visit_with_polarity(arg, !current_polarity);
             }
         } else {
-            // No DefId available — assume invariance (safest choice)
+            // No DefId available — the base is opaque (e.g. a cross-file
+            // `Ref` not yet mapped to a def), so the invariance below is a
+            // conservative ASSUMPTION, not a measurement. A variance-based
+            // REJECTION from it would be unsound-vs-tsc (tsc marks such
+            // variances Unmeasurable and compares structurally): mark the
+            // mask so the same-base fast path falls back to the structural
+            // relation instead of hard-failing on differing arguments.
+            self.result |= Variance::NEEDS_STRUCTURAL_FALLBACK;
             for &arg in &app.args {
                 self.visit_with_polarity(arg, current_polarity);
                 self.visit_with_polarity(arg, !current_polarity);
