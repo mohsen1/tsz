@@ -149,7 +149,7 @@ fn object_literal_context_routes_contextual_rebuilds_through_boundary() {
     );
     scan_slice_for_patterns(
         OBJECT_LITERAL_ACCESSOR,
-        "if marker_this_type.is_none() {",
+        "if marker_this_type.is_none() && (self.ctx.no_implicit_this() || self.is_js_file()) {",
         "pushed_synthetic_this = true;",
         &[
             ".factory().object(",

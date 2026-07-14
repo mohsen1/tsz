@@ -1418,7 +1418,7 @@ impl ParserState {
             if self.should_report_error() {
                 self.parse_error_at_current_token("')' expected.", diagnostic_codes::EXPECTED);
             }
-            self.recover_parenthesized_expression_typed_arrow_tail();
+            self.recover_parenthesized_expression_typed_arrow_tail(expression);
         }
         self.context_flags = saved_context_flags;
 
@@ -1430,8 +1430,25 @@ impl ParserState {
         )
     }
 
-    fn recover_parenthesized_expression_typed_arrow_tail(&mut self) {
+    /// Recovery for an arrow-parameter-like parenthesized expression: a bare
+    /// identifier followed by `:` (e.g. `<<T>(x: T) => T>f` whose arrow
+    /// speculation was rejected by surrounding context). tsc consumes the
+    /// `: <type>` tail, reports `','` at the close paren and `';'` at a
+    /// following `=>`, and keeps parsing.
+    ///
+    /// Deliberately NOT applied when the inner expression is missing or
+    /// composite (`(new: number)`, `((a): b)`): tsc abandons those parens and
+    /// the statement list re-scans the tail as garbage statements
+    /// (TS1434/TS1128 per token).
+    fn recover_parenthesized_expression_typed_arrow_tail(&mut self, expression: NodeIndex) {
         if !self.is_token(SyntaxKind::ColonToken) {
+            return;
+        }
+        let is_bare_identifier = self
+            .arena
+            .get(expression)
+            .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16);
+        if !is_bare_identifier {
             return;
         }
 

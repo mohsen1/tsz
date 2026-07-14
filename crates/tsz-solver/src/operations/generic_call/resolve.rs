@@ -1490,7 +1490,33 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             .any(|bound| !bound.is_any_unknown_or_error())
                     })
                 });
-                if target_var_already_has_direct_candidate {
+                // The candidate check above is order-dependent: arguments are
+                // visited left-to-right, so a pinning argument that appears
+                // *after* this generic-function argument has not yet seeded its
+                // type variable. Mirror tsc's `SkipGenericFunctions` by also
+                // deferring when a sibling concrete argument structurally pins
+                // one of the callback's parameter-position type parameters; the
+                // round-2 pass then re-infers this argument in the fixed
+                // context.
+                let sibling_concrete_arg_pins_callback_param =
+                    !target_var_already_has_direct_candidate && {
+                        let param_pos_vars = self.collect_callback_parameter_placeholder_vars(
+                            contextual_target_type,
+                            &var_map,
+                            &mut placeholder_probe_map,
+                            &mut placeholder_visited,
+                        );
+                        self.callback_parameter_var_pinned_by_sibling_arg(
+                            &instantiated_params,
+                            arg_types,
+                            i,
+                            &param_pos_vars,
+                            &var_map,
+                        )
+                    };
+                if target_var_already_has_direct_candidate
+                    || sibling_concrete_arg_pins_callback_param
+                {
                     deferred_generic_function_arg_indices.insert(i);
                     saw_deferred_arg = true;
                     continue;

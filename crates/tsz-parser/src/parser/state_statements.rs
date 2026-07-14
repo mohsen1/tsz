@@ -436,6 +436,26 @@ impl ParserState {
                     continue;
                 }
 
+                // A stray `:` at statement position cannot start a statement.
+                // tsc (parseList / abortParsingListOrMoveToNextToken) reports
+                // TS1128 at each such token and advances one token at a time,
+                // rather than resyncing to the next boundary and swallowing
+                // the tokens in between (e.g. the trailing `): string;` tail
+                // of a failed parenthesized expression). Suppress a duplicate
+                // when a diagnostic already anchors this exact position (a
+                // failed parenthesized expression can leave TS1109 here).
+                if self.is_token(SyntaxKind::ColonToken) {
+                    if self.token_pos() != self.last_error_pos {
+                        self.parse_error_at_current_token(
+                            "Declaration or statement expected.",
+                            diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                        );
+                    }
+                    self.next_token();
+                    previous_statement_was_block = false;
+                    continue;
+                }
+
                 // Statement parsing failed, resync to recover
                 // Suppress cascading errors when:
                 // 1. A recent error was within 3 chars, OR

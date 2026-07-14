@@ -1309,6 +1309,21 @@ pub(crate) fn widen_object_property_literals_for_display_resolved<R: TypeResolve
     )
 }
 
+/// `collect_referenced_types` for declaration-emit portability checks
+/// (TS2883 and friends): mapped key positions are excluded, since a mapped
+/// type with a concrete key constraint serializes its keys as property
+/// names, never as printed type references.
+pub(crate) fn collect_portability_referenced_types(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> rustc_hash::FxHashSet<TypeId> {
+    let mut collected = rustc_hash::FxHashSet::default();
+    tsz_solver::visitor::walk_declaration_portability_referenced_types(db, type_id, |t| {
+        collected.insert(t);
+    });
+    collected
+}
+
 /// An empty-object `evaluated` whose display alias is an application of an
 /// interface/class base is a marker render (`ThisType<any>` from
 /// `Object.defineProperty`): tsc prints the shared `{}` structurally, never

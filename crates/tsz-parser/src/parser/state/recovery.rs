@@ -456,13 +456,6 @@ impl ParserState {
             return;
         }
 
-        if self.should_suppress_type_or_keyword_suggestion_for_missing_semicolon(
-            expression_text.as_str(),
-            pos,
-        ) {
-            return;
-        }
-
         if let Some(suggestion) = spelling::suggest_keyword(&expression_text) {
             if suggestion == "this" && self.is_token(SyntaxKind::DotToken) {
                 self.parse_error_at(

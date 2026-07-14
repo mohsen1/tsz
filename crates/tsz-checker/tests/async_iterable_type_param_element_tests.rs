@@ -39,9 +39,33 @@ fn strict_codes(source: &str) -> Vec<u32> {
     check_source_strict_codes(&format!("{ASYNC_ITERABLE_PRELUDE}\n{source}"))
 }
 
+/// Real-lib variant: well-known-symbol recognition keys on the BUILTIN lib
+/// `Symbol` identity, so the file-local prelude stub cannot provide the
+/// `[Symbol.asyncIterator]` protocol member. Tests whose fixture depends on
+/// that recognition (for-await over an `AsyncIterableIterator` constraint)
+/// must run against the real lib set, mirroring the CLI.
+fn real_lib_strict_codes(source: &str) -> Vec<u32> {
+    use tsz_checker::context::{CheckerOptions, ScriptTarget};
+    let libs = tsz_checker::test_utils::load_default_lib_files();
+    tsz_checker::test_utils::check_multi_file_with_libs(
+        &[("test.ts", source)],
+        "test.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2022,
+            strict: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    )
+    .iter()
+    .map(|d| d.code)
+    .collect()
+}
+
 #[test]
 fn for_await_type_parameter_constraint_provides_element_type() {
-    let codes = strict_codes(
+    let codes = real_lib_strict_codes(
         r#"
 async function f<T extends AsyncIterableIterator<number>>(iter: T) {
   for await (const value of iter) {
@@ -63,7 +87,7 @@ async function f<T extends AsyncIterableIterator<number>>(iter: T) {
 
 #[test]
 fn for_await_renamed_type_parameter_constraint_provides_element_type() {
-    let codes = strict_codes(
+    let codes = real_lib_strict_codes(
         r#"
 async function g<Stream extends AsyncIterableIterator<boolean>>(source: Stream) {
   for await (const item of source) {

@@ -419,21 +419,6 @@ pub(crate) fn collect_referenced_types(
     tsz_solver::visitor::collect_referenced_types(db, type_id)
 }
 
-/// [`collect_referenced_types`] for declaration-emit portability checks
-/// (TS2883 and friends): mapped key positions are excluded, since a mapped
-/// type with a concrete key constraint serializes its keys as property
-/// names, never as printed type references.
-pub(crate) fn collect_portability_referenced_types(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> rustc_hash::FxHashSet<TypeId> {
-    let mut collected = rustc_hash::FxHashSet::default();
-    tsz_solver::visitor::walk_declaration_portability_referenced_types(db, type_id, |t| {
-        collected.insert(t);
-    });
-    collected
-}
-
 pub(crate) fn collect_enum_def_ids(
     db: &dyn TypeDatabase,
     type_id: TypeId,

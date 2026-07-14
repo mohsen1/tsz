@@ -84,7 +84,7 @@ Candidates: 12,585 (12,043 runnable, 507 unsupported, 35 skipped)
 
 <!-- EMIT_START -->
 ```
-JavaScript:  [████████████████████] 100.0% (11,563 / 11,563 tests)
+JavaScript:  [████████████████████] 100.0% (11,562 / 11,563 tests)
 Declaration: [████████████████████] 98.7% (1,372 / 1,390 tests)
 ```
 <!-- EMIT_END -->

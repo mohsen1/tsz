@@ -337,18 +337,18 @@ fn jsdoc_legacy_function_type_with_new_marker_is_parsed_as_constructor() {
 fn jsdoc_legacy_constructor_function_suffix_does_not_cascade() {
     // TS 7.0.2 parses `function` as a type-reference identifier and the
     // reserved `new` rejects the arrow speculation: `','` expected at `(`
-    // and `Expression expected` at the `:` after `new`. tsc additionally
-    // recovers the tail as garbage statements (TS1434/TS1128); tsz's
-    // remaining tail recovery differs there (known gap) — this pin holds the
-    // prefix and the absence of the removed TS8020 path.
+    // and `Expression expected` at the `:` after `new`. The tail is then
+    // re-scanned as garbage statements: TS1434 at `number`, TS1128 at `)`
+    // and at the trailing `:`, with `string;` swallowed silently.
     let source = "var c: function(new: number): string;";
     let (parser, _root) = parse_source(source);
     let diagnostics = parser.get_diagnostics();
 
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
-    assert!(
-        codes.starts_with(&[1005, 1109]),
-        "expected the TS1005 + TS1109 recovery prefix, got {diagnostics:?}"
+    assert_eq!(
+        codes,
+        vec![1005, 1109, 1434, 1128, 1128],
+        "expected tsc 7.0.2's garbage-statement tail recovery, got {diagnostics:?}"
     );
     assert!(
         !codes.contains(&8020),

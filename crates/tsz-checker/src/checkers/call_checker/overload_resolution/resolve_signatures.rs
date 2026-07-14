@@ -224,6 +224,15 @@ impl<'a> CheckerState<'a> {
         // and accepted after the loop, preserving declaration order for the
         // fallback pass. Single-signature calls keep today's behavior.
         let overload_two_pass = signatures.len() > 1;
+        // Candidates whose pass-1 (subtype-relation) resolution succeeded but
+        // that the union pass deferred to the signature-specific second pass.
+        // tsc's `chooseOverload` runs the subtype pass over ALL candidates
+        // before the assignable pass, so the second pass must try these
+        // candidates first: an `any` argument relates to an `any`-instantiated
+        // generic parameter under the subtype relation but NOT to a concrete
+        // one, and the generic candidate must win over an earlier concrete
+        // overload that only passes under plain assignability.
+        let mut phase1_subtype_successes: Vec<usize> = Vec::new();
         let mut assignable_pass_fallback: Option<NoReturnContextFallback> = None;
         // tsc tries every overload before committing TS2556 for a non-tuple
         // spread; stash the first fixed-arity rejection as the last-resort
@@ -307,6 +316,7 @@ impl<'a> CheckerState<'a> {
                     );
                     if matches!(pass1.0, CallResult::Success(_)) {
                         resolution = Some(pass1);
+                        phase1_subtype_successes.push(idx);
                     } else {
                         self.rollback_overload_retry_state(&subtype_pass_snap);
                         subtype_pass_deferred = true;
@@ -977,7 +987,18 @@ impl<'a> CheckerState<'a> {
         // body errors against the resolved signature; it does not treat a body error
         // as an overload mismatch. When no overload resolves cleanly we commit to
         // this candidate and surface its diagnostics instead of silently recovering.
-        for (idx, original_sig) in signatures.iter().enumerate() {
+        //
+        // Candidate order mirrors tsc's two passes: candidates whose pass-1
+        // subtype resolution succeeded (see `phase1_subtype_successes`) are
+        // tried first in declaration order, then the remainder in declaration
+        // order. With no pass-1 successes this is exactly declaration order.
+        let second_pass_order: Vec<usize> = phase1_subtype_successes
+            .iter()
+            .copied()
+            .chain((0..signatures.len()).filter(|idx| !phase1_subtype_successes.contains(idx)))
+            .collect();
+        for idx in second_pass_order {
+            let original_sig = &signatures[idx];
             // See the first-pass loop: an open-ended spread requires an effective
             // rest parameter, so fixed-arity overloads are skipped here too.
             if skip_non_rest_for_spread && !original_sig.params.iter().any(|param| param.rest) {

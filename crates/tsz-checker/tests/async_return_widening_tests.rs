@@ -193,14 +193,35 @@ fn async_arrow_returning_promise_expression_preserves_inner() {
     // When an async function returns an already-Promise-wrapped value, the
     // outer Promise wrapping preserves the inner type (no double-wrap, no
     // spurious widening).
+    //
+    // Runs against the real lib set: async lowering resolves the global
+    // `Promise` VALUE by builtin identity, so a file-local `interface
+    // Promise<T>` stub cannot stand in (it has no value side and would emit
+    // TS2468/TS2705 instead of reaching the call mismatch under test).
     let source = r#"
-interface Promise<T> {}
 interface Foo { bar: number }
 declare function makePromise(): Promise<Foo>;
 declare function h(p: () => string): void;
 h(async () => makePromise());
 "#;
-    let diags = get_diagnostics(source);
+    let diags: Vec<(u32, String)> = {
+        use tsz_checker::context::{CheckerOptions, ScriptTarget};
+        let libs = tsz_checker::test_utils::load_default_lib_files();
+        tsz_checker::test_utils::check_multi_file_with_libs(
+            &[("test.ts", source)],
+            "test.ts",
+            CheckerOptions {
+                target: ScriptTarget::ES2022,
+                strict: true,
+                strict_null_checks: true,
+                ..CheckerOptions::default()
+            },
+            &libs,
+        )
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+    };
     // Surfaces as TS2322 or TS2345 depending on which elaboration path wins;
     // the invariant under test is that the inner `Foo` survives unchanged
     // (not widened, not re-wrapped twice).

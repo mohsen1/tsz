@@ -420,7 +420,7 @@ impl<'a> CheckerState<'a> {
         // names (see `collect_portability_referenced_types`), so an alias
         // referenced only from a key constraint is never a printed reference.
         let referenced_types =
-            crate::query_boundaries::common::collect_portability_referenced_types(
+            crate::query_boundaries::diagnostics::collect_portability_referenced_types(
                 self.ctx.types,
                 inferred_type,
             );
