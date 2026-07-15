@@ -263,8 +263,23 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
+        // Mirror `root_symbol_supports_js_expando_read`: a `var X = {}` object
+        // literal is an expando host. The binder's per-file expando tracking only
+        // records the write when the writing file can resolve the root, so a
+        // cross-file (or forward-referenced) `X.member = value` whose `X = {}`
+        // declaration lives in another file is missed there; this cross-file-aware
+        // predicate keeps the write from surfacing a spurious TS2339 on `{}`,
+        // matching the read side that already resolves such members. A JSDoc
+        // `@type` annotation opts the variable out of the expando model.
+        if init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            && self.variable_declaration_has_jsdoc_type_annotation(decl_idx)
+        {
+            return false;
+        }
+
         init_node.is_function_expression_or_arrow()
             || init_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            || init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
     }
 
     fn variable_declaration_has_jsdoc_type_annotation(&self, decl_idx: NodeIndex) -> bool {

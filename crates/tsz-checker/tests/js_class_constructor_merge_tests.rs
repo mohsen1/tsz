@@ -236,14 +236,29 @@ two.wat;
         .map(|(_, codes)| codes.as_slice())
         .expect("other.js diagnostics");
 
+    // TS7 dropped the JS-salsa projection of expando values into type space, so
+    // `@type {Ns.One}` / `@type {Ns.Two}` — where `Ns` is a plain `var Ns = {}`
+    // value, not a namespace — resolve to `error` and report TS2503 "Cannot find
+    // namespace 'Ns'" at the root instead of the pre-TS7 constructor-identity
+    // type. The type is `error`, so `one = undefined` produces no TS2322 and
+    // `one.wat` produces no TS2339.
+    //
+    // Oracle (tsc 7.0.2, conformance/salsa/prototypePropertyAssignmentMergeAcrossFiles2.ts):
+    // exactly `[TS2503 @ other.js:2:11, TS2503 @ other.js:7:11]`. This no-lib unit
+    // harness re-resolves the annotation more than once, so assert the namespace
+    // error is present (per @type site) and the removed salsa codes are absent.
+    assert!(
+        other_codes.iter().filter(|&&code| code == 2503).count() >= 2,
+        "Expected TS2503 'Cannot find namespace' for both `@type {{Ns.*}}` value-root references, got: {diagnostics:#?}"
+    );
     assert_eq!(
         other_codes.iter().filter(|&&code| code == 2322).count(),
-        2,
-        "Expected two TS2322 diagnostics for assigning undefined to the cross-file prototype constructors, got: {diagnostics:#?}"
+        0,
+        "TS7 resolves `@type {{Ns.One}}` to error (TS2503), so no TS2322 on `undefined` assignment: {diagnostics:#?}"
     );
     assert_eq!(
         other_codes.iter().filter(|&&code| code == 2339).count(),
-        2,
-        "Expected two TS2339 diagnostics for missing properties on the preserved constructor identities, got: {diagnostics:#?}"
+        0,
+        "TS7 resolves `@type {{Ns.One}}` to error (TS2503), so no TS2339 on member access: {diagnostics:#?}"
     );
 }
