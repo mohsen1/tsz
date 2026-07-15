@@ -8,8 +8,9 @@
 //! - `check_modifier_combinations` — modifier conflict checks (e.g., abstract + private)
 
 use crate::query_boundaries::assignability::{
-    erase_function_type_params_to_any, get_function_return_type, replace_function_return_type,
-    rewrite_function_error_slots_to_any, strip_function_type_predicate,
+    distribute_any_check_conditional, erase_function_type_params_to_any, get_function_return_type,
+    replace_function_return_type, rewrite_function_error_slots_to_any,
+    strip_function_type_predicate,
 };
 use crate::query_boundaries::construct_signatures::{
     construct_only_callable_type, function_type_from_call_signature,
@@ -960,7 +961,21 @@ impl<'a> CheckerState<'a> {
         match (impl_return, overload_return) {
             (Some(impl_ret), Some(overload_ret)) => {
                 // Bidirectional return type check: either direction must be assignable,
-                // or the overload returns void
+                // or the overload returns void.
+                //
+                // Distribute an `any`-check conditional return into the union of both
+                // branches first. `getErasedSignature` erases the overload's type
+                // parameters to `any`, so a return like
+                // `patternOrKey extends string ? A : B` becomes
+                // `any extends string ? A : B`. tsc's `getConditionalType` resolves a
+                // conditional whose check type is `any` to `A | B` (both branches), so
+                // the erased overload return is `A | B` when tsc relates it to the
+                // implementation return. tsz's relation instead resolves the check as a
+                // single true-branch pick (`any` is assignable to `string`), dropping the
+                // false branch; when the implementation return is only compatible with
+                // that dropped branch, the comparison degrades to a false-positive TS2394.
+                let overload_ret = distribute_any_check_conditional(self.ctx.types, overload_ret);
+                let impl_ret = distribute_any_check_conditional(self.ctx.types, impl_ret);
                 let return_compatible = constructors_only
                     || overload_ret == tsz_solver::TypeId::VOID
                     || self
