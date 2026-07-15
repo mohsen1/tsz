@@ -866,10 +866,6 @@ pub(crate) fn erase_function_type_params_to_any(db: &dyn TypeDatabase, type_id: 
     tsz_solver::type_queries::erase_function_type_params_to_any(db, type_id)
 }
 
-pub(crate) fn distribute_any_check_conditional(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    tsz_solver::type_queries::distribute_any_check_conditional(db, type_id)
-}
-
 pub(crate) fn are_types_overlapping_with_env(
     db: &dyn TypeDatabase,
     env: &tsz_solver::relations::subtype::TypeEnvironment,

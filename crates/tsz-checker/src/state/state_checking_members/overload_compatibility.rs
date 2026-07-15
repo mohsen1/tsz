@@ -8,12 +8,12 @@
 //! - `check_modifier_combinations` — modifier conflict checks (e.g., abstract + private)
 
 use crate::query_boundaries::assignability::{
-    distribute_any_check_conditional, erase_function_type_params_to_any, get_function_return_type,
-    replace_function_return_type, rewrite_function_error_slots_to_any,
-    strip_function_type_predicate,
+    erase_function_type_params_to_any, get_function_return_type, replace_function_return_type,
+    rewrite_function_error_slots_to_any, strip_function_type_predicate,
 };
 use crate::query_boundaries::construct_signatures::{
-    construct_only_callable_type, function_type_from_call_signature,
+    construct_only_callable_type, distribute_any_check_conditional,
+    function_type_from_call_signature,
 };
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;

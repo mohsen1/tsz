@@ -497,3 +497,11 @@ pub(crate) fn map_function_shape_types(
         is_method: shape.is_method,
     })
 }
+
+/// Resolve a conditional whose check type is `any` to the union of both
+/// branches (tsc `getConditionalType` wildcard rule). Used on erased
+/// overload/implementation returns before the return relation; see the
+/// solver-side doc for details.
+pub(crate) fn distribute_any_check_conditional(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::type_queries::distribute_any_check_conditional(db, type_id)
+}

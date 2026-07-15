@@ -6,7 +6,7 @@
 //! `TypeInterner` + manual `module_exports` insertion) diverges on cross-interner
 //! atom identity, so the consumer symbol shape flips in-harness even though tsc
 //! 7.0.2 and the real binary agree: the illegal export-assignment/sibling combo
-//! is `TS2309`, the require() surface is exactly `{ default }`, and the late
+//! is `TS2309`, the `require()` surface is exactly `{ default }`, and the late
 //! `configs` sibling is dropped (reading it is `TS2339`). Verified standalone
 //! against tsc 7.0.2 before migration.
 
@@ -92,7 +92,7 @@ exports.configs = { "stage-0": defaultConfig };
 "#;
 
 /// TS7: `module.exports = { default }` mixed with a sibling `exports.configs`
-/// write is an illegal export-assignment combination (`TS2309`). The require()
+/// write is an illegal export-assignment combination (`TS2309`). The `require()`
 /// consumer surface is exactly `{ default }`: `default` resolves, while the
 /// dropped `configs` sibling is `TS2339`. tsc 7.0.2 and the real `tsz` binary
 /// agree; only the stripped two-binder in-process harness diverged.
@@ -117,15 +117,15 @@ const dropped = value.configs;
         out.contains("TS2309"),
         "lib.js must report TS2309 (export assignment with other exported elements); got:\n{out}"
     );
-    // The late `exports.configs` sibling is dropped from the require() surface,
+    // The late `exports.configs` sibling is dropped from the `require()` surface,
     // so reading it is a missing-property error.
     assert!(
         out.contains("Property 'configs' does not exist"),
-        "the `configs` sibling must be dropped from the require() surface (TS2339 on read); got:\n{out}"
+        "the `configs` sibling must be dropped from the `require()` surface (TS2339 on read); got:\n{out}"
     );
     // The direct `default` export IS on the surface, so reading it must not error.
     assert!(
         !out.contains("Property 'default' does not exist"),
-        "the direct `default` export must remain on the require() surface; got:\n{out}"
+        "the direct `default` export must remain on the `require()` surface; got:\n{out}"
     );
 }
