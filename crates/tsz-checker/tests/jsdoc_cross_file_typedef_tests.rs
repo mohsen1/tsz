@@ -826,6 +826,21 @@ var y = "ok";
 
 #[test]
 fn cross_file_jsdoc_enum_member_is_assignable_to_enum_param() {
+    // TS7 dropped the JS-salsa projection of expando values into type space, so
+    // the original fixture's `@param {!Host.UserMetrics.Action}` (an `@enum`
+    // expando used as a *type*) now reports TS2749 ("refers to a value, but is
+    // being used as a type"), and its `/** @typedef {string} */` with no name is
+    // a TS1003 parse error. What TS7 *does* keep is the value-space enum-member
+    // call and cross-file qualified `@typedef` name resolution. This fixture
+    // exercises only that TS7-valid surface: the `@enum` member value flows into
+    // a numeric param, and the named cross-file qualified `@typedef`s
+    // (`Host.UserMetrics.Bargh` / `.Blah`) resolve as types.
+    //
+    // Oracle (tsc 7.0.2, `--allowJs --checkJs --noEmit --target es2015`): no
+    // diagnostics. In particular the root `Host` is a plain value, but a
+    // qualified `@typedef` reachable by its dotted name is a real type — it must
+    // NOT trip the TS2503 "Cannot find namespace 'Host'" that a value-space
+    // expando member (`Host.X = class {}`) used in type position does.
     let diagnostics = check_js_file_with_types_diagnostics(
         "enumDef.js",
         r#"
@@ -836,22 +851,15 @@ Host.UserMetrics.Action = {
     WindowDocked: 1,
     WindowUndocked: 2,
 };
-/**
- * @typedef {string} Host.UserMetrics.Bargh
- */
-/**
- * @typedef {string}
- */
-Host.UserMetrics.Blah = {
-    x: 12
-}
+/** @typedef {string} Host.UserMetrics.Bargh */
+/** @typedef {number} Host.UserMetrics.Blah */
 "#,
         "index.js",
         r#"
 var Other = {};
 Other.Cls = class {
     /**
-     * @param {!Host.UserMetrics.Action} p
+     * @param {number} p
      */
     method(p) {}
     usage() {
@@ -867,7 +875,7 @@ var x = "ok";
 /**
  * @type {Host.UserMetrics.Blah}
  */
-var y = "ok";
+var y = 12;
 "#,
         CheckerOptions {
             allow_js: true,
@@ -883,7 +891,7 @@ var y = "ok";
 
     assert!(
         diagnostics.is_empty(),
-        "Expected no diagnostics for cross-file JSDoc @enum member calls and sibling typedefs, got diagnostics: {rendered:?}"
+        "Expected no diagnostics for the value-space @enum member call and named cross-file qualified @typedefs, got diagnostics: {rendered:?}"
     );
 }
 

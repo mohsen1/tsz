@@ -1048,6 +1048,120 @@ impl<'a> CheckerState<'a> {
         self.resolve_jsdoc_type_name(type_expr)
     }
 
+    /// Whether `type_expr` is a bare dotted identifier chain (`A.B`, `A.B.C`)
+    /// with no generics, unions, intersections, groupings, object literals,
+    /// arrays, or string literals — the only shape the value-root namespace
+    /// check applies to. Richer forms carry their own resolution and diagnostics.
+    pub(crate) fn jsdoc_type_expr_is_plain_qualified_name(type_expr: &str) -> bool {
+        let mut chars = type_expr.chars().peekable();
+        let mut saw_dot = false;
+        let mut segment_len = 0usize;
+        while let Some(&c) = chars.peek() {
+            match c {
+                '.' => {
+                    if segment_len == 0 {
+                        return false;
+                    }
+                    saw_dot = true;
+                    segment_len = 0;
+                }
+                c if c.is_alphanumeric() || c == '_' || c == '$' => {
+                    segment_len += 1;
+                }
+                _ => return false,
+            }
+            chars.next();
+        }
+        saw_dot && segment_len > 0
+    }
+
+    /// TS7: a qualified JSDoc type name `A.B(.C…)` can only be a type when its
+    /// root `A` has namespace/type meaning — a namespace/module, class, enum,
+    /// interface, type alias, or import alias. A plain runtime value (`var A =
+    /// {}`, `function A(){}`, `var A = class {}`) that only grew members via JS
+    /// special assignments (`A.B = …`) is not a namespace in type position, so
+    /// tsc emits TS2503 "Cannot find namespace 'A'". This reports whether `A`
+    /// has that plain-value shape. The root is resolved the same three ways the
+    /// qualified-name resolver uses (current-file locals, lib globals, and
+    /// sibling script files that share the JS salsa global scope), so the check
+    /// is independent of which file declares the value.
+    pub(crate) fn jsdoc_qualified_root_is_plain_value(&mut self, root_name: &str) -> bool {
+        if root_name.is_empty() || root_name == "globalThis" {
+            return false;
+        }
+        let sym_id = if let Some(sym_id) = self.ctx.binder.file_locals.get(root_name) {
+            sym_id
+        } else if let Some(sym_id) = self
+            .ctx
+            .lib_contexts
+            .iter()
+            .find_map(|ctx| ctx.binder.file_locals.get(root_name))
+        {
+            sym_id
+        } else if let Some((sym_id, _file_idx)) =
+            self.resolve_jsdoc_cross_file_root_symbol(root_name)
+        {
+            sym_id
+        } else {
+            return false;
+        };
+
+        let lib_binders = self.get_lib_binders();
+        let (flags, has_import_module, declarations) = match self
+            .get_cross_file_symbol(sym_id)
+            .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders))
+        {
+            Some(symbol) => (
+                symbol.flags,
+                symbol.import_module().is_some(),
+                symbol.declarations.clone(),
+            ),
+            None => return false,
+        };
+
+        // A real namespace/type anchor (or import alias) is a legitimate
+        // qualifier; only pure runtime values are rejected. `VALUE_MODULE` /
+        // `NAMESPACE_MODULE` cover declaration-merged namespaces and enums.
+        let member_holder_flags = symbol_flags::MODULE
+            | symbol_flags::NAMESPACE_MODULE
+            | symbol_flags::VALUE_MODULE
+            | symbol_flags::TYPE_ALIAS
+            | symbol_flags::INTERFACE
+            | symbol_flags::CLASS
+            | symbol_flags::ENUM
+            | symbol_flags::ALIAS;
+        if flags & member_holder_flags != 0 {
+            return false;
+        }
+        if flags & symbol_flags::VALUE == 0 {
+            return false;
+        }
+        // `var mod = require("./x")` (and other imported values) navigate into
+        // their module's exports; the qualified form resolves there, not here.
+        if has_import_module {
+            return false;
+        }
+        for decl_idx in declarations {
+            if !decl_idx.is_some() {
+                continue;
+            }
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+            if var_decl.initializer.is_some()
+                && self
+                    .get_require_module_specifier(var_decl.initializer)
+                    .is_some()
+            {
+                return false;
+            }
+        }
+        true
+    }
+
     /// Extract a JSDoc `@this {T}` tag from a function's JSDoc comment and
     /// resolve it to a `TypeId`. Returns `None` when there is no `@this` tag
     /// or the referenced type cannot be resolved.
@@ -1444,7 +1558,7 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    fn resolve_jsdoc_cross_file_root_symbol(
+    pub(crate) fn resolve_jsdoc_cross_file_root_symbol(
         &mut self,
         root_name: &str,
     ) -> Option<(tsz_binder::SymbolId, usize)> {

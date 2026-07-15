@@ -622,13 +622,19 @@ impl<'a> CheckerState<'a> {
             &comments,
             &source_text,
         );
-        self.validate_jsdoc_qualified_value_receiver_at_node(
+        if self.report_jsdoc_value_root_used_as_namespace(
             idx,
             node.pos,
             type_expr,
             &comments,
             &source_text,
-        );
+        ) {
+            // TS2503 emitted: the qualified type has no namespace to resolve
+            // into, so its type is `error` (tsc's errorType). Returning here
+            // suppresses the expando member resolution that would otherwise
+            // surface a spurious `typeof`-based TS2339 on later member access.
+            return Some(TypeId::ERROR);
+        }
         // Set the anchor position for typedef scoping.
         if Self::jsdoc_backtick_import_argument_offset(type_expr).is_some() {
             let type_expr_start = self
@@ -779,154 +785,60 @@ impl<'a> CheckerState<'a> {
     /// a plain value (not a namespace/module/type container). tsc's JSDoc
     /// checker treats this as "Namespace 'A' has no exported member 'B'";
     /// without this pass we silently accept the unknown member.
-    fn validate_jsdoc_qualified_value_receiver_at_node(
+    /// TS7: a qualified JSDoc type name `A.B(.C…)` whose root `A` is a plain
+    /// runtime value (not a namespace/module, class, enum, interface, type
+    /// alias, or import alias) cannot be a type — `var A = {}; A.B = class {}`
+    /// grows value-space expando members but no type-space namespace. tsc emits
+    /// TS2503 "Cannot find namespace 'A'" at the root. Returns `true` when it
+    /// emitted (the caller then treats the annotation type as `error`), so the
+    /// expando member is never resolved into a spurious `typeof`-based TS2339.
+    fn report_jsdoc_value_root_used_as_namespace(
         &mut self,
         idx: NodeIndex,
         anchor_pos: u32,
         type_expr: &str,
         comments: &[tsz_common::comments::CommentRange],
         source_text: &str,
-    ) {
-        use tsz_binder::symbol_flags;
-        // Only handle the simple `A.B` shape. Deeper chains, generics, unions,
-        // imports, or `(...)` groupings go through richer resolution elsewhere.
+    ) -> bool {
         let trimmed = type_expr.trim();
-        if trimmed.contains('<')
-            || trimmed.contains('|')
-            || trimmed.contains('&')
-            || trimmed.contains('(')
-            || trimmed.contains('[')
-            || trimmed.contains(' ')
-            || trimmed.contains('"')
-        {
-            return;
+        // Only bare dotted identifier chains; richer forms carry their own
+        // resolution and diagnostics.
+        if !Self::jsdoc_type_expr_is_plain_qualified_name(trimmed) {
+            return false;
         }
-        let mut parts = trimmed.split('.');
-        let Some(root) = parts.next().filter(|s| !s.is_empty()) else {
-            return;
+        let Some(root) = trimmed.split('.').next().filter(|s| !s.is_empty()) else {
+            return false;
         };
-        let Some(member) = parts.next().filter(|s| !s.is_empty()) else {
-            return;
-        };
-        // Only single-dot A.B; deeper A.B.C handled elsewhere (and varies more).
-        if parts.next().is_some() {
-            return;
+        if !self.jsdoc_qualified_root_is_plain_value(root) {
+            return false;
         }
-
-        let Some(sym_id) = self.ctx.binder.file_locals.get(root) else {
-            return;
-        };
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-            return;
-        };
-        // JS salsa mode merges expando property assignments from every file
-        // that touches a given identifier (e.g. `Ns.One = ...` in one file,
-        // `/** @type {Ns.One} */` in another). Our per-file
-        // `expando_properties` table doesn't see those cross-file
-        // assignments, so skip the check when the declaring file isn't the
-        // one we're currently processing.
-        if symbol.decl_file_idx != u32::MAX
-            && symbol.decl_file_idx as usize != self.ctx.current_file_idx
-        {
-            return;
-        }
-        // If the root has any "can-hold-members" flags — namespace/module,
-        // type alias, interface, class, enum, or import alias — let the
-        // normal resolution path run. We only want to flag the case where
-        // `A` is a pure runtime value (e.g. `var a = foo();`) and someone
-        // writes `{A.B}` in JSDoc.
-        let member_holder_flags = symbol_flags::MODULE
-            | symbol_flags::NAMESPACE_MODULE
-            | symbol_flags::VALUE_MODULE
-            | symbol_flags::TYPE_ALIAS
-            | symbol_flags::INTERFACE
-            | symbol_flags::CLASS
-            | symbol_flags::ENUM
-            | symbol_flags::ALIAS;
-        if symbol.flags & member_holder_flags != 0 {
-            return;
-        }
-        // Must actually be a value (variable, function, etc.).
-        if !symbol.has_any_flags(symbol_flags::VALUE) {
-            return;
-        }
-        // CommonJS `var mod = require("./x")` binds `mod` to the module's
-        // exports. Qualified references like `{mod.Foo}` resolve through the
-        // imported module and must not be flagged here.
-        if symbol.import_module().is_some() {
-            return;
-        }
-        // Detect `var mod = require("./x")` in JS salsa mode, which is
-        // handled by the type checker rather than the binder's
-        // `import_module` field.
-        if symbol.declarations.iter().any(|&decl_idx| {
-            if !decl_idx.is_some() {
-                return false;
-            }
-            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
-                return false;
-            };
-            let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
-                return false;
-            };
-            var_decl.initializer.is_some()
-                && self
-                    .get_require_module_specifier(var_decl.initializer)
-                    .is_some()
-        }) {
-            return;
-        }
-        // In JS salsa mode, plain values grow namespace-like expando members
-        // via assignments such as `Workspace.Project = ...`. If the symbol has
-        // any such member/export children, the qualified form `A.B` may be a
-        // legitimate expando type reference — let the resolver decide.
-        let has_members = symbol
-            .members
-            .as_ref()
-            .is_some_and(|table| !table.is_empty());
-        let has_exports = symbol
-            .exports
-            .as_ref()
-            .is_some_and(|table| !table.is_empty());
-        if has_members || has_exports {
-            return;
-        }
-        // The binder also tracks `X.prop = value` expando assignments in a
-        // side table keyed by the receiver name. If any expando property was
-        // registered for this root, treat it as namespace-like and skip.
-        if self
-            .ctx
-            .binder
-            .expando_properties
-            .get(root)
-            .is_some_and(|props| props.contains(member) || !props.is_empty())
-        {
-            return;
+        // A qualified JSDoc `@typedef` (`/** @typedef {string} A.B.C */`) declares
+        // a real type reachable by its dotted name even when the root `A` is a
+        // plain value; tsc resolves it with no error. Only a value-space expando
+        // member (`A.B = class {}`) is the "used as a namespace" case.
+        if self.resolve_global_jsdoc_typedef_info(trimmed).is_some() {
+            return false;
         }
 
         let Some((_, comment_pos)) =
             self.try_jsdoc_with_ancestor_walk_and_pos(idx, comments, source_text)
         else {
-            return;
+            return false;
         };
         let raw_comment = &source_text[comment_pos as usize..anchor_pos as usize];
         let Some(type_expr_offset) = raw_comment.find(trimmed) else {
-            return;
+            return false;
         };
-        // `member` sits at `root.len() + 1` bytes past the start of the type expression
-        // (the +1 skips the `.`).
-        let member_offset = type_expr_offset + root.len() + 1;
-
-        let message = format_message(
-            diagnostic_messages::NAMESPACE_HAS_NO_EXPORTED_MEMBER,
-            &[root, member],
-        );
+        // The root is the first segment, so it sits at the start of the type
+        // expression within the comment.
+        let message = format_message(diagnostic_messages::CANNOT_FIND_NAMESPACE, &[root]);
         self.error_at_position(
-            comment_pos + member_offset as u32,
-            member.len() as u32,
+            comment_pos + type_expr_offset as u32,
+            root.len() as u32,
             &message,
-            diagnostic_codes::NAMESPACE_HAS_NO_EXPORTED_MEMBER,
+            diagnostic_codes::CANNOT_FIND_NAMESPACE,
         );
+        true
     }
 
     fn normalized_jsdoc_lookup_node(&self, idx: NodeIndex) -> NodeIndex {
