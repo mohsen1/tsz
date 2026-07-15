@@ -88,6 +88,9 @@ path = "tests/kysely_cross_file_callback_context_cli_tests.rs"
 name = "array_literal_iterable_contextual_tests"
 path = "tests/array_literal_iterable_contextual_tests.rs"
 [[test]]
+name = "narrow_union_lazy_alias_member_cli_tests"
+path = "tests/narrow_union_lazy_alias_member_cli_tests.rs"
+[[test]]
 name = "overload_any_check_conditional_return_tests"
 path = "tests/overload_any_check_conditional_return_tests.rs"
 [[test]]
