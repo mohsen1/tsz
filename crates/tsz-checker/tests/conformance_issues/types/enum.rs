@@ -918,18 +918,20 @@ Workspace.Project.prototype = {
         },
     );
 
+    // TypeScript 7.0.2 (pinned oracle): `var Workspace = {}` is a plain value
+    // root, so the qualified JSDoc reference is TS2503 "Cannot find namespace
+    // 'Workspace'" and the annotation resolves to error — no TS2454/2339/2322
+    // follow. The old expectations encoded the removed pre-TS7 salsa merge.
     assert!(
-        has_error(&diagnostics, 2454),
-        "Expected TS2454 for JSDoc-typed merged class value before assignment. Actual diagnostics: {diagnostics:#?}"
+        has_error(&diagnostics, 2503),
+        "Expected TS2503 for the plain-value qualified JSDoc root (tsc 7.0.2). Actual diagnostics: {diagnostics:#?}"
     );
-    assert!(
-        !has_error(&diagnostics, 2339),
-        "Did not expect TS2339 once the JSDoc merged class type resolves. Actual diagnostics: {diagnostics:#?}"
-    );
-    assert!(
-        !has_error(&diagnostics, 2322),
-        "Did not expect TS2322 while reusing prototype evidence for a JSDoc-typed merged class. Actual diagnostics: {diagnostics:#?}"
-    );
+    for code in [2454, 2339, 2322] {
+        assert!(
+            !has_error(&diagnostics, code),
+            "Did not expect TS{code} once the annotation resolves to error. Actual diagnostics: {diagnostics:#?}"
+        );
+    }
 }
 
 #[test]
