@@ -1085,7 +1085,12 @@ tsz_write_hotscript_config() {
   tsz_write_basic_external_project_config "$1" "src"
 }
 tsz_write_typebox_config() {
-  tsz_write_basic_external_project_config "$1" "src"
+  # typebox imports sibling modules with explicit `.ts` extensions; its
+  # upstream tsconfig enables allowImportingTsExtensions (valid with noEmit).
+  # Without it the guard drowns in ~3050 shared TS5097s.
+  tsz_write_basic_external_project_config "$1" "src" \
+    '    "allowImportingTsExtensions": true,
+'
 }
 tsz_write_class_transformer_config() {
   tsz_write_basic_external_project_config "$1" "src"
