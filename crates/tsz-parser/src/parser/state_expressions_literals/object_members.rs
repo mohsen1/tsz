@@ -592,9 +592,24 @@ impl ParserState {
             self.context_flags = saved_body_flags;
             block
         } else {
-            if had_open_paren && !self.is_token(SyntaxKind::CloseBraceToken) {
+            if had_open_paren {
                 use tsz_common::diagnostics::diagnostic_codes;
-                self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
+                if self.is_token(SyntaxKind::CloseBraceToken) {
+                    // Body-less object-literal accessor terminated by the object's
+                    // closing `}` (`{ get foo() }`). tsc's `parseFunctionBlockOrSemicolon`
+                    // accepts the parse (`canParseSemicolon` is true before `}`) and lets
+                    // `checkGrammarAccessor` report TS1005 `'{' expected` via
+                    // `grammarErrorAtPos(accessor, accessor.end - 1, 1)` — i.e. at the last
+                    // character of the signature (the `)`), not at the following `}`.
+                    self.parse_error_at(
+                        signature_end.saturating_sub(1),
+                        1,
+                        "'{' expected.",
+                        diagnostic_codes::EXPECTED,
+                    );
+                } else {
+                    self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
+                }
             }
             NodeIndex::NONE
         };
@@ -689,9 +704,22 @@ impl ParserState {
             self.context_flags = saved_body_flags;
             block
         } else {
-            if had_open_paren && !self.is_token(SyntaxKind::CloseBraceToken) {
+            if had_open_paren {
                 use tsz_common::diagnostics::diagnostic_codes;
-                self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
+                if self.is_token(SyntaxKind::CloseBraceToken) {
+                    // Body-less object-literal accessor terminated by the object's
+                    // closing `}` (`{ set foo(a) }`). tsc reports TS1005 `'{' expected`
+                    // via `checkGrammarAccessor`'s `grammarErrorAtPos(accessor,
+                    // accessor.end - 1, 1)` — at the `)`, not at the following `}`.
+                    self.parse_error_at(
+                        close_paren_end.saturating_sub(1),
+                        1,
+                        "'{' expected.",
+                        diagnostic_codes::EXPECTED,
+                    );
+                } else {
+                    self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
+                }
             }
             NodeIndex::NONE
         };

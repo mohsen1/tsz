@@ -708,7 +708,17 @@ impl ParserState {
 
         // Keep STATIC_BLOCK flag during parameter parsing — inside a static block,
         // 'await' is reserved even in function parameters, matching tsc behavior.
+        // Also enter the function's Await/Yield context for the parameter list so
+        // `await`/`yield` binding names are rejected the way tsc's SignatureFlags
+        // do (asyncFunctionDeclaration5). Restored before the return type / body.
         let has_open_paren = self.parse_expected(SyntaxKind::OpenParenToken);
+        let saved_param_ctx = self.context_flags;
+        if is_async {
+            self.context_flags |= CONTEXT_FLAG_ASYNC;
+        }
+        if asterisk_token {
+            self.context_flags |= CONTEXT_FLAG_GENERATOR;
+        }
         let parameters = if !has_open_paren && self.is_token(SyntaxKind::OpenBraceToken) {
             NodeList::new()
         } else {
@@ -716,6 +726,7 @@ impl ParserState {
             self.parse_expected(SyntaxKind::CloseParenToken);
             params
         };
+        self.context_flags = saved_param_ctx;
 
         let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
             self.parse_return_type()
