@@ -819,6 +819,33 @@ impl<'a> CheckerState<'a> {
                 None
             };
 
+        // Element context from a non-array *iterable* contextual type. tsc's
+        // `getContextualTypeForElementExpression` derives an array literal's element
+        // context from the iteration type of the contextual type (`getIterationTypeOfIterable`),
+        // not just from array/tuple/index shapes. So `["push"]` against `Iterable<M>`
+        // contextually types each element with `M`. The contextual type reaches here
+        // already expanded from the `Iterable<M>` Application to its object form (with
+        // `[Symbol.iterator]`), so the Application `args[0]` heuristic no longer applies;
+        // extract the yield type from the iterator protocol instead. Only used as a
+        // fallback (see the element chain below) and only when the context is not an
+        // array/tuple shape (`applicable_contextual_type` is `None`), so array and tuple
+        // contexts keep their existing per-element/per-position typing.
+        let iterable_yield_element_ctx = if applicable_contextual_type.is_none() {
+            effective_contextual.and_then(|ctx| {
+                // Resolve the iteration (yield) type via the environment-aware iterator
+                // protocol. The contextual type has already been expanded from the
+                // `Iterable<M>` Application to its object form (with `[Symbol.iterator]`),
+                // whose inner `Iterator<M>` member types need `TypeEnvironment` resolution
+                // that the solver-only `iterator_info_yield_type` cannot perform. `ANY` is
+                // the resolver's unresolved sentinel and also a genuine `Iterable<any>`
+                // yield; either way a non-concrete yield must not force element context.
+                let yield_ty = self.resolve_iterator_element_type(ctx);
+                Some(yield_ty).filter(|&y| y != TypeId::NEVER && y != TypeId::ANY)
+            })
+        } else {
+            None
+        };
+
         // Get types of all elements, applying contextual typing when available.
         // Track (type, node_index) pairs for excess property checking on array elements.
         let mut element_types = Vec::new();
@@ -953,6 +980,13 @@ impl<'a> CheckerState<'a> {
                             // getIndexedAccessType(type, numericLiteral(index)).
                             let index_str = index.to_string();
                             helper.get_property_type(&index_str)
+                        })
+                        .or_else(|| {
+                            // Fallback: a non-array *iterable* contextual type (e.g.
+                            // `Iterable<M>`) contextually types each element with its
+                            // iteration (yield) type, matching tsc's
+                            // getContextualTypeForElementExpression.
+                            iterable_yield_element_ctx
                         })
                         .or_else(|| {
                             fallback_unknown_array_element_context.then_some(TypeId::UNKNOWN)
@@ -1236,6 +1270,11 @@ impl<'a> CheckerState<'a> {
             let contextual = effective_contextual?;
             self.resolve_array_element_type_from_index_signature(contextual)
                 .or_else(|| self.resolve_array_element_type_from_union_members(contextual))
+                // A non-array *iterable* contextual type (e.g. `Iterable<M>`) collapses the
+                // array literal to `Array<yield>` (here `Array<M>`), preserving the element
+                // literals instead of widening them through best-common-type. Mirrors tsc,
+                // where an array literal assignable to `Iterable<M>` keeps element type `M`.
+                .or(iterable_yield_element_ctx)
         });
         if let Some(context_element_type) = context_element_type
             && context_element_type != TypeId::ANY

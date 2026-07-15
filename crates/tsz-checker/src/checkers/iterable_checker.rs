@@ -650,7 +650,7 @@ impl<'a> CheckerState<'a> {
     ///    merged declarations (`IArguments`) and custom iterator classes.
     ///
     /// Returns ANY as fallback if the protocol cannot be resolved.
-    fn resolve_iterator_element_type(&mut self, type_id: TypeId) -> TypeId {
+    pub(crate) fn resolve_iterator_element_type(&mut self, type_id: TypeId) -> TypeId {
         // Try solver-level iterator resolution first (handles Application types correctly)
         // `ANY` is also the solver's unresolved-iterator sentinel. Let the
         // environment-aware property chain distinguish that from an explicit
