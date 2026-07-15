@@ -100,6 +100,82 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Cheap coarse reject: a source file whose text contains none of the
+    /// `@typedef` / `@callback` / `@import` substrings cannot define a JSDoc
+    /// typedef. Fast (`memchr`) but imprecise — the DOM lib mentions the CSS
+    /// `@import` at-rule in prose, so a substring hit does not imply a real
+    /// tag; [`Self::source_file_has_jsdoc_typedef_tag`] refines it.
+    fn source_file_may_define_jsdoc_typedef(source_file: &SourceFileData) -> bool {
+        if source_file.comments.is_empty() {
+            return false;
+        }
+        let text = &source_file.text;
+        text.contains("@typedef") || text.contains("@callback") || text.contains("@import")
+    }
+
+    /// Precise, name-independent guard: does any JSDoc comment in `source_file`
+    /// contain a real `@typedef` / `@callback` / `@import` *tag* — a comment
+    /// line that, after stripping the JSDoc frame (`/**`, `*`), starts with the
+    /// tag — as opposed to a coincidental substring in documentation prose
+    /// (the DOM lib's "represents an @import at-rule")?
+    ///
+    /// A file that answers `false` can never satisfy any typedef-name lookup,
+    /// so the whole per-comment scan/parse (and the full source-text clone it
+    /// requires in [`Self::resolve_global_jsdoc_typedef_info_uncached`]) is
+    /// skipped for it. This is not gated on project size, so small typedef-free
+    /// projects (e.g. `comlink`, whose only cross-arena file is the DOM lib)
+    /// stop re-scanning the DOM lib on every unresolved type reference.
+    fn source_file_has_jsdoc_typedef_tag(source_file: &SourceFileData) -> bool {
+        use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
+
+        if !Self::source_file_may_define_jsdoc_typedef(source_file) {
+            return false;
+        }
+        let text = &source_file.text;
+        source_file.comments.iter().any(|comment| {
+            if !is_jsdoc_comment(comment, text) {
+                return false;
+            }
+            get_jsdoc_content(comment, text).lines().any(|line| {
+                let line = line
+                    .trim()
+                    .trim_start_matches("/**")
+                    .trim_start_matches("/*")
+                    .trim_start_matches('*')
+                    .trim_start();
+                line.starts_with("@typedef")
+                    || line.starts_with("@callback")
+                    || line.starts_with("@import")
+            })
+        })
+    }
+
+    /// Cached [`Self::source_file_has_jsdoc_typedef_tag`], keyed by file
+    /// identity so the name-independent scan runs at most once per file over
+    /// the whole run instead of once per unresolved name.
+    fn source_file_has_jsdoc_typedef_tag_cached(
+        &self,
+        file_idx: usize,
+        source_file_idx: usize,
+        source_file: &SourceFileData,
+    ) -> bool {
+        let key = (file_idx as u32, source_file_idx as u32);
+        if let Some(entry) = self
+            .ctx
+            .jsdoc_global_typedef_lookup_cache
+            .tag_presence_by_file
+            .get(&key)
+        {
+            return *entry.value();
+        }
+        let result = Self::source_file_has_jsdoc_typedef_tag(source_file);
+        self.ctx
+            .jsdoc_global_typedef_lookup_cache
+            .tag_presence_by_file
+            .insert(key, result);
+        result
+    }
+
     pub(crate) fn source_file_has_jsdoc_typedef_named(
         source_file: &SourceFileData,
         name: &str,
@@ -367,12 +443,22 @@ impl<'a> CheckerState<'a> {
             .iter()
             .enumerate()
             .filter(|(source_file_idx, source_file)| {
-                if !use_typedef_prescan {
-                    return true;
-                }
                 let file_idx = self
                     .global_source_file_idx_for_name(&source_file.file_name)
                     .unwrap_or(current_file_idx);
+                // Always-on, name-independent, cached: a file with no real
+                // typedef tag can never match, so skip it (and its full
+                // source-text clone) before any per-name scanning.
+                if !self.source_file_has_jsdoc_typedef_tag_cached(
+                    file_idx,
+                    *source_file_idx,
+                    source_file,
+                ) {
+                    return false;
+                }
+                if !use_typedef_prescan {
+                    return true;
+                }
                 self.source_file_has_jsdoc_typedef_named_cached(
                     file_idx,
                     *source_file_idx,
@@ -425,6 +511,18 @@ impl<'a> CheckerState<'a> {
             }
 
             for (source_file_idx, source_file) in arena.source_files.iter().enumerate() {
+                // Always-on, name-independent, cached tag guard (see the
+                // current-arena filter): skip files that cannot define a typedef
+                // before the external-module walk and the full source-text clone.
+                // This is what stops `comlink` re-scanning the DOM lib (whose
+                // only `@import` hits are CSS-at-rule prose) on every name.
+                if !self.source_file_has_jsdoc_typedef_tag_cached(
+                    file_idx,
+                    source_file_idx,
+                    source_file,
+                ) {
+                    continue;
+                }
                 if Self::jsdoc_source_file_is_external_module(
                     &self.ctx,
                     file_idx,

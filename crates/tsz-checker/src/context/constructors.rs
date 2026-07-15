@@ -266,6 +266,7 @@ impl<'a> CheckerContext<'a> {
                 miss_cache: RefCell::new(FxHashSet::default()),
                 in_progress: RefCell::new(FxHashSet::default()),
                 typedef_presence_by_file: Arc::new(dashmap::DashMap::new()),
+                tag_presence_by_file: Arc::new(dashmap::DashMap::new()),
             },
             nested_namespace_candidates_cache_complete: Cell::new(false),
             lowering_entity_name_resolution_cache: RefCell::new(crate::context::CowCache::default()),
@@ -833,6 +834,11 @@ impl<'a> CheckerContext<'a> {
             &parent
                 .jsdoc_global_typedef_lookup_cache
                 .typedef_presence_by_file,
+        );
+        ctx.jsdoc_global_typedef_lookup_cache.tag_presence_by_file = Arc::clone(
+            &parent
+                .jsdoc_global_typedef_lookup_cache
+                .tag_presence_by_file,
         );
         ctx.skip_lib_type_resolution = parent.skip_lib_type_resolution;
 

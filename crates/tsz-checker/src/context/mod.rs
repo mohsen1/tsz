@@ -134,6 +134,13 @@ pub struct JSDocGlobalTypedefLookupCache {
     pub miss_cache: RefCell<FxHashSet<String>>,
     pub in_progress: RefCell<FxHashSet<String>>,
     pub typedef_presence_by_file: Arc<dashmap::DashMap<(u32, u32, String), bool>>,
+    /// Name-independent per-file guard: whether a source file contains any real
+    /// JSDoc `@typedef` / `@callback` / `@import` *tag* (line-start in a JSDoc
+    /// comment), as opposed to a coincidental substring in doc prose (the DOM
+    /// lib mentions the CSS `@import` at-rule dozens of times). Computed once
+    /// per file and reused for every unresolved-name lookup, so a typedef-free
+    /// file (or lib) is scanned+parsed at most once instead of once per name.
+    pub tag_presence_by_file: Arc<dashmap::DashMap<(u32, u32), bool>>,
 }
 
 /// Maximum depth for nested `get_type_of_symbol` calls before giving up.
