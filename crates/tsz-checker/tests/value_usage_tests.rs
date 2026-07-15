@@ -595,10 +595,15 @@ ns.foo.bar();
 // TS2339 errors (wrong code → correct code), so no tests flip from pass to fail.
 
 #[test]
-fn test_for_await_no_ts1103_ts1431_ts1432() {
-    // tsc 6.0 no longer emits TS1103/TS1431/TS1432 for `for await` statements.
-    // Top-level `for await` and `for await` in non-async functions are accepted.
-    // Only TS18038 (for-await in class static blocks) is still emitted.
+fn test_for_await_top_level_non_module_emits_ts1431_ts1432() {
+    // tsc 7.0.2 DOES emit these (verified against the pinned oracle): a
+    // top-level `for await` in a non-module script gets TS1431 (file is not
+    // a module) and TS1432 (module/target combination), anchored at the
+    // statement. The old assertion here encoded a stale "obsolete in tsc
+    // 6.0" premise. The `for await` inside an async function stays clean.
+    // Follow-up gap (do not assert yet): the oracle also emits TS1103 for
+    // the `for await` inside the NON-async function; tsz does not emit
+    // TS1103 there yet.
     let source = r#"
 async function ok() {
     let y: any;
@@ -612,10 +617,11 @@ for await (const x of []) {}
 "#;
     let diags = crate::test_utils::check_source_diagnostics(source);
 
-    let obsolete_count = diagnostic_count_where(&diags, |code| matches!(code, 1103 | 1431 | 1432));
+    let ts1431 = diagnostic_count(&diags, 1431);
+    let ts1432 = diagnostic_count(&diags, 1432);
     assert!(
-        obsolete_count == 0,
-        "Expected no TS1103/TS1431/TS1432 (obsolete in tsc 6.0), got diagnostics: {diags:?}"
+        ts1431 == 1 && ts1432 == 1,
+        "Expected exactly one TS1431 and one TS1432 for the top-level `for await` in a non-module script (tsc 7.0.2), got: {diags:?}"
     );
 }
 

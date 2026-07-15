@@ -674,35 +674,80 @@ impl<'a> CheckerState<'a> {
     /// - `stmt_idx`: The for-await statement node index to check
     ///
     /// ## Notes:
-    /// tsc 6.0 no longer emits TS1103/TS1431/TS1432 for `for await` statements.
-    /// Top-level await and `for await` in non-async functions are now accepted
-    /// without error.  Only TS18038 (`for await` in class static blocks) is
-    /// still emitted.
+    /// tsc emits TS18038 (`for await` in class static blocks) and, for a
+    /// top-level `for await` outside async context, the same module/target
+    /// grammar diagnostics as a bare top-level `await` expression: TS1431 when
+    /// the file is not a module and TS1432 when the module/target combination
+    /// does not support top-level await. All three anchor at the `await`
+    /// keyword, not the `for` keyword.
     pub(crate) fn check_for_await_statement(&mut self, stmt_idx: NodeIndex) {
-        if !self.ctx.in_async_context()
-            && self.ctx.function_depth > 0
-            && self.find_enclosing_static_block(stmt_idx).is_some()
-        {
-            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-            // TS18038: 'for await' loops cannot be used inside a class static block.
-            // TSC anchors this error at the `await` keyword, not the `for` keyword.
-            if let Some(stmt_node) = self.ctx.arena.get(stmt_idx) {
-                let await_pos = stmt_node.pos + 4; // skip "for "
-                let await_len = 5u32; // "await"
-                self.error(
-                    await_pos,
-                    await_len,
-                    diagnostic_messages::FOR_AWAIT_LOOPS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK
-                        .to_string(),
-                    diagnostic_codes::FOR_AWAIT_LOOPS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
-                );
-            } else {
-                self.error_at_node(
-                    stmt_idx,
-                    diagnostic_messages::FOR_AWAIT_LOOPS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
-                    diagnostic_codes::FOR_AWAIT_LOOPS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
-                );
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        if self.ctx.in_async_context() {
+            return;
+        }
+
+        // The `await` keyword sits immediately after `for `.
+        let await_anchor = self
+            .ctx
+            .arena
+            .get(stmt_idx)
+            .map(|stmt_node| (stmt_node.pos + 4, 5u32));
+
+        if self.ctx.function_depth > 0 {
+            if self.find_enclosing_static_block(stmt_idx).is_some() {
+                // TS18038: 'for await' loops cannot be used inside a class static block.
+                if let Some((await_pos, await_len)) = await_anchor {
+                    self.error(
+                        await_pos,
+                        await_len,
+                        diagnostic_messages::FOR_AWAIT_LOOPS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK
+                            .to_string(),
+                        diagnostic_codes::FOR_AWAIT_LOOPS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
+                    );
+                } else {
+                    self.error_at_node(
+                        stmt_idx,
+                        diagnostic_messages::FOR_AWAIT_LOOPS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
+                        diagnostic_codes::FOR_AWAIT_LOOPS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
+                    );
+                }
             }
+            return;
+        }
+
+        // Top-level `for await`. tsc suppresses these grammar checks whenever the
+        // *program* has a real syntax parse error (not just the current file):
+        // a `for await (... in ...)` parse error in a sibling file silences the
+        // top-level for-await grammar checks everywhere. Use the program-wide
+        // flag to mirror that, not the per-file `has_syntax_parse_errors`.
+        if self.ctx.has_parse_errors {
+            return;
+        }
+        let Some((await_pos, await_len)) = await_anchor else {
+            return;
+        };
+
+        // TS1431: top-level `for await` is only valid in a module.
+        if !self.ctx.is_external_module_file() {
+            self.error(
+                await_pos,
+                await_len,
+                diagnostic_messages::FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_FILE_WHEN_THAT_FILE_IS_A
+                    .to_string(),
+                diagnostic_codes::FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_FILE_WHEN_THAT_FILE_IS_A,
+            );
+        }
+
+        // TS1432: top-level `for await` requires a supporting module/target.
+        if !self.supports_top_level_await() {
+            self.error(
+                await_pos,
+                await_len,
+                diagnostic_messages::TOP_LEVEL_FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ES20
+                    .to_string(),
+                diagnostic_codes::TOP_LEVEL_FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ES20,
+            );
         }
     }
 
