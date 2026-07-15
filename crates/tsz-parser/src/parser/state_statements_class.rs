@@ -1032,24 +1032,6 @@ impl ParserState {
             );
         }
 
-        // tsc parses a function's parameters in that function's Await
-        // SignatureFlags context, so `await` in an async function is rejected as a
-        // binding identifier name with TS1359 — see asyncFunctionDeclaration5 /
-        // asyncArrowFunction5. The name token is still consumed as an identifier
-        // below so parameter recovery (type annotation, initializer) proceeds
-        // normally.
-        {
-            let name_is_await = self.is_token(SyntaxKind::AwaitKeyword)
-                || (self.is_token(SyntaxKind::Identifier)
-                    && self.scanner.get_token_value_ref() == "await");
-            if name_is_await && (self.in_async_context() || self.in_static_block_context()) {
-                self.parse_error_at_current_token(
-                    "Identifier expected. 'await' is a reserved word that cannot be used here.",
-                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
-                );
-            }
-        }
-
         let parameter_name_is_reserved_word =
             self.is_reserved_word() && !self.is_token(SyntaxKind::DefaultKeyword);
         let is_invalid_rest_this_parameter =

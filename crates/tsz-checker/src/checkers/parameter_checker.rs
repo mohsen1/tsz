@@ -102,6 +102,11 @@ impl<'a> CheckerState<'a> {
         strict_context_node: NodeIndex,
         use_class_strict_message: bool,
     ) {
+        // TS1359: `await` as a parameter name inside an async function-like.
+        // Unlike the strict-mode reserved-name checks below, this is not gated
+        // on strict mode, so it must run before the strict-mode early return.
+        self.check_await_reserved_parameter_names(params);
+
         if !use_class_strict_message && !self.is_strict_mode_for_node(strict_context_node) {
             return;
         }
@@ -190,6 +195,75 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+
+    /// TS1359: reject `await` used as a parameter name when the parameter's
+    /// immediately enclosing function-like is `async`. tsc parses a function's
+    /// parameter list under that function's own Await context, so `await` is not
+    /// a legal binding identifier there (see `asyncFunctionDeclaration5` /
+    /// `asyncArrowFunction5`).
+    ///
+    /// This is a grammar check that tsc suppresses program-wide once any file in
+    /// the program has a real syntax (parse) error — mirrored here via
+    /// `has_parse_errors` (the program-wide `program_has_real_syntax_errors`
+    /// flag). The `parser.asyncGenerators.*` suites witness the suppression: a
+    /// sibling file's TS1109 drops every TS1359 in the program.
+    fn check_await_reserved_parameter_names(&mut self, params: &[NodeIndex]) {
+        if self.ctx.has_parse_errors {
+            return;
+        }
+
+        for &param_idx in params {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+            let Some(name_node) = self.ctx.arena.get(param.name) else {
+                continue;
+            };
+            let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+                continue;
+            };
+            if ident.escaped_text != "await" {
+                continue;
+            }
+
+            if self.parameter_enclosing_function_is_async(param_idx) {
+                use crate::diagnostics::diagnostic_codes;
+                self.error_at_node(
+                    param.name,
+                    "Identifier expected. 'await' is a reserved word that cannot be used here.",
+                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
+                );
+            }
+        }
+    }
+
+    /// Whether the function-like that owns `param_idx` carries the `async`
+    /// modifier. Resolves to the first enclosing function-like (arrows included);
+    /// a non-async function nested inside an async one — or inside a class static
+    /// block — resets the Await context, exactly like tsc, because the walk stops
+    /// at that inner function rather than the outer async scope.
+    fn parameter_enclosing_function_is_async(&self, param_idx: NodeIndex) -> bool {
+        let Some(func_idx) = self.enclosing_function_like_for_parameter(param_idx) else {
+            return false;
+        };
+        let Some(func_node) = self.ctx.arena.get(func_idx) else {
+            return false;
+        };
+        if let Some(func) = self.ctx.arena.get_function(func_node) {
+            return func.is_async;
+        }
+        self.ctx
+            .arena
+            .get_method_decl(func_node)
+            .is_some_and(|method| {
+                self.ctx
+                    .arena
+                    .has_modifier(&method.modifiers, tsz_scanner::SyntaxKind::AsyncKeyword)
+            })
     }
 
     fn rest_parameter_name_is_recovery_artifact(
@@ -1482,6 +1556,88 @@ mod strict_parameter_name_tests {
         assert!(
             !codes.contains(&1213),
             "recovered `...public rest` should not cascade into TS1213: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn async_function_await_parameter_reports_ts1359() {
+        let codes = checker_codes_with_parse_health("async function foo(await) {}");
+        assert!(
+            codes.contains(&1359),
+            "async function `await` parameter should report TS1359: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn async_arrow_await_parameter_reports_ts1359() {
+        let codes = checker_codes_with_parse_health("var foo = async (await) => {};");
+        assert!(
+            codes.contains(&1359),
+            "async arrow `await` parameter should report TS1359: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn async_generator_await_parameter_reports_ts1359() {
+        let codes = checker_codes_with_parse_health("async function* foo(await) {}");
+        assert!(
+            codes.contains(&1359),
+            "async generator `await` parameter should report TS1359: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn async_generator_method_await_parameter_reports_ts1359() {
+        // Binder-name variation: the check keys off the `await` identifier and
+        // the enclosing method's async modifier, not the enclosing class name.
+        let codes = checker_codes_with_parse_health("class Widget { async *run(await) {} }");
+        assert!(
+            codes.contains(&1359),
+            "async method `await` parameter should report TS1359: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn non_async_function_await_parameter_stays_clean() {
+        let codes = checker_codes_with_parse_health("function foo(await) {}");
+        assert!(
+            !codes.contains(&1359),
+            "non-async function `await` parameter must not report TS1359: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn sync_generator_await_parameter_stays_clean() {
+        let codes = checker_codes_with_parse_health("function* foo(await) {}");
+        assert!(
+            !codes.contains(&1359),
+            "sync generator `await` parameter must not report TS1359: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn plain_function_in_static_block_await_parameter_stays_clean() {
+        // The nested non-async function resets the Await context, so tsc emits
+        // no TS1359 here even though the lexical scope is a class static block.
+        let codes =
+            checker_codes_with_parse_health("class C { static { function foo(await) {} } }");
+        assert!(
+            !codes.contains(&1359),
+            "plain function nested in a static block must not report TS1359: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn parse_error_suppresses_await_parameter_ts1359_program_wide() {
+        // A real parse error anywhere in the program suppresses the TS1359
+        // grammar check, mirroring tsc's program-wide grammar-check gate.
+        let codes = checker_codes_with_parse_health(
+            "async function foo(await) {}
+             function bad( ",
+        );
+        assert!(
+            !codes.contains(&1359),
+            "parse error should suppress the await-parameter TS1359: {codes:?}"
         );
     }
 }
