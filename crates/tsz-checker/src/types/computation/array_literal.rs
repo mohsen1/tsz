@@ -981,13 +981,11 @@ impl<'a> CheckerState<'a> {
                             let index_str = index.to_string();
                             helper.get_property_type(&index_str)
                         })
-                        .or_else(|| {
-                            // Fallback: a non-array *iterable* contextual type (e.g.
-                            // `Iterable<M>`) contextually types each element with its
-                            // iteration (yield) type, matching tsc's
-                            // getContextualTypeForElementExpression.
-                            iterable_yield_element_ctx
-                        })
+                        // Fallback: a non-array *iterable* contextual type (e.g.
+                        // `Iterable<M>`) contextually types each element with its
+                        // iteration (yield) type, matching tsc's
+                        // getContextualTypeForElementExpression.
+                        .or(iterable_yield_element_ctx)
                         .or_else(|| {
                             fallback_unknown_array_element_context.then_some(TypeId::UNKNOWN)
                         });
