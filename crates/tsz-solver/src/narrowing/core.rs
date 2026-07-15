@@ -703,15 +703,26 @@ impl<'a> NarrowingContext<'a> {
             let mut matching: Vec<TypeId> = members
                 .iter()
                 .filter_map(|&member| {
-                    if self.is_assignable_to(member, target_type) {
-                        return Some(member);
-                    }
-                    // Resolve Application/Lazy types before assignability check.
-                    // Without this, generic instantiations like ArrayLike<any>
-                    // remain opaque Application types and structural assignability
-                    // to object targets (e.g. { length: unknown }) fails.
+                    // Resolve alias / `Lazy(DefId)` members before the keep
+                    // decision. An unresolved `Lazy` is permissively treated as
+                    // assignable to any target, so checking the raw member keeps
+                    // every cross-file alias constituent — e.g. narrowing
+                    // `AnyObject | AnyArray | AnyMap | AnySet` by `AnyMap` would
+                    // retain all four members because each is an unresolved
+                    // `Lazy(DefId)` that spuriously "matches" `Map<any, any>`.
+                    // Filtering on the resolved structural form keeps only the
+                    // genuinely-related constituent, matching tsc's
+                    // `getNarrowedType`, which maps over the resolved
+                    // constituents. When the member cannot be resolved further
+                    // (`resolved_member == member`) fall back to the raw check so
+                    // a genuinely-deferred member is still admitted.
                     let resolved_member = self.resolve_type(member);
-                    if resolved_member != member && self.is_assignable_to(resolved_member, target_type) {
+                    let keep_member = if resolved_member != member {
+                        self.is_assignable_to(resolved_member, target_type)
+                    } else {
+                        self.is_assignable_to(member, target_type)
+                    };
+                    if keep_member {
                         return Some(member);
                     }
                     // Reverse subtype check: target <: member.
