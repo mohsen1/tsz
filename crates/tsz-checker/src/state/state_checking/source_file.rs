@@ -651,8 +651,14 @@ impl CheckerState<'_> {
             // TS2300: Check for duplicate @import names across JSDoc comments
             self.check_jsdoc_duplicate_imports();
 
+            // TS1069: `@template {Constraint}` with no following type-parameter name
+            self.check_jsdoc_template_brace_syntax();
+
             // TS1003: Check @param tags for malformed `*` names
             self.check_jsdoc_param_invalid_names();
+
+            // TS1003: `@typedef {Type}` with no name after the type expression
+            self.check_jsdoc_typedef_missing_name();
 
             // TS1003: Check @property/@member tags for private-name syntax
             self.check_jsdoc_property_private_names();

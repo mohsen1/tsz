@@ -458,4 +458,135 @@ impl<'a> CheckerState<'a> {
         }
         false
     }
+
+    /// TS1069: `@template {Constraint}` with no type-parameter name following
+    /// the constraint braces (e.g. `@template {T}`). TypeScript's JSDoc parser
+    /// reports "Unexpected token. A type parameter name was expected without
+    /// curly braces." at the position where the name was expected. This is a
+    /// purely syntactic property of the JSDoc comment — tsc emits it during
+    /// parsing regardless of what the tag decorates — so it runs once per JS
+    /// source file over every JSDoc comment (class, function, and variable
+    /// hosts alike). No TS2304 accompanies it: tsc does not treat the braced
+    /// text as a `Cannot find name` reference.
+    pub(crate) fn check_jsdoc_template_brace_syntax(&mut self) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use tsz_common::comments::is_jsdoc_comment;
+
+        if !self.is_js_file() {
+            return;
+        }
+        let Some(sf) = self.ctx.arena.source_files.first() else {
+            return;
+        };
+        let source_text: &str = &sf.text;
+
+        // Collect anchors before emitting so the `self.ctx.error` loop does not
+        // conflict with the immutable borrow of `sf.comments`.
+        let mut anchors: Vec<u32> = Vec::new();
+        for comment in &sf.comments {
+            if !is_jsdoc_comment(comment, source_text) {
+                continue;
+            }
+            let text = comment.get_text(source_text);
+            let base = comment.pos;
+            let mut scan = 0usize;
+            while let Some(rel) = Self::jsdoc_tag_offset(&text[scan..], "template") {
+                let tag_off = scan + rel;
+                let after_tag = tag_off + "@template".len();
+                let rest = &text[after_tag..];
+                let trimmed = rest.trim_start();
+                if !trimmed.starts_with('{') {
+                    scan = after_tag;
+                    continue;
+                }
+                let leading_ws = rest.len() - trimmed.len();
+                let brace_off = after_tag + leading_ws;
+                let Some(close_rel) =
+                    Self::jsdoc_balanced_close_brace_offset(&text[brace_off + 1..])
+                else {
+                    scan = brace_off + 1;
+                    continue;
+                };
+                let close_off = brace_off + 1 + close_rel;
+
+                // `@template {Constraint} Name` — a following identifier (past
+                // whitespace and continuation asterisks) is the valid
+                // constrained form; nothing to report.
+                if Self::jsdoc_next_is_type_param_name(&text[close_off + 1..]) {
+                    scan = close_off + 1;
+                    continue;
+                }
+
+                anchors
+                    .push(base + Self::jsdoc_template_missing_name_anchor(text, close_off) as u32);
+                scan = close_off + 1;
+            }
+        }
+
+        for anchor in anchors {
+            self.ctx.error(
+                anchor,
+                1,
+                diagnostic_messages::UNEXPECTED_TOKEN_A_TYPE_PARAMETER_NAME_WAS_EXPECTED_WITHOUT_CURLY_BRACES.to_string(),
+                diagnostic_codes::UNEXPECTED_TOKEN_A_TYPE_PARAMETER_NAME_WAS_EXPECTED_WITHOUT_CURLY_BRACES,
+            );
+        }
+    }
+
+    /// Byte offset of the `}` that balances the leading `{` of `s` (which is
+    /// the text immediately after an opening `{`), or `None` if unbalanced.
+    fn jsdoc_balanced_close_brace_offset(s: &str) -> Option<usize> {
+        let mut depth: i32 = 1;
+        for (i, ch) in s.char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(i);
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// Whether the first non-trivia glyph in `after_close` starts a JSDoc type
+    /// parameter name. Continuation whitespace and leading `*` line markers are
+    /// skipped, mirroring tsc's `skipWhitespaceOrAsterisk` before it parses the
+    /// name that a constraint (`@template {C} Name`) introduces.
+    fn jsdoc_next_is_type_param_name(after_close: &str) -> bool {
+        for ch in after_close.chars() {
+            if ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n' || ch == '*' {
+                continue;
+            }
+            // `[` opens the bracketed `[Name=default]` form (tsc parses it via
+            // `parseOptionalJsdoc(OpenBracketToken)`), so it also introduces a
+            // valid type-parameter name.
+            return ch == '_' || ch == '$' || ch == '[' || ch.is_ascii_alphabetic();
+        }
+        false
+    }
+
+    /// Byte offset (within the comment text) where TS1069 anchors when a
+    /// constrained `@template` tag has no name. tsc reports at the token where
+    /// the name was expected: right after the closing brace when more of the
+    /// same line follows, or the first non-space glyph of the next continuation
+    /// line (the leading `*`) when the constraint ends its line.
+    fn jsdoc_template_missing_name_anchor(text: &str, close_off: usize) -> usize {
+        let bytes = text.as_bytes();
+        let mut i = close_off + 1;
+        while i < bytes.len() && matches!(bytes[i], b' ' | b'\t' | b'\r') {
+            i += 1;
+        }
+        if i < bytes.len() && bytes[i] == b'\n' {
+            i += 1;
+            while i < bytes.len() && matches!(bytes[i], b' ' | b'\t' | b'\r') {
+                i += 1;
+            }
+            return i;
+        }
+        close_off + 1
+    }
 }

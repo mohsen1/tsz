@@ -292,6 +292,15 @@ impl<'a> CheckerState<'a> {
                                     "'from' expected.",
                                     crate::diagnostics::diagnostic_codes::EXPECTED,
                                 );
+                                // tsc also expects a string-literal module
+                                // specifier at the same spot the clause breaks
+                                // (`@import defer * as ns from …`).
+                                self.error_at_position(
+                                    error_pos,
+                                    1,
+                                    crate::diagnostics::diagnostic_messages::STRING_LITERAL_EXPECTED,
+                                    crate::diagnostics::diagnostic_codes::STRING_LITERAL_EXPECTED,
+                                );
                                 search_from = after_import;
                                 continue;
                             }
@@ -364,12 +373,20 @@ impl<'a> CheckerState<'a> {
                             );
                         } else {
                             // For imports with additional content (e.g., `@import x = require("types")`),
-                            // only emit TS1005 at the import clause position (not TS1109).
+                            // emit TS1005 'from' expected at the import clause
+                            // position (not TS1109), plus TS1141 for the missing
+                            // string-literal specifier tsc reports at the same spot.
                             self.error_at_position(
                                 expr_pos,
                                 1,
                                 "'from' expected.",
                                 crate::diagnostics::diagnostic_codes::EXPECTED,
+                            );
+                            self.error_at_position(
+                                expr_pos,
+                                1,
+                                crate::diagnostics::diagnostic_messages::STRING_LITERAL_EXPECTED,
+                                crate::diagnostics::diagnostic_codes::STRING_LITERAL_EXPECTED,
                             );
                         }
                     }

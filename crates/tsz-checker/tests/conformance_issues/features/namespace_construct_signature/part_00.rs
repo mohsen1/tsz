@@ -836,7 +836,10 @@ class B extends A {
 }
 
 #[test]
-fn test_jsdoc_template_brace_form_reports_ts1069_and_ts2304() {
+fn test_jsdoc_template_brace_form_reports_ts1069_without_ts2304() {
+    // Mirrors conformance/jsdoc/jsdocOuterTypeParameters3.ts. TypeScript 7.0.2
+    // reports only TS1069 for the nameless `@template {T}` brace form; it does
+    // not treat the braced text as a `Cannot find name` (TS2304) reference.
     let source = r#"
 /** @template {T} */
 class Baz {
@@ -864,8 +867,8 @@ class Baz {
         "Expected TS1069 for invalid JSDoc @template brace syntax. Actual diagnostics: {diagnostics:#?}"
     );
     assert!(
-        has_error(&diagnostics, 2304),
-        "Expected TS2304 for the unresolved JSDoc template name inside braces. Actual diagnostics: {diagnostics:#?}"
+        !has_error(&diagnostics, 2304),
+        "TS2304 must not fire for the braced JSDoc template name (tsc 7.0.2 parity). Actual diagnostics: {diagnostics:#?}"
     );
 }
 
