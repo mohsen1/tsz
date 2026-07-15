@@ -1135,8 +1135,28 @@ impl CheckerState<'_> {
                                     .iter()
                                     .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
                                     .collect();
+                                // Keep the generic lib reference NOMINAL. Unlike the
+                                // `get_global_type_with_libs` branch above (which builds a
+                                // `Lazy(DefId)` base via `get_canonical_lib_def_id`), this
+                                // fallback resolves the lib type to its interface BODY. Using
+                                // that body object directly as the application base drops the
+                                // `DefId` the relation layer's coinductive cycle guard needs:
+                                // an imported generic member returning `Promise<TResult1 |
+                                // TResult2>` whose method type-param names collide with the lib
+                                // `Promise`/`PromiseLike` `then`'s own `TResult1`/`TResult2`
+                                // then captures those names through the exposed body, so the
+                                // `Promise <: PromiseLike` recursion can never converge (false
+                                // TS2345). `resolve_lib_type_by_name` registered the resolved
+                                // body under its lib `DefId` (`register_type_to_def`), so
+                                // recover it and keep the base `Lazy(DefId)`.
+                                let base = self
+                                    .ctx
+                                    .definition_store
+                                    .find_def_for_type(type_id)
+                                    .map(|def_id| self.ctx.types.factory().lazy(def_id))
+                                    .unwrap_or(type_id);
                                 // Create a TypeApplication to instantiate the generic type
-                                return self.ctx.types.factory().application(type_id, type_args);
+                                return self.ctx.types.factory().application(base, type_args);
                             }
                             return type_id;
                         }
