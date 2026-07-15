@@ -650,13 +650,43 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         // object literals, arrays, etc.). Applying the asserted type
                         // to arbitrary expressions like `target ?? component` can
                         // manufacture spurious TS2322s inside an `as` assertion.
-                        let needs_context = !is_const_assertion
-                            && self.checker.argument_needs_contextual_type(
-                                self.checker
-                                    .ctx
-                                    .arena
-                                    .skip_parenthesized_and_assertions(assertion.expression),
-                            );
+                        let operand_idx = self
+                            .checker
+                            .ctx
+                            .arena
+                            .skip_parenthesized_and_assertions(assertion.expression);
+                        let mut needs_context = !is_const_assertion
+                            && self.checker.argument_needs_contextual_type(operand_idx);
+                        // `satisfies` contextually types its operand exactly like a
+                        // variable annotation (`checkSatisfiesExpressionWorker` calls
+                        // `checkExpressionWithContextualType`). A bare generic call whose
+                        // type parameter is only inferable from the return position
+                        // (`genericFn() satisfies Target`) is not flagged by
+                        // `argument_needs_contextual_type` — it has no context-sensitive
+                        // arguments — yet the target must still seed return-only inference,
+                        // matching the variable-annotation initializer path. Reuse that
+                        // path's generic-call guard so the suppression cases (multiple
+                        // overloads, bare-return type params, direct-argument overlap) stay
+                        // in sync; non-generic call operands are a no-op (a call's return
+                        // type is fixed, so seeding the contextual type changes nothing).
+                        if !needs_context
+                            && k == syntax_kind_ext::SATISFIES_EXPRESSION
+                            && !self.checker.type_contains_error(asserted_type)
+                        {
+                            let is_call_operand =
+                                self.checker.ctx.arena.get(operand_idx).is_some_and(|op| {
+                                    op.kind == syntax_kind_ext::CALL_EXPRESSION
+                                        || op.kind == syntax_kind_ext::NEW_EXPRESSION
+                                });
+                            if is_call_operand {
+                                needs_context = !self
+                                    .checker
+                                    .suppress_initializer_contextual_type_for_generic_call(
+                                        operand_idx,
+                                        asserted_type,
+                                    );
+                            }
+                        }
                         let request = if needs_context {
                             // `satisfies` uses normal contextual typing (not assertion),
                             // while `as`/angle-bracket assertions mark assertion origin

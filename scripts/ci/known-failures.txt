@@ -22,9 +22,6 @@
 # - js_constructor_property: TS7 half-migration — Ctor.prototype = { m() {} }
 #   methods must contextually type `this` as the object literal (oracle emits
 #   TS2339s; tsz emits neither old TS2322 nor new TS2339s).
-# - inferred_from_satisfies_target: `satisfies` target is not seeded as the
-#   generic call's contextual type (oracle infers from it; tsz falls back to
-#   the default type argument).
 # baseline-status: reconciled r3
 tsz-checker::conditional_application_display_tests::deferred_generic_conditional_keeps_branch_union
 tsz-checker::conformance_issues_types::types::fp_repro_audit_2026::issue_14944_genuine_widening_self_assignment_still_errors
@@ -52,7 +49,6 @@ tsz-checker::mapped_keyof_index_access_tests::mapped_keyof_typeof_inferred_value
 tsz-checker::mapped_keyof_index_access_tests::spy_obj_key_and_returnvalue_emits_ts2339
 tsz-checker::nonnull_contextual_type_arg_inference_tests::contextual_return_can_refine_transparent_wrapper_inference
 tsz-checker::order_independent_alias_resolution_tests::non_generic_reexport_reports_ts2315_in_every_order
-tsz-checker::return_only_defaulted_intersection_contextual_inference_tests::inferred_from_satisfies_target
 tsz-checker::simple_local_interface_fastpath_tests::composite_and_array_properties_keep_lowered_types
 tsz-checker::simple_local_interface_fastpath_tests::missing_interface_lib_rows_keep_lib_shapes
 tsz-cli::driver::core::check::check_tests::cross_file_class_namespace_merge_value_keeps_call_signature_in_import_cycle
