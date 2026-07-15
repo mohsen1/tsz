@@ -159,11 +159,7 @@ impl<'a> CheckerState<'a> {
                 window_type,
                 *key_atom,
             );
-            if let Some(type_id) = prop_result.success_type() {
-                resolved_types.push(type_id);
-            } else {
-                return None;
-            }
+            resolved_types.push(prop_result.success_type()?);
         }
         if resolved_types.is_empty() {
             return None;
