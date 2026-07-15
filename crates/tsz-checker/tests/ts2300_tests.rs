@@ -438,11 +438,14 @@ fn duplicate_interface_properties() {
 /// are detected as duplicates (both occurrences reported).
 #[test]
 fn duplicate_interface_string_literal_and_identifier() {
+    // tsc renders the duplicate name via `declarationNameToString` of the FIRST
+    // declaration (`"artist"`), reused at every occurrence. Oracle
+    // (duplicateStringNamedProperty1.ts): both sites report `'"artist"'`.
     verify_errors(
         "interface Album { \"artist\": string; artist: string; }",
         &[
-            (1, 19, "Duplicate identifier 'artist'."),
-            (1, 37, "Duplicate identifier 'artist'."),
+            (1, 19, "Duplicate identifier '\"artist\"'."),
+            (1, 37, "Duplicate identifier '\"artist\"'."),
         ],
     );
 }
@@ -569,16 +572,19 @@ class C {
 /// Test that numeric class members with equivalent numeric values are detected as duplicates.
 #[test]
 fn numeric_class_member_duplicates() {
-    // 0 and 0.0 are duplicates — message preserves source text per TSC's declarationNameToString
+    // 0 and 0.0 are duplicates. tsc reuses the FIRST declaration's source
+    // spelling (`0`) at every occurrence (oracle: numericClassMembers1.ts),
+    // not the second declaration's `0.0`.
     verify_errors(
         "class C { 0 = 1; 0.0 = 2; }",
-        &[(1, 18, "Duplicate identifier '0.0'.")],
+        &[(1, 18, "Duplicate identifier '0'.")],
     );
 
-    // 0.0 and '0' are duplicates — string literal wrapped in single quotes
+    // 0.0 and '0' are duplicates. First declaration is `0.0`, so both sites
+    // report `'0.0'` (not the second declaration's `'0'`).
     verify_errors(
         "class C { 0.0 = 1; '0' = 2; }",
-        &[(1, 20, "Duplicate identifier ''0''.")],
+        &[(1, 20, "Duplicate identifier '0.0'.")],
     );
 
     // '0.0' and '0' are NOT duplicates

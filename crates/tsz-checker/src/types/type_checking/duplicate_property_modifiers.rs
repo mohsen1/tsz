@@ -87,22 +87,32 @@ impl<'a> CheckerState<'a> {
                 // to the same value (e.g., `[c0]` and `[c1]` where c0="1", c1=1)
                 // get only TS2717, matching tsc behavior.
                 if is_syntactic && prev_syntactic {
+                    // tsc renders the duplicate name via `declarationNameToString`
+                    // of the FIRST declaration's name node (verbatim source
+                    // spelling), and reuses that spelling for every occurrence:
+                    // `{ "artist"; artist }` reports `'"artist"'` at both, and
+                    // `{ 0.0; '0' }` reports `'0.0'` (raw source, not the
+                    // canonicalized `0`).
+                    let prev_name_idx = self
+                        .ctx
+                        .arena
+                        .get(prev_idx)
+                        .and_then(|prev_node| self.ctx.arena.get_signature(prev_node))
+                        .map(|prev_sig| prev_sig.name)
+                        .unwrap_or(prev_idx);
+                    let display_name = self
+                        .declaration_name_to_string(prev_name_idx)
+                        .unwrap_or_else(|| name.clone());
                     self.error_at_node(
                         name_idx,
-                        &format!("Duplicate identifier '{name}'."),
+                        &format!("Duplicate identifier '{display_name}'."),
                         diagnostic_codes::DUPLICATE_IDENTIFIER,
                     );
-                    // Also mark the first occurrence
-                    if let Some(prev_node) = self.ctx.arena.get(prev_idx) {
-                        let prev_name_idx =
-                            if let Some(prev_sig) = self.ctx.arena.get_signature(prev_node) {
-                                prev_sig.name
-                            } else {
-                                prev_idx
-                            };
+                    // Also mark the first occurrence.
+                    if self.ctx.arena.get(prev_idx).is_some() {
                         self.error_at_node(
                             prev_name_idx,
-                            &format!("Duplicate identifier '{name}'."),
+                            &format!("Duplicate identifier '{display_name}'."),
                             diagnostic_codes::DUPLICATE_IDENTIFIER,
                         );
                     }

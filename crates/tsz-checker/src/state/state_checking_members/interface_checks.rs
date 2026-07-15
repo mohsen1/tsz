@@ -1001,6 +1001,18 @@ impl<'a> CheckerState<'a> {
                     TypeId::ANY
                 };
 
+                // tsc renders the duplicate name via `declarationNameToString` of
+                // the FIRST declaration's name node (verbatim source spelling) and
+                // reuses it for every occurrence: `{ "artist"; artist }` reports
+                // `'"artist"'` at both, and `{ "1"; 1 }` reports `'"1"'` (source,
+                // not the canonicalized `1`).
+                let first_name_node = self
+                    .get_interface_member_name_node(entries[0].0)
+                    .unwrap_or(entries[0].0);
+                let display_name = self
+                    .declaration_name_to_string(first_name_node)
+                    .unwrap_or_else(|| name.clone());
+
                 for (i, &(idx, type_ann, _is_syntactic)) in entries.iter().enumerate() {
                     let error_node = self.get_interface_member_name_node(idx).unwrap_or(idx);
 
@@ -1009,7 +1021,7 @@ impl<'a> CheckerState<'a> {
                         self.error_at_node_msg(
                             error_node,
                             diagnostic_codes::DUPLICATE_IDENTIFIER,
-                            &[name],
+                            &[&display_name],
                         );
                     }
 
@@ -1351,6 +1363,39 @@ impl<'a> CheckerState<'a> {
                 .filter(|idx: &NodeIndex| idx.is_some()),
             _ => None,
         }
+    }
+
+    /// tsc's `declarationNameToString` for the duplicate-identifier (TS2300)
+    /// surface: the verbatim source spelling of a property name node. A
+    /// string-literal name keeps its quotes (`"artist"`), a numeric-literal name
+    /// keeps its raw source text (`0b11`, `1.0` — never canonicalized to `3` /
+    /// `1`), a computed name renders as `["a"]`, and a plain identifier renders
+    /// as written. tsc reuses the *first* declaration's spelling for every
+    /// occurrence of a duplicate, so callers pass the first declaration's name.
+    pub(crate) fn declaration_name_to_string(&self, name_idx: NodeIndex) -> Option<String> {
+        let name_node = self.ctx.arena.get(name_idx)?;
+        if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+            return Some(ident.escaped_text.to_string());
+        }
+        if name_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
+            && let Some(lit) = self.ctx.arena.get_literal(name_node)
+        {
+            // tsc renders string-named properties with double quotes. `lit.text`
+            // holds the unquoted value, so re-quote unless it already carries
+            // its source quotes.
+            let text = &lit.text;
+            return Some(if text.starts_with('"') {
+                text.clone()
+            } else {
+                format!("\"{text}\"")
+            });
+        }
+        if name_node.kind == tsz_scanner::SyntaxKind::NumericLiteral as u16
+            && let Some(lit) = self.ctx.arena.get_literal(name_node)
+        {
+            return Some(lit.text.clone());
+        }
+        self.get_member_name_text(name_idx)
     }
 
     /// Get the display text for a class member name, matching TSC's `declarationNameToString`.

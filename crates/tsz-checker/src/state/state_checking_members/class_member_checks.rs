@@ -11,46 +11,48 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl CheckerState<'_> {
+    /// The property/method/accessor name node of a class member, if any.
+    fn class_member_name_node(&self, member_idx: NodeIndex) -> Option<NodeIndex> {
+        let member_node = self.ctx.arena.get(member_idx)?;
+        let name_idx = match member_node.kind {
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                .ctx
+                .arena
+                .get_property_decl(member_node)
+                .map(|p| p.name),
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                self.ctx.arena.get_method_decl(member_node).map(|m| m.name)
+            }
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                self.ctx.arena.get_accessor(member_node).map(|a| a.name)
+            }
+            _ => None,
+        }?;
+        name_idx.is_some().then_some(name_idx)
+    }
+
     /// Report TS2300 "Duplicate identifier" error for a class member (property or method).
     /// Helper function to avoid code duplication in `check_duplicate_class_members`.
-    fn report_duplicate_class_member_ts2300(&mut self, member_idx: NodeIndex) {
+    ///
+    /// The error is anchored at `member_idx`, but the rendered name is taken from
+    /// `name_source_idx` — the *first* declaration in the duplicate group. tsc's
+    /// `declarationNameToString` renders the first declaration's verbatim source
+    /// spelling and reuses it at every occurrence, so `{ 0; 0.0 }` reports `'0'`
+    /// (not `0.0`) at both, and `{ "1"; 1 }` reports `'"1"'`.
+    fn report_duplicate_class_member_ts2300(
+        &mut self,
+        member_idx: NodeIndex,
+        name_source_idx: NodeIndex,
+    ) {
         use crate::diagnostics::diagnostic_codes;
 
-        let member_node = self.ctx.arena.get(member_idx);
-        let (name_idx, error_node) = match member_node.map(|n| n.kind) {
-            Some(k) if k == syntax_kind_ext::PROPERTY_DECLARATION => {
-                let prop = self.ctx.arena.get_property_decl(
-                    member_node.expect("Some(k) match ensures member_node is Some"),
-                );
-                let name_idx = prop.map(|p| p.name).filter(|idx| idx.is_some());
-                let node = name_idx.unwrap_or(member_idx);
-                (name_idx, node)
-            }
-            Some(k) if k == syntax_kind_ext::METHOD_DECLARATION => {
-                let method = self.ctx.arena.get_method_decl(
-                    member_node.expect("Some(k) match ensures member_node is Some"),
-                );
-                let name_idx = method.map(|m| m.name).filter(|idx| idx.is_some());
-                let node = name_idx.unwrap_or(member_idx);
-                (name_idx, node)
-            }
-            Some(k) if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
-                let accessor = self
-                    .ctx
-                    .arena
-                    .get_accessor(member_node.expect("Some(k) match ensures member_node is Some"));
-                let name_idx = accessor.map(|a| a.name).filter(|idx| idx.is_some());
-                let node = name_idx.unwrap_or(member_idx);
-                (name_idx, node)
-            }
-            _ => return,
+        let error_node = self
+            .class_member_name_node(member_idx)
+            .unwrap_or(member_idx);
+        let Some(name_source_name) = self.class_member_name_node(name_source_idx) else {
+            return;
         };
-
-        // Use display text (preserves source representation) for the diagnostic message,
-        // matching TSC's declarationNameToString behavior.
-        if let Some(name_idx) = name_idx
-            && let Some(display_name) = self.get_member_name_display_text(name_idx)
-        {
+        if let Some(display_name) = self.declaration_name_to_string(name_source_name) {
             self.error_at_node_msg(
                 error_node,
                 diagnostic_codes::DUPLICATE_IDENTIFIER,
@@ -415,8 +417,9 @@ impl CheckerState<'_> {
 
                 // All properties: tsc's binder (declareSymbol) reports
                 // TS2300 at EVERY declaration site, the first included.
+                let name_source = info.indices[0];
                 for &idx in info.indices.iter() {
-                    self.report_duplicate_class_member_ts2300(idx);
+                    self.report_duplicate_class_member_ts2300(idx, name_source);
                 }
             } else if property_count > 0 && method_count > 0 {
                 // Mixed property/method duplicates: tsc 7.0.2 reports TS2300
@@ -424,8 +427,9 @@ impl CheckerState<'_> {
                 // subsequent-declaration type rule only applies between
                 // PROPERTY declarations (oracle: `class { m(){} m: number }`
                 // gets 2x TS2300 and nothing else).
+                let name_source = info.indices[0];
                 for &idx in info.indices.iter() {
-                    self.report_duplicate_class_member_ts2300(idx);
+                    self.report_duplicate_class_member_ts2300(idx, name_source);
                 }
             } else if method_impl_count > 1 {
                 // Multiple method implementations -> TS2393 for implementations only
@@ -512,8 +516,9 @@ impl CheckerState<'_> {
             if !names_with_paired_dup_accessors.is_empty() {
                 for (plain_key, indices) in &accessor_plain_names {
                     if names_with_paired_dup_accessors.contains(plain_key) {
+                        let name_source = indices[0];
                         for &idx in indices {
-                            self.report_duplicate_class_member_ts2300(idx);
+                            self.report_duplicate_class_member_ts2300(idx, name_source);
                         }
                     }
                 }
@@ -541,8 +546,9 @@ impl CheckerState<'_> {
                     continue;
                 }
                 let start = if info.is_private { 0 } else { 1 };
+                let name_source = info.indices[0];
                 for &idx in info.indices.iter().skip(start) {
-                    self.report_duplicate_class_member_ts2300(idx);
+                    self.report_duplicate_class_member_ts2300(idx, name_source);
                 }
             }
         }
@@ -600,6 +606,17 @@ impl CheckerState<'_> {
                 let bare_key = key.strip_prefix("static:").unwrap_or(key);
                 let is_computed = bare_key.starts_with('[');
 
+                // tsc renders the duplicate name from the group's FIRST declaration
+                // (by source position, across both the property/method and accessor
+                // members), reusing that spelling at every reported occurrence.
+                let name_source = member_info
+                    .indices
+                    .iter()
+                    .chain(accessor_indices.iter())
+                    .copied()
+                    .min_by_key(|&idx| self.ctx.arena.pos_at(idx).unwrap_or(u32::MAX))
+                    .unwrap_or(NodeIndex::NONE);
+
                 if is_computed {
                     // Computed names: only report on later declarations.
                     let first_member_pos = member_info
@@ -617,12 +634,12 @@ impl CheckerState<'_> {
                     if first_member_pos < first_accessor_pos {
                         // Method/property came first — only flag accessors
                         for &idx in accessor_indices {
-                            self.report_duplicate_class_member_ts2300(idx);
+                            self.report_duplicate_class_member_ts2300(idx, name_source);
                         }
                     } else {
                         // Accessor came first — only flag methods/properties
                         for &idx in &member_info.indices {
-                            self.report_duplicate_class_member_ts2300(idx);
+                            self.report_duplicate_class_member_ts2300(idx, name_source);
                         }
                     }
                 } else {
@@ -698,16 +715,16 @@ impl CheckerState<'_> {
                         // Accessor(s) established the member first — flag only
                         // the later property/method declarations.
                         for &idx in &member_info.indices {
-                            self.report_duplicate_class_member_ts2300(idx);
+                            self.report_duplicate_class_member_ts2300(idx, name_source);
                         }
                     } else {
                         // Property/method came first, or accessors don't form a
                         // qualifying set: flag all conflicting declarations.
                         for &idx in &member_info.indices {
-                            self.report_duplicate_class_member_ts2300(idx);
+                            self.report_duplicate_class_member_ts2300(idx, name_source);
                         }
                         for &idx in accessor_indices {
-                            self.report_duplicate_class_member_ts2300(idx);
+                            self.report_duplicate_class_member_ts2300(idx, name_source);
                         }
                     }
                 }
