@@ -1464,17 +1464,25 @@ o.y;
         },
     );
 
-    let relevant: Vec<(u32, String)> = diagnostics
-        .into_iter()
+    // TypeScript 7.0.2 (pinned oracle): `o.y = void 0` DECLARES the expando
+    // member, so no TS2339 fires anywhere; under noImplicitAny the member's
+    // implicit `any` is reported once as TS7008 at the write. The old
+    // expectation (2x TS2339 on 'typeof o') encoded pre-TS7 behavior that
+    // rejected the write outright. tsz currently still reports one residual
+    // TS2339 and lacks the TS7008 emission — the remaining gap is tracked in
+    // the salsa campaign (missing-TS7008 sub-family) and this test is
+    // baselined until it lands.
+    let ts7008: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 7008)
+        .collect();
+    let ts2339: Vec<_> = diagnostics
+        .iter()
         .filter(|(code, _)| *code == 2339)
         .collect();
-
-    assert_eq!(relevant.len(), 2, "unexpected diagnostics: {relevant:#?}");
     assert!(
-        relevant
-            .iter()
-            .all(|(_, message)| message.contains("Property 'y' does not exist on type 'typeof o'.")),
-        "Expected TS2339 to display typeof o for missing JS expando property. Actual diagnostics: {relevant:#?}"
+        ts7008.len() == 1 && ts2339.is_empty(),
+        "Expected exactly one TS7008 (implicit-any expando member) and no TS2339 per tsc 7.0.2. Actual: {diagnostics:#?}"
     );
 }
 
