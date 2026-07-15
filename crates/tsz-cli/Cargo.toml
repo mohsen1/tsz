@@ -82,8 +82,14 @@ path = "tests/lib_alias_ref_def_identity_tests.rs"
 name = "zod_cross_file_partial_omit_tests"
 path = "tests/zod_cross_file_partial_omit_tests.rs"
 [[test]]
+name = "kysely_cross_file_callback_context_cli_tests"
+path = "tests/kysely_cross_file_callback_context_cli_tests.rs"
+[[test]]
 name = "array_literal_iterable_contextual_tests"
 path = "tests/array_literal_iterable_contextual_tests.rs"
+[[test]]
+name = "overload_any_check_conditional_return_tests"
+path = "tests/overload_any_check_conditional_return_tests.rs"
 [[test]]
 name = "tsc_compat_tests"
 path = "tests/tsc_compat_tests.rs"
@@ -214,6 +220,10 @@ path = "tests/cross_module_contextual_rest_tuple_spread_ts2556_cli_tests.rs"
 [[test]]
 name = "merged_unique_symbol_factory_cli_tests"
 path = "tests/merged_unique_symbol_factory_cli_tests.rs"
+
+[[test]]
+name = "js_export_surface_commonjs_cli_tests"
+path = "tests/js_export_surface_commonjs_cli_tests.rs"
 
 [dev-dependencies]
 tempfile = { workspace = true }

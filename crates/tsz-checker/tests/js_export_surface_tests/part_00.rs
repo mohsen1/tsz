@@ -482,41 +482,6 @@ new mod.Baz();
 }
 
 #[test]
-fn test_js_export_surface_preserves_default_before_late_exports_assignment() {
-    let inspection = inspect_commonjs_two_file_consumer_symbol(
-        "lib.js",
-        r#"
-const defaultConfig = { parser: "babel" };
-module.exports = { default: defaultConfig };
-exports.configs = { "stage-0": defaultConfig };
-"#,
-        "consumer.ts",
-        r#"
-import lib = require("./lib.js");
-const value = lib;
-"#,
-        "value",
-        "./lib.js",
-    );
-
-    // TS7: `module.exports = { default }` mixed with the sibling
-    // `exports.configs = ...` is an illegal export-assignment combination
-    // (TS2309). The module type is exactly `{ default }`; `configs` is not
-    // merged as a namespace member, so the require() consumer surface keeps the
-    // bare object shape (not `typeof import(...)`) and drops `configs`.
-    assert!(
-        !inspection.formatted.starts_with("typeof import(\""),
-        "Expected the suppressed export-assignment type to keep the bare object shape, got: {}",
-        inspection.formatted
-    );
-    assert_eq!(
-        inspection.shape_props,
-        vec![("default".to_string(), 1)],
-        "Expected the TS7 export surface to keep only the direct `default` export and drop the illegal `configs` sibling"
-    );
-}
-
-#[test]
 fn test_js_export_surface_preserves_plain_exports_assignment_order() {
     let inspection = inspect_commonjs_two_file_consumer_symbol(
         "lib.js",
