@@ -1451,15 +1451,7 @@ impl ParserState {
     }
 
     fn is_for_variable_declaration_empty(&mut self, declaration_keyword: SyntaxKind) -> bool {
-        // `var` reaches here directly; `using`/`await using` reach here through the
-        // for-initializer lookahead (the keyword token is `using`/`await`
-        // respectively). In every case a contextual `of` (or a reserved `in`)
-        // immediately after the declaration keyword makes the declaration list
-        // empty, which tsc reports as TS1123.
-        if !matches!(
-            declaration_keyword,
-            SyntaxKind::VarKeyword | SyntaxKind::UsingKeyword | SyntaxKind::AwaitKeyword
-        ) {
+        if declaration_keyword != SyntaxKind::VarKeyword {
             return false;
         }
 
