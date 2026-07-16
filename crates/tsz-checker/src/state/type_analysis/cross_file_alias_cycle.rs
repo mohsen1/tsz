@@ -50,6 +50,29 @@ thread_local! {
     /// thread and the delegation recursion stays on that thread.
     static CROSS_ARENA_ALIAS_STACK: std::cell::RefCell<Vec<CrossArenaAliasEntry>> =
         const { std::cell::RefCell::new(Vec::new()) };
+
+    /// Stack of class/interface instance types currently being *built* on this
+    /// thread, keyed by the stable `(owner file index, declaration NodeIndex)`
+    /// of the class. Raw `SymbolId`s and `DefId`s of a class differ per import
+    /// alias / per referencing arena, so neither identifies "the same class"
+    /// across the child checkers a cross-arena delegation spins up; the declaring
+    /// file plus its declaration node is unambiguous program-wide.
+    ///
+    /// This is the cross-arena analogue of the single-file
+    /// `class_instance_resolution_set`: when module A and module B declare
+    /// classes whose member types reference each other (`A.x: B`, `B.y: A`),
+    /// resolving `A`'s instance type while checking B delegates into a fresh
+    /// child checker whose empty resolution set does not know `A` is already in
+    /// flight — so the mutual reference re-delegates until the cross-arena depth
+    /// cap truncates it and silently drops members (a false `TS2339` on the
+    /// surviving type). Every class-instance build pushes its key here (see
+    /// `get_class_instance_type_inner`); a cross-arena delegation whose target is
+    /// already on this stack returns a deferred `Lazy(DefId)` self-reference
+    /// instead, exactly as tsc represents a class inside its own (mutually
+    /// recursive) member signatures. The lazy reference resolves to the full
+    /// instance type once the in-flight build completes.
+    static CROSS_ARENA_CLASS_INSTANCE_STACK: std::cell::RefCell<Vec<(u32, NodeIndex)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Clear the cross-arena alias-resolution stack.
@@ -61,6 +84,7 @@ thread_local! {
 /// guarantees a clean DFS even if a future non-unwinding bail-out path is added.
 pub(crate) fn reset_cross_arena_alias_stack() {
     CROSS_ARENA_ALIAS_STACK.with(|stack| stack.borrow_mut().clear());
+    CROSS_ARENA_CLASS_INSTANCE_STACK.with(|stack| stack.borrow_mut().clear());
 }
 
 #[cfg(test)]
@@ -87,7 +111,56 @@ impl Drop for CrossArenaAliasGuard {
     }
 }
 
+/// RAII guard returned by [`CheckerState::enter_cross_arena_class_instance`].
+/// Pops the pushed class-instance key on drop — including on panic unwind — but
+/// only when a key was actually pushed (a class without a resolvable owner file
+/// is not tracked).
+pub(crate) struct CrossArenaClassInstanceGuard {
+    pushed: bool,
+}
+
+impl Drop for CrossArenaClassInstanceGuard {
+    fn drop(&mut self) {
+        if self.pushed {
+            CROSS_ARENA_CLASS_INSTANCE_STACK.with(|stack| {
+                stack.borrow_mut().pop();
+            });
+        }
+    }
+}
+
 impl<'a> CheckerState<'a> {
+    /// Push a class/interface instance-type build onto the cross-arena
+    /// class-instance stack, keyed by its stable `(owner file index, declaration
+    /// NodeIndex)`; the returned guard pops it on drop. Called at the start of
+    /// every class instance-type build so a mutually-recursive cross-file member
+    /// reference reaching the same class through a delegation defers to a lazy
+    /// self-reference (see [`Self::cross_arena_class_instance_in_progress`]).
+    /// A missing owner file (`None`) is not tracked; the guard then pops nothing.
+    pub(crate) fn enter_cross_arena_class_instance(
+        owner_file_idx: Option<u32>,
+        decl: NodeIndex,
+    ) -> CrossArenaClassInstanceGuard {
+        match owner_file_idx {
+            Some(file_idx) => {
+                CROSS_ARENA_CLASS_INSTANCE_STACK
+                    .with(|stack| stack.borrow_mut().push((file_idx, decl)));
+                CrossArenaClassInstanceGuard { pushed: true }
+            }
+            None => CrossArenaClassInstanceGuard { pushed: false },
+        }
+    }
+
+    /// True when the class/interface identified by `(owner_file_idx, decl)` is
+    /// already being built higher on the active resolution path.
+    pub(crate) fn cross_arena_class_instance_in_progress(
+        owner_file_idx: u32,
+        decl: NodeIndex,
+    ) -> bool {
+        CROSS_ARENA_CLASS_INSTANCE_STACK
+            .with(|stack| stack.borrow().contains(&(owner_file_idx, decl)))
+    }
+
     /// Push a type-alias `DefId` onto the cross-arena alias-resolution stack for
     /// the duration of a cross-file delegation; the returned guard pops it on
     /// drop.

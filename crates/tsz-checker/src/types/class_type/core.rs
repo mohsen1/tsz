@@ -80,6 +80,19 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR; // Fuel exhausted - prevent infinite loop
         }
 
+        // Track this class as in-progress on the cross-arena class-instance
+        // stack, keyed by its stable `(owner file, declaration node)`. A
+        // mutually-recursive cross-file member reference that reaches this class
+        // through a delegation defers to a lazy self-reference instead of
+        // re-delegating into the depth cap and dropping members (false TS2339).
+        // Pushed here (not only at the delegation site) so a class first built
+        // locally in its declaring file is covered before any delegation. The
+        // guard pops on every exit path below, including panic unwind.
+        let _cross_arena_class_instance_guard = Self::enter_cross_arena_class_instance(
+            u32::try_from(self.ctx.current_file_idx).ok(),
+            class_idx,
+        );
+
         // Class member types can reference class type parameters (e.g. `class Box<T> { value: T }`).
         // Keep class type parameters in scope while constructing the instance type.
         let (mut class_type_params, mut class_type_param_updates) =

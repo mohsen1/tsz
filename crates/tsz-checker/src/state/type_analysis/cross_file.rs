@@ -1307,6 +1307,40 @@ impl CheckerState<'_> {
             return hit.clone();
         }
 
+        // Cross-arena class-instance cycle: this class is already being built
+        // higher on the resolution path, so its member types (mutually,
+        // cross-file) reference it. Re-delegating would recurse until the
+        // cross-arena depth cap truncates the chain and drops members (a false
+        // `TS2339` on the surviving type). Defer to a `Lazy(DefId)`
+        // self-reference, mirroring the single-file `class_instance_resolution_set`
+        // fallback; it resolves to the full instance type once the in-flight build
+        // completes. Keyed by the stable `(owner file, declaration node)` — raw
+        // `SymbolId`s / `DefId`s of the class differ per import alias, so they do
+        // not identify "the same class" across the child checkers a delegation
+        // creates.
+        //
+        // Restricted to pure classes: a class merged with a namespace/value module
+        // (`class C {} namespace C {}`) carries static/namespace members on its
+        // value side, and deferring its whole resolution to a lazy instance ref
+        // drops those from `typeof C` while the class is still in flight (the
+        // separate cross-file-statics-in-import-cycle gap; a `static make`/`create`
+        // then reads as missing). Those merges keep the prior delegation behavior.
+        if let Some(owner_file_idx) = query_file_idx
+            && let Ok(owner_file_idx_u32) = u32::try_from(owner_file_idx)
+            && let Some(symbol) = self
+                .get_symbol_from_registered_file_target(sym_id)
+                .or_else(|| self.get_cross_file_symbol(sym_id))
+            && !symbol.has_any_flags(symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)
+            && let Some(decl) = symbol.primary_declaration()
+            && Self::cross_arena_class_instance_in_progress(owner_file_idx_u32, decl)
+        {
+            let params = self
+                .ctx
+                .get_def_type_params(self.ctx.get_or_create_def_id(sym_id))
+                .unwrap_or_default();
+            return Some((self.ctx.create_lazy_type_ref(sym_id), params));
+        }
+
         let cross_arena_guard = Self::enter_cross_arena_delegation()?;
 
         if !self.ctx.enter_recursion() {
@@ -1404,7 +1438,10 @@ impl CheckerState<'_> {
 
         // Record a class instance-type boundary on the cross-arena alias stack:
         // an alias re-entered through this class's members defers like tsc and is
-        // not a TS2456 cycle (see `mark_cross_arena_alias_cycle`).
+        // not a TS2456 cycle (see `mark_cross_arena_alias_cycle`). The
+        // class-instance in-progress key is pushed by the build itself
+        // (`get_class_instance_type_inner`), which also covers a class first
+        // built locally in its declaring file before any delegation.
         let result = {
             let _class_boundary = Self::enter_cross_arena_class_boundary();
             checker.class_instance_type_with_params_from_symbol(delegate_sym_id)
