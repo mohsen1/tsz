@@ -119,7 +119,12 @@ function g() {
 }
 
 #[test]
-fn ts2769_property_call_multi_arg_mismatch_anchors_property_token() {
+fn ts2769_property_call_multi_arg_mismatch_anchors_last_overloads_failing_argument() {
+    // `x.h(2,2)` — overload `h(string, number)` rejects arg 0, overload
+    // `h(number, string)` rejects arg 1. tsc anchors TS2769 at the *last*
+    // argument-error candidate's first failing argument, i.e. the second `2`,
+    // matching `compiler/overload1.ts(34,9)` (`z=x.h(2,2)`). It does NOT anchor
+    // at the property token `h`.
     let source = r#"
 interface I {
     h(s1: string, s2: number): string;
@@ -138,15 +143,28 @@ z=x.h(2,2);
         .expect("expected TS2769");
 
     let property_start = source.find("h(2,2)").expect("expected property call") as u32;
-    assert_eq!(
+    // The second `2` — arg 1, which the last overload `h(number, string)` rejects.
+    let second_arg_start = source.find("2,2)").expect("expected args") as u32 + 2;
+    assert_ne!(
         diag.start, property_start,
-        "TS2769 should anchor at the overloaded property token when no single argument explains the failure"
+        "TS2769 must not anchor at the property token `h`, got: {diag:?}"
     );
-    assert_eq!(diag.length, 1, "TS2769 should cover only `h`");
+    assert_eq!(
+        diag.start, second_arg_start,
+        "TS2769 should anchor at the last overload's failing argument (second `2`), got: {diag:?}"
+    );
+    assert_eq!(
+        diag.length, 1,
+        "TS2769 should cover only the argument token"
+    );
 }
 
 #[test]
-fn ts2769_provisional_callback_failures_anchor_callee_not_callback_argument() {
+fn ts2769_provisional_callback_failures_anchor_callback_body() {
+    // When the failing overload argument is a callback whose return type does
+    // not match, tsc elaborates to the callback's (expression) body, matching
+    // `compiler/overloadsWithProvisionalErrors.ts(6,11)` — `func(s => ({}))`
+    // anchors at the body `({})`, not at the callee `func`.
     let source = r#"
 declare var func: {
     (s: string): number;
@@ -166,26 +184,24 @@ func(s => ({ a: blah }));
         "expected two TS2769 diagnostics, got: {diagnostics:?}"
     );
 
-    let first_call_start = source
+    let first_body_start = source.find("({}))").expect("expected first body") as u32;
+    let third_body_start = source.find("({ a: blah }))").expect("expected third body") as u32;
+    let callee_start = source
         .find("func(s => ({}));")
         .expect("expected first call") as u32;
-    let third_call_start = source
-        .find("func(s => ({ a: blah }));")
-        .expect("expected third call") as u32;
-    let callback_start = source.find("s => ({})").expect("expected callback") as u32;
 
     let starts: Vec<u32> = ts2769.iter().map(|diag| diag.start).collect();
     assert!(
-        starts.contains(&first_call_start),
-        "expected TS2769 at first call callee, got: {ts2769:?}"
+        starts.contains(&first_body_start),
+        "expected TS2769 at first callback body `({{}})`, got: {ts2769:?}"
     );
     assert!(
-        starts.contains(&third_call_start),
-        "expected TS2769 at third call callee, got: {ts2769:?}"
+        starts.contains(&third_body_start),
+        "expected TS2769 at third callback body `({{ a: blah }})`, got: {ts2769:?}"
     );
     assert!(
-        !starts.contains(&callback_start),
-        "TS2769 should anchor at callee, not callback argument: {ts2769:?}"
+        !starts.contains(&callee_start),
+        "TS2769 should anchor at the callback body, not the callee: {ts2769:?}"
     );
 }
 
@@ -472,23 +488,23 @@ wm.delete(s);
 "#;
 
     let diagnostics = check_source_with_strict_null(source);
-    let weak_set_anchor = source
-        .find("WeakSet([s])")
-        .expect("expected WeakSet constructor") as u32;
-    let weak_map_anchor = source
-        .find("WeakMap([[s, false]])")
-        .expect("expected WeakMap constructor") as u32;
+    // tsc drills the failing array-literal argument to the element that carries
+    // the offending `symbol`, matching `compiler/dissallowSymbolAsWeakType.ts`:
+    // WeakSet anchors at `s` in `[s]` (col 25), and WeakMap descends the nested
+    // tuple `[[s, false]]` to the key `s` (col 26) — never the constructor name.
+    let weak_set_anchor = source.find("[s])").expect("expected WeakSet element") as u32 + 1;
+    let weak_map_anchor = source.find("[[s, false]]").expect("expected WeakMap key") as u32 + 2;
     assert!(
         diagnostics
             .iter()
             .any(|diag| diag.code == 2769 && diag.start == weak_set_anchor),
-        "WeakSet TS2769 should anchor at the constructor identifier, got: {diagnostics:#?}"
+        "WeakSet TS2769 should anchor at the array element `s`, got: {diagnostics:#?}"
     );
     assert!(
         diagnostics
             .iter()
             .any(|diag| diag.code == 2769 && diag.start == weak_map_anchor),
-        "WeakMap TS2769 should anchor at the constructor identifier, got: {diagnostics:#?}"
+        "WeakMap TS2769 should anchor at the nested tuple key `s`, got: {diagnostics:#?}"
     );
 
     let object_arg_errors = diagnostics
@@ -608,15 +624,11 @@ s.transform(buildOp(n => n.toString()), badOp());
 }
 
 #[test]
-fn ts2769_property_call_anchors_callee_when_different_args_fail_different_overloads() {
-    // When each overload fails because a DISTINCT argument doesn't match that
-    // overload's parameter — overload 1 rejects arg 0, overload 2 rejects arg 1
-    // — there is no shared failing argument, so tsc anchors TS2769 at the
-    // property callee rather than at any argument.
-    //
-    // Structural rule: `shared_overload_argument_anchor` returns `None` when
-    // the set of type-mismatching arguments differs across overloads, causing
-    // the anchor to fall back to the callee.
+fn ts2769_property_call_anchors_last_overloads_argument_when_different_args_fail() {
+    // When each overload rejects a DISTINCT argument — overload 1 rejects arg 0,
+    // overload 2 rejects arg 1 — tsc anchors TS2769 at the *last* overload's
+    // failing argument (the second `42`), NOT at the property callee. Same shape
+    // and rule as `compiler/overload1.ts(34,9)` (`z=x.h(2,2)`).
     let source = r#"
 interface Obs {
     pipe(op1: string, op2: number): void;
@@ -634,24 +646,23 @@ obs.pipe(42, 42);
         "expected exactly one TS2769 for cross-overload argument failure, got: {diagnostics:?}"
     );
     let diag = &ts2769[0];
-    // The callee in `obs.pipe(42, 42)` is `pipe` (a property access).
+    // The callee `pipe` (property access) — the position the stale rule used.
     let pipe_token_start = source.rfind("pipe(42").expect("pipe(42") as u32;
     let first_arg_start = source.rfind("42, 42)").expect("42, 42)") as u32;
+    // The second `42` — arg 1, which the last overload `pipe(number, string)`
+    // rejects.
     let second_arg_start = first_arg_start + "42, ".len() as u32;
-    // TS2769 must NOT anchor at either argument.
+    assert_ne!(
+        diag.start, pipe_token_start,
+        "TS2769 must not anchor at the property token `pipe`, got: {diag:?}"
+    );
     assert_ne!(
         diag.start, first_arg_start,
-        "should not anchor at first arg when overloads fail on different arguments, got: {diag:?}"
+        "TS2769 anchors at the last overload's failing argument, not arg 0, got: {diag:?}"
     );
-    assert_ne!(
+    assert_eq!(
         diag.start, second_arg_start,
-        "should not anchor at second arg when overloads fail on different arguments, got: {diag:?}"
-    );
-    // TS2769 should anchor at or before the end of the `pipe` token.
-    assert!(
-        diag.start <= pipe_token_start + "pipe".len() as u32,
-        "TS2769 should anchor at callee when failures diverge across args, got start={}",
-        diag.start
+        "TS2769 should anchor at the last overload's failing argument (second `42`), got: {diag:?}"
     );
 }
 

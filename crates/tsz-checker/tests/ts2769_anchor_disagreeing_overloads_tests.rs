@@ -1,16 +1,19 @@
 //! Anchor tests for TS2769 when no overload matches and the overloads
-//! disagree on their failure messages.
+//! disagree on which argument sub-node they reject.
 //!
-//! tsc's rule: when all overloads fail with argument-type mismatches (TS2345
-//! elaborations) but the rendered failures differ across overloads (e.g.,
-//! each overload rejects a *different* excess property in the same object
-//! literal), tsc anchors the top-level TS2769 at the callee / whole call
-//! expression, not at the argument. The shared-argument heuristic only fires
-//! when every overload rejects the argument for the same reason.
+//! tsc's rule (`reportCallResolutionErrors` -> `candidatesForArgumentError`):
+//! the top-level TS2769's span is the *last* argument-error candidate's
+//! `isSignatureApplicable` elaboration node — i.e. the first argument that is
+//! not assignable to that last candidate's parameters, drilled into the exact
+//! failing sub-node. When overloads reject *different* excess properties of the
+//! same object literal, the anchor is the last overload's rejected property,
+//! not the callee.
 //!
-//! Baseline this locks in (TypeScript compiler):
-//!   orderMattersForSignatureGroupIdentity.ts(19,1): TS2769 — anchor at `v`,
-//!     not at the `{ s: "", n: 0 }` argument.
+//! Baseline this locks in (tsc 7.0.2, `scripts/conformance/tsc-cache-full.json`):
+//!   `orderMattersForSignatureGroupIdentity.ts(19,5)`: TS2769 anchors at the
+//!   property `s` inside `v({ s: "", n: 0 })` — the property the *last*
+//!   overload `(x: { n: number })` rejects as excess — not at the callee `v`
+//!   (column 1) and not at the opening brace.
 
 fn get_diagnostics(source: &str) -> Vec<(u32, u32, String)> {
     tsz_checker::test_utils::check_source(source, "test.ts", Default::default())
@@ -20,10 +23,11 @@ fn get_diagnostics(source: &str) -> Vec<(u32, u32, String)> {
 }
 
 #[test]
-fn ts2769_anchored_at_callee_when_overloads_disagree() {
+fn ts2769_anchored_at_last_overloads_rejected_property_when_overloads_disagree() {
     // Two overloads, each rejecting a different excess property on the same
-    // object literal. Failure messages differ across overloads, so the
-    // top-level TS2769 must anchor at the callee (`v`) — not at the argument.
+    // object literal. tsc anchors the top-level TS2769 at the *last* overload's
+    // rejected property (`(x: { n: number })` rejects `s` as excess), matching
+    // `orderMattersForSignatureGroupIdentity.ts(19,5)` — not the callee `v`.
     let source = r#"interface A {
     (x: { s: string }): string
     (x: { n: number }): number
@@ -37,14 +41,18 @@ v({ s: "", n: 0 });
     let callee_start = source
         .find("v({ s:")
         .expect("callee start must exist in fixture") as u32;
-    let argument_start = source
-        .find("{ s: \"\", n: 0 }")
-        .expect("argument start must exist") as u32;
-    assert!(
-        ts2769[0].1 == callee_start || ts2769[0].1 >= argument_start,
-        "TS2769 should anchor at the callee or the rejected argument. callee={}, argument={}, got start={}",
-        callee_start,
-        argument_start,
+    let property_start = source
+        .find("s: \"\"")
+        .expect("first property `s` must exist") as u32;
+    assert_ne!(
+        ts2769[0].1, callee_start,
+        "TS2769 must not anchor at the callee `v`; got start={}",
+        ts2769[0].1
+    );
+    assert_eq!(
+        ts2769[0].1, property_start,
+        "TS2769 should anchor at the object literal's first property `s` (the \
+         last overload's excess-property culprit); got start={}",
         ts2769[0].1
     );
 }

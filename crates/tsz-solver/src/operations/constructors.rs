@@ -199,7 +199,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         crate::diagnostics::PendingDiagnosticBuilder::argument_not_assignable(
                             actual, expected,
                         )
-                        .with_overload_signature(self.interner.function(func)),
+                        .with_overload_signature(self.interner.function(func))
+                        .with_argument_index(index),
                     );
                 }
                 CallResult::ArgumentCountMismatch {

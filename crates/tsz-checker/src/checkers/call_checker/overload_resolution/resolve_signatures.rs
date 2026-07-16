@@ -1578,6 +1578,7 @@ impl<'a> CheckerState<'a> {
                         failures.push(
                             PendingDiagnosticBuilder::argument_not_assignable(actual, expected)
                                 .with_optional_span(self.arg_source_span(args, index))
+                                .with_argument_index(index)
                                 .with_overload_signature(overload_signature()),
                         );
                         self.ctx
@@ -1825,6 +1826,7 @@ impl<'a> CheckerState<'a> {
                         failures.push(
                             PendingDiagnosticBuilder::argument_not_assignable(actual, expected)
                                 .with_optional_span(self.arg_source_span(args, index))
+                                .with_argument_index(index)
                                 .with_overload_signature(overload_signature()),
                         );
                     }

@@ -1252,8 +1252,14 @@ impl<'a> CheckerState<'a> {
                 // TS2416: Instance members use standard property incompatibility error
                 if is_static {
                     // TS2417: Class static side '{0}' incorrectly extends base class static side '{1}'.
+                    // tsc runs the static-side assignability as a single whole-type
+                    // check anchored at the derived class name (`node.Name()` in
+                    // `checkClassLikeDeclaration`), not per offending member. Anchor
+                    // at the class name here too; the `(start, code)` diagnostic
+                    // dedup collapses multiple mismatching static members into the
+                    // single TS2417 tsc emits.
                     self.error_at_node(
-                        member_name_idx,
+                        class_data.name,
                         &format!(
                             "Class static side 'typeof {derived_class_name}' incorrectly extends base class static side 'typeof {base_class_name}'."
                         ),

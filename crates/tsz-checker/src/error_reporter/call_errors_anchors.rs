@@ -56,6 +56,87 @@ impl<'a> CheckerState<'a> {
         self.logical_call_argument_nodes(idx)?.into_iter().next()
     }
 
+    /// tsc anchors `TS2769` at the *last* argument-error candidate's first
+    /// non-assignable argument (`reportCallResolutionErrors` selects
+    /// `candidatesForArgumentError[len-1]`, and the wrapped diagnostic's span is
+    /// that candidate's `isSignatureApplicable` elaboration node). The solver
+    /// threads the positional index of each candidate's first failing argument
+    /// onto its `PendingDiagnostic`; here we map the last argument-error
+    /// failure's index onto the call's logical argument nodes and drill into the
+    /// argument the way tsc's `elaborateError` does (object-literal member,
+    /// array element, or callback body), so the anchor lands on the exact
+    /// sub-node rather than the callee.
+    pub(super) fn indexed_overload_argument_anchor(
+        &self,
+        idx: NodeIndex,
+        argument_failures: &[&tsz_solver::PendingDiagnostic],
+    ) -> Option<super::fingerprint_policy::ResolvedDiagnosticAnchor> {
+        use crate::error_reporter::fingerprint_policy::DiagnosticAnchorKind;
+
+        let last = argument_failures.last()?;
+        let index = last.argument_index?;
+        let args = self.logical_call_argument_nodes(idx)?;
+        let arg_idx = *args.get(index)?;
+        let drilled = self.drill_overload_argument_node(arg_idx);
+        self.resolve_diagnostic_anchor(drilled, DiagnosticAnchorKind::Exact)
+    }
+
+    /// Elaborate an overloaded-call argument node to the sub-node tsc reports
+    /// the failure on: an object literal drills to its first member, an array
+    /// literal to its first element, and a callback with an expression body to
+    /// that body. Every other argument shape anchors on the argument itself.
+    fn drill_overload_argument_node(&self, arg_idx: NodeIndex) -> NodeIndex {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(arg_idx);
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return arg_idx;
+        };
+        match node.kind {
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => self
+                .first_object_literal_property(expr_idx)
+                .unwrap_or(arg_idx),
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
+                // tsc's `elaborateElementwise` follows the failing element into
+                // nested array/tuple literals (e.g. `new WeakMap([[s, false]])`
+                // drills `[[s, false]]` -> `[s, false]` -> `s`). Descend through
+                // leading array elements until the first non-array leaf.
+                let mut current = expr_idx;
+                while let Some(inner) = self
+                    .ctx
+                    .arena
+                    .get(current)
+                    .filter(|n| n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
+                    .and_then(|n| self.ctx.arena.get_literal_expr(n))
+                    .and_then(|arr| arr.elements.nodes.first().copied())
+                {
+                    current = inner;
+                }
+                if current == expr_idx {
+                    arg_idx
+                } else {
+                    current
+                }
+            }
+            k if k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
+            {
+                self.ctx
+                    .arena
+                    .get_function(node)
+                    .map(|func| func.body)
+                    .filter(|&body| {
+                        self.ctx
+                            .arena
+                            .get(body)
+                            .is_some_and(|body_node| body_node.kind != syntax_kind_ext::BLOCK)
+                    })
+                    .unwrap_or(arg_idx)
+            }
+            _ => arg_idx,
+        }
+    }
+
     /// If `idx` points to an object literal expression, return its first property element.
     /// Used to anchor overload errors at the first property name (matching tsc)
     /// instead of the opening brace.

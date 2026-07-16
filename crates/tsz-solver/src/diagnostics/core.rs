@@ -578,6 +578,14 @@ pub struct PendingDiagnostic {
     /// (`Overload N of M, '<signature>', gave the following error.`) wrapper.
     /// `None` for every non-overload diagnostic.
     pub overload_signature: Option<TypeId>,
+    /// Positional index of the first non-assignable argument, when this
+    /// diagnostic is one overload candidate's argument-applicability failure
+    /// (`TS2345`). tsc anchors the top-level `TS2769` at the last
+    /// argument-error candidate's failing argument; the checker maps this
+    /// index onto the call's logical argument nodes to recover that anchor.
+    /// AST-agnostic (a plain positional index), so it stays inside the solver.
+    /// `None` for non-argument diagnostics.
+    pub argument_index: Option<usize>,
 }
 
 impl PendingDiagnostic {
@@ -590,6 +598,7 @@ impl PendingDiagnostic {
             severity: DiagnosticSeverity::Error,
             related: Vec::new(),
             overload_signature: None,
+            argument_index: None,
         }
     }
 
@@ -597,6 +606,15 @@ impl PendingDiagnostic {
     /// so the reporter can wrap it in the `TS2772` per-overload elaboration.
     pub const fn with_overload_signature(mut self, signature: TypeId) -> Self {
         self.overload_signature = Some(signature);
+        self
+    }
+
+    /// Record the positional index of the first non-assignable argument for
+    /// this overload candidate's failure, so the checker can anchor the
+    /// top-level `TS2769` at that argument (tsc's `candidatesForArgumentError`
+    /// last-candidate rule).
+    pub const fn with_argument_index(mut self, index: usize) -> Self {
+        self.argument_index = Some(index);
         self
     }
 

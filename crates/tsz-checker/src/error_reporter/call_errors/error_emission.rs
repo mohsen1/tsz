@@ -1112,7 +1112,23 @@ impl<'a> CheckerState<'a> {
         } else {
             idx
         };
+        // When the heuristic falls back to the callee (`OverloadPrimary`), tsc
+        // instead anchors `TS2769` at the last argument-error candidate's
+        // failing argument. Substitute that indexed argument anchor here so the
+        // callee fallback only survives when no argument-error candidate carries
+        // a positional index (e.g. `this`-type mismatches). Argument anchors the
+        // heuristic already resolved (`Exact`/literal/tagged) are left intact.
+        // `.bind`/`.call`/`.apply` with a non-`undefined` this-argument is a
+        // distinct tsc anchor rule (the failing this-argument is the receiver,
+        // so tsc anchors on the member expression, not the explicit argument);
+        // leave those to the existing `OverloadPrimary` handling rather than
+        // redirecting them to the positional argument.
+        let indexed_argument_anchor =
+            (matches!(anchor_kind, DiagnosticAnchorKind::OverloadPrimary) && !is_bind_method_call)
+                .then(|| self.indexed_overload_argument_anchor(idx, &argument_failures))
+                .flatten();
         let Some(anchor) = callback_body_failure_span
+            .or(indexed_argument_anchor)
             .or_else(|| self.resolve_diagnostic_anchor(anchor_idx, anchor_kind))
         else {
             return;
