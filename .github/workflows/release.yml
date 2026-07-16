@@ -111,7 +111,7 @@ jobs:
 
       - name: Install cross (Linux cross targets)
         if: matrix.cross == true
-        uses: taiki-e/install-action@5ebac0d9522d786674368e47e92963ba13f2c376 # v2
+        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
         with:
           tool: cross
 
@@ -219,7 +219,7 @@ jobs:
           fi
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           tag_name: ${{ needs.resolve-tag.outputs.tag }}
           name: ${{ needs.resolve-tag.outputs.tag }}
