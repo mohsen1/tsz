@@ -287,14 +287,12 @@ impl<'a> CheckerState<'a> {
             });
         }
 
-        if Self::is_module_exports_target_in_arena(arena, binary.left) {
-            self.collect_commonjs_object_literal_type_exports(
-                target_file_idx,
-                arena,
-                binary.right,
-                decls,
-            );
-        }
+        // TS7: members of a `module.exports = { X }` object literal carry only
+        // value meaning. A bare/import-type reference to such a member is the
+        // TS2749 (require destructure) / TS2694 (import-type) value-used-as-type
+        // error, so they are not registered as type-capable exports. Direct
+        // `exports.X = class`/`module.exports = Class` forms still export types
+        // through the sibling collection paths.
 
         self.collect_commonjs_type_capable_exports_from_expression(
             target_file_idx,
@@ -303,54 +301,6 @@ impl<'a> CheckerState<'a> {
             export_object_roots,
             decls,
         );
-    }
-
-    fn collect_commonjs_object_literal_type_exports(
-        &mut self,
-        target_file_idx: usize,
-        arena: &tsz_parser::parser::NodeArena,
-        expr_idx: NodeIndex,
-        decls: &mut Vec<JsdocNamedDecl>,
-    ) {
-        let Some(expr_node) = arena.get(expr_idx) else {
-            return;
-        };
-        if expr_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-            return;
-        }
-        let Some(obj) = arena.get_literal_expr(expr_node) else {
-            return;
-        };
-
-        for &element_idx in &obj.elements.nodes {
-            let Some(element_node) = arena.get(element_idx) else {
-                continue;
-            };
-            if element_node.kind != syntax_kind_ext::PROPERTY_ASSIGNMENT {
-                continue;
-            }
-            let Some(prop) = arena.get_property_assignment(element_node) else {
-                continue;
-            };
-            let Some(name_node) = arena.get(prop.name) else {
-                continue;
-            };
-            let Some(name) =
-                crate::types_domain::queries::core::get_literal_property_name(arena, prop.name)
-            else {
-                continue;
-            };
-            if !self.expression_introduces_type_name(target_file_idx, prop.initializer) {
-                continue;
-            }
-            decls.push(JsdocNamedDecl {
-                name,
-                pos: name_node.pos,
-                len: name_node.end.saturating_sub(name_node.pos),
-                file_idx: target_file_idx,
-                is_global_script_decl: self.jsdoc_file_is_global_script(target_file_idx),
-            });
-        }
     }
 
     fn commonjs_named_export_target_in_arena(
@@ -377,7 +327,7 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn is_module_exports_target_in_arena(
+    pub(crate) fn is_module_exports_target_in_arena(
         arena: &tsz_parser::parser::NodeArena,
         idx: NodeIndex,
     ) -> bool {

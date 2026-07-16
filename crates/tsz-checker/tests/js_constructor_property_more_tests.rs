@@ -363,26 +363,39 @@ Cp.prototype = {
 }
 "#;
 
+    // TypeScript 7 dropped JS constructor-function inference: a plain
+    // `@class`-tagged function is not a constructor type, so `this` in its body
+    // has no instance type (TS2683) and the prototype-object method's `this`
+    // refers to the object literal, not an instance. There is therefore no
+    // numeric `this.x` to violate — tsc 7.0.2 emits no TS2322 here.
+    //
+    // Oracle witness (`tsc 7.0.2`, `strict`):
+    // ```text
+    // cp.js(7,5):  error TS2683: 'this' implicitly has type 'any' …
+    // cp.js(8,5):  error TS2683: 'this' implicitly has type 'any' …
+    // cp.js(13,14): error TS2339: Property 'x' does not exist on type '{ m4(): … }'.
+    // ```
     let diagnostics = check_js(source);
-    let ts2339: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == 2339)
-        .collect();
     let ts2322: Vec<_> = diagnostics
         .iter()
         .filter(|(code, message)| {
             *code == 2322 && message.contains("string") && message.contains("number")
         })
         .collect();
+    let ts2683: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2683)
+        .collect();
 
     assert!(
-        ts2339.is_empty(),
-        "Expected prototype object literal expando writes to avoid TS2339, got: {diagnostics:?}"
+        ts2322.is_empty(),
+        "TS7 drops constructor-function inference: no numeric `this.x` member \
+         check fires, got: {diagnostics:?}"
     );
-    assert_eq!(
-        ts2322.len(),
-        1,
-        "Expected exactly one TS2322 for writing string into numeric `this.x`, got: {diagnostics:?}"
+    assert!(
+        !ts2683.is_empty(),
+        "TS7: `this` in a non-constructor JS function body is implicitly any \
+         (TS2683), got: {diagnostics:?}"
     );
 }
 

@@ -370,6 +370,50 @@ impl CheckerState<'_> {
                 let expr_stmt = self.ctx.arena.get_expression_statement(stmt_node)?;
                 self.jsdoc_simple_template_type_for_node(expr_stmt.expression)
             })
+            // A `@type` tag that is textually present but resolves to nothing
+            // (e.g. `@type {Rectangle[]}` where `Rectangle` is a value-only
+            // reference reported as TS2749) is still an explicit annotation:
+            // the member takes the error type, not an inferred implicit `any`.
+            // Returning `ERROR` here keeps `any_is_explicit` set so no spurious
+            // TS7008 fires, matching tsc.
+            .or_else(|| {
+                self.jsdoc_leading_type_tag_present(stmt_idx)
+                    .then_some(TypeId::ERROR)
+            })
+    }
+
+    /// Whether a node carries a leading JSDoc `@type` tag, independent of
+    /// whether the annotated type resolves. Used to distinguish "no annotation"
+    /// from "annotation present but unresolvable".
+    fn jsdoc_leading_type_tag_present(&mut self, idx: NodeIndex) -> bool {
+        let Some(sf) = self.source_file_data_for_node(idx) else {
+            return false;
+        };
+        if sf.comments.is_empty() || !sf.comments.iter().any(|c| c.is_multi_line) {
+            return false;
+        }
+        let source_text: String = sf.text.to_string();
+        let comments = sf.comments.clone();
+        let probe = |this: &mut Self, node: NodeIndex| -> bool {
+            this.effective_jsdoc_pos_for_node(node, &comments, &source_text)
+                .and_then(|pos| this.try_leading_jsdoc(&comments, pos, &source_text))
+                .as_deref()
+                .and_then(Self::extract_jsdoc_type_expression)
+                .is_some()
+        };
+        if probe(self, idx) {
+            return true;
+        }
+        let Some(expr) = self
+            .ctx
+            .arena
+            .get(idx)
+            .and_then(|stmt_node| self.ctx.arena.get_expression_statement(stmt_node))
+            .map(|expr_stmt| expr_stmt.expression)
+        else {
+            return false;
+        };
+        probe(self, expr)
     }
 
     /// Force resolve a direct leading JSDoc `@type` annotation, bypassing the

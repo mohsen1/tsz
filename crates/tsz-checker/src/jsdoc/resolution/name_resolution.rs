@@ -1653,6 +1653,18 @@ impl<'a> CheckerState<'a> {
             local_name.to_string()
         };
 
+        // TS7: `module.exports = { X }` object-literal members carry only value
+        // meaning. A require-destructured binding of such a member is not a type
+        // alias; returning `None` routes the bare reference to the TS2749
+        // value-used-as-type terminal, matching tsc.
+        if self.commonjs_named_export_is_object_literal_member(
+            &module_specifier,
+            &export_name,
+            Some(self.ctx.current_file_idx),
+        ) {
+            return None;
+        }
+
         let surface_export_type = self.resolve_js_export_named_type(
             &module_specifier,
             &export_name,
@@ -1790,16 +1802,24 @@ impl<'a> CheckerState<'a> {
         if symbol.has_any_flags(
             symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::BLOCK_SCOPED_VARIABLE,
         ) {
-            if let Some(enum_type) = symbol
+            let is_enum_tagged = symbol
                 .declarations
                 .iter()
                 .copied()
                 .filter(|decl| decl.is_some())
-                .find_map(|decl| self.jsdoc_enum_annotation_type_for_symbol_decl(sym_id, decl))
-            {
-                return enum_type;
-            }
-            if symbol.value_declaration.is_some()
+                .any(|decl| {
+                    self.jsdoc_enum_annotation_type_for_symbol_decl(sym_id, decl)
+                        .is_some()
+                });
+            if is_enum_tagged {
+                // TS7 dropped `@enum` type synthesis: the tag creates only a
+                // value binding, no type. A bare reference is the TS2749
+                // value-used-as-type error; `typeof` queries (ValuePosition)
+                // still get the object's value type, so fall through.
+                if mode == JsdocNameMode::BareTypeReference {
+                    return TypeId::ERROR;
+                }
+            } else if symbol.value_declaration.is_some()
                 && let Some(instance_type) = self.resolve_jsdoc_commonjs_binding_element_type(
                     symbol.value_declaration,
                     symbol.escaped_name.as_str(),
@@ -1819,13 +1839,26 @@ impl<'a> CheckerState<'a> {
                 return instance_type;
             }
             let value_type = self.get_type_of_symbol(sym_id);
-            // A variable initialized with a class EXPRESSION is value-only in
-            // a bare JSDoc type position (tsc 7 reports TS2749), unlike a
-            // require()-initialized variable, which is an import-like alias
-            // that keeps the class's type meaning.
-            if mode == JsdocNameMode::BareTypeReference
-                && self.jsdoc_variable_initializer_is_class_expression(symbol.value_declaration)
-            {
+            // TS7: a plain value variable is never a valid bare JSDoc type.
+            // Two require-alias forms keep type meaning and are resolved
+            // before the value-only terminal:
+            //   * `const {X} = require(...)` binding elements → CommonJS
+            //     binding-element path above.
+            //   * `const X = require("./mod")` whole-module aliases → the
+            //     instance type of the module's construct-signature export
+            //     (`module.exports = Chunk`) here.
+            // Everything else reaching a bare position (plain objects, `@enum`
+            // values, constructor-typed globals like `Image`, class-expression
+            // vars, `require(...).member` property-access consts) is value-only
+            // and reports TS2749. `typeof` queries (ValuePosition) still
+            // consume the value type below.
+            if mode == JsdocNameMode::BareTypeReference {
+                if self.jsdoc_variable_is_whole_module_require_alias(symbol.value_declaration)
+                    && let Some(instance_type) =
+                        self.instance_type_from_constructor_type(value_type)
+                {
+                    return instance_type;
+                }
                 return TypeId::ERROR;
             }
             let prefer_value_type = symbol.value_declaration.is_some()
@@ -1839,14 +1872,8 @@ impl<'a> CheckerState<'a> {
                 return instance_type;
             }
             // Fall back to the raw value type for non-constructor variables.
-            // Note: this fallback is also load-bearing for `typeof` queries, which
-            // route through here for the variable's value type, so it must remain
-            // even though a bare variable is not a valid JSDoc type on its own.
-            if mode == JsdocNameMode::BareTypeReference
-                && self.jsdoc_value_is_plain_callable(value_type)
-            {
-                return TypeId::ERROR;
-            }
+            // Note: this fallback is load-bearing for `typeof` queries, which
+            // route through here for the variable's value type.
             if value_type != TypeId::ERROR && value_type != TypeId::UNKNOWN {
                 return value_type;
             }
@@ -1867,9 +1894,13 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|sigs| !sigs.is_empty())
     }
 
-    /// Whether a value symbol's declaration is a variable initialized with a
-    /// class expression (`const C = class { ... }`).
-    fn jsdoc_variable_initializer_is_class_expression(&self, value_decl: NodeIndex) -> bool {
+    /// Whether a value symbol's declaration is a whole-module require alias
+    /// (`const X = require("./mod")`) — a CommonJS import-equals binding that
+    /// keeps the target module's type meaning (e.g. `module.exports = Chunk`).
+    /// Property-access consts (`const X = require("./mod").member`) and
+    /// destructuring binding elements are excluded: the initializer must be a
+    /// bare `require(...)` call directly bound to a plain identifier.
+    fn jsdoc_variable_is_whole_module_require_alias(&mut self, value_decl: NodeIndex) -> bool {
         if !value_decl.is_some() {
             return false;
         }
@@ -1893,12 +1924,21 @@ impl<'a> CheckerState<'a> {
         let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
             return false;
         };
+        // The binding target must be a plain identifier: a binding pattern
+        // (`const {X} = require(...)`) is a destructure, not a whole-module
+        // alias, and is handled by the CommonJS binding-element path.
+        if self
+            .ctx
+            .arena
+            .get(var_decl.name)
+            .is_none_or(|name| name.kind != SyntaxKind::Identifier as u16)
+        {
+            return false;
+        }
         var_decl.initializer.is_some()
             && self
-                .ctx
-                .arena
-                .get(var_decl.initializer)
-                .is_some_and(|init| init.kind == syntax_kind_ext::CLASS_EXPRESSION)
+                .get_require_module_specifier(var_decl.initializer)
+                .is_some()
     }
 
     /// Returns `true` when a bare JSDoc type-position name resolves to a symbol

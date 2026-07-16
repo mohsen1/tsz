@@ -803,12 +803,9 @@ impl<'a> CheckerState<'a> {
         if facts.initializer.is_some() {
             self.report_malformed_jsdoc_satisfies_tags(facts.decl_idx);
             self.report_duplicate_jsdoc_satisfies_tags(facts.decl_idx);
-            if let Some(sym_id) = self.ctx.binder.get_node_symbol(facts.decl_idx)
-                && let Some(enum_element_type) =
-                    self.jsdoc_enum_annotation_type_for_symbol_decl(sym_id, facts.decl_idx)
-            {
-                self.check_jsdoc_enum_initializer_values(facts.initializer, enum_element_type);
-            }
+            // TS7 dropped `@enum` type synthesis: the tag no longer contributes
+            // an element type, so the object-literal members are not validated
+            // against it (a bare reference to the value is TS2749 instead).
             // JSDoc @satisfies on variable declarations: provide contextual type
             // for the initializer so that object literal methods and arrow function
             // parameters get contextually typed from the satisfies type.

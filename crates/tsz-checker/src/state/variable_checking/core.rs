@@ -15,7 +15,6 @@ use tsz_solver::TypeId;
 
 mod annotation_context;
 mod async_jsdoc_return;
-mod jsdoc_enum_and_prior_values;
 mod precheck_helpers;
 mod prior_value;
 

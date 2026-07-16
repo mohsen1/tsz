@@ -1666,6 +1666,94 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Whether a named CommonJS export originates from a `module.exports = { … }`
+    /// object-literal assignment (`module.exports = { X }`). Such members carry
+    /// only value meaning: TS7 reports a bare/import-type reference to them as
+    /// TS2749/TS2694, unlike `exports.X = class` or `module.exports = Class`,
+    /// which export type meaning.
+    pub(crate) fn commonjs_named_export_is_object_literal_member(
+        &self,
+        module_name: &str,
+        export_name: &str,
+        source_file_idx: Option<usize>,
+    ) -> bool {
+        let Some(target_file_idx) = source_file_idx
+            .and_then(|file_idx| {
+                self.ctx
+                    .resolve_import_target_from_file(file_idx, module_name)
+            })
+            .or_else(|| self.ctx.resolve_import_target(module_name))
+        else {
+            return false;
+        };
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let Some(source_file) = target_arena.source_files.first() else {
+            return false;
+        };
+        for &stmt_idx in source_file.statements.nodes.iter().rev() {
+            let Some(stmt_node) = target_arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(stmt) = target_arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            let Some(expr_node) = target_arena.get(stmt.expression) else {
+                continue;
+            };
+            if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                continue;
+            }
+            let Some(binary) = target_arena.get_binary_expr(expr_node) else {
+                continue;
+            };
+            if binary.operator_token != SyntaxKind::EqualsToken as u16
+                || !Self::is_module_exports_target_in_arena(target_arena, binary.left)
+            {
+                continue;
+            }
+            let Some(rhs_node) = target_arena.get(binary.right) else {
+                continue;
+            };
+            if rhs_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                continue;
+            }
+            let Some(obj) = target_arena.get_literal_expr(rhs_node) else {
+                continue;
+            };
+            for &element_idx in &obj.elements.nodes {
+                let Some(element_node) = target_arena.get(element_idx) else {
+                    continue;
+                };
+                // Property assignment (`{ X: … }`) or shorthand (`{ X }`).
+                let name_idx = if element_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                    target_arena
+                        .get_property_assignment(element_node)
+                        .map(|prop| prop.name)
+                } else if element_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
+                    target_arena
+                        .get_shorthand_property(element_node)
+                        .map(|prop| prop.name)
+                } else {
+                    None
+                };
+                if let Some(name_idx) = name_idx
+                    && crate::types_domain::queries::core::get_literal_property_name(
+                        target_arena,
+                        name_idx,
+                    )
+                    .as_deref()
+                        == Some(export_name)
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     fn commonjs_named_export_assignment_rhs(
         arena: &tsz_parser::parser::NodeArena,
         expr_idx: NodeIndex,
