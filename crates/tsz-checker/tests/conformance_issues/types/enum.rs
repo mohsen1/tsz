@@ -961,14 +961,24 @@ d.chunk;
         },
     );
 
+    // TypeScript 7.0.2 (pinned oracle): `const D = Chunk` is a VALUE binding,
+    // so `@type {D}` is TS2749 value-as-type (with-libs oracle emits exactly
+    // TS2749 here). The old TS2454 expectation encoded the removed pre-TS7
+    // alias resolution; neither compiler emits TS2454 or TS2339 now. Under
+    // this harness's --noLib, tsc happens to suppress the TS2749 behind its
+    // TS2318 lib-degradation cascade while tsz still applies the semantic
+    // rule — this test pins the RULE, not the degenerate-config cascade.
+    // Known residual (not asserted): tsz's follow-on TS18048.
     assert!(
-        has_error(&diagnostics, 2454),
-        "Expected TS2454 for JSDoc type aliasing a local constructor value. Actual diagnostics: {diagnostics:#?}"
+        has_error(&diagnostics, 2749),
+        "Expected TS2749 for a JSDoc reference to a constructor VALUE alias (tsc 7.0.2 with-libs rule). Actual diagnostics: {diagnostics:#?}"
     );
-    assert!(
-        !has_error(&diagnostics, 2339),
-        "Did not expect TS2339 once the JSDoc constructor alias resolves to the instance type. Actual diagnostics: {diagnostics:#?}"
-    );
+    for code in [2454, 2339] {
+        assert!(
+            !has_error(&diagnostics, code),
+            "Did not expect TS{code} for the constructor value alias (tsc 7.0.2). Actual diagnostics: {diagnostics:#?}"
+        );
+    }
 }
 
 #[test]
