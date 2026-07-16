@@ -182,6 +182,34 @@ pub(crate) fn lazy_own_members_varpos_enabled() -> bool {
     })
 }
 
+/// Opt-IN switch for the lazy lib-interface **heritage** producer (#13933
+/// Slice 1). When `TSZ_LAZY_LIB_HERITAGE=1`,
+/// [`CheckerState::merge_lib_interface_heritage`] records each resolved heritage
+/// base as a `Lazy(BaseDef)` edge — a generic base as
+/// `Application(Lazy(BaseDef), instantiated_args)` — and returns
+/// `Intersection(own_members, base_edge…)` instead of eagerly flattening the
+/// base's members into the derived object. Inherited members then resolve on
+/// demand by descending the `Lazy` bases (the #13935 consumer foundation, which
+/// already handles `Intersection`+`Lazy` heritage shapes).
+///
+/// DEFAULT-OFF. Flag-off leaves the member-flatten path untouched, so the
+/// derived body is byte-identical to the eager pipeline by construction. This is
+/// the landing configuration for Slice 1; the representation change is validated
+/// flag-on but only flips default-on after the Tier-B raw-shape readers are
+/// routed through the descent path (Slices 2–3). The `Lazy(DefId)` edge is a
+/// stable interned handle (the #14957 convergence-safety argument), so it does
+/// not churn fixpoint identity, and it dissolves the #12299 heritage cycle: a
+/// base is recorded as an edge without resolving its body.
+///
+/// Cached in a `OnceLock` so the environment is read at most once per process.
+pub(crate) fn lazy_lib_heritage_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("TSZ_LAZY_LIB_HERITAGE").is_ok_and(|v| !v.is_empty() && v != "0")
+    })
+}
+
 impl CheckerState<'_> {
     /// Compute the known-global value-type override for a property-access
     /// receiver identifier `ident_text`, given the receiver's `current_type`

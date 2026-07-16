@@ -394,7 +394,15 @@ impl<'a> CheckerState<'a> {
 
         let heritage_namespace = name.split_once('.').map(|(namespace, _)| namespace);
 
-        // Now resolve each base type and merge, applying type argument substitution
+        // Now resolve each base type and merge, applying type argument substitution.
+        //
+        // Under `TSZ_LAZY_LIB_HERITAGE` (#13933 Slice 1) a resolved base is
+        // recorded as a `Lazy(BaseDef)` edge collected in `base_edges` instead of
+        // having its members flattened into `derived_type`; after the loop those
+        // edges are wrapped as `Intersection(own, base_edge…)`. Inherited members
+        // then resolve on demand through the descent-safe consumer path.
+        let lazy_heritage = crate::state_checking::lazy_lib_member::lazy_lib_heritage_enabled();
+        let mut base_edges: Vec<TypeId> = Vec::new();
         let mut incomplete = false;
         for base in &bases {
             let namespace_base_sym = heritage_namespace
@@ -427,6 +435,20 @@ impl<'a> CheckerState<'a> {
             }
 
             if let Some(mut base_type) = base_type {
+                // Lazy heritage edge: represent this base as `Lazy(BaseDef)`
+                // (or `Application(Lazy(BaseDef), args)` for a generic base)
+                // rather than flattening its members. Only for non-namespaced
+                // bases resolvable to a lib symbol; namespaced/`typeof`-class
+                // bases keep the eager merge. The eagerly resolved `base_type`
+                // above is retained for the #12299 incomplete/drain contract
+                // (Slice 1 keeps eager resolution; Slice 3 drops it).
+                if lazy_heritage
+                    && namespace_base_sym.is_none()
+                    && let Some(edge) = self.lazy_heritage_base_edge(base)
+                {
+                    base_edges.push(edge);
+                    continue;
+                }
                 // If there are type arguments, resolve them and substitute
                 if !base.type_arg_indices.is_empty() {
                     let base_sym = namespace_base_sym
@@ -480,8 +502,69 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Flag-on: combine the own object with the collected lazy base edges into
+        // `Intersection(own, base_edge…)`. Own members come first so descent-based
+        // property collection reads them ahead of inherited base members.
+        if lazy_heritage && !base_edges.is_empty() {
+            let factory = self.ctx.types.factory();
+            let mut members = Vec::with_capacity(base_edges.len() + 1);
+            members.push(derived_type);
+            members.extend(base_edges);
+            derived_type = factory.intersection(members);
+        }
+
         self.ctx.lib_heritage_in_progress.remove(name);
         (derived_type, incomplete)
+    }
+
+    /// Build the lazy heritage edge for `base` under `TSZ_LAZY_LIB_HERITAGE`:
+    /// `Lazy(BaseDef)` for a non-generic base, or
+    /// `Application(Lazy(BaseDef), instantiated_args)` for a generic one. The
+    /// `Lazy` handle is the base's canonical, name-verified lib `DefId`
+    /// ([`crate::context::CheckerContext::lib_def_id_verified`], which avoids the
+    /// cross-lib-binder raw-id collision that a bare `get_or_create_def_id` can
+    /// hit), so descent resolves it to the byte-identical materialized body.
+    ///
+    /// Returns `None` when the base name does not resolve to a lib symbol, so the
+    /// caller falls back to the eager member-merge (a genuinely-missing base or a
+    /// `typeof`-class base is unchanged).
+    fn lazy_heritage_base_edge(&mut self, base: &LibHeritageBase<'_>) -> Option<TypeId> {
+        let base_sym = self.resolve_lib_symbol_by_entity_name(&base.name)?;
+        let def_id = self.ctx.lib_def_id_verified(&base.name, base_sym);
+        let base_lazy = self.ctx.types.lazy(def_id);
+
+        if base.type_arg_indices.is_empty() {
+            return Some(base_lazy);
+        }
+        let base_params = self.get_type_params_for_symbol(base_sym);
+        if base_params.is_empty() {
+            // No declared params: the base is effectively non-generic; the type
+            // arguments (if any) have no slots to fill, so the bare `Lazy` head is
+            // the correct edge.
+            return Some(base_lazy);
+        }
+
+        // Resolve the heritage type arguments in the derived interface's seeded
+        // type-parameter scope (so `extends IteratorObject<T, …>` carries the
+        // instantiated `T`), padding/truncating to the base's arity. Descent
+        // applies the substitution via `expand_application_with_resolver`
+        // (collect.rs), preserving base type-param substitution (#13652).
+        let mut type_args = Vec::with_capacity(base_params.len());
+        for &arg_idx in &base.type_arg_indices {
+            type_args.push(self.resolve_lib_heritage_type_arg(arg_idx, base.arena));
+        }
+        while type_args.len() < base_params.len() {
+            let param = &base_params[type_args.len()];
+            type_args.push(
+                param
+                    .default
+                    .or(param.constraint)
+                    .unwrap_or(TypeId::UNKNOWN),
+            );
+        }
+        type_args.truncate(base_params.len());
+
+        Some(self.ctx.types.factory().application(base_lazy, type_args))
     }
 
     /// Resolve a type argument node from a lib arena to a TypeId.

@@ -116,7 +116,12 @@ sharing, safety unproven), `TSZ_EAGER_WARM_LOCAL_CACHES` (rollback hatch for
 lazy local-cache warming), `TSZ_ENABLE_LIB_DEF_FREEZE` /
 `TSZ_ENABLE_LIB_DEF_DEFER_PUBLISH` (lib-def freeze/defer-publish experiments),
 `TSZ_LAZY_OWN_MEMBERS` / `TSZ_LAZY_OWN_MEMBERS_VARPOS` (#14957 lazy lib-member
-family; VARPOS is the known opt-in regression), `TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK`
+family; VARPOS is the known opt-in regression), `TSZ_LAZY_LIB_HERITAGE` (#13933
+Slice 1 lazy lib-interface *heritage* producer: `merge_lib_interface_heritage`
+records each base as a `Lazy(BaseDef)` edge under `Intersection(own, base…)`
+instead of flattening its members — default-OFF, flag-off byte-identical;
+graduation gated on routing the Tier-B raw-shape readers through the descent
+path), `TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK`
 / `TSZ_EXPERIMENT_FORCE_PARALLEL_CHECK_TINY` / `TSZ_EXPERIMENT_NO_SHARED_QC`
 (parallel-check experiments), `TSZ_FILE_SESSION_REUSE` (paired with its kill
 switch below), `TSZ_CROSS_FILE_TYPE_PARAMS_CACHE` (cross-file type-param cache

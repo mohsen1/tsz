@@ -387,3 +387,101 @@ fn dom_relation_stays_below_materialization_ratchet() {
         );
     }
 }
+
+// =============================================================================
+// Producer flip (#13933 Slice 1) — flag-gated representation assertion
+// =============================================================================
+//
+// The `TSZ_LAZY_LIB_HERITAGE` producer flip changes `merge_lib_interface_heritage`
+// from flattening a base's members into the derived object to recording the base
+// as a `Lazy(BaseDef)` edge (a generic base as `Application(Lazy(BaseDef), args)`)
+// under an `Intersection(own, base_edge…)`. The flag latches in a process-global
+// `OnceLock`, so this test re-execs itself with the flag set (mirroring
+// `deterministic_election_env_gate`): the parent asserts the DEFAULT (flag-off)
+// producer still emits a flat object with no lazy base edge, then the child
+// asserts the flag-on producer emits the `Intersection`+`Lazy` edge — the
+// observable proof the representation flipped, on top of the byte-identical
+// diagnostic guards above.
+
+const PRODUCER_CHILD_MARKER: &str = "TSZ_LAZY_LIB_HERITAGE_PRODUCER_CHILD";
+
+/// Whether `resolve_lib_type_by_name(name)` yields a heritage representation
+/// carrying at least one lazy base edge: an `Intersection` with a member that is
+/// a bare `Lazy(DefId)` or an `Application` whose base is a `Lazy(DefId)`.
+fn producer_has_lazy_base_edge(name: &str) -> bool {
+    use crate::test_utils::with_checked_source_with_libs_mut;
+    use tsz_solver::types::TypeData;
+
+    let libs = load_default_lib_files();
+    with_checked_source_with_libs_mut(
+        TRIVIAL_SOURCE,
+        "producer.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+        |checker, types| {
+            let Some(ty) = checker.resolve_lib_type_by_name(name) else {
+                return false;
+            };
+            let Some(TypeData::Intersection(members_id)) = types.lookup(ty) else {
+                return false;
+            };
+            types
+                .type_list(members_id)
+                .iter()
+                .any(|&member| match types.lookup(member) {
+                    Some(TypeData::Lazy(_)) => true,
+                    Some(TypeData::Application(app_id)) => {
+                        matches!(
+                            types.lookup(types.type_application(app_id).base),
+                            Some(TypeData::Lazy(_))
+                        )
+                    }
+                    _ => false,
+                })
+        },
+    )
+}
+
+/// The producer flip is observable: default-off, a heritage lib interface
+/// (`Element extends Node`, non-generic) resolves to a flat object with the base
+/// flattened in — no lazy base edge. Under `TSZ_LAZY_LIB_HERITAGE=1` the same
+/// resolution yields `Intersection(own, Lazy(Node))`.
+#[test]
+fn lazy_lib_heritage_producer_emits_intersection_edges() {
+    if std::env::var(PRODUCER_CHILD_MARKER).is_ok() {
+        assert!(
+            producer_has_lazy_base_edge("Element"),
+            "TSZ_LAZY_LIB_HERITAGE=1: `Element` heritage must resolve to an \
+             Intersection carrying a Lazy(Node) base edge, not a flattened object",
+        );
+        return;
+    }
+
+    assert!(
+        !producer_has_lazy_base_edge("Element"),
+        "default (flag-off): `Element` heritage must stay a flattened object with \
+         no lazy base edge (byte-identical to the eager pipeline)",
+    );
+
+    let exe = std::env::current_exe().expect("test binary path");
+    let output = std::process::Command::new(exe)
+        .args([
+            "--exact",
+            "lazy_lib_heritage_guard_tests::lazy_lib_heritage_producer_emits_intersection_edges",
+            "--nocapture",
+        ])
+        .env(PRODUCER_CHILD_MARKER, "1")
+        .env("TSZ_LAZY_LIB_HERITAGE", "1")
+        .output()
+        .expect("spawn child test process");
+    assert!(
+        output.status.success(),
+        "child producer assertion failed under TSZ_LAZY_LIB_HERITAGE=1:\n\
+         --- stdout ---\n{}\n--- stderr ---\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
