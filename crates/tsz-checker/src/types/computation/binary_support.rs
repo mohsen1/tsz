@@ -990,6 +990,36 @@ impl CheckerState<'_> {
                 }
             }
 
+            // tsc: a value-position class reference (`typeof C`) always carries a
+            // construct signature, so `x instanceof C` is a valid RHS. Under
+            // whole-module load tsz can resolve the RHS class value to the class
+            // INSTANCE type (an object with no construct signature) when the same
+            // class was used in TYPE position earlier in the module — the deferred
+            // `Lazy(classDef)` then reads the already-populated instance-type
+            // cache — so the structural check above wrongly rejects it. Recognize
+            // the value-position class reference directly: the RHS operand's
+            // declared type is a `Lazy` for a class definition (`Class`, or the
+            // `ClassConstructor` value-side def). This is
+            // positional — it keys off the RHS being a class *value* reference,
+            // not a sniff of the (mis-)resolved shape — and never accepts a class
+            // *instance* operand, whose type is the resolved object type rather
+            // than a `Lazy(classDef)`.
+            if !is_valid_rhs
+                && let Some(def_id) = crate::query_boundaries::common::lazy_def_id(
+                    self.ctx.types.as_type_database(),
+                    right_type,
+                )
+                && self.ctx.definition_store.get(def_id).is_some_and(|def| {
+                    matches!(
+                        def.kind,
+                        tsz_solver::def::DefKind::Class
+                            | tsz_solver::def::DefKind::ClassConstructor
+                    )
+                })
+            {
+                is_valid_rhs = true;
+            }
+
             if !is_valid_rhs {
                 self.error_at_node_msg(
                     right_idx,
