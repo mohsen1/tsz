@@ -38,10 +38,11 @@ declare const Buffer: {
   isBuffer(value: unknown): boolean;
   compare(left: unknown, right: unknown): number;
   from(value: unknown, encoding?: string): Buffer;
+  from(value: unknown, byteOffset: number, length?: number): Buffer;
 };
 
 interface ErrorConstructor {
-  captureStackTrace?(targetObject: object, constructorOpt?: Function): void;
+  captureStackTrace(targetObject: object, constructorOpt?: Function): void;
 }
 
 interface DurableObjectStorage {
@@ -249,6 +250,8 @@ declare module '@opentelemetry/api' {
   export type Span<T = any, U = any, V = any, W = any> = any;
   export const Tracer: any;
   export type Tracer<T = any, U = any, V = any, W = any> = any;
+  export const trace: any;
+  export const SpanStatusCode: any;
 }
 
 declare module '@planetscale/database' {
@@ -501,22 +504,32 @@ declare module 'mysql2' {
 }
 
 declare module 'mysql2/promise' {
-  export const Connection: any;
-  export type Connection<T = any, U = any, V = any, W = any> = any;
-  export const FieldPacket: any;
-  export type FieldPacket<T = any, U = any, V = any, W = any> = any;
-  export const OkPacket: any;
-  export type OkPacket<T = any, U = any, V = any, W = any> = any;
-  export const Pool: any;
-  export type Pool<T = any, U = any, V = any, W = any> = any;
-  export const PoolConnection: any;
-  export type PoolConnection<T = any, U = any, V = any, W = any> = any;
-  export const QueryOptions: any;
-  export type QueryOptions<T = any, U = any, V = any, W = any> = any;
-  export const ResultSetHeader: any;
-  export type ResultSetHeader<T = any, U = any, V = any, W = any> = any;
-  export const RowDataPacket: any;
-  export type RowDataPacket<T = any, U = any, V = any, W = any> = any;
+  // Typed just enough for drizzle's singlestore session (transitively checked via
+  // singlestore-core): a generic `query`/`execute` returning the real
+  // `[rows, fields]` tuple, mirroring @types/mysql2, so `client.query<T>()` is a
+  // generic call (not an untyped one) and its rows carry a real type.
+  export interface FieldPacket { [key: string]: any; }
+  export interface OkPacket { [key: string]: any; }
+  export interface ResultSetHeader { [key: string]: any; }
+  export interface RowDataPacket { [key: string]: any; }
+  export interface QueryOptions { [key: string]: any; }
+  export interface Connection {
+    query<T = any>(sql: any, values?: any): Promise<[T, FieldPacket[]]>;
+    execute<T = any>(sql: any, values?: any): Promise<[T, FieldPacket[]]>;
+    [key: string]: any;
+  }
+  export interface Pool extends Connection {}
+  export interface PoolConnection extends Connection {}
+}
+
+declare module 'node:fs' {
+  // drizzle's core `migrator.ts` does `readFileSync(...).toString().split(...)`;
+  // typing `readFileSync` as string-returning (vs the bare any-stub) gives the
+  // downstream string ops real types, mirroring @types/node for this call site.
+  const readFileSync: (path: any, options?: any) => string;
+  const _default: { readFileSync: typeof readFileSync; [key: string]: any };
+  export default _default;
+  export { readFileSync };
 }
 
 declare module 'node:events' {
@@ -679,6 +692,106 @@ declare namespace NodeJS {
   type Timer = any;
   type Immediate = any;
   type ErrnoException = any;
+}
+declare var Buffer: any;
+declare var process: any;
+TYPES
+}
+
+tsz_write_effect_external_stubs() {
+  # effect's real build installs `fast-check` + `@standard-schema/spec` and pins
+  # `types: ["node"]`; the bench clone installs none. The two-file split is
+  # load-bearing: `FastCheck.ts` does `export * from "fast-check"`, which only
+  # re-surfaces named types when the fast-check ambient module lives in a SCRIPT
+  # file (no top-level export), while `declare global` requires a MODULE file
+  # (hence the `export {}`). Row is still red after this (5 residual errors:
+  # effect threads element types through fast-check's real generic factory
+  # surface, which a hand stub cannot fully reproduce — needs vendored
+  # fast-check .d.ts); the stubs remove the ~220 spurious resolution errors so
+  # the residual diagnostic set is the honest one.
+  local output="$1"
+  local fixture_dir
+  fixture_dir="$(dirname "$output")"
+  cat > "$fixture_dir/tsz-bench-globals.d.ts" <<'TYPES'
+// node globals effect's source reads (real config pins `types: ["node"]`; the
+// bench clone installs none). `declare global` requires module scope, hence the
+// `export {}`. Ambient external-module stubs live in tsz-bench-modules.d.ts,
+// which must stay a script file so `export * from "fast-check"` re-exports them.
+export {};
+
+declare global {
+  var process: any;
+  var setImmediate: (...args: any[]) => any;
+  interface ErrorConstructor {
+    stackTraceLimit: number;
+    captureStackTrace(targetObject: object, constructorOpt?: Function): void;
+  }
+}
+TYPES
+  cat > "$fixture_dir/tsz-bench-modules.d.ts" <<'TYPES'
+// effect installs `fast-check` + `@standard-schema/spec`; the bench clone does
+// not. Mirror only the surface effect's own source consumes. `FastCheck.ts` does
+// `export * from "fast-check"`, so this MUST be a script (no top-level export)
+// ambient module declaration for the re-export to surface these named types.
+declare module '@standard-schema/spec' {
+  export type StandardSchemaV1<Input = unknown, Output = Input> = any;
+  export namespace StandardSchemaV1 {
+    export type Props<Input = unknown, Output = Input> = any;
+    export type Result<Output> = any;
+    export type InferInput<Schema> = any;
+    export type InferOutput<Schema> = any;
+    export type FailureResult = any;
+    export type Issue = any;
+  }
+}
+
+declare module 'fast-check' {
+  export interface Arbitrary<T = any> {
+    map<U>(f: (t: T) => U): Arbitrary<U>;
+    chain<U>(f: (t: T) => Arbitrary<U>): Arbitrary<U>;
+    filter(f: (t: T) => boolean): Arbitrary<T>;
+    noBias(): Arbitrary<T>;
+    noShrink(): Arbitrary<T>;
+  }
+  export interface StringSharedConstraints { minLength?: number; maxLength?: number; }
+  export interface FloatConstraints {
+    min?: number; max?: number; minExcluded?: boolean; maxExcluded?: boolean;
+    noNaN?: boolean; noDefaultInfinity?: boolean;
+  }
+  export interface BigIntConstraints { min?: bigint; max?: bigint; }
+  export interface ArrayConstraints { minLength?: number; maxLength?: number; }
+  export interface DateConstraints { min?: Date; max?: Date; noInvalidDate?: boolean; }
+  type ArbFactory = <A = any, B = any, C = any>(...args: any[]) => Arbitrary<any>;
+  export const anything: ArbFactory;
+  // Type-preserving signatures for the factories whose element type effect
+  // threads through into `LazyArbitrary<F<A>>` results (matching fast-check's
+  // real generics); an `any`-returning factory would collapse A to `unknown`.
+  export function array<T>(arb: Arbitrary<T>, constraints?: ArrayConstraints): Arbitrary<T[]>;
+  export function constant<T>(value: T): Arbitrary<T>;
+  export function constantFrom<T>(...values: T[]): Arbitrary<T>;
+  export function oneof<T>(...args: Array<Arbitrary<T> | object>): Arbitrary<T>;
+  export function tuple<T extends readonly unknown[]>(
+    ...arbs: { [K in keyof T]: Arbitrary<T[K]> }
+  ): Arbitrary<T>;
+  export const bigInt: ArbFactory;
+  export const boolean: ArbFactory;
+  export const date: ArbFactory;
+  export const float: ArbFactory;
+  export const integer: ArbFactory;
+  // `letrec` returns a record of named arbitraries; effect destructures the
+  // result (`const { FiberId } = fc.letrec((tie) => ({ FiberId: ... }))`), so it
+  // must be `any` (not `Arbitrary`) with a typed builder param.
+  export const letrec: (builder: (tie: (key: string) => Arbitrary<any>) => any) => any;
+  export const maxSafeNat: ArbFactory;
+  export const object: ArbFactory;
+  export function record<T>(fields: { [K in keyof T]: Arbitrary<T[K]> }): Arbitrary<T>;
+  export function record<T, C>(fields: { [K in keyof T]: Arbitrary<T[K]> }, constraints: C): Arbitrary<any>;
+  export const string: ArbFactory;
+  export const stringMatching: ArbFactory;
+  export const uint8Array: ArbFactory;
+  export const ulid: ArbFactory;
+  export const uuid: ArbFactory;
+  export const webUrl: ArbFactory;
 }
 TYPES
 }

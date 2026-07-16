@@ -23,6 +23,8 @@ TSZ_PROJECT_ROWS_MJS="$TSZ_PROJECT_FIXTURES_ROOT/scripts/bench/project-rows.mjs"
 # functions that call the stub writers are invoked.
 # shellcheck source=lib/project-fixture-stubs.sh
 source "$TSZ_PROJECT_FIXTURES_ROOT/scripts/bench/lib/project-fixture-stubs.sh"
+# shellcheck source=lib/project-fixture-stubs-canary.sh
+source "$TSZ_PROJECT_FIXTURES_ROOT/scripts/bench/lib/project-fixture-stubs-canary.sh"
 
 # Canonical project row groups for runners that share fixture handling.
 # Keep row names here aligned with the project-corpus workflows.
@@ -773,13 +775,20 @@ tsz_write_basic_external_project_config() {
   # for projects that import sibling modules with explicit `.ts` extensions).
   local extra_compiler_options="${3:-}"
   local extra_include="${4:-}"
+  # Optional 5th arg: extra exclude JSON lines (each with its own trailing
+  # comma) injected before the shared node_modules/dist/build tail. Used by
+  # fixtures that must drop optional-dependency or test-scaffolding subtrees.
+  local extra_exclude="${5:-}"
+  # Optional 6th arg: inner JSON of the lib array, for fixtures whose real
+  # tsconfig pins a different lib set (e.g. esnext, or es2023 + disposable).
+  local lib_entries="${6:-\"es2022\", \"dom\", \"dom.iterable\"}"
   cat > "$output" <<JSON
 {
   "compilerOptions": {
     "target": "es2022",
     "module": "esnext",
     "strict": true,
-    "lib": ["es2022", "dom", "dom.iterable"],
+    "lib": [${lib_entries}],
     "types": [],
     "skipLibCheck": true,
     "noEmit": true,
@@ -798,7 +807,7 @@ ${extra_compiler_options}    "resolveJsonModule": true
     "**/*.spec.ts",
     "**/*.spec.tsx",
     "**/__tests__/**",
-    "**/node_modules/**",
+${extra_exclude}    "**/node_modules/**",
     "**/dist/**",
     "**/build/**"
   ]
@@ -807,7 +816,17 @@ JSON
 }
 
 tsz_write_valibot_config() {
-  tsz_write_basic_external_project_config "$1" "library/src"
+  # valibot imports sibling modules with explicit `.ts` extensions; its real
+  # library/tsconfig.json sets allowImportingTsExtensions (paired with noEmit).
+  # Its only external import is `vitest`, a devDependency used solely by the
+  # test-scaffolding helpers under library/src/vitest/** (not re-exported by
+  # the shipped barrel), so exclude that subtree instead of stubbing vitest.
+  tsz_write_basic_external_project_config "$1" "library/src" \
+    '    "allowImportingTsExtensions": true,
+' \
+    "" \
+    '    "**/vitest/**",
+'
 }
 
 tsz_write_msw_config() {
@@ -819,15 +838,22 @@ tsz_write_msw_config() {
   # `moduleResolution: bundler` does not probe with a `.ts` extension -- bundled
   # tsc emits the same TS2307 on those specifiers without the `paths` mapping.
   # Mirror upstream's `paths` so the fixture replicates msw's actual resolution
-  # setup; both tsc and tsz then bind `#core/...` to src/core sources. (External
-  # dependency specifiers such as `outvariant`/`@mswjs/interceptors` remain
-  # unresolved because the clone installs nothing, matching tsc.)
+  # setup; both tsc and tsz then bind `#core/...` to src/core sources. External
+  # dependency specifiers (outvariant, @mswjs/interceptors, graphql, rettime,
+  # cookie/tough-cookie, path-to-regexp, ...) are ambient-stubbed — see
+  # tsz_write_msw_canary_stubs; FetchResponse must extend the real Response or
+  # msw's HttpResponse loses its Response inheritance chain and cascades. Row
+  # keeps 3 honest residuals (rettime's real conditional-type machinery cannot
+  # be reproduced by permissive stubs: 2 now-unused upstream @ts-expect-error
+  # directives + 1 contextual-param implicit any).
+  tsz_write_msw_canary_stubs "$1"
   tsz_write_basic_external_project_config "$1" "src" \
     '    "paths": {
       "#core": ["./src/core"],
       "#core/*": ["./src/core/*"]
     },
-'
+' \
+    ', "tsz-bench-external-modules.d.ts", "tsz-bench-globals.d.ts"'
 }
 
 tsz_write_comlink_config() {
@@ -835,7 +861,13 @@ tsz_write_comlink_config() {
 }
 
 tsz_write_effect_config() {
-  tsz_write_basic_external_project_config "$1" "packages/effect/src"
+  # Best-effort dependency stubs (fast-check + @standard-schema/spec + node
+  # globals) cut the tsc-side wall from ~228 spurious resolution errors to 5
+  # honest residuals; see tsz_write_effect_external_stubs for why the row is
+  # still red and what a full fix needs.
+  tsz_write_effect_external_stubs "$1"
+  tsz_write_basic_external_project_config "$1" "packages/effect/src" "" \
+    ', "tsz-bench-globals.d.ts", "tsz-bench-modules.d.ts"'
 }
 
 tsz_write_drizzle_orm_config() {
@@ -846,15 +878,45 @@ tsz_write_drizzle_orm_config() {
   # drizzle-orm/src rather than upstream's config-relative src. The fixture does
   # not install the optional driver dependency graph, so unknown package imports
   # use local any stubs while package-internal paths still bind source.
+  # Driver adapter subtrees wrapping uninstalled optional peer dependencies
+  # (package.json peerDependenciesMeta marks all 29 driver deps optional) are
+  # excluded: each mostly re-types an absent client library, exploding under
+  # strict/noImplicitAny in a no-install clone. Core dialect logic
+  # (pg/mysql/sqlite/singlestore-core, sql, query-builders) stays fully
+  # checked; op-sqlite and tidb-serverless compile clean and stay included.
+  # Path targets are ./-prefixed: with baseUrl unset, tsc 6 rejects
+  # non-relative paths targets with TS5090.
   tsz_write_drizzle_orm_external_stubs "$1"
   tsz_write_basic_external_project_config "$1" "drizzle-orm/src" \
     '    "paths": {
-      "~/*": ["drizzle-orm/src/*"],
-      "*": ["tsz-bench-external-module.d.ts"]
+      "~/*": ["./drizzle-orm/src/*"],
+      "*": ["./tsz-bench-external-module.d.ts"]
     },
     "allowImportingTsExtensions": true,
 ' \
-    ', "tsz-bench-external-named-modules.d.ts"'
+    ', "tsz-bench-external-named-modules.d.ts"' \
+    '    "drizzle-orm/src/aws-data-api/**",
+    "drizzle-orm/src/better-sqlite3/**",
+    "drizzle-orm/src/bun-sql/**",
+    "drizzle-orm/src/d1/**",
+    "drizzle-orm/src/expo-sqlite/**",
+    "drizzle-orm/src/gel/**",
+    "drizzle-orm/src/knex/**",
+    "drizzle-orm/src/libsql/**",
+    "drizzle-orm/src/mysql2/**",
+    "drizzle-orm/src/neon-http/**",
+    "drizzle-orm/src/neon-serverless/**",
+    "drizzle-orm/src/netlify-db/**",
+    "drizzle-orm/src/node-postgres/**",
+    "drizzle-orm/src/pglite/**",
+    "drizzle-orm/src/planetscale-serverless/**",
+    "drizzle-orm/src/postgres-js/**",
+    "drizzle-orm/src/prisma/**",
+    "drizzle-orm/src/singlestore/**",
+    "drizzle-orm/src/sql-js/**",
+    "drizzle-orm/src/vercel-postgres/**",
+    "drizzle-orm/src/xata-http/**",
+'
 }
 
 tsz_write_ts_rest_config() {
@@ -900,11 +962,17 @@ tsz_write_radash_config() {
 tsz_write_valtio_config() {
   # valtio's `src/index.ts` re-exports `./vanilla.ts` / `./react.ts` with
   # explicit `.ts` extensions, permitted upstream via allowImportingTsExtensions
-  # (paired with noEmit). Without it tsc/tsz emit TS5097 and cascade; carry the
-  # option so the guard matches tsc.
+  # (paired with noEmit). External deps (react, proxy-compare,
+  # @redux-devtools/extension) are ambient-stubbed — react hooks keep generic
+  # call signatures so valtio's own hook usage stays contextually typed. One
+  # honest residual remains: proxyMap.ts guards Map.getOrInsert behind an
+  # upstream `[ONLY-TS-5.9.3]` @ts-expect-error marker not extended to tsc 6,
+  # and es2022 lib has no getOrInsert — genuine upstream source rot.
+  tsz_write_valtio_canary_stubs "$1"
   tsz_write_basic_external_project_config "$1" "src" \
     '    "allowImportingTsExtensions": true,
-'
+' \
+    ', "tsz-bench-external-modules.d.ts", "tsz-bench-globals.d.ts"'
 }
 
 tsz_write_scule_config() {
@@ -933,36 +1001,89 @@ tsz_write_change_case_config() {
 }
 
 tsz_write_tiny_invariant_config() {
-  # tiny-invariant is zero-dependency; its `src/tiny-invariant.ts` implements
-  # the runtime invariant helper. Both tsz and tsc emit only the shared TS2591
-  # process baseline line (0 tsz-only delta), so this is a clean green row.
-  tsz_write_basic_external_project_config "$1" "src"
+  # tiny-invariant is zero-dependency; its `src/tiny-invariant.ts` reads
+  # `process.env.NODE_ENV`, which upstream resolves via ambient @types/node
+  # (its real tsconfig sets no `types` pin). The no-install clone lacks node
+  # typings and the baseline pins types:[], so stub `process` as any (the
+  # immer/tanstack-query pattern); tsc then validates the fixture clean.
+  local fixture_dir
+  fixture_dir="$(dirname "$1")"
+  cat > "$fixture_dir/tsz-bench-globals.d.ts" <<'TYPES'
+declare const process: any;
+TYPES
+  tsz_write_basic_external_project_config "$1" "src" "" \
+    ', "tsz-bench-globals.d.ts"'
 }
 
 tsz_write_ts_belt_config() {
-  # ts-belt is zero-dependency; its source compiles under the shared baseline.
-  tsz_write_basic_external_project_config "$1" "src"
+  # ts-belt's REAL tsconfig compiles only `./src/**/index.ts` (each module's
+  # barrel); stray non-index sources like src/Dict/Dict.ts are stale
+  # ReScript-adjacent leftovers upstream never compiles, and Dict.ts contains a
+  # genuinely broken import (`NonNullable` is not exported by ../types).
+  # Mirroring upstream's include is alignment, not a check-weakening. lib
+  # esnext mirrors upstream's target/lib "esnext".
+  cat > "$1" <<'JSON'
+{
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "esnext",
+    "strict": true,
+    "lib": ["esnext", "dom", "dom.iterable"],
+    "types": [],
+    "skipLibCheck": true,
+    "noEmit": true,
+    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "bundler",
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true
+  },
+  "include": ["src/**/index.ts"],
+  "exclude": [
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.test-d.ts",
+    "**/*.test-d.tsx",
+    "**/*.spec.ts",
+    "**/*.spec.tsx",
+    "**/__tests__/**",
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/build/**"
+  ]
+}
+JSON
 }
 
 tsz_write_ts_extras_config() {
-  # ts-extras imports `type-fest`, which is unresolved under the shared
-  # `types: []` baseline (the clone installs nothing). The resulting TS2307 set
-  # is identical under tsc and tsz, so the tsc-oracle delta cancels it — the
-  # type-fest-typed paths are any-stubbed. The row is fully tsc-parity (tsz-only
-  # delta = 0) but a thin parity row rather than a deep witness.
-  tsz_write_basic_external_project_config "$1" "source"
+  # ts-extras imports `type-fest` (a real dependency the no-install clone
+  # lacks); the named types it consumes are any-stubbed so the reference
+  # compile is clean (bare-any install semantics) instead of a TS2307 wall.
+  tsz_write_ts_extras_canary_stubs "$1"
+  tsz_write_basic_external_project_config "$1" "source" "" \
+    ', "tsz-bench-external-modules.d.ts"'
 }
 
 tsz_write_superjson_config() {
-  # superjson depends on `copy-anything` (unresolved under `types: []`, cancels
-  # in the tsc-oracle delta like other external imports).
-  tsz_write_basic_external_project_config "$1" "src"
+  # superjson depends on `copy-anything`; ambient-stub it (bare-any install
+  # semantics) so the reference compile validates clean.
+  tsz_write_superjson_canary_stubs "$1"
+  tsz_write_basic_external_project_config "$1" "src" "" \
+    ', "tsz-bench-external-modules.d.ts"'
 }
 
 tsz_write_trpc_config() {
+  # trpc's real packages/server/tsconfig.json pins lib es2023 + DOM.AsyncIterable
+  # (+ the disposable surface: core stream utils use `using`/Symbol.dispose and
+  # AsyncDisposable); the es2022 baseline lib turned that whole cluster into
+  # spurious TS2318/TS2339. Row remains red on the adapter files' real external
+  # deps (fastify/aws-lambda/express/ws/next + node builtins) — see the
+  # canary-fixture campaign notes; the lib alignment still removes the spurious
+  # half of the wall.
   tsz_write_trpc_external_stubs "$1"
   tsz_write_basic_external_project_config "$1" "packages/server/src" "" \
-    ', "tsz-bench-globals.d.ts"'
+    ', "tsz-bench-globals.d.ts"' \
+    "" '"es2023", "dom", "dom.iterable", "dom.asynciterable", "esnext.disposable"'
 }
 tsz_write_tanstack_query_config() {
   # tanstack-query's real root tsconfig pins `"types": ["node"]`, so its build
@@ -982,7 +1103,25 @@ TYPES
     ', "tsz-bench-globals.d.ts"'
 }
 tsz_write_tanstack_router_config() {
-  tsz_write_basic_external_project_config "$1" "packages/router-core/src"
+  # tanstack-router is a pnpm workspace: router-core imports its sibling
+  # workspace package @tanstack/history (and itself via @tanstack/router-core
+  # self-references, whose `isServer` export condition resolves to
+  # isServer/development.ts). Map those onto the real sibling source instead of
+  # any-stubs so router-core's own types stay load-bearing. Genuinely external
+  # deps (seroval, cookie-es, node builtins) are ambient-stubbed — see
+  # tsz_write_tanstack_router_canary_stubs. Its source imports sibling modules
+  # with explicit .ts extensions (upstream allowImportingTsExtensions).
+  tsz_write_tanstack_router_canary_stubs "$1"
+  tsz_write_basic_external_project_config "$1" "packages/router-core/src" \
+    '    "paths": {
+      "@tanstack/history": ["./packages/history/src"],
+      "@tanstack/router-core": ["./packages/router-core/src"],
+      "@tanstack/router-core/*": ["./packages/router-core/src/*"],
+      "@tanstack/router-core/isServer": ["./packages/router-core/src/isServer/development.ts"]
+    },
+    "allowImportingTsExtensions": true,
+' \
+    ', "tsz-bench-external-modules.d.ts", "tsz-bench-globals.d.ts"'
 }
 tsz_write_zustand_config() {
   # zustand imports sibling modules with explicit `.ts` extensions; its real
@@ -1005,9 +1144,16 @@ tsz_write_io_ts_config() {
   tsz_write_io_ts_external_stubs "$1"
   # TS7 resolves `paths` targets relative to the config directory without the
   # removed `baseUrl` option.
+  # NOTE (2026-07 canary campaign): with the ./-prefixed target the config is
+  # VALID under tsc 6 (TS5090 gone) but the row is genuinely red (~203 errors):
+  # io-ts consumes fp-ts's HKT type-classes as named TYPE imports and augments
+  # fp-ts/lib/HKT, which no small any-stub can satisfy (export=any fails named
+  # imports/augmentation; a wildcard ambient module resolves named type
+  # positions to a namespace and is worse). Greening io-ts needs fp-ts's real
+  # type surface vendored.
   tsz_write_basic_external_project_config "$1" "src" \
     '    "paths": {
-      "fp-ts/lib/*": ["tsz-bench-external-module.d.ts"]
+      "fp-ts/lib/*": ["./tsz-bench-external-module.d.ts"]
     },
 '
 }
@@ -1034,7 +1180,25 @@ tsz_write_remeda_config() {
   tsz_write_basic_external_project_config "$1" "packages/remeda/src"
 }
 tsz_write_ts_morph_config() {
-  tsz_write_basic_external_project_config "$1" "packages/ts-morph/src"
+  # ts-morph's @ts-morph/common workspace dep maps to its BUILT declaration
+  # bundle (packages/common/lib/ts-morph-common.d.ts): mapping to common/src
+  # instead pulls in ts-morph's typescript-internals augmentation source and
+  # ~4.7x more errors. Test suites (mocha describe/it) are excluded like
+  # upstream. code-block-writer must stub as a default-exported CLASS (a
+  # bare-any default is value-only and every `writer: CodeBlockWriter` type
+  # position trips TS2749). Row remains red (~180 honest residuals in
+  # ts-morph's own compiler-node->wrapper mapped-type/mixin machinery under
+  # the stripped no-install config).
+  tsz_write_ts_morph_canary_stubs "$1"
+  tsz_write_basic_external_project_config "$1" "packages/ts-morph/src" \
+    '    "paths": {
+      "@ts-morph/common": ["./packages/common/lib/ts-morph-common.d.ts"]
+    },
+' \
+    ', "tsz-bench-external-modules.d.ts", "tsz-bench-globals.d.ts"' \
+    '    "**/tests/**",
+    "**/*Tests.ts",
+'
 }
 tsz_write_arktype_config() {
   # arktype is a pnpm workspace: ark/type imports its sibling workspace packages
@@ -1061,10 +1225,10 @@ TYPES
   # tsconfig sets allowImportingTsExtensions: true (paired with noEmit).
   tsz_write_basic_external_project_config "$1" "ark/type" \
     '    "paths": {
-      "@ark/util": ["ark/util/index.ts"],
-      "@ark/schema/config": ["ark/schema/config.ts"],
-      "@ark/schema": ["ark/schema/index.ts"],
-      "arkregex": ["ark/regex/index.ts"]
+      "@ark/util": ["./ark/util/index.ts"],
+      "@ark/schema/config": ["./ark/schema/config.ts"],
+      "@ark/schema": ["./ark/schema/index.ts"],
+      "arkregex": ["./ark/regex/index.ts"]
     },
     "allowImportingTsExtensions": true,
 ' \
@@ -1075,10 +1239,14 @@ tsz_write_superstruct_config() {
 }
 tsz_write_runtypes_config() {
   # runtypes imports sibling modules with explicit `.ts` extensions; its real
-  # tsconfig sets allowImportingTsExtensions: true (paired with noEmit).
+  # tsconfig sets allowImportingTsExtensions: true (paired with noEmit). Its
+  # real tsconfig also targets "esnext" with no explicit lib (effective lib
+  # esnext); the source uses Array.prototype.toReversed (es2023), which the
+  # es2022 baseline lib lacks, so mirror lib esnext.
   tsz_write_basic_external_project_config "$1" "src" \
     '    "allowImportingTsExtensions": true,
-'
+' \
+    "" "" '"esnext", "dom", "dom.iterable"'
 }
 tsz_write_hotscript_config() {
   tsz_write_basic_external_project_config "$1" "src"
@@ -1092,7 +1260,47 @@ tsz_write_typebox_config() {
 '
 }
 tsz_write_class_transformer_config() {
-  tsz_write_basic_external_project_config "$1" "src"
+  # class-transformer's SHIPPING build (tsconfig.prod.cjs.json -> tsconfig.prod.json)
+  # compiles with strict:false plus decorator metadata at target es2018; the repo
+  # root tsconfig.json's strict:true is not what upstream builds, so mirroring the
+  # prod options is faithful, not a weakening. The clone has no @types/node or
+  # @types/jest (types:[]), and src/utils/get-global.util.spect.ts (upstream typo
+  # for .spec.ts, so it ships in the prod include) reads jest + Node globals that
+  # upstream resolves via devDependency typings; stub those globals as any.
+  local fixture_dir
+  fixture_dir="$(dirname "$1")"
+  cat > "$fixture_dir/tsz-bench-globals.d.ts" <<'TYPES'
+declare var global: any;
+declare var Buffer: any;
+declare var process: any;
+declare function describe(...args: any[]): any;
+declare function it(...args: any[]): any;
+declare function expect(...args: any[]): any;
+declare function beforeEach(...args: any[]): any;
+declare function afterEach(...args: any[]): any;
+TYPES
+  cat > "$1" <<'JSON'
+{
+  "compilerOptions": {
+    "target": "es2018",
+    "module": "esnext",
+    "strict": false,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "lib": ["es2018"],
+    "types": [],
+    "skipLibCheck": true,
+    "noEmit": true,
+    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "bundler",
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true
+  },
+  "include": ["src/**/*.ts", "tsz-bench-globals.d.ts"],
+  "exclude": ["**/*.spec.ts", "**/node_modules/**", "build/**", "test/**"]
+}
+JSON
 }
 tsz_write_type_graphql_config() {
   # type-graphql uses `@/` path aliases and depends on graphql,
@@ -1107,8 +1315,8 @@ tsz_write_type_graphql_config() {
   tsz_write_basic_external_project_config "$1" "src" \
     '    "useDefineForClassFields": false,
     "paths": {
-      "@/*": ["src/*"],
-      "*": ["tsz-bench-external-module.d.ts"]
+      "@/*": ["./src/*"],
+      "*": ["./tsz-bench-external-module.d.ts"]
     },
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
@@ -1116,17 +1324,121 @@ tsz_write_type_graphql_config() {
     ', "tsz-bench-external-named-modules.d.ts"'
 }
 tsz_write_neverthrow_config() {
-  tsz_write_basic_external_project_config "$1" "src"
+  # Upstream neverthrow/tsconfig.json is strict:false with the explicit
+  # sub-flags noImplicitAny/strictNullChecks/strictFunctionTypes; the shared
+  # baseline's full strict:true is stricter than upstream and produces a
+  # spurious TS2322 on ResultAsync error-channel widening. Upstream's lib list
+  # ("dom","es2016","es2017.object") predates the pinned source's use of
+  # AsyncGenerator/Symbol.asyncIterator, so lib is raised to es2018 (a runtime
+  # lib requirement, not a strictness change).
+  cat > "$1" <<'JSON'
+{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "esnext",
+    "strict": false,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "lib": ["dom", "es2018"],
+    "types": [],
+    "skipLibCheck": true,
+    "noEmit": true,
+    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "bundler",
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["**/*.spec.ts", "**/node_modules/**", "**/dist/**"]
+}
+JSON
 }
 tsz_write_xstate_config() {
   # xstate imports sibling modules with explicit `.ts` extensions; its real
   # tsconfig sets allowImportingTsExtensions: true (paired with noEmit).
+  # dev/index.ts reads `global` (upstream sees it via @types/node; the clone
+  # installs none) and scxml.ts imports the real uninstalled dep `xml-js`.
+  # The xml-js Element stub must be a STRUCTURAL interface (not `any`): the
+  # scxml callbacks over `.elements` only get contextual parameter types when
+  # Element has real members, mirroring xml-js's actual typings — a bare any
+  # leaves 20 spurious TS7006 implicit-any errors.
+  local fixture_dir
+  fixture_dir="$(dirname "$1")"
+  cat > "$fixture_dir/tsz-bench-globals.d.ts" <<'TYPES'
+declare var global: any;
+declare module 'xml-js' {
+  export interface Element {
+    declaration?: any; instruction?: any; attributes?: Record<string, any>;
+    name?: string; type?: string; elements?: Element[]; [key: string]: any;
+  }
+  export const xml2js: any;
+  const _default: any;
+  export default _default;
+}
+TYPES
   tsz_write_basic_external_project_config "$1" "packages/core/src" \
     '    "allowImportingTsExtensions": true,
-'
+' \
+    ', "tsz-bench-globals.d.ts"'
 }
 tsz_write_mobx_config() {
-  tsz_write_basic_external_project_config "$1" "packages/mobx/src"
+  # Upstream packages/mobx/tsconfig.json runs with noImplicitAny:false,
+  # noImplicitThis:false, experimentalDecorators, useDefineForClassFields,
+  # jsx:react, and lib ["esnext"] (no dom); the shared baseline's full
+  # strict:true + dom lib is stricter than upstream and produces spurious
+  # implicit-any and dom-TimerHandler errors. Upstream's downlevelIteration is
+  # dropped (tsc 6.x deprecation hard-error TS5101; no-op at target es2022).
+  # Upstream resolves process/global/console/timer globals via @types/node,
+  # which the no-install clone lacks (types:[]), so stub them as any.
+  local fixture_dir
+  fixture_dir="$(dirname "$1")"
+  cat > "$fixture_dir/tsz-bench-globals.d.ts" <<'TYPES'
+declare var process: any;
+declare var global: any;
+declare var console: any;
+declare function setTimeout(...args: any[]): any;
+declare function clearTimeout(...args: any[]): any;
+declare function setInterval(...args: any[]): any;
+declare function clearInterval(...args: any[]): any;
+TYPES
+  cat > "$1" <<'JSON'
+{
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "esnext",
+    "strict": true,
+    "noImplicitAny": false,
+    "noImplicitThis": false,
+    "experimentalDecorators": true,
+    "useDefineForClassFields": true,
+    "jsx": "react",
+    "lib": ["esnext"],
+    "types": [],
+    "skipLibCheck": true,
+    "noEmit": true,
+    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "bundler",
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true
+  },
+  "include": ["packages/mobx/src/**/*.ts", "packages/mobx/src/**/*.tsx", "tsz-bench-globals.d.ts"],
+  "exclude": [
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.test-d.ts",
+    "**/*.test-d.tsx",
+    "**/*.spec.ts",
+    "**/*.spec.tsx",
+    "**/__tests__/**",
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/build/**"
+  ]
+}
+JSON
 }
 
 # The full Next.js row uses a sparse source checkout, not an installed Next.js
@@ -1162,6 +1474,7 @@ tsz_write_nextjs_config() {
     "noEmit": true,
     "noCheck": true,
     "skipLibCheck": true,
+    "moduleResolution": "bundler",
     "target": "ES2020",
     "lib": ["DOM", "DOM.Iterable", "ES2020"],
     "types": [],
