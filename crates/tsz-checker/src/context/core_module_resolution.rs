@@ -54,7 +54,14 @@ impl CheckerContext<'_> {
                 && !c.starts_with("..\\")
         };
         if bare_prefix_needed(file_name) {
-            let prefixed = format!("./{file_name}");
+            // Build the `./`-prefixed key without the `format!`/`fmt::write`
+            // machinery (a hot cost on barrel-heavy module graphs like `ts-morph`,
+            // where this bare-specifier retry runs on most cross-file export
+            // lookups): a sized `push_str` concat is the same one allocation with
+            // none of the formatter overhead.
+            let mut prefixed = String::with_capacity(2 + file_name.len());
+            prefixed.push_str("./");
+            prefixed.push_str(file_name);
             if let Some(v) = map.get(&prefixed) {
                 return Some(v);
             }
@@ -66,7 +73,9 @@ impl CheckerContext<'_> {
                 return Some(v);
             }
             if bare_prefix_needed(n) {
-                let prefixed = format!("./{n}");
+                let mut prefixed = String::with_capacity(2 + n.len());
+                prefixed.push_str("./");
+                prefixed.push_str(n);
                 if let Some(v) = map.get(&prefixed) {
                     return Some(v);
                 }
