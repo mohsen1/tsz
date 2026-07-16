@@ -494,9 +494,16 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Resolve a parameter's contextual type from its enclosing function's
+    /// contextual type. When `extended` is set, the enclosing function's
+    /// contextual type is additionally recovered from broader syntactic
+    /// positions (return, parameter default, class member, assignment,
+    /// object-literal property, conditional) — used only by the TS2403
+    /// redeclaration baseline, never by the parameter's checked type.
     pub(crate) fn contextual_parameter_type_from_enclosing_function(
         &mut self,
         param_idx: NodeIndex,
+        extended: bool,
     ) -> Option<TypeId> {
         let mut param_idx = param_idx;
         let mut param_node = self.ctx.arena.get(param_idx)?;
@@ -577,9 +584,15 @@ impl<'a> CheckerState<'a> {
             })
             .count();
 
-        let contextual_type = self
-            .ctx
-            .contextual_type
+        // Baseline-only: the syntactic contextual position (var/return/parameter/
+        // class-member/assignment/object-property/call-argument) is the authoritative
+        // declared type for the TS2403 redeclaration baseline, so it must win over the
+        // parameter/arrow's own inferred/cached type. Gated on `extended`, so the
+        // non-baseline caller keeps the original source order exactly.
+        let contextual_type = extended
+            .then(|| self.expression_contextual_type_annotation(function_idx))
+            .flatten()
+            .or(self.ctx.contextual_type)
             .or_else(|| {
                 self.ctx
                     .binder
@@ -649,6 +662,104 @@ impl<'a> CheckerState<'a> {
         }
 
         Some(ty)
+    }
+
+    /// The contextual type an expression node receives from its syntactic
+    /// position, walking outward through parenthesized/conditional wrappers.
+    /// Used only by the TS2403 redeclaration baseline to recover the declared
+    /// type of a contextually-typed parameter (no annotation); it must not
+    /// change the parameter's checked type. Mirrors the positions tsc
+    /// propagates a contextual type through.
+    fn expression_contextual_type_annotation(&mut self, expr_idx: NodeIndex) -> Option<TypeId> {
+        self.expression_contextual_type_annotation_rec(expr_idx, 0)
+    }
+
+    fn expression_contextual_type_annotation_rec(
+        &mut self,
+        expr_idx: NodeIndex,
+        depth: u8,
+    ) -> Option<TypeId> {
+        if depth > 8 {
+            return None;
+        }
+        let parent_idx = self.ctx.arena.get_extended(expr_idx)?.parent;
+        let parent_kind = self.ctx.arena.get(parent_idx)?.kind;
+        match parent_kind {
+            syntax_kind_ext::VARIABLE_DECLARATION => {
+                let vd = self.ctx.arena.get_variable_declaration_at(parent_idx)?;
+                (vd.initializer == expr_idx && vd.type_annotation.is_some())
+                    .then(|| self.get_type_from_type_node(vd.type_annotation))
+            }
+            syntax_kind_ext::PARAMETER => {
+                let p = self.ctx.arena.get_parameter_at(parent_idx)?;
+                (p.initializer == expr_idx && p.type_annotation.is_some())
+                    .then(|| self.get_type_from_type_node(p.type_annotation))
+            }
+            syntax_kind_ext::PROPERTY_DECLARATION => {
+                let pd = self.ctx.arena.get_property_decl_at(parent_idx)?;
+                (pd.initializer == expr_idx && pd.type_annotation.is_some())
+                    .then(|| self.get_type_from_type_node(pd.type_annotation))
+            }
+            syntax_kind_ext::RETURN_STATEMENT => {
+                let ann = self.enclosing_function_return_annotation_node(parent_idx)?;
+                ann.is_some().then(|| self.get_type_from_type_node(ann))
+            }
+            syntax_kind_ext::BINARY_EXPRESSION => {
+                let bin = self.ctx.arena.get_binary_expr_at(parent_idx)?;
+                if bin.right != expr_idx || !self.is_assignment_operator(bin.operator_token) {
+                    return None;
+                }
+                let ty = self.get_type_of_node(bin.left);
+                (ty != TypeId::ERROR).then_some(ty)
+            }
+            syntax_kind_ext::PARENTHESIZED_EXPRESSION | syntax_kind_ext::CONDITIONAL_EXPRESSION => {
+                self.expression_contextual_type_annotation_rec(parent_idx, depth + 1)
+            }
+            syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                let pa = self.ctx.arena.get_property_assignment_at(parent_idx)?;
+                if pa.initializer != expr_idx {
+                    return None;
+                }
+                let name = self.get_property_name_resolved(pa.name)?;
+                let obj_idx = self.ctx.arena.get_extended(parent_idx)?.parent;
+                let obj_ctx = self.expression_contextual_type_annotation_rec(obj_idx, depth + 1)?;
+                // Evaluate so a `Lazy`/unevaluated annotation object type exposes its
+                // members to the structural property lookup.
+                let obj_ctx = self.evaluate_contextual_type(obj_ctx);
+                let atom = self.ctx.types.intern_string(&name);
+                let db = self.ctx.types.as_type_database();
+                crate::query_boundaries::common::raw_property_type(db, obj_ctx, atom)
+            }
+            syntax_kind_ext::CALL_EXPRESSION => {
+                // Callback argument: the expression's contextual type is the
+                // callee parameter type at this argument's position.
+                let (callee_idx, arg_index) = {
+                    let call = self.ctx.arena.get_call_expr_at(parent_idx)?;
+                    let args = call.arguments.as_ref()?;
+                    let arg_index = args.nodes.iter().position(|&a| a == expr_idx)?;
+                    (call.expression, arg_index)
+                };
+                let callee_ty = self.get_type_of_node(callee_idx);
+                if callee_ty == TypeId::ERROR {
+                    return None;
+                }
+                // Resolve a `Lazy`/unevaluated callee type so its call signature
+                // exposes its parameters. The parameter at this argument's index is
+                // the callback's contextual type (`get_parameter_type` reads the
+                // first/only call signature — the first-applicable signature for the
+                // simple non-overloaded callees this baseline targets; overload
+                // selection is not reattempted here, so an overloaded callee that
+                // yields no parameter simply leaves the baseline unchanged).
+                let callee_ty = self.evaluate_contextual_type(callee_ty);
+                let helper = ContextualTypeContext::with_expected_and_options(
+                    self.ctx.types,
+                    callee_ty,
+                    self.ctx.compiler_options.no_implicit_any,
+                );
+                helper.get_parameter_type(arg_index)
+            }
+            _ => None,
+        }
     }
 
     pub(crate) fn contextual_parameter_type_with_env_from_expected(

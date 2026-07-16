@@ -764,8 +764,11 @@ impl<'a> CheckerState<'a> {
                             }
                         }
                     }
-                    if let Some(contextual_type) =
-                        self.contextual_parameter_type_from_enclosing_function(resolved_value_decl)
+                    if let Some(contextual_type) = self
+                        .contextual_parameter_type_from_enclosing_function(
+                            resolved_value_decl,
+                            false,
+                        )
                     {
                         return (contextual_type, Vec::new());
                     }

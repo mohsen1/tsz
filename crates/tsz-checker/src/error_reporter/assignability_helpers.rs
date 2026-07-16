@@ -702,7 +702,7 @@ impl<'a> CheckerState<'a> {
     /// positions. Used so the recovered-intersection diagnostic display fires
     /// for `return` positions the same way it already does for annotated
     /// bindings.
-    fn enclosing_function_return_annotation_node(
+    pub(crate) fn enclosing_function_return_annotation_node(
         &self,
         return_stmt_idx: NodeIndex,
     ) -> Option<NodeIndex> {

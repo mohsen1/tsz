@@ -1408,7 +1408,17 @@ impl<'a> CheckerState<'a> {
                                         let mut param_type = if param.type_annotation.is_some() {
                                             self.get_type_from_type_node(param.type_annotation)
                                         } else {
-                                            TypeId::ANY
+                                            // No annotation: tsc's TS2403 identity uses the
+                                            // parameter's actual (contextual) type, not `any`.
+                                            // A parameter contextually typed `T` from its
+                                            // enclosing function, redeclared by an inner
+                                            // `var x: T`, is identical and must not conflict.
+                                            // Baseline-side only — the parameter's checked type
+                                            // is unchanged.
+                                            self.contextual_parameter_type_from_enclosing_function(
+                                                other_decl, true,
+                                            )
+                                            .unwrap_or(TypeId::ANY)
                                         };
                                         // Rest parameters (...args) have array type
                                         if param.dot_dot_dot_token {
@@ -1851,3 +1861,7 @@ impl<'a> CheckerState<'a> {
 #[cfg(test)]
 #[path = "core_tests.rs"]
 mod core_tests;
+
+#[cfg(test)]
+#[path = "contextual_param_ts2403_tests.rs"]
+mod contextual_param_ts2403_tests;
