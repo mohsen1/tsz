@@ -1615,6 +1615,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             if results.is_empty() {
                 return TypeId::UNDEFINED;
             }
+            // Indexed access `T[K]` over a union index is a tsc `.Subtype`
+            // construction site (checker.ts:33511): the union of property types
+            // is subtype-reduced. The `union` constructor performs that shallow
+            // reduction (Pathway A), so no explicit `subtype_reduced` route is
+            // needed while Pathway A still reduces; that route lands in Stage 3
+            // when the literal-only default disables construction-time reduction.
             return self.interner().union(results);
         }
 

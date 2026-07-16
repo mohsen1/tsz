@@ -746,8 +746,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             evaluated_members.push(self.evaluate_compound_member(member));
         }
 
-        // Deep structural simplification using SubtypeChecker
-        self.simplify_union_members(&mut evaluated_members);
+        // Deep structural simplification using SubtypeChecker.
+        //
+        // tsc's instantiation/mapping path for unions (`mapType`/`mapTypeWithAlias`)
+        // uses `UnionReduction.Literal` — it does NOT pairwise subtype-reduce here.
+        // Under `TSZ_UNION_LITERAL_DEFAULT` we drop this evaluate-layer full-relation
+        // reduce so evaluated unions re-intern through the (literal-mode) constructor,
+        // matching tsc; the evaluate-reachable `.Subtype` construction sites recover
+        // reduction explicitly through `subtype_reduced`. Flag-off keeps the historical
+        // reduction so behavior is byte-identical.
+        if !crate::intern::union_literal_default_enabled() {
+            self.simplify_union_members(&mut evaluated_members);
+        }
 
         let result = self.interner.union_from_slice(&evaluated_members);
         display_provenance::record_union_origin(
