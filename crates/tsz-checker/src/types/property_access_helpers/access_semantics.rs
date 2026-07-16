@@ -522,7 +522,25 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         let prop_atom = self.ctx.types.intern_string(property_name);
-        self.resolved_type_has_property(spread_type, prop_atom)
+        // A spread of `T | undefined` / `T | null` contributes `T`'s properties:
+        // nullish constituents spread to `{}` and add nothing, and the remaining
+        // constituents contribute their members (as optional). This mirrors tsc's
+        // `getSpreadType` union/nullish handling. Strip the nullish constituents
+        // first, then accept the property when ANY surviving constituent declares
+        // it — so a later `obj.prop = ...` write against an all-nullish-union
+        // spread source is a re-assignment of an existing member, not an expando
+        // forward-read (issue: tanstack TS2565 FP on spread-built object literals).
+        let stripped = self.ctx.types.remove_nullish(spread_type);
+        if let Some(members) =
+            crate::query_boundaries::state::checking::union_members(self.ctx.types, stripped)
+        {
+            members
+                .iter()
+                .copied()
+                .any(|member| self.resolved_type_has_property(member, prop_atom))
+        } else {
+            self.resolved_type_has_property(stripped, prop_atom)
+        }
     }
 
     /// Structural `type_has_property` that first resolves a `Lazy(DefId)` source

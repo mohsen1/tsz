@@ -1649,6 +1649,9 @@ mod ts2564_constructor_throw_guard_tests;
 #[path = "tests/ts2565_jsdoc_prototype_type_decl_tests.rs"]
 mod ts2565_jsdoc_prototype_type_decl_tests;
 #[cfg(test)]
+#[path = "tests/ts2565_object_literal_nullish_spread_tests.rs"]
+mod ts2565_object_literal_nullish_spread_tests;
+#[cfg(test)]
 #[path = "tests/ts2590_array_literal_identity_skip_tests.rs"]
 mod ts2590_array_literal_identity_skip_tests;
 #[cfg(test)]
