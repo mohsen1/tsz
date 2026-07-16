@@ -406,11 +406,15 @@ fn dom_relation_stays_below_materialization_ratchet() {
 const PRODUCER_CHILD_MARKER: &str = "TSZ_LAZY_LIB_HERITAGE_PRODUCER_CHILD";
 
 /// Whether `resolve_lib_type_by_name(name)` yields a heritage representation
-/// carrying at least one lazy base edge: an `Intersection` with a member that is
-/// a bare `Lazy(DefId)` or an `Application` whose base is a `Lazy(DefId)`.
+/// carrying at least one lazy base edge (an `Intersection` member that is a bare
+/// `Lazy(DefId)` or an `Application` over one).
+///
+/// The shape inspection is delegated to the solver's
+/// `top_level_lazy_intersection_edges` boundary query, so this checker test does
+/// not reach across the boundary into raw solver `TypeData` (the arch-size
+/// checker-test boundary rule).
 fn producer_has_lazy_base_edge(name: &str) -> bool {
     use crate::test_utils::with_checked_source_with_libs_mut;
-    use tsz_solver::types::TypeData;
 
     let libs = load_default_lib_files();
     with_checked_source_with_libs_mut(
@@ -425,22 +429,7 @@ fn producer_has_lazy_base_edge(name: &str) -> bool {
             let Some(ty) = checker.resolve_lib_type_by_name(name) else {
                 return false;
             };
-            let Some(TypeData::Intersection(members_id)) = types.lookup(ty) else {
-                return false;
-            };
-            types
-                .type_list(members_id)
-                .iter()
-                .any(|&member| match types.lookup(member) {
-                    Some(TypeData::Lazy(_)) => true,
-                    Some(TypeData::Application(app_id)) => {
-                        matches!(
-                            types.lookup(types.type_application(app_id).base),
-                            Some(TypeData::Lazy(_))
-                        )
-                    }
-                    _ => false,
-                })
+            !tsz_solver::top_level_lazy_intersection_edges(types, ty).is_empty()
         },
     )
 }

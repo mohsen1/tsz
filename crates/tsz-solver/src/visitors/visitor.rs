@@ -504,6 +504,42 @@ pub fn collect_lazy_def_ids(types: &dyn TypeDatabase, root: TypeId) -> Vec<DefId
     out
 }
 
+/// Collect the `DefId` of each **top-level** heritage-base edge under a lazy
+/// lib-interface `Intersection`.
+///
+/// The lazy lib-interface heritage producer (#13933) represents an interface
+/// with heritage as `Intersection(own_members, base_edge…)`, where each
+/// `base_edge` is a bare `Lazy(DefId)` (a non-generic base) or an `Application`
+/// whose base is a `Lazy(DefId)` (a generic base). This shallow query returns
+/// the `DefId` of every such edge directly under `root` — it is the
+/// heritage-edge observability query, letting a boundary consumer (e.g. a
+/// checker test) confirm the produced heritage shape without inspecting raw
+/// `TypeData` across the solver boundary.
+///
+/// Returns an empty `Vec` when `root` is not an `Intersection`, or when no
+/// top-level member is a lazy base edge (e.g. an eagerly-flattened `Object`
+/// body). Only the direct members of `root` are inspected; nested heritage is
+/// not descended.
+pub fn top_level_lazy_intersection_edges(types: &dyn TypeDatabase, root: TypeId) -> Vec<DefId> {
+    let Some(TypeData::Intersection(members_id)) = types.lookup(root) else {
+        return Vec::new();
+    };
+    types
+        .type_list(members_id)
+        .iter()
+        .filter_map(|&member| match types.lookup(member) {
+            Some(TypeData::Lazy(def_id)) => Some(def_id),
+            Some(TypeData::Application(app_id)) => {
+                match types.lookup(types.type_application(app_id).base) {
+                    Some(TypeData::Lazy(def_id)) => Some(def_id),
+                    _ => None,
+                }
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 /// If every type reachable from `root` is an intrinsic, a [`TypeData::Union`]
 /// container, or a *bare* [`TypeData::Lazy`] reference — i.e. `root` is a
 /// (possibly nested) union of intrinsics and bare lazy references with no other
