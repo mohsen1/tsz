@@ -1026,6 +1026,9 @@ mod generic_alias_application_display_tests;
 #[path = "tests/generic_argument_suppression_relation_routing_arch_tests.rs"]
 mod generic_argument_suppression_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/generic_call_enclosing_type_param_return_tests.rs"]
+mod generic_call_enclosing_type_param_return_tests;
+#[cfg(test)]
 #[path = "tests/generic_callback_outer_context_tests.rs"]
 mod generic_callback_outer_context_tests;
 #[cfg(test)]

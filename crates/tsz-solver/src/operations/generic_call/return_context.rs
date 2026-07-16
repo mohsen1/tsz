@@ -87,6 +87,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let Some(TypeData::TypeParameter(info)) = self.interner.lookup(resolved) else {
                 continue;
             };
+            // Only re-generalize when the call type parameter resolved to a
+            // synthetic inference placeholder — a higher-order source parameter
+            // (`__infer_src_*`) minted for a generic function argument, or a
+            // call-local inference variable. When it resolved to a *free
+            // enclosing* type parameter (e.g. the outer `T` of the caller's own
+            // generic function, `User`/`DeclScoped` origin), tsc keeps it as a
+            // free reference in the result (`() => T`) rather than quantifying it
+            // into a fresh signature (`<T>() => T`): that type parameter is bound
+            // by the enclosing scope, not by this call's result.
+            if !info.is_infer_placeholder() {
+                continue;
+            }
             if seen.insert(info.name)
                 && crate::contains_type_parameter_named(
                     self.interner.as_type_database(),
