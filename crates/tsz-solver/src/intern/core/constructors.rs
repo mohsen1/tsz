@@ -871,66 +871,12 @@ impl TypeInterner {
             flat.dedup();
         }
 
-        // Single-pass scan for special sentinel types instead of multiple contains() calls.
-        // Each contains() is O(N); scanning once is O(N) total instead of O(4N).
-        let mut has_error = false;
-        let mut has_any = false;
-        let mut has_unknown = false;
-        let mut has_never = false;
-        for &id in flat.iter() {
-            if id == TypeId::ERROR {
-                has_error = true;
-                break; // ERROR trumps everything
-            }
-            if id == TypeId::ANY {
-                has_any = true;
-            } else if id == TypeId::UNKNOWN {
-                has_unknown = true;
-            } else if id == TypeId::NEVER {
-                has_never = true;
-            }
-        }
-        if has_error {
-            return TypeId::ERROR;
-        }
-        if flat.is_empty() {
-            return TypeId::NEVER;
-        }
-        if flat.len() == 1 {
-            return flat[0];
-        }
-        if has_any {
-            return TypeId::ANY;
-        }
-        if has_unknown {
-            return TypeId::UNKNOWN;
-        }
-        // Remove `never` from unions (only scan if we found any)
-        if has_never {
-            flat.retain(|id| *id != TypeId::NEVER);
-        }
-        if flat.is_empty() {
-            return TypeId::NEVER;
-        }
-        if flat.len() == 1 {
-            return flat[0];
-        }
-
-        // Absorb literal types into their corresponding primitive types
-        // e.g., "a" | string | number => string | number
-        // e.g., 1 | 2 | number => number
-        // e.g., true | boolean => boolean
-        self.absorb_literals_into_primitives(&mut flat);
-        // Merge Enum(D, X) | Enum(D, Y) → Enum(D, X | Y) so that split-then-
-        // rejoined enum members (e.g., E1.a | E1.b) display as E1, not E1 | E1.
-        self.merge_same_enum_parts(&mut flat);
-        self.absorb_intersections_with_union_constituents(&mut flat);
-
-        if flat.is_empty() {
-            return TypeId::NEVER;
-        }
-        if flat.len() == 1 {
-            return flat[0];
+        // Literal ladder (tsc `UnionReduction.Literal`): sentinel handling,
+        // `never` removal, and literal→primitive/enum/intersection absorption.
+        // Shared with `normalize_union_literal_only`; the `enriched` flag keeps
+        // the two absorptions that the literal-only path historically omitted.
+        if let Some(collapsed) = self.apply_union_literal_ladder(&mut flat, true) {
+            return collapsed;
         }
 
         // Large object unions are expensive to subtype-reduce (O(n²)), but they are
@@ -1038,16 +984,27 @@ impl TypeInterner {
         });
     }
 
-    /// Normalize a union with literal-only reduction (no subtype reduction).
+    /// Shared literal ladder for tsc's `UnionReduction.Literal` normalization,
+    /// applied by both `normalize_union` (the default path, before optional
+    /// subtype reduction) and `normalize_union_literal_only`.
     ///
-    /// This matches tsc's `UnionReduction.Literal` behavior. It performs all the
-    /// same normalization as `normalize_union` (sort, dedup, special cases, literal
-    /// absorption) but skips the `reduce_union_subtypes` step.
-    fn normalize_union_literal_only(&self, mut flat: TypeListBuffer) -> TypeId {
-        self.sort_union_members(&mut flat);
-        flat.dedup();
-
-        // Single-pass scan for special sentinel types
+    /// Callers pass `flat` already deduplicated (and, for the default path,
+    /// sorted). The ladder scans for sentinel members (`error`/`any`/`unknown`),
+    /// strips `never`, and absorbs literals into their primitives
+    /// (`"a" | string` → `string`). When `enriched` is set it additionally
+    /// merges split enum parts (`E.a | E.b` → `E`) and drops intersections whose
+    /// parts already appear as union constituents (`A | (A & B)` → `A | (A & B)`
+    /// keeps `A`; `A | (A & …)` with `A` present drops the intersection) — the
+    /// two steps `normalize_union_literal_only` historically omitted. Returns
+    /// `Some(id)` when the union collapses to a single terminal type, otherwise
+    /// `None` with `flat` holding the ≥2 normalized members.
+    fn apply_union_literal_ladder(
+        &self,
+        flat: &mut TypeListBuffer,
+        enriched: bool,
+    ) -> Option<TypeId> {
+        // Single-pass scan for special sentinel types instead of multiple
+        // contains() calls. Each contains() is O(N); scanning once is O(N).
         let mut has_error = false;
         let mut has_any = false;
         let mut has_unknown = false;
@@ -1055,7 +1012,7 @@ impl TypeInterner {
         for &id in flat.iter() {
             if id == TypeId::ERROR {
                 has_error = true;
-                break;
+                break; // ERROR trumps everything
             }
             if id == TypeId::ANY {
                 has_any = true;
@@ -1066,42 +1023,92 @@ impl TypeInterner {
             }
         }
         if has_error {
-            return TypeId::ERROR;
+            return Some(TypeId::ERROR);
         }
         if flat.is_empty() {
-            return TypeId::NEVER;
+            return Some(TypeId::NEVER);
         }
         if flat.len() == 1 {
-            return flat[0];
+            return Some(flat[0]);
         }
         if has_any {
-            return TypeId::ANY;
+            return Some(TypeId::ANY);
         }
         if has_unknown {
-            return TypeId::UNKNOWN;
+            return Some(TypeId::UNKNOWN);
         }
+        // Remove `never` from unions (only scan if we found any)
         if has_never {
             flat.retain(|id| *id != TypeId::NEVER);
         }
         if flat.is_empty() {
-            return TypeId::NEVER;
+            return Some(TypeId::NEVER);
         }
         if flat.len() == 1 {
-            return flat[0];
+            return Some(flat[0]);
         }
 
-        self.absorb_literals_into_primitives(&mut flat);
+        // Absorb literal types into their corresponding primitive types
+        // e.g., "a" | string | number => string | number
+        // e.g., 1 | 2 | number => number
+        // e.g., true | boolean => boolean
+        self.absorb_literals_into_primitives(flat);
+        if enriched {
+            // Merge Enum(D, X) | Enum(D, Y) → Enum(D, X | Y) so that split-then-
+            // rejoined enum members (e.g., E1.a | E1.b) display as E1, not E1 | E1.
+            self.merge_same_enum_parts(flat);
+            self.absorb_intersections_with_union_constituents(flat);
+        }
 
         if flat.is_empty() {
-            return TypeId::NEVER;
+            return Some(TypeId::NEVER);
         }
         if flat.len() == 1 {
-            return flat[0];
+            return Some(flat[0]);
+        }
+        None
+    }
+
+    /// Normalize a union with literal-only reduction (no subtype reduction).
+    ///
+    /// This matches tsc's `UnionReduction.Literal` behavior. It performs all the
+    /// same normalization as `normalize_union` (sort, dedup, special cases, literal
+    /// absorption) but skips the `reduce_union_subtypes` step. The enum-merge and
+    /// intersection-absorption steps of the shared ladder are gated behind the
+    /// `TSZ_UNION_LITERAL_DEFAULT` flag so this path (reached from the >1000-member
+    /// object-union guard in `normalize_union`) stays byte-identical when OFF.
+    fn normalize_union_literal_only(&self, mut flat: TypeListBuffer) -> TypeId {
+        self.sort_union_members(&mut flat);
+        flat.dedup();
+
+        let enriched = crate::intern::union_literal_default_enabled();
+        if let Some(collapsed) = self.apply_union_literal_ladder(&mut flat, enriched) {
+            return collapsed;
         }
 
         // NOTE: No subtype reduction here — this is the key difference from normalize_union.
         // tsc's UnionReduction.Literal only absorbs literals into primitives.
 
+        let list_id = self.intern_type_list_from_slice(&flat);
+        self.intern(TypeData::Union(list_id))
+    }
+
+    /// Test hook: run the shared literal ladder directly with an explicit
+    /// `enriched` toggle, bypassing the process-global `TSZ_UNION_LITERAL_DEFAULT`
+    /// `OnceLock` so both the legacy (literal-absorb-only) and enriched
+    /// (enum-merge + intersection-absorb) paths are exercised deterministically.
+    #[cfg(test)]
+    pub(crate) fn union_literal_ladder_for_test(
+        &self,
+        members: Vec<TypeId>,
+        enriched: bool,
+    ) -> TypeId {
+        let mut flat: TypeListBuffer = members.into_iter().collect();
+        self.sort_union_members(&mut flat);
+        flat.dedup();
+        if let Some(collapsed) = self.apply_union_literal_ladder(&mut flat, enriched) {
+            return collapsed;
+        }
         let list_id = self.intern_type_list_from_slice(&flat);
         self.intern(TypeData::Union(list_id))
     }

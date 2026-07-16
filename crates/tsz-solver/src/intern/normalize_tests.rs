@@ -522,3 +522,212 @@ fn structural_bucket_skip_matches_unbucketed_reduction_small_partition() {
         "disjoint members must all survive the small bucketed partition path"
     );
 }
+
+// -----------------------------------------------------------------------------
+// Union construction-mode campaign (#15809): shared literal ladder +
+// `subtype_reduced` derived query (Stage 1). See `intern/union_mode.rs`.
+// -----------------------------------------------------------------------------
+
+#[test]
+fn union_literal_default_flag_defaults_off() {
+    // The campaign is default-OFF; flag-off must be byte-identical by
+    // construction, so the default read must be false in an unconfigured run.
+    assert!(
+        !crate::intern::union_literal_default_enabled(),
+        "TSZ_UNION_LITERAL_DEFAULT must default OFF"
+    );
+}
+
+#[test]
+fn union_literal_ladder_enriched_merges_split_enums() {
+    use crate::def::DefId;
+    let interner = TypeInterner::new();
+    // Two members of the same enum def, split apart. tsc's Literal ladder
+    // rejoins `E.a | E.b` into `E`; the legacy literal-only path did not.
+    let e_a = interner.enum_type(DefId(9101), interner.literal_string("a"));
+    let e_b = interner.enum_type(DefId(9101), interner.literal_string("b"));
+
+    let enriched = interner.union_literal_ladder_for_test(vec![e_a, e_b], true);
+    assert!(
+        matches!(
+            interner.lookup(enriched),
+            Some(TypeData::Enum(DefId(9101), _))
+        ),
+        "enriched literal ladder must merge same-def enum parts into one Enum"
+    );
+
+    let legacy = interner.union_literal_ladder_for_test(vec![e_a, e_b], false);
+    let Some(TypeData::Union(list_id)) = interner.lookup(legacy) else {
+        panic!("legacy literal ladder must keep the two split enum members as a union");
+    };
+    assert_eq!(
+        interner.type_list(list_id).len(),
+        2,
+        "legacy literal ladder omits same-def enum merging"
+    );
+}
+
+#[test]
+fn union_literal_ladder_enriched_absorbs_intersection_with_present_constituent() {
+    let interner = TypeInterner::new();
+    let a = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("x"),
+        TypeId::STRING,
+    )]);
+    let b = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("y"),
+        TypeId::NUMBER,
+    )]);
+    // A raw intersection so the union carries a `TypeData::Intersection` member
+    // whose part `a` is also a bare union constituent.
+    let inter = interner.intersect_types_raw(vec![a, b]);
+    assert!(
+        matches!(interner.lookup(inter), Some(TypeData::Intersection(_))),
+        "test setup: intersect_types_raw must keep an Intersection node"
+    );
+
+    let enriched = interner.union_literal_ladder_for_test(vec![a, inter], true);
+    assert_eq!(
+        enriched, a,
+        "enriched literal ladder drops an intersection whose part is present (A | (A & B) => A)"
+    );
+
+    let legacy = interner.union_literal_ladder_for_test(vec![a, inter], false);
+    let Some(TypeData::Union(list_id)) = interner.lookup(legacy) else {
+        panic!("legacy literal ladder must keep both members");
+    };
+    assert_eq!(
+        interner.type_list(list_id).len(),
+        2,
+        "legacy literal ladder omits intersection-with-constituent absorption"
+    );
+}
+
+/// Build a `{ narrow-key } | { wide-key } | number` union in literal mode (no
+/// subtype reduction), so the wider object survives for `subtype_reduced` to
+/// remove. The widened `number` primitive bypasses the pairwise reducer's
+/// all-object literal gate (see `object_vs_object_reduces_only_with_primitive`).
+fn literal_mode_object_union(interner: &TypeInterner, k1: &str, k2: &str) -> (TypeId, TypeId) {
+    let narrow = interner.object(vec![PropertyInfo::new(
+        interner.intern_string(k1),
+        interner.literal_number(1.0),
+    )]);
+    let wide = interner.object(vec![
+        PropertyInfo::new(interner.intern_string(k1), interner.literal_number(1.0)),
+        PropertyInfo::new(interner.intern_string(k2), interner.literal_number(2.0)),
+    ]);
+    let lit_union = interner.union_literal_reduce(vec![narrow, wide, TypeId::NUMBER]);
+    (lit_union, narrow)
+}
+
+#[test]
+fn subtype_reduced_recovers_reduction_dropped_by_literal_default() {
+    let interner = TypeInterner::new();
+    let (lit_union, narrow) = literal_mode_object_union(&interner, "a", "b");
+
+    // Literal mode keeps the wider object (the subsumed member) — tsc's
+    // UnionReduction.Literal behavior.
+    let Some(TypeData::Union(lit_list)) = interner.lookup(lit_union) else {
+        panic!("literal-mode union must retain all three members");
+    };
+    assert_eq!(
+        interner.type_list(lit_list).len(),
+        3,
+        "literal default must keep the subsumed wide object"
+    );
+
+    // The `.Subtype` counterpart recovers the reduction: the wide object is a
+    // shallow subtype of the narrow-keyed supertype and is dropped.
+    let reduced = interner.subtype_reduced(lit_union, 0);
+    let Some(TypeData::Union(reduced_list)) = interner.lookup(reduced) else {
+        panic!("reduced union should still be a union (narrow | number)");
+    };
+    let list = interner.type_list(reduced_list);
+    assert_eq!(
+        list.len(),
+        2,
+        "subtype_reduced must drop the subsumed wide object"
+    );
+    assert!(list.contains(&narrow));
+    assert!(list.contains(&TypeId::NUMBER));
+    assert_ne!(
+        reduced, lit_union,
+        "reduction forks a distinct union TypeId"
+    );
+}
+
+#[test]
+fn subtype_reduced_is_idempotent() {
+    let interner = TypeInterner::new();
+    let (lit_union, _) = literal_mode_object_union(&interner, "a", "b");
+    let reduced = interner.subtype_reduced(lit_union, 0);
+    assert_eq!(
+        interner.subtype_reduced(reduced, 0),
+        reduced,
+        "subtype_reduced(subtype_reduced(u)) == subtype_reduced(u)"
+    );
+}
+
+#[test]
+fn subtype_reduced_returns_non_union_and_complex_unions_unchanged() {
+    let interner = TypeInterner::new();
+    // Non-union input is returned unchanged.
+    assert_eq!(interner.subtype_reduced(TypeId::NUMBER, 0), TypeId::NUMBER);
+
+    // A union carrying a `TypeParameter` member hits the `has_complex` guard and
+    // is returned unchanged (reducing against an unresolved parameter is unsound).
+    use crate::TypeParamInfo;
+    let tp = interner.type_param(TypeParamInfo::simple(interner.intern_string("T")));
+    let narrow = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        interner.literal_number(1.0),
+    )]);
+    let wide = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("a"), interner.literal_number(1.0)),
+        PropertyInfo::new(interner.intern_string("b"), interner.literal_number(2.0)),
+    ]);
+    let complex_union = interner.union_literal_reduce(vec![tp, narrow, wide, TypeId::NUMBER]);
+    assert_eq!(
+        interner.subtype_reduced(complex_union, 0),
+        complex_union,
+        "unions with a TypeParameter/Lazy member must not be subtype-reduced"
+    );
+}
+
+#[test]
+fn subtype_reduced_result_is_stable_across_resolver_generations() {
+    let interner = TypeInterner::new();
+    let (lit_union, _) = literal_mode_object_union(&interner, "a", "b");
+    // The shallow reduction is resolver-independent; the generation key only
+    // scopes the memo (intersection_merge_cache precedent). Different generations
+    // must yield the same reduced TypeId.
+    let g0 = interner.subtype_reduced(lit_union, 0);
+    let g7 = interner.subtype_reduced(lit_union, 7);
+    assert_eq!(
+        g0, g7,
+        "reduced form must be identical across resolver generations"
+    );
+    // And a re-query at a bumped generation recomputes to the same result.
+    assert_eq!(interner.subtype_reduced(lit_union, 7), g7);
+}
+
+#[test]
+fn subtype_reduced_is_binder_name_invariant() {
+    // Same structural union, different property names: reduction must drop the
+    // wide object in both, proving it is structural (not name-driven).
+    let interner = TypeInterner::new();
+    let (union_ab, narrow_ab) = literal_mode_object_union(&interner, "a", "b");
+    let (union_pq, narrow_pq) = literal_mode_object_union(&interner, "p", "q");
+
+    let reduced_ab = interner.subtype_reduced(union_ab, 0);
+    let reduced_pq = interner.subtype_reduced(union_pq, 0);
+    for (reduced, narrow) in [(reduced_ab, narrow_ab), (reduced_pq, narrow_pq)] {
+        let Some(TypeData::Union(list_id)) = interner.lookup(reduced) else {
+            panic!("both renamed unions must reduce to a two-member union");
+        };
+        let list = interner.type_list(list_id);
+        assert_eq!(list.len(), 2);
+        assert!(list.contains(&narrow));
+        assert!(list.contains(&TypeId::NUMBER));
+    }
+}

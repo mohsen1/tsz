@@ -106,6 +106,16 @@ joins the substrate.
 
 ### Adjacent opt-in experiments (default OFF)
 
+`TSZ_UNION_LITERAL_DEFAULT` (#15809 union construction-mode campaign; solver
+interner + evaluate layer — moves tsz toward tsc's `UnionReduction.Literal` vs
+`.Subtype` discipline. Stage 2 drops the evaluate-layer `simplify_union_members`
+blanket full-relation reduce and routes the evaluate-reachable `.Subtype`
+construction sites through the derived interner query `subtype_reduced`; the
+literal ladder's enum-merge/intersection-absorption steps in
+`normalize_union_literal_only` are also gated here. Default-OFF, flag-off
+byte-identical by construction; graduation gated on the Stage-3 Pathway-A
+default flip plus tsc-ward corpus/conformance/emit deltas),
+
 `TSZ_DECL_ORIGIN_REDUCTION` (#15334 WAVE-1 sound register-through-reduction
 co-walk for cross-arena HKT alpha-equivalence; relation-layer, composes with
 `TSZ_ALPHA_NAME_PAIR` — candidate for promotion into the campaign table if it

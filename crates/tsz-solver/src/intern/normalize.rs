@@ -1233,6 +1233,82 @@ impl TypeInterner {
         self.reduce_union_subtypes_sized(flat);
     }
 
+    /// Derived query: return the `UnionReduction.Subtype` form of a union.
+    ///
+    /// This is the `.Subtype` counterpart to the literal-mode default (tsc
+    /// `getUnionType(members, UnionReduction.Subtype)` backed by
+    /// `subtypeReductionCache`). It runs the same shallow pairwise sweep as
+    /// [`reduce_union_subtypes`](Self::reduce_union_subtypes) (which itself
+    /// reuses `try_partition_union_reduction`) over a union `TypeId` and returns
+    /// the reduced union as a possibly-distinct `TypeId`. Union identity forks
+    /// only here; construction never subtype-reduces once the literal default is
+    /// in effect.
+    ///
+    /// Contract:
+    /// - Non-union inputs, and unions carrying a `TypeParameter`/`Lazy` member
+    ///   (the same `has_complex` guard `normalize_union` applies), are returned
+    ///   unchanged: reducing against an unresolved type parameter or a deferred
+    ///   `Lazy` ref is unsound.
+    /// - Idempotent: `subtype_reduced(subtype_reduced(u)) == subtype_reduced(u)`,
+    ///   because reducing an already-reduced member list removes nothing and
+    ///   re-interns to the same `TypeId`.
+    /// - Memo soundness: the shallow engine (`is_subtype_shallow`) is a bounded,
+    ///   pure, `lookup()`-only function that yields only definitive verdicts (no
+    ///   fuel/depth-limit "Maybe"), so — unlike the full-relation
+    ///   `compound_subtype_cached`, which must refuse to cache non-definitive
+    ///   results — there is no `DepthExceeded`/`IterationExceeded` outcome to
+    ///   exclude, and the reduced form is a pure function of the interned
+    ///   (immutable) member shapes. The `resolver_generation` key dimension is
+    ///   retained to mirror the `intersection_merge_cache` precedent.
+    ///
+    /// Stage 1 lands the query and its memo; the evaluate-layer `.Subtype`
+    /// construction sites (design §1) route through it in Stage 3, when the
+    /// literal-only default disables construction-time reduction and the routing
+    /// stops being redundant with `normalize_union`'s pairwise sweep. Exercised
+    /// now by the `intern::normalize` unit tests.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn subtype_reduced(&self, union: TypeId, resolver_generation: u64) -> TypeId {
+        let Some(TypeData::Union(list_id)) = self.lookup(union) else {
+            return union;
+        };
+        let members = self.type_list(list_id);
+        if members.len() <= 1 {
+            return union;
+        }
+        // Same guard `normalize_union` uses before `reduce_union_subtypes`: an
+        // unresolved `TypeParameter` can stand for a supertype/subtype of any
+        // concrete peer, and a `Lazy` ref names a not-yet-available shape, so
+        // reducing the surrounding members against them is unsound.
+        let has_complex = members.iter().any(|&id| {
+            matches!(
+                self.lookup(id),
+                Some(TypeData::TypeParameter(_) | TypeData::Lazy(_))
+            )
+        });
+        if has_complex {
+            return union;
+        }
+        if let Some(hit) = self
+            .subtype_reduced_cache
+            .get(&(union, resolver_generation))
+        {
+            return *hit;
+        }
+        let mut flat: TypeListBuffer = members.iter().copied().collect();
+        self.reduce_union_subtypes(&mut flat);
+        let reduced = if flat.is_empty() {
+            TypeId::NEVER
+        } else if flat.len() == 1 {
+            flat[0]
+        } else {
+            let reduced_list = self.intern_type_list_from_slice(&flat);
+            self.intern(TypeData::Union(reduced_list))
+        };
+        self.subtype_reduced_cache
+            .insert((union, resolver_generation), reduced);
+        reduced
+    }
+
     /// Size-dispatching union reduction: the bitset path caps at 64 members, so
     /// anything wider must use the heap-backed large-row reducer. Every caller
     /// that reduces a union of unbounded width — the top-level entry and each

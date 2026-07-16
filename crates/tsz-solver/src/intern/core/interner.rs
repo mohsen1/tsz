@@ -359,6 +359,14 @@ pub struct TypeInterner {
     pub(crate) union_normalize_cache: DashMap<Box<[TypeId]>, TypeId, FxBuildHasher>,
     /// Retained member slots across all `union_normalize_cache` keys.
     pub(super) union_normalize_cache_member_slots: AtomicUsize,
+    /// Run-wide memo for the derived `subtype_reduced` query: a literal-only
+    /// union `TypeId` mapped to its `UnionReduction.Subtype` form (tsc's
+    /// `subtypeReductionCache` analogue). Keyed by `(input_union,
+    /// resolver_generation)` to mirror the `intersection_merge_cache`
+    /// generation-scoping precedent, though the shallow reduction engine is
+    /// itself resolver-independent (bounded, pure, `lookup()`-only) so the
+    /// generation dimension is a conservative belt on top of a pure key.
+    pub(crate) subtype_reduced_cache: DashMap<(TypeId, u64), TypeId, FxBuildHasher>,
     /// The global Array base type (e.g., Array<T> from lib.d.ts).
     /// Uses `AtomicU32` (with `u32::MAX` as sentinel for `None`) instead of
     /// `RwLock` so file checkers can overwrite the prime checker's value without
@@ -769,6 +777,7 @@ impl TypeInterner {
             proto_instantiation_cache: DashMap::with_hasher(FxBuildHasher),
             contravariant_infer_names_cache: DashMap::with_hasher(FxBuildHasher),
             union_normalize_cache: DashMap::with_hasher(FxBuildHasher),
+            subtype_reduced_cache: DashMap::with_hasher(FxBuildHasher),
             union_normalize_cache_member_slots: AtomicUsize::new(0),
             array_base_type: AtomicU32::new(u32::MAX),
             array_display_base_type: AtomicU32::new(u32::MAX),
