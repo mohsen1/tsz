@@ -304,3 +304,170 @@ const obj = { x: 1, bad: function (this: Ctx) { return this.x; } };
         "function-expression property with member present on `this:` must be clean; got {diags:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Re-entrant object-literal `this` container (M6 mobx canary FP).
+//
+// When one object literal's method (with an *inferred* return type) references
+// another literal's method, checking the first literal forces the second
+// literal's member types while the first literal's synthetic `this` is still on
+// the this-stack. The enclosing literal's method must still resolve `this` to
+// its *own* literal, not to the referring literal on the stack. Renamed from
+// the mobx witness (traps / arrayExtensions).
+// ---------------------------------------------------------------------------
+
+fn ts2339_codes(source: &str) -> Vec<u32> {
+    check_source_strict_messages(source)
+        .into_iter()
+        .filter(|(code, _)| *code == 2339)
+        .map(|(code, _)| code)
+        .collect()
+}
+
+#[test]
+fn reentrant_object_literal_method_this_uses_own_literal() {
+    // `gateTraps.fetchMember` (inferred return) references `toolkit.grabFirst`,
+    // forcing `toolkit`'s member types while gateTraps' `this` is on the stack.
+    // `this.chopRange` inside toolkit's methods must resolve to `toolkit`.
+    let codes = ts2339_codes(
+        r#"
+const gateTraps = {
+    fetchMember(box: any, key: any) {
+        if (key === "size") { return 0; }
+        return toolkit.grabFirst;
+    },
+    storeMember(box: any, key: any, value: any): boolean { return true; },
+    sealGuard() {}
+};
+var toolkit = {
+    wipeAll(): any[] { return this.chopRange(0); },
+    chopRange(begin: number, howMany?: number): any[] { return [begin, howMany]; },
+    grabFirst() { return this.chopRange(0, 1)[0]; }
+};
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "re-entrant forcing must not leak the referring literal's `this`; got TS2339 {codes:?}"
+    );
+}
+
+#[test]
+fn reentrant_object_literal_method_this_renamed_binders() {
+    // Same structure, entirely different identifiers — proves the fix is not
+    // keyed on any particular binder name.
+    let codes = ts2339_codes(
+        r#"
+const proxyHooks = {
+    peek(target: any, prop: any) {
+        if (prop === "len") { return 0; }
+        return helpers.head;
+    },
+    poke(target: any, prop: any, val: any): boolean { return true; },
+    freeze() {}
+};
+var helpers = {
+    clearAll(): any[] { return this.slice(0); },
+    slice(from: number, count?: number): any[] { return [from, count]; },
+    head() { return this.slice(0, 1)[0]; }
+};
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "renamed re-entrant forcing must stay clean; got TS2339 {codes:?}"
+    );
+}
+
+#[test]
+fn reentrant_object_literal_method_this_reversed_declaration_order() {
+    // The forced literal is declared *before* the referring one (B-before-A).
+    let codes = ts2339_codes(
+        r#"
+var toolkit = {
+    wipeAll(): any[] { return this.chopRange(0); },
+    chopRange(begin: number, howMany?: number): any[] { return [begin, howMany]; },
+    grabFirst() { return this.chopRange(0, 1)[0]; }
+};
+const gateTraps = {
+    fetchMember(box: any, key: any) {
+        if (key === "size") { return 0; }
+        return toolkit.grabFirst;
+    },
+    sealGuard() {}
+};
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "reversed-order re-entrant forcing must stay clean; got TS2339 {codes:?}"
+    );
+}
+
+#[test]
+fn reentrant_object_literal_function_expression_property_this_uses_own_literal() {
+    // The forced members are `function` expression properties (own `this`),
+    // not shorthand methods — the twin push path.
+    let codes = ts2339_codes(
+        r#"
+const gateTraps = {
+    fetchMember: function (box: any, key: any) {
+        if (key === "size") { return 0; }
+        return toolkit.grabFirst;
+    },
+    sealGuard: function () {}
+};
+var toolkit = {
+    chopRange: function (begin: number, howMany?: number): any[] { return [begin, howMany]; },
+    grabFirst: function () { return this.chopRange(0, 1)[0]; }
+};
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "function-expression property re-entrant forcing must stay clean; got TS2339 {codes:?}"
+    );
+}
+
+#[test]
+fn reentrant_object_literal_getter_this_uses_own_literal() {
+    // Getter form (accessor path was already immune) — regression guard.
+    let codes = ts2339_codes(
+        r#"
+const gateTraps = {
+    fetchMember(box: any, key: any) {
+        if (key === "size") { return 0; }
+        return toolkit.head;
+    },
+    sealGuard() {}
+};
+var toolkit = {
+    chopRange(begin: number, howMany?: number): any[] { return [begin, howMany]; },
+    get head() { return this.chopRange(0, 1)[0]; }
+};
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "getter re-entrant forcing must stay clean; got TS2339 {codes:?}"
+    );
+}
+
+#[test]
+fn object_literal_method_missing_property_this_still_reports_ts2339() {
+    // Negative guard: a genuine missing-member access on the literal's own
+    // `this` must still report TS2339 (the fix must not suppress real errors).
+    let codes = ts2339_codes(
+        r#"
+var toolkit = {
+    chopRange(begin: number): any[] { return [begin]; },
+    grabFirst() { return this.doesNotExist(0, 1); }
+};
+"#,
+    );
+    assert_eq!(
+        codes,
+        vec![2339],
+        "a real missing member on the literal's own `this` must still be TS2339"
+    );
+}

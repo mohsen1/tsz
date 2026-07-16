@@ -383,10 +383,15 @@ impl<'a> CheckerState<'a> {
                         // Gated like tsc's getContextualThisParameterType:
                         // object-literal `this` typing needs noImplicitThis
                         // (or a JS file); otherwise `this` is plain `any`.
+                        // A `function` expression property has its own `this`
+                        // (arrow properties, which capture the outer `this`, are
+                        // excluded above via `initializer_is_function_expression`),
+                        // so it is not gated on `current_this_type().is_none()`:
+                        // that gate leaks a referring literal's `this` under
+                        // re-entrant member forcing (see the method path above).
                         if initializer_is_function_expression
                             && (self.ctx.no_implicit_this() || self.is_js_file())
                             && marker_this_type.is_none()
-                            && self.current_this_type().is_none()
                             && !self.function_like_has_explicit_this_parameter(prop.initializer)
                         {
                             if let Some(receiver_this_type) = contextual_receiver_this_type {
@@ -1287,8 +1292,17 @@ impl<'a> CheckerState<'a> {
                     // `method_return_this_circularity` into a spurious TS7023 (#14843).
                     let mut pushed_contextual_this = false;
                     let mut pushed_synthetic_this = false;
+                    // An object-literal shorthand method always has its own `this`
+                    // (the enclosing literal / its contextual type), never a
+                    // lexically-inherited one — only arrow properties capture the
+                    // outer `this`, and those never reach this method path. Do NOT
+                    // gate on `current_this_type().is_none()`: during re-entrant
+                    // member forcing (another literal's method whose return type is
+                    // still being inferred sits on the this-stack) that gate would
+                    // skip pushing this literal's own `this`, leaking the referring
+                    // literal's type into this method's body (false TS2339). The
+                    // accessor path pushes unconditionally for the same reason.
                     if marker_this_type.is_none()
-                        && self.current_this_type().is_none()
                         && !self.function_like_has_explicit_this_parameter(elem_idx)
                     {
                         // Prefer the method's contextual `this` type (e.g., from an
