@@ -283,9 +283,9 @@ pub use visitors::visitor::{
     lazy_def_id, literal_number, literal_string, literal_value, mapped_type_id,
     module_namespace_symbol_ref, no_infer_inner_type, object_shape_id, object_with_index_shape_id,
     readonly_inner_type, recursive_index, references_any_type_param_named,
-    resolve_default_type_args, string_intrinsic_components, template_literal_id,
-    top_level_lazy_intersection_edges, tuple_list_id, type_param_info, type_query_symbol,
-    union_list_id, unique_symbol_ref, unwrap_readonly_or_noinfer, walk_referenced_types,
+    resolve_default_type_args, string_intrinsic_components, template_literal_id, tuple_list_id,
+    type_param_info, type_query_symbol, union_list_id, unique_symbol_ref,
+    unwrap_readonly_or_noinfer, walk_referenced_types,
 };
 
 #[cfg(test)]

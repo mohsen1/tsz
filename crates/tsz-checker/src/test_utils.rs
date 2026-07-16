@@ -1115,49 +1115,6 @@ fn with_checked_source_with_libs<R>(
     extract(&checker, &types)
 }
 
-/// Mutable-`extract` sibling of [`with_checked_source_with_libs`]: runs the same
-/// parse/bind/check pipeline, then hands the checked [`CheckerState`] to
-/// `extract` **by mutable reference** so a test can drive a `&mut self` query
-/// (e.g. `resolve_lib_type_by_name`) against the fully-configured lib contexts
-/// and inspect the produced type shape. Used by the lazy-lib-heritage producer
-/// guard to observe the `Intersection`+`Lazy` representation flag-on.
-pub fn with_checked_source_with_libs_mut<R>(
-    source: &str,
-    file_name: &str,
-    options: CheckerOptions,
-    lib_files: &[Arc<LibFile>],
-    extract: impl FnOnce(&mut CheckerState<'_>, &TypeInterner) -> R,
-) -> R {
-    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
-    let source_file = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file_with_libs(parser.get_arena(), source_file, lib_files);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        file_name.to_string(),
-        options,
-    );
-    checker.enable_source_file_test_pragmas();
-
-    let lib_contexts: Vec<LibContext> = lib_files
-        .iter()
-        .map(|lib| LibContext {
-            arena: Arc::clone(&lib.arena),
-            binder: Arc::clone(&lib.binder),
-        })
-        .collect();
-    checker.ctx.set_lib_contexts(lib_contexts);
-    checker.ctx.set_actual_lib_file_count(lib_files.len());
-
-    checker.check_source_file(source_file);
-    extract(&mut checker, &types)
-}
-
 /// Parse, bind, and type-check `source` with `lib_files`, returning the
 /// diagnostics alongside the number of types interned during the check
 /// ([`TypeInterner::len`]).
