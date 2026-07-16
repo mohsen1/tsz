@@ -836,3 +836,177 @@ fn subtype_unrelated_interfaces_fall_through_to_structural() {
         "structural fall-through: a is missing b's `b` member, so a is not <: b",
     );
 }
+
+// ----------------------------------------------------------------------------
+// Tier-B consumer descent (#13933 Slice 2)
+//
+// The Slice-1 producer emits `Intersection(own, Lazy(base))` for lib heritage.
+// The Slice-2 audit confirmed the default-pipeline member-reading consumers
+// (`collect_properties` / `PropertyAccessEvaluator` / `SubtypeChecker` above,
+// plus `keyof` and readonly-declares) already descend `Intersection`+`Lazy`
+// bases, because the pipeline already emits `Object & Application(base)` for
+// generic user heritage. These tests convert that audit into pinned guards so
+// flag-on descent-safety is enforced rather than assumed. Each asserts the lazy
+// heritage representation is INDISTINGUISHABLE from the eagerly-flattened form
+// (the flag-off body), the same equivalence the producer flip relies on.
+// ----------------------------------------------------------------------------
+
+/// Evaluate `keyof ty` with the given resolver.
+fn evaluate_keyof(interner: &TypeInterner, env: &TypeEnvironment, ty: TypeId) -> TypeId {
+    use crate::evaluation::evaluate::TypeEvaluator;
+    TypeEvaluator::with_resolver(interner, env).evaluate(interner.keyof(ty))
+}
+
+/// `keyof` over a lazy heritage interface must enumerate own AND inherited keys,
+/// interning to the exact same key union as the eagerly-flattened body — the
+/// `keyof` key-enumeration Tier-B site (design §3).
+#[test]
+fn keyof_descends_lazy_heritage_base_matches_flattened_form() {
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+
+    let base = DefId(31_050);
+    declare_interface(
+        &mut env,
+        base,
+        object(&interner, &[("inherited", TypeId::STRING)]),
+    );
+    let lazy_form = interner.intersection2(
+        object(&interner, &[("own", TypeId::NUMBER)]),
+        interner.lazy(base),
+    );
+    let flattened_form = object(
+        &interner,
+        &[("own", TypeId::NUMBER), ("inherited", TypeId::STRING)],
+    );
+
+    let lazy_keys = evaluate_keyof(&interner, &env, lazy_form);
+    let flattened_keys = evaluate_keyof(&interner, &env, flattened_form);
+
+    assert_ne!(
+        lazy_keys,
+        TypeId::NEVER,
+        "keyof over a lazy heritage interface must not collapse to never (inherited keys dropped)",
+    );
+    assert_eq!(
+        lazy_keys, flattened_keys,
+        "keyof of the lazy heritage form must equal keyof of the flattened body \
+         (own key union inherited key)",
+    );
+}
+
+/// `keyof` must descend a TRANSITIVE lazy heritage chain (own -> Lazy(mid) ->
+/// Lazy(base)), matching the fully-flattened key union.
+#[test]
+fn keyof_descends_transitive_lazy_heritage_chain() {
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+
+    let base = DefId(31_051);
+    let mid = DefId(31_052);
+    declare_interface(
+        &mut env,
+        base,
+        object(&interner, &[("grand", TypeId::STRING)]),
+    );
+    declare_interface(
+        &mut env,
+        mid,
+        interner.intersection2(
+            object(&interner, &[("middle", TypeId::BOOLEAN)]),
+            interner.lazy(base),
+        ),
+    );
+    let lazy_form = interner.intersection2(
+        object(&interner, &[("own", TypeId::NUMBER)]),
+        interner.lazy(mid),
+    );
+    let flattened_form = object(
+        &interner,
+        &[
+            ("own", TypeId::NUMBER),
+            ("middle", TypeId::BOOLEAN),
+            ("grand", TypeId::STRING),
+        ],
+    );
+
+    assert_eq!(
+        evaluate_keyof(&interner, &env, lazy_form),
+        evaluate_keyof(&interner, &env, flattened_form),
+        "keyof must enumerate keys from every level of a transitive lazy heritage chain",
+    );
+}
+
+/// The override-vs-intersect witness (the lead-flagged Slice-2 risk):
+/// Override-vs-intersect divergence (the lead-flagged Slice-2 risk), CHARACTERIZED.
+///
+/// `collect_properties` INTERSECTS same-named members of an intersection, whereas
+/// heritage OVERRIDE replaces the base member with the derived one. So for a
+/// derived interface that NARROWS an inherited member (`x: number` over
+/// `x: number | string`), the lazy-intersection body collects `x` as the RAW,
+/// UNREDUCED `number & (number | string)` (`intersect_types_raw2` does no
+/// absorption), while the eagerly-flattened override body collects `x: number`.
+/// The two member `TypeId`s therefore DIFFER — a real, confirmed divergence from
+/// broadening the intersection representation to lib heritage (a non-generic base
+/// that used to flatten/override now becomes a lazy intersection edge).
+///
+/// What IS preserved is RELATIONAL parity: `number & (number | string)` is
+/// mutually assignable with `number`, so at the interface level the lazy
+/// narrowing form and the flattened override form are mutually assignable in both
+/// directions. Every assignability relation (hence every `TS2xxx` relation
+/// diagnostic) is therefore unaffected; only the RENDERED member type can differ
+/// (`number & (number | string)` vs `number`) — a display-level question the
+/// flag-on corpus diff measures, not an assignability regression. This test pins
+/// the relational invariant AND asserts the member-type divergence so a future
+/// change that closes it (a merge that reduces/overrides) is a conscious update.
+#[test]
+fn narrowing_override_relates_identically_to_flattened_form() {
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+
+    let number_or_string = interner.union(vec![TypeId::NUMBER, TypeId::STRING]);
+    let base = DefId(31_053);
+    declare_interface(
+        &mut env,
+        base,
+        object(&interner, &[("x", number_or_string)]),
+    );
+
+    // Derived narrows the inherited `x` to `number`.
+    let lazy_form = interner.intersection2(
+        object(&interner, &[("x", TypeId::NUMBER)]),
+        interner.lazy(base),
+    );
+    // Flattened override form: the derived member replaces the base member.
+    let flattened_form = object(&interner, &[("x", TypeId::NUMBER)]);
+
+    // Documented divergence: the collected member TYPE differs (intersect vs
+    // override); the lazy form does not reduce to the bare narrowed type.
+    let lazy_x = collected_type(
+        &collect_properties(lazy_form, &interner, &env),
+        &interner,
+        "x",
+    );
+    let flattened_x = collected_type(
+        &collect_properties(flattened_form, &interner, &env),
+        &interner,
+        "x",
+    );
+    assert_ne!(
+        lazy_x, flattened_x,
+        "expected the documented intersect-vs-override member-type divergence; if these now \
+         match, the merge learned to reduce/override — update the doc and escalate the win",
+    );
+
+    // The invariant that MUST hold: interface-level relational parity, both ways.
+    let mut fwd = SubtypeChecker::with_resolver(&interner, &env);
+    assert!(
+        fwd.check_subtype(flattened_form, lazy_form).is_true(),
+        "flattened override form must be assignable to the lazy narrowing form",
+    );
+    let mut rev = SubtypeChecker::with_resolver(&interner, &env);
+    assert!(
+        rev.check_subtype(lazy_form, flattened_form).is_true(),
+        "lazy narrowing form must be assignable to the flattened override form",
+    );
+}
