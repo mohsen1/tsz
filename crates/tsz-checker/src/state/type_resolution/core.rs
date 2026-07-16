@@ -230,6 +230,23 @@ impl CheckerState<'_> {
         if let Some(name_node) = self.ctx.arena.get(type_name_idx)
             && name_node.kind == syntax_kind_ext::QUALIFIED_NAME
         {
+            // Namespace-qualified generic reference with all-defaulted type
+            // parameters, referenced bare (`ns.Alias` where
+            // `type Alias<T = D, ...>`): substitute the declared defaults the
+            // same way the simple-name path does. Without this the qualified path
+            // falls through to the general lowering below with the parameters
+            // left FREE, so a bare `ns.Alias` reaches the relation as
+            // `Body<T, ...>` with unbound `T` — a false TS2322/TS2345 on every
+            // assignment to it (runtypes `Gadget.Slim`, M9). Mixed / non-defaulted
+            // references return `None` here and keep their arity diagnostics.
+            if !has_type_args
+                && let TypeSymbolResolution::Type(sym_id) =
+                    self.resolve_qualified_symbol_in_type_position(type_name_idx)
+                && let Some(filled) =
+                    self.qualified_bare_reference_default_fill(sym_id, type_name_idx)
+            {
+                return filled;
+            }
             if has_type_args {
                 let sym_id = match self.resolve_qualified_symbol_in_type_position(type_name_idx) {
                     TypeSymbolResolution::Type(sym_id) => {
@@ -675,11 +692,28 @@ impl CheckerState<'_> {
                         &type_params,
                         self.ctx.types,
                     );
-                    self.error_generic_type_requires_type_arguments_at(
-                        &display_name,
-                        required_count,
-                        idx,
-                    );
+                    // Mirror the simple-name path: when only some parameters are
+                    // required (the rest have defaults, e.g. `<A, B = A>`), tsc
+                    // reports the range form TS2707 ("between N and M"); only when
+                    // every parameter is required does it use the exact-count
+                    // TS2314. The qualified path previously always used TS2314,
+                    // diverging from tsc (and from the simple path) on
+                    // partially-defaulted references.
+                    if required_count < type_params.len() {
+                        let min_str = required_count.to_string();
+                        let max_str = type_params.len().to_string();
+                        self.error_at_node_msg(
+                            idx,
+                            crate::diagnostics::diagnostic_codes::GENERIC_TYPE_REQUIRES_BETWEEN_AND_TYPE_ARGUMENTS,
+                            &[&display_name, &min_str, &max_str],
+                        );
+                    } else {
+                        self.error_generic_type_requires_type_arguments_at(
+                            &display_name,
+                            required_count,
+                            idx,
+                        );
+                    }
                     // tsc returns errorType when a generic type is used without
                     // required type arguments. This prevents cascading errors
                     // like TS2454 on variables with erroneous type annotations.

@@ -56,6 +56,9 @@ path = "tests/delete_narrowing_reset_tests.rs"
 name = "sibling_defaulted_conditional_constraint_tests"
 path = "tests/sibling_defaulted_conditional_constraint_tests.rs"
 [[test]]
+name = "qualified_alias_default_fill_tests"
+path = "tests/qualified_alias_default_fill_tests.rs"
+[[test]]
 name = "enum_literal_comparison_overlap_tests"
 path = "tests/enum_literal_comparison_overlap_tests.rs"
 [[test]]

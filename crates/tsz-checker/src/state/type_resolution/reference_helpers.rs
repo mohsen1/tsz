@@ -350,6 +350,50 @@ impl CheckerState<'_> {
         TypeId::ERROR
     }
 
+    /// M9: a bare namespace-qualified reference (`ns.Alias`, no type arguments)
+    /// whose target's type parameters ALL carry defaults — substitute the
+    /// declared defaults, exactly as [`resolve_simple_type_reference`] does for
+    /// an unqualified bare reference. Returns `None` when the target is not an
+    /// all-defaulted generic, so the caller falls through to its existing
+    /// qualified-name resolution (and its arity diagnostics).
+    ///
+    /// Gating on EVERY parameter having a default mirrors the simple-name path,
+    /// whose fill runs only after the `required_count > 0` arity early-return: a
+    /// mixed `<A, B = A>` reference (some required) must reach the arity
+    /// diagnostic, not be silently filled. The member's simple `escaped_name`
+    /// (not the dotted entity text) is used for parameter extraction so it
+    /// matches the declaration by name instead of falling back to the
+    /// collision-prone raw-`SymbolId` display path.
+    pub(crate) fn qualified_bare_reference_default_fill(
+        &mut self,
+        sym_id: SymbolId,
+        type_name_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let name = self
+            .get_symbol_globally(sym_id)
+            .map(|s| s.escaped_name.clone())
+            .or_else(|| self.entity_name_text(type_name_idx))
+            .unwrap_or_else(|| "<unknown>".to_string());
+        let type_params = self.get_reference_type_params_for_symbol(sym_id, &name);
+        if type_params.is_empty() || !type_params.iter().all(|p| p.default.is_some()) {
+            return None;
+        }
+        self.ctx
+            .get_or_create_def_id_with_params(sym_id, type_params.clone());
+        let default_args = query::resolve_default_type_args(self.ctx.types, &type_params);
+        let def_id = self.ctx.get_or_create_def_id(sym_id);
+        // Register the alias body so `Application` expansion can resolve
+        // `Lazy(def_id)` (mirrors the simple-name path).
+        let _ = self.get_type_of_symbol(sym_id);
+        let base_type_id = self.ctx.types.factory().lazy(def_id);
+        Some(
+            self.ctx
+                .types
+                .factory()
+                .application(base_type_id, default_args),
+        )
+    }
+
     /// Ensure a DefId has its type parameters cached and body registered before lowering.
     ///
     /// This is the stable-identity helper for the "prime `DefId` before `TypeLowering`"
