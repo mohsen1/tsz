@@ -397,8 +397,8 @@ assert.equal(
 );
 assert.deepEqual(
   shellProjectConfig("tsz_write_drizzle_orm_config").compilerOptions.paths,
-  { "~/*": ["drizzle-orm/src/*"], "*": ["tsz-bench-external-module.d.ts"] },
-  "drizzle-orm guard config must match upstream tilde import path support",
+  { "~/*": ["./drizzle-orm/src/*"], "*": ["./tsz-bench-external-module.d.ts"] },
+  "drizzle-orm guard config must match upstream tilde import path support (./-prefixed: tsc 6 rejects non-relative paths targets without baseUrl)",
 );
 assert.equal(
   shellProjectConfig("tsz_write_drizzle_orm_config").compilerOptions.baseUrl,
