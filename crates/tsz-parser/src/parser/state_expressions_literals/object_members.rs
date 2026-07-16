@@ -523,11 +523,7 @@ impl ParserState {
         }
 
         let type_parameters = self.is_token(SyntaxKind::LessThanToken).then(|| {
-            use tsz_common::diagnostics::diagnostic_codes;
-            self.parse_error_at_current_token(
-                "An accessor cannot have type parameters.",
-                diagnostic_codes::AN_ACCESSOR_CANNOT_HAVE_TYPE_PARAMETERS,
-            );
+            self.report_accessor_type_parameters_error(name);
             self.parse_type_parameters()
         });
 
@@ -654,11 +650,7 @@ impl ParserState {
         }
 
         let type_parameters = self.is_token(SyntaxKind::LessThanToken).then(|| {
-            use tsz_common::diagnostics::diagnostic_codes;
-            self.parse_error_at_current_token(
-                "An accessor cannot have type parameters.",
-                diagnostic_codes::AN_ACCESSOR_CANNOT_HAVE_TYPE_PARAMETERS,
-            );
+            self.report_accessor_type_parameters_error(name);
             self.parse_type_parameters()
         });
 

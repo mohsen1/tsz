@@ -1122,6 +1122,30 @@ impl<'a> CheckerState<'a> {
             return self.normalized_anchor_span(param.name, name_start, name_len);
         }
 
+        // tsc's `getErrorSpanForNode` narrows a *named* function or class
+        // expression to its name (an anonymous one keeps the `function`/`class`
+        // keyword span). e.g. `function named() {}` as the always-truthy operand
+        // of `||` anchors TS2872 at `named`, not at `function`.
+        if node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            && let Some(func) = self.ctx.arena.get_function(node)
+            && func.name.is_some()
+            && let Some(name_node) = self.ctx.arena.get(func.name)
+        {
+            let name_start = name_node.pos;
+            let name_len = name_node.end.saturating_sub(name_start);
+            return self.normalized_anchor_span(func.name, name_start, name_len);
+        }
+
+        if node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            && let Some(class) = self.ctx.arena.get_class(node)
+            && class.name.is_some()
+            && let Some(name_node) = self.ctx.arena.get(class.name)
+        {
+            let name_start = name_node.pos;
+            let name_len = name_node.end.saturating_sub(name_start);
+            return self.normalized_anchor_span(class.name, name_start, name_len);
+        }
+
         (start, length)
     }
 

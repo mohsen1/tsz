@@ -19,6 +19,31 @@ impl ParserState {
         self.parse_error_at(start, end - start, message, code);
     }
 
+    /// Report `TS1094` (`An accessor cannot have type parameters.`) for a
+    /// get/set accessor that carries a type parameter list. tsc anchors this at
+    /// the accessor *name* (via `getErrorSpanForNode` on the declaration), not
+    /// at the `<` of the type parameter list; fall back to the current token
+    /// only when the name node span is unavailable.
+    pub(crate) fn report_accessor_type_parameters_error(&mut self, name: super::base::NodeIndex) {
+        use tsz_common::diagnostics::diagnostic_codes;
+        let span = self
+            .arena
+            .get(name)
+            .map(|name_node| (name_node.pos, name_node.end.saturating_sub(name_node.pos)));
+        match span {
+            Some((start, length)) => self.parse_error_at(
+                start,
+                length,
+                "An accessor cannot have type parameters.",
+                diagnostic_codes::AN_ACCESSOR_CANNOT_HAVE_TYPE_PARAMETERS,
+            ),
+            None => self.parse_error_at_current_token(
+                "An accessor cannot have type parameters.",
+                diagnostic_codes::AN_ACCESSOR_CANNOT_HAVE_TYPE_PARAMETERS,
+            ),
+        }
+    }
+
     /// Emit a companion diagnostic at the current token, bypassing position-based
     /// deduplication.  Use when TSC emits multiple distinct error codes at the same
     /// position (e.g. TS1042 + TS1184 for object-literal modifiers).
