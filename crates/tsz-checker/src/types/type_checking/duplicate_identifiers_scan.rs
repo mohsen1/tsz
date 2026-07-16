@@ -1,16 +1,13 @@
 //! Pass-1 symbol scan for `check_duplicate_identifiers`.
 //!
 //! Collects the per-file duplicate-check working set: the survivor symbols pass 2
-//! must re-examine, cross-file conflict names, the `global_scope_conflict_cache`,
-//! and the module/external flags. Also emits the whole-file `TS6200` summary when
-//! eight or more identifiers collide across files. Extracted verbatim from
-//! `duplicate_identifiers.rs` to keep that shard under the size limit.
+//! must re-examine, the `global_scope_conflict_cache`, and the module/external
+//! flags. Extracted verbatim from `duplicate_identifiers.rs` to keep that shard
+//! under the size limit.
 
 use super::{DuplicateDeclList, DuplicateIdentifierScanState};
-use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::state::CheckerState;
 use rustc_hash::FxHashMap;
-use tsz_binder::symbol_flags;
 
 impl<'a> CheckerState<'a> {
     /// Pass 1 of `check_duplicate_identifiers`: build the survivor working set and
@@ -33,7 +30,6 @@ impl<'a> CheckerState<'a> {
         // guaranteed to appear in top-level scope tables, but they still participate in
         // duplicate-name checks for the current file.
         self.extend_duplicate_symbol_ids_with_local_augmentation_decls(&mut symbol_ids);
-        let mut cross_file_conflicts = Vec::new();
         // One entry per distinct symbol name; bounded by the symbol set (#11617).
         let mut global_scope_conflict_cache: FxHashMap<String, DuplicateDeclList> =
             FxHashMap::with_capacity_and_hasher(symbol_ids.len(), Default::default());
@@ -115,121 +111,18 @@ impl<'a> CheckerState<'a> {
 
             // Survived the conflict-free skip: pass 2 must re-examine this symbol.
             // Record it so pass 2 iterates only survivors instead of the full set.
+            // tsc 7.0.2 (typescript-go `reportMergeSymbolError`) always emits
+            // per-declaration TS2300 for cross-file duplicate identifiers; the legacy
+            // TS6.x whole-file TS6200 batch summary (`>= 8` conflicts) was removed, so
+            // pass 2 owns every emission with no batching gate here.
             pass2_symbol_ids.push(sym_id);
-
-            let mut has_local = false;
-            let mut has_remote = false;
-            for &decl_idx in &symbol.declarations {
-                if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
-                    for arena in arenas {
-                        let is_local = std::ptr::eq(&**arena, self.ctx.arena);
-                        if let Some(_flags) = self.declaration_symbol_flags(arena, decl_idx) {
-                            if has_libs
-                                && is_local
-                                && !self.declaration_name_matches(decl_idx, &symbol.escaped_name)
-                            {
-                                continue;
-                            }
-                            if is_local {
-                                has_local = true;
-                            } else {
-                                has_remote = true;
-                            }
-                        }
-                    }
-                } else {
-                    let is_local = true; // Fallback
-                    if let Some(_flags) = self.declaration_symbol_flags(self.ctx.arena, decl_idx) {
-                        if has_libs
-                            && is_local
-                            && !self.declaration_name_matches(decl_idx, &symbol.escaped_name)
-                        {
-                            continue;
-                        }
-                        if is_local {
-                            has_local = true;
-                        } else {
-                            has_remote = true;
-                        }
-                    }
-                }
-            }
-
-            if !(module_augmentation_declarations.is_empty()
-                && script_scope_declarations.is_empty()
-                && global_scope_declarations.is_empty()
-                && jsx_runtime_conflict_declarations.is_empty()
-                && default_import_alias_conflicts.is_empty()
-                && module_block_scoped_conflicts.is_empty())
-            {
-                has_remote = true;
-            }
-
-            if has_local && has_remote {
-                // Interfaces always merge with other interfaces across files in TypeScript.
-                let is_interface_merge = symbol.has_any_flags(symbol_flags::INTERFACE)
-                    && !symbol.has_any_flags(
-                        symbol_flags::FUNCTION_SCOPED_VARIABLE
-                            | symbol_flags::BLOCK_SCOPED_VARIABLE
-                            | symbol_flags::TYPE_ALIAS
-                            | symbol_flags::REGULAR_ENUM
-                            | symbol_flags::CONST_ENUM,
-                    );
-                // var declarations merge across script files (non-modules).
-                let is_var_merge = !is_external_module
-                    && symbol.has_any_flags(symbol_flags::FUNCTION_SCOPED_VARIABLE)
-                    && !symbol.has_any_flags(
-                        symbol_flags::BLOCK_SCOPED_VARIABLE
-                            | symbol_flags::CLASS
-                            | symbol_flags::FUNCTION
-                            | symbol_flags::REGULAR_ENUM
-                            | symbol_flags::CONST_ENUM
-                            | symbol_flags::TYPE_ALIAS,
-                    );
-                // Function declarations merge across files via module augmentation.
-                let is_function_merge = symbol.has_any_flags(symbol_flags::FUNCTION)
-                    && !module_augmentation_declarations.is_empty();
-                // Import aliases referencing remote declarations are valid merges.
-                let is_alias_import_merge = symbol.has_any_flags(symbol_flags::ALIAS)
-                    && symbol
-                        .declarations
-                        .iter()
-                        .any(|&d| self.is_import_alias_node(d));
-                if !is_interface_merge
-                    && !is_var_merge
-                    && !is_function_merge
-                    && !is_alias_import_merge
-                {
-                    cross_file_conflicts.push(symbol.escaped_name.clone());
-                }
-            }
-        }
-
-        let emit_ts6200 = cross_file_conflicts.len() >= 8;
-        if emit_ts6200 {
-            cross_file_conflicts.sort();
-            let list = cross_file_conflicts.join(", ");
-            let message = format_message(
-                diagnostic_messages::DEFINITIONS_OF_THE_FOLLOWING_IDENTIFIERS_CONFLICT_WITH_THOSE_IN_ANOTHER_FILE,
-                &[&list],
-            );
-            // Report at position 0 (start of file) — tsc anchors TS6200 at the
-            // SourceFile node which has pos=0, length=0.
-            self.error_at_position(
-                0,
-                0,
-                &message,
-                diagnostic_codes::DEFINITIONS_OF_THE_FOLLOWING_IDENTIFIERS_CONFLICT_WITH_THOSE_IN_ANOTHER_FILE,
-            );
         }
 
         DuplicateIdentifierScanState {
             has_libs,
             is_external_module,
-            cross_file_conflicts,
             global_scope_conflict_cache,
             may_have_default_import_alias_conflicts,
-            emit_ts6200,
             pass2_symbol_ids,
         }
     }

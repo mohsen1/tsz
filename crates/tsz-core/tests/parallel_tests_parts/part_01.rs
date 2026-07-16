@@ -1048,8 +1048,14 @@ export {}
     );
 }
 
+// tsc 7.0.2 (typescript-go `reportMergeSymbolError`) emits per-declaration TS2300
+// for every cross-file duplicate identifier and never aggregates them into the
+// legacy TS6.x whole-file TS6200 summary (diagnostic 6200 is unused in the tsgo
+// checker). The oracle for `compiler/duplicateIdentifierRelatedSpans7.ts` — this
+// exact 9-member `declare module` shape — expects nine TS2300 per file, not one
+// TS6200. This test previously asserted the removed TS6200 aggregation.
 #[test]
-fn test_check_files_parallel_module_augmentation_member_conflicts_aggregate_to_ts6200() {
+fn test_check_files_parallel_module_augmentation_member_conflicts_emit_per_declaration_ts2300() {
     let files = vec![
         (
             "file1.ts".to_string(),
@@ -1132,14 +1138,14 @@ export {};
 
     assert_eq!(
         file1_codes,
-        vec![6200],
-        "Expected file1.ts to aggregate large module augmentation conflicts into TS6200. Diagnostics: {:#?}",
+        vec![2300; 9],
+        "Expected file1.ts to report per-declaration TS2300 for each of the 9 conflicting members (no TS6200 batch). Diagnostics: {:#?}",
         file1.diagnostics
     );
     assert_eq!(
         file2_codes,
-        vec![6200],
-        "Expected file2.ts to aggregate large module augmentation conflicts into TS6200. Diagnostics: {:#?}",
+        vec![2300; 9],
+        "Expected file2.ts to report per-declaration TS2300 for each of the 9 conflicting members (no TS6200 batch). Diagnostics: {:#?}",
         file2.diagnostics
     );
 }

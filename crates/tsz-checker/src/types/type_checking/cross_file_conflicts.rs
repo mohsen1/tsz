@@ -16,7 +16,6 @@ use tsz_scanner::SyntaxKind;
 
 const INTERFACE_MEMBER_KIND_PROPERTY: u8 = 1;
 const INTERFACE_MEMBER_KIND_METHOD: u8 = 1 << 1;
-const CROSS_FILE_INTERFACE_MEMBER_CONFLICT_LIMIT: usize = 8;
 
 impl<'a> CheckerState<'a> {
     /// Check cross-file interface member conflicts (property vs method with same name).
@@ -1557,11 +1556,12 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let mut conflict_names = Vec::new();
-        let mut seen_conflict_names = FxHashSet::default();
+        // tsc 7.0.2 (typescript-go `reportMergeSymbolError`) emits per-declaration
+        // TS2300 for every cross-file interface-member conflict; the legacy TS6.x
+        // whole-file TS6200 batch summary was removed (diagnostic 6200 is unused in
+        // the tsgo checker and no oracle test expects it). Emit one TS2300 per
+        // conflicting member at its name token.
         let mut conflict_name_nodes = Vec::new();
-        let mut anchor_nodes = Vec::new();
-        let mut seen_anchor_nodes = FxHashSet::default();
 
         for &decl_idx in local_interface_decls {
             let Some(node) = self.ctx.arena.get(decl_idx) else {
@@ -1570,8 +1570,6 @@ impl<'a> CheckerState<'a> {
             let Some(iface) = self.ctx.arena.get_interface(node) else {
                 continue;
             };
-            let anchor_node = self.interface_member_conflict_anchor_node(decl_idx);
-            let mut decl_has_conflict = false;
 
             for &member_idx in &iface.members.nodes {
                 let Some(member_node) = self.ctx.arena.get(member_idx) else {
@@ -1600,50 +1598,13 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                decl_has_conflict = true;
-                if seen_conflict_names.insert(name.clone()) {
-                    conflict_names.push(name.clone());
-                }
                 conflict_name_nodes.push((name, sig.name));
             }
-
-            if decl_has_conflict && seen_anchor_nodes.insert(anchor_node) {
-                anchor_nodes.push(anchor_node);
-            }
-        }
-
-        if conflict_name_nodes.is_empty() {
-            return;
-        }
-
-        if conflict_names.len() >= CROSS_FILE_INTERFACE_MEMBER_CONFLICT_LIMIT {
-            let list = conflict_names.join(", ");
-            let message = format_message(
-                diagnostic_messages::DEFINITIONS_OF_THE_FOLLOWING_IDENTIFIERS_CONFLICT_WITH_THOSE_IN_ANOTHER_FILE,
-                &[&list],
-            );
-            for anchor_node in anchor_nodes {
-                self.error_at_node(
-                    anchor_node,
-                    &message,
-                    diagnostic_codes::DEFINITIONS_OF_THE_FOLLOWING_IDENTIFIERS_CONFLICT_WITH_THOSE_IN_ANOTHER_FILE,
-                );
-            }
-            return;
         }
 
         for (name, node_idx) in conflict_name_nodes {
             let message = format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&name]);
             self.error_at_node(node_idx, &message, diagnostic_codes::DUPLICATE_IDENTIFIER);
-        }
-    }
-
-    fn interface_member_conflict_anchor_node(&self, decl_idx: NodeIndex) -> NodeIndex {
-        let enclosing_namespace = self.get_enclosing_namespace(decl_idx);
-        if enclosing_namespace.is_none() {
-            decl_idx
-        } else {
-            enclosing_namespace
         }
     }
 

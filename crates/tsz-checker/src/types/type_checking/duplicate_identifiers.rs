@@ -37,10 +37,8 @@ pub(super) enum DuplicateDeclarationOrigin {
 struct DuplicateIdentifierScanState {
     has_libs: bool,
     is_external_module: bool,
-    cross_file_conflicts: Vec<String>,
     global_scope_conflict_cache: rustc_hash::FxHashMap<String, DuplicateDeclList>,
     may_have_default_import_alias_conflicts: bool,
-    emit_ts6200: bool,
     pass2_symbol_ids: Vec<tsz_binder::SymbolId>,
 }
 
@@ -74,10 +72,8 @@ impl<'a> CheckerState<'a> {
         let DuplicateIdentifierScanState {
             has_libs,
             is_external_module,
-            cross_file_conflicts,
             mut global_scope_conflict_cache,
             may_have_default_import_alias_conflicts,
-            emit_ts6200,
             pass2_symbol_ids,
         } = self.duplicate_identifiers_scan_symbols();
 
@@ -119,14 +115,6 @@ impl<'a> CheckerState<'a> {
                     &symbol.escaped_name,
                     symbol.flags,
                 );
-
-            if emit_ts6200
-                && cross_file_conflicts
-                    .binary_search(&symbol.escaped_name)
-                    .is_ok()
-            {
-                continue;
-            }
 
             // Same cross-file NodeIndex collision check as above.
             if symbol.declarations.len() <= 1 {
