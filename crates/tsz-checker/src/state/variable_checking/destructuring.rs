@@ -595,6 +595,21 @@ impl<'a> CheckerState<'a> {
             if name_node.kind == SyntaxKind::Identifier as u16
                 && let Some(sym_id) = self.ctx.binder.get_node_symbol(element_data.name)
             {
+                // A bare `unique symbol` binding element widens to `symbol`, matching
+                // tsc's `widenTypeForVariableLikeDeclaration` (the `isBindingElement`
+                // branch always widens — a binding element's pattern annotation types
+                // the *source*, not the element binding, so `const [db]: [typeof cs] = t`
+                // still yields `db: symbol`). A binding element is never the unique
+                // symbol's mint site, so no ref guard is needed; `is_unique_symbol_type`
+                // is bare-only, so a `typeof a | typeof b` element is preserved. This
+                // widens the *element* only — nested patterns recurse below with the
+                // un-widened `element_type` and widen at their own leaf identifiers.
+                let element_type =
+                    if common_query::is_unique_symbol_type(self.ctx.types, element_type) {
+                        TypeId::SYMBOL
+                    } else {
+                        element_type
+                    };
                 // Route null/undefined widening through the flow observation boundary.
                 let final_type = flow_boundary::widen_null_undefined_to_any(
                     self.ctx.types,

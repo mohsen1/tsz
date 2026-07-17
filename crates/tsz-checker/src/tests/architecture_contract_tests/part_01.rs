@@ -437,7 +437,11 @@ fn test_emitter_direct_solver_access_does_not_grow() {
     // solver reads on main (measured 674 at the recalibration; the ceiling
     // had not been re-baselined since 478). Debt: route these through a
     // compiler semantic view / declaration summary.
-    const DIRECT_SOLVER_ACCESS_LINE_CEILING: usize = 674;
+    // 674→675 (#60): +1 for the destructuring binding-element DTS widen, which
+    // asks the solver-owned `widen_bare_unique_symbol_value_for_dts`
+    // (getWidenedUniqueESSymbolType) — a solver-backed boundary, not a raw
+    // `TypeData` read, so emit and check agree on `const [db] = t` -> `symbol`.
+    const DIRECT_SOLVER_ACCESS_LINE_CEILING: usize = 675;
     assert!(
         direct_solver_lines.len() <= DIRECT_SOLVER_ACCESS_LINE_CEILING,
         "Emitter direct solver access grew to {} lines (ceiling: {}). \

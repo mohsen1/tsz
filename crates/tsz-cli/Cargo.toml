@@ -153,6 +153,10 @@ name = "object_rest_binding_dts_emit_tests"
 path = "tests/object_rest_binding_dts_emit_tests.rs"
 
 [[test]]
+name = "unique_symbol_destructuring_dts_emit_tests"
+path = "tests/unique_symbol_destructuring_dts_emit_tests.rs"
+
+[[test]]
 name = "inferred_const_literal_union_dts_emit_tests"
 path = "tests/inferred_const_literal_union_dts_emit_tests.rs"
 

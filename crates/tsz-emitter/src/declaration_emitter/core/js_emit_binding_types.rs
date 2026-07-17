@@ -405,6 +405,18 @@ impl<'a> DeclarationEmitter<'a> {
         self.write(" ");
 
         for (index, (ident_idx, type_id)) in bindings.into_iter().enumerate() {
+            // A bare `unique symbol` destructuring binding element widens to
+            // `symbol` in the emitted type (tsc's `getWidenedUniqueESSymbolType`,
+            // the `isBindingElement` branch), matching the checker's *bare-only*
+            // widening of the same binding. The solver-owned bare widen leaves a
+            // `typeof a | typeof b` element and object/rest binding types
+            // untouched — keeping emit and check consistent for `const [db] = t`.
+            let type_id = match (type_id, self.type_interner) {
+                (Some(t), Some(interner)) => Some(
+                    tsz_solver::visitor::widen_bare_unique_symbol_value_for_dts(interner, t),
+                ),
+                (other, _) => other,
+            };
             if index > 0 {
                 self.write(", ");
             }

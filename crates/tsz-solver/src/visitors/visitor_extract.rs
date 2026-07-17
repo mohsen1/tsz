@@ -185,6 +185,20 @@ pub fn widen_unique_symbol_value_type_for_dts(types: &dyn TypeDatabase, type_id:
     widen_unique_symbol_value_type_for_dts_inner(types, type_id, 0)
 }
 
+/// Widen only a *bare* `unique symbol` to `symbol` for DTS emit, leaving every
+/// other type untouched. Unlike [`widen_unique_symbol_value_type_for_dts`], this
+/// does not recurse into composite types, so it never reconstructs an object /
+/// tuple / union binding element — the `getWidenedUniqueESSymbolType` rule a
+/// bare unique-symbol destructuring binding element needs (a union of unique
+/// symbols is preserved).
+pub fn widen_bare_unique_symbol_value_for_dts(types: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    if crate::type_queries::is_unique_symbol_type(types, type_id) {
+        TypeId::SYMBOL
+    } else {
+        type_id
+    }
+}
+
 fn widen_unique_symbol_value_type_for_dts_inner(
     types: &dyn TypeDatabase,
     type_id: TypeId,

@@ -235,3 +235,98 @@ const chk: typeof sA | typeof sB = u;
         "a union of unique symbols must not widen to symbol, got {c:?}"
     );
 }
+
+// --- #60: a bare `unique symbol` destructuring binding element widens to `symbol` ---
+// tsc's `widenTypeForVariableLikeDeclaration` `isBindingElement` branch ALWAYS
+// widens a bare unique-symbol element — its pattern annotation types the source,
+// not the element binding — so an array/object/nested/`let` destructuring element
+// reads as `symbol` and is no longer assignable to `typeof cs`. Verified vs tsc 7.0.2.
+
+#[test]
+fn array_destructuring_unique_symbol_element_widens_to_symbol() {
+    let c = codes(
+        r#"
+declare const cs: unique symbol;
+declare const t: [typeof cs];
+const [db] = t;
+const chk: typeof cs = db;
+"#,
+    );
+    assert!(
+        c.contains(&2322),
+        "const [db] = t must widen db to symbol, got {c:?}"
+    );
+}
+
+#[test]
+fn pattern_annotated_destructuring_element_still_widens() {
+    // The pattern annotation `[typeof cs]` types the SOURCE, not the element
+    // binding, so the element still widens (tsc's isBindingElement branch has no
+    // annotation guard).
+    let c = codes(
+        r#"
+declare const cs: unique symbol;
+declare const t: [typeof cs];
+const [db]: [typeof cs] = t;
+const chk: typeof cs = db;
+"#,
+    );
+    assert!(
+        c.contains(&2322),
+        "pattern-annotated destructuring element must still widen, got {c:?}"
+    );
+}
+
+#[test]
+fn object_and_nested_destructuring_unique_symbol_elements_widen() {
+    let c = codes(
+        r#"
+declare const cs: unique symbol;
+declare const o: { k: typeof cs };
+declare const on2: [[typeof cs]];
+const { k: dd } = o;
+const [[dn]] = on2;
+const cdd: typeof cs = dd;
+const cdn: typeof cs = dn;
+"#,
+    );
+    assert!(
+        c.contains(&2322),
+        "object + nested destructuring elements must widen to symbol, got {c:?}"
+    );
+}
+
+#[test]
+fn renamed_destructuring_element_widens_to_symbol() {
+    // Different binder names — proves the widening is structural, not name-keyed.
+    let c = codes(
+        r#"
+declare const alpha: unique symbol;
+declare const tup: [typeof alpha];
+const [beta] = tup;
+const chk: typeof alpha = beta;
+"#,
+    );
+    assert!(
+        c.contains(&2322),
+        "renamed destructuring element must widen, got {c:?}"
+    );
+}
+
+#[test]
+fn destructuring_union_of_unique_symbols_element_is_not_widened() {
+    // Only a *bare* unique-symbol element widens; a union element is preserved.
+    let c = codes(
+        r#"
+declare const sA: unique symbol;
+declare const sB: unique symbol;
+declare const t: [typeof sA | typeof sB];
+const [u] = t;
+const chk: typeof sA | typeof sB = u;
+"#,
+    );
+    assert!(
+        !c.contains(&2322),
+        "a union destructuring element must not widen to symbol, got {c:?}"
+    );
+}
