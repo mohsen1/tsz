@@ -1342,6 +1342,17 @@ pub(crate) fn empty_object_display_alias_is_marker_render(
     tsz_solver::empty_object_display_alias_is_marker_render(db, def_store, evaluated, alias_origin)
 }
 
+/// Widen for diagnostic display while preserving `unique symbol` types
+/// (display never widens a unique symbol to `symbol`; that is a
+/// mutable-location rule). Display-domain policy, so it lives here rather
+/// than in `common` (checker test boundary: common surface is ratcheted).
+pub(crate) fn widen_type_preserving_unique_symbols(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    type_id: tsz_solver::TypeId,
+) -> tsz_solver::TypeId {
+    tsz_solver::operations::widening::widen_type_preserving_unique_symbols(db, type_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1416,15 +1427,4 @@ mod tests {
             &[query_app]
         ));
     }
-}
-
-/// Widen for diagnostic display while preserving `unique symbol` types
-/// (display never widens a unique symbol to `symbol`; that is a
-/// mutable-location rule). Display-domain policy, so it lives here rather
-/// than in `common` (checker test boundary: common surface is ratcheted).
-pub(crate) fn widen_type_preserving_unique_symbols(
-    db: &dyn tsz_solver::construction::TypeDatabase,
-    type_id: tsz_solver::TypeId,
-) -> tsz_solver::TypeId {
-    tsz_solver::operations::widening::widen_type_preserving_unique_symbols(db, type_id)
 }
