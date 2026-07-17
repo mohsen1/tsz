@@ -415,3 +415,169 @@ const chk: typeof cs = C.rt;
         "annotated readonly field must stay unique, got {c:?}"
     );
 }
+
+// ── Object/array-literal element widening (#64) ─────────────────────────────
+// A fresh object/array literal in a const/let binding widens a bare
+// `unique symbol` element to `symbol` (tsc `getWidenedUniqueESSymbolType`
+// applied recursively by `getWidenedType`), so a `typeof cs` read fails; an
+// `as const` or annotated position preserves the unique identity.
+
+#[test]
+fn const_object_literal_unique_symbol_property_widens() {
+    // Renamed binder `sym`/`holder` proves the routing is structural.
+    let c = codes(
+        r#"
+declare const sym: unique symbol;
+const holder = { m: sym };
+const chk: typeof sym = holder.m;
+"#,
+    );
+    assert!(
+        c.contains(&2322),
+        "const object-literal unique-symbol property must widen to symbol, got {c:?}"
+    );
+}
+
+#[test]
+fn const_array_literal_unique_symbol_element_widens() {
+    let c = codes(
+        r#"
+declare const uniq: unique symbol;
+const list = [uniq];
+const chk: typeof uniq = list[0];
+"#,
+    );
+    assert!(
+        c.contains(&2322),
+        "const array-literal unique-symbol element must widen to symbol, got {c:?}"
+    );
+}
+
+#[test]
+fn nested_object_literal_unique_symbol_widens() {
+    let c = codes(
+        r#"
+declare const tag: unique symbol;
+const outer = { inner: { leaf: tag } };
+const chk: typeof tag = outer.inner.leaf;
+"#,
+    );
+    assert!(
+        c.contains(&2322),
+        "nested object-literal unique-symbol must widen to symbol, got {c:?}"
+    );
+}
+
+#[test]
+fn nested_array_literal_unique_symbol_widens() {
+    let c = codes(
+        r#"
+declare const tok: unique symbol;
+const grid = [[tok]];
+const chk: typeof tok = grid[0][0];
+"#,
+    );
+    assert!(
+        c.contains(&2322),
+        "nested array-literal unique-symbol must widen to symbol, got {c:?}"
+    );
+}
+
+#[test]
+fn let_object_literal_unique_symbol_property_widens() {
+    let c = codes(
+        r#"
+declare const key: unique symbol;
+let box = { m: key };
+const chk: typeof key = box.m;
+"#,
+    );
+    assert!(
+        c.contains(&2322),
+        "let object-literal unique-symbol property must widen to symbol, got {c:?}"
+    );
+}
+
+#[test]
+fn union_element_in_object_literal_widens() {
+    // A conditional over two distinct unique symbols is a mutable element, so
+    // each member widens to `symbol` (tsc widens the whole property to symbol).
+    let c = codes(
+        r#"
+declare const first: unique symbol;
+declare const second: unique symbol;
+declare const cond: boolean;
+const wrap = { m: cond ? first : second };
+const chk: typeof first | typeof second = wrap.m;
+"#,
+    );
+    assert!(
+        c.contains(&2322),
+        "union of unique symbols in an object-literal property must widen, got {c:?}"
+    );
+}
+
+#[test]
+fn as_const_object_literal_unique_symbol_preserved() {
+    // `as const` marks the property readonly; the unique symbol is preserved.
+    let c = codes(
+        r#"
+declare const pin: unique symbol;
+const frozen = { m: pin } as const;
+const chk: typeof pin = frozen.m;
+"#,
+    );
+    assert!(
+        !c.contains(&2322),
+        "as-const object-literal must preserve the unique symbol, got {c:?}"
+    );
+}
+
+#[test]
+fn as_const_array_literal_unique_symbol_preserved() {
+    let c = codes(
+        r#"
+declare const seal: unique symbol;
+const frozenList = [seal] as const;
+const chk: typeof seal = frozenList[0];
+"#,
+    );
+    assert!(
+        !c.contains(&2322),
+        "as-const array-literal must preserve the unique symbol, got {c:?}"
+    );
+}
+
+#[test]
+fn annotated_object_literal_binding_unique_symbol_preserved() {
+    // An explicit annotation types the binding; its unique symbol is preserved.
+    let c = codes(
+        r#"
+declare const mark: unique symbol;
+const annotated: { m: typeof mark } = { m: mark };
+const chk: typeof mark = annotated.m;
+"#,
+    );
+    assert!(
+        !c.contains(&2322),
+        "annotated object-literal binding must preserve the unique symbol, got {c:?}"
+    );
+}
+
+#[test]
+fn nested_as_const_inside_fresh_object_literal_preserved() {
+    // A nested `as const` value keeps its unique symbol even inside a fresh
+    // outer object literal (readonly positions are never widened).
+    let c = codes(
+        r#"
+declare const csn: unique symbol;
+const inner = { n: csn } as const;
+const outer = { m: inner };
+const chk: typeof csn = outer.m.n;
+"#,
+    );
+    assert!(
+        !c.contains(&2322),
+        "nested as-const unique symbol must be preserved inside a fresh literal, got {c:?}"
+    );
+}

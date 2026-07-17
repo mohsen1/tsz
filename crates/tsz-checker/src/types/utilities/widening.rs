@@ -28,23 +28,41 @@ impl<'a> CheckerState<'a> {
     /// to `symbol_types`, so the emitter's cache-based factory detection — and
     /// every other consumer that reads the raw cache — is unaffected; only reads
     /// routed through `get_type_of_symbol` observe the widened `symbol`.
+    ///
+    /// A fresh object/array *literal* binding widens the same way in its mutable
+    /// element positions (`const o = { m: cs }` reads `{ m: symbol }`,
+    /// `const a = [cs]` reads `symbol[]`), because tsc's `getWidenedType` applies
+    /// `getWidenedUniqueESSymbolType` recursively through the literal. This too is
+    /// read-only, so the raw cache the emitter reads keeps `typeof cs` and its DTS
+    /// output is byte-identical.
     pub(crate) fn widen_read_unique_symbol_binding(
         &self,
         sym_id: SymbolId,
         type_id: TypeId,
     ) -> TypeId {
-        // Fast reject on the `get_type_of_symbol` hot path: only a bare
-        // `unique symbol` can widen. `is_unique_symbol_type` is a single interner
-        // lookup with no `Lazy` resolution.
-        if !crate::query_boundaries::common::is_unique_symbol_type(self.ctx.types, type_id) {
+        // Fast reject on the `get_type_of_symbol` hot path. Only a bare
+        // `unique symbol` (single interner lookup, no `Lazy` resolution) or a
+        // plain object/array literal shape can carry a widenable unique symbol.
+        let is_bare =
+            crate::query_boundaries::common::is_unique_symbol_type(self.ctx.types, type_id);
+        let is_literal_shape = !is_bare
+            && crate::query_boundaries::widening::is_plain_object_or_array_shape(
+                self.ctx.types,
+                type_id,
+            );
+        if !is_bare && !is_literal_shape {
             return type_id;
         }
-        // tsc `type.symbol !== getSymbolOfDeclaration(decl)`: the mint site, whose
-        // unique symbol's owning symbol is itself, keeps `unique symbol`.
-        match crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, type_id) {
-            Some(sym_ref) if sym_ref.0 == sym_id.0 => return type_id,
-            Some(_) => {}
-            None => return type_id,
+        // tsc `type.symbol !== getSymbolOfDeclaration(decl)`: a bare mint site,
+        // whose unique symbol's owning symbol is itself, keeps `unique symbol`.
+        // (A nested element is never its binding's mint site, so this only gates
+        // the bare case.)
+        if is_bare {
+            match crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, type_id) {
+                Some(sym_ref) if sym_ref.0 == sym_id.0 => return type_id,
+                Some(_) => {}
+                None => return type_id,
+            }
         }
         // tsc `(isBindingElement(decl) || !decl.type)`: only an *inferred*
         // variable-declaration binding widens; an explicit annotation preserves
@@ -62,7 +80,20 @@ impl<'a> CheckerState<'a> {
         if var_decl.type_annotation.is_some() {
             return type_id;
         }
-        TypeId::SYMBOL
+        if is_bare {
+            return TypeId::SYMBOL;
+        }
+        // Fresh object/array literal: widen bare `unique symbol` aliases in the
+        // mutable element positions (`readonly`/`as const` positions preserved).
+        // A non-fresh compound initializer (a call result, a plain identifier
+        // reference) keeps its literal element types.
+        if self.is_fresh_literal_expression(var_decl.initializer) {
+            return crate::query_boundaries::widening::widen_unique_symbol_literal_elements(
+                self.ctx.types,
+                type_id,
+            );
+        }
+        type_id
     }
 
     /// Widen a literal type to its primitive type.

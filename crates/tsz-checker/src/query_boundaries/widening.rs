@@ -58,6 +58,18 @@ pub(crate) fn widen_const_initializer(db: &dyn TypeDatabase, type_id: TypeId) ->
     tsz_solver::operations::widening::widen_const_initializer(db, type_id)
 }
 
+/// Widen bare `unique symbol` aliases in a fresh object/array literal's mutable
+/// element positions to `symbol`, matching tsc's `getWidenedUniqueESSymbolType`
+/// at a const/let binding: `const o = { m: cs }` → `{ m: symbol }`,
+/// `const a = [cs]` → `symbol[]`. Preserves `readonly` (`as const`) positions
+/// and leaves every non-unique-symbol type unchanged.
+pub(crate) fn widen_unique_symbol_literal_elements(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
+    tsz_solver::operations::widening::widen_unique_symbol_literal_elements(db, type_id)
+}
+
 /// Whether `type_id` is a *plain* object/array shape: `Object`,
 /// `ObjectWithIndex`, `Array`, or `Tuple` only. Excludes `Function`,
 /// `Callable`, `Mapped`, `Intersection`, `TypeParameter`, and `Lazy`.

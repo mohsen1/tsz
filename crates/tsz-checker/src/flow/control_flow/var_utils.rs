@@ -1111,18 +1111,30 @@ impl<'a> FlowAnalyzer<'a> {
         let Some(symbol_id) = symbol_id else {
             return declared_type;
         };
-        if !crate::query_boundaries::common::is_unique_symbol_type(self.interner, declared_type) {
+        // Cheap pre-filter: only a bare `unique symbol` or a plain object/array
+        // literal shape carries a widenable unique symbol.
+        let is_bare =
+            crate::query_boundaries::common::is_unique_symbol_type(self.interner, declared_type);
+        let is_literal_shape = !is_bare
+            && crate::query_boundaries::widening::is_plain_object_or_array_shape(
+                self.interner,
+                declared_type,
+            );
+        if !is_bare && !is_literal_shape {
             return declared_type;
         }
-        // tsc `type.symbol !== getSymbolOfDeclaration(decl)`: the mint site keeps
-        // `unique symbol`.
-        let Some(sym_ref) =
-            crate::query_boundaries::common::unique_symbol_ref(self.interner, declared_type)
-        else {
-            return declared_type;
-        };
-        if sym_ref.0 == symbol_id.0 {
-            return declared_type;
+        // tsc `type.symbol !== getSymbolOfDeclaration(decl)`: a bare mint site
+        // keeps `unique symbol` (a nested element is never its binding's mint
+        // site, so this only gates the bare case).
+        if is_bare {
+            let Some(sym_ref) =
+                crate::query_boundaries::common::unique_symbol_ref(self.interner, declared_type)
+            else {
+                return declared_type;
+            };
+            if sym_ref.0 == symbol_id.0 {
+                return declared_type;
+            }
         }
         // Restrict to un-annotated variable declarations (let/var/const); class
         // fields and destructuring elements are separate widening owners.
@@ -1136,7 +1148,38 @@ impl<'a> FlowAnalyzer<'a> {
         if !is_unannotated_var_decl {
             return declared_type;
         }
-        TypeId::SYMBOL
+        if is_bare {
+            return TypeId::SYMBOL;
+        }
+        // Fresh object/array literal: widen bare `unique symbol` aliases in the
+        // mutable element positions (`readonly`/`as const` positions preserved).
+        // Gated on a *direct* object/array literal initializer so a non-fresh
+        // compound source (a call result, an identifier reference) keeps its
+        // element types.
+        if self.var_decl_initializer_is_object_or_array_literal(decl) {
+            return crate::query_boundaries::widening::widen_unique_symbol_literal_elements(
+                self.interner,
+                declared_type,
+            );
+        }
+        declared_type
+    }
+
+    /// Whether `decl`'s variable-declaration initializer is a direct object or
+    /// array literal (skipping parentheses) — the fresh-literal shape whose
+    /// mutable element positions widen a bare `unique symbol` to `symbol`.
+    fn var_decl_initializer_is_object_or_array_literal(&self, decl: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(decl) else {
+            return false;
+        };
+        let Some(var_decl) = self.arena.get_variable_declaration(node) else {
+            return false;
+        };
+        let init = self.arena.skip_parenthesized(var_decl.initializer);
+        self.arena.get(init).is_some_and(|init_node| {
+            init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+        })
     }
 
     pub(crate) fn var_decl_redeclares_parameter_for_reference(

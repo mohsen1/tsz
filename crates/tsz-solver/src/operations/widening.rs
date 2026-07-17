@@ -489,6 +489,107 @@ pub fn widen_const_initializer(
     }
 }
 
+/// Widen every bare `unique symbol` nested in a fresh object/array literal's
+/// mutable element positions to `symbol`, mirroring tsc's
+/// `getWidenedUniqueESSymbolType` applied recursively by `getWidenedType` at a
+/// const/let binding declaration.
+///
+/// tsc widens a `unique symbol` at a mutable location independently of the
+/// fresh/regular literal duality: a fresh object-literal property whose value is
+/// an annotated-const `unique symbol` reference (recorded `non_widening` in tsz)
+/// still widens to `symbol` (`const o = { m: cs }` → `{ m: symbol }`). Only a
+/// `readonly` position preserves the unique symbol — an `as const` object
+/// property (`readonly`) or a `ReadonlyType`-wrapped array/tuple — matching tsc
+/// leaving a regular readonly literal untouched.
+///
+/// Unlike [`widen_type`], every non-unique-symbol type is returned unchanged
+/// (regular literals, primitives, functions, `Lazy`, `ReadonlyType`, …), so it
+/// is safe to apply on top of an already-typed const initializer without
+/// perturbing its literal surface. It is a pure function of the interned type —
+/// no `Lazy` resolution — so it never mutates evaluation caches. Reached only
+/// from the checker's fresh-literal const/mutable-binding path, so it never
+/// touches inference-position widening ([`widen_type_for_inference`] preserves
+/// unique symbols by design).
+pub fn widen_unique_symbol_literal_elements(
+    db: &dyn crate::construction::TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::UniqueSymbol(_)) => TypeId::SYMBOL,
+        // Object literal: widen a `unique symbol` in every non-`readonly`
+        // property (a `readonly` property came from `as const` and is preserved).
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+            let shape = db.object_shape(shape_id);
+            let mut new_props = Vec::with_capacity(shape.properties.len());
+            let mut changed = false;
+            for prop in &shape.properties {
+                let mut new_prop = prop.clone();
+                if !prop.readonly {
+                    let widened_read = widen_unique_symbol_literal_elements(db, prop.type_id);
+                    let widened_write = widen_unique_symbol_literal_elements(db, prop.write_type);
+                    if widened_read != prop.type_id || widened_write != prop.write_type {
+                        changed = true;
+                    }
+                    new_prop.type_id = widened_read;
+                    new_prop.write_type = widened_write;
+                }
+                new_props.push(new_prop);
+            }
+            if changed {
+                rebuild_object_with_shape_metadata(db, type_id, &shape, new_props)
+            } else {
+                type_id
+            }
+        }
+        Some(TypeData::Array(element_type)) => {
+            let widened = widen_unique_symbol_literal_elements(db, element_type);
+            if widened != element_type {
+                db.array(widened)
+            } else {
+                type_id
+            }
+        }
+        Some(TypeData::Tuple(tuple_list_id)) => {
+            let elements = db.tuple_list(tuple_list_id);
+            let mut new_elements = Vec::with_capacity(elements.len());
+            let mut changed = false;
+            for elem in elements.iter() {
+                let widened = widen_unique_symbol_literal_elements(db, elem.type_id);
+                if widened != elem.type_id {
+                    changed = true;
+                }
+                let mut new_elem = *elem;
+                new_elem.type_id = widened;
+                new_elements.push(new_elem);
+            }
+            if changed {
+                db.tuple(new_elements)
+            } else {
+                type_id
+            }
+        }
+        Some(TypeData::Union(list_id)) => {
+            let members = db.type_list(list_id);
+            let mapped: Vec<TypeId> = members
+                .iter()
+                .map(|&m| widen_unique_symbol_literal_elements(db, m))
+                .collect();
+            if mapped.iter().zip(members.iter()).all(|(a, b)| a == b) {
+                type_id
+            } else {
+                db.union(mapped)
+            }
+        }
+        // `ReadonlyType` (an `as const` array/tuple), literals, `Lazy`,
+        // functions, applications, … carry no widenable unique symbol at a
+        // mutable literal position and are preserved.
+        _ => type_id,
+    }
+}
+
 /// Deep-widen a type including inside function/callable signatures.
 ///
 /// Unlike `widen_type` which skips Function/Callable types for performance
