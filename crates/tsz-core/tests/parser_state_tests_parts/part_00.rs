@@ -284,6 +284,115 @@ fn test_parser_object_get_accessor_parameters_report_ts1054() {
 }
 
 #[test]
+fn test_parser_class_set_accessor_zero_params_report_ts1049() {
+    // A `set` accessor with no parameter is TS1049. Vary the binder name to
+    // confirm the check is structural, not name-scoped.
+    for source in [
+        "class Widget { set label() { } }",
+        "class Store { set value() { } }",
+    ] {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        parser.parse_source_file();
+        let codes: Vec<u32> = parser
+            .get_diagnostics()
+            .iter()
+            .map(|diag| diag.code)
+            .collect();
+        assert!(
+            codes.contains(&diagnostic_codes::A_SET_ACCESSOR_MUST_HAVE_EXACTLY_ONE_PARAMETER),
+            "Expected TS1049 for `{source}`: {:?}",
+            parser.get_diagnostics()
+        );
+    }
+}
+
+#[test]
+fn test_parser_class_set_accessor_two_params_report_ts1049() {
+    let source = "class Store { set value(first: number, second: number) { } }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    parser.parse_source_file();
+    let codes: Vec<u32> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|diag| diag.code)
+        .collect();
+    assert!(
+        codes.contains(&diagnostic_codes::A_SET_ACCESSOR_MUST_HAVE_EXACTLY_ONE_PARAMETER),
+        "Expected TS1049: {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn test_parser_object_set_accessor_wrong_param_count_report_ts1049() {
+    for source in [
+        "var obj = { set caption() { } };",
+        "var obj = { set caption(a, b) { } };",
+    ] {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        parser.parse_source_file();
+        let codes: Vec<u32> = parser
+            .get_diagnostics()
+            .iter()
+            .map(|diag| diag.code)
+            .collect();
+        assert!(
+            codes.contains(&diagnostic_codes::A_SET_ACCESSOR_MUST_HAVE_EXACTLY_ONE_PARAMETER),
+            "Expected TS1049 for `{source}`: {:?}",
+            parser.get_diagnostics()
+        );
+    }
+}
+
+#[test]
+fn test_parser_set_accessor_one_param_no_ts1049() {
+    // Exactly one parameter is correct; and a leading `this` parameter does not
+    // count toward the value parameter (tsc `getAccessorThisParameter`).
+    for source in [
+        "class Store { set value(next: number) { } }",
+        "var obj = { set caption(next: string) { } };",
+        "class Store { set value(this: Store, next: number) { } }",
+    ] {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        parser.parse_source_file();
+        let codes: Vec<u32> = parser
+            .get_diagnostics()
+            .iter()
+            .map(|diag| diag.code)
+            .collect();
+        assert!(
+            !codes.contains(&diagnostic_codes::A_SET_ACCESSOR_MUST_HAVE_EXACTLY_ONE_PARAMETER),
+            "Unexpected TS1049 for `{source}`: {:?}",
+            parser.get_diagnostics()
+        );
+    }
+}
+
+#[test]
+fn test_parser_set_accessor_wrong_count_suppresses_return_type_ts1095() {
+    // tsc `checkGrammarAccessor` reports the count error and returns before the
+    // return-type-annotation check, so only TS1049 fires (not TS1095).
+    let source = "class Store { set value(a, b): number { } }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    parser.parse_source_file();
+    let codes: Vec<u32> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|diag| diag.code)
+        .collect();
+    assert!(
+        codes.contains(&diagnostic_codes::A_SET_ACCESSOR_MUST_HAVE_EXACTLY_ONE_PARAMETER),
+        "Expected TS1049: {:?}",
+        parser.get_diagnostics()
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_A_RETURN_TYPE_ANNOTATION),
+        "Unexpected TS1095 (should be suppressed by TS1049): {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
 fn test_parser_duplicate_extends_reports_ts1172() {
     let source = "class C extends A extends B {}";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());

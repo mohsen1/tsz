@@ -1037,7 +1037,7 @@ impl ParserState {
             self.parse_type_parameters()
         });
 
-        self.parse_expected(SyntaxKind::OpenParenToken);
+        let had_open_paren = self.parse_expected(SyntaxKind::OpenParenToken);
         let parameters = if self.is_token(SyntaxKind::CloseParenToken) {
             Self::make_node_list(vec![])
         } else {
@@ -1045,10 +1045,17 @@ impl ParserState {
         };
         self.parse_expected(SyntaxKind::CloseParenToken);
 
+        // TS1049: A 'set' accessor must have exactly one parameter. tsc's
+        // `checkGrammarAccessor` reports the count error before the other
+        // `set`-specific grammar checks, so a wrong count suppresses them.
+        let count_error =
+            had_open_paren && self.report_set_accessor_parameter_count(name, &parameters);
+
         // TS1051: A 'set' accessor cannot have an optional parameter
         // tsc anchors the error at the `?` token, which is right after the
         // parameter name.
-        if let Some(&first_param) = parameters.nodes.first()
+        if !count_error
+            && let Some(&first_param) = parameters.nodes.first()
             && let Some(param_node) = self.arena.get(first_param)
         {
             let data_idx = param_node.data_index as usize;
@@ -1075,19 +1082,23 @@ impl ParserState {
         // emitter can preserve it.
         let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
             use tsz_common::diagnostics::diagnostic_codes;
-            // Report error at the accessor name, matching tsc behavior
-            if let Some(name_node) = self.arena.get(name) {
-                self.parse_error_at(
-                    name_node.pos,
-                    name_node.end - name_node.pos,
-                    "A 'set' accessor cannot have a return type annotation.",
-                    diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_A_RETURN_TYPE_ANNOTATION,
-                );
-            } else {
-                self.parse_error_at_current_token(
-                    "A 'set' accessor cannot have a return type annotation.",
-                    diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_A_RETURN_TYPE_ANNOTATION,
-                );
+            // Report error at the accessor name, matching tsc behavior. A wrong
+            // parameter count already fired TS1049, so tsc's early return
+            // suppresses this one.
+            if !count_error {
+                if let Some(name_node) = self.arena.get(name) {
+                    self.parse_error_at(
+                        name_node.pos,
+                        name_node.end - name_node.pos,
+                        "A 'set' accessor cannot have a return type annotation.",
+                        diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_A_RETURN_TYPE_ANNOTATION,
+                    );
+                } else {
+                    self.parse_error_at_current_token(
+                        "A 'set' accessor cannot have a return type annotation.",
+                        diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_A_RETURN_TYPE_ANNOTATION,
+                    );
+                }
             }
             // Use parse_return_type to match tsc, which parses type predicates
             // even in invalid setter return types
@@ -1112,6 +1123,51 @@ impl ParserState {
                 body,
             },
         )
+    }
+
+    /// TS1049: a `set` accessor must have exactly one parameter. Mirrors tsc
+    /// `checkGrammarAccessor` via `doesAccessorHaveCorrectParameterCount`: the
+    /// value-parameter count is correct only when it is exactly one, or two
+    /// when the first parameter is a `this` parameter (a `this` parameter does
+    /// not count toward the value parameter). Reported on the accessor name,
+    /// like tsc's `grammarErrorOnNode(accessor.name, …)`.
+    ///
+    /// Returns whether the diagnostic fired so callers can suppress the later
+    /// `set`-specific grammar checks (return type, optional parameter), matching
+    /// tsc's single-error early return once the count is already wrong.
+    pub(crate) fn report_set_accessor_parameter_count(
+        &mut self,
+        name: NodeIndex,
+        parameters: &NodeList,
+    ) -> bool {
+        let count = parameters.nodes.len();
+        let first_is_this = parameters.nodes.first().is_some_and(|&param_idx| {
+            let name_idx = match self.arena.get_parameter_at(param_idx) {
+                Some(param) => param.name,
+                None => return false,
+            };
+            self.arena
+                .get(name_idx)
+                .is_some_and(|name_node| name_node.kind == SyntaxKind::ThisKeyword as u16)
+        });
+        if count == 1 || (count == 2 && first_is_this) {
+            return false;
+        }
+        use tsz_common::diagnostics::diagnostic_codes;
+        if let Some(name_node) = self.arena.get(name) {
+            self.parse_error_at(
+                name_node.pos,
+                name_node.end - name_node.pos,
+                "A 'set' accessor must have exactly one parameter.",
+                diagnostic_codes::A_SET_ACCESSOR_MUST_HAVE_EXACTLY_ONE_PARAMETER,
+            );
+        } else {
+            self.parse_error_at_current_token(
+                "A 'set' accessor must have exactly one parameter.",
+                diagnostic_codes::A_SET_ACCESSOR_MUST_HAVE_EXACTLY_ONE_PARAMETER,
+            );
+        }
+        true
     }
 
     /// Parse class members

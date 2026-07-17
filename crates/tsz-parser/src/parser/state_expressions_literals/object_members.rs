@@ -670,21 +670,31 @@ impl ParserState {
             self.parse_expected(SyntaxKind::CloseParenToken);
         }
 
+        // TS1049: A 'set' accessor must have exactly one parameter. tsc's
+        // `checkGrammarAccessor` reports the count error before the other
+        // `set`-specific grammar checks, so a wrong count suppresses them.
+        let count_error =
+            had_open_paren && self.report_set_accessor_parameter_count(name, &parameters);
+
         if self.parse_optional(SyntaxKind::ColonToken) {
             use tsz_common::diagnostics::diagnostic_codes;
-            // Report error at the accessor name, matching tsc behavior
-            if let Some(name_node) = self.arena.get(name) {
-                self.parse_error_at(
-                    name_node.pos,
-                    name_node.end - name_node.pos,
-                    "A 'set' accessor cannot have a return type annotation.",
-                    diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_A_RETURN_TYPE_ANNOTATION,
-                );
-            } else {
-                self.parse_error_at_current_token(
-                    "A 'set' accessor cannot have a return type annotation.",
-                    diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_A_RETURN_TYPE_ANNOTATION,
-                );
+            // Report error at the accessor name, matching tsc behavior. A wrong
+            // parameter count already fired TS1049, so tsc's early return
+            // suppresses this one.
+            if !count_error {
+                if let Some(name_node) = self.arena.get(name) {
+                    self.parse_error_at(
+                        name_node.pos,
+                        name_node.end - name_node.pos,
+                        "A 'set' accessor cannot have a return type annotation.",
+                        diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_A_RETURN_TYPE_ANNOTATION,
+                    );
+                } else {
+                    self.parse_error_at_current_token(
+                        "A 'set' accessor cannot have a return type annotation.",
+                        diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_A_RETURN_TYPE_ANNOTATION,
+                    );
+                }
             }
             let _ = self.parse_return_type();
         }
