@@ -918,21 +918,6 @@ impl<'a> CheckerState<'a> {
             {
                 return (TypeId::ANY, jsdoc_declared_type);
             }
-            // A bare `unique symbol` read at a variable-like binding widens to
-            // `symbol`, matching tsc's `getWidenedUniqueESSymbolType` for
-            // mutable/const locations. This is distinct from literal-freshness
-            // widening: it fires for a *non-fresh* alias of an existing unique
-            // symbol (`let p = cs` / `const p = cs`) for `let`/`const`/`var`
-            // alike, whereas literal widening preserves `const`. A freshly
-            // minted `const X = Symbol()` reaches the const branch below with a
-            // plain `symbol` initializer type and is upgraded to its own
-            // `typeof X` identity there, and an explicit `typeof`/`unique symbol`
-            // annotation was handled above, so both stay unique. Only a *bare*
-            // unique symbol widens — a union member (`typeof a | typeof b`) is
-            // preserved (verified against tsc 7.0.2).
-            if self.binding_initializer_widens_unique_symbol(init_type) {
-                return (TypeId::SYMBOL, jsdoc_declared_type);
-            }
             // Note: Freshness is tracked by the TypeId flags.
             // Fresh vs non-fresh object types are interned distinctly.
             if self.is_const_variable_declaration(facts.decl_idx) {

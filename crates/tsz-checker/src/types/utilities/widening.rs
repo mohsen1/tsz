@@ -146,28 +146,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Whether a variable-like binding initializer of type `init_type` is a
-    /// *bare* `unique symbol` and therefore widens to `symbol`, matching tsc's
-    /// `getWidenedUniqueESSymbolType` at mutable/const locations (`let p = cs`,
-    /// `const p = cs`, `var p = cs` all widen; an explicit `typeof`/`unique
-    /// symbol` annotation or a freshly minted `const X = Symbol()` are handled
-    /// by their own paths and stay unique). Resolves a semantic `Lazy` ref so an
-    /// identifier read of a declared unique symbol is recognized. Only a bare
-    /// unique symbol widens — a union member (`typeof a | typeof b`) is kept, so
-    /// the check is deliberately on the whole type, not its members.
-    pub(crate) fn binding_initializer_widens_unique_symbol(&mut self, init_type: TypeId) -> bool {
-        // Intrinsics (`string`, `symbol`, …) are never a `unique symbol` and
-        // never resolve to one, so skip the evaluation for the common case.
-        if init_type.is_intrinsic() {
-            return false;
-        }
-        if crate::query_boundaries::common::is_unique_symbol_type(self.ctx.types, init_type) {
-            return true;
-        }
-        let evaluated = self.evaluate_type_with_env(init_type);
-        crate::query_boundaries::common::is_unique_symbol_type(self.ctx.types, evaluated)
-    }
-
     /// Widen only enum member types to their parent enum type.
     ///
     /// Unlike `widen_initializer_type_for_mutable_binding`, this does NOT widen

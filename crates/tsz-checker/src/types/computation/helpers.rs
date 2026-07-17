@@ -1044,21 +1044,6 @@ impl<'a> CheckerState<'a> {
         if var_decl.initializer.is_some() {
             let init_type = self.get_type_of_node(var_decl.initializer);
 
-            // A bare `unique symbol` read at a variable-like binding widens to
-            // `symbol`, matching tsc's `getWidenedUniqueESSymbolType` for
-            // mutable/const locations. This is distinct from literal-freshness
-            // widening: it fires for a *non-fresh* alias of an existing unique
-            // symbol (`let p = cs` / `const p = cs`) for `let`/`const`/`var`
-            // alike, whereas literal widening preserves `const`. A freshly
-            // minted `const X = Symbol()` already returned above with its own
-            // `typeof X` identity, and an explicit `typeof`/`unique symbol`
-            // annotation returned earlier, so both stay unique. Only a *bare*
-            // unique symbol widens — a union member (`typeof a | typeof b`) is
-            // preserved (verified against tsc 7.0.2).
-            if self.binding_initializer_widens_unique_symbol(init_type) {
-                return TypeId::SYMBOL;
-            }
-
             // Rule #10: Literal Widening (with freshness)
             // For mutable bindings (let/var), the freshness boundary widens
             // fresh literal (and enum member) initializers to their base;
