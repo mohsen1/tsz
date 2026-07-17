@@ -330,3 +330,88 @@ const chk: typeof sA | typeof sB = u;
         "a union destructuring element must not widen to symbol, got {c:?}"
     );
 }
+
+// --- #60: a bare `unique symbol` class-field alias widens to `symbol` ---
+// tsc widens a bare unique-symbol *alias* class field (static/instance,
+// readonly or mutable) to `symbol`, EXCEPT a freshly minted `= Symbol()`
+// factory (whose unique symbol's owning symbol is the field itself) or an
+// explicit `typeof`/`unique symbol` annotation. Verified vs tsc 7.0.2.
+
+#[test]
+fn static_readonly_field_unique_symbol_alias_widens_to_symbol() {
+    let c = codes(
+        r#"
+declare const cs: unique symbol;
+class C { static readonly ra = cs; }
+const chk: typeof cs = C.ra;
+"#,
+    );
+    assert!(
+        c.contains(&2322),
+        "static readonly ra = cs must widen to symbol, got {c:?}"
+    );
+}
+
+#[test]
+fn instance_readonly_field_unique_symbol_alias_widens_to_symbol() {
+    let c = codes(
+        r#"
+declare const cs: unique symbol;
+class C { readonly ia = cs; }
+declare const c: C;
+const chk: typeof cs = c.ia;
+"#,
+    );
+    assert!(
+        c.contains(&2322),
+        "readonly ia = cs must widen to symbol, got {c:?}"
+    );
+}
+
+#[test]
+fn renamed_readonly_field_unique_symbol_alias_widens() {
+    // Different binder names — proves the widening is structural.
+    let c = codes(
+        r#"
+declare const alpha: unique symbol;
+class K { static readonly beta = alpha; }
+const chk: typeof alpha = K.beta;
+"#,
+    );
+    assert!(
+        c.contains(&2322),
+        "renamed readonly field alias must widen, got {c:?}"
+    );
+}
+
+#[test]
+fn static_readonly_field_symbol_factory_stays_unique() {
+    // A freshly minted `static readonly rf = Symbol()` keeps its own `typeof rf`
+    // identity — its unique symbol's owning symbol IS the field.
+    let c = codes(
+        r#"
+class C { static readonly rf = Symbol(); }
+const chk: typeof C.rf = C.rf;
+"#,
+    );
+    assert!(
+        !c.contains(&2322),
+        "static readonly rf = Symbol() must keep its unique identity, got {c:?}"
+    );
+}
+
+#[test]
+fn annotated_readonly_field_unique_symbol_stays_unique() {
+    // An explicit `typeof cs` annotation preserves the unique identity.
+    let c = codes(
+        r#"
+declare const cs: unique symbol;
+class C { static readonly rt: typeof cs = cs; }
+const chk: typeof cs = C.rt;
+"#,
+    );
+    assert!(
+        !c.contains(&2322),
+        "annotated readonly field must stay unique, got {c:?}"
+    );
+}

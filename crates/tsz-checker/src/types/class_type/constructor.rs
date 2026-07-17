@@ -712,7 +712,13 @@ impl<'a> CheckerState<'a> {
                         // When the class expression is contextually typed by an
                         // interface with a literal property type (e.g., `x: "a"`),
                         // tsc preserves the literal type rather than widening.
-                        if readonly || has_contextual_member {
+                        if readonly {
+                            // A bare `unique symbol` alias in a static readonly field
+                            // widens to `symbol` (tsc getWidenedUniqueESSymbolType); a
+                            // `static readonly f = Symbol()` factory keeps its own
+                            // `typeof f` identity. No-op for any non-alias readonly type.
+                            self.widen_readonly_field_unique_symbol_alias(member_idx, init_type)
+                        } else if has_contextual_member {
                             init_type
                         } else {
                             self.widen_literal_type(init_type)

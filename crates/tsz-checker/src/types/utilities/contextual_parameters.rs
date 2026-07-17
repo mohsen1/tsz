@@ -245,6 +245,38 @@ impl<'a> CheckerState<'a> {
         Some(self.wrap_static_readonly_unique_symbol_type(member_idx, prop, raw))
     }
 
+    /// Widen a readonly class field's un-annotated bare `unique symbol` *alias*
+    /// initializer to `symbol`, matching tsc's `getWidenedUniqueESSymbolType`
+    /// (the `!declaration.type && type.symbol !== getSymbolOfDeclaration` rule it
+    /// applies to a field the same as a variable). A freshly minted
+    /// `static readonly f = Symbol()` — whose unique symbol's owning symbol *is*
+    /// the field — keeps its `typeof f` identity, and an annotated field returns
+    /// its annotation type before reaching the initializer path. A mutable field
+    /// already widens through the freshness path, so only the readonly branch
+    /// needs this. Bare-only (`is_unique_symbol_type`), so a union member is
+    /// preserved.
+    pub(crate) fn widen_readonly_field_unique_symbol_alias(
+        &self,
+        member_idx: NodeIndex,
+        init_type: TypeId,
+    ) -> TypeId {
+        if !crate::query_boundaries::common::is_unique_symbol_type(self.ctx.types, init_type) {
+            return init_type;
+        }
+        let Some(sym_ref) =
+            crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, init_type)
+        else {
+            return init_type;
+        };
+        let Some(field_sym) = self.ctx.binder.get_node_symbol(member_idx) else {
+            return init_type;
+        };
+        if sym_ref.0 == field_sym.0 {
+            return init_type;
+        }
+        TypeId::SYMBOL
+    }
+
     /// Like [`effective_class_property_declared_type`] but returns the raw
     /// annotation type, without the `static readonly: unique symbol` wrap.
     /// Used at the declaration-site initializer assignability check, where

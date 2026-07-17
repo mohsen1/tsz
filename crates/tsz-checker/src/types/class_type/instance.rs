@@ -571,7 +571,12 @@ impl<'a> CheckerState<'a> {
                         // a declared annotation, matching tsc's
                         // getWidenedLiteralLikeTypeForContextualType.
                         if is_readonly {
-                            init_type
+                            // A bare `unique symbol` alias in a readonly field
+                            // widens to `symbol` (tsc getWidenedUniqueESSymbolType);
+                            // a freshly minted `= Symbol()` factory keeps its own
+                            // `typeof f` identity. Mutable fields already widen via
+                            // the freshness path below.
+                            self.widen_readonly_field_unique_symbol_alias(member_idx, init_type)
                         } else {
                             self.widen_expression_type_if_fresh(prop.initializer, init_type)
                         }
