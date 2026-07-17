@@ -59,6 +59,32 @@ interface S3<TVal = unknown> extends Remap<BaseOpts<TVal>, 'key'> { more?: boole
     );
 }
 
+// Nested passthrough alias chains over a free type parameter, and concrete-arg
+// controls, must all stay clean: the outer substitution yields an object-typed
+// application (`Base<V>` / an inner alias application), which is a valid base.
+#[test]
+fn interface_extends_nested_and_concrete_alias_bases_no_ts2312() {
+    let codes = check(
+        r#"
+interface BaseOpts<TVal = unknown> { key?: unknown; val?: TVal; }
+type IdA<T> = T;
+type IdB<T> = T;
+type Inter<T> = T & { extra: {} };
+// nested alias chains over the enclosing free param
+interface N1<TVal = unknown> extends IdA<IdB<BaseOpts<TVal>>> {}
+interface N2<TVal = unknown> extends IdA<Inter<BaseOpts<TVal>>> {}
+interface N3<TVal = unknown> extends Inter<IdA<BaseOpts<TVal>>> {}
+// concrete-arg controls (clean before and after the fix)
+interface C1 extends IdA<BaseOpts<number>> {}
+interface C2 extends IdA<IdB<BaseOpts<string>>> {}
+"#,
+    );
+    assert!(
+        !codes.contains(&2312),
+        "nested passthrough alias chains and concrete-arg alias bases are valid interface bases (no TS2312). Got: {codes:?}"
+    );
+}
+
 // Negative: a genuinely generic non-object alias body stays an invalid base after
 // substitution and must keep TS2312 (matching tsc). Each of the five bases is
 // independently invalid, so tsc emits five TS2312.
