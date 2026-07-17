@@ -38,6 +38,26 @@ pub(crate) const fn user_type_param_info(
     type_param_info(name, constraint, default, is_const, TypeParamOrigin::User)
 }
 
+/// Construct the [`TypeParamOrigin::OverloadRenamed`] origin for an overload
+/// signature type parameter that `overload_signature_for_inference` renamed to
+/// a program-unique `__overload_sig_*` atom for name-keyed inference.
+///
+/// `source_origin` is the parameter's origin before this rename; when it is
+/// itself an already-renamed origin the earliest declared display name is
+/// preserved so a chain of renames never leaks the synthetic atom into a
+/// diagnostic. `fallback_name` is the source parameter's own declared name,
+/// used when it carried no prior display name.
+pub(crate) fn overload_renamed_type_param_origin(
+    source_origin: TypeParamOrigin,
+    fallback_name: Atom,
+) -> TypeParamOrigin {
+    TypeParamOrigin::OverloadRenamed {
+        display_name: source_origin
+            .overload_rename_display_name()
+            .unwrap_or(fallback_name),
+    }
+}
+
 pub(crate) fn type_param(db: &dyn TypeDatabase, info: TypeParamInfo) -> TypeId {
     db.type_param(info)
 }

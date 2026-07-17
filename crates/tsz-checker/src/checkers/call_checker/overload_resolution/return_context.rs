@@ -2,7 +2,7 @@ use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
 use crate::query_boundaries::construct_signatures::function_shape_from_call_signature_preserving_method;
 use crate::state::CheckerState;
 use std::fmt::Write;
-use tsz_solver::{CallSignature, ParamInfo, TypeId, TypeParamInfo, TypeParamOrigin};
+use tsz_solver::{CallSignature, ParamInfo, TypeId, TypeParamInfo};
 
 use super::SelectedTypePredicate;
 
@@ -262,9 +262,10 @@ impl<'a> CheckerState<'a> {
             // name-keyed inference; record the original declared name so the
             // printer never leaks the placeholder into a diagnostic (TS2769
             // candidate signatures / argument-not-assignable elaborations).
-            let renamed_origin = TypeParamOrigin::OverloadRenamed {
-                display_name: tp.origin.overload_rename_display_name().unwrap_or(tp.name),
-            };
+            let renamed_origin =
+                crate::query_boundaries::signature_building::overload_renamed_type_param_origin(
+                    tp.origin, tp.name,
+                );
             let fresh_type = self.ctx.types.factory().type_param(TypeParamInfo {
                 name: fresh_name,
                 constraint: None,
