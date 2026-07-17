@@ -113,11 +113,11 @@ dir_size_kb() {
 # in -X mode, so we filter the candidate list ourselves instead.
 
 # Always protected
-PROTECTED_RE='^(\.env|\.env\.)'
+PROTECTED_RE='^(\.env|\.env\.|scripts/node_modules/)'
 
 # Unless --full, also protect Rust build caches
 if [[ "$FULL" == false ]]; then
-  PROTECTED_RE='^(\.env|\.env\.|\.target\/|\.target-bench\/|target\/)'
+  PROTECTED_RE='^(\.env|\.env\.|scripts/node_modules/|\.target\/|\.target-bench\/|target\/)'
 fi
 
 # Filter helper: reads "Would remove X" lines from git clean -n, strips protected
@@ -196,9 +196,14 @@ for d in "${CLEAN_DIRS[@]}"; do
   [[ -d "$REPO_ROOT/$d" ]] && rm -rf "$REPO_ROOT/$d" 2>/dev/null || true
 done
 
-# Phase 4: Clean nested caches in scripts/ subdirectories
-find "$REPO_ROOT/scripts" -maxdepth 3 -type d \
+# Phase 4: Clean nested caches in scripts/ subdirectories.
+# PRESERVE scripts/node_modules itself: it is the sanctioned pinned-tsc oracle
+# location (scripts/setup/ensure-pinned-typescript.sh) that conformance and
+# canary tooling resolve — deleting it silently no-ops every oracle run until
+# someone re-ensures it. Only caches nested BELOW scripts/* are cleaned.
+find "$REPO_ROOT/scripts" -mindepth 2 -maxdepth 3 -type d \
   \( -name "node_modules" -o -name "dist" -o -name ".cache" \) \
+  -not -path "$REPO_ROOT/scripts/node_modules/*" \
   -exec rm -rf {} + 2>/dev/null || true
 
 # Phase 5: Remove .DS_Store files everywhere
