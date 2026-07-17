@@ -137,17 +137,29 @@ impl ParserState {
             return;
         };
 
+        // `await using` (USING | CONST bits) reports TS1495; plain `using`
+        // (USING bit only) reports TS1491 — tsc distinguishes the two in its
+        // using-declaration modifier branch.
+        let is_await_using = self.arena.get(declaration_list).is_some_and(|node| {
+            node.has_any_node_flags(node_flags::USING) && node.has_any_node_flags(node_flags::CONST)
+        });
+
         let modifier_text = SyntaxKind::try_from_u16(modifier.kind)
             .and_then(tsz_scanner::keyword_to_text_static)
             .unwrap_or_default();
-        let message = diagnostic_messages::MODIFIER_CANNOT_APPEAR_ON_A_USING_DECLARATION
-            .replace("{0}", modifier_text);
-        self.parse_error_at(
-            modifier.pos,
-            modifier.end - modifier.pos,
-            &message,
-            diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_USING_DECLARATION,
-        );
+        let (message_template, code) = if is_await_using {
+            (
+                diagnostic_messages::MODIFIER_CANNOT_APPEAR_ON_AN_AWAIT_USING_DECLARATION,
+                diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_AN_AWAIT_USING_DECLARATION,
+            )
+        } else {
+            (
+                diagnostic_messages::MODIFIER_CANNOT_APPEAR_ON_A_USING_DECLARATION,
+                diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_USING_DECLARATION,
+            )
+        };
+        let message = message_template.replace("{0}", modifier_text);
+        self.parse_error_at(modifier.pos, modifier.end - modifier.pos, &message, code);
     }
 
     pub(crate) fn parse_variable_declaration_name(&mut self) -> NodeIndex {

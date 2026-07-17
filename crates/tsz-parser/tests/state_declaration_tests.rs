@@ -1696,27 +1696,35 @@ fn using_declaration_declare_modifier_reports_ts1491() {
 }
 
 #[test]
-fn await_using_declaration_export_modifier_reports_ts1491() {
-    // The `await using` (async) form is rejected the same way as plain `using`.
+fn await_using_declaration_export_modifier_reports_ts1495() {
+    // tsc reports a modifier on an `await using` declaration as TS1495 (distinct
+    // from plain `using`'s TS1491) — see conformance `awaitUsingDeclarations.11`.
     let source = "export await using e = d;\n";
     let diags = collect_using_modifier_diags(source);
     assert!(
         diags.iter().any(|(code, _start, msg)| *code
-            == diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_USING_DECLARATION
+            == diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_AN_AWAIT_USING_DECLARATION
             && msg.contains("'export'")),
-        "expected TS1491 'export' on `export await using`, got {diags:?}"
+        "expected TS1495 'export' on `export await using`, got {diags:?}"
+    );
+    assert!(
+        !diags
+            .iter()
+            .any(|(code, _, _)| *code
+                == diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_USING_DECLARATION),
+        "must not also report the plain-using TS1491, got {diags:?}"
     );
 }
 
 #[test]
-fn await_using_declaration_declare_modifier_reports_ts1491() {
+fn await_using_declaration_declare_modifier_reports_ts1495() {
     let source = "declare await using f = d;\n";
     let diags = collect_using_modifier_diags(source);
     assert!(
         diags.iter().any(|(code, _start, msg)| *code
-            == diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_USING_DECLARATION
+            == diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_AN_AWAIT_USING_DECLARATION
             && msg.contains("'declare'")),
-        "expected TS1491 'declare' on `declare await using`, got {diags:?}"
+        "expected TS1495 'declare' on `declare await using`, got {diags:?}"
     );
 }
 

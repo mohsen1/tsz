@@ -971,6 +971,9 @@ impl ParserState {
 
         // Check for for-in or for-of
         if self.is_token(SyntaxKind::InKeyword) {
+            // TS1493/1494: the left-hand side of a `for...in` cannot be a
+            // `using` / `await using` declaration.
+            self.report_for_in_using_left_hand_side(initializer);
             // TS1005: for-await can only be used with 'of', not 'in'
             if await_modifier {
                 self.parse_error_at_current_token("'of' expected.", diagnostic_codes::EXPECTED);
@@ -1278,11 +1281,60 @@ impl ParserState {
         declarations
     }
 
+    /// TS1493/TS1494: the left-hand side of a `for...in` statement cannot be a
+    /// `using` (TS1493) or `await using` (TS1494) declaration. Reported on the
+    /// declaration-list initializer, mirroring tsc's
+    /// `checkGrammarForInOrForOfStatement`. A `using` list carries the `USING`
+    /// flag; `await using` additionally carries the `CONST` bit (`AWAIT_USING`).
+    fn report_for_in_using_left_hand_side(&mut self, initializer: NodeIndex) {
+        use crate::parser::node_flags;
+        let Some(node) = self.arena.get(initializer) else {
+            return;
+        };
+        if !node.has_any_node_flags(node_flags::USING) {
+            return;
+        }
+        let (message, code) = if node.has_any_node_flags(node_flags::CONST) {
+            (
+                "The left-hand side of a 'for...in' statement cannot be an 'await using' declaration.",
+                diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_CANNOT_BE_AN_AWAIT_USING_DECLARATION,
+            )
+        } else {
+            (
+                "The left-hand side of a 'for...in' statement cannot be a 'using' declaration.",
+                diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_CANNOT_BE_A_USING_DECLARATION,
+            )
+        };
+        self.parse_error_at(node.pos, node.end - node.pos, message, code);
+    }
+
     fn parse_for_variable_declaration_entry(
         &mut self,
         declaration_keyword: SyntaxKind,
     ) -> NodeIndex {
         let decl_start = self.token_pos();
+
+        // TS1492: `using` / `await using` declarations may not have binding
+        // patterns. The keyword is `await` for `await using` in a for header
+        // (see `parse_for_variable_declaration_declaration_keyword`).
+        if matches!(
+            declaration_keyword,
+            SyntaxKind::UsingKeyword | SyntaxKind::AwaitKeyword
+        ) && (self.is_token(SyntaxKind::OpenBraceToken)
+            || self.is_token(SyntaxKind::OpenBracketToken))
+        {
+            let decl_kind = if declaration_keyword == SyntaxKind::AwaitKeyword {
+                "await using"
+            } else {
+                "using"
+            };
+            let message = diagnostic_messages::DECLARATIONS_MAY_NOT_HAVE_BINDING_PATTERNS
+                .replace("{0}", decl_kind);
+            self.parse_error_at_current_token(
+                &message,
+                diagnostic_codes::DECLARATIONS_MAY_NOT_HAVE_BINDING_PATTERNS,
+            );
+        }
 
         let name = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_object_binding_pattern()

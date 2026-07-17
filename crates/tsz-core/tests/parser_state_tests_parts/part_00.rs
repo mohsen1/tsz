@@ -284,6 +284,88 @@ fn test_parser_object_get_accessor_parameters_report_ts1054() {
 }
 
 #[test]
+fn test_parser_for_in_using_declaration_reports_ts1493_ts1494() {
+    // The LHS of a `for...in` cannot be a `using` (TS1493) or `await using`
+    // (TS1494) declaration. Vary the loop variable to keep the check structural.
+    for (source, code) in [
+        ("for (using resource in {}) {}", 1493u32),
+        ("async function m() { for (await using handle in {}) {} }", 1494u32),
+    ] {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        parser.parse_source_file();
+        let codes: Vec<u32> = parser
+            .get_diagnostics()
+            .iter()
+            .map(|diag| diag.code)
+            .collect();
+        assert!(
+            codes.contains(&code),
+            "expected TS{code} for `{source}`: {:?}",
+            parser.get_diagnostics()
+        );
+    }
+}
+
+#[test]
+fn test_parser_for_head_using_binding_pattern_reports_ts1492() {
+    for source in [
+        "for (using {} of []) {}",
+        "async function m() { for (await using {} of []) {} }",
+    ] {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        parser.parse_source_file();
+        let codes: Vec<u32> = parser
+            .get_diagnostics()
+            .iter()
+            .map(|diag| diag.code)
+            .collect();
+        assert!(
+            codes.contains(&diagnostic_codes::DECLARATIONS_MAY_NOT_HAVE_BINDING_PATTERNS),
+            "expected TS1492 for `{source}`: {:?}",
+            parser.get_diagnostics()
+        );
+    }
+}
+
+#[test]
+fn test_parser_await_using_modifier_reports_ts1495_not_ts1491() {
+    // `await using` with a modifier is TS1495; plain `using` stays TS1491.
+    let mut parser = ParserState::new(
+        "test.ts".to_string(),
+        "export await using resource = null;".to_string(),
+    );
+    parser.parse_source_file();
+    let codes: Vec<u32> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|diag| diag.code)
+        .collect();
+    assert!(
+        codes.contains(&diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_AN_AWAIT_USING_DECLARATION)
+            && !codes.contains(&diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_USING_DECLARATION),
+        "expected TS1495 (not TS1491) for `export await using`: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut parser = ParserState::new(
+        "test.ts".to_string(),
+        "export using handle = null;".to_string(),
+    );
+    parser.parse_source_file();
+    let codes: Vec<u32> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|diag| diag.code)
+        .collect();
+    assert!(
+        codes.contains(&diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_USING_DECLARATION)
+            && !codes.contains(&diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_AN_AWAIT_USING_DECLARATION),
+        "expected TS1491 (not TS1495) for `export using`: {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
 fn test_parser_regex_braced_unicode_escape_out_of_range_reports_ts1198() {
     // Under the `u`/`v` flag, `\u{...}` is a code-point escape whose value must
     // be <= 0x10FFFF. Vary the literal to keep the check structural.
