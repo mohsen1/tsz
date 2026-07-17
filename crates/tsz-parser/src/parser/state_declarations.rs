@@ -863,6 +863,7 @@ impl ParserState {
                     modifiers,
                     parameters: Self::make_node_list(vec![]),
                     type_annotation,
+                    had_parameter_arity_error: true,
                 },
             );
         }
@@ -1097,6 +1098,7 @@ impl ParserState {
                 modifiers,
                 parameters: Self::make_node_list(vec![param_node]),
                 type_annotation,
+                had_parameter_arity_error: has_multiple_params,
             },
         )
     }
