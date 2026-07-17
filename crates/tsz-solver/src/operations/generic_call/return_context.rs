@@ -87,16 +87,24 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let Some(TypeData::TypeParameter(info)) = self.interner.lookup(resolved) else {
                 continue;
             };
-            // Only re-generalize when the call type parameter resolved to a
-            // synthetic inference placeholder — a higher-order source parameter
-            // (`__infer_src_*`) minted for a generic function argument, or a
-            // call-local inference variable. When it resolved to a *free
-            // enclosing* type parameter (e.g. the outer `T` of the caller's own
-            // generic function, `User`/`DeclScoped` origin), tsc keeps it as a
-            // free reference in the result (`() => T`) rather than quantifying it
-            // into a fresh signature (`<T>() => T`): that type parameter is bound
-            // by the enclosing scope, not by this call's result.
-            if !info.is_infer_placeholder() {
+            // Re-generalize in exactly two cases. (1) The call type parameter
+            // resolved to a synthetic inference placeholder — a higher-order
+            // source parameter (`__infer_src_*`) minted for a generic function
+            // argument, or a call-local inference variable. (2) The callee's own
+            // type parameter stayed UNRESOLVED (identity substitution — the
+            // context-sensitive-argument case, e.g. `arrayFilter(x => …)`
+            // against a generic contextual signature): tsc keeps the call
+            // generic, so the result re-quantifies the callee's own parameter.
+            // When it instead resolved to a *free enclosing* type parameter
+            // (the outer `T` of the caller's own generic function — a DIFFERENT
+            // parameter name), tsc keeps it as a free reference in the result
+            // (`() => T`) rather than quantifying it into a fresh signature
+            // (`<T>() => T`): that type parameter is bound by the enclosing
+            // scope, not by this call's result. (A same-named enclosing
+            // parameter is indistinguishable from the unresolved-own case under
+            // name-keyed `User` identity — #14344; the hoist is the pre-existing
+            // behavior for that corner.)
+            if !info.is_infer_placeholder() && info.name != tp.name {
                 continue;
             }
             if seen.insert(info.name)
