@@ -185,13 +185,7 @@ impl<'a> TypeFormatter<'a> {
         rest_param: &ParamInfo,
     ) -> Option<Vec<String>> {
         let rest_name_atom = rest_param.name?;
-        // tsc expands a `readonly [..]` rest tuple the same as a mutable one
-        // (the readonly modifier is dropped from the expanded parameters), so
-        // peel one `ReadonlyType` wrapper before the tuple check.
-        let tuple_type = match self.interner.lookup(rest_param.type_id) {
-            Some(TypeData::ReadonlyType(inner)) => inner,
-            _ => rest_param.type_id,
-        };
+        let tuple_type = self.resolve_rest_param_display_tuple(rest_param.type_id)?;
         let Some(TypeData::Tuple(list_id)) = self.interner.lookup(tuple_type) else {
             return None;
         };
@@ -217,6 +211,63 @@ impl<'a> TypeFormatter<'a> {
             out.push(self.render_param_display(&name, e.optional, e.rest, e.type_id));
         }
         Some(out)
+    }
+
+    /// Resolve a rest parameter's declared type to the concrete tuple to expand
+    /// for display, or `None` to keep the written `...rest: T` form.
+    ///
+    /// A directly-written tuple (optionally behind one `ReadonlyType` wrapper)
+    /// is returned as-is. tsc also expands a rest parameter whose type is a
+    /// *type alias* or *generic application* that resolves to a tuple:
+    /// `type R = [a, b]; ...rest: R` renders like the inline tuple, and this
+    /// holds through nested and generic aliases
+    /// (`type R<T> = [T, number]; ...rest: R<string>`). Such a `Lazy(DefId)` /
+    /// `Application` is evaluated to its underlying type through the formatter's
+    /// own definition store, then re-checked for a tuple. A resolved array
+    /// (`type R = number[]`) or a tuple with a non-trailing rest is left
+    /// unexpanded, matching tsc, which keeps the written alias form for those.
+    fn resolve_rest_param_display_tuple(&self, type_id: TypeId) -> Option<TypeId> {
+        // Fast path: a directly-written tuple, optionally behind one readonly
+        // wrapper (tsc drops the `readonly` modifier when expanding). This keeps
+        // the common inline-tuple case off the evaluator.
+        let peeled = self.peel_readonly_type(type_id);
+        if matches!(self.interner.lookup(peeled), Some(TypeData::Tuple(_))) {
+            return Some(peeled);
+        }
+        // Only an alias, a generic application, or one of those behind a
+        // readonly wrapper can resolve to a different tuple; evaluating anything
+        // else would be wasted display work.
+        if !matches!(
+            self.interner.lookup(type_id),
+            Some(TypeData::Lazy(_) | TypeData::Application(_) | TypeData::ReadonlyType(_))
+        ) {
+            return None;
+        }
+        // Resolve through the formatter's definition store: it carries the alias
+        // bodies and generic type-parameter lists the evaluator needs, which the
+        // default (`NoopResolver`) evaluator does not have. Without a store the
+        // alias cannot be named either, so keeping the written form is correct.
+        let def_store = self.def_store?;
+        let resolver = crate::caches::query_cache_evaluation::StoreOnlyResolver::new(def_store);
+        let evaluated = crate::evaluation::evaluate::evaluate_type_with_resolver(
+            self.interner,
+            &resolver,
+            type_id,
+        );
+        if evaluated == type_id {
+            return None;
+        }
+        let peeled = self.peel_readonly_type(evaluated);
+        matches!(self.interner.lookup(peeled), Some(TypeData::Tuple(_))).then_some(peeled)
+    }
+
+    /// Peel one `ReadonlyType` wrapper. tsc drops the `readonly` modifier when
+    /// it expands a rest tuple, so the wrapper must not block the tuple check.
+    fn peel_readonly_type(&self, type_id: TypeId) -> TypeId {
+        match self.interner.lookup(type_id) {
+            Some(TypeData::ReadonlyType(inner)) => inner,
+            _ => type_id,
+        }
     }
 
     /// Format a signature with the given separator between params and return type.
