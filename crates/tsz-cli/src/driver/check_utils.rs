@@ -1344,6 +1344,7 @@ pub(super) const fn is_structural_parse_error(code: u32) -> bool {
 /// - TS1014: A rest parameter must be last in a parameter list
 /// - TS1047: A rest parameter cannot be optional
 /// - TS1048: A rest parameter cannot have an initializer
+/// - TS1096: An index signature must have exactly one parameter
 /// - TS1185: Merge conflict marker encountered
 /// - TS1214: Identifier expected (strict mode reserved word)
 /// - TS1262: 'await' at top level
@@ -1351,6 +1352,14 @@ pub(super) const fn is_structural_parse_error(code: u32) -> bool {
 ///
 /// tsc emits TS7006/TS7019 even in the presence of these errors because
 /// the parameter identity (name) is still valid and can be type-checked.
+///
+/// TS1096 belongs here because tsc reports it from
+/// `checkGrammarIndexSignatureParameters` at CHECK time on a well-formed index
+/// signature (the multi-parameter AST parses fine), so it never participates in
+/// tsc's `hasParseDiagnostics` suppression. tsz emits it during parsing instead,
+/// so without this entry a stray `[a, b]` would set `has_syntax_parse_errors` and
+/// suppress unrelated check-time grammar diagnostics elsewhere in the file
+/// (e.g. TS1036 in an ambient namespace, and nearby TS1021).
 pub(super) const fn is_non_suppressing_parse_error(code: u32) -> bool {
     matches!(
         code,
@@ -1358,6 +1367,7 @@ pub(super) const fn is_non_suppressing_parse_error(code: u32) -> bool {
         | 1014 // A rest parameter must be last in a parameter list
         | 1047 // A rest parameter cannot be optional
         | 1048 // A rest parameter cannot have an initializer
+        | 1096 // An index signature must have exactly one parameter (check-time grammar in tsc)
         | 1185 // Merge conflict marker
         | 1191 // An import declaration cannot have modifiers (grammar constraint, AST is valid)
         | 1214 // Identifier expected (strict mode reserved word)

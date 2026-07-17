@@ -32,50 +32,103 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // Check different declaration types for 'declare' modifier
-            let modifiers = match stmt_node.kind {
-                syntax_kind_ext::FUNCTION_DECLARATION => {
-                    self.ctx.arena.get_function(stmt_node).map(|f| &f.modifiers)
+            // `export declare X` parses as EXPORT_DECLARATION wrapping the real
+            // declaration; the wrapper's own modifiers are always None, so the
+            // `declare` modifier lives on the inner clause. Unwrap so both the
+            // modifier check and the nested-namespace recursion see the real
+            // declaration (mirrors `check_initializers_in_ambient_body`).
+            let decl_idx = if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                match self.ctx.arena.get_export_decl(stmt_node) {
+                    Some(export_decl) if export_decl.export_clause.is_some() => {
+                        export_decl.export_clause
+                    }
+                    _ => continue,
                 }
-                syntax_kind_ext::VARIABLE_STATEMENT => {
-                    self.ctx.arena.get_variable(stmt_node).map(|v| &v.modifiers)
-                }
-                syntax_kind_ext::CLASS_DECLARATION => {
-                    self.ctx.arena.get_class(stmt_node).map(|c| &c.modifiers)
-                }
-                syntax_kind_ext::INTERFACE_DECLARATION => self
-                    .ctx
-                    .arena
-                    .get_interface(stmt_node)
-                    .map(|i| &i.modifiers),
-                syntax_kind_ext::TYPE_ALIAS_DECLARATION => self
-                    .ctx
-                    .arena
-                    .get_type_alias(stmt_node)
-                    .map(|t| &t.modifiers),
-                syntax_kind_ext::ENUM_DECLARATION => {
-                    self.ctx.arena.get_enum(stmt_node).map(|e| &e.modifiers)
-                }
-                syntax_kind_ext::MODULE_DECLARATION => {
-                    self.ctx.arena.get_module(stmt_node).map(|m| &m.modifiers)
-                }
-                syntax_kind_ext::IMPORT_EQUALS_DECLARATION
-                | syntax_kind_ext::IMPORT_DECLARATION => self
-                    .ctx
-                    .arena
-                    .get_import_decl(stmt_node)
-                    .map(|i| &i.modifiers),
-                _ => None,
+            } else {
+                stmt_idx
             };
 
-            if let Some(mods) = modifiers
-                && let Some(declare_mod) = self.get_declare_modifier(mods)
-            {
+            // Resolve the redundant `declare` modifier (if any) and the nested
+            // ambient body to recurse into, dropping all arena borrows before
+            // the mutable diagnostic emission below.
+            let (declare_mod, nested_body) = {
+                let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                    continue;
+                };
+                let decl_kind = decl_node.kind;
+
+                // Check different declaration types for 'declare' modifier
+                let modifiers = match decl_kind {
+                    syntax_kind_ext::FUNCTION_DECLARATION => {
+                        self.ctx.arena.get_function(decl_node).map(|f| &f.modifiers)
+                    }
+                    syntax_kind_ext::VARIABLE_STATEMENT => {
+                        self.ctx.arena.get_variable(decl_node).map(|v| &v.modifiers)
+                    }
+                    syntax_kind_ext::CLASS_DECLARATION => {
+                        self.ctx.arena.get_class(decl_node).map(|c| &c.modifiers)
+                    }
+                    syntax_kind_ext::INTERFACE_DECLARATION => self
+                        .ctx
+                        .arena
+                        .get_interface(decl_node)
+                        .map(|i| &i.modifiers),
+                    syntax_kind_ext::TYPE_ALIAS_DECLARATION => self
+                        .ctx
+                        .arena
+                        .get_type_alias(decl_node)
+                        .map(|t| &t.modifiers),
+                    syntax_kind_ext::ENUM_DECLARATION => {
+                        self.ctx.arena.get_enum(decl_node).map(|e| &e.modifiers)
+                    }
+                    syntax_kind_ext::MODULE_DECLARATION => {
+                        self.ctx.arena.get_module(decl_node).map(|m| &m.modifiers)
+                    }
+                    syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                    | syntax_kind_ext::IMPORT_DECLARATION => self
+                        .ctx
+                        .arena
+                        .get_import_decl(decl_node)
+                        .map(|i| &i.modifiers),
+                    _ => None,
+                };
+                let declare_mod = modifiers.and_then(|mods| self.get_declare_modifier(mods));
+
+                // A nested namespace body is itself ambient, so redundant
+                // `declare` modifiers inside it are equally invalid. Recurse
+                // into it unless it carries its OWN `declare` (a `declare`
+                // positioned at/after the module start; dotted-namespace
+                // continuations clone the parent's `declare` at an earlier
+                // position and are treated as inherited). Own-declare roots are
+                // visited independently by the own-declare callback, so
+                // recursing into them would double-report TS1038.
+                let mut nested_body = None;
+                if decl_kind == syntax_kind_ext::MODULE_DECLARATION
+                    && let Some(module) = self.ctx.arena.get_module(decl_node)
+                    && module.body.is_some()
+                {
+                    let own_declare = self
+                        .get_declare_modifier(&module.modifiers)
+                        .and_then(|mod_idx| self.ctx.arena.get(mod_idx))
+                        .is_some_and(|mod_node| mod_node.pos >= decl_node.pos);
+                    if !own_declare {
+                        nested_body = Some(module.body);
+                    }
+                }
+
+                (declare_mod, nested_body)
+            };
+
+            if let Some(declare_mod) = declare_mod {
                 self.error_at_node(
                         declare_mod,
                         "A 'declare' modifier cannot be used in an already ambient context.",
                         diagnostic_codes::A_DECLARE_MODIFIER_CANNOT_BE_USED_IN_AN_ALREADY_AMBIENT_CONTEXT,
                     );
+            }
+
+            if let Some(nested_body) = nested_body {
+                self.check_declare_modifiers_in_ambient_body(nested_body);
             }
         }
     }

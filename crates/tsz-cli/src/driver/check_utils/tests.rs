@@ -1502,6 +1502,27 @@ fn regex_flag_errors_do_not_suppress_semantic_diagnostics() {
     );
 }
 
+#[test]
+fn index_signature_arity_error_does_not_suppress_grammar_diagnostics() {
+    // TS1096 (An index signature must have exactly one parameter) is a check-time
+    // grammar error in tsc (checkGrammarIndexSignatureParameters) on a well-formed
+    // AST, so it must not set has_syntax_parse_errors — otherwise a stray `[a, b]`
+    // would suppress unrelated check-time grammar diagnostics elsewhere in the file
+    // (e.g. TS1036 in an ambient namespace, and nearby TS1021).
+    assert!(
+        is_non_suppressing_parse_error(1096),
+        "TS1096 (index signature arity) should be non-suppressing"
+    );
+    assert!(
+        !is_real_syntax_error(1096),
+        "TS1096 must not be a real syntax error (would still poison the flag)"
+    );
+    assert!(
+        !is_structural_parse_error(1096),
+        "TS1096 must not be a structural parse error (would still poison the flag)"
+    );
+}
+
 /// Helper: parse a single file and collect noCheck path diagnostics.
 fn collect_no_check_diags(file_name: &str, source: &str) -> Vec<Diagnostic> {
     let mut parse_results =

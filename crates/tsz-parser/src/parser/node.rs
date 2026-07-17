@@ -506,6 +506,13 @@ pub struct IndexSignatureData {
     pub modifiers: Option<NodeList>,
     pub parameters: NodeList,
     pub type_annotation: NodeIndex,
+    /// True when the parser already reported a parameter-arity error (TS1096,
+    /// "An index signature must have exactly one parameter.") for an empty
+    /// `[]` or a multi-parameter `[a, b]` signature. The multi-parameter form
+    /// is recovered down to a single parameter node, so `parameters.len()`
+    /// alone cannot distinguish it; the checker consults this flag to replicate
+    /// tsc's early return (TS1096 suppresses the later TS1021).
+    pub had_parameter_arity_error: bool,
 }
 
 /// Data for property declarations

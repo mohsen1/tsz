@@ -33,8 +33,11 @@ impl<'a> CheckerState<'a> {
         // uses early returns, so TS1021 only fires when ALL previous checks pass.
         let mut has_grammar_error = false;
 
-        // TS1096: multiple parameters — checked first by TSC and suppresses all later grammar errors.
-        if index_sig.parameters.nodes.len() != 1 {
+        // TS1096: wrong parameter count — checked first by TSC and suppresses all
+        // later grammar errors. A multi-parameter `[a, b]` signature is recovered
+        // to a single parameter node, so the parser records the arity error on the
+        // node; consult it as well as the recovered length.
+        if index_sig.parameters.nodes.len() != 1 || index_sig.had_parameter_arity_error {
             has_grammar_error = true;
             // TS1096 is already emitted by the parser.
         }
