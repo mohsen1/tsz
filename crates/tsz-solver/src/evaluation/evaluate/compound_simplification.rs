@@ -135,6 +135,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         use crate::relations::subtype::{MAX_SUBTYPE_DEPTH, SubtypeChecker};
         let mut checker = SubtypeChecker::with_resolver(self.interner, self.resolver);
         checker.bypass_evaluation = true;
+        // Union/intersection member removal must act only on a *definitive*
+        // subtype verdict. Under `bypass_evaluation` the relation cannot expand
+        // opaque `Application`/`Lazy` components, so a coinductive cycle or a
+        // depth/iteration-limit hit yields a limit-derived optimistic "maybe"
+        // (`CycleDetected`/`DepthExceeded`) that `is_true()` reads as related —
+        // dropping distinct members whose difference lives inside the un-expanded
+        // component (e.g. `Float32Array<ArrayBuffer>` vs `Float64Array<ArrayBuffer>`
+        // via `Record<string, TypedArrayCtorUnion>[key]`, and the runtypes fuel
+        // blowup documented in the storm soundness ledger). Turning off the
+        // coinductive assumption makes every cycle/limit verdict `False` at every
+        // nesting level, so reduction keeps a member unless it is *provably*
+        // redundant. Termination is unaffected: the recursion guard still fires;
+        // only the returned verdict changes from optimistic-true to not-related.
+        checker.assume_related_on_cycle = false;
         checker.max_depth = MAX_SUBTYPE_DEPTH;
         checker.no_unchecked_indexed_access = self.no_unchecked_indexed_access;
         checker.exact_optional_property_types = self.exact_optional_property_types;
@@ -643,6 +657,10 @@ mod tests {
     ) -> SubtypeChecker<'a> {
         let mut checker = SubtypeChecker::new(interner);
         checker.bypass_evaluation = true;
+        // Mirror the production reduction checker (see `remove_redundant_members`):
+        // member removal only acts on definitive verdicts, so the probe key must
+        // carry the same not-coinductive relation mode.
+        checker.assume_related_on_cycle = false;
         checker.max_depth = MAX_SUBTYPE_DEPTH;
         checker.exact_optional_property_types = exact_optional_property_types;
         checker

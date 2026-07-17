@@ -191,6 +191,10 @@ fn compound_simplification_checker(
 ) -> SubtypeChecker<'_, crate::relations::subtype::NoopResolver> {
     let mut checker = SubtypeChecker::new(interner);
     checker.bypass_evaluation = true;
+    // Mirror the production reduction checker (see `remove_redundant_members`):
+    // member removal only acts on definitive verdicts, so the probe key must
+    // carry the same not-coinductive relation mode.
+    checker.assume_related_on_cycle = false;
     checker.max_depth = MAX_SUBTYPE_DEPTH;
     checker
 }
