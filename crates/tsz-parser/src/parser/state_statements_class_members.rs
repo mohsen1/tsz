@@ -854,6 +854,15 @@ impl ParserState {
             // double-counts the diagnostic (the ambient/abstract gating likewise
             // lives in the checker) — see the #14958 regression. Accept the
             // body-less signature and leave the brace diagnostic to the checker.
+            //
+            // NOTE (wave-3 checkpoint): the checker does NOT actually emit this
+            // grammar error, so tsz drops it for a non-ambient, non-abstract class
+            // accessor (abstractPropertyNegative.ts, giant.ts). Re-emitting it here
+            // is blocked: adding the parse error makes the checker's
+            // `has_parse_errors` guards suppress the file's semantic diagnostics
+            // (TS2416/2540/2654/2676), a net loss. Fixing this needs the checker to
+            // own `checkGrammarAccessor` (or to stop swallowing semantic checks on
+            // grammar errors), not a parser emission.
             self.parse_semicolon();
             NodeIndex::NONE
         } else {
