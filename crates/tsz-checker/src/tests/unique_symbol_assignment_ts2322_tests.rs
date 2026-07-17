@@ -92,3 +92,146 @@ const x: typeof s1 = w;
     assert!(c.contains(&2322), "expected TS2322, got {c:?}");
     assert!(!c.contains(&2719), "must not emit TS2719, got {c:?}");
 }
+
+// --- #58: a bare `unique symbol` binding read widens to `symbol` ---
+// tsc's `widenTypeForVariableLikeDeclaration` widens a bare unique-symbol
+// *alias* bound by an un-annotated variable declaration (`let`/`const`/`var`)
+// to `symbol` inside `getTypeOfSymbol`, so the binding is no longer assignable
+// to `typeof cs`. tsz previously kept the unique symbol (a false-negative: two
+// missed TS2322s). The freshly minted `const s = Symbol()` factory (whose
+// unique symbol's owning symbol *is* the declaration) and an explicit
+// `typeof`/`unique symbol` annotation stay unique. Verified against tsc 7.0.2.
+
+#[test]
+fn let_binding_of_unique_symbol_alias_widens_to_symbol() {
+    let c = codes(
+        r#"
+declare const cs: unique symbol;
+let p = cs;
+const chk: typeof cs = p;
+"#,
+    );
+    assert!(
+        c.contains(&2322),
+        "let p = cs must widen to symbol (TS2322 on `typeof cs = p`), got {c:?}"
+    );
+}
+
+#[test]
+fn plain_const_binding_of_unique_symbol_alias_widens_to_symbol() {
+    let c = codes(
+        r#"
+declare const cs: unique symbol;
+const p = cs;
+const chk: typeof cs = p;
+"#,
+    );
+    assert!(
+        c.contains(&2322),
+        "const p = cs must widen to symbol (unlike a literal const), got {c:?}"
+    );
+}
+
+#[test]
+fn var_binding_of_unique_symbol_alias_widens_to_symbol() {
+    let c = codes(
+        r#"
+declare const cs: unique symbol;
+var p = cs;
+const chk: typeof cs = p;
+"#,
+    );
+    assert!(
+        c.contains(&2322),
+        "var p = cs must widen to symbol, got {c:?}"
+    );
+}
+
+#[test]
+fn renamed_unique_symbol_alias_binding_widens_to_symbol() {
+    // Different identifier spellings — proves the widening is structural, not
+    // keyed on the `cs` name.
+    let c = codes(
+        r#"
+declare const alpha: unique symbol;
+let beta = alpha;
+const chk: typeof alpha = beta;
+"#,
+    );
+    assert!(
+        c.contains(&2322),
+        "renamed binders must still widen, got {c:?}"
+    );
+}
+
+#[test]
+fn typeof_of_widened_unique_symbol_alias_is_symbol() {
+    // The `get_type_of_symbol` read-widening also flows into a `typeof p` query:
+    // tsc reports `typeof p` as `symbol`, so `symbol` !<: `typeof cs`.
+    let c = codes(
+        r#"
+declare const cs: unique symbol;
+const p = cs;
+type T = typeof p;
+declare const t: T;
+const chk: typeof cs = t;
+"#,
+    );
+    assert!(
+        c.contains(&2322),
+        "typeof p (p = cs alias) must be symbol, got {c:?}"
+    );
+}
+
+#[test]
+fn annotated_unique_symbol_binding_stays_unique() {
+    // An explicit `typeof cs` annotation preserves the unique identity — the
+    // widening only applies to *inferred* binding types.
+    let c = codes(
+        r#"
+declare const cs: unique symbol;
+const p: typeof cs = cs;
+const chk: typeof cs = p;
+"#,
+    );
+    assert!(
+        !c.contains(&2322),
+        "annotated binding must stay unique (no widening), got {c:?}"
+    );
+}
+
+#[test]
+fn factory_const_symbol_stays_unique() {
+    // A freshly minted `const s = Symbol()` keeps its own `typeof s` identity —
+    // its unique symbol's owning symbol IS the declaration; only an *alias* of
+    // an existing unique symbol widens.
+    let c = codes(
+        r#"
+const s = Symbol();
+const chk: typeof s = s;
+"#,
+    );
+    assert!(
+        !c.contains(&2322),
+        "const s = Symbol() must keep its unique identity, got {c:?}"
+    );
+}
+
+#[test]
+fn union_of_unique_symbols_binding_is_not_widened() {
+    // Only a *bare* unique symbol widens; a union member is preserved
+    // (`typeof a | typeof b`), matching tsc — assigning back to that union is
+    // clean, which would fail if the binding had widened to `symbol`.
+    let c = codes(
+        r#"
+declare const sA: unique symbol;
+declare const sB: unique symbol;
+let u = Math.random() ? sA : sB;
+const chk: typeof sA | typeof sB = u;
+"#,
+    );
+    assert!(
+        !c.contains(&2322),
+        "a union of unique symbols must not widen to symbol, got {c:?}"
+    );
+}

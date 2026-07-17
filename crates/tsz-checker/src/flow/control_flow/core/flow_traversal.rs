@@ -698,7 +698,16 @@ impl<'a> FlowAnalyzer<'a> {
                                                 })
                                             })
                                         });
-                                    let narrowing_base = declared_type.unwrap_or(initial_type);
+                                    // A bare `unique symbol` alias binding caches
+                                    // its un-widened `typeof cs` here; widen it so
+                                    // the killing definition reduces from `symbol`
+                                    // (tsc's widened `getTypeOfVariableDeclaration`)
+                                    // and a later `const a: typeof cs = p` read
+                                    // sees `symbol` (the real TS2322).
+                                    let narrowing_base = self.flow_widen_binding_declared_type(
+                                        symbol_id,
+                                        declared_type.unwrap_or(initial_type),
+                                    );
                                     // For const declarations with enum types: if the assigned
                                     // type is a member of the enum, narrow directly to the
                                     // member type. This enables flow narrowing for patterns like

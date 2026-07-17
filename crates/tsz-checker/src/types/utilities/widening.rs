@@ -5,9 +5,66 @@
 //! messages. Backed by `query_boundaries::widening` and `query_boundaries::common`.
 use crate::query_boundaries::enum_analysis as enum_query;
 use crate::state::CheckerState;
+use tsz_binder::SymbolId;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// Read-time `unique symbol` widening for a variable binding, mirroring
+    /// tsc's `widenTypeForVariableLikeDeclaration` — the unique-symbol arm of
+    /// `getWidenedTypeForVariableLikeDeclaration`, applied inside
+    /// `getTypeOfSymbol`. A bare `unique symbol` that is an *alias* of another
+    /// symbol's unique identity and is bound by a variable declaration with no
+    /// type annotation reads as `symbol` (`let p = cs` / `const p = cs` /
+    /// `var p = cs`). tsc's exact guard is
+    /// `(isBindingElement(decl) || !decl.type) && type.symbol !== getSymbolOfDeclaration(decl)`:
+    /// a freshly minted `const s = Symbol()` — whose unique symbol's owning
+    /// symbol *is* the declaration — and an explicit `typeof`/`unique symbol`
+    /// annotation both keep the unique identity.
+    ///
+    /// This is the CHECK-side counterpart of the DTS emitter's own
+    /// `getWidenedUniqueESSymbolType` read-widening
+    /// (`symbol_has_unique_symbol_type` / `widen_unique_symbol_value_type_for_dts`).
+    /// It transforms the *returned* declared type only and is never written back
+    /// to `symbol_types`, so the emitter's cache-based factory detection — and
+    /// every other consumer that reads the raw cache — is unaffected; only reads
+    /// routed through `get_type_of_symbol` observe the widened `symbol`.
+    pub(crate) fn widen_read_unique_symbol_binding(
+        &self,
+        sym_id: SymbolId,
+        type_id: TypeId,
+    ) -> TypeId {
+        // Fast reject on the `get_type_of_symbol` hot path: only a bare
+        // `unique symbol` can widen. `is_unique_symbol_type` is a single interner
+        // lookup with no `Lazy` resolution.
+        if !crate::query_boundaries::common::is_unique_symbol_type(self.ctx.types, type_id) {
+            return type_id;
+        }
+        // tsc `type.symbol !== getSymbolOfDeclaration(decl)`: the mint site, whose
+        // unique symbol's owning symbol is itself, keeps `unique symbol`.
+        match crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, type_id) {
+            Some(sym_ref) if sym_ref.0 == sym_id.0 => return type_id,
+            Some(_) => {}
+            None => return type_id,
+        }
+        // tsc `(isBindingElement(decl) || !decl.type)`: only an *inferred*
+        // variable-declaration binding widens; an explicit annotation preserves
+        // the identity. Scoping to same-file variable declarations excludes class
+        // fields and destructuring elements (separate widening owners).
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return type_id;
+        };
+        let Some(node) = self.ctx.arena.get(symbol.value_declaration) else {
+            return type_id;
+        };
+        let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) else {
+            return type_id;
+        };
+        if var_decl.type_annotation.is_some() {
+            return type_id;
+        }
+        TypeId::SYMBOL
+    }
+
     /// Widen a literal type to its primitive type.
     ///
     /// Converts literal types to their primitive types for widening (unannotated

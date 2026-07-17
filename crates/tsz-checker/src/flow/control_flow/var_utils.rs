@@ -1090,6 +1090,55 @@ impl<'a> FlowAnalyzer<'a> {
         false
     }
 
+    /// Flow counterpart of `CheckerState::widen_read_unique_symbol_binding`.
+    ///
+    /// The killing-definition narrowing base is the variable declaration's cached
+    /// type (`node_types[value_declaration]`), which holds the *un-widened*
+    /// `typeof cs` for a bare `unique symbol` alias binding. tsc's flow narrows
+    /// against the widened `getWidenedTypeForVariableLikeDeclaration`, so
+    /// `let/const/var p = cs` flows as `symbol`; without widening the base,
+    /// `narrow_assignment` keeps the non-union `typeof cs` and a later
+    /// `const a: typeof cs = p` read is wrongly accepted. Widens only an alias of
+    /// *another* symbol's unique identity (tsc's
+    /// `type.symbol !== getSymbolOfDeclaration`) bound by an un-annotated variable
+    /// declaration, so a `const s = Symbol()` factory and an explicit annotation
+    /// keep their unique identity.
+    pub(crate) fn flow_widen_binding_declared_type(
+        &self,
+        symbol_id: Option<SymbolId>,
+        declared_type: TypeId,
+    ) -> TypeId {
+        let Some(symbol_id) = symbol_id else {
+            return declared_type;
+        };
+        if !crate::query_boundaries::common::is_unique_symbol_type(self.interner, declared_type) {
+            return declared_type;
+        }
+        // tsc `type.symbol !== getSymbolOfDeclaration(decl)`: the mint site keeps
+        // `unique symbol`.
+        let Some(sym_ref) =
+            crate::query_boundaries::common::unique_symbol_ref(self.interner, declared_type)
+        else {
+            return declared_type;
+        };
+        if sym_ref.0 == symbol_id.0 {
+            return declared_type;
+        }
+        // Restrict to un-annotated variable declarations (let/var/const); class
+        // fields and destructuring elements are separate widening owners.
+        let Some(symbol) = self.binder.get_symbol(symbol_id) else {
+            return declared_type;
+        };
+        let decl = symbol.value_declaration;
+        let is_unannotated_var_decl = self.is_mutable_var_decl_without_annotation(decl)
+            || (self.is_const_variable_declaration(decl)
+                && !self.is_var_decl_with_type_annotation(decl));
+        if !is_unannotated_var_decl {
+            return declared_type;
+        }
+        TypeId::SYMBOL
+    }
+
     pub(crate) fn var_decl_redeclares_parameter_for_reference(
         &self,
         assignment_node: NodeIndex,

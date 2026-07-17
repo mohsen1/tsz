@@ -1208,14 +1208,19 @@ impl CheckerState<'_> {
         // carry the same breaker as the merge entry points (#14111). `None`
         // signals a bail (already tripped, or this probe tripped it); cache
         // `ERROR` for the symbol on that path, matching the prior behaviour.
-        if let Some(type_id) = crate::checkers_domain::with_stack_guard(None, || {
+        let type_id = if let Some(type_id) = crate::checkers_domain::with_stack_guard(None, || {
             Some(self.get_type_of_symbol_inner(sym_id))
         }) {
             type_id
         } else {
             self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
             TypeId::ERROR
-        }
+        };
+        // tsc widens a bare `unique symbol` alias binding to `symbol` inside
+        // `getTypeOfSymbol` (`widenTypeForVariableLikeDeclaration`). Apply that on
+        // the read only — never written back — so the cached declared type stays
+        // unique for the DTS emitter's own read-widening path.
+        self.widen_read_unique_symbol_binding(sym_id, type_id)
     }
 
     fn get_type_of_symbol_inner(&mut self, sym_id: SymbolId) -> TypeId {
