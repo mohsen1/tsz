@@ -128,3 +128,24 @@ fn bare_from_string_still_terminates_specifier_list() {
         "malformed `export {{ from \"./mod\"` should still report diagnostics"
     );
 }
+
+/// `export * from <identifier>` — the module specifier after `from` must be a
+/// string literal. tsc reports TS1141 "String literal expected." for a
+/// non-string specifier (even inside a `namespace`, where tsz previously
+/// accepted the identifier silently and let the checker report TS1194 instead).
+/// Vary the specifier name to keep the check structural.
+#[test]
+fn export_star_from_non_string_specifier_reports_ts1141() {
+    for source in [
+        "namespace Ns { export * from Target; }",
+        "namespace Outer { export * from Origin; }",
+    ] {
+        let (parser, _root) = parse_source(source);
+        let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&1141),
+            "expected TS1141 for `{source}`: {:?}",
+            parser.get_diagnostics()
+        );
+    }
+}

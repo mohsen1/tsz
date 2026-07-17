@@ -491,13 +491,21 @@ impl ParserState {
         };
 
         self.parse_expected(SyntaxKind::FromKeyword);
-        // Module specifier is usually a string literal, but inside `namespace`
-        // declarations it can be an identifier (e.g., `export * from Aaa;`).
+        // The module specifier must be a string literal. tsc emits TS1141
+        // "String literal expected." for a non-string specifier (e.g.
+        // `export * from Aaa;`) even inside a `namespace`; the identifier is then
+        // parsed for recovery so the binder still reaches the target. This parse
+        // error suppresses the checker's TS1194 in that case (tsc reports only
+        // TS1141) — the campaign's has_parse_errors policy gate.
         let module_specifier = if self.is_token(SyntaxKind::StringLiteral)
             || self.is_token(SyntaxKind::NoSubstitutionTemplateLiteral)
         {
             self.parse_string_literal()
         } else {
+            self.parse_error_at_current_token(
+                diagnostic_messages::STRING_LITERAL_EXPECTED,
+                diagnostic_codes::STRING_LITERAL_EXPECTED,
+            );
             self.parse_identifier_name()
         };
 

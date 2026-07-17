@@ -176,7 +176,16 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             // TS1194: Export declarations are not permitted in a namespace.
             // `export { } from "mod"` is NEVER allowed in any namespace (even declare);
             // `export { }` (no from) is only disallowed in non-ambient namespaces.
-            if !in_non_module_context && self.is_inside_namespace_declaration(export_idx) {
+            //
+            // This is a check-time grammar diagnostic, so — like tsc's grammar
+            // checks — it is suppressed when the program has a real parse error
+            // (the campaign's `has_parse_errors` policy gate). e.g. a non-string
+            // module specifier (`export * from Aaa;`) is reported as the parse
+            // error TS1141 only, not additionally as TS1194.
+            if !self.ctx.has_parse_errors
+                && !in_non_module_context
+                && self.is_inside_namespace_declaration(export_idx)
+            {
                 let has_from = export_decl.module_specifier.is_some();
                 let is_named = self
                     .ctx
