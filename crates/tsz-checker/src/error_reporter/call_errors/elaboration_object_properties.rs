@@ -374,19 +374,26 @@ impl<'a> CheckerState<'a> {
                     } else {
                         cached_prop_type
                     }
-                } else if self
-                    .ctx
-                    .arena
-                    .get(prop_value_idx)
-                    .is_some_and(|n| n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
-                {
-                    // For nested object literal properties, the cached type may have been
-                    // widened (e.g., `{a: 1}` → `{a: number}`) before the contextual type
-                    // from the generic call was available. Re-check with the target property
-                    // type as context to see if the literal form is actually assignable.
-                    // Example: `foo({ a: { a: 1, x: 1 } })` where `a` expects
-                    // `Required<{a?: 1; x: 1}>` — the cached `{a: number}` fails, but
-                    // the contextually-typed `{a: 1; x: 1}` passes.
+                } else if self.ctx.arena.get(prop_value_idx).is_some_and(|n| {
+                    matches!(
+                        n.kind,
+                        syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                            | syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                    )
+                }) {
+                    // For nested object/array literal properties, the cached type may
+                    // have been widened before the property's contextual type was
+                    // available: `{a: 1}` → `{a: number}`, and — the case that
+                    // matters for a tuple target — a bare tuple literal `[1, "ok"]`
+                    // widens to the array `(number | "ok")[]`, which then fails the
+                    // closed-tuple relation with a spurious arity mismatch ("Target
+                    // requires N element(s) but source may have fewer"). Re-type the
+                    // literal with the target member as context, exactly like tsc's
+                    // `elaborateElementwise`, so `[1, "ok"]` becomes `[number, "ok"]`;
+                    // if that contextual form relates, the mismatch is not real.
+                    // Example: `const x: { pair: [number, "ok"] } = { pair: [1, "ok"],
+                    // bad: … }` — the sibling `bad` failure elaborates the object, and
+                    // the cached array `pair` must recover its tuple form here.
                     let contextual_request =
                         crate::context::TypingRequest::with_contextual_type(target_prop_type);
                     let contextual_prop_type =
