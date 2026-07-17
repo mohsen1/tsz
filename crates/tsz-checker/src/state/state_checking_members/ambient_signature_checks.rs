@@ -1703,6 +1703,29 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // TS1005: a non-ambient, non-abstract accessor must have a `{` brace body.
+        // tsc's `checkGrammarAccessor` reports this at CHECK time
+        // (`grammarErrorAtPos(accessor, accessor.end - 1, 1, …)`), so — unlike a
+        // parse-time error — it coexists with the class's semantic diagnostics
+        // instead of tripping the program-wide `has_parse_errors` suppression.
+        // The parser deliberately defers the body-less accessor here (see
+        // `parse_accessor_body`); this is that deferred check.
+        let accessor_end = node.end;
+        let accessor_body_missing = accessor.body.is_none();
+        let accessor_is_abstract = self.has_abstract_modifier(&accessor.modifiers);
+        if accessor_body_missing
+            && !accessor_is_abstract
+            && !self.ctx.is_declaration_file()
+            && !self.ctx.arena.is_in_ambient_context(member_idx)
+        {
+            self.error(
+                accessor_end.saturating_sub(1),
+                1,
+                "'{' expected.".to_string(),
+                diagnostic_codes::EXPECTED,
+            );
+        }
+
         let is_getter = node.kind == syntax_kind_ext::GET_ACCESSOR;
 
         // TS2808: A get accessor must be at least as accessible as the setter
@@ -1747,6 +1770,17 @@ impl<'a> CheckerState<'a> {
             &accessor.parameters.nodes,
             contextual_setter_param_types.as_deref(),
         );
+
+        // TS1346/TS1347: a `set` accessor's parameters follow the same
+        // `"use strict"` / non-simple-parameter-list grammar as other
+        // function-likes. Set-accessor parameters route through this accessor
+        // path rather than the shared per-function-like param check
+        // (`check_strict_mode_reserved_parameter_names`), so wire the check in
+        // here too. The helper is target-gated (ES2016+) and has_parse_errors-gated.
+        if node.kind == syntax_kind_ext::SET_ACCESSOR {
+            self.check_use_strict_non_simple_parameter_list(&accessor.parameters.nodes, member_idx);
+        }
+
         if let Some(contextual_types) = contextual_setter_param_types.as_ref() {
             for (&param_idx, contextual_type) in accessor
                 .parameters

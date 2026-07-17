@@ -232,4 +232,53 @@ mod tests {
             "non-prologue 'use strict' must not report TS1346/TS1347: {codes:?}"
         );
     }
+
+    #[test]
+    fn set_accessor_use_strict_non_simple_param_reports_ts1346_ts1347() {
+        // Set-accessor parameters route through the accessor grammar path, not
+        // the shared per-function-like param check; the use-strict check is
+        // wired in there too. Vary binder names to keep the check structural.
+        for source in [
+            "class Store { set value(seed = 1) { \"use strict\"; } }",
+            "class Widget { set label({ text }) { \"use strict\"; } }",
+        ] {
+            let codes = checker_codes_at_target(source, tsz_common::common::ScriptTarget::ES2016);
+            assert!(
+                codes.contains(&1346) && codes.contains(&1347),
+                "expected TS1346+TS1347 for `{source}`: {codes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn class_accessor_without_body_reports_ts1005() {
+        // A non-ambient, non-abstract class accessor without a brace body is
+        // TS1005, emitted at check time so it coexists with semantic diagnostics.
+        for source in [
+            "class Store { get value(): string; }",
+            "class Widget { set label(v: string); }",
+        ] {
+            let codes = checker_codes_at_target(source, tsz_common::common::ScriptTarget::ES2016);
+            assert!(
+                codes.contains(&1005),
+                "expected TS1005 for `{source}`: {codes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn abstract_or_ambient_accessor_without_body_is_clean() {
+        // Abstract and ambient (`declare class`) accessors are legitimately
+        // body-less and must not report TS1005.
+        for source in [
+            "abstract class Store { abstract get value(): string; }",
+            "declare class Widget { get label(): string; }",
+        ] {
+            let codes = checker_codes_at_target(source, tsz_common::common::ScriptTarget::ES2016);
+            assert!(
+                !codes.contains(&1005),
+                "unexpected TS1005 for `{source}`: {codes:?}"
+            );
+        }
+    }
 }
