@@ -56,6 +56,9 @@ path = "tests/delete_narrowing_reset_tests.rs"
 name = "sibling_defaulted_conditional_constraint_tests"
 path = "tests/sibling_defaulted_conditional_constraint_tests.rs"
 [[test]]
+name = "predicate_callback_any_inference_tests"
+path = "tests/predicate_callback_any_inference_tests.rs"
+[[test]]
 name = "qualified_alias_default_fill_tests"
 path = "tests/qualified_alias_default_fill_tests.rs"
 [[test]]

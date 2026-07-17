@@ -1436,6 +1436,31 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 priority,
             );
         }
+
+        // A type-predicate argument (`(raw: any) => raw is bigint`) whose `any`
+        // parameter makes it contextually sensitive is routed here instead of
+        // through `infer_signatures`. Its predicate target carries the same
+        // inference information as a return type — a `raw is I` parameter must
+        // learn `I = bigint` — so mirror the predicate branch of
+        // `infer_signatures`. Without this the type parameter the predicate
+        // pins stays unresolved (`unknown`) during Round-1 contextual typing, so
+        // a sibling context-sensitive callback whose parameter references it is
+        // typed against `unknown` (M12: superjson `makeCodec`).
+        if let (Some(source_pred), Some(target_pred)) =
+            (&source_fn.type_predicate, &target_fn.type_predicate)
+        {
+            let targets_match = match (source_pred.parameter_index, target_pred.parameter_index) {
+                (Some(s_idx), Some(t_idx)) => s_idx == t_idx,
+                _ => source_pred.target == target_pred.target,
+            };
+            if targets_match
+                && source_pred.asserts == target_pred.asserts
+                && let (Some(source_ty), Some(target_ty)) =
+                    (source_pred.type_id, target_pred.type_id)
+            {
+                self.constrain_types(infer_ctx, var_map, source_ty, target_ty, priority);
+            }
+        }
         true
     }
 
