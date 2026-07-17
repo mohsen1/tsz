@@ -300,10 +300,11 @@ impl<'a> CheckerState<'a> {
             return widened;
         }
         if crate::query_boundaries::common::is_generic_application(self.ctx.types, type_id) {
-            let widened = crate::query_boundaries::common::widen_type_preserving_unique_symbols(
-                self.ctx.types,
-                type_id,
-            );
+            let widened =
+                crate::query_boundaries::diagnostics::widen_type_preserving_unique_symbols(
+                    self.ctx.types,
+                    type_id,
+                );
             if let Some(def_id) = constructor_display_def {
                 self.ctx
                     .definition_store
@@ -317,10 +318,11 @@ impl<'a> CheckerState<'a> {
         // Preserve a unique-symbol source (`typeof x` / `unique symbol`) — tsc
         // never renders it as `symbol`; the `symbol` widening is a
         // mutable-location semantic rule, not a display rule.
-        let mut widened = crate::query_boundaries::common::widen_type_preserving_unique_symbols(
-            self.ctx.types,
-            type_id,
-        );
+        let mut widened =
+            crate::query_boundaries::diagnostics::widen_type_preserving_unique_symbols(
+                self.ctx.types,
+                type_id,
+            );
         if let Some(shape) =
             crate::query_boundaries::common::function_shape_for_type(self.ctx.types, widened)
         {

@@ -1417,3 +1417,14 @@ mod tests {
         ));
     }
 }
+
+/// Widen for diagnostic display while preserving `unique symbol` types
+/// (display never widens a unique symbol to `symbol`; that is a
+/// mutable-location rule). Display-domain policy, so it lives here rather
+/// than in `common` (checker test boundary: common surface is ratcheted).
+pub(crate) fn widen_type_preserving_unique_symbols(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    type_id: tsz_solver::TypeId,
+) -> tsz_solver::TypeId {
+    tsz_solver::operations::widening::widen_type_preserving_unique_symbols(db, type_id)
+}
