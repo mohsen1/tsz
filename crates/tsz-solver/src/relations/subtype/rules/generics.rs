@@ -647,11 +647,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             _ => None,
         };
 
-        if let Some(def_pair) = app_def_pair {
-            let visiting = self.def_guard.is_visiting(&def_pair);
-            let visiting_rev = self.def_guard.is_visiting(&(def_pair.1, def_pair.0));
-            // Check for cycles before expansion
-            if visiting || visiting_rev {
+        let entered_app_def_pair = if let Some(def_pair) = app_def_pair {
+            // A reversed pair already on the guard is genuine bivariant
+            // cross-recursion (`A<..> <: B<..>` while `B<..> <: A<..>` is in
+            // flight above), so the coinductive assumption is correct.
+            if self.def_guard.is_visiting(&(def_pair.1, def_pair.0)) {
                 let unsound =
                     self.application_cycle_with_concrete_differing_args_is_unsound(&s_app, &t_app);
                 tracing::trace!(
@@ -659,7 +659,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     unsound,
                     s_args = ?s_app.args,
                     t_args = ?t_app.args,
-                    "app-vs-app def-pair cycle"
+                    "app-vs-app def-pair reversed cycle"
                 );
                 return if unsound {
                     SubtypeResult::False
@@ -667,23 +667,42 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     self.cycle_result()
                 };
             }
-            use crate::recursion::RecursionResult;
-            match self.def_guard.enter(def_pair) {
-                RecursionResult::Cycle => {
-                    return if self
-                        .application_cycle_with_concrete_differing_args_is_unsound(&s_app, &t_app)
-                    {
-                        SubtypeResult::False
-                    } else {
-                        self.cycle_result()
-                    };
+            // The parent `check_subtype` (cache.rs) enters this base pair into
+            // the def_guard before dispatching here. Under `bypass_evaluation`
+            // (the evaluator's `simplify_union_members` reduction) source/target
+            // are not evaluated first, so a *forward* pair already on the guard
+            // is that parent double-entry, not a real cycle. Treating it as one
+            // returns a coinductive `True` that wrongly collapses distinct union
+            // members whose only difference lives inside opaque `Application`
+            // return types (e.g. `new () => WrapA<X>` vs `new () => WrapB<X>`).
+            // Mirror `check_lazy_lazy_subtype`'s `already_visiting`: skip the
+            // cycle short-circuit and the re-entry, and let the owning parent
+            // frame leave the guard. With `bypass_evaluation` off, a genuine
+            // recursive double-entry still yields `Cycle` from `enter` below.
+            let already_visiting = self.bypass_evaluation && self.def_guard.is_visiting(&def_pair);
+            if already_visiting {
+                None
+            } else {
+                use crate::recursion::RecursionResult;
+                match self.def_guard.enter(def_pair) {
+                    RecursionResult::Cycle => {
+                        return if self.application_cycle_with_concrete_differing_args_is_unsound(
+                            &s_app, &t_app,
+                        ) {
+                            SubtypeResult::False
+                        } else {
+                            self.cycle_result()
+                        };
+                    }
+                    RecursionResult::DepthExceeded | RecursionResult::IterationExceeded => {
+                        return self.depth_result();
+                    }
+                    RecursionResult::Entered => Some(def_pair),
                 }
-                RecursionResult::DepthExceeded | RecursionResult::IterationExceeded => {
-                    return self.depth_result();
-                }
-                RecursionResult::Entered => {}
             }
-        }
+        } else {
+            None
+        };
 
         // =======================================================================
         // SLOW PATH: Structural expansion for mismatched bases or unknown variance
@@ -753,8 +772,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         };
 
-        // Clean up cycle detection guard
-        if let Some(def_pair) = app_def_pair {
+        // Clean up cycle detection guard — only the frame that entered the pair
+        // leaves it. Under a `bypass_evaluation` parent double-entry we skipped
+        // the re-entry, so the owning parent frame owns the leave.
+        if let Some(def_pair) = entered_app_def_pair {
             self.def_guard.leave(def_pair);
         }
 
