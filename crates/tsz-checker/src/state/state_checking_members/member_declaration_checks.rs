@@ -1580,6 +1580,19 @@ impl<'a> CheckerState<'a> {
 
         let is_ambient_field = is_ambient && node.kind == syntax_kind_ext::PROPERTY_DECLARATION;
 
+        // A decorated method with no body is an overload signature, which tsc's
+        // checkGrammarDecorators reports as TS1249 ("A decorator can only decorate
+        // a method implementation, not an overload") — the same `!nodeCanBeDecorated`
+        // path as an abstract method. Ambient methods are legitimately body-less
+        // and handled elsewhere, so exclude them.
+        let is_overload_method = !is_ambient
+            && node.kind == syntax_kind_ext::METHOD_DECLARATION
+            && self
+                .ctx
+                .arena
+                .get_method_decl(node)
+                .is_some_and(|m| m.body.is_none());
+
         // With --experimentalDecorators, decorators on private-named members
         // and members of class expressions are not valid (TS1206).
         let is_private_member =
@@ -1632,11 +1645,14 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if is_abstract
+                    || is_overload_method
                     || (!self.ctx.compiler_options.experimental_decorators && is_ambient_field)
                     || legacy_decorator_not_valid
                 {
                     use crate::diagnostics::diagnostic_codes;
-                    if is_abstract && node.kind == syntax_kind_ext::METHOD_DECLARATION {
+                    if (is_abstract || is_overload_method)
+                        && node.kind == syntax_kind_ext::METHOD_DECLARATION
+                    {
                         self.error_at_node(
                             modifier_idx,
                             "A decorator can only decorate a method implementation, not an overload.",
