@@ -470,6 +470,15 @@ pub(crate) fn widen_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     widening::widen_type(db, type_id)
 }
 
+/// Like [`widen_type`] but preserves `unique symbol` types (display never
+/// widens a unique symbol to `symbol`; that is a mutable-location rule).
+pub(crate) fn widen_type_preserving_unique_symbols(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
+    widening::widen_type_preserving_unique_symbols(db, type_id)
+}
+
 /// Widen a type for diagnostic display, preserving boolean literal intrinsics.
 ///
 /// Like `widen_type` but keeps `true`/`false` literals so narrowed types

@@ -179,6 +179,60 @@ pub fn widen_type(db: &dyn crate::construction::TypeDatabase, type_id: TypeId) -
     result
 }
 
+/// Like [`widen_type`] (same fresh-literal/boolean/function widening) but
+/// preserves `unique symbol` types anywhere in the shape, including nested
+/// array/tuple elements. tsc's `typeToString` renders a unique symbol as
+/// `typeof x` / `unique symbol` — never `symbol` — so display formatters that
+/// still need `widen_type`'s other widenings (e.g. cleaning a function-like
+/// source for a diagnostic) must not collapse a unique-symbol source. Does not
+/// use the `widen_type` memo, which holds the unique-symbol-widening result.
+pub fn widen_type_preserving_unique_symbols(
+    db: &dyn crate::construction::TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
+    if type_id.is_intrinsic()
+        && type_id != crate::types::TypeId::BOOLEAN_TRUE
+        && type_id != crate::types::TypeId::BOOLEAN_FALSE
+    {
+        return type_id;
+    }
+    if matches!(
+        db.lookup(type_id),
+        Some(
+            crate::types::TypeData::Function(_)
+                | crate::types::TypeData::Callable(_)
+                | crate::types::TypeData::TypeParameter(_)
+                | crate::types::TypeData::Enum(_, _)
+                | crate::types::TypeData::Mapped(_)
+                | crate::types::TypeData::Conditional(_)
+                | crate::types::TypeData::Application(_)
+                | crate::types::TypeData::Lazy(_)
+                | crate::types::TypeData::IndexAccess(_, _)
+                | crate::types::TypeData::KeyOf(_)
+                | crate::types::TypeData::TemplateLiteral(_)
+                | crate::types::TypeData::ThisType
+                | crate::types::TypeData::Error
+        )
+    ) {
+        return type_id;
+    }
+    use rustc_hash::FxHashMap;
+    let mut cache = FxHashMap::default();
+    widen_type_cached(
+        db,
+        type_id,
+        &mut cache,
+        WidenFlags {
+            widen_boolean_intrinsics: true,
+            widen_functions: true,
+            widen_object_union_members: false,
+            preserve_booleans_in_rest_tuples: false,
+            respect_object_freshness: false,
+            widen_unique_symbols: false,
+        },
+    )
+}
+
 /// Widen for diagnostic display: like `widen_type` but preserves boolean
 /// literal intrinsics (`true`/`false`) so that narrowed types like
 /// `string | false` display correctly instead of `string | boolean`.
@@ -202,7 +256,11 @@ pub fn widen_type_for_display(
             widen_object_union_members: false,
             preserve_booleans_in_rest_tuples: false,
             respect_object_freshness: false,
-            widen_unique_symbols: true,
+            // tsc's `typeToString` never widens a `unique symbol` — a diagnostic
+            // renders the inferred `typeof x` / `unique symbol`, not `symbol`.
+            // The `symbol` widening is a mutable-location semantic rule
+            // (`getWidenedUniqueESSymbolType` at bindings), not a display rule.
+            widen_unique_symbols: false,
         },
     )
 }
@@ -237,7 +295,8 @@ pub fn widen_type_for_display_preserving_non_fresh(
             widen_object_union_members: false,
             preserve_booleans_in_rest_tuples: false,
             respect_object_freshness: true,
-            widen_unique_symbols: true,
+            // Display never widens a `unique symbol` (see `widen_type_for_display`).
+            widen_unique_symbols: false,
         },
     )
 }
@@ -275,7 +334,8 @@ pub fn widen_argument_type_for_display(
             widen_object_union_members: false,
             preserve_booleans_in_rest_tuples: true,
             respect_object_freshness: false,
-            widen_unique_symbols: true,
+            // Display never widens a `unique symbol` (see `widen_type_for_display`).
+            widen_unique_symbols: false,
         },
     )
 }
@@ -561,10 +621,11 @@ fn widen_type_cached(
         // String/Number/Boolean/BigInt literals widen to their primitives
         Some(TypeData::Literal(ref value)) => value.primitive_type_id(),
 
-        // Unique Symbol widens to Symbol only at mutable-location / display
-        // contexts (tsc `getWidenedUniqueESSymbolType`). In inference position
-        // tsc preserves it (`getWidenedLiteralType` never widens unique symbols),
-        // so the non-widen case falls through to the identity default below.
+        // Unique Symbol widens to Symbol only at mutable-location binding
+        // contexts (tsc `getWidenedUniqueESSymbolType`). Inference position
+        // preserves it (`getWidenedLiteralType` never widens unique symbols) and
+        // so does display (`typeToString` renders `typeof x`), so both leave
+        // `widen_unique_symbols` false and fall through to the identity default.
         Some(TypeData::UniqueSymbol(_)) if widen_unique_symbols => TypeId::SYMBOL,
 
         // Unions: only widen if the union itself requires widening.
