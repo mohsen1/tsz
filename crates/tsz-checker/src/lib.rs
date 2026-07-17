@@ -1125,6 +1125,9 @@ mod initializer_relation_routing_arch_tests;
 #[path = "../tests/interface_extends_array_json_tests.rs"]
 mod interface_extends_array_json_tests;
 #[cfg(test)]
+#[path = "tests/interface_heritage_alias_arg_substitution_tests.rs"]
+mod interface_heritage_alias_arg_substitution_tests;
+#[cfg(test)]
 #[path = "tests/interface_index_conflict_relation_routing_arch_tests.rs"]
 mod interface_index_conflict_relation_routing_arch_tests;
 #[cfg(test)]

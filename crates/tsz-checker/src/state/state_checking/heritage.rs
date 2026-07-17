@@ -866,15 +866,28 @@ impl<'a> CheckerState<'a> {
                                         // such an alias is applied to the enclosing
                                         // interface's own type parameters the base stays
                                         // deferred and `instantiated_type` erases to
-                                        // `Error`/`Any`, so classify it from the
-                                        // un-instantiated alias body. A body that *is* a
-                                        // valid base (object/intersection of objects)
-                                        // never trips this, so an unrelated resolution
-                                        // failure is not masked as TS2312.
+                                        // `Error`/`Any`, so classify it from the alias
+                                        // body — but from the body with the alias's own
+                                        // type arguments SUBSTITUTED, not the raw body.
+                                        // A passthrough/identity alias (`type Id<T> = T`,
+                                        // or `T & { ... }`) has a bare type-parameter body
+                                        // that is not itself a valid base, yet substituting
+                                        // the argument (a valid object base) makes it one —
+                                        // `interface I<V> extends Id<Base<V>>` is legal in
+                                        // tsc. A genuinely generic mapped/conditional body
+                                        // stays generic after substitution (its constraint
+                                        // still references a type parameter) and remains an
+                                        // invalid base, so this keeps the real TS2312.
+                                        let substituted_body = self
+                                            .substitute_alias_body_with_heritage_args(
+                                                type_sym,
+                                                symbol_type,
+                                                type_args,
+                                            );
                                         let body_is_invalid_base =
                                             !crate::query_boundaries::class::is_valid_interface_base_type(
                                                 self.ctx.types,
-                                                symbol_type,
+                                                substituted_body,
                                             );
                                         if body_is_invalid_base
                                             && args_reference_enclosing_type_param
@@ -1381,6 +1394,59 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+
+    /// Substitute a generic type alias's own heritage type arguments into its
+    /// body, for the erased-`instantiated_type` interface-base validity check.
+    ///
+    /// When `interface I<V> extends Alias<Base<V>>` is checked, `Alias`'s
+    /// argument references `I`'s own (unbound) parameter `V`, so the full
+    /// instantiation erases to `Error`/`Any` and the base must be classified from
+    /// the alias body instead. Classifying the RAW body wrongly rejects a
+    /// passthrough alias (`type Alias<T> = T` / `T & { … }`) whose bare
+    /// type-parameter body is not itself a valid base though the substituted body
+    /// (`Base<V>`, a real object base) is. Returns the body with the alias's
+    /// declared parameters replaced by its heritage arguments (missing trailing
+    /// args filled from defaults/constraints); returns the body unchanged when
+    /// the alias has no parameters or no arguments were supplied.
+    fn substitute_alias_body_with_heritage_args(
+        &mut self,
+        type_sym: SymbolId,
+        symbol_type: TypeId,
+        type_args: Option<&tsz_parser::parser::base::NodeList>,
+    ) -> TypeId {
+        let Some(args) = type_args else {
+            return symbol_type;
+        };
+        let base_type_params = self.get_type_params_for_symbol(type_sym);
+        if base_type_params.is_empty() {
+            return symbol_type;
+        }
+        let mut evaluated_args: Vec<TypeId> = args
+            .nodes
+            .iter()
+            .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+            .collect();
+        if evaluated_args.len() < base_type_params.len() {
+            for param in base_type_params.iter().skip(evaluated_args.len()) {
+                let fallback = param
+                    .default
+                    .or(param.constraint)
+                    .unwrap_or(TypeId::UNKNOWN);
+                evaluated_args.push(fallback);
+            }
+        }
+        evaluated_args.truncate(base_type_params.len());
+        let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
+            self.ctx.types,
+            &base_type_params,
+            &evaluated_args,
+        );
+        crate::query_boundaries::common::instantiate_type(
+            self.ctx.types,
+            symbol_type,
+            &substitution,
+        )
     }
 
     /// When a user class merges with or shadows a lib variable of the same name
