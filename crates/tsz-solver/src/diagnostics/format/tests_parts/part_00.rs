@@ -1548,6 +1548,223 @@ fn format_function_rest_param() {
     );
 }
 
+// A trailing rest parameter whose type is a concrete tuple expands to
+// positional parameters, matching tsc's `signatureToString`
+// (`(...rest: [A, B])` -> `(rest_0: A, rest_1: B)`).
+fn format_rest_tuple_fn(
+    db: &TypeInterner,
+    rest_name: &str,
+    elements: Vec<crate::types::TupleElement>,
+) -> String {
+    let tuple = db.tuple(elements);
+    let func = db.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(db.intern_string(rest_name)),
+            type_id: tuple,
+            optional: false,
+            rest: true,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let mut fmt = TypeFormatter::new(db);
+    fmt.format(func).into_owned()
+}
+
+#[test]
+fn format_rest_tuple_param_expands_unlabeled() {
+    let db = TypeInterner::new();
+    let elements = vec![
+        crate::types::TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        crate::types::TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ];
+    assert_eq!(
+        format_rest_tuple_fn(&db, "rest", elements),
+        "(rest_0: string, rest_1: number) => void"
+    );
+}
+
+#[test]
+fn format_rest_tuple_param_uses_labels_and_rest_name() {
+    let db = TypeInterner::new();
+    // Labels win over the `{name}_{i}` fallback; the rest-parameter name drives
+    // the fallback so a renamed rest (`args`) yields `args_0`, `args_1`.
+    let labeled = vec![
+        crate::types::TupleElement {
+            type_id: TypeId::STRING,
+            name: Some(db.intern_string("a")),
+            optional: false,
+            rest: false,
+        },
+        crate::types::TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ];
+    assert_eq!(
+        format_rest_tuple_fn(&db, "rest", labeled),
+        "(a: string, rest_1: number) => void"
+    );
+
+    let renamed = vec![
+        crate::types::TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        crate::types::TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ];
+    assert_eq!(
+        format_rest_tuple_fn(&db, "args", renamed),
+        "(args_0: string, args_1: number) => void"
+    );
+}
+
+#[test]
+fn format_rest_tuple_param_trailing_variadic_keeps_bare_rest_name() {
+    let db = TypeInterner::new();
+    // `[string, ...number[]]` -> `(rest_0: string, ...rest: number[])`.
+    let number_arr = db.array(TypeId::NUMBER);
+    let elements = vec![
+        crate::types::TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        crate::types::TupleElement {
+            type_id: number_arr,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+    ];
+    assert_eq!(
+        format_rest_tuple_fn(&db, "rest", elements),
+        "(rest_0: string, ...rest: number[]) => void"
+    );
+}
+
+#[test]
+fn format_rest_tuple_param_middle_rest_not_expanded() {
+    let db = TypeInterner::new();
+    // A rest element in a non-trailing position (`[string, ...number[], boolean]`)
+    // can't become a parameter list, so tsc leaves it as the written tuple.
+    let number_arr = db.array(TypeId::NUMBER);
+    let elements = vec![
+        crate::types::TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        crate::types::TupleElement {
+            type_id: number_arr,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+        crate::types::TupleElement {
+            type_id: TypeId::BOOLEAN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ];
+    let result = format_rest_tuple_fn(&db, "rest", elements);
+    assert!(
+        result.starts_with("(...rest: ["),
+        "middle-rest tuple must stay unexpanded, got: {result}"
+    );
+}
+
+#[test]
+fn format_rest_array_param_not_expanded() {
+    let db = TypeInterner::new();
+    // A plain array rest (`...args: string[]`) is not a tuple and is never
+    // expanded.
+    let arr = db.array(TypeId::STRING);
+    let func = db.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(db.intern_string("args")),
+            type_id: arr,
+            optional: false,
+            rest: true,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let mut fmt = TypeFormatter::new(&db);
+    assert_eq!(fmt.format(func), "(...args: string[]) => void");
+}
+
+#[test]
+fn format_rest_readonly_tuple_param_expands_dropping_modifier() {
+    let db = TypeInterner::new();
+    // `readonly [string, number]` expands like a mutable tuple; tsc drops the
+    // `readonly` modifier from the expanded positional parameters.
+    let tuple = db.tuple(vec![
+        crate::types::TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        crate::types::TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    let readonly_tuple = db.readonly_type(tuple);
+    let func = db.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(db.intern_string("rest")),
+            type_id: readonly_tuple,
+            optional: false,
+            rest: true,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let mut fmt = TypeFormatter::new(&db);
+    assert_eq!(
+        fmt.format(func),
+        "(rest_0: string, rest_1: number) => void"
+    );
+}
+
 #[test]
 fn format_function_with_type_params() {
     let db = TypeInterner::new();

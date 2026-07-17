@@ -117,30 +117,106 @@ impl<'a> TypeFormatter<'a> {
             rendered.push(format!("this: {}", self.format(this_ty)));
         }
 
-        for p in params {
+        let last = params.len().wrapping_sub(1);
+        for (i, p) in params.iter().enumerate() {
+            // tsc's `signatureToString` expands a trailing rest parameter whose
+            // type is a concrete tuple into positional parameters
+            // (`...rest: [A, B]` renders as `rest_0: A, rest_1: B`). Only the
+            // final parameter is a candidate.
+            if i == last
+                && p.rest
+                && let Some(expanded) = self.expand_rest_tuple_param_for_display(p)
+            {
+                rendered.extend(expanded);
+                continue;
+            }
             let name = p
                 .name
                 .map_or_else(|| "_".to_string(), |atom| self.atom(atom).to_string());
-            let optional = if p.optional { "?" } else { "" };
-            let rest = if p.rest { "..." } else { "" };
-            let type_str: String = if p.optional {
-                let formatted = self.format(p.type_id).into_owned();
-                if self.preserve_optional_parameter_surface_syntax {
-                    formatted
-                } else if p.type_id == TypeId::NEVER {
-                    "undefined".to_string()
-                } else if !self.type_contains_undefined(p.type_id) {
-                    format!("{formatted} | undefined")
-                } else {
-                    formatted
-                }
-            } else {
-                self.format(p.type_id).into_owned()
-            };
-            rendered.push(format!("{rest}{name}{optional}: {type_str}"));
+            rendered.push(self.render_param_display(&name, p.optional, p.rest, p.type_id));
         }
 
         rendered
+    }
+
+    /// Render a single parameter (`{...}{name}{?}: {type}`), applying tsc's
+    /// optional-parameter surface (`x?: T | undefined`).
+    fn render_param_display(
+        &mut self,
+        name: &str,
+        optional: bool,
+        rest: bool,
+        type_id: TypeId,
+    ) -> String {
+        let optional_marker = if optional { "?" } else { "" };
+        let rest_prefix = if rest { "..." } else { "" };
+        let type_str: String = if optional {
+            let formatted = self.format(type_id).into_owned();
+            if self.preserve_optional_parameter_surface_syntax {
+                formatted
+            } else if type_id == TypeId::NEVER {
+                "undefined".to_string()
+            } else if !self.type_contains_undefined(type_id) {
+                format!("{formatted} | undefined")
+            } else {
+                formatted
+            }
+        } else {
+            self.format(type_id).into_owned()
+        };
+        format!("{rest_prefix}{name}{optional_marker}: {type_str}")
+    }
+
+    /// Expand a trailing rest parameter whose type is a concrete tuple into
+    /// per-element positional parameters, matching tsc's `signatureToString`
+    /// (`getExpandedParameters` / `getParameterNameAtPosition`).
+    ///
+    /// Returns `None` (keep the written `...rest: [..]` form) when the rest type
+    /// is not a tuple, the rest parameter is unnamed, or the tuple carries a
+    /// rest element in a non-trailing position (`[string, ...number[], boolean]`)
+    /// — a parameter list can't hold a middle rest, so tsc leaves those
+    /// unexpanded.
+    ///
+    /// Each element's name follows tsc: its tuple label when present, otherwise
+    /// `{restname}_{index}` for a fixed/optional element and the bare `{restname}`
+    /// for the trailing variadic element.
+    fn expand_rest_tuple_param_for_display(
+        &mut self,
+        rest_param: &ParamInfo,
+    ) -> Option<Vec<String>> {
+        let rest_name_atom = rest_param.name?;
+        // tsc expands a `readonly [..]` rest tuple the same as a mutable one
+        // (the readonly modifier is dropped from the expanded parameters), so
+        // peel one `ReadonlyType` wrapper before the tuple check.
+        let tuple_type = match self.interner.lookup(rest_param.type_id) {
+            Some(TypeData::ReadonlyType(inner)) => inner,
+            _ => rest_param.type_id,
+        };
+        let Some(TypeData::Tuple(list_id)) = self.interner.lookup(tuple_type) else {
+            return None;
+        };
+        let elements = self.interner.tuple_list(list_id);
+        let len = elements.len();
+        if elements
+            .iter()
+            .enumerate()
+            .any(|(i, e)| e.rest && i + 1 != len)
+        {
+            return None;
+        }
+        let rest_name = self.atom(rest_name_atom).to_string();
+        let mut out = Vec::with_capacity(len);
+        for (i, e) in elements.iter().enumerate() {
+            let name = if let Some(label) = e.name {
+                self.atom(label).to_string()
+            } else if e.rest {
+                rest_name.clone()
+            } else {
+                format!("{rest_name}_{i}")
+            };
+            out.push(self.render_param_display(&name, e.optional, e.rest, e.type_id));
+        }
+        Some(out)
     }
 
     /// Format a signature with the given separator between params and return type.
