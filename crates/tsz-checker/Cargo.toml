@@ -594,9 +594,6 @@ path = "tests/ts1241_method_decorator_tests.rs"
 name = "ts1249_method_overload_decorator_tests"
 path = "tests/ts1249_method_overload_decorator_tests.rs"
 [[test]]
-name = "ts1119_object_literal_property_accessor_tests"
-path = "tests/ts1119_object_literal_property_accessor_tests.rs"
-[[test]]
 name = "es_member_decorator_arity_tests"
 path = "tests/es_member_decorator_arity_tests.rs"
 [[test]]

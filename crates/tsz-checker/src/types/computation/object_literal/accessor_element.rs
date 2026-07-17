@@ -344,20 +344,15 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::DUPLICATE_IDENTIFIER,
                     );
                 } else {
-                    // The name is already present and this is not a same-kind
-                    // accessor duplicate (TS1118) nor a complementary get/set pair,
-                    // so the prior member is a data property: tsc reports TS1119
-                    // "An object literal cannot have property and accessor with the
-                    // same name.", not the property-vs-property TS1117.
                     let message = format_message(
-                        diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_PROPERTY_AND_ACCESSOR_WITH_THE_SAME_NAME,
-                        &[&name],
-                    );
+                                diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
+                                &[&name],
+                            );
                     self.error_at_node(
-                        accessor.name,
-                        &message,
-                        diagnostic_codes::AN_OBJECT_LITERAL_CANNOT_HAVE_PROPERTY_AND_ACCESSOR_WITH_THE_SAME_NAME,
-                    );
+                                accessor.name,
+                                &message,
+                                diagnostic_codes::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
+                            );
                 }
             }
             explicit_property_names.insert(name_atom);

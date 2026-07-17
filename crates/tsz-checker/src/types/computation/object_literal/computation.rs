@@ -695,30 +695,21 @@ impl<'a> CheckerState<'a> {
                     let name_already_written = explicit_property_names.contains(&name_atom);
 
                     // Check for duplicate property (skip in destructuring targets).
-                    // A data property clashing with a prior data property is TS1117;
-                    // clashing with a prior accessor of the same name is TS1119
-                    // "An object literal cannot have property and accessor with the
-                    // same name." (the reverse order of the accessor-side check).
+                    // TS1117: duplicate properties are an error in object literals.
                     if !skip_duplicate_check
                         && explicit_property_names.contains(&name_atom)
                         && !self.ctx.has_parse_errors
                         && (!self.is_js_file() || self.ctx.js_strict_mode_diagnostics_enabled())
                     {
-                        let clashes_with_accessor =
-                            getter_names.contains(&name_atom) || setter_names.contains(&name_atom);
-                        let (message_template, code) = if clashes_with_accessor {
-                            (
-                                diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_PROPERTY_AND_ACCESSOR_WITH_THE_SAME_NAME,
-                                diagnostic_codes::AN_OBJECT_LITERAL_CANNOT_HAVE_PROPERTY_AND_ACCESSOR_WITH_THE_SAME_NAME,
-                            )
-                        } else {
-                            (
-                                diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
-                                diagnostic_codes::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
-                            )
-                        };
-                        let message = format_message(message_template, &[&name]);
-                        self.error_at_node(prop.name, &message, code);
+                        let message = format_message(
+                            diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
+                            &[&name],
+                        );
+                        self.error_at_node(
+                            prop.name,
+                            &message,
+                            diagnostic_codes::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
+                        );
                     }
                     explicit_property_names.insert(name_atom);
 
