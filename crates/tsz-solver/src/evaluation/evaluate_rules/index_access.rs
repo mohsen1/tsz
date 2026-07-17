@@ -1487,6 +1487,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return TypeId::ANY;
         }
 
+        // Match tsc: indexing `never` yields `never` for any key (`never` has
+        // every property). Without this the access falls through to a deferred
+        // `IndexAccess(never, K)` that never reduces, so a mapped/conditional
+        // utility that bottoms out at `never` (e.g. `T[keyof T]` with
+        // `keyof {} = never`, feeding `NonNullable<never['meta']>['trouble']`)
+        // stays unreduced and then fails constraint/assignability checks
+        // (false TS2344/TS2322 — the valibot `TwinRecord<{}>` M5 family).
+        if evaluated_object == TypeId::NEVER {
+            return TypeId::NEVER;
+        }
+
         // Error type propagation: if the object or index type is ERROR (e.g., from
         // a failed module import), return ERROR to suppress cascading diagnostics.
         // Without this, `Out[T]` where `Out` comes from a missing module would

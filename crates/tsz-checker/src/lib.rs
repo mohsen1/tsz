@@ -1329,6 +1329,9 @@ mod nested_type_parameter_target_elaboration_tests;
 #[path = "../tests/never_absorption_call_spread_tests.rs"]
 mod never_absorption_call_spread_tests;
 #[cfg(test)]
+#[path = "tests/never_indexed_access_reduction_tests.rs"]
+mod never_indexed_access_reduction_tests;
+#[cfg(test)]
 #[path = "../tests/never_initializer_falls_through_tests.rs"]
 mod never_initializer_falls_through_tests;
 #[cfg(test)]
