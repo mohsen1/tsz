@@ -10,10 +10,23 @@
 //! Mirrors the `quickinfoTypeAtReturnPositionsInaccurate.ts` conformance
 //! reproducer.
 
+use tsz_checker::context::CheckerOptions;
 use tsz_common::diagnostics::Diagnostic;
 
+/// Type-check `source` against the compiled default lib set. Lib contexts are
+/// required so type-guard predicates that narrow through lib utilities
+/// (`Extract`, `keyof`) evaluate the same way the real compiler does; a bare
+/// no-lib check cannot resolve `Extract<...>` and so fails to narrow inside a
+/// user-defined type guard, producing a spurious extra `TS2339` that neither
+/// `tsc` nor the `tsz` binary report.
 fn check(source: &str) -> Vec<Diagnostic> {
-    tsz_checker::test_utils::check_source_diagnostics(source)
+    let lib_files = tsz_checker::test_utils::load_default_lib_files();
+    tsz_checker::test_utils::check_source_with_libs(
+        source,
+        "test.ts",
+        CheckerOptions::default(),
+        &lib_files,
+    )
 }
 
 /// `class Store<E extends { [k: string]: A | B }>` with a method that
@@ -117,6 +130,9 @@ class Store<Bags extends { [index: string]: Bag }> {
 
 #[test]
 fn quickinfo_return_position_conformance_shape_keeps_only_expected_missing_property() {
+    if tsz_checker::test_utils::load_default_lib_files().is_empty() {
+        return; // needs lib `Extract` to evaluate the type-guard narrowing
+    }
     let source = r#"
 class Alpha<T extends number> {
   private value!: T;
