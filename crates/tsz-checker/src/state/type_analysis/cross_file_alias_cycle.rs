@@ -73,6 +73,30 @@ thread_local! {
     /// instance type once the in-flight build completes.
     static CROSS_ARENA_CLASS_INSTANCE_STACK: std::cell::RefCell<Vec<(u32, NodeIndex)>> =
         const { std::cell::RefCell::new(Vec::new()) };
+
+    /// Stack of class *constructor* (value / `typeof C`) types currently being
+    /// built on this thread, keyed by the same stable `(owner file index,
+    /// declaration NodeIndex)` as the instance stack above. Raw `SymbolId`s of a
+    /// class differ per import alias, so `class_constructor_resolution_set`
+    /// (which is `SymbolId`-keyed) cannot recognise "the same class's
+    /// constructor" across the child checkers a cross-arena delegation spins up.
+    ///
+    /// This is the value-side analogue of `CROSS_ARENA_CLASS_INSTANCE_STACK`.
+    /// When a class merged with a namespace/value module is referenced through a
+    /// cross-file import cycle, resolving its value (`typeof C`) re-delegates
+    /// into a fresh child checker that re-runs the whole constructor build while
+    /// the class is still mid-build. That rebuild reads the class's own
+    /// mid-build (degraded) instance for a self-referencing static's signature
+    /// (`static make = <R extends C>(…)`), so the static errors and drops from
+    /// `typeof C` (a false `TS2339` on `C.make` in the consumer file). Every
+    /// constructor build pushes its key here (see
+    /// `get_class_constructor_type_with_request_and_mode`); a cross-arena
+    /// constructor request whose target is already on this stack returns a
+    /// deferred `Lazy` to the class's `ClassConstructor` companion instead — the
+    /// full value (constructor + statics + merged namespace exports), which
+    /// resolves once the in-flight build publishes the companion body.
+    static CROSS_ARENA_CLASS_CONSTRUCTOR_STACK: std::cell::RefCell<Vec<(u32, NodeIndex)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Clear the cross-arena alias-resolution stack.
@@ -85,6 +109,7 @@ thread_local! {
 pub(crate) fn reset_cross_arena_alias_stack() {
     CROSS_ARENA_ALIAS_STACK.with(|stack| stack.borrow_mut().clear());
     CROSS_ARENA_CLASS_INSTANCE_STACK.with(|stack| stack.borrow_mut().clear());
+    CROSS_ARENA_CLASS_CONSTRUCTOR_STACK.with(|stack| stack.borrow_mut().clear());
 }
 
 #[cfg(test)]
@@ -129,6 +154,24 @@ impl Drop for CrossArenaClassInstanceGuard {
     }
 }
 
+/// RAII guard returned by [`CheckerState::enter_cross_arena_class_constructor`].
+/// Pops the pushed class-constructor key on drop — including on panic unwind —
+/// but only when a key was actually pushed (a class without a resolvable owner
+/// file is not tracked).
+pub(crate) struct CrossArenaClassConstructorGuard {
+    pushed: bool,
+}
+
+impl Drop for CrossArenaClassConstructorGuard {
+    fn drop(&mut self) {
+        if self.pushed {
+            CROSS_ARENA_CLASS_CONSTRUCTOR_STACK.with(|stack| {
+                stack.borrow_mut().pop();
+            });
+        }
+    }
+}
+
 impl<'a> CheckerState<'a> {
     /// Push a class/interface instance-type build onto the cross-arena
     /// class-instance stack, keyed by its stable `(owner file index, declaration
@@ -158,6 +201,38 @@ impl<'a> CheckerState<'a> {
         decl: NodeIndex,
     ) -> bool {
         CROSS_ARENA_CLASS_INSTANCE_STACK
+            .with(|stack| stack.borrow().contains(&(owner_file_idx, decl)))
+    }
+
+    /// Push a class *constructor* (value) build onto the cross-arena
+    /// class-constructor stack, keyed by its stable `(owner file index,
+    /// declaration NodeIndex)`; the returned guard pops it on drop. Called at the
+    /// start of every constructor build so a cross-file value re-request reaching
+    /// the same class through a delegation defers to the class's constructor
+    /// companion `Lazy` (the full value) instead of rebuilding a degraded one
+    /// (see [`Self::cross_arena_class_constructor_in_progress`]). A missing owner
+    /// file (`None`) is not tracked; the guard then pops nothing.
+    pub(crate) fn enter_cross_arena_class_constructor(
+        owner_file_idx: Option<u32>,
+        decl: NodeIndex,
+    ) -> CrossArenaClassConstructorGuard {
+        match owner_file_idx {
+            Some(file_idx) => {
+                CROSS_ARENA_CLASS_CONSTRUCTOR_STACK
+                    .with(|stack| stack.borrow_mut().push((file_idx, decl)));
+                CrossArenaClassConstructorGuard { pushed: true }
+            }
+            None => CrossArenaClassConstructorGuard { pushed: false },
+        }
+    }
+
+    /// True when the class identified by `(owner_file_idx, decl)` already has its
+    /// constructor (value) type being built higher on the active resolution path.
+    pub(crate) fn cross_arena_class_constructor_in_progress(
+        owner_file_idx: u32,
+        decl: NodeIndex,
+    ) -> bool {
+        CROSS_ARENA_CLASS_CONSTRUCTOR_STACK
             .with(|stack| stack.borrow().contains(&(owner_file_idx, decl)))
     }
 

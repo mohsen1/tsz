@@ -68,6 +68,21 @@ fn ts2339(files: &[(&str, &str)], roots: &[&str]) -> Vec<(String, String)> {
     out
 }
 
+fn all_diags(files: &[(&str, &str)], roots: &[&str]) -> Vec<(String, u32, String)> {
+    // Every diagnostic in both root orders. Used by the class+namespace-merge
+    // statics-loss witnesses, where the failure surfaces as a chain (TS2339 on
+    // the missing static, then a TS2347 untyped call / TS7006 implicit-any
+    // callback cascade, or a TS2344 constraint failure) rather than a lone
+    // TS2339 — so an exact tsc-clean assertion must consider all codes.
+    let mut out: Vec<(String, u32, String)> = Vec::new();
+    for order in [roots.to_vec(), roots.iter().rev().copied().collect()] {
+        for d in compile_in_order(files, &order) {
+            out.push((order.join(","), d.code, d.message_text.clone()));
+        }
+    }
+    out
+}
+
 const WAREHOUSE: &str = r#"
 import { Crate } from "./crate.ts";
 
@@ -211,5 +226,93 @@ fn acyclic_cross_module_stays_clean() {
     assert!(
         hits.is_empty(),
         "acyclic cross-module control must be clean; got: {hits:#?}"
+    );
+}
+
+// --------------------------------------------------------------------------
+// Task #2 (value side): cross-file statics lost in an import cycle under a
+// class+namespace merge. When a class merged with a namespace is
+// default-imported across an import cycle and a consumer reads one of its
+// statics (`C.craft(...)`), resolving the class's *value* (`typeof C`)
+// mid-cycle re-delegated Blueprint->Forge->Blueprint until the cross-arena
+// depth cap truncated the chain and dropped the class's statics from
+// `typeof C` — a false `TS2339` on `C.craft` in the consumer, cascading to a
+// `TS2347` untyped-call / `TS7006` implicit-any chain. The fix defers the
+// mid-cycle *value* re-request to the class's constructor companion `Lazy`
+// (the full value: statics + merged namespace exports), so the statics
+// survive. All binder names are arbitrary (no `Schema`/`make`/runtypes text).
+//
+// The static's signature is generic but does not self-reference the class
+// through its constraint, which is a *separate* (instance-side) gap tracked in
+// the ledger; this witness isolates the value-side statics-loss the fix owns.
+// --------------------------------------------------------------------------
+const BLUEPRINT: &str = r#"
+import Forge from "./forge";
+class Blueprint<U = any> {
+  readonly emblem!: U;
+  static craft = <M>(shape: (n: number) => M, trait: Blueprint.Trait<M>): M =>
+    shape(0);
+  private constructor(_s: (n: number) => U, _t: Blueprint.Trait<U>) {}
+  static seed(): number {
+    return Blueprint.craft<number>((n) => n, { label: "s", core: 1 });
+  }
+  wield() {
+    return new Forge().run();
+  }
+}
+namespace Blueprint {
+  export type Trait<M> = { label: string; core: M };
+}
+export default Blueprint;
+"#;
+
+const FORGE: &str = r#"
+import Blueprint from "./blueprint";
+export default class Forge {
+  run() {
+    return Blueprint.craft<number>((n) => n, { label: "f", core: 2 });
+  }
+}
+"#;
+
+#[test]
+fn import_cycle_class_namespace_merge_statics_survive_cross_arena() {
+    let hits = all_diags(
+        &[("blueprint.ts", BLUEPRINT), ("forge.ts", FORGE)],
+        &["blueprint.ts", "forge.ts"],
+    );
+    assert!(
+        hits.is_empty(),
+        "class+namespace merge value must keep its statics across the import \
+         cycle (tsc-clean); got: {hits:#?}"
+    );
+}
+
+// Acyclic control for the same class+namespace-merge + generic static shape:
+// with the back-reference (`wield()`/`Forge`) removed there is no cycle, so
+// this is already clean — it guards against the value deferral firing (and
+// hiding a genuine error) when there is no cycle to break.
+const ACYCLIC_MOLD: &str = r#"
+class Mold<U = any> {
+  readonly emblem!: U;
+  static craft = <M>(shape: (n: number) => M, trait: Mold.Trait<M>): M =>
+    shape(0);
+  private constructor(_s: (n: number) => U, _t: Mold.Trait<U>) {}
+  static seed(): number {
+    return Mold.craft<number>((n) => n, { label: "s", core: 1 });
+  }
+}
+namespace Mold {
+  export type Trait<M> = { label: string; core: M };
+}
+export const madeHere = Mold.craft<number>((n) => n, { label: "h", core: 3 });
+"#;
+
+#[test]
+fn acyclic_class_namespace_merge_static_stays_clean() {
+    let hits = all_diags(&[("mold.ts", ACYCLIC_MOLD)], &["mold.ts"]);
+    assert!(
+        hits.is_empty(),
+        "acyclic class+namespace-merge static control must be clean; got: {hits:#?}"
     );
 }

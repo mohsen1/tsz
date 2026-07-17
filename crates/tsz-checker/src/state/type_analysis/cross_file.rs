@@ -495,6 +495,35 @@ impl CheckerState<'_> {
                 .or_else(|| delegate_arena.and_then(|arena| self.ctx.get_file_idx_for_arena(arena)))
                 .map(|idx| idx as u32);
 
+            // Cross-file value ping-pong for a class caught in an import cycle:
+            // this same class's constructor (`typeof C`) is already being
+            // resolved higher on this delegation path. Re-delegating recurses
+            // until the cross-arena depth cap truncates the chain and drops the
+            // class's statics — a false `TS2339` on `C.make` in the consumer
+            // file (the cross-file statics-lost-in-import-cycle gap). Defer to
+            // the class's `ClassConstructor` companion `Lazy` — the full value
+            // (constructor + statics + merged namespace exports) — keyed by the
+            // stable `(owner file, declaration node)` since raw `SymbolId`s
+            // differ per import alias. The companion resolves once the in-flight
+            // build publishes its body. The guard below marks this class
+            // in-flight for the duration of the delegation so the re-entry is
+            // recognised; unlike the instance-side deferral this must be the
+            // *value* companion, so the static/namespace side survives.
+            let ctor_stack_key = cross_file_symbol_is_class
+                .then(|| memo_file_idx.zip(cross_file_symbol.and_then(|s| s.primary_declaration())))
+                .flatten();
+            if let Some((owner_file_idx, decl)) = ctor_stack_key
+                && Self::cross_arena_class_constructor_in_progress(owner_file_idx, decl)
+            {
+                return Some((
+                    self.constructor_companion_lazy_for_symbol(sym_id, None),
+                    Vec::new(),
+                ));
+            }
+            let _cross_arena_ctor_guard = ctor_stack_key.map(|(owner_file_idx, decl)| {
+                Self::enter_cross_arena_class_constructor(Some(owner_file_idx), decl)
+            });
+
             let symbol_type_cache_file_idx = self.symbol_arena_symbol_type_cache_file_idx(
                 needs_cross_file_delegation,
                 cross_file_idx,
@@ -1319,12 +1348,18 @@ impl CheckerState<'_> {
         // not identify "the same class" across the child checkers a delegation
         // creates.
         //
-        // Restricted to pure classes: a class merged with a namespace/value module
-        // (`class C {} namespace C {}`) carries static/namespace members on its
-        // value side, and deferring its whole resolution to a lazy instance ref
-        // drops those from `typeof C` while the class is still in flight (the
-        // separate cross-file-statics-in-import-cycle gap; a `static make`/`create`
-        // then reads as missing). Those merges keep the prior delegation behavior.
+        // Restricted to pure classes: for a class merged with a namespace/value
+        // module (`class C {} namespace C {}`) the *value* side (`typeof C`,
+        // statics + namespace exports) is deferred separately at the
+        // symbol-delegation entry via the constructor companion `Lazy` (see
+        // `constructor_companion_lazy_for_symbol`), which keeps its statics
+        // across the cycle. The *instance* side of a merge is still NOT deferred
+        // here: combining an instance `Lazy(DefId)` with that value companion
+        // `Lazy` forms a mutual value<->instance lazy reference the solver forces
+        // to a stack overflow on hub-and-spoke heritage cycles (runtypes). Until
+        // the instance can be deferred to a lazy that resolves to the *pure
+        // instance* independently of the merged-symbol DefId, merges keep the
+        // prior (non-deferred) delegation behavior on the instance side.
         if let Some(owner_file_idx) = query_file_idx
             && let Ok(owner_file_idx_u32) = u32::try_from(owner_file_idx)
             && let Some(symbol) = self
