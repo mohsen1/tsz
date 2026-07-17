@@ -245,7 +245,11 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
             }
             TypeParamOrigin::InferPlaceholder { id } => MetaRecursionIdentity::InferPlaceholder(id),
             TypeParamOrigin::InferSource { id, .. } => MetaRecursionIdentity::InferSource(id),
-            TypeParamOrigin::User => MetaRecursionIdentity::Type(type_id),
+            // An overload-renamed param already has a program-unique TypeId, so
+            // its recursion identity is its type id — same as a plain `User`.
+            TypeParamOrigin::User | TypeParamOrigin::OverloadRenamed { .. } => {
+                MetaRecursionIdentity::Type(type_id)
+            }
         }
     }
 

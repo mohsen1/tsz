@@ -1766,6 +1766,46 @@ fn format_rest_readonly_tuple_param_expands_dropping_modifier() {
 }
 
 #[test]
+fn format_overload_renamed_type_param_uses_display_name() {
+    // A type parameter renamed to the synthetic `__overload_sig_*` atom for
+    // name-keyed overload inference must render its original declared name and
+    // never leak the placeholder into a diagnostic.
+    let db = TypeInterner::new();
+    let synthetic = db.intern_string("__overload_sig_2_tp_0");
+    let display = db.intern_string("Value");
+    let tp = db.type_param(TypeParamInfo {
+        name: synthetic,
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::OverloadRenamed {
+            display_name: display,
+        },
+    });
+    let func = db.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(db.intern_string("x")),
+            type_id: tp,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let mut fmt = TypeFormatter::new(&db);
+    let result = fmt.format(func);
+    assert_eq!(result, "(x: Value) => void");
+    assert!(
+        !result.contains("__overload_sig"),
+        "synthetic overload placeholder leaked: {result}"
+    );
+}
+
+#[test]
 fn format_function_with_type_params() {
     let db = TypeInterner::new();
     let mut fmt = TypeFormatter::new(&db);

@@ -1415,6 +1415,14 @@ pub enum TypeParamOrigin {
     /// re-generalized return types display with their source names; `None` for
     /// the legacy `__infer_src_ctx_*` form.
     InferSource { id: u64, origin_name: Option<Atom> },
+    /// An overload signature's own type parameter that collided by name with a
+    /// foreign (caller-scope) type parameter in the arguments, so
+    /// `overload_signature_for_inference` renamed it to a program-unique
+    /// `__overload_sig_{sig}_tp_{i}` atom for name-keyed inference. This is NOT
+    /// an inference placeholder — it behaves as `User` for all classification —
+    /// but the synthetic `name` must never reach diagnostics. `display_name`
+    /// records the original declared name so the printer renders it instead.
+    OverloadRenamed { display_name: Atom },
 }
 
 impl TypeParamOrigin {
@@ -1425,7 +1433,13 @@ impl TypeParamOrigin {
     pub const fn is_infer_placeholder(self) -> bool {
         // `DeclScoped` is a user-written param (decl-stamped for identity), NOT
         // an inference placeholder — classify it with `User` (#14344 STEP-B).
-        !matches!(self, Self::User | Self::DeclScoped { .. })
+        // `OverloadRenamed` is a declared overload type param that was renamed
+        // for name-keyed inference; it too behaves as `User` (the rename does
+        // not turn it into a HOFI/call-local placeholder).
+        !matches!(
+            self,
+            Self::User | Self::DeclScoped { .. } | Self::OverloadRenamed { .. }
+        )
     }
 
     /// Higher-order *source* inference placeholder only.
@@ -1452,6 +1466,17 @@ impl TypeParamOrigin {
     pub const fn infer_source_origin_name(self) -> Option<Atom> {
         match self {
             TypeParamOrigin::InferSource { origin_name, .. } => origin_name,
+            _ => None,
+        }
+    }
+
+    /// The original declared name for an overload-renamed type parameter, if
+    /// any. Used by the printer to render the source name instead of the
+    /// synthetic `__overload_sig_*` atom.
+    #[inline]
+    pub const fn overload_rename_display_name(self) -> Option<Atom> {
+        match self {
+            TypeParamOrigin::OverloadRenamed { display_name } => Some(display_name),
             _ => None,
         }
     }

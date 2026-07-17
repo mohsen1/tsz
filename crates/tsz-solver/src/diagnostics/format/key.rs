@@ -179,7 +179,16 @@ impl<'a> TypeFormatter<'a> {
                 }
                 self.format_callable(shape.as_ref()).into()
             }
-            TypeData::TypeParameter(info) => Cow::Owned(self.atom(info.name).to_string()),
+            TypeData::TypeParameter(info) => {
+                // An overload type parameter renamed for name-keyed inference
+                // renders under its original declared name, never the synthetic
+                // `__overload_sig_*` atom (see `TypeParamOrigin::OverloadRenamed`).
+                let name = info
+                    .origin
+                    .overload_rename_display_name()
+                    .unwrap_or(info.name);
+                Cow::Owned(self.atom(name).to_string())
+            }
             TypeData::UnresolvedTypeName(name) => {
                 if self.atom(*name).as_ref() == "BuiltinIteratorReturn"
                     && let Some(replacement) = self.builtin_iterator_return_type
