@@ -107,6 +107,11 @@ impl<'a> CheckerState<'a> {
         // on strict mode, so it must run before the strict-mode early return.
         self.check_await_reserved_parameter_names(params);
 
+        // TS1346/TS1347: `"use strict"` directive with a non-simple parameter
+        // list. Also a checkGrammar diagnostic (not gated on strict mode), so it
+        // runs before the strict-mode early return.
+        self.check_use_strict_non_simple_parameter_list(params, strict_context_node);
+
         if !use_class_strict_message && !self.is_strict_mode_for_node(strict_context_node) {
             return;
         }

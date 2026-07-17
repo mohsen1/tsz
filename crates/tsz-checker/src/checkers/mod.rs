@@ -16,6 +16,7 @@ mod promise_checker_generator;
 mod promise_checker_object_normalization;
 pub mod property_checker;
 pub mod signature_builder;
+mod use_strict_parameter_list;
 
 use tsz_parser::parser::base::NodeIndex;
 use tsz_solver::TypeId;
