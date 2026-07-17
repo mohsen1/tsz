@@ -667,6 +667,35 @@ fn test_widen_type_for_inference_does_not_recurse_into_function() {
     assert_eq!(widened, func);
 }
 
+#[test]
+fn test_widen_type_for_inference_preserves_unique_symbol() {
+    // tsc's `getWidenedLiteralType` never widens a `unique symbol`, so a
+    // const-bound unique symbol inferred into a type-parameter position must be
+    // preserved — unlike the mutable-location/display widener, which applies
+    // `getWidenedUniqueESSymbolType` (`unique symbol` -> `symbol`). Regression
+    // guard for jotai's `[typeof RESET]` rest tuple collapsing to `[symbol]`.
+    let interner = TypeInterner::new();
+    let unique_sym = interner.intern(TypeData::UniqueSymbol(SymbolRef(7)));
+
+    // Mutable-location / display widening still collapses to `symbol`.
+    assert_eq!(widen_type(&interner, unique_sym), TypeId::SYMBOL);
+    assert_eq!(
+        widen_type_for_mutable_binding(&interner, unique_sym),
+        TypeId::SYMBOL
+    );
+
+    // Inference-position widening preserves it, both bare and nested in a tuple
+    // element (the jotai `[typeof RESET]` shape).
+    assert_eq!(widen_type_for_inference(&interner, unique_sym), unique_sym);
+    let tuple = interner.tuple(vec![TupleElement {
+        type_id: unique_sym,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+    assert_eq!(widen_type_for_inference(&interner, tuple), tuple);
+}
+
 // -------- widen_object_literal_properties (pub(crate)) -----------------------
 
 fn mutable_lit_prop(interner: &TypeInterner, name: &str, lit: TypeId) -> PropertyInfo {

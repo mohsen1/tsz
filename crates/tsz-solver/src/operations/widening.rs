@@ -12,7 +12,9 @@
 //! - **Union types**: All members are widened recursively
 //! - **Object types**: Property types are widened unless `readonly`
 //! - **Type parameters**: Never widened
-//! - **Unique symbols**: Never widened
+//! - **Unique symbols**: widened to `symbol` at mutable-location / display
+//!   contexts (tsc `getWidenedUniqueESSymbolType`); preserved in inference
+//!   position (tsc `getWidenedLiteralType` never widens them)
 
 use crate::diagnostics::display_provenance::{
     self, AliasApplicationPriority, AliasApplicationProvenance,
@@ -160,7 +162,19 @@ pub fn widen_type(db: &dyn crate::construction::TypeDatabase, type_id: TypeId) -
     }
     use rustc_hash::FxHashMap;
     let mut cache = FxHashMap::default();
-    let result = widen_type_cached(db, type_id, &mut cache, true, true, false, false, false);
+    let result = widen_type_cached(
+        db,
+        type_id,
+        &mut cache,
+        WidenFlags {
+            widen_boolean_intrinsics: true,
+            widen_functions: true,
+            widen_object_union_members: false,
+            preserve_booleans_in_rest_tuples: false,
+            respect_object_freshness: false,
+            widen_unique_symbols: true,
+        },
+    );
     db.set_widen_type_memo(type_id, result);
     result
 }
@@ -178,7 +192,19 @@ pub fn widen_type_for_display(
 ) -> TypeId {
     use rustc_hash::FxHashMap;
     let mut cache = FxHashMap::default();
-    widen_type_cached(db, type_id, &mut cache, false, false, false, false, false)
+    widen_type_cached(
+        db,
+        type_id,
+        &mut cache,
+        WidenFlags {
+            widen_boolean_intrinsics: false,
+            widen_functions: false,
+            widen_object_union_members: false,
+            preserve_booleans_in_rest_tuples: false,
+            respect_object_freshness: false,
+            widen_unique_symbols: true,
+        },
+    )
 }
 
 /// Widen for diagnostic display while preserving the literal property types of
@@ -201,7 +227,19 @@ pub fn widen_type_for_display_preserving_non_fresh(
 ) -> TypeId {
     use rustc_hash::FxHashMap;
     let mut cache = FxHashMap::default();
-    widen_type_cached(db, type_id, &mut cache, false, false, false, false, true)
+    widen_type_cached(
+        db,
+        type_id,
+        &mut cache,
+        WidenFlags {
+            widen_boolean_intrinsics: false,
+            widen_functions: false,
+            widen_object_union_members: false,
+            preserve_booleans_in_rest_tuples: false,
+            respect_object_freshness: true,
+            widen_unique_symbols: true,
+        },
+    )
 }
 
 /// Widen for call-argument diagnostic display: widens boolean literal
@@ -227,7 +265,19 @@ pub fn widen_argument_type_for_display(
 ) -> TypeId {
     use rustc_hash::FxHashMap;
     let mut cache = FxHashMap::default();
-    widen_type_cached(db, type_id, &mut cache, true, false, false, true, false)
+    widen_type_cached(
+        db,
+        type_id,
+        &mut cache,
+        WidenFlags {
+            widen_boolean_intrinsics: true,
+            widen_functions: false,
+            widen_object_union_members: false,
+            preserve_booleans_in_rest_tuples: true,
+            respect_object_freshness: false,
+            widen_unique_symbols: true,
+        },
+    )
 }
 
 /// Widen type for inference resolution: like `widen_type` but does NOT
@@ -244,7 +294,19 @@ pub fn widen_type_for_inference(
 ) -> TypeId {
     use rustc_hash::FxHashMap;
     let mut cache = FxHashMap::default();
-    widen_type_cached(db, type_id, &mut cache, true, false, true, false, false)
+    widen_type_cached(
+        db,
+        type_id,
+        &mut cache,
+        WidenFlags {
+            widen_boolean_intrinsics: true,
+            widen_functions: false,
+            widen_object_union_members: true,
+            preserve_booleans_in_rest_tuples: false,
+            respect_object_freshness: false,
+            widen_unique_symbols: false,
+        },
+    )
 }
 
 /// Display-widen a type for TS2403 (subsequent variable declaration) messages.
@@ -301,7 +363,19 @@ pub fn widen_type_for_mutable_binding(
         return widen_type(db, type_id);
     }
     let mut cache = FxHashMap::default();
-    widen_type_cached(db, type_id, &mut cache, true, true, true, false, false)
+    widen_type_cached(
+        db,
+        type_id,
+        &mut cache,
+        WidenFlags {
+            widen_boolean_intrinsics: true,
+            widen_functions: true,
+            widen_object_union_members: true,
+            preserve_booleans_in_rest_tuples: false,
+            respect_object_freshness: false,
+            widen_unique_symbols: true,
+        },
+    )
 }
 
 /// Widen a `const` declaration's fresh initializer type the way tsc does.
@@ -391,20 +465,31 @@ pub fn widen_type_deep(db: &dyn crate::construction::TypeDatabase, type_id: Type
     }
     use rustc_hash::FxHashMap;
     let mut cache = FxHashMap::default();
-    widen_type_cached(db, type_id, &mut cache, true, true, false, false, false)
+    widen_type_cached(
+        db,
+        type_id,
+        &mut cache,
+        WidenFlags {
+            widen_boolean_intrinsics: true,
+            widen_functions: true,
+            widen_object_union_members: false,
+            preserve_booleans_in_rest_tuples: false,
+            respect_object_freshness: false,
+            widen_unique_symbols: true,
+        },
+    )
 }
 
-fn widen_type_cached(
-    db: &dyn crate::construction::TypeDatabase,
-    type_id: TypeId,
-    // Keyed on `(TypeId, widen_boolean_intrinsics)` so the same compound
-    // type processed under different boolean-widening contexts inside one
-    // widening operation can't poison each other's results. The
-    // `preserve_booleans_in_rest_tuples` carve-out flips
-    // `widen_boolean_intrinsics` from `true` (outside a rest-tuple) to
-    // `false` (inside) mid-traversal; without the flag in the key, the
-    // first-processed version would short-circuit the second.
-    cache: &mut rustc_hash::FxHashMap<(TypeId, bool), TypeId>,
+/// Per-operation widening policy threaded unchanged through the recursive
+/// `widen_type_cached` traversal (only `widen_boolean_intrinsics` is flipped
+/// mid-traversal, by the rest-tuple carve-out).
+#[derive(Clone, Copy)]
+struct WidenFlags {
+    // Keyed into the cache (see `widen_type_cached`) so the same compound type
+    // processed under different boolean-widening contexts inside one widening
+    // operation can't poison each other's results. The
+    // `preserve_booleans_in_rest_tuples` carve-out flips this from `true`
+    // (outside a rest-tuple) to `false` (inside) mid-traversal.
     widen_boolean_intrinsics: bool,
     widen_functions: bool,
     widen_object_union_members: bool,
@@ -428,7 +513,29 @@ fn widen_type_cached(
     // gate object-property widening on freshness via
     // `widen_object_union_members`.
     respect_object_freshness: bool,
+    // When true, a `unique symbol` widens to `symbol` (tsc's
+    // `getWidenedUniqueESSymbolType`, applied at mutable-location / display
+    // contexts). Inference-position widening leaves it false: tsc's
+    // `getWidenedLiteralType` never widens a `unique symbol`, so a const-bound
+    // `unique symbol` inferred into a tuple/rest position (e.g. jotai's
+    // `[typeof RESET]`) is preserved, not collapsed to `[symbol]`.
+    widen_unique_symbols: bool,
+}
+
+fn widen_type_cached(
+    db: &dyn crate::construction::TypeDatabase,
+    type_id: TypeId,
+    cache: &mut rustc_hash::FxHashMap<(TypeId, bool), TypeId>,
+    flags: WidenFlags,
 ) -> TypeId {
+    let WidenFlags {
+        widen_boolean_intrinsics,
+        widen_functions,
+        widen_object_union_members,
+        preserve_booleans_in_rest_tuples,
+        respect_object_freshness,
+        widen_unique_symbols,
+    } = flags;
     // Fast path: most intrinsic types are never widened, but boolean
     // literal intrinsics (BOOLEAN_TRUE / BOOLEAN_FALSE) must widen to BOOLEAN.
     if (type_id == TypeId::BOOLEAN_TRUE || type_id == TypeId::BOOLEAN_FALSE)
@@ -454,8 +561,11 @@ fn widen_type_cached(
         // String/Number/Boolean/BigInt literals widen to their primitives
         Some(TypeData::Literal(ref value)) => value.primitive_type_id(),
 
-        // Unique Symbol widens to Symbol
-        Some(TypeData::UniqueSymbol(_)) => TypeId::SYMBOL,
+        // Unique Symbol widens to Symbol only at mutable-location / display
+        // contexts (tsc `getWidenedUniqueESSymbolType`). In inference position
+        // tsc preserves it (`getWidenedLiteralType` never widens unique symbols),
+        // so the non-widen case falls through to the identity default below.
+        Some(TypeData::UniqueSymbol(_)) if widen_unique_symbols => TypeId::SYMBOL,
 
         // Unions: only widen if the union itself requires widening.
         // tsc's getWidenedType only widens types with the RequiresWidening flag.
@@ -563,18 +673,7 @@ fn widen_type_cached(
 
                 let widened_members: Vec<TypeId> = members_to_widen
                     .iter()
-                    .map(|&m| {
-                        widen_type_cached(
-                            db,
-                            m,
-                            cache,
-                            widen_boolean_intrinsics,
-                            widen_functions,
-                            widen_object_union_members,
-                            preserve_booleans_in_rest_tuples,
-                            respect_object_freshness,
-                        )
-                    })
+                    .map(|&m| widen_type_cached(db, m, cache, flags))
                     .collect();
                 // Preserve source order for diagnostic display: the canonical
                 // union sort uses anonymous shape allocation order, which can
@@ -639,16 +738,7 @@ fn widen_type_cached(
                 {
                     prop.type_id
                 } else {
-                    widen_type_cached(
-                        db,
-                        prop.type_id,
-                        cache,
-                        widen_boolean_intrinsics,
-                        widen_functions,
-                        widen_object_union_members,
-                        preserve_booleans_in_rest_tuples,
-                        respect_object_freshness,
-                    )
+                    widen_type_cached(db, prop.type_id, cache, flags)
                 };
 
                 // Write type follows read type logic.
@@ -657,16 +747,7 @@ fn widen_type_cached(
                 {
                     prop.write_type
                 } else {
-                    widen_type_cached(
-                        db,
-                        prop.write_type,
-                        cache,
-                        widen_boolean_intrinsics,
-                        widen_functions,
-                        widen_object_union_members,
-                        preserve_booleans_in_rest_tuples,
-                        respect_object_freshness,
-                    )
+                    widen_type_cached(db, prop.write_type, cache, flags)
                 };
 
                 if widened_type != prop.type_id || widened_write_type != prop.write_type {
@@ -716,16 +797,7 @@ fn widen_type_cached(
 
         // Arrays: recursively widen element type
         Some(TypeData::Array(element_type)) => {
-            let widened = widen_type_cached(
-                db,
-                element_type,
-                cache,
-                widen_boolean_intrinsics,
-                widen_functions,
-                widen_object_union_members,
-                preserve_booleans_in_rest_tuples,
-                respect_object_freshness,
-            );
+            let widened = widen_type_cached(db, element_type, cache, flags);
             if widened != element_type {
                 let widened_arr = db.array(widened);
                 propagate_display_alias(db, type_id, widened_arr);
@@ -760,11 +832,10 @@ fn widen_type_cached(
                     db,
                     elem.type_id,
                     cache,
-                    widen_booleans_here,
-                    widen_functions,
-                    widen_object_union_members,
-                    preserve_booleans_in_rest_tuples,
-                    respect_object_freshness,
+                    WidenFlags {
+                        widen_boolean_intrinsics: widen_booleans_here,
+                        ..flags
+                    },
                 );
                 if widened != elem.type_id {
                     changed = true;
@@ -792,16 +863,7 @@ fn widen_type_cached(
                 .iter()
                 .map(|param| {
                     let mut widened = *param;
-                    widened.type_id = widen_type_cached(
-                        db,
-                        param.type_id,
-                        cache,
-                        widen_boolean_intrinsics,
-                        widen_functions,
-                        widen_object_union_members,
-                        preserve_booleans_in_rest_tuples,
-                        respect_object_freshness,
-                    );
+                    widened.type_id = widen_type_cached(db, param.type_id, cache, flags);
                     if widened.type_id != param.type_id {
                         changed = true;
                     }
@@ -809,31 +871,13 @@ fn widen_type_cached(
                 })
                 .collect();
             widened_shape.this_type = widened_shape.this_type.map(|this_ty| {
-                let widened = widen_type_cached(
-                    db,
-                    this_ty,
-                    cache,
-                    widen_boolean_intrinsics,
-                    widen_functions,
-                    widen_object_union_members,
-                    preserve_booleans_in_rest_tuples,
-                    respect_object_freshness,
-                );
+                let widened = widen_type_cached(db, this_ty, cache, flags);
                 if widened != this_ty {
                     changed = true;
                 }
                 widened
             });
-            let widened_return = widen_type_cached(
-                db,
-                widened_shape.return_type,
-                cache,
-                widen_boolean_intrinsics,
-                widen_functions,
-                widen_object_union_members,
-                preserve_booleans_in_rest_tuples,
-                respect_object_freshness,
-            );
+            let widened_return = widen_type_cached(db, widened_shape.return_type, cache, flags);
             if widened_return != widened_shape.return_type {
                 changed = true;
             }
@@ -863,16 +907,7 @@ fn widen_type_cached(
                         .iter()
                         .map(|param| {
                             let mut widened = *param;
-                            widened.type_id = widen_type_cached(
-                                db,
-                                param.type_id,
-                                cache,
-                                widen_boolean_intrinsics,
-                                widen_functions,
-                                widen_object_union_members,
-                                preserve_booleans_in_rest_tuples,
-                                respect_object_freshness,
-                            );
+                            widened.type_id = widen_type_cached(db, param.type_id, cache, flags);
                             if widened.type_id != param.type_id {
                                 changed = true;
                             }
@@ -880,31 +915,14 @@ fn widen_type_cached(
                         })
                         .collect();
                     widened_sig.this_type = widened_sig.this_type.map(|this_ty| {
-                        let widened = widen_type_cached(
-                            db,
-                            this_ty,
-                            cache,
-                            widen_boolean_intrinsics,
-                            widen_functions,
-                            widen_object_union_members,
-                            preserve_booleans_in_rest_tuples,
-                            respect_object_freshness,
-                        );
+                        let widened = widen_type_cached(db, this_ty, cache, flags);
                         if widened != this_ty {
                             changed = true;
                         }
                         widened
                     });
-                    let widened_return = widen_type_cached(
-                        db,
-                        widened_sig.return_type,
-                        cache,
-                        widen_boolean_intrinsics,
-                        widen_functions,
-                        widen_object_union_members,
-                        preserve_booleans_in_rest_tuples,
-                        respect_object_freshness,
-                    );
+                    let widened_return =
+                        widen_type_cached(db, widened_sig.return_type, cache, flags);
                     if widened_return != widened_sig.return_type {
                         changed = true;
                     }
