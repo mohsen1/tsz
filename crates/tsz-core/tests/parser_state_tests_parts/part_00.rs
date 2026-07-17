@@ -284,6 +284,71 @@ fn test_parser_object_get_accessor_parameters_report_ts1054() {
 }
 
 #[test]
+fn test_parser_regex_braced_unicode_escape_out_of_range_reports_ts1198() {
+    // Under the `u`/`v` flag, `\u{...}` is a code-point escape whose value must
+    // be <= 0x10FFFF. Vary the literal to keep the check structural.
+    for source in [
+        r"var a = /\u{110000}/u;",
+        r"var b = /\u{FFFFFFFF}/gu;",
+        r"var c = /\u{110000}/v;",
+    ] {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        parser.parse_source_file();
+        let codes: Vec<u32> = parser
+            .get_diagnostics()
+            .iter()
+            .map(|diag| diag.code)
+            .collect();
+        assert!(
+            codes.contains(
+                &diagnostic_codes::AN_EXTENDED_UNICODE_ESCAPE_VALUE_MUST_BE_BETWEEN_0X0_AND_0X10FFFF_INCLUSIVE
+            ),
+            "expected TS1198 for `{source}`: {:?}",
+            parser.get_diagnostics()
+        );
+    }
+}
+
+#[test]
+fn test_parser_regex_braced_unicode_escape_empty_reports_ts1125() {
+    let mut parser = ParserState::new("test.ts".to_string(), r"var a = /\u{}/u;".to_string());
+    parser.parse_source_file();
+    let codes: Vec<u32> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|diag| diag.code)
+        .collect();
+    assert!(
+        codes.contains(&diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED),
+        "expected TS1125 for empty `\\u{{}}`: {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn test_parser_regex_braced_unicode_escape_without_unicode_flag_is_clean() {
+    // Without the `u`/`v` flag the `{` opens a quantifier, so `\u{110000}` is not
+    // a code-point escape and must not be range-checked. A valid in-range escape
+    // under the `u` flag is likewise clean.
+    for source in [r"var a = /\u{110000}/;", r"var b = /\u{10FFFF}/u;"] {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        parser.parse_source_file();
+        let codes: Vec<u32> = parser
+            .get_diagnostics()
+            .iter()
+            .map(|diag| diag.code)
+            .collect();
+        assert!(
+            !codes.contains(
+                &diagnostic_codes::AN_EXTENDED_UNICODE_ESCAPE_VALUE_MUST_BE_BETWEEN_0X0_AND_0X10FFFF_INCLUSIVE
+            ),
+            "unexpected TS1198 for `{source}`: {:?}",
+            parser.get_diagnostics()
+        );
+    }
+}
+
+#[test]
 fn test_parser_class_set_accessor_zero_params_report_ts1049() {
     // A `set` accessor with no parameter is TS1049. Vary the binder name to
     // confirm the check is structural, not name-scoped.

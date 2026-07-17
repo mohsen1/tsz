@@ -364,17 +364,55 @@ impl ParserState {
             }
 
             fn scan_braced_unicode_escape_value(
-                _parser: &mut ParserState,
-                _emit: &impl Fn(&mut ParserState, usize, u32, &str, u32),
+                parser: &mut ParserState,
+                emit: &impl Fn(&mut ParserState, usize, u32, &str, u32),
                 body: &[u8],
                 end: usize,
                 pos: &mut usize,
+                strict_mode: bool,
             ) {
-                // Skip past `\u{...}` body without validating the code-point
-                // range. tsc treats out-of-range escapes inside regex literals
-                // as a runtime concern and does not emit TS1198 here, even
-                // with the `u` flag.
-                *pos += 1;
+                // `*pos` is at the `{`. Under the Unicode (`u`) or Unicode-sets
+                // (`v`) flag, `\u{ HexDigits }` is a code-point escape whose value
+                // must be a run of hex digits no greater than 0x10FFFF; tsc
+                // validates it (mirrors the string-literal `\u{…}` checks). Without
+                // a Unicode flag the `{` merely opens a quantifier, so no
+                // validation applies. The broader malformed-escape diagnostics
+                // (TS1508 "Unexpected …") live in the full regex-grammar validator
+                // (task #74); this helper is the separable seam it will extend.
+                *pos += 1; // consume `{`
+                let hex_start = *pos;
+                let mut has_digit = false;
+                while *pos < end && body[*pos].is_ascii_hexdigit() {
+                    has_digit = true;
+                    *pos += 1;
+                }
+                let hex_end = *pos;
+                if strict_mode && hex_end < end && body[hex_end] == b'}' {
+                    if !has_digit {
+                        emit(
+                            parser,
+                            hex_end,
+                            1,
+                            diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                            diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+                        );
+                    } else {
+                        let hex = std::str::from_utf8(&body[hex_start..hex_end]).unwrap_or("");
+                        let out_of_range =
+                            u32::from_str_radix(hex, 16).map_or(true, |value| value > 0x10FFFF);
+                        if out_of_range {
+                            emit(
+                                parser,
+                                hex_start,
+                                (hex_end - hex_start) as u32,
+                                diagnostic_messages::AN_EXTENDED_UNICODE_ESCAPE_VALUE_MUST_BE_BETWEEN_0X0_AND_0X10FFFF_INCLUSIVE,
+                                diagnostic_codes::AN_EXTENDED_UNICODE_ESCAPE_VALUE_MUST_BE_BETWEEN_0X0_AND_0X10FFFF_INCLUSIVE,
+                            );
+                        }
+                    }
+                }
+                // Recovery: skim to and past the closing `}` (legacy behavior) so
+                // the outer body scan continues correctly regardless of validity.
                 while *pos < end && body[*pos] != b'}' {
                     *pos += 1;
                 }
@@ -508,7 +546,14 @@ impl ParserState {
                     b'u' => {
                         *pos += 1;
                         if *pos < end && body[*pos] == b'{' {
-                            scan_braced_unicode_escape_value(parser, emit, body, end, pos);
+                            scan_braced_unicode_escape_value(
+                                parser,
+                                emit,
+                                body,
+                                end,
+                                pos,
+                                strict_mode,
+                            );
                         } else {
                             let mut digits = 0usize;
                             while *pos < end && digits < 4 && body[*pos].is_ascii_hexdigit() {

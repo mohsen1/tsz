@@ -31,11 +31,13 @@ const regexes: RegExp[] = [
 }
 
 #[test]
-fn test_regex_extended_unicode_escape_above_max_does_not_report_ts1198() {
-    // tsc treats out-of-range `\u{...}` inside regex literals as a runtime
-    // concern and does not emit TS1198 even with the `u` flag. Match that
-    // behavior — the parser must skip past the braced escape without
-    // validating its code-point range.
+fn test_regex_extended_unicode_escape_above_max_reports_ts1198() {
+    // Under the `u` flag, `\u{...}` is a code-point escape and tsc (7.0.2) emits
+    // TS1198 when its value exceeds 0x10FFFF (conformance
+    // `unicodeExtendedEscapesInRegularExpressions07/12`). The prior expectation
+    // that regex escapes are never range-checked reflected a stale tsc 6.0 cache.
+    // The character-class form (`/[\u{110000}]/u`) is validated by the full
+    // regex-grammar validator (task #74), so only the top-level escape fires here.
     let source = r#"
 const regexes: RegExp[] = [
   /\u{110000}/u,
@@ -45,17 +47,17 @@ const regexes: RegExp[] = [
     let (parser, _root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
-    let ts1198: Vec<_> = diagnostics
+    let ts1198 = diagnostics
         .iter()
         .filter(|d| {
             d.code
                 == diagnostic_codes::AN_EXTENDED_UNICODE_ESCAPE_VALUE_MUST_BE_BETWEEN_0X0_AND_0X10FFFF_INCLUSIVE
         })
-        .collect();
+        .count();
 
-    assert!(
-        ts1198.is_empty(),
-        "Expected no TS1198 inside regex literals to match tsc, got {diagnostics:?}"
+    assert_eq!(
+        ts1198, 1,
+        "Expected TS1198 for the top-level out-of-range `\\u{{}}` escape, got {diagnostics:?}"
     );
 }
 
@@ -490,7 +492,12 @@ fn test_regex_named_capturing_groups_do_not_emit_unexpected_paren() {
 }
 
 #[test]
-fn test_regex_unicode_brace_escape_variants_do_not_emit_ts1125() {
+fn test_regex_empty_braced_unicode_escape_reports_ts1125() {
+    // `\u{}` under the `u` flag has no hex digits, so tsc emits TS1125
+    // (conformance `unicodeExtendedEscapesInRegularExpressions19`). The malformed
+    // non-empty forms (`\u{-DDDD}`, `\u{r}`) additionally require the TS1508
+    // "Unexpected …" regex-grammar diagnostic (task #74) and are not yet reported,
+    // so the empty form is the only TS1125 here.
     let source = r#"
 const a = /\u{-DDDD}/gu;
 const b = /\u{r}\u{n}\u{t}/gu;
@@ -498,10 +505,10 @@ const c = /\u{}/gu;
 "#;
     let (parser, _root) = parse_source(source);
     let diagnostics = parser.get_diagnostics();
-    let ts1125: Vec<_> = diagnostics.iter().filter(|d| d.code == 1125).collect();
-    assert!(
-        ts1125.is_empty(),
-        "Expected brace-form regex unicode escapes to avoid TS1125, got {diagnostics:?}"
+    let ts1125 = diagnostics.iter().filter(|d| d.code == 1125).count();
+    assert_eq!(
+        ts1125, 1,
+        "Expected exactly one TS1125 (from the empty `\\u{{}}`), got {diagnostics:?}"
     );
 }
 
