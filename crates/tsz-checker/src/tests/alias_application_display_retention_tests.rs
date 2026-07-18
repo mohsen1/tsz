@@ -48,18 +48,58 @@ const wrong: PickInner<{ inner: { deep: boolean } }> = 5;
 }
 
 #[test]
-fn keyof_bodied_alias_application_renders_keys_in_declaration_order() {
+fn keyof_bodied_alias_application_ranks_keys_like_tsc() {
     let message = ts2322_message(
         r#"
 type KeysOf<Rec> = keyof Rec;
 const wrong: KeysOf<{ zebra: 1; apple: 2 }> = 5;
 "#,
     );
-    // Property declaration order (`zebra` before `apple`), not the interner's
-    // canonical sort.
+    // tsc 7.0.2 ranks/alphabetizes the resolved key union in display, NOT
+    // property declaration order. Oracle (node typescript@7.0.2):
+    //   `KeysOf<{ zebra: 1; apple: 2 }> = 5`
+    //   → "Type '5' is not assignable to type '"apple" | "zebra"'."
+    // (The earlier declaration-order expectation was TS6-era policy the 7.0.2
+    // oracle refuted; the keyof reduction now routes through the shared union
+    // comparator via `ApplicationDisplayReduction::SortedUnion`.)
     assert_eq!(
         message,
-        "Type '5' is not assignable to type '\"zebra\" | \"apple\"'."
+        "Type '5' is not assignable to type '\"apple\" | \"zebra\"'."
+    );
+}
+
+#[test]
+fn object_rest_this_omit_receiver_ranks_string_then_numeric_keys() {
+    // The `Omit<this, K>` receiver display for object-rest destructuring ranks
+    // the omitted-key union in tsc's union order (oracle: tsc 7.0.2), NOT the
+    // property-collection order: string-literal keys quoted + lexicographic
+    // first, then number-literal keys UNQUOTED + numeric.
+    //   `Omit<this, "alpha" | "beta" | "method" | 2 | 5 | 10>`
+    // Guards the numeric-key case: plain lexicographic sort would misorder
+    // (`10` before `2`) and mis-quote (`"2"`).
+    let diags = check_source_diagnostics(
+        r#"
+class A {
+  10() { return 1; }
+  2() { return 2; }
+  get 5() { return 3; }
+  beta() { return 4; }
+  alpha() { return 5; }
+  method() {
+    const { ...rest } = this;
+    rest.alpha;
+  }
+}
+"#,
+    );
+    let msg = diags
+        .iter()
+        .find(|d| d.code == 2339 && d.message_text.contains("Omit<this"))
+        .map(|d| d.message_text.clone())
+        .unwrap_or_default();
+    assert_eq!(
+        msg,
+        "Property 'alpha' does not exist on type 'Omit<this, \"alpha\" | \"beta\" | \"method\" | 2 | 5 | 10>'."
     );
 }
 

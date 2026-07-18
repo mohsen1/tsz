@@ -286,23 +286,32 @@ impl<'a> TypeFormatter<'a> {
                 // re-evaluation on deeply nested generics (#13480).
                 if let Some(reduced) = self.application_display_reduction(type_id, &app) {
                     use super::application_reduction::ApplicationDisplayReduction;
-                    match reduced {
+                    // `SortedUnion` (keyof key unions) routes through the shared
+                    // union comparator so the keys rank/alphabetize like tsc;
+                    // `OrderedUnion` (distributive-conditional branches) keeps its
+                    // distribution order, which tsc preserves. See
+                    // `ApplicationDisplayReduction`.
+                    let (members, sort) = match reduced {
                         ApplicationDisplayReduction::Type(reduced) => {
                             return self.format(reduced);
                         }
-                        ApplicationDisplayReduction::OrderedUnion(members) => {
-                            // A caller skipping the display-alias chase did so
-                            // for the *application node* (a stale evaluation
-                            // alias would preempt this reduction); the reduced
-                            // members render with their own alias surfaces
-                            // (`Omit<…, "c">`), so re-enable the chase for them.
-                            let previous_skip_chase = self.skip_application_display_alias_chase;
-                            self.skip_application_display_alias_chase = false;
-                            let rendered = self.format_union_members_in_order(&members);
-                            self.skip_application_display_alias_chase = previous_skip_chase;
-                            return rendered;
-                        }
-                    }
+                        ApplicationDisplayReduction::SortedUnion(members) => (members, true),
+                        ApplicationDisplayReduction::OrderedUnion(members) => (members, false),
+                    };
+                    // A caller skipping the display-alias chase did so for the
+                    // *application node* (a stale evaluation alias would preempt
+                    // this reduction); the reduced members render with their own
+                    // alias surfaces (`Omit<…, "c">`), so re-enable the chase.
+                    let previous_skip_chase = self.skip_application_display_alias_chase;
+                    self.skip_application_display_alias_chase = false;
+                    let members = if sort {
+                        self.order_union_members_by_source(members)
+                    } else {
+                        members
+                    };
+                    let rendered = self.format_union_members_in_order(&members);
+                    self.skip_application_display_alias_chase = previous_skip_chase;
+                    return rendered;
                 }
 
                 // Special handling for Application(Lazy(def_id), args)

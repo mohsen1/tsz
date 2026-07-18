@@ -22,13 +22,22 @@ use rustc_hash::FxHashSet;
 /// What an `Application` display reduction resolved to.
 ///
 /// `Type` renders the reduced `TypeId` in place of the `Name<Args>` surface.
-/// `OrderedUnion` renders the members joined with ` | ` in the given
-/// (declaration) order — used for `keyof`-bodied alias applications, whose
-/// resolved key union must follow the operand's property declaration order
-/// (the interned union is canonically sorted and would lose it).
+///
+/// The two union variants encode tsc 7.0.2's *per-context* union display-order
+/// rule (oracle-adjudicated), not a blanket policy:
+/// - `SortedUnion` renders the members through the shared union comparator
+///   (`order_union_members_by_source`). Used for `keyof`-bodied alias
+///   applications: tsc ranks/alphabetizes the resolved key union
+///   (`keyof { zebra; apple }` → `"apple" | "zebra"`), so the members are
+///   sorted, not kept in property-declaration order.
+/// - `OrderedUnion` renders the members joined with ` | ` in the given
+///   (distribution) order, unsorted. Used for a *distributive* conditional over
+///   a concrete union: tsc preserves the distribution/source order of the
+///   branches (`NoC<B | A>` → `DropKey<…B…> | DropKey<…A…>`, not reordered).
 #[derive(Clone)]
 pub(super) enum ApplicationDisplayReduction {
     Type(TypeId),
+    SortedUnion(Vec<TypeId>),
     OrderedUnion(Vec<TypeId>),
 }
 
@@ -193,10 +202,15 @@ impl<'a> TypeFormatter<'a> {
             return Some(ApplicationDisplayReduction::Type(current));
         }
         // A `keyof`-bodied alias application reduces to the operand's key
-        // union. The interned union is canonically sorted, but tsc renders the
-        // keys in property declaration order, so reconstruct that order from
-        // the instantiated operand. Bare literal and other union results stay
-        // on the application surface (tsc applies literal-union display
+        // union. tsc ranks/alphabetizes that key union in display
+        // (`keyof { zebra; apple }` → `"apple" | "zebra"`, oracle-adjudicated
+        // against tsc 7.0.2), so route the members through the shared union
+        // comparator via `SortedUnion` rather than preserving property
+        // declaration order. `keyof_reduction_ordered_members` still gates the
+        // shape (returns `None` for numeric-keyed operands, which keep the
+        // `Name<Args>` alias surface); the member order it returns is then
+        // re-sorted at the render site. Bare literal and other union results
+        // stay on the application surface (tsc applies literal-union display
         // widening there, a separate display concern).
         if body_kind == crate::type_queries::ReducingAliasBodyKind::KeyOf {
             let (operand, def_id, args) = last_keyof_step?;
@@ -208,7 +222,7 @@ impl<'a> TypeFormatter<'a> {
                 &args,
             );
             let members = self.keyof_reduction_ordered_members(operand, current)?;
-            return Some(ApplicationDisplayReduction::OrderedUnion(members));
+            return Some(ApplicationDisplayReduction::SortedUnion(members));
         }
         None
     }

@@ -550,11 +550,30 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let key_display = keys
-            .iter()
-            .map(|key| format!("\"{key}\""))
-            .collect::<Vec<_>>()
-            .join(" | ");
+        // tsc ranks the omitted-key union in this `Omit<this, …>` display in
+        // union order (oracle-adjudicated against tsc 7.0.2), NOT the
+        // property-collection order the keys arrive in. String-literal keys rank
+        // before number-literal keys; string keys render quoted and sort
+        // lexicographically, number keys render UNQUOTED and sort numerically:
+        //   `Omit<this, "alpha" | "beta" | "method" | 2 | 5 | 10>`
+        // A canonical non-negative-integer property name is a number-literal key
+        // (e.g. `get 5()`); any other name is a string-literal key.
+        let is_numeric_key = |k: &str| {
+            !k.is_empty()
+                && k.bytes().all(|b| b.is_ascii_digit())
+                && (k == "0" || !k.starts_with('0'))
+        };
+        let mut string_keys: Vec<&String> = keys.iter().filter(|k| !is_numeric_key(k)).collect();
+        let mut numeric_keys: Vec<&String> = keys.iter().filter(|k| is_numeric_key(k)).collect();
+        string_keys.sort();
+        numeric_keys.sort_by(|a, b| {
+            a.len()
+                .cmp(&b.len())
+                .then_with(|| a.as_str().cmp(b.as_str()))
+        });
+        let mut parts: Vec<String> = string_keys.iter().map(|k| format!("\"{k}\"")).collect();
+        parts.extend(numeric_keys.iter().map(|k| (*k).clone()));
+        let key_display = parts.join(" | ");
         Some(format!("Omit<this, {key_display}>"))
     }
 
