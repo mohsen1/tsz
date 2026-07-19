@@ -35,6 +35,15 @@ pub trait TypeDisplayProvenance {
         self.store_display_alias(evaluated, application);
     }
 
+    /// Transfer an already-validated application alias while rebuilding its
+    /// evaluated type graph.
+    ///
+    /// Unlike ordinary alias discovery, this operation must not depend on
+    /// whether the rebuilt application or rebuilt result was interned first.
+    /// Implementations still enforce intrinsic, scoped-parameter, and cycle
+    /// safety before accepting the transferred provenance.
+    fn transfer_rewritten_application_display_alias(&self, evaluated: TypeId, application: TypeId);
+
     /// Look up the original `Application` `TypeId` for a type produced by
     /// evaluating an `Application`. Returns `None` if no mapping exists.
     fn get_display_alias(&self, _type_id: TypeId) -> Option<TypeId> {
@@ -146,6 +155,10 @@ impl TypeDisplayProvenance for TypeInterner {
 
     fn store_display_alias_preferring_application(&self, evaluated: TypeId, application: TypeId) {
         Self::store_display_alias_preferring_application(self, evaluated, application);
+    }
+
+    fn transfer_rewritten_application_display_alias(&self, evaluated: TypeId, application: TypeId) {
+        Self::transfer_rewritten_application_display_alias(self, evaluated, application);
     }
 
     fn get_display_alias(&self, type_id: TypeId) -> Option<TypeId> {

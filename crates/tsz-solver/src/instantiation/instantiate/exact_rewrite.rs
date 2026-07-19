@@ -17,10 +17,13 @@ use std::collections::hash_map::Entry;
 /// Replace aligned exact identities throughout `root` in one graph walk.
 ///
 /// Replacements are simultaneous: a replacement value is terminal and is not
-/// itself rewritten through another pair. The walk is `O(P + N)`, where `P` is
-/// the number of non-identity replacement pairs and `N` is the reachable graph
-/// size. Shared nodes are rebuilt once, and a no-op graph retains its original
-/// interned identity.
+/// itself rewritten through another pair. The walk is `O(P + V + E)`, where
+/// `P` is the number of non-identity replacement pairs, `V` is the number of
+/// reachable interned nodes, and `E` is the number of structural and provenance
+/// slots traversed. Shared nodes are rebuilt once, every union/intersection
+/// member list is reconstructed in one linear pass, and a no-op graph retains
+/// its original interned identity. Auxiliary storage is `O(P + V + Q)`, where
+/// `Q` is the provenance transfer count staged for all-or-nothing commit.
 pub fn substitute_exact_types(
     db: &dyn QueryDatabase,
     root: TypeId,
@@ -54,7 +57,14 @@ pub fn substitute_exact_types(
         return root;
     }
 
-    ExactTypeRewriter { db, rewritten }.rewrite(root)
+    let mut rewriter = ExactTypeRewriter {
+        db,
+        rewritten,
+        aborted: false,
+        pending_provenance: Vec::new(),
+    };
+    let result = rewriter.rewrite(root);
+    rewriter.finish(root, result)
 }
 
 /// Replace one exact interned identity throughout a type graph.
@@ -77,10 +87,32 @@ struct ExactTypeRewriter<'a> {
     /// Preloaded with direct replacements, then extended with per-node memoized
     /// results. Direct replacements therefore remain terminal.
     rewritten: FxHashMap<TypeId, TypeId>,
+    /// Sticky shared-frame bailout. Once set, every active caller preserves its
+    /// source node and the public operation returns its original root.
+    aborted: bool,
+    /// Provenance writes are transactional: speculative structural nodes may be
+    /// interned during a walk, but no side table is mutated unless the whole
+    /// reachable graph completes within the shared solver-frame budget.
+    pending_provenance: Vec<PendingProvenance>,
+}
+
+enum PendingProvenance {
+    DisplayProperties(TypeId, Vec<PropertyInfo>),
+    UnionOrigin(TypeId, Vec<TypeId>),
+    ApplicationEvalOrigin(TypeId, TypeId),
+    MergedIntersectionOrigin(TypeId, TypeId),
+    RewrittenApplicationDisplayAlias(TypeId, TypeId),
+    DisplayAliasIfAbsent(TypeId, TypeId),
+    ConditionalAliasBase(TypeId),
+    GlobalThisSurfaceDisplay(TypeId),
+    LiteralObjectAnnotation(TypeId),
 }
 
 impl ExactTypeRewriter<'_> {
     fn rewrite(&mut self, type_id: TypeId) -> TypeId {
+        if self.aborted {
+            return type_id;
+        }
         if let Some(&cached) = self.rewritten.get(&type_id) {
             return cached;
         }
@@ -88,6 +120,15 @@ impl ExactTypeRewriter<'_> {
             return type_id;
         }
 
+        let Some(result) = crate::recursion::with_solver_frame(|| self.rewrite_in_frame(type_id))
+        else {
+            self.aborted = true;
+            return type_id;
+        };
+        result
+    }
+
+    fn rewrite_in_frame(&mut self, type_id: TypeId) -> TypeId {
         // A self-map is the cycle placeholder. Interned types are normally a
         // DAG with `Lazy`/`Recursive` cut points, but provenance can add edges.
         self.rewritten.insert(type_id, type_id);
@@ -131,10 +172,11 @@ impl ExactTypeRewriter<'_> {
                     .symbol_index
                     .as_ref()
                     .and_then(|index| self.rewrite_index_signature(index));
-                if properties.is_none()
-                    && string_index.is_none()
-                    && number_index.is_none()
-                    && symbol_index.is_none()
+                if self.aborted
+                    || (properties.is_none()
+                        && string_index.is_none()
+                        && number_index.is_none()
+                        && symbol_index.is_none())
                 {
                     type_id
                 } else {
@@ -150,13 +192,13 @@ impl ExactTypeRewriter<'_> {
             }
             TypeData::Union(list_id) => self
                 .rewrite_type_ids(self.db.type_list(list_id).as_ref())
-                .map_or(type_id, |members| self.db.union(members)),
+                .map_or(type_id, |members| self.db.union_preserve_members(members)),
             TypeData::Intersection(list_id) => self
                 .rewrite_type_ids(self.db.type_list(list_id).as_ref())
-                .map_or(type_id, |members| self.db.intersection(members)),
+                .map_or(type_id, |members| self.db.intersect_types_raw(members)),
             TypeData::Array(element) => {
                 let rewritten = self.rewrite(element);
-                if rewritten == element {
+                if self.aborted || rewritten == element {
                     type_id
                 } else {
                     self.db.array(rewritten)
@@ -180,7 +222,7 @@ impl ExactTypeRewriter<'_> {
                 .map_or(type_id, |info| self.db.fresh_type_param(info)),
             TypeData::Enum(def_id, member_type) => {
                 let rewritten = self.rewrite(member_type);
-                if rewritten == member_type {
+                if self.aborted || rewritten == member_type {
                     type_id
                 } else {
                     self.db.enum_type(def_id, rewritten)
@@ -190,7 +232,7 @@ impl ExactTypeRewriter<'_> {
                 let app = self.db.type_application(app_id);
                 let base = self.rewrite(app.base);
                 let args = self.rewrite_type_ids(&app.args);
-                if base == app.base && args.is_none() {
+                if self.aborted || (base == app.base && args.is_none()) {
                     type_id
                 } else {
                     self.db
@@ -206,7 +248,7 @@ impl ExactTypeRewriter<'_> {
                     false_type: self.rewrite(cond.false_type),
                     is_distributive: cond.is_distributive,
                 };
-                if rewritten == cond {
+                if self.aborted || rewritten == cond {
                     type_id
                 } else {
                     self.db.conditional(rewritten)
@@ -218,10 +260,11 @@ impl ExactTypeRewriter<'_> {
                 let constraint = self.rewrite(mapped.constraint);
                 let name_type = mapped.name_type.map(|name_type| self.rewrite(name_type));
                 let template = self.rewrite(mapped.template);
-                if type_param.is_none()
-                    && constraint == mapped.constraint
-                    && name_type == mapped.name_type
-                    && template == mapped.template
+                if self.aborted
+                    || (type_param.is_none()
+                        && constraint == mapped.constraint
+                        && name_type == mapped.name_type
+                        && template == mapped.template)
                 {
                     type_id
                 } else {
@@ -238,7 +281,9 @@ impl ExactTypeRewriter<'_> {
             TypeData::IndexAccess(object_type, index_type) => {
                 let object_type_rewritten = self.rewrite(object_type);
                 let index_type_rewritten = self.rewrite(index_type);
-                if object_type_rewritten == object_type && index_type_rewritten == index_type {
+                if self.aborted
+                    || (object_type_rewritten == object_type && index_type_rewritten == index_type)
+                {
                     type_id
                 } else {
                     self.db
@@ -271,7 +316,9 @@ impl ExactTypeRewriter<'_> {
             } => {
                 let base_type_rewritten = self.rewrite(base_type);
                 let constraint_rewritten = self.rewrite(constraint);
-                if base_type_rewritten == base_type && constraint_rewritten == constraint {
+                if self.aborted
+                    || (base_type_rewritten == base_type && constraint_rewritten == constraint)
+                {
                     type_id
                 } else {
                     self.db
@@ -286,6 +333,47 @@ impl ExactTypeRewriter<'_> {
         if result != type_id {
             self.propagate_provenance(type_id, result);
         }
+        if self.aborted { type_id } else { result }
+    }
+
+    fn finish(self, original: TypeId, result: TypeId) -> TypeId {
+        if self.aborted {
+            return original;
+        }
+        for provenance in self.pending_provenance {
+            match provenance {
+                PendingProvenance::DisplayProperties(type_id, properties) => {
+                    self.db.store_display_properties(type_id, properties);
+                }
+                PendingProvenance::UnionOrigin(type_id, members) => {
+                    self.db.store_union_origin(type_id, members);
+                }
+                PendingProvenance::ApplicationEvalOrigin(type_id, origin) => {
+                    self.db.record_application_eval_origin(type_id, origin);
+                }
+                PendingProvenance::MergedIntersectionOrigin(type_id, origin) => {
+                    self.db.store_merged_intersection_origin(type_id, origin);
+                }
+                PendingProvenance::RewrittenApplicationDisplayAlias(type_id, alias) => {
+                    self.db
+                        .transfer_rewritten_application_display_alias(type_id, alias);
+                }
+                PendingProvenance::DisplayAliasIfAbsent(type_id, alias) => {
+                    if self.db.get_display_alias(type_id).is_none() {
+                        self.db.store_display_alias(type_id, alias);
+                    }
+                }
+                PendingProvenance::ConditionalAliasBase(type_id) => {
+                    self.db.mark_conditional_alias_base(type_id);
+                }
+                PendingProvenance::GlobalThisSurfaceDisplay(type_id) => {
+                    self.db.mark_global_this_surface_display(type_id);
+                }
+                PendingProvenance::LiteralObjectAnnotation(type_id) => {
+                    self.db.mark_literal_object_annotation(type_id);
+                }
+            }
+        }
         result
     }
 
@@ -296,7 +384,7 @@ impl ExactTypeRewriter<'_> {
         build: impl FnOnce(&dyn TypeDatabase, TypeId) -> TypeId,
     ) -> TypeId {
         let rewritten = self.rewrite(inner);
-        if rewritten == inner {
+        if self.aborted || rewritten == inner {
             original
         } else {
             build(self.db, rewritten)
@@ -316,7 +404,7 @@ impl ExactTypeRewriter<'_> {
                 changed = Some(values);
             }
         }
-        changed
+        (!self.aborted).then_some(changed).flatten()
     }
 
     fn rewrite_tuple_elements(&mut self, elements: &[TupleElement]) -> Option<Vec<TupleElement>> {
@@ -336,7 +424,7 @@ impl ExactTypeRewriter<'_> {
                 changed = Some(values);
             }
         }
-        changed
+        (!self.aborted).then_some(changed).flatten()
     }
 
     fn rewrite_properties(&mut self, properties: &[PropertyInfo]) -> Option<Vec<PropertyInfo>> {
@@ -362,17 +450,19 @@ impl ExactTypeRewriter<'_> {
                 changed = Some(values);
             }
         }
-        changed
+        (!self.aborted).then_some(changed).flatten()
     }
 
     fn rewrite_index_signature(&mut self, index: &IndexSignature) -> Option<IndexSignature> {
         let key_type = self.rewrite(index.key_type);
         let value_type = self.rewrite(index.value_type);
-        (key_type != index.key_type || value_type != index.value_type).then_some(IndexSignature {
-            key_type,
-            value_type,
-            ..*index
-        })
+        (!self.aborted && (key_type != index.key_type || value_type != index.value_type)).then_some(
+            IndexSignature {
+                key_type,
+                value_type,
+                ..*index
+            },
+        )
     }
 
     fn rewrite_params(&mut self, params: &[ParamInfo]) -> Option<Vec<ParamInfo>> {
@@ -389,7 +479,7 @@ impl ExactTypeRewriter<'_> {
                 changed = Some(values);
             }
         }
-        changed
+        (!self.aborted).then_some(changed).flatten()
     }
 
     fn rewrite_type_param(&mut self, param: TypeParamInfo) -> Option<TypeParamInfo> {
@@ -400,7 +490,7 @@ impl ExactTypeRewriter<'_> {
             default,
             ..param
         };
-        (rewritten != param).then_some(rewritten)
+        (!self.aborted && rewritten != param).then_some(rewritten)
     }
 
     fn rewrite_type_params(&mut self, params: &[TypeParamInfo]) -> Option<Vec<TypeParamInfo>> {
@@ -416,12 +506,12 @@ impl ExactTypeRewriter<'_> {
                 changed = Some(values);
             }
         }
-        changed
+        (!self.aborted).then_some(changed).flatten()
     }
 
     fn rewrite_predicate(&mut self, predicate: TypePredicate) -> Option<TypePredicate> {
         let type_id = predicate.type_id.map(|type_id| self.rewrite(type_id));
-        (type_id != predicate.type_id).then_some(TypePredicate {
+        (!self.aborted && type_id != predicate.type_id).then_some(TypePredicate {
             type_id,
             ..predicate
         })
@@ -435,11 +525,12 @@ impl ExactTypeRewriter<'_> {
         let type_predicate = shape
             .type_predicate
             .and_then(|predicate| self.rewrite_predicate(predicate));
-        if type_params.is_none()
-            && params.is_none()
-            && this_type == shape.this_type
-            && return_type == shape.return_type
-            && type_predicate.is_none()
+        if self.aborted
+            || (type_params.is_none()
+                && params.is_none()
+                && this_type == shape.this_type
+                && return_type == shape.return_type
+                && type_predicate.is_none())
         {
             None
         } else {
@@ -463,11 +554,12 @@ impl ExactTypeRewriter<'_> {
         let type_predicate = signature
             .type_predicate
             .and_then(|predicate| self.rewrite_predicate(predicate));
-        if type_params.is_none()
-            && params.is_none()
-            && this_type == signature.this_type
-            && return_type == signature.return_type
-            && type_predicate.is_none()
+        if self.aborted
+            || (type_params.is_none()
+                && params.is_none()
+                && this_type == signature.this_type
+                && return_type == signature.return_type
+                && type_predicate.is_none())
         {
             None
         } else {
@@ -497,7 +589,7 @@ impl ExactTypeRewriter<'_> {
                 changed = Some(values);
             }
         }
-        changed
+        (!self.aborted).then_some(changed).flatten()
     }
 
     fn rewrite_callable_shape(&mut self, shape: &CallableShape) -> Option<CallableShape> {
@@ -512,11 +604,12 @@ impl ExactTypeRewriter<'_> {
             .number_index
             .as_ref()
             .and_then(|index| self.rewrite_index_signature(index));
-        if call_signatures.is_none()
-            && construct_signatures.is_none()
-            && properties.is_none()
-            && string_index.is_none()
-            && number_index.is_none()
+        if self.aborted
+            || (call_signatures.is_none()
+                && construct_signatures.is_none()
+                && properties.is_none()
+                && string_index.is_none()
+                && number_index.is_none())
         {
             None
         } else {
@@ -549,7 +642,7 @@ impl ExactTypeRewriter<'_> {
                 changed = Some(values);
             }
         }
-        changed
+        (!self.aborted).then_some(changed).flatten()
     }
 
     fn propagate_provenance(&mut self, source: TypeId, result: TypeId) {
@@ -557,24 +650,27 @@ impl ExactTypeRewriter<'_> {
             let properties = self
                 .rewrite_properties(properties.as_ref())
                 .unwrap_or_else(|| properties.as_ref().clone());
-            self.db.store_display_properties(result, properties);
+            self.pending_provenance
+                .push(PendingProvenance::DisplayProperties(result, properties));
         }
 
         if let Some(origin) = self.db.get_union_origin(source) {
             let origin = self
                 .rewrite_type_ids(origin.as_ref())
                 .unwrap_or_else(|| origin.as_ref().clone());
-            self.db.store_union_origin(result, origin);
+            self.pending_provenance
+                .push(PendingProvenance::UnionOrigin(result, origin));
         }
 
-        // Application provenance is first-write-wins. Publish it before
-        // replaying a merged origin, whose member reconstruction can intern the
-        // same structural result through a different application.
+        // Application provenance is first-write-wins. Stage it before replaying
+        // a merged origin, whose member reconstruction can intern the same
+        // structural result through a different application.
         if self.db.get_application_eval_origin(result).is_none()
             && let Some(origin) = self.db.get_application_eval_origin(source)
         {
             let origin = self.rewrite(origin);
-            self.db.record_application_eval_origin(result, origin);
+            self.pending_provenance
+                .push(PendingProvenance::ApplicationEvalOrigin(result, origin));
         }
 
         if self.db.get_merged_intersection_origin(result).is_none()
@@ -585,27 +681,36 @@ impl ExactTypeRewriter<'_> {
                 .db
                 .get_merged_intersection_origin(rewritten_origin)
                 .unwrap_or(rewritten_origin);
-            self.db.store_merged_intersection_origin(result, raw_origin);
+            self.pending_provenance
+                .push(PendingProvenance::MergedIntersectionOrigin(
+                    result, raw_origin,
+                ));
         }
 
         if let Some(alias) = self.db.get_display_alias(source) {
             let alias = self.rewrite(alias);
             if matches!(self.db.lookup(alias), Some(TypeData::Application(_))) {
-                self.db
-                    .store_display_alias_preferring_application(result, alias);
+                self.pending_provenance
+                    .push(PendingProvenance::RewrittenApplicationDisplayAlias(
+                        result, alias,
+                    ));
             } else if self.db.get_display_alias(result).is_none() {
-                self.db.store_display_alias(result, alias);
+                self.pending_provenance
+                    .push(PendingProvenance::DisplayAliasIfAbsent(result, alias));
             }
         }
 
         if self.db.is_conditional_alias_base(source) {
-            self.db.mark_conditional_alias_base(result);
+            self.pending_provenance
+                .push(PendingProvenance::ConditionalAliasBase(result));
         }
         if self.db.is_global_this_surface_display(source) {
-            self.db.mark_global_this_surface_display(result);
+            self.pending_provenance
+                .push(PendingProvenance::GlobalThisSurfaceDisplay(result));
         }
         if self.db.is_literal_object_annotation(source) {
-            self.db.mark_literal_object_annotation(result);
+            self.pending_provenance
+                .push(PendingProvenance::LiteralObjectAnnotation(result));
         }
     }
 }
@@ -675,6 +780,38 @@ mod tests {
             substitute_exact_type(&db, no_match, declaration, TypeId::STRING),
             no_match,
         );
+    }
+
+    #[test]
+    fn exact_rewrite_preserves_union_members_and_raw_intersection_shape() {
+        let db = TypeInterner::new();
+        let outer = fresh_param(&db, "Outer");
+        let subtype_member = db.literal_string("member");
+        assert_eq!(
+            db.union(vec![subtype_member, TypeId::STRING]),
+            TypeId::STRING,
+            "ordinary union construction absorbs the literal subtype",
+        );
+        let union = db.union_preserve_members(vec![outer, TypeId::STRING]);
+
+        let rewritten_union = substitute_exact_type(&db, union, outer, subtype_member);
+        let Some(TypeData::Union(list_id)) = db.lookup(rewritten_union) else {
+            panic!("exact replay must not subtype-reduce the literal member");
+        };
+        assert_eq!(db.type_list(list_id).len(), 2);
+
+        let left = db.object(vec![PropertyInfo::new(db.intern_string("left"), outer)]);
+        let right = db.object(vec![PropertyInfo::new(
+            db.intern_string("right"),
+            TypeId::NUMBER,
+        )]);
+        let intersection = db.intersect_types_raw(vec![left, right]);
+        let rewritten_intersection =
+            substitute_exact_type(&db, intersection, outer, subtype_member);
+        let Some(TypeData::Intersection(list_id)) = db.lookup(rewritten_intersection) else {
+            panic!("exact replay must not normalize raw object intersections");
+        };
+        assert_eq!(db.type_list(list_id).len(), 2);
     }
 
     #[test]
@@ -964,5 +1101,95 @@ mod tests {
         };
         assert_eq!(db.type_application(app_id).args, vec![TypeId::STRING]);
         assert_eq!(db.get_display_alias(result), Some(origin));
+    }
+
+    #[test]
+    fn exact_rewrite_transfers_generic_display_alias_in_both_allocation_orders() {
+        fn run(alias_before_result: bool) {
+            let db = TypeInterner::new();
+            let source_param = fresh_param(&db, "Source");
+            let replacement = fresh_param(&db, "Replacement");
+            let base = db.lazy(DefId(21));
+
+            // Seed valid source provenance in the ordinary evaluator order:
+            // the application exists before its evaluated structural result.
+            let source_alias = db.application(base, vec![source_param]);
+            let source = db.array(source_param);
+            db.store_display_alias_preferring_application(source, source_alias);
+            assert_eq!(db.get_display_alias(source), Some(source_alias));
+
+            let expected_alias =
+                alias_before_result.then(|| db.application(base, vec![replacement]));
+            let expected_result = (!alias_before_result).then(|| db.array(replacement));
+
+            let result = substitute_exact_type(&db, source, source_param, replacement);
+            let expected_result = expected_result.unwrap_or_else(|| db.array(replacement));
+            let expected_alias =
+                expected_alias.unwrap_or_else(|| db.application(base, vec![replacement]));
+
+            assert_eq!(result, expected_result);
+            assert_eq!(db.get_display_alias(result), Some(expected_alias));
+        }
+
+        run(true);
+        run(false);
+    }
+
+    #[test]
+    fn rewritten_display_alias_transfer_retains_global_identity_and_cycle_guards() {
+        let db = TypeInterner::new();
+        let parameter = fresh_param(&db, "Parameter");
+        let base = db.lazy(DefId(23));
+        let safe_alias = db.application(base, vec![TypeId::STRING]);
+
+        db.transfer_rewritten_application_display_alias(TypeId::STRING, safe_alias);
+        db.transfer_rewritten_application_display_alias(parameter, safe_alias);
+        assert_eq!(db.get_display_alias(TypeId::STRING), None);
+        assert_eq!(db.get_display_alias(parameter), None);
+
+        let evaluated = db.array(TypeId::STRING);
+        let cyclic_alias = db.application(base, vec![evaluated]);
+        db.transfer_rewritten_application_display_alias(evaluated, cyclic_alias);
+        assert_eq!(db.get_display_alias(evaluated), None);
+    }
+
+    #[test]
+    fn exact_rewrite_depth_bail_returns_original_without_provenance_writes() {
+        let db = TypeInterner::new();
+        let outer = fresh_param(&db, "Outer");
+        let base = db.lazy(DefId(22));
+        let source_alias = db.application(base, vec![outer]);
+        let property = db.intern_string("value");
+        let shallow = db.object(vec![PropertyInfo::new(property, outer)]);
+        db.store_display_alias_preferring_application(shallow, source_alias);
+        assert_eq!(db.get_display_alias(shallow), Some(source_alias));
+
+        // This canonical node is the speculative shallow rewrite the first
+        // tuple slot would produce before the second slot exceeds the shared
+        // solver-frame budget. Its provenance must remain untouched on bail.
+        let rewritten_shallow = db.object(vec![PropertyInfo::new(property, TypeId::STRING)]);
+        assert_eq!(db.get_display_alias(rewritten_shallow), None);
+
+        let mut deep = outer;
+        for _ in 0..=crate::recursion::MAX_SOLVER_STACK_FRAMES {
+            deep = db.array(deep);
+        }
+        let root = db.tuple(vec![
+            TupleElement::fixed(shallow),
+            TupleElement::fixed(deep),
+        ]);
+
+        assert_eq!(
+            substitute_exact_type(&db, root, outer, TypeId::STRING),
+            root,
+        );
+        assert_eq!(db.get_display_alias(rewritten_shallow), None);
+
+        // The RAII frame budget and sticky bailout are request-scoped.
+        let shallow_array = db.array(outer);
+        assert_eq!(
+            substitute_exact_type(&db, shallow_array, outer, TypeId::STRING),
+            db.array(TypeId::STRING),
+        );
     }
 }

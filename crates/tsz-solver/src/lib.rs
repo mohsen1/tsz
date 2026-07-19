@@ -250,7 +250,8 @@ pub mod observability {
 /// `query_boundaries` in the checker crate.
 pub mod construction {
     pub use crate::caches::db::{
-        QueryDatabase, TypeBuiltinAccess, TypeDatabase, TypeSubstitutionConstruction,
+        QueryDatabase, TypeBuiltinAccess, TypeDatabase, TypeRawIntersectionConstruction,
+        TypeSubstitutionConstruction,
     };
     pub use crate::caches::query_cache::{QueryCache, RelationCacheProbe, SharedQueryCache};
     pub use crate::caches::query_cache_statistics::{QueryCacheStatistics, RelationCacheStats};

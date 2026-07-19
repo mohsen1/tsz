@@ -10,7 +10,8 @@ use crate::caches::application_eval_index::{
 use crate::caches::db::{
     IntersectionMergeCacheEntry, QueryDatabase, TypeBuiltinAccess, TypeCompilerOptions,
     TypeContainsByIdCache, TypeDatabase, TypeDisplayProvenance, TypeExtractParamsCache,
-    TypePruneUnionCache, TypeSubstitutionConstruction, TypeTupleLimitSignal, TypeWidenCache,
+    TypePruneUnionCache, TypeRawIntersectionConstruction, TypeSubstitutionConstruction,
+    TypeTupleLimitSignal, TypeWidenCache,
 };
 use crate::caches::eval_dependency_index::{self, EvalDependencyIndex, EvalDependencyIndexState};
 use crate::caches::instantiation_cache::{InstantiationCache, InstantiationCacheKey};
@@ -720,6 +721,11 @@ impl TypeDisplayProvenance for QueryCache<'_> {
             .store_display_alias_preferring_application(evaluated, application);
     }
 
+    fn transfer_rewritten_application_display_alias(&self, evaluated: TypeId, application: TypeId) {
+        self.interner
+            .transfer_rewritten_application_display_alias(evaluated, application);
+    }
+
     fn get_display_alias(&self, type_id: TypeId) -> Option<TypeId> {
         self.interner.get_display_alias(type_id)
     }
@@ -790,6 +796,12 @@ impl TypeDisplayProvenance for QueryCache<'_> {
 
     fn mark_union_too_complex(&self) {
         self.interner.set_union_too_complex();
+    }
+}
+
+impl TypeRawIntersectionConstruction for QueryCache<'_> {
+    fn intersect_types_raw(&self, members: Vec<TypeId>) -> TypeId {
+        self.interner.intersect_types_raw(members)
     }
 }
 

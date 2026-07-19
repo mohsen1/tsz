@@ -175,6 +175,44 @@ impl TypeInterner {
         self.display_alias.insert(evaluated, application);
     }
 
+    /// Transfer application display provenance while structurally rebuilding
+    /// an already-validated source graph.
+    ///
+    /// The source mapping proves that this is provenance replay rather than a
+    /// new alias-discovery decision, so allocation order must not affect the
+    /// result. The normal global-identity and formatting-cycle safety checks
+    /// still apply.
+    ///
+    /// Callers must only pass an application alias read from an existing
+    /// source graph and structurally rewritten through the same substitution.
+    pub fn transfer_rewritten_application_display_alias(
+        &self,
+        evaluated: TypeId,
+        application: TypeId,
+    ) {
+        if evaluated == application || evaluated.is_intrinsic() {
+            return;
+        }
+        if matches!(self.lookup(evaluated), Some(TypeData::TypeParameter(_))) {
+            return;
+        }
+        let Some(TypeData::Application(app_id)) = self.lookup(application) else {
+            return;
+        };
+        let app = self.type_application(app_id);
+        if app.args.contains(&evaluated) {
+            return;
+        }
+        let preserves_conditional_branch_alias = self.is_conditional_alias_base(app.base)
+            && self.get_display_alias(evaluated).is_some_and(|existing| {
+                matches!(self.lookup(existing), Some(TypeData::Intersection(_)))
+            });
+        if preserves_conditional_branch_alias {
+            return;
+        }
+        self.display_alias.insert(evaluated, application);
+    }
+
     /// Look up the original Application TypeId for a type that was produced
     /// by evaluating an Application.
     ///
