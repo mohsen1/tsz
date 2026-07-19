@@ -2278,6 +2278,9 @@ path = "tests/cross_eval_application_sentinel_tests.rs"
 name = "conditional_true_branch_substitution_tests"
 path = "tests/conditional_true_branch_substitution_tests.rs"
 [[test]]
+name = "narrowed_indexed_access_constraint_tests"
+path = "tests/narrowed_indexed_access_constraint_tests.rs"
+[[test]]
 name = "issue_14123_repro_tests"
 path = "tests/issue_14123_repro_tests.rs"
 [[test]]
