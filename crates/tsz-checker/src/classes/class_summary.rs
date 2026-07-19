@@ -32,7 +32,7 @@ mod exact_rebind_cache_tests {
     use super::ClassChainSummary;
     use tsz_solver::construction::TypeInterner;
     use tsz_solver::def::DefId;
-    use tsz_solver::{FunctionShape, ParamInfo, TypeId, TypeParamInfo};
+    use tsz_solver::{ParamInfo, TypeId, TypeParamInfo};
 
     #[test]
     fn repeated_member_rebind_reuses_nested_generic_identity() {
@@ -46,18 +46,19 @@ mod exact_rebind_cache_tests {
             is_const: false,
             origin: tsz_solver::TypeParamOrigin::User,
         });
-        let member = db.function(FunctionShape {
-            type_params: Vec::new(),
-            params: vec![ParamInfo {
+        let member = crate::query_boundaries::construct_signatures::function_type_from_parts(
+            &db,
+            Vec::new(),
+            vec![ParamInfo {
                 type_id: nested,
                 ..ParamInfo::default()
             }],
-            this_type: None,
-            return_type: TypeId::VOID,
-            type_predicate: None,
-            is_constructor: false,
-            is_method: true,
-        });
+            None,
+            TypeId::VOID,
+            None,
+            false,
+            true,
+        );
         let summary = ClassChainSummary {
             root_type_params: vec![source_outer],
             ..ClassChainSummary::default()
@@ -137,18 +138,20 @@ mod exact_rebind_cache_tests {
             is_const: false,
             origin: tsz_solver::TypeParamOrigin::User,
         });
-        let function_member = db.function(FunctionShape {
-            type_params: Vec::new(),
-            params: vec![ParamInfo {
-                type_id: nested,
-                ..ParamInfo::default()
-            }],
-            this_type: None,
-            return_type: TypeId::VOID,
-            type_predicate: None,
-            is_constructor: false,
-            is_method: true,
-        });
+        let function_member =
+            crate::query_boundaries::construct_signatures::function_type_from_parts(
+                &db,
+                Vec::new(),
+                vec![ParamInfo {
+                    type_id: nested,
+                    ..ParamInfo::default()
+                }],
+                None,
+                TypeId::VOID,
+                None,
+                false,
+                true,
+            );
         let array_member = db.array(nested);
         let summary = ClassChainSummary {
             root_type_params: vec![source_outer],
