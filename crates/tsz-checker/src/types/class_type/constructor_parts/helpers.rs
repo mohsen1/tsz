@@ -29,48 +29,16 @@ impl<'a> CheckerState<'a> {
         class: &tsz_parser::parser::node::ClassData,
         sym_id: tsz_binder::SymbolId,
     ) -> TypeId {
-        // Fallback display name for a companion not covered by pre-population
-        // (anonymous classes): "typeof ClassName". Only computed when a fresh
-        // companion must be created; a pre-populated one already carries a name.
-        let class_def = self.ctx.get_or_create_def_id(sym_id);
-        if self
-            .ctx
-            .definition_store
-            .get_constructor_def(class_def)
-            .is_none()
-        {
-            let display_name = self.class_constructor_display_name(class_idx, class);
-            return self.constructor_companion_lazy_for_symbol(sym_id, Some(&display_name));
-        }
-        self.constructor_companion_lazy_for_symbol(sym_id, None)
-    }
-
-    /// A `Lazy` to the class's `ClassConstructor` companion `DefId`, keyed by
-    /// `sym_id` alone — the value (`typeof C`: constructor + statics + merged
-    /// namespace exports) resolved lazily once the in-flight, non-cyclic
-    /// constructor build publishes the companion body. Reuses a pre-populated or
-    /// previously-pinned companion; only registers a fresh one (with
-    /// `fresh_display_name`, falling back to the symbol's own name) when none
-    /// exists yet, so the completing build's `get_constructor_def` + `set_body`
-    /// target this same identity. Callable without the class's `ClassData`, so a
-    /// cross-arena value delegation can defer without materializing the owner
-    /// arena's node.
-    pub(crate) fn constructor_companion_lazy_for_symbol(
-        &mut self,
-        sym_id: tsz_binder::SymbolId,
-        fresh_display_name: Option<&str>,
-    ) -> TypeId {
         let class_def = self.ctx.get_or_create_def_id(sym_id);
         let ctor_def = match self.ctx.definition_store.get_constructor_def(class_def) {
             Some(existing) => existing,
             None => {
-                let name = match fresh_display_name {
-                    Some(display) => self.ctx.types.intern_string(display),
-                    None => self
-                        .get_cross_file_symbol(sym_id)
-                        .map(|symbol| self.ctx.types.intern_string(&symbol.escaped_name))
-                        .unwrap_or_else(|| self.ctx.types.intern_string("(anonymous)")),
-                };
+                // No pre-populated companion (anonymous classes, or classes not
+                // covered by pre-population): create one with no body yet and
+                // pin the mapping, so the completing computation reuses this
+                // identity via `get_constructor_def` and `set_body`s onto it.
+                let display_name = self.class_constructor_display_name(class_idx, class);
+                let name = self.ctx.types.intern_string(&display_name);
                 let created = self.ctx.definition_store.register(
                     tsz_solver::def::DefinitionInfo::class_constructor_companion(
                         name,

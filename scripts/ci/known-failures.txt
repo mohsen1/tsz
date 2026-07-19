@@ -32,7 +32,16 @@
 # - js_constructor_property_more_tests::test_generic_constructor_prototype_object_methods_keep_existing_member_checks
 #   (js_constructor_property_more_tests binary: 45/45 pass)
 # - tsz-cli ...cross_file_class_namespace_merge_value_keeps_call_signature_in_import_cycle
-# baseline-status: reconciled r5
+# 2026-07-19 re-reconcile (r6): one ADDITION with the revert of 0e4409ffc8
+# (task #83 adjudication). The cross-file class-value import-cycle deferral
+# fixed this test but regressed neverthrow with 3 canary FPs (plain classes in
+# barrel cycles lose statics/construct sigs — the companion is built once,
+# mid-cycle, incomplete; no post-cycle rebuild exists). Deferral-off is
+# byte-identical on all other canary rows, so the deferral's only wins were its
+# own tests. The test returns to its pre-0e4409ffc8 tracked-failing state
+# pending the architectural pure-instance-DefId item (task #2); full saga:
+# session ledger m4-snapshot-defid + neverthrow-fixforward reports.
+# baseline-status: reconciled r6
 tsz-checker::conditional_application_display_tests::deferred_generic_conditional_keeps_branch_union
 tsz-checker::conformance_issues_features::features::namespace_construct_signature::part_00::test_js_void_zero_expando_reports_named_receiver_type
 tsz-checker::conformance_issues_types::types::fp_repro_audit_2026::issue_14944_genuine_widening_self_assignment_still_errors
@@ -56,4 +65,5 @@ tsz-checker::mapped_keyof_index_access_tests::spy_obj_key_and_returnvalue_emits_
 tsz-checker::nonnull_contextual_type_arg_inference_tests::contextual_return_can_refine_transparent_wrapper_inference
 tsz-checker::order_independent_alias_resolution_tests::non_generic_reexport_reports_ts2315_in_every_order
 tsz-checker::simple_local_interface_fastpath_tests::missing_interface_lib_rows_keep_lib_shapes
+tsz-cli::driver::core::check::check_tests::cross_file_class_namespace_merge_value_keeps_call_signature_in_import_cycle
 tsz-core::parallel::core::tests::test_check_files_parallel_zod_issue_data_cross_file_spread
