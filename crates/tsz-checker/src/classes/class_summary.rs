@@ -74,6 +74,11 @@ mod exact_rebind_cache_tests {
         let db = TypeInterner::new();
         let source_outer = db.fresh_type_param(TypeParamInfo::simple(db.intern_string("Outer")));
         let active_outer = db.fresh_type_param(TypeParamInfo::simple(db.intern_string("Active")));
+        // The application is discovered before its evaluated structural result,
+        // matching evaluator allocation order, but its provenance is attached
+        // only after the first cached rewrite.
+        let alias_base = db.lazy(DefId(27));
+        let source_alias = db.application(alias_base, vec![source_outer]);
         let member = db.array(source_outer);
         let summary = ClassChainSummary {
             root_type_params: vec![source_outer],
@@ -83,10 +88,9 @@ mod exact_rebind_cache_tests {
         let first = summary.rebind_root_type_params(&db, &[active_outer], member);
         assert_eq!(db.get_display_alias(first), None);
 
-        let alias_base = db.lazy(DefId(27));
-        let source_alias = db.application(alias_base, vec![source_outer]);
         db.store_display_alias_preferring_application(member, source_alias);
         db.record_application_eval_origin(member, source_alias);
+        assert_eq!(db.get_display_alias(member), Some(source_alias));
 
         let second = summary.rebind_root_type_params(&db, &[active_outer], member);
         let expected_alias = db.application(alias_base, vec![active_outer]);
