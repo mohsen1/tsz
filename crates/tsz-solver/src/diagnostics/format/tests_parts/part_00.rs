@@ -551,17 +551,20 @@ fn format_union_of_intersections_factors_common_type_parameter() {
     ]);
     let mut fmt = TypeFormatter::new(&db);
 
-    assert_eq!(fmt.format(union), "T & (0 | 2 | 1)");
+    // tsc renders the factored numeric-literal remainder numerically ascending,
+    // regardless of allocation order (oracle tsc 7.0.2
+    // inDoesNotOperateOnPrimitiveTypes: `T & (0 | 1 | 2)`).
+    assert_eq!(fmt.format(union), "T & (0 | 1 | 2)");
 }
 
 #[test]
 fn format_union_of_intersections_display_order_independent_of_alloc_order() {
-    // Regression: the previous code round-tripped through `interner.union()`,
-    // which re-sorts by alloc-order and discards the numeric display sort.
-    // When `one` is interned before `two` (lower alloc-order), that round-trip
-    // would produce `0 | 1 | 2` instead of the correct `0 | 2 | 1`.
-    // The sibling test `format_union_of_intersections_factors_common_type_parameter`
-    // happened to pass even with the bug because it interned `two` before `one`.
+    // The factored numeric-literal remainder sorts numerically ascending and is
+    // therefore independent of allocation order: interning `one` before `two`
+    // (lower alloc-order) must not change the `0 | 1 | 2` display (oracle tsc
+    // 7.0.2 `U & (1 | 2 | 0)` → `U & (0 | 1 | 2)`). The sort is applied directly
+    // rather than round-tripping through `interner.union()` (which re-sorts by
+    // alloc-order and would reintroduce order dependence).
     let db = TypeInterner::new();
     let k = db.type_param(TypeParamInfo {
         name: db.intern_string("K"),
@@ -580,7 +583,7 @@ fn format_union_of_intersections_display_order_independent_of_alloc_order() {
         db.intersection2(k, one),
     ]);
     let mut fmt = TypeFormatter::new(&db);
-    assert_eq!(fmt.format(union), "K & (0 | 2 | 1)");
+    assert_eq!(fmt.format(union), "K & (0 | 1 | 2)");
 }
 
 #[test]

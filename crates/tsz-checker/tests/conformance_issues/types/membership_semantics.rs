@@ -861,9 +861,11 @@ function f<T>(thing: T & (0 | 1 | 2)) {
     assert!(
         diagnostics.iter().any(|(code, message)| {
             *code == 2322
-                && message.contains("Type 'T & (0 | 2 | 1)' is not assignable to type 'object'.")
+                && message.contains("Type 'T & (0 | 1 | 2)' is not assignable to type 'object'.")
         }),
-        "Expected TS2322 with canonical numeric-literal union display, got: {diagnostics:#?}"
+        "Expected TS2322 with numerically-ascending canonical numeric-literal union \
+         display (oracle tsc 7.0.2 inDoesNotOperateOnPrimitiveTypes: `T & (0 | 1 | 2)`), \
+         got: {diagnostics:#?}"
     );
 }
 
@@ -904,9 +906,52 @@ function f<U>(thing: U & (1 | 2 | 0)) {
     assert!(
         diagnostics.iter().any(|(code, message)| {
             *code == 2322
-                && message.contains("Type 'U & (0 | 2 | 1)' is not assignable to type 'object'.")
+                && message.contains("Type 'U & (0 | 1 | 2)' is not assignable to type 'object'.")
         }),
-        "Expected TS2322 with canonical numeric-literal union display for renamed/reordered annotation, got: {diagnostics:#?}"
+        "Expected TS2322 with numerically-ascending canonical numeric-literal union display \
+         for the renamed/reordered annotation (oracle tsc 7.0.2 `U & (1 | 2 | 0)` → \
+         `U & (0 | 1 | 2)`), got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_switch_source_union_reconstruction_sorts_case_labels_by_comparator() {
+    // Conformance: TypeScript/tests/cases/conformance/types/unknown/unknownType2.ts
+    //
+    // A `switch` whose case labels reconstruct the narrowed source union in a
+    // TS2322 return-type mismatch. tsc sorts that literal union alphabetically
+    // regardless of clause order. Renamed labels + a non-alphabetical clause
+    // order (`"gamma"`, `"beta"`) prove the sort reads the members' literal
+    // values through the shared union comparator, not any hardcoded name or the
+    // clause order (oracle tsc 7.0.2: `"beta" | "gamma"`).
+    let diagnostics = compile_and_get_diagnostics_named(
+        "test.ts",
+        r#"
+type Allowed = "zeta" | "alpha";
+function pick(x: unknown): Allowed {
+    switch (x) {
+        case "gamma":
+        case "beta":
+            return x;
+    }
+    return "alpha";
+}
+"#,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322
+                && message
+                    .contains("Type '\"beta\" | \"gamma\"' is not assignable to type 'Allowed'.")
+        }),
+        "Expected the switch-case source union to render alphabetically sorted regardless of \
+         clause order (oracle tsc 7.0.2: `\"beta\" | \"gamma\"`), got: {diagnostics:#?}"
     );
 }
 

@@ -567,7 +567,6 @@ impl<'a> CheckerState<'a> {
     ) -> Option<String> {
         let expected_len = crate::query_boundaries::common::union_members(self.ctx.types, source)
             .map(|members| members.len())?;
-        let target_members = crate::query_boundaries::common::union_members(self.ctx.types, target);
         if expected_len < 2 {
             return None;
         }
@@ -609,8 +608,7 @@ impl<'a> CheckerState<'a> {
             start -= 1;
         }
 
-        let mut invalid = Vec::new();
-        let mut valid = Vec::new();
+        let mut entries: Vec<(TypeId, String)> = Vec::new();
         for &idx in &case_block.statements.nodes[start..=clause_pos] {
             let clause_node = self.ctx.arena.get(idx)?;
             let clause = self.ctx.arena.get_case_clause(clause_node)?;
@@ -621,23 +619,28 @@ impl<'a> CheckerState<'a> {
             let display = self
                 .literal_expression_display(clause.expression)
                 .unwrap_or_else(|| self.format_assignability_type_for_message(case_type, target));
-            let matches_target = case_type == target
-                || target_members
-                    .as_ref()
-                    .is_some_and(|members| members.contains(&case_type));
-            if matches_target {
-                valid.push(display);
-            } else {
-                invalid.push(display);
-            }
+            entries.push((case_type, display));
         }
 
-        if invalid.len() + valid.len() != expected_len {
+        if entries.len() != expected_len {
             return None;
         }
 
-        invalid.extend(valid);
-        Some(invalid.join(" | "))
+        // Order the reconstructed case members through the shared union
+        // comparator so the source-union display matches tsc's sorted literal
+        // union (oracle unknownType2: `"maybe" | "no" | "yes"`) rather than the
+        // clause order.
+        let ordered = {
+            let mut formatter = self.ctx.create_diagnostic_type_formatter();
+            formatter.order_union_members_for_display(entries.iter().map(|(ty, _)| *ty).collect())
+        };
+        let mut displays = Vec::with_capacity(ordered.len());
+        for ty in ordered {
+            if let Some(pos) = entries.iter().position(|(entry_ty, _)| *entry_ty == ty) {
+                displays.push(entries.remove(pos).1);
+            }
+        }
+        Some(displays.join(" | "))
     }
 
     fn format_tuple_shape_for_readonly_to_mutable(&mut self, type_id: TypeId) -> Option<String> {
@@ -1861,8 +1864,13 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut formatter = self.ctx.create_diagnostic_type_formatter();
+        // This site expands a literal-union alias target and joins its members
+        // directly; order them through the shared union comparator so the
+        // display matches tsc's sorted literal union (oracle
+        // assignmentCompatWithDiscriminatedUnion: `"categorical" | "linear"`).
+        let ordered = formatter.order_union_members_for_display(members.to_vec());
         Some(
-            members
+            ordered
                 .iter()
                 .map(|&member| formatter.format(member).into_owned())
                 .collect::<Vec<_>>()

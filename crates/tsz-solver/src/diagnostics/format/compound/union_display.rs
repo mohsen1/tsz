@@ -186,6 +186,17 @@ impl<'a> TypeFormatter<'a> {
         order.into_iter().map(|i| members[i]).collect()
     }
 
+    /// Public entry point for checker-side diagnostic reconstructions that
+    /// expand an alias/receiver union and join its members directly (bypassing
+    /// [`Self::format_union`]). Ordering a member list through the shared
+    /// rank/literal/name comparator lets those sites match tsc's sorted union
+    /// display without re-implementing the comparator or reading rendered
+    /// strings. Returns the input order unchanged when no `def_store` is
+    /// configured (the comparator needs it to resolve names/positions).
+    pub fn order_union_members_for_display(&mut self, members: Vec<TypeId>) -> Vec<TypeId> {
+        self.order_union_members_by_source(members)
+    }
+
     /// Textual sort key for a template-literal union member: the rendered
     /// template shape with `${` placeholders, matching tsc 7's display sort
     /// by template text.
@@ -442,6 +453,11 @@ impl<'a> TypeFormatter<'a> {
             union_remainders.push(numeric_literal_parts[0]);
         }
 
+        // tsc renders the factored numeric-literal remainder in canonical
+        // numerically-ascending order (`T & (0 | 1 | 2)`), regardless of the
+        // declared/allocation order (oracle: inDoesNotOperateOnPrimitiveTypes
+        // `T & (0 | 1 | 2)`, and a declared `U & (1 | 2 | 0)` also renders
+        // `U & (0 | 1 | 2)`).
         union_remainders.sort_by(|&left, &right| {
             let left_number = match self.interner.lookup(left) {
                 Some(TypeData::Literal(LiteralValue::Number(number))) => number,
@@ -451,11 +467,7 @@ impl<'a> TypeFormatter<'a> {
                 Some(TypeData::Literal(LiteralValue::Number(number))) => number,
                 _ => return std::cmp::Ordering::Equal,
             };
-            let left_zero = left_number.0.to_bits() == 0.0f64.to_bits();
-            let right_zero = right_number.0.to_bits() == 0.0f64.to_bits();
-            right_zero
-                .cmp(&left_zero)
-                .then_with(|| right_number.0.total_cmp(&left_number.0))
+            left_number.0.total_cmp(&right_number.0)
         });
 
         let common = common?;
@@ -465,8 +477,8 @@ impl<'a> TypeFormatter<'a> {
             .collect::<Vec<_>>()
             .join(" & ");
         // Use sorted union_remainders directly rather than round-tripping through
-        // self.interner.union(), which canonically re-sorts by TypeId and discards
-        // the custom numeric sort order above (e.g. `0 | 2 | 1` → `0 | 1 | 2`).
+        // self.interner.union(), which canonically re-sorts by TypeId (allocation
+        // order) and would discard the numeric-ascending sort above.
         let remainder_display = self.format_ordered_union_members(union_remainders);
         Some(format!("{common_display} & ({remainder_display})"))
     }
