@@ -1230,27 +1230,6 @@ pub fn resolve_unbound_type_params_to_declared_fallbacks<S: std::hash::BuildHash
     })
 }
 
-/// Replace one exact interned type identity throughout a type graph.
-///
-/// Unlike [`TypeSubstitution`], this operation is keyed by [`TypeId`] rather
-/// than a type-parameter name. It can therefore rebind a cached declaration
-/// parameter without capturing an unrelated shadowed parameter that happens
-/// to use the same spelling.
-pub fn substitute_exact_type(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-    from: TypeId,
-    to: TypeId,
-) -> TypeId {
-    if from == to {
-        return type_id;
-    }
-    let mut memo = FxHashMap::default();
-    crate::evaluation::evaluate_rules::substitute::substitute_exact_type_db(
-        db, type_id, from, to, &mut memo,
-    )
-}
-
 /// Resolve the type parameters whose declared name is in `names` and appear
 /// free in `ty` to their `default → constraint → unknown`, matching tsc's
 /// instantiation of a *failed* generic call's result with default type

@@ -1155,6 +1155,7 @@ mod api_lazy;
 mod cache_stability;
 mod conditional;
 mod display_properties;
+mod exact_rewrite;
 pub(crate) mod flags;
 mod homomorphic;
 mod indexed;
@@ -1168,6 +1169,7 @@ use self::api_lazy::{
     mapped_constraint_needs_resolver, template_has_lazy_application_in_composite,
     type_contains_lazy_application,
 };
+pub use self::exact_rewrite::{substitute_exact_type, substitute_exact_types};
 pub use self::substitution::TypeSubstitution;
 #[cfg(test)]
 #[path = "../../tests/instantiate_tests.rs"]

@@ -200,14 +200,14 @@ pub(crate) fn resolve_unbound_type_params_to_declared_fallbacks<S: std::hash::Bu
     )
 }
 
-/// Rebind one exact interned type identity throughout a type graph.
-pub(crate) fn substitute_exact_type(
-    db: &dyn TypeDatabase,
+/// Rebind aligned exact interned identities in one memoized graph walk.
+pub(crate) fn substitute_exact_types(
+    db: &dyn QueryDatabase,
     type_id: TypeId,
-    from: TypeId,
-    to: TypeId,
+    from: &[TypeId],
+    to: &[TypeId],
 ) -> TypeId {
-    tsz_solver::computation::substitute_exact_type(db, type_id, from, to)
+    tsz_solver::computation::substitute_exact_types(db, type_id, from, to)
 }
 
 /// Free type parameters of `roots` whose declared name is in `names`, as

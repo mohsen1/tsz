@@ -112,26 +112,19 @@ pub(crate) struct ClassChainSummary {
 impl ClassChainSummary {
     pub(crate) fn rebind_root_type_params(
         &self,
-        db: &dyn tsz_solver::construction::TypeDatabase,
+        db: &dyn tsz_solver::construction::QueryDatabase,
         active_root_type_params: &[TypeId],
-        mut type_id: TypeId,
+        type_id: TypeId,
     ) -> TypeId {
         if self.root_type_params.len() != active_root_type_params.len() {
             return type_id;
         }
-        for (&cached_param, &active_param) in
-            self.root_type_params.iter().zip(active_root_type_params)
-        {
-            if active_param != cached_param {
-                type_id = crate::query_boundaries::common::substitute_exact_type(
-                    db,
-                    type_id,
-                    cached_param,
-                    active_param,
-                );
-            }
-        }
-        type_id
+        crate::query_boundaries::common::substitute_exact_types(
+            db,
+            type_id,
+            &self.root_type_params,
+            active_root_type_params,
+        )
     }
 
     pub(crate) fn lookup(
