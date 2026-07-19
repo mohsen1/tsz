@@ -1022,6 +1022,10 @@ impl TypeDatabase for QueryCache<'_> {
         self.interner.intersection2(left, right)
     }
 
+    fn intersect_types_raw(&self, members: Vec<TypeId>) -> TypeId {
+        self.interner.intersect_types_raw(members)
+    }
+
     fn intersect_types_raw2(&self, left: TypeId, right: TypeId) -> TypeId {
         self.interner.intersect_types_raw2(left, right)
     }

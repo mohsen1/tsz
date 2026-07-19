@@ -528,6 +528,8 @@ pub trait TypeDatabase:
     fn union3(&self, first: TypeId, second: TypeId, third: TypeId) -> TypeId;
     fn intersection(&self, members: Vec<TypeId>) -> TypeId;
     fn intersection2(&self, left: TypeId, right: TypeId) -> TypeId;
+    /// Order-preserving intersection without object/callable normalization.
+    fn intersect_types_raw(&self, members: Vec<TypeId>) -> TypeId;
     /// Raw intersection without normalization (used to avoid infinite recursion)
     fn intersect_types_raw2(&self, left: TypeId, right: TypeId) -> TypeId;
     fn array(&self, element: TypeId) -> TypeId;
@@ -1079,6 +1081,10 @@ impl TypeDatabase for TypeInterner {
 
     fn intersection2(&self, left: TypeId, right: TypeId) -> TypeId {
         Self::intersection2(self, left, right)
+    }
+
+    fn intersect_types_raw(&self, members: Vec<TypeId>) -> TypeId {
+        Self::intersect_types_raw(self, members)
     }
 
     fn intersect_types_raw2(&self, left: TypeId, right: TypeId) -> TypeId {
