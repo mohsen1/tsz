@@ -71,6 +71,30 @@ mod exact_rebind_cache_tests {
     }
 
     #[test]
+    fn identical_or_empty_class_binder_scopes_skip_rewrite_sessions() {
+        let db = TypeInterner::new();
+        let outer = db.fresh_type_param(TypeParamInfo::simple(db.intern_string("Outer")));
+        let member = db.array(outer);
+        let generic_summary = ClassChainSummary {
+            root_type_params: vec![outer],
+            ..ClassChainSummary::default()
+        };
+
+        assert_eq!(
+            generic_summary.rebind_root_type_params(&db, &[outer], member),
+            member,
+        );
+        assert!(generic_summary.rebind_sessions.borrow().is_empty());
+
+        let plain_summary = ClassChainSummary::default();
+        assert_eq!(
+            plain_summary.rebind_root_type_params(&db, &[], TypeId::STRING),
+            TypeId::STRING,
+        );
+        assert!(plain_summary.rebind_sessions.borrow().is_empty());
+    }
+
+    #[test]
     fn cached_member_rebind_refreshes_late_application_display_alias() {
         let db = TypeInterner::new();
         let source_outer = db.fresh_type_param(TypeParamInfo::simple(db.intern_string("Outer")));
@@ -245,6 +269,11 @@ impl ClassChainSummary {
         type_id: TypeId,
     ) -> TypeId {
         if self.root_type_params.len() != active_root_type_params.len() {
+            return type_id;
+        }
+        if self.root_type_params.is_empty()
+            || self.root_type_params.as_slice() == active_root_type_params
+        {
             return type_id;
         }
         {
