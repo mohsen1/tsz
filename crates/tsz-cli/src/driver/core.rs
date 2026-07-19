@@ -8,9 +8,9 @@ use std::time::Instant;
 
 use crate::args::CliArgs;
 use crate::config::{
-    ResolvedCompilerOptions, TsConfig, load_tsconfig, load_tsconfig_with_diagnostics,
-    resolve_compiler_options, resolve_lib_files_with_options,
-    resolve_lib_files_with_options_transitive,
+    RemovedOptionNotice, ResolvedCompilerOptions, TsConfig, load_tsconfig,
+    load_tsconfig_with_diagnostics_deferred, resolve_compiler_options,
+    resolve_lib_files_with_options, resolve_lib_files_with_options_transitive,
 };
 use tsz::binder::BinderOptions;
 use tsz::binder::BinderState;
@@ -1561,8 +1561,8 @@ mod plan;
 pub use plan::apply_cli_overrides;
 use plan::{
     apply_cli_overrides_with_config_options, cli_ignore_deprecations_silences_6_0,
-    display_relative_to_dir, emit_common_source_directory, find_latest_dts_file,
-    implicit_common_source_directory, is_deprecation_diagnostic_code,
+    cli_valid_override_keys, display_relative_to_dir, emit_common_source_directory,
+    find_latest_dts_file, implicit_common_source_directory, is_deprecation_diagnostic_code,
     is_removed_option_diagnostic_code, is_removed_option_value_diagnostic_code,
     ordered_direct_cli_parse_diagnostics, validate_cli_compiler_option_diagnostics,
 };

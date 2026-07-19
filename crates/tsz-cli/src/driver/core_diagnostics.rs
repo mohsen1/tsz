@@ -265,6 +265,20 @@ fn compile_inner_impl(
     let loaded = load_config_with_diagnostics(tsconfig_path.as_deref())?;
     let config = loaded.config;
     let mut config_diagnostics = loaded.diagnostics;
+    // tsc merges explicit CLI options over the config chain BEFORE the
+    // removed-option check, so a chain-effective removed VALUE that the CLI
+    // overrides with a valid value produces no diagnostic at all
+    // (`tsc -p . --moduleResolution bundler` over node10 compiles clean).
+    // Removed KEYS are not retractable: passing the key on the CLI is itself
+    // a removal error.
+    let cli_override_keys = cli_valid_override_keys(args, config.as_ref())?;
+    config_diagnostics.extend(
+        loaded
+            .pending_removed_option_notices
+            .into_iter()
+            .filter(|notice| !(notice.is_value && cli_override_keys.contains(&notice.key)))
+            .map(|notice| notice.diagnostic),
+    );
     // A references-only root tsconfig (no .ts inputs, but non-empty `references[]`) is
     // the canonical TypeScript Project References pattern. tsc never emits TS18003 in
     // this case; suppress the "no inputs" diagnostic when `references[]` is non-empty.
