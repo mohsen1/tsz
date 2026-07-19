@@ -1,10 +1,27 @@
 //! Explicit generic arguments must retain their enclosing declaration's type-
 //! parameter identity through inherited application-member lookup.
 
-use tsz_checker::test_utils::check_source_strict_codes;
+use tsz_checker::context::CheckerOptions;
+use tsz_checker::test_utils::{check_source, check_source_strict_codes};
 
 fn codes(source: &str) -> Vec<u32> {
     check_source_strict_codes(source)
+}
+
+fn js_codes(source: &str) -> Vec<u32> {
+    check_source(
+        source,
+        "application-member-rebind.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    )
+    .into_iter()
+    .map(|diagnostic| diagnostic.code)
+    .collect()
 }
 
 #[test]
@@ -277,5 +294,100 @@ class Derived<Tail extends object | null = null> {
         codes(source),
         vec![2322],
         "a foreign omitted binder with the same spelling must retain its own default",
+    );
+}
+
+#[test]
+fn cached_class_summary_rebinds_inherited_member_in_field_initializer() {
+    let source = r#"
+abstract class Runnable {
+  abstract run(): void;
+}
+
+class Base<Payload> {
+  value!: Payload;
+}
+
+class Derived<Tail extends Runnable | null = null> extends Base<Tail> {
+  copy: Tail = this.value;
+  invoke = this.value?.run();
+}
+"#;
+
+    assert!(
+        codes(source).is_empty(),
+        "early class construction must rebind cached members to the active class binder",
+    );
+}
+
+#[test]
+fn jsdoc_class_template_rebinds_early_member_access() {
+    let source = r#"
+/**
+ * @template U
+ */
+class Box {
+  /** @type {U} */
+  value = /** @type {any} */ (null);
+
+  /** @type {U} */
+  copy = this.value;
+
+  /** @returns {U} */
+  read() {
+    return this.value;
+  }
+}
+"#;
+
+    let diagnostics = check_source(
+        source,
+        "application-member-rebind.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "JSDoc class binders must stay active during early member recovery: {diagnostics:#?}",
+    );
+}
+
+#[test]
+fn jsdoc_method_template_does_not_hide_enclosing_class_binder() {
+    let source = r#"
+class Runnable {
+  run() {}
+}
+
+/**
+ * @template {Runnable | null} U
+ */
+class Derived {
+  /** @type {U} */
+  value = /** @type {any} */ (null);
+
+  /**
+   * @template U
+   * @param {U} local
+   * @returns {U}
+   */
+  use(local) {
+    const value = this.value;
+    if (value) {
+      value.run();
+    }
+    return local;
+  }
+}
+"#;
+
+    let actual = js_codes(source);
+    assert!(
+        actual.is_empty(),
+        "a same-named JSDoc method binder must not hide the constrained class binder: {actual:?}",
     );
 }

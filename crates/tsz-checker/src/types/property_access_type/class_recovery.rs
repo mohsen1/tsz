@@ -9,6 +9,26 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn active_class_summary_root_type_params(
+        &self,
+        class_idx: NodeIndex,
+        summary: &ClassChainSummary,
+        allow_construction_scope: bool,
+    ) -> Option<Vec<TypeId>> {
+        if let Some(info) = self
+            .ctx
+            .enclosing_class
+            .as_ref()
+            .filter(|info| info.class_idx == class_idx)
+        {
+            return Some(info.class_type_parameter_ids.clone());
+        }
+        allow_construction_scope.then(|| {
+            summary
+                .root_type_params_from_active_scope(self.ctx.types, &self.ctx.type_parameter_scope)
+        })?
+    }
+
     pub(crate) fn resolve_class_access_with_current_member_initializer_recovery(
         &mut self,
         expression: NodeIndex,
@@ -214,13 +234,13 @@ impl<'a> CheckerState<'a> {
         let member_type = summary
             .member_info(property_name, is_static_access, true)?
             .type_id;
-        let active_root_type_params = self
-            .ctx
-            .enclosing_class
-            .as_ref()
-            .filter(|info| info.class_idx == class_idx)
-            .map_or(&[][..], |info| info.class_type_parameter_ids.as_slice());
-        Some(summary.rebind_root_type_params(self.ctx.types, active_root_type_params, member_type))
+        let active_root_type_params =
+            self.active_class_summary_root_type_params(class_idx, summary, true);
+        Some(summary.rebind_root_type_params(
+            self.ctx.types,
+            active_root_type_params.as_deref().unwrap_or(&[]),
+            member_type,
+        ))
     }
 
     pub(super) fn recover_direct_this_class_chain_member(
@@ -233,10 +253,10 @@ impl<'a> CheckerState<'a> {
         object_type_for_access: TypeId,
         original_object_type: TypeId,
     ) -> Option<(TypeId, bool)> {
-        if used_class_chain_method_type
-            || !direct_class_this_receiver
+        if !direct_class_this_receiver
             || object_type_for_access != original_object_type
-            || self.enclosing_class_declares_member(property_name)
+            || (!used_class_chain_method_type
+                && self.enclosing_class_declares_member(property_name))
         {
             return None;
         }
@@ -245,27 +265,26 @@ impl<'a> CheckerState<'a> {
         let summary = self.summarize_class_chain(class_idx);
         let member = summary.member_info(property_name, false, true)?;
         let member_is_method_like = member.is_method || member.is_accessor;
-        if member.from_interface
-            || (member_is_method_like
-                && !matches!(prop_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR))
-            || matches!(
-                member.type_id,
-                TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR
-            )
-            || member.type_id == prop_type
+        if !used_class_chain_method_type
+            && (member.from_interface
+                || (member_is_method_like
+                    && !matches!(prop_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR))
+                || matches!(
+                    member.type_id,
+                    TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR
+                )
+                || member.type_id == prop_type)
         {
             return None;
         }
 
-        let active_root_type_params = self
-            .ctx
-            .enclosing_class
-            .as_ref()
-            .filter(|info| info.class_idx == class_idx)
-            .map_or(&[][..], |info| info.class_type_parameter_ids.as_slice());
+        let in_construction_scope = self.ctx.checking_computed_property_name.is_some()
+            || self.property_access_is_in_class_property_initializer(receiver_expr);
+        let active_root_type_params =
+            self.active_class_summary_root_type_params(class_idx, &summary, in_construction_scope);
         let member_type = summary.rebind_root_type_params(
             self.ctx.types,
-            active_root_type_params,
+            active_root_type_params.as_deref().unwrap_or(&[]),
             member.type_id,
         );
         Some((member_type, member_is_method_like))

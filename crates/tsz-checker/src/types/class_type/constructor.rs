@@ -269,19 +269,8 @@ impl<'a> CheckerState<'a> {
         apply_module_augmentations: bool,
     ) -> TypeId {
         let is_abstract_class = self.has_abstract_modifier(&class.modifiers);
-        let (mut class_type_params, mut type_param_updates) =
-            self.push_type_parameters(&class.type_parameters);
-
-        // In JS files, classes don't have syntax-level type parameters.
-        // JSDoc `@template T` tags serve the same purpose.
-        if class_type_params.is_empty() {
-            let (jsdoc_params, jsdoc_updates) =
-                self.push_jsdoc_class_template_type_params(class_idx);
-            if !jsdoc_params.is_empty() {
-                class_type_params = jsdoc_params;
-                type_param_updates.extend(jsdoc_updates);
-            }
-        }
+        let (class_type_params, type_param_updates) =
+            self.push_effective_class_type_parameters(class_idx, class);
 
         // NOTE: instance type is computed AFTER static member processing (see below).
         // This allows us to temporarily cache a partial constructor type with all static

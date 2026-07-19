@@ -7,6 +7,7 @@ use crate::query_boundaries::construct_signatures::call_only_callable_type;
 use crate::query_boundaries::definite_assignment::constructor_assigned_properties;
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::RefCell;
 use tsz_lowering::TypeLowering;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -23,6 +24,49 @@ pub(crate) struct ClassPropertyInitializationInfo {
     pub(crate) has_no_initializer: bool,
     pub(crate) is_abstract: bool,
     pub(crate) requires_initialization: bool,
+}
+
+#[cfg(test)]
+mod exact_rebind_cache_tests {
+    use super::ClassChainSummary;
+    use tsz_solver::construction::TypeInterner;
+    use tsz_solver::{FunctionShape, ParamInfo, TypeId, TypeParamInfo};
+
+    #[test]
+    fn repeated_member_rebind_reuses_nested_generic_identity() {
+        let db = TypeInterner::new();
+        let source_outer = db.fresh_type_param(TypeParamInfo::simple(db.intern_string("Outer")));
+        let active_outer = db.fresh_type_param(TypeParamInfo::simple(db.intern_string("Active")));
+        let nested = db.fresh_type_param(TypeParamInfo {
+            name: db.intern_string("Nested"),
+            constraint: Some(source_outer),
+            default: None,
+            is_const: false,
+            origin: tsz_solver::TypeParamOrigin::User,
+        });
+        let member = db.function(FunctionShape {
+            type_params: Vec::new(),
+            params: vec![ParamInfo {
+                type_id: nested,
+                ..ParamInfo::default()
+            }],
+            this_type: None,
+            return_type: TypeId::VOID,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: true,
+        });
+        let summary = ClassChainSummary {
+            root_type_params: vec![source_outer],
+            ..ClassChainSummary::default()
+        };
+
+        let first = summary.rebind_root_type_params(&db, &[active_outer], member);
+        let second = summary.rebind_root_type_params(&db, &[active_outer], member);
+
+        assert_eq!(first, second);
+        assert_ne!(first, member);
+    }
 }
 
 #[derive(Clone, Default)]
@@ -93,6 +137,10 @@ pub(crate) enum ClassMemberKind {
 pub(crate) struct ClassChainSummary {
     /// Root-class type parameter identities used to build this cached summary.
     root_type_params: Vec<TypeId>,
+    /// Exact rebinds are stable for one cached summary and active binder vector.
+    /// This prevents nested generic member binders from being freshly allocated
+    /// again on every property access.
+    rebound_root_types: RefCell<FxHashMap<Vec<TypeId>, FxHashMap<TypeId, TypeId>>>,
     /// Unified instance member map: name -> entry (replaces 6 maps + 1 set)
     instance_members: FxHashMap<String, MemberEntry>,
     /// Unified static member map: name -> entry (replaces 6 maps + 1 set)
@@ -119,12 +167,49 @@ impl ClassChainSummary {
         if self.root_type_params.len() != active_root_type_params.len() {
             return type_id;
         }
-        crate::query_boundaries::common::substitute_exact_types(
+        if let Some(cached) = self
+            .rebound_root_types
+            .borrow()
+            .get(active_root_type_params)
+            .and_then(|types| types.get(&type_id))
+            .copied()
+        {
+            return cached;
+        }
+
+        let rebound = crate::query_boundaries::common::substitute_exact_types(
             db,
             type_id,
             &self.root_type_params,
             active_root_type_params,
-        )
+        );
+        self.rebound_root_types
+            .borrow_mut()
+            .entry(active_root_type_params.to_vec())
+            .or_default()
+            .insert(type_id, rebound);
+        rebound
+    }
+
+    /// Resolve the cached summary's declaration-ordered binders through the
+    /// current name scope. This is used only during early class construction,
+    /// before `EnclosingClassInfo` is installed and before member-level binders
+    /// can shadow the class parameters.
+    pub(crate) fn root_type_params_from_active_scope(
+        &self,
+        db: &dyn tsz_solver::construction::TypeDatabase,
+        active_scope: &FxHashMap<String, TypeId>,
+    ) -> Option<Vec<TypeId>> {
+        self.root_type_params
+            .iter()
+            .map(|&type_id| {
+                let tsz_solver::TypeData::TypeParameter(info) = db.lookup(type_id)? else {
+                    return None;
+                };
+                let name = db.resolve_atom_ref(info.name);
+                active_scope.get(name.as_ref()).copied()
+            })
+            .collect()
     }
 
     pub(crate) fn lookup(
@@ -706,7 +791,7 @@ impl<'a> CheckerState<'a> {
             // cannot replace the type parameters, causing base member types to remain
             // as `any` and skipping TS2416 checks entirely.
             let (class_type_params, type_param_updates) =
-                self.push_type_parameters(&class.type_parameters);
+                self.push_effective_class_type_parameters(current_idx, class);
 
             if is_first {
                 summary.root_type_params = self
@@ -808,7 +893,7 @@ impl<'a> CheckerState<'a> {
             if let Some((base_class_idx, type_arg_ids)) = extends_info {
                 if let Some(base_class) = self.ctx.arena.get_class_at(base_class_idx) {
                     let (base_type_params, base_type_param_updates) =
-                        self.push_type_parameters(&base_class.type_parameters);
+                        self.push_effective_class_type_parameters(base_class_idx, base_class);
                     self.pop_type_parameters(base_type_param_updates);
 
                     if !base_type_params.is_empty() && !type_arg_ids.is_empty() {
@@ -859,7 +944,7 @@ impl<'a> CheckerState<'a> {
         include_private: bool,
     ) -> Option<TypeId> {
         let class = self.ctx.arena.get_class_at(class_idx)?;
-        let (_, type_param_updates) = self.push_type_parameters(&class.type_parameters);
+        let (_, type_param_updates) = self.push_effective_class_type_parameters(class_idx, class);
         let summary = self.collect_class_members_for_chain(class_idx, class);
         self.pop_type_parameters(type_param_updates);
 
@@ -1088,7 +1173,8 @@ impl<'a> CheckerState<'a> {
                     .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
                     .collect()
             } else {
-                Vec::new()
+                self.jsdoc_extends_type_arguments_for_heritage(class_idx, expr_idx)
+                    .unwrap_or_default()
             };
 
             return Some((base_class_idx, type_arg_ids));

@@ -377,7 +377,7 @@ impl<'a> CheckerState<'a> {
         // Push type parameters BEFORE checking heritage clauses and abstract members
         // This allows heritage clauses and member checks to reference the class's type parameters
         let (class_type_parameters, type_param_updates) =
-            self.push_type_parameters(&class.type_parameters);
+            self.push_effective_class_type_parameters(stmt_idx, class);
 
         self.check_duplicate_type_parameters(&class.type_parameters);
         self.check_strict_mode_reserved_type_parameter_names(
@@ -1121,7 +1121,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let (class_type_parameters, type_param_updates) =
-            self.push_type_parameters(&class.type_parameters);
+            self.push_effective_class_type_parameters(class_idx, class);
 
         self.check_duplicate_type_parameters(&class.type_parameters);
         self.check_strict_mode_reserved_type_parameter_names(
