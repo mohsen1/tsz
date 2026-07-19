@@ -385,7 +385,7 @@ impl<'a> CheckerState<'a> {
     fn assignment_numeric_literal_union_replacement_display(
         &self,
         type_id: TypeId,
-        other_type: Option<TypeId>,
+        _other_type: Option<TypeId>,
         rewrite_alias_origin: bool,
         source_order: &str,
     ) -> Option<String> {
@@ -397,12 +397,7 @@ impl<'a> CheckerState<'a> {
             let canonical_order =
                 self.format_type_for_assignability_message_with_union_origin_policy(type_id, true);
             return self
-                .assignment_canonical_number_literal_union_display(
-                    type_id,
-                    other_type,
-                    source_order,
-                    &canonical_order,
-                )
+                .assignment_canonical_number_literal_union_display(source_order, &canonical_order)
                 .filter(|assignment_order| assignment_order != source_order);
         }
 
@@ -413,80 +408,15 @@ impl<'a> CheckerState<'a> {
 
     fn assignment_canonical_number_literal_union_display(
         &self,
-        type_id: TypeId,
-        other_type: Option<TypeId>,
         source_order: &str,
         canonical_order: &str,
     ) -> Option<String> {
-        if let Some(relation_order) =
-            self.numeric_literal_union_display_with_unmatched_members_first(type_id, other_type)
-            && relation_order != source_order
-        {
-            return Some(relation_order);
-        }
-
-        if source_order != canonical_order {
-            return Some(canonical_order.to_string());
-        }
-
-        None
-    }
-
-    fn numeric_literal_union_display_with_unmatched_members_first(
-        &self,
-        type_id: TypeId,
-        other_type: Option<TypeId>,
-    ) -> Option<String> {
-        let other_numbers = self.numeric_literal_values_for_display_order(other_type?)?;
-        if other_numbers.is_empty() {
-            return None;
-        }
-
-        let members = diagnostic_query::union_members(self.ctx.types, type_id)?;
-        let mut unmatched = Vec::new();
-        let mut matched = Vec::new();
-        for member in members {
-            let number = self.numeric_literal_value(member)?;
-            if other_numbers.contains(&number) {
-                matched.push(member);
-            } else {
-                unmatched.push(member);
-            }
-        }
-        if unmatched.is_empty() || matched.is_empty() {
-            return None;
-        }
-
-        let mut ordered = unmatched;
-        ordered.extend(matched);
-        Some(
-            ordered
-                .into_iter()
-                .map(|member| {
-                    self.format_type_for_assignability_message_with_union_origin_policy(
-                        member, true,
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(" | "),
-        )
-    }
-
-    fn numeric_literal_values_for_display_order(&self, type_id: TypeId) -> Option<Vec<u64>> {
-        if let Some(number) = self.numeric_literal_value(type_id) {
-            return Some(vec![number]);
-        }
-
-        let members = diagnostic_query::union_members(self.ctx.types, type_id)?;
-        let mut numbers = Vec::with_capacity(members.len());
-        for member in members {
-            numbers.push(self.numeric_literal_value(member)?);
-        }
-        Some(numbers)
-    }
-
-    fn numeric_literal_value(&self, type_id: TypeId) -> Option<u64> {
-        diagnostic_query::number_literal_bits(self.ctx.types, type_id)
+        // tsc always renders a number-literal union in its canonical order
+        // (numerically ascending — `1 | 2 | 10`, oracle-verified), regardless of
+        // source order or which members overlap the assignment counterpart. The
+        // comparator-backed `canonical_order` already encodes that, so prefer it
+        // whenever it differs from the raw source-order display.
+        (source_order != canonical_order).then(|| canonical_order.to_string())
     }
 
     fn is_number_literal_union_for_display_order(&self, type_id: TypeId) -> bool {

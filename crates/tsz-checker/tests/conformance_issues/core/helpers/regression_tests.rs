@@ -762,23 +762,23 @@ ps1 = ps12;
     assert!(
         ts2322
             .iter()
-            .any(|message| message.contains("Type '2 | 1' is not assignable to type '1'.")),
+            .any(|message| message.contains("Type '1 | 2' is not assignable to type '1'.")),
         "Expected scalar alias assignment to expand to the literal union, got: {diagnostics:?}"
     );
     assert!(
         ts2322.iter().any(|message| message
-            .contains("Type 'VarianceShape<2 | 1>' is not assignable to type 'VarianceShape<1>'.")),
+            .contains("Type 'VarianceShape<1 | 2>' is not assignable to type 'VarianceShape<1>'.")),
         "Expected shallow object alias assignment to preserve the outer alias surface, got: {diagnostics:?}"
     );
     assert!(
         ts2322.iter().any(|message| message.contains(
-            "Type 'VarianceDeepShape<2 | 1>' is not assignable to type 'VarianceDeepShape<1>'."
+            "Type 'VarianceDeepShape<1 | 2>' is not assignable to type 'VarianceDeepShape<1>'."
         )),
         "Expected deep object alias assignment to preserve the outer alias surface, got: {diagnostics:?}"
     );
     assert!(
         ts2322.iter().any(|message| message.contains(
-            "Type 'PlainShapeAlias<2 | 1>' is not assignable to type 'PlainShapeAlias<1>'."
+            "Type 'PlainShapeAlias<1 | 2>' is not assignable to type 'PlainShapeAlias<1>'."
         )),
         "Expected non-variance object alias assignment to preserve the target alias surface, got: {diagnostics:?}"
     );
