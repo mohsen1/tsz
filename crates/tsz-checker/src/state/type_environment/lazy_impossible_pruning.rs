@@ -2,10 +2,10 @@
 //!
 //! Split out of `lazy.rs` (it shares that module's `CheckerState` impl and
 //! `evaluate_type_with_resolution` entry point). These helpers remove union
-//! members whose evaluated shape is uninhabitable — an intersection with
-//! conflicting unit-literal discriminants, or an object with a required
-//! property that is itself an impossible unit intersection — so a relation
-//! never has to reason about a member that can hold no value.
+//! members whose evaluated shape is uninhabitable because an intersection has
+//! conflicting unit-literal discriminants, so a relation never has to reason
+//! about a member that can hold no value. A required `never` property alone does
+//! not make an object impossible: TypeScript preserves those members in unions.
 
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
@@ -40,7 +40,6 @@ impl CheckerState<'_> {
             .into_iter()
             .filter(|&member| {
                 !self.intersection_has_impossible_literal_discriminants_with_env(member)
-                    && !self.object_member_has_impossible_required_property_with_env(member)
             })
             .collect();
 
@@ -56,6 +55,17 @@ impl CheckerState<'_> {
         &mut self,
         type_id: TypeId,
     ) -> bool {
+        // Concrete object intersections are eagerly merged for O(1) member
+        // lookup. Inspect their retained structural origin so a required
+        // `never` produced by conflicting discriminants is pruned without
+        // treating an authored required-`never` property as impossible.
+        let evaluated = self.evaluate_type_with_resolution(type_id);
+        let type_id = self
+            .ctx
+            .types
+            .get_merged_intersection_origin(evaluated)
+            .or_else(|| self.ctx.types.get_merged_intersection_origin(type_id))
+            .unwrap_or(evaluated);
         let Some(members) =
             crate::query_boundaries::state::checking::intersection_members(self.ctx.types, type_id)
         else {
@@ -75,78 +85,24 @@ impl CheckerState<'_> {
             };
 
             for prop in &shape.properties {
+                let prop_type = self.evaluate_type_with_resolution(prop.type_id);
                 if !crate::query_boundaries::state::checking::is_unit_type(
                     self.ctx.types,
-                    prop.type_id,
+                    prop_type,
                 ) {
                     continue;
                 }
 
                 let seen = discriminants.entry(prop.name).or_default();
                 if seen.iter().any(|&other| {
-                    !self.diagnostic_subtype_outcome(prop.type_id, other).related
-                        && !self.diagnostic_subtype_outcome(other, prop.type_id).related
+                    !self.diagnostic_subtype_outcome(prop_type, other).related
+                        && !self.diagnostic_subtype_outcome(other, prop_type).related
                 }) {
                     return true;
                 }
-                if !seen.contains(&prop.type_id) {
-                    seen.push(prop.type_id);
+                if !seen.contains(&prop_type) {
+                    seen.push(prop_type);
                 }
-            }
-        }
-
-        false
-    }
-
-    fn object_member_has_impossible_required_property_with_env(&mut self, type_id: TypeId) -> bool {
-        let evaluated_type = self.evaluate_type_with_resolution(type_id);
-        let Some(shape) =
-            crate::query_boundaries::state::checking::object_shape(self.ctx.types, evaluated_type)
-        else {
-            return false;
-        };
-
-        shape.properties.iter().any(|prop| {
-            !prop.optional && self.type_is_impossible_unit_intersection_with_env(prop.type_id)
-        })
-    }
-
-    fn type_is_impossible_unit_intersection_with_env(&mut self, type_id: TypeId) -> bool {
-        let evaluated = self.evaluate_type_with_resolution(type_id);
-        if evaluated == TypeId::NEVER {
-            return true;
-        }
-
-        let Some(members) = crate::query_boundaries::state::checking::intersection_members(
-            self.ctx.types,
-            evaluated,
-        ) else {
-            return false;
-        };
-
-        let mut units = Vec::new();
-        for member in members {
-            let evaluated_member = self.evaluate_type_with_resolution(member);
-            if !crate::query_boundaries::state::checking::is_unit_type(
-                self.ctx.types,
-                evaluated_member,
-            ) {
-                continue;
-            }
-
-            if units.iter().any(|&other| {
-                !self
-                    .diagnostic_subtype_outcome(evaluated_member, other)
-                    .related
-                    && !self
-                        .diagnostic_subtype_outcome(other, evaluated_member)
-                        .related
-            }) {
-                return true;
-            }
-
-            if !units.contains(&evaluated_member) {
-                units.push(evaluated_member);
             }
         }
 

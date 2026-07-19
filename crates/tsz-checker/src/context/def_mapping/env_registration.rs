@@ -2,8 +2,8 @@
 //! `TypeEnvironment` instances for `CheckerContext`, split out of
 //! `def_mapping.rs`.
 //!
-//! Owns the `register_def_*_in_envs` family plus the published-body history
-//! and application-eval invalidation helpers backing it.
+//! Owns the `register_def_*_in_envs` family plus the application-eval
+//! invalidation helpers backing it.
 
 use crate::context::CheckerContext;
 use crate::context::deferred_flow_env_write::DeferredFlowEnvWrite;
@@ -13,38 +13,16 @@ use tsz_solver::TypeId;
 use tsz_solver::def::DefId;
 
 impl CheckerContext<'_> {
-    /// Record that `def_id` has been published with body `body`, returning
-    /// whether that body was **already** in the def's published-body history.
-    ///
-    /// Used to detect the benign re-resolution oscillation where a generic
-    /// alias re-lowers to one of a small set of structurally-equivalent interned
-    /// bodies on every application. The history is tiny (bounded by the number
-    /// of distinct equivalent re-lowerings, typically 1-2), so the linear scan
-    /// over the `SmallVec` is effectively constant.
-    fn record_published_body(&self, def_id: DefId, body: TypeId) -> bool {
-        let mut map = self.def_published_bodies.borrow_mut();
-        let history = map.entry(def_id).or_default();
-        if history.contains(&body) {
-            true
-        } else {
-            history.push(body);
-            false
-        }
-    }
-
     /// Register a non-generic definition body in **both** type environments.
     #[track_caller]
     pub fn register_def_in_envs(&self, def_id: DefId, body: TypeId) {
         let prev_body = self.definition_store.get_body(def_id);
         let body_changed = prev_body != Some(body);
-        // Skip the expensive env-eval cache sweep when a def re-publishes a body
-        // it already held (a benign re-resolution oscillation). See
-        // `def_published_bodies` and `register_def_with_params_in_envs`.
-        let body_seen_before = body_changed && self.record_published_body(def_id, body);
         self.publish_definition_body(def_id, body);
         if body_changed {
             // First publication (`None -> Some`) needs no env-eval/narrowing
-            // sweep, for the same reason `invalidate_application_evals_on_body_rewrite`
+            // sweep, for the same reason
+            // `invalidate_application_evals_on_definition_rewrite`
             // skips it: no cached entry can reference `def_id` before it had a
             // resolvable body (the solver refuses to persist results computed
             // against an unresolved def, `mark_unresolved_def_seen`). Sweeping
@@ -52,16 +30,16 @@ impl CheckerContext<'_> {
             // is `O(N^2)` across a file of `N` aliases whose closed-but-deferred
             // bodies (e.g. `Uppercase<"..">`) each seed one new cache entry. Gate
             // the sweep on a genuine rewrite (`Some(old) -> Some(new)`).
-            if !body_seen_before && prev_body.is_some() {
+            if prev_body.is_some() {
                 self.clear_type_evaluation_caches_for_def(def_id);
             }
-            self.invalidate_application_evals_on_body_rewrite(def_id, prev_body);
+            self.invalidate_application_evals_on_definition_rewrite(def_id, prev_body);
         }
         self.register_in_envs(DeferredFlowEnvWrite::InsertDef { def_id, body });
     }
 
     /// Drop stale per-file application-eval entries when an already-published
-    /// definition body is *rewritten* to different content.
+    /// definition body or parameter list is *rewritten* to different content.
     ///
     /// First publication (`None -> Some`) needs no sweep: the solver's
     /// evaluator refuses to persist application/closed-eval results computed
@@ -72,7 +50,7 @@ impl CheckerContext<'_> {
     /// were legitimately cached against `old`. The sweep is def-keyed and
     /// rewrite-gated so the common first-registration path never pays the
     /// cache scan.
-    fn invalidate_application_evals_on_body_rewrite(
+    fn invalidate_application_evals_on_definition_rewrite(
         &self,
         def_id: DefId,
         prev_body: Option<TypeId>,
@@ -102,29 +80,24 @@ impl CheckerContext<'_> {
             .definition_store
             .get_type_params(def_id)
             .is_none_or(|existing| existing != params);
-        // A generic alias re-resolves on every application; the re-lowering can
-        // emit one of a few structurally-equivalent interned bodies, so
-        // `body_changed` oscillates. Re-publishing a body the def already held
-        // introduces no new staleness beyond the first occurrence, so the
-        // expensive `O(env_eval_cache)` `clear_type_evaluation_caches_for_def`
-        // sweep can be skipped for that benign rewrite (see
-        // `def_published_bodies`). A genuinely new body, or any params change,
-        // still sweeps. The cheap, def-keyed application-eval invalidation still
-        // runs on every real body change.
-        let body_seen_before = body_changed && self.record_published_body(def_id, body);
         self.publish_definition_body_with_params(def_id, body, params.clone());
         // First publication (`prev_body == None`) needs no sweep: no cached
         // entry can reference `def_id` before it had a resolvable body (see
-        // `register_def_in_envs` and `invalidate_application_evals_on_body_rewrite`).
+        // `register_def_in_envs` and
+        // `invalidate_application_evals_on_definition_rewrite`).
         // A params-only change without a prior body cannot occur — params are
         // published atomically with the body — so gating on `prev_body.is_some()`
         // preserves every genuine-rewrite sweep while removing the per-first-
         // registration `O(env_eval_cache)` scan that is `O(N^2)` across a file.
-        if prev_body.is_some() && ((body_changed && !body_seen_before) || params_changed) {
+        if prev_body.is_some() && (body_changed || params_changed) {
+            // A -> B -> A is still a real rewrite: entries can be populated
+            // while B is active and are stale when A returns. Env-eval entries
+            // are reverse-indexed by `DefId`, so that part is dependency-
+            // proportional; the narrowing-cache scans run only on rewrites.
             self.clear_type_evaluation_caches_for_def(def_id);
         }
-        if body_changed {
-            self.invalidate_application_evals_on_body_rewrite(def_id, prev_body);
+        if body_changed || params_changed {
+            self.invalidate_application_evals_on_definition_rewrite(def_id, prev_body);
         }
         let declared_variances = TypeResolver::get_type_param_variance(self, def_id);
         self.register_in_envs(DeferredFlowEnvWrite::InsertDefWithParams {

@@ -86,6 +86,187 @@ impl<'a> TypeInstantiator<'a> {
         self.interner.store_display_properties(result, props);
     }
 
+    /// Preserve the structural origin of an eagerly merged object intersection.
+    ///
+    /// Substituting a property creates a new object `TypeId`, so the origin map
+    /// recorded when the generic intersection was merged cannot be reused by
+    /// identity. Rebuild the raw origin members from the completed substitutions
+    /// already memoized by the active walk, then preserve them as a raw
+    /// intersection. A second semantic instantiation would merge the origin
+    /// back into `result` and repaint shared application/display provenance,
+    /// which can poison later conditional-alias inference.
+    pub(super) fn propagate_instantiated_merged_intersection_origin(
+        &mut self,
+        source: TypeId,
+        result: TypeId,
+    ) {
+        if source == result {
+            return;
+        }
+        if self
+            .interner
+            .get_merged_intersection_origin(result)
+            .is_some()
+        {
+            return;
+        }
+        let Some(origin) = self.interner.get_merged_intersection_origin(source) else {
+            return;
+        };
+        if self.has_depth_exceeded() {
+            return;
+        }
+
+        let Some(TypeData::Intersection(origin_list)) = self.interner.lookup(origin) else {
+            return;
+        };
+        let origin_members = self.interner.type_list(origin_list);
+        let mut rebuilt_members = FxHashMap::default();
+        let instantiated_members = origin_members
+            .iter()
+            .map(|&member| self.rebuild_merged_origin_member(member, result, &mut rebuilt_members))
+            .collect();
+        let instantiated_origin = self.raw_intersection(instantiated_members);
+        self.interner
+            .store_merged_intersection_origin(result, instantiated_origin);
+    }
+
+    /// Rebuild one retained raw object member using only substitution results
+    /// completed by the active merged-object walk. This is deliberately not a
+    /// recursive instantiation entry point: all property/index slots in the
+    /// merged source were already visited, and replaying them would repeat
+    /// semantic reduction and provenance side effects.
+    fn rebuild_merged_origin_member(
+        &self,
+        member: TypeId,
+        protected_result: TypeId,
+        rebuilt_members: &mut FxHashMap<TypeId, TypeId>,
+    ) -> TypeId {
+        if let Some(&rebuilt) = rebuilt_members.get(&member) {
+            return rebuilt;
+        }
+        rebuilt_members.insert(member, member);
+        let Some(kind) = self.interner.lookup(member) else {
+            return member;
+        };
+        let shape_id = match kind {
+            TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => shape_id,
+            _ => return member,
+        };
+        let shape = self.interner.object_shape(shape_id);
+        let properties = shape
+            .properties
+            .iter()
+            .map(|property| {
+                let mut property = property.clone();
+                property.type_id = self.completed_instantiation(property.type_id);
+                property.write_type = self.completed_instantiation(property.write_type);
+                property
+            })
+            .collect();
+
+        let rebuilt = if matches!(kind, TypeData::Object(_)) {
+            self.interner
+                .object_with_flags_and_symbol(properties, shape.flags, shape.symbol)
+        } else {
+            let rebuild_index = |index: Option<IndexSignature>| {
+                index.map(|mut index| {
+                    index.key_type = self.completed_instantiation(index.key_type);
+                    index.value_type = self.completed_instantiation(index.value_type);
+                    index
+                })
+            };
+            self.interner.object_with_index(ObjectShape {
+                flags: shape.flags,
+                properties,
+                string_index: rebuild_index(shape.string_index),
+                number_index: rebuild_index(shape.number_index),
+                symbol_index: rebuild_index(shape.symbol_index),
+                symbol: shape.symbol,
+            })
+        };
+        rebuilt_members.insert(member, rebuilt);
+
+        if rebuilt != protected_result {
+            if let Some(display_properties) = self.interner.get_display_properties(member) {
+                let display_properties = display_properties
+                    .iter()
+                    .map(|property| {
+                        let mut property = property.clone();
+                        property.type_id = self.completed_instantiation(property.type_id);
+                        property.write_type = self.completed_instantiation(property.write_type);
+                        property
+                    })
+                    .collect();
+                self.interner
+                    .store_display_properties(rebuilt, display_properties);
+            }
+            if self.interner.get_application_eval_origin(rebuilt).is_none()
+                && let Some(application) = self.interner.get_application_eval_origin(member)
+                && let Some(TypeData::Application(application_id)) =
+                    self.interner.lookup(application)
+            {
+                let application = self.interner.type_application(application_id);
+                let base = self.completed_instantiation(application.base);
+                let args = application
+                    .args
+                    .iter()
+                    .map(|&argument| self.completed_instantiation(argument))
+                    .collect();
+                let application = self.interner.application(base, args);
+                self.interner
+                    .record_application_eval_origin(rebuilt, application);
+            }
+        }
+
+        // A raw origin member can itself be the result of an earlier merge
+        // (`(A & B) & C`). Replay that nested origin without re-entering
+        // semantic instantiation. Never let a member that canonicalizes to the
+        // outer result claim the outer result's first-write-wins provenance.
+        if rebuilt != protected_result
+            && self
+                .interner
+                .get_merged_intersection_origin(rebuilt)
+                .is_none()
+            && let Some(nested_origin) = self.interner.get_merged_intersection_origin(member)
+            && let Some(TypeData::Intersection(nested_list)) = self.interner.lookup(nested_origin)
+        {
+            let nested_members = self.interner.type_list(nested_list);
+            let instantiated_nested = nested_members
+                .iter()
+                .map(|&nested_member| {
+                    self.rebuild_merged_origin_member(
+                        nested_member,
+                        protected_result,
+                        rebuilt_members,
+                    )
+                })
+                .collect();
+            let instantiated_nested = self.raw_intersection(instantiated_nested);
+            self.interner
+                .store_display_alias(rebuilt, instantiated_nested);
+            self.interner
+                .store_merged_intersection_origin(rebuilt, instantiated_nested);
+        }
+
+        rebuilt
+    }
+
+    #[inline]
+    fn completed_instantiation(&self, type_id: TypeId) -> TypeId {
+        self.visiting.get(&type_id).copied().unwrap_or(type_id)
+    }
+
+    fn raw_intersection(&self, members: Vec<TypeId>) -> TypeId {
+        let mut members = members.into_iter();
+        let Some(first) = members.next() else {
+            return TypeId::UNKNOWN;
+        };
+        members.fold(first, |left, right| {
+            self.interner.intersect_types_raw2(left, right)
+        })
+    }
+
     /// Propagate semantic application provenance through instantiation.
     ///
     /// A nominal class/interface instantiation that evaluation lowered to a

@@ -1006,6 +1006,7 @@ impl<'a> TypeInstantiator<'a> {
                     // propagating display/application provenance.
                     self.propagate_instantiated_display_properties(type_id, result);
                     self.propagate_instantiated_application_origin(type_id, result);
+                    self.propagate_instantiated_merged_intersection_origin(type_id, result);
                     result
                 } else {
                     type_id
@@ -1047,6 +1048,7 @@ impl<'a> TypeInstantiator<'a> {
                     });
                     self.propagate_instantiated_display_properties(type_id, result);
                     self.propagate_instantiated_application_origin(type_id, result);
+                    self.propagate_instantiated_merged_intersection_origin(type_id, result);
                     result
                 } else {
                     type_id

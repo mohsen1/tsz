@@ -1734,6 +1734,13 @@ fn intersection_has_impossible_literal_discriminants(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> bool {
+    // Concrete object intersections are eagerly merged for O(1) member lookup.
+    // Inspect their retained structural origin: a merged required-`never`
+    // discriminant is proof of a conflicting intersection, while the same
+    // property on an authored object is not proof that the object is absent.
+    let type_id = db
+        .get_merged_intersection_origin(type_id)
+        .unwrap_or(type_id);
     let Some(TypeData::Intersection(list_id)) = db.lookup(type_id) else {
         return false;
     };
@@ -1751,80 +1758,26 @@ fn intersection_has_impossible_literal_discriminants(
         };
 
         for prop in &shape.properties {
-            if !crate::type_queries::is_unit_type(db, prop.type_id) {
+            let evaluated_prop = crate::evaluation::evaluate::evaluate_type(db, prop.type_id);
+            let prop_type = if evaluated_prop != prop.type_id {
+                evaluated_prop
+            } else {
+                prop.type_id
+            };
+            if !crate::type_queries::is_unit_type(db, prop_type) {
                 continue;
             }
 
             let seen = discriminants.entry(prop.name).or_default();
             if seen.iter().any(|&other| {
-                !crate::relations::subtype::is_subtype_of(db, prop.type_id, other)
-                    && !crate::relations::subtype::is_subtype_of(db, other, prop.type_id)
+                !crate::relations::subtype::is_subtype_of(db, prop_type, other)
+                    && !crate::relations::subtype::is_subtype_of(db, other, prop_type)
             }) {
                 return true;
             }
-            if !seen.contains(&prop.type_id) {
-                seen.push(prop.type_id);
+            if !seen.contains(&prop_type) {
+                seen.push(prop_type);
             }
-        }
-    }
-
-    false
-}
-
-fn object_member_has_impossible_required_property(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    let evaluated_type = crate::evaluation::evaluate::evaluate_type(db, type_id);
-    let type_id = if evaluated_type != type_id {
-        evaluated_type
-    } else {
-        type_id
-    };
-    let Some(shape) = get_object_shape(db, type_id) else {
-        return false;
-    };
-
-    shape.properties.iter().any(|prop| {
-        !prop.optional
-            && (crate::evaluation::evaluate::evaluate_type(db, prop.type_id) == TypeId::NEVER
-                || unit_intersection_is_impossible(db, prop.type_id))
-    })
-}
-
-fn unit_intersection_is_impossible(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    if type_id.is_intrinsic() {
-        return false;
-    }
-    let evaluated = crate::evaluation::evaluate::evaluate_type(db, type_id);
-    let type_id = if evaluated != type_id {
-        evaluated
-    } else {
-        type_id
-    };
-    if type_id.is_intrinsic() {
-        return false;
-    }
-    let Some(TypeData::Intersection(list_id)) = db.lookup(type_id) else {
-        return false;
-    };
-
-    let mut units = Vec::new();
-    for &member in db.type_list(list_id).iter() {
-        let evaluated_member = crate::evaluation::evaluate::evaluate_type(db, member);
-        let member = if evaluated_member != member {
-            evaluated_member
-        } else {
-            member
-        };
-        if !crate::type_queries::is_unit_type(db, member) {
-            continue;
-        }
-        if units.iter().any(|&other| {
-            !crate::relations::subtype::is_subtype_of(db, member, other)
-                && !crate::relations::subtype::is_subtype_of(db, other, member)
-        }) {
-            return true;
-        }
-        if !units.contains(&member) {
-            units.push(member);
         }
     }
 
@@ -1832,9 +1785,10 @@ fn unit_intersection_is_impossible(db: &dyn TypeDatabase, type_id: TypeId) -> bo
 }
 
 /// Prune union members whose object/intersection shape is structurally
-/// impossible (conflicting literal discriminants, never-typed or impossible-unit
-/// required properties), returning the narrowed union (or `never` / the single
-/// survivor / the input unchanged).
+/// impossible because of conflicting literal discriminants, returning the
+/// narrowed union (or `never` / the single survivor / the input unchanged).
+/// A required `never` property does not make an object member impossible in
+/// TypeScript and is therefore deliberately retained.
 ///
 /// Pure function of the input union `TypeId`: it consults only structural
 /// predicates over the immutable interned type `DAG` via resolver-free
@@ -1857,10 +1811,7 @@ pub fn prune_impossible_object_union_members(db: &dyn TypeDatabase, type_id: Typ
     let retained: Vec<_> = members
         .iter()
         .copied()
-        .filter(|&member| {
-            !intersection_has_impossible_literal_discriminants(db, member)
-                && !object_member_has_impossible_required_property(db, member)
-        })
+        .filter(|&member| !intersection_has_impossible_literal_discriminants(db, member))
         .collect();
 
     let result = match retained.len() {

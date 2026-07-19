@@ -388,15 +388,14 @@ definition body is **registered**, `register_def_in_envs` /
   body (`mark_unresolved_def_seen`), so no cached entry can reference the def
   yet. Sweeping on every first registration would be `O(env_eval_cache)` per def,
   `O(N^2)` across a file of `N` aliases.
-- **Benign re-resolution oscillation**: a generic alias re-resolves on every
-  application and the re-lowering can emit one of a few structurally-equivalent
-  interned bodies, so `body_changed` flip-flops. `def_published_bodies`
-  (`RefCell<FxHashMap<DefId, SmallVec<[TypeId; 2]>>>`) records the bodies a def
-  has already published; re-publishing a body the def already held introduces no
-  new staleness, so the sweep is skipped.
-- **Genuine rewrite (`Some(old) -> Some(new)`)** or any params change: sweep via
-  `clear_type_evaluation_caches_for_def`, plus the cheap def-keyed
-  `invalidate_application_eval_cache_for_def`.
+- **Every rewrite (`Some(old) -> Some(new)`)**, including an `A -> B -> A`
+  re-publication, or any params change: invalidate through
+  `clear_type_evaluation_caches_for_def`. Entries may have been populated while
+  the intervening body was active, so a previously published body is not a safe
+  shortcut. Env-eval entries are removed through the reverse `DefId` dependency
+  index; the narrowing-cache structural scans remain gated on real rewrites.
+  The cheap def-keyed `invalidate_application_eval_cache_for_def` also runs on
+  body or parameter changes.
 
 The `invalidate_env_eval_reachable_from(type_id)` variant exists because
 re-evaluating a type under a different resolution mode (e.g. after a speculative

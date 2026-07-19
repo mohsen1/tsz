@@ -337,11 +337,6 @@ impl<'a> CheckerContext<'a> {
         self.type_position_resolution_cache.borrow_mut().clear();
         self.clear_env_eval_cache();
         self.lib_type_resolution_caches.clear();
-        // Body-publication history tracks oscillating re-resolutions only to
-        // suppress redundant env-eval cache sweeps; it shares that cache's
-        // per-file lifecycle, so reset it alongside.
-        self.def_published_bodies.borrow_mut().clear();
-
         // Depth counters: reset to their base depth and clear the
         // `exceeded` flag.
         self.call_depth.borrow_mut().reset();

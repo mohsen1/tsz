@@ -319,7 +319,6 @@ impl<'a> CheckerContext<'a> {
             lazy_def_ids_cache: RefCell::new(FxHashMap::default()),
             type_queries_cache: RefCell::new(FxHashMap::default()),
             type_position_resolution_cache: RefCell::new(FxHashMap::default()),
-            def_published_bodies: RefCell::new(FxHashMap::default()),
             package_json_cache: RefCell::new(FxHashMap::default()),
             class_symbol_to_decl_cache: RefCell::new(FxHashMap::default()),
             heritage_symbol_cache: RefCell::new(FxHashMap::default()),

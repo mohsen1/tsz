@@ -553,6 +553,61 @@ fn prune_impossible_object_union_members_memo_is_byte_identical_and_reused() {
 }
 
 #[test]
+fn prune_impossible_object_union_members_retains_required_never_property() {
+    let interner = TypeInterner::new();
+    let marker = interner.intern_string("marker");
+    let common = interner.intern_string("common");
+    let branded = interner.object(vec![
+        PropertyInfo::new(marker, TypeId::NEVER),
+        PropertyInfo::new(common, TypeId::STRING),
+    ]);
+    let ordinary = interner.object(vec![PropertyInfo::new(common, TypeId::NUMBER)]);
+    let union = interner.union_preserve_members(vec![branded, ordinary]);
+
+    let Some(TypeData::Union(members)) = interner.lookup(union) else {
+        panic!("expected a Union for the required-never setup, got {union:?}");
+    };
+    assert_eq!(interner.type_list(members).len(), 2);
+
+    let db: &dyn TypeDatabase = &interner;
+    let pruned = crate::type_queries::prune_impossible_object_union_members(db, union);
+
+    assert_eq!(
+        pruned, union,
+        "a required `never` property makes construction difficult but does not make the object member impossible"
+    );
+    assert_eq!(db.prune_union_members_memo(union), Some(union));
+}
+
+#[test]
+fn prune_impossible_object_union_members_retains_merged_authored_never_property() {
+    let interner = TypeInterner::new();
+    let marker = interner.intern_string("marker");
+    let common = interner.intern_string("common");
+    let extra = interner.intern_string("extra");
+    let branded = interner.object(vec![
+        PropertyInfo::new(marker, TypeId::NEVER),
+        PropertyInfo::new(common, TypeId::STRING),
+    ]);
+    let extra_shape = interner.object(vec![PropertyInfo::new(extra, TypeId::BOOLEAN)]);
+    let merged = interner.intersection(vec![branded, extra_shape]);
+    let ordinary = interner.object(vec![PropertyInfo::new(common, TypeId::NUMBER)]);
+    let union = interner.union_preserve_members(vec![merged, ordinary]);
+
+    assert!(
+        interner.get_merged_intersection_origin(merged).is_some(),
+        "the negative control must exercise a merged intersection"
+    );
+
+    let db: &dyn TypeDatabase = &interner;
+    let pruned = crate::type_queries::prune_impossible_object_union_members(db, union);
+    assert_eq!(
+        pruned, union,
+        "an authored required `never` remains inhabitable even after object-intersection merging"
+    );
+}
+
+#[test]
 fn type_interner_query_db_tracks_no_unchecked_indexed_access() {
     let interner = TypeInterner::new();
     let db: &dyn QueryDatabase = &interner;
