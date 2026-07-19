@@ -92,7 +92,7 @@ pub(crate) enum ClassMemberKind {
 #[derive(Clone, Default)]
 pub(crate) struct ClassChainSummary {
     /// Root-class type parameter identities used to build this cached summary.
-    root_type_params: Vec<(String, TypeId)>,
+    root_type_params: Vec<TypeId>,
     /// Unified instance member map: name -> entry (replaces 6 maps + 1 set)
     instance_members: FxHashMap<String, MemberEntry>,
     /// Unified static member map: name -> entry (replaces 6 maps + 1 set)
@@ -113,18 +113,20 @@ impl ClassChainSummary {
     pub(crate) fn rebind_root_type_params(
         &self,
         db: &dyn tsz_solver::construction::TypeDatabase,
-        active_scope: &FxHashMap<String, TypeId>,
+        active_root_type_params: &[TypeId],
         mut type_id: TypeId,
     ) -> TypeId {
-        for (name, cached_param) in &self.root_type_params {
-            let Some(&active_param) = active_scope.get(name) else {
-                continue;
-            };
-            if active_param != *cached_param {
+        if self.root_type_params.len() != active_root_type_params.len() {
+            return type_id;
+        }
+        for (&cached_param, &active_param) in
+            self.root_type_params.iter().zip(active_root_type_params)
+        {
+            if active_param != cached_param {
                 type_id = crate::query_boundaries::common::substitute_exact_type(
                     db,
                     type_id,
-                    *cached_param,
+                    cached_param,
                     active_param,
                 );
             }
@@ -714,19 +716,9 @@ impl<'a> CheckerState<'a> {
                 self.push_type_parameters(&class.type_parameters);
 
             if is_first {
-                summary.root_type_params = class_type_params
-                    .iter()
-                    .map(|param| {
-                        let name = self.ctx.types.resolve_atom(param.name);
-                        let type_id = self
-                            .ctx
-                            .type_parameter_scope
-                            .get(&name)
-                            .copied()
-                            .unwrap_or_else(|| self.ctx.types.type_param(*param));
-                        (name, type_id)
-                    })
-                    .collect();
+                summary.root_type_params = self
+                    .exact_type_parameter_ids_in_scope(&class_type_params)
+                    .unwrap_or_default();
             }
 
             let own_summary = self.collect_class_members_for_chain(current_idx, class);

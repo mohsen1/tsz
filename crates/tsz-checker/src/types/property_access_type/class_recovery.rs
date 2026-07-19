@@ -214,11 +214,13 @@ impl<'a> CheckerState<'a> {
         let member_type = summary
             .member_info(property_name, is_static_access, true)?
             .type_id;
-        Some(summary.rebind_root_type_params(
-            self.ctx.types,
-            &self.ctx.type_parameter_scope,
-            member_type,
-        ))
+        let active_root_type_params = self
+            .ctx
+            .enclosing_class
+            .as_ref()
+            .filter(|info| info.class_idx == class_idx)
+            .map_or(&[][..], |info| info.class_type_parameter_ids.as_slice());
+        Some(summary.rebind_root_type_params(self.ctx.types, active_root_type_params, member_type))
     }
 
     pub(super) fn recover_direct_this_class_chain_member(
@@ -239,7 +241,8 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let summary = self.summarize_class_chain(self.nearest_enclosing_class(receiver_expr)?);
+        let class_idx = self.nearest_enclosing_class(receiver_expr)?;
+        let summary = self.summarize_class_chain(class_idx);
         let member = summary.member_info(property_name, false, true)?;
         let member_is_method_like = member.is_method || member.is_accessor;
         if member.from_interface
@@ -254,9 +257,15 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        let active_root_type_params = self
+            .ctx
+            .enclosing_class
+            .as_ref()
+            .filter(|info| info.class_idx == class_idx)
+            .map_or(&[][..], |info| info.class_type_parameter_ids.as_slice());
         let member_type = summary.rebind_root_type_params(
             self.ctx.types,
-            &self.ctx.type_parameter_scope,
+            active_root_type_params,
             member.type_id,
         );
         Some((member_type, member_is_method_like))

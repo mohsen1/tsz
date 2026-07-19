@@ -18,6 +18,41 @@ impl<'a> CheckerState<'a> {
     // Section 39: Type Parameter Scope Utilities
     // =========================================================================
 
+    /// Resolve declaration-ordered type-parameter infos to the exact identities
+    /// currently installed in the checker scope. Returns `None` rather than a
+    /// partial vector so callers never shift positional binder alignment.
+    pub(crate) fn exact_type_parameter_ids_in_scope(
+        &self,
+        params: &[tsz_solver::TypeParamInfo],
+    ) -> Option<Vec<TypeId>> {
+        params
+            .iter()
+            .map(|param| {
+                let name = self.ctx.types.resolve_atom_ref(param.name);
+                self.ctx.type_parameter_scope.get(name.as_ref()).copied()
+            })
+            .collect()
+    }
+
+    /// Exact type-parameter identities available to a member expression.
+    ///
+    /// The name-keyed scope contains the innermost binder for each spelling,
+    /// so a method parameter can hide an enclosing class parameter there. A
+    /// cached class member still carries the enclosing binder's exact identity;
+    /// retain both identities when deciding which free parameters are bound.
+    pub(crate) fn member_type_parameter_ids_in_scope(&self) -> rustc_hash::FxHashSet<TypeId> {
+        let mut in_scope = self
+            .ctx
+            .type_parameter_scope
+            .values()
+            .copied()
+            .collect::<rustc_hash::FxHashSet<_>>();
+        if let Some(class_info) = self.ctx.enclosing_class.as_ref() {
+            in_scope.extend(class_info.class_type_parameter_ids.iter().copied());
+        }
+        in_scope
+    }
+
     /// Pop type parameters from scope, restoring previous values.
     /// Used to restore the type parameter scope after exiting a generic context.
     pub(crate) fn pop_type_parameters(&mut self, updates: Vec<(String, Option<TypeId>, bool)>) {

@@ -82,6 +82,88 @@ class TupleSchema<
 }
 
 #[test]
+fn cached_class_summary_rebinds_refined_secondary_binder() {
+    let source = r#"
+type AnyRunner = Runner<any>;
+
+class Runner<Definition> {
+  readonly definition!: Definition;
+
+  prime<Other extends AnyRunner>() {}
+}
+
+interface SequenceDefinition<
+  Head,
+  Tail extends AnyRunner | null = null,
+> {
+  tail: Tail;
+}
+
+class Sequence<
+  Head,
+  Tail extends AnyRunner | null = null,
+> extends Runner<SequenceDefinition<Head, Tail>> {
+  use(): void {
+    const tail = this.definition.tail;
+    if (tail) {
+      tail.prime();
+    }
+  }
+
+  get tail() {
+    return this.definition.tail;
+  }
+}
+"#;
+
+    assert!(
+        codes(source).is_empty(),
+        "a cached inherited member must rebind the summary's exact class parameter identity",
+    );
+}
+
+#[test]
+fn method_shadow_does_not_capture_enclosing_class_binder() {
+    let source = r#"
+type AnyRunner = Runner<any>;
+
+class Runner<Definition> {
+  readonly definition!: Definition;
+
+  prime<Other extends AnyRunner>() {}
+}
+
+interface SequenceDefinition<
+  Head,
+  Tail extends AnyRunner | null = null,
+> {
+  tail: Tail;
+}
+
+class Sequence<
+  Head,
+  Tail extends AnyRunner | null = null,
+> extends Runner<SequenceDefinition<Head, Tail>> {
+  use<Tail extends object>(): void {
+    const tail = this.definition.tail;
+    if (tail) {
+      tail.prime();
+    }
+  }
+
+  get tail() {
+    return this.definition.tail;
+  }
+}
+"#;
+
+    assert!(
+        codes(source).is_empty(),
+        "a same-named method binder must neither capture nor hide the enclosing class binder",
+    );
+}
+
+#[test]
 fn inherited_member_application_uses_enclosing_renamed_binder() {
     let source = r#"
 abstract class Runnable {

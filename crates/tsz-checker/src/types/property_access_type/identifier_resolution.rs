@@ -69,8 +69,7 @@ impl<'a> CheckerState<'a> {
         {
             return member_type;
         }
-        let in_scope: rustc_hash::FxHashSet<TypeId> =
-            self.ctx.type_parameter_scope.values().copied().collect();
+        let in_scope = self.member_type_parameter_ids_in_scope();
         crate::query_boundaries::common::resolve_unbound_type_params_to_defaults(
             self.ctx.types,
             member_type,

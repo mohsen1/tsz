@@ -376,7 +376,8 @@ impl<'a> CheckerState<'a> {
 
         // Push type parameters BEFORE checking heritage clauses and abstract members
         // This allows heritage clauses and member checks to reference the class's type parameters
-        let (_type_params, type_param_updates) = self.push_type_parameters(&class.type_parameters);
+        let (class_type_parameters, type_param_updates) =
+            self.push_type_parameters(&class.type_parameters);
 
         self.check_duplicate_type_parameters(&class.type_parameters);
         self.check_strict_mode_reserved_type_parameter_names(
@@ -404,6 +405,9 @@ impl<'a> CheckerState<'a> {
             .iter()
             .map(|(name, _, _)| name.clone())
             .collect();
+        let class_type_parameter_ids = self
+            .exact_type_parameter_ids_in_scope(&class_type_parameters)
+            .unwrap_or_default();
 
         // Check for unused type parameters (TS6133)
         self.check_unused_type_params(&class.type_parameters, stmt_idx);
@@ -777,7 +781,8 @@ impl<'a> CheckerState<'a> {
             has_super_call_in_current_constructor: false,
             cached_instance_this_type: prior_instance_type_snapshot,
             type_param_names: class_type_param_names,
-            class_type_parameters: _type_params,
+            class_type_parameters,
+            class_type_parameter_ids,
         });
 
         let preserve_stable_class_shape_cache = self.class_shape_cache_is_stable(stmt_idx, class);
@@ -1115,7 +1120,8 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let (_type_params, type_param_updates) = self.push_type_parameters(&class.type_parameters);
+        let (class_type_parameters, type_param_updates) =
+            self.push_type_parameters(&class.type_parameters);
 
         self.check_duplicate_type_parameters(&class.type_parameters);
         self.check_strict_mode_reserved_type_parameter_names(
@@ -1137,6 +1143,9 @@ impl<'a> CheckerState<'a> {
             .iter()
             .map(|(name, _, _)| name.clone())
             .collect();
+        let class_type_parameter_ids = self
+            .exact_type_parameter_ids_in_scope(&class_type_parameters)
+            .unwrap_or_default();
 
         // Class expressions are strict-mode class definitions too. Their
         // names and base expressions participate in the same recovered
@@ -1173,7 +1182,8 @@ impl<'a> CheckerState<'a> {
             has_super_call_in_current_constructor: false,
             cached_instance_this_type: None,
             type_param_names: class_type_param_names,
-            class_type_parameters: _type_params,
+            class_type_parameters,
+            class_type_parameter_ids,
         });
 
         // Class bodies reset the async context — field initializers don't

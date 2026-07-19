@@ -109,6 +109,9 @@ impl<'a> CheckerState<'a> {
                 class_type_param_updates.extend(jsdoc_updates);
             }
         }
+        let class_type_param_ids = self
+            .exact_type_parameter_ids_in_scope(&class_type_params)
+            .unwrap_or_default();
 
         // PERF: Pre-size maps based on member count to avoid rehashing
         let member_count = class.members.nodes.len();
@@ -118,6 +121,7 @@ impl<'a> CheckerState<'a> {
             current_sym,
             flags,
             class_type_params,
+            class_type_param_ids,
             class_type_param_updates,
             member_count,
             properties: FxHashMap::with_capacity_and_hasher(member_count, Default::default()),
