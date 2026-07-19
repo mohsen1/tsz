@@ -8,7 +8,7 @@ use crate::type_param_info;
 use crate::types::{
     CallSignature, CallableShape, CallableShapeId, FunctionShape, FunctionShapeId, ObjectFlags,
     ObjectShape, ParamInfo, PropertyInfo, TupleElement, TypeData, TypeId, TypeParamInfo,
-    TypeParamOrigin, Visibility,
+    Visibility,
 };
 use crate::visitor::callable_shape_id;
 
@@ -147,20 +147,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// on top of `TSZ_TYPEPARAM_DECL_IDENTITY`).
     ///
     /// When ON (and the construction stamp is ON), the alpha-rename registration
-    /// records each paired param's `DeclScoped { file, node }` origin alongside
+    /// records each paired param's authoritative declaration origin alongside
     /// the pre-instantiate `TypeId` pair, and the consult
     /// (`check_subtype`) additionally accepts two reduced-body `TypeParameter`
     /// leaves whose carried decl-origins form a registered pair — the same-origin
     /// `B ≡ A` bridge that the name-keyed re-mint loses (the leaf id is a THIRD
-    /// identity, but its `(file, node)` origin survives). A different-origin pair
-    /// (`T`/`U` from distinct decls that were never registered) is NOT accepted,
-    /// which is the sound discriminator the name+surface structural strip cannot
-    /// express.
+    /// identity, but its declaration origin survives). A different-origin pair
+    /// (`T`/`U` from distinct declarations that were never registered) is not
+    /// accepted, which is the sound discriminator the name+surface structural
+    /// strip cannot express.
     ///
     /// Requires `TSZ_TYPEPARAM_DECL_IDENTITY=1` to have any effect: without the
-    /// construction stamp no leaf carries a `DeclScoped` origin, so the extra
-    /// match never fires. Flag-OFF the registered `origins` field is always
-    /// `None` and the consult is byte-identical to the id-only match.
+    /// construction stamp no leaf carries an authoritative declaration origin,
+    /// so the extra match never fires. With the flag off, the registered
+    /// `origins` field is always `None` and the consult is byte-identical to the
+    /// id-only match.
     pub(crate) fn decl_origin_reduction_enabled() -> bool {
         use std::sync::OnceLock;
         static ON: OnceLock<bool> = OnceLock::new();
@@ -170,25 +171,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         })
     }
 
-    /// Build a name-keyed substitution that maps every free `DeclScoped` type
-    /// parameter occurring in `source`/`target` back to its `User`-canonical
-    /// structural intern (origin erased, surface preserved). Applying it to both
-    /// cloned bodies collapses alpha-equivalent params from distinct decls to
-    /// ONE id — the flag-OFF identity — so the structural comparison relates
-    /// them.
+    /// Map every free declaration-origin type parameter in `source`/`target`
+    /// back to its `User`-canonical structural intern. Applying this substitution
+    /// to both bodies collapses alpha-equivalent parameters to the flag-off identity.
     ///
-    /// Soundness: collapsing two `DeclScoped` params to one `User` id is sound
-    /// ONLY when they are genuinely alpha-equivalent — same name AND same
-    /// surface (`constraint`/`default`/`is_const`). The interner's `type_param`
-    /// already enforces this: distinct surfaces produce distinct `User` ids, so
-    /// `<A>` and `<A extends string>` never collapse. The remaining hazard is a
-    /// name collision where the SAME name has TWO different `DeclScoped`
-    /// surfaces across the two bodies (one decl's `<A>` vs another's
-    /// `<A extends string>`): a name-keyed substitution cannot represent that
-    /// split, so such names are EXCLUDED from the strip entirely (left at their
-    /// distinct `DeclScoped` ids, the conservative non-collapsing choice — no
-    /// over-relate). Only names whose every `DeclScoped` occurrence shares one
-    /// surface are stripped.
+    /// This is sound only for equal names and surfaces (`constraint`, `default`,
+    /// and `is_const`). The interner keeps distinct surfaces in distinct `User`
+    /// ids. If one name has multiple declaration surfaces across the bodies, a
+    /// name-keyed substitution cannot represent the split, so that name remains
+    /// declaration-scoped. Only uniformly surfaced names are stripped.
     pub(crate) fn build_decl_param_structural_strip(
         &self,
         source: &FunctionShape,
@@ -416,16 +407,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     let target_tp_type = self.interner.type_param(*target_tp);
                     if source_tp_type != target_tp_type {
                         // #14345 WAVE-1: additionally record the decl-origin pair
-                        // when BOTH params carry a `DeclScoped { file, node }`
-                        // construction stamp, so the consult can bridge
+                        // when both params carry authoritative declaration
+                        // origins, so the consult can bridge
                         // reduced-body `Kind<F,A>` leaves that survive the
                         // name-keyed re-mint as a THIRD id but keep their carried
                         // origin. Gated behind `decl_origin_reduction_enabled`
                         // (composes with `TSZ_TYPEPARAM_DECL_IDENTITY`); OFF ->
                         // `origins: None`, byte-identical id-only behavior.
                         let origins = if Self::decl_origin_reduction_enabled()
-                            && matches!(source_tp.origin, TypeParamOrigin::DeclScoped { .. })
-                            && matches!(target_tp.origin, TypeParamOrigin::DeclScoped { .. })
+                            && source_tp.origin.is_decl_scoped()
+                            && target_tp.origin.is_decl_scoped()
                         {
                             Some((source_tp.origin, target_tp.origin))
                         } else {
@@ -451,19 +442,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // #14345 WAVE-1 register-through-reduction co-walk (flag-gated,
                 // byte-parity-inert OFF). Registers the DEEPER corresponding leaf
                 // origin-pairs the top-level registration misses; must run before
-                // the strip below (which erases `DeclScoped`). See `cowalk` module.
+                // the strip below (which erases declaration origins). See the
+                // `cowalk` module.
                 self.register_cowalk_leaf_origins(&source_instantiated, &target_instantiated);
                 // #14345 scoped structural-strip (flag-gated, byte-parity-inert
                 // OFF). The construction stamp gives every user-written type
-                // parameter a `DeclScoped { file, node }` origin so two distinct
-                // declarations sharing an identical surface intern to DISTINCT
+                // parameter an authoritative declaration origin so two distinct
+                // declarations sharing an identical surface intern to distinct
                 // ids — fixing the self-ref-guard over-collapse at
                 // construction/registration (the 278 fp-ts fixes). But that
                 // stamp also makes two ALPHA-EQUIVALENT signature bodies (e.g.
                 // `<A>(r: Record<string, A>) => number` vs
                 // `<A>(r: ReadonlyRecord<string, A>) => number` after their
                 // aliases reduce to the same shape) fail to relate: their `A`s
-                // carry distinct `DeclScoped` origins that are re-minted to a
+                // carry distinct declaration origins that are re-minted to a
                 // THIRD id through the name-keyed substitution + per-body
                 // `instantiate_type`, so the id-keyed equivalence registered
                 // above (lines ~289-300) never bridges them — the +53
@@ -472,10 +464,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // Flag-OFF, those same params intern to ONE structural (`User`)
                 // id and relate trivially (zero +53). This strip reproduces that
                 // flag-OFF identity SCOPED to the two cloned bodies used for the
-                // structural compare ONLY: each free `DeclScoped` parameter is
-                // mapped back to its `User`-canonical structural intern (origin
-                // erased, surface preserved), so alpha-equivalent params from
-                // distinct decls collapse to the SAME id and unify. It does NOT
+                // structural compare only: each free declaration-stamped
+                // parameter is mapped back to its `User`-canonical structural
+                // intern (origin erased, surface preserved), so alpha-equivalent
+                // params from distinct decls collapse to the SAME id and unify. It does NOT
                 // touch construction-time stamping (the 278 fire at a different
                 // level — registration/`is_identity_for`), so it is additive to
                 // the construction fix.

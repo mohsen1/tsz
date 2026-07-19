@@ -26,6 +26,7 @@ pub(super) enum MetaRecursionIdentity {
     InferSource(u64),
     BoundParameter(u32),
     Recursive(u32),
+    TypeParamJsdocComment { file: Atom, pos: u32 },
 }
 
 fn leftmost_index_access_object(
@@ -242,6 +243,9 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
         match info.origin {
             TypeParamOrigin::DeclScoped { file, node } => {
                 MetaRecursionIdentity::TypeParamDecl { file, node }
+            }
+            TypeParamOrigin::JsdocCommentScoped { file, pos } => {
+                MetaRecursionIdentity::TypeParamJsdocComment { file, pos }
             }
             TypeParamOrigin::InferPlaceholder { id } => MetaRecursionIdentity::InferPlaceholder(id),
             TypeParamOrigin::InferSource { id, .. } => MetaRecursionIdentity::InferSource(id),

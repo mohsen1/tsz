@@ -10,18 +10,19 @@
 //!
 //! This co-walk closes that gap: it walks the two re-minted bodies STRUCTURALLY
 //! IN LOCKSTEP and registers the corresponding DEEPER leaf origin-pairs (the
-//! arg-position `TypeParameter`s carrying `DeclScoped { file, node }`) into
-//! `type_param_equivalences`.
+//! arg-position `TypeParameter`s carrying authoritative declaration origins)
+//! into `type_param_equivalences`.
 //!
 //! Soundness: a pair is registered ONLY at a structurally-CORRESPONDING
 //! position — the walk descends both bodies together and, the moment the two
 //! shapes DIVERGE in structural kind at any node, it stops descending that
 //! branch (a genuine structural mismatch must still fail to relate). Because the
-//! consult matches by carried `(file, node)`, registering the genuine structural
-//! correspondence is sound; the only hazard — pairing non-corresponding leaves —
-//! is prevented by the lockstep divergence guard. Registration is further
-//! limited to `TypeParameter`-vs-`TypeParameter` leaves where BOTH carry a
-//! `DeclScoped` origin; any other leaf pairing registers nothing.
+//! consult matches by exact carried declaration origin, registering the genuine
+//! structural correspondence is sound; the only hazard — pairing
+//! non-corresponding leaves — is prevented by the lockstep divergence guard.
+//! Registration is further limited to `TypeParameter`-vs-`TypeParameter`
+//! leaves where both carry authoritative declaration origins; any other leaf
+//! pairing registers nothing.
 //!
 //! Gated behind `TSZ_DECL_ORIGIN_REDUCTION` (composing with
 //! `TSZ_TYPEPARAM_DECL_IDENTITY`); flag-OFF this walk never runs.
@@ -38,7 +39,7 @@ const COWALK_MAX_DEPTH: u32 = 64;
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Co-walk the two re-minted bodies in lockstep and register the deeper
-    /// corresponding `DeclScoped` leaf origin-pairs. No-op unless the
+    /// corresponding authoritative declaration-origin pairs. No-op unless the
     /// decl-origin-reduction flag is on.
     ///
     /// The pushed equivalences are appended after the top-level pairs the caller
@@ -70,9 +71,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     /// Walk `src`/`tgt` structurally in lockstep. At a `TypeParameter`-vs-
-    /// `TypeParameter` leaf where both carry `DeclScoped`, register the origin
-    /// pair. Recurse into corresponding children only while the two structural
-    /// kinds AGREE; on any kind divergence, stop (do not register past it).
+    /// `TypeParameter` leaf where both carry authoritative declaration origins,
+    /// register the origin pair. Recurse into corresponding children only while
+    /// the two structural kinds agree; on any kind divergence, stop (do not
+    /// register past it).
     fn cowalk_register(
         &mut self,
         src: TypeId,
@@ -99,7 +101,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         match (s_data, t_data) {
             // The leaf we care about: two type parameters at the SAME structural
-            // position. Register their decl-origins when BOTH are stamped.
+            // position. Register their origins when both are authoritatively
+            // stamped.
             (TypeData::TypeParameter(s_info), TypeData::TypeParameter(t_info)) => {
                 self.register_leaf_origin_pair(src, tgt, s_info.origin, t_info.origin);
             }
@@ -212,7 +215,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     /// Register a single deeper leaf origin-pair when both origins are
-    /// `DeclScoped` and the pair is not already present. Duplicate suppression
+    /// authoritative and the pair is not already present. Duplicate suppression
     /// keeps the equivalence vector small and avoids re-registering the
     /// top-level pairs the caller already pushed.
     fn register_leaf_origin_pair(
@@ -222,9 +225,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         s_origin: TypeParamOrigin,
         t_origin: TypeParamOrigin,
     ) {
-        if !matches!(s_origin, TypeParamOrigin::DeclScoped { .. })
-            || !matches!(t_origin, TypeParamOrigin::DeclScoped { .. })
-        {
+        if !s_origin.is_decl_scoped() || !t_origin.is_decl_scoped() {
             return;
         }
         // Same declaration site on both sides is already an identity; nothing to

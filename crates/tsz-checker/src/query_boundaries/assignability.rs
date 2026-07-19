@@ -731,7 +731,7 @@ pub(crate) use relation_kind_variants::{
     cached_bivariant_assignability_with_resolver, is_redeclaration_identical_with_resolver,
     is_subtype_with_resolver,
 };
-pub(crate) use shape::{is_index_access_for_assignability, union_members_for_assignability};
+pub(crate) use shape::*;
 
 pub(crate) fn classify_for_assignability_eval(
     db: &dyn TypeDatabase,

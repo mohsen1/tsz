@@ -1423,6 +1423,15 @@ pub enum TypeParamOrigin {
     /// but the synthetic `name` must never reach diagnostics. `display_name`
     /// records the original declared name so the printer renders it instead.
     OverloadRenamed { display_name: Atom },
+    /// A user-written type parameter declared by a standalone JSDoc comment.
+    ///
+    /// JSDoc `@overload`, `@typedef`, and `@callback` declarations have no AST
+    /// name node. Their source position is stable when an incremental parse
+    /// appends arena nodes. This dedicated variant's discriminant keeps the
+    /// identity distinct from every real `NodeIndex`, even when the numeric
+    /// payloads match. The payload matches [`Self::DeclScoped`], so this remains
+    /// size-neutral. Kept last so existing variant discriminants remain stable.
+    JsdocCommentScoped { file: Atom, pos: u32 },
 }
 
 impl TypeParamOrigin {
@@ -1431,14 +1440,26 @@ impl TypeParamOrigin {
     /// Replaces the historical `starts_with("__infer_")` scan.
     #[inline]
     pub const fn is_infer_placeholder(self) -> bool {
-        // `DeclScoped` is a user-written param (decl-stamped for identity), NOT
-        // an inference placeholder — classify it with `User` (#14344 STEP-B).
+        // Declaration-scoped origins are user-written params, NOT inference
+        // placeholders — classify them with `User` (#14344 STEP-B).
         // `OverloadRenamed` is a declared overload type param that was renamed
         // for name-keyed inference; it too behaves as `User` (the rename does
         // not turn it into a HOFI/call-local placeholder).
         !matches!(
             self,
-            Self::User | Self::DeclScoped { .. } | Self::OverloadRenamed { .. }
+            Self::User
+                | Self::DeclScoped { .. }
+                | Self::JsdocCommentScoped { .. }
+                | Self::OverloadRenamed { .. }
+        )
+    }
+
+    /// Whether this origin carries authoritative user-declaration identity.
+    #[inline]
+    pub const fn is_decl_scoped(self) -> bool {
+        matches!(
+            self,
+            Self::DeclScoped { .. } | Self::JsdocCommentScoped { .. }
         )
     }
 

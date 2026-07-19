@@ -716,8 +716,17 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Push type parameters (like <U> in `fn<U>(id: U)`) before checking types
-        let (_type_params, type_param_updates) = self.push_type_parameters(&method.type_parameters);
+        // Keep syntax and declaration-stamped JSDoc binders in scope while checking.
+        let (type_params, type_param_updates) = self.push_type_parameters(&method.type_parameters);
+        let method_jsdoc = self.get_jsdoc_for_function(member_idx);
+        let jsdoc_type_param_updates = if type_params.is_empty()
+            && let Some(jsdoc) = method_jsdoc.as_deref()
+        {
+            self.push_jsdoc_template_type_parameters_for_owner(member_idx, jsdoc)
+                .1
+        } else {
+            Vec::new()
+        };
 
         self.check_modifier_combinations(&method.modifiers);
 
@@ -852,8 +861,6 @@ impl<'a> CheckerState<'a> {
             .as_ref()
             .is_some_and(|c| c.is_declared)
             && self.has_private_modifier(&method.modifiers);
-        // Get method-level JSDoc for @param type checking
-        let method_jsdoc = self.get_jsdoc_for_function(member_idx);
         // Pre-extract ordered @param names for positional matching with binding patterns
         let jsdoc_param_names: Vec<String> = method_jsdoc
             .as_ref()
@@ -1140,6 +1147,7 @@ impl<'a> CheckerState<'a> {
             self.ctx.function_owned_this_stack.pop();
         }
 
+        self.pop_type_parameters(jsdoc_type_param_updates);
         self.pop_type_parameters(type_param_updates);
     }
 

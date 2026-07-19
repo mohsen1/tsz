@@ -1178,6 +1178,7 @@ mod jsdoc_function_return_type_anchor_tests;
 #[cfg(test)]
 #[path = "tests/jsdoc_overload_call_resolution_tests.rs"]
 mod jsdoc_overload_call_resolution_tests;
+
 #[cfg(test)]
 #[path = "../tests/jsdoc_readonly_tests.rs"]
 mod jsdoc_readonly_tests;
@@ -1190,6 +1191,9 @@ mod jsdoc_reference_kernel_tests;
 #[cfg(test)]
 #[path = "../tests/jsdoc_satisfies_tests.rs"]
 mod jsdoc_satisfies_tests;
+#[cfg(test)]
+#[path = "tests/jsdoc_shadowed_type_param_identity_tests.rs"]
+mod jsdoc_shadowed_type_param_identity_tests;
 #[cfg(test)]
 #[path = "../tests/jsdoc_template_class_tests.rs"]
 mod jsdoc_template_class_tests;

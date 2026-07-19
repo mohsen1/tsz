@@ -290,15 +290,33 @@ impl<'a> CheckerState<'a> {
         // distributive conditional, or template-`infer` capture. The source and
         // target displays are identical to the TS2322 form; only the suggestion
         // clause is appended, matching tsc's TS2820 wording.
-        let (message, code) = match self
-            .find_string_literal_spelling_suggestion_reduced(source_for_display, target_for_display)
-        {
+        let spelling_suggestion = self.find_string_literal_spelling_suggestion_reduced(
+            source_for_display,
+            target_for_display,
+        );
+        let same_surface_distinct_decl_binders = || {
+            crate::query_boundaries::assignability::
+                have_same_surface_distinct_decl_scoped_free_type_parameters(
+                    self.ctx.types,
+                    &self.ctx,
+                    source_for_display,
+                    target_for_display,
+                )
+        };
+        let (message, code) = match spelling_suggestion {
             Some(suggestion) => (
                 crate::diagnostics::format_message(
                     crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_DID_YOU_MEAN,
                     &[&source_str, &target_str, &suggestion],
                 ),
                 crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_DID_YOU_MEAN,
+            ),
+            None if source_str == target_str && same_surface_distinct_decl_binders() => (
+                crate::diagnostics::format_message(
+                    crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_TWO_DIFFERENT_TYPES_WITH_THIS_NAME_EXIST_BUT_THEY,
+                    &[&source_str, &target_str],
+                ),
+                crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_TWO_DIFFERENT_TYPES_WITH_THIS_NAME_EXIST_BUT_THEY,
             ),
             None => (
                 crate::diagnostics::format_message(

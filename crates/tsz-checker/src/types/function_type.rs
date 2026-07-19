@@ -282,22 +282,9 @@ impl<'a> CheckerState<'a> {
             && let Some(owner_target) = prototype_owner_target
             && let Some(owner_jsdoc) = self.find_jsdoc_for_function(owner_target)
         {
-            let constraint_strs = Self::jsdoc_template_constraint_strings(&owner_jsdoc);
-            for (name, is_const, default_str) in Self::jsdoc_template_type_params(&owner_jsdoc) {
-                let atom = self.ctx.types.intern_string(&name);
-                let default = default_str
-                    .as_deref()
-                    .and_then(|s| self.resolve_jsdoc_reference(s));
-                let constraint = constraint_strs
-                    .get(&name)
-                    .and_then(|s| self.resolve_jsdoc_reference(s));
-                let info = signature_building_boundary::user_type_param_info(
-                    atom, constraint, default, is_const,
-                );
-                let ty = signature_building_boundary::user_type_param(self.ctx.types, info);
-                let previous = self.ctx.type_parameter_scope.insert(name.clone(), ty);
-                jsdoc_type_param_updates.push((name, previous, false));
-            }
+            let (_, updates) =
+                self.push_jsdoc_template_type_parameters_for_owner(owner_target, &owner_jsdoc);
+            jsdoc_type_param_updates.extend(updates);
         }
         if self.is_js_file()
             && type_params.is_empty()
@@ -305,26 +292,12 @@ impl<'a> CheckerState<'a> {
         {
             let template_names = Self::jsdoc_template_type_params(jsdoc);
             if !template_names.is_empty() {
-                let mut jsdoc_type_params = Vec::with_capacity(template_names.len());
-                let constraint_strs = Self::jsdoc_template_constraint_strings(jsdoc);
-                for (name, is_const, default_str) in template_names {
-                    let atom = self.ctx.types.intern_string(&name);
-                    let default = default_str
-                        .as_deref()
-                        .and_then(|s| self.resolve_jsdoc_reference(s));
-                    let constraint = constraint_strs
-                        .get(&name)
-                        .and_then(|s| self.resolve_jsdoc_reference(s));
-                    let info = signature_building_boundary::user_type_param_info(
-                        atom, constraint, default, is_const,
-                    );
-                    let ty = signature_building_boundary::user_type_param(self.ctx.types, info);
-                    jsdoc_type_params.push(info);
-                    // Register in type_parameter_scope so inline JSDoc casts
-                    // like `/** @type {T} */(expr)` can resolve `T`.
-                    let previous = self.ctx.type_parameter_scope.insert(name.clone(), ty);
-                    jsdoc_type_param_updates.push((name, previous, false));
-                }
+                let (jsdoc_type_params, updates) =
+                    self.push_jsdoc_template_type_parameters_for_owner(idx, jsdoc);
+                // The helper registers the binders in `type_parameter_scope`,
+                // so inline JSDoc casts like `/** @type {T} */(expr)` resolve
+                // the callable's own `T` rather than an enclosing declaration.
+                jsdoc_type_param_updates.extend(updates);
                 type_params = jsdoc_type_params;
             }
         }

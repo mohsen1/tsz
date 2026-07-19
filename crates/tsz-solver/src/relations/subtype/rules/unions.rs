@@ -67,8 +67,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Implements TypeScript's soundness rules for type parameter compatibility.
     ///
     /// ## TypeScript Soundness Rules:
-    /// - Same type parameter (shared name, not proven distinct by mutually
-    ///   incompatible constraints) → reflexive (always compatible)
+    /// - Same type parameter (shared declaration identity, or a legacy shared
+    ///   name not proven distinct) → reflexive (always compatible)
     /// - Different type parameters → check constraint transitivity
     /// - Type parameter vs concrete → constraint must be subtype of concrete
     /// - Unconstrained type parameter → acts like `unknown` (top type)
@@ -79,11 +79,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ) -> SubtypeResult {
         // Type parameter vs type parameter
         if let Some(t_info) = type_param_info(self.interner, target) {
-            // A shared *name* is only a proxy for parameter identity: a
-            // `TypeParamInfo` carries no declaration handle, so two distinct
-            // type parameters that happen to share a name (e.g. an inner generic
-            // shadowing an outer one) are not necessarily the same parameter.
-            // When both carry constraints that are provably incompatible
+            // A shared *name* is only a legacy proxy for parameter identity.
+            // Declaration-stamped parameters are distinguished directly;
+            // unstamped parameters retain the constraint-based fallback below.
+            // When two legacy parameters carry constraints that are provably incompatible
             // (neither assignable to the other), the parameters are definitely
             // distinct — `tsc` treats them as unrelated and reports the failure
             // (TS2719, "two different types with this name exist"). Related
@@ -179,11 +178,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Decide whether two same-named type parameters are *provably distinct*
     /// declarations rather than the same parameter seen twice.
     ///
-    /// `TypeParamInfo` has no declaration handle, so a shared name cannot prove
-    /// identity. The conservative signal that two same-named parameters are
-    /// genuinely different is that both carry constraints which are mutually
-    /// non-assignable: the same parameter always presents the same constraint
-    /// (interning to the same `TypeId`, or — when the constraint is reached
+    /// A pair of authoritative declaration origins provides authoritative
+    /// declaration identity. For legacy unstamped parameters, the conservative
+    /// signal that two same-named parameters are genuinely different is that
+    /// both carry constraints which are mutually non-assignable: the same
+    /// parameter always presents the same constraint (interning to the same
+    /// `TypeId`, or — when the constraint is reached
     /// through different-but-related representations — at least a one-way
     /// assignable one), so a constraint pair with no assignable direction can
     /// only come from two different declarations. Returning `true` here
@@ -191,16 +191,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// through to constraint transitivity and a real mismatch is reported,
     /// mirroring `tsc`'s handling of distinct identically-named type parameters.
     ///
-    /// Unconstrained (or one-sided-unconstrained) same-named pairs return
+    /// Unconstrained (or one-sided-unconstrained) same-named legacy pairs return
     /// `false`: they intern to one `TypeId` and never reach this path, or cannot
-    /// be told apart without a parameter identity, so the historical reflexive
-    /// behaviour is preserved to avoid regressing alpha-renamed generic-signature
-    /// comparisons.
+    /// be told apart without a declaration stamp, so the historical reflexive
+    /// behaviour is preserved.
     fn same_named_type_params_are_distinct(
         &mut self,
         s_info: &TypeParamInfo,
         t_info: &TypeParamInfo,
     ) -> bool {
+        // A declaration stamp is authoritative identity. Distinct owners stay
+        // unrelated even when their surface spelling, constraint, and default
+        // are byte-for-byte identical (for example a method-level JSDoc
+        // `@template T` shadowing a class-level `@template T`). Generic
+        // signature alpha-renaming registers an explicit equivalence before
+        // reaching this rule, so declaration identity does not reject valid
+        // `<T>(x: T) => T` / `<U>(x: U) => U` comparisons.
+        if s_info.origin.is_decl_scoped() && t_info.origin.is_decl_scoped() {
+            return s_info.origin != t_info.origin;
+        }
+
         let (Some(s_constraint), Some(t_constraint)) = (s_info.constraint, t_info.constraint)
         else {
             return false;

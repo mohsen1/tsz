@@ -290,7 +290,7 @@ mod type_param_equivalence_tests {
     }
 
     /// A `User` (unstamped) leaf carries no declaration site and must never
-    /// match on origins, even against a registered decl-scoped pair.
+    /// match on origins, even against a registered declaration-origin pair.
     #[test]
     fn origin_equivalence_never_matches_user_leaves() {
         let eq = TypeParamEquivalence {
@@ -410,17 +410,17 @@ impl RelationEventCounter {
 ///
 /// The `source`/`target` `TypeId`s are the pre-instantiate signature-param ids
 /// (the historical `(TypeId, TypeId)` pair). `origins` additionally records the
-/// two params' declaration origins when BOTH carry a `DeclScoped { file, node }`
-/// construction stamp (`TSZ_TYPEPARAM_DECL_IDENTITY`).
+/// two params' declaration origins when both carry authoritative declaration
+/// stamps (`DeclScoped` or `JsdocCommentScoped`).
 ///
 /// #14345 WAVE-1 decl-origin-through-reduction: the name-keyed re-mint
 /// (`instantiate_function_shape`) rewrites deeper, arg-position `Kind<F,A>`
 /// param leaves to a THIRD id that the registered `TypeId` pair never contains,
 /// so the id-keyed consult (`check_subtype`) misses and the two alpha-equivalent
-/// bodies fail to relate. The decl-origin `(file, node)` is STABLE across that
-/// re-mint (the leaf's origin survives — a substitution hit maps it to the
-/// same-origin top-level param, a miss returns the original id, and the
-/// `TypeParameter` re-intern preserves the origin field). So the consult can
+/// bodies fail to relate. The declaration origin is stable across that re-mint
+/// (a substitution hit maps the leaf to the same-origin top-level param, a miss
+/// returns the original id, and the `TypeParameter` re-intern preserves the
+/// origin field). So the consult can
 /// additionally match a reduced-body leaf against a registered equivalence by
 /// its CARRIED origin: a same-origin leaf pair relates, a different-origin pair
 /// (never registered) does not. This is the sound discriminator the name-keyed
@@ -430,10 +430,10 @@ impl RelationEventCounter {
 pub(crate) struct TypeParamEquivalence {
     pub(crate) source: TypeId,
     pub(crate) target: TypeId,
-    /// Declaration origins of the two paired params, recorded only when BOTH are
-    /// `DeclScoped`. `None` for every other registration path (mapped-key
-    /// constraints, index-access keys, non-stamped params) so those keep the
-    /// pure id-keyed behavior.
+    /// Declaration origins of the two paired params, recorded only when both
+    /// carry authoritative declaration stamps. `None` for every other
+    /// registration path (mapped-key constraints, index-access keys,
+    /// non-stamped params) so those keep the pure id-keyed behavior.
     pub(crate) origins: Option<(TypeParamOrigin, TypeParamOrigin)>,
 }
 
@@ -459,9 +459,9 @@ impl TypeParamEquivalence {
 
     /// Whether this registered pair matches the given leaf ORIGIN pair
     /// (order-insensitive), for the #14345 WAVE-1 decl-origin consult. Both the
-    /// registered entry and the queried leaves must carry `DeclScoped` origins;
-    /// two `DeclScoped { file, node }` values are equal iff their `(file, node)`
-    /// declaration site is identical.
+    /// registered entry and the queried leaves must carry authoritative
+    /// declaration origins. Equality includes the origin variant, so an AST
+    /// node and a JSDoc comment remain distinct even with equal numeric payloads.
     #[inline]
     pub(crate) fn matches_origins(
         &self,
@@ -471,11 +471,9 @@ impl TypeParamEquivalence {
         let Some((reg_source, reg_target)) = self.origins else {
             return false;
         };
-        // Only decl-scoped origins are a sound discriminator; a `User` origin
-        // carries no declaration site so it must never match here.
-        if !matches!(source_origin, TypeParamOrigin::DeclScoped { .. })
-            || !matches!(target_origin, TypeParamOrigin::DeclScoped { .. })
-        {
+        // Only authoritative declaration origins are a sound discriminator; a
+        // `User` origin carries no declaration site so it must never match here.
+        if !source_origin.is_decl_scoped() || !target_origin.is_decl_scoped() {
             return false;
         }
         (reg_source == source_origin && reg_target == target_origin)

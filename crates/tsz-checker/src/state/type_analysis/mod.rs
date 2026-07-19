@@ -42,6 +42,7 @@ mod cross_file_overlay_gate;
 pub(crate) mod cross_file_query_types;
 mod cross_file_residue;
 mod cross_file_shared_cache;
+mod jsdoc_type_param_identity;
 mod qualified_names;
 mod source_alias_attribution;
 mod symbol_env_registration;

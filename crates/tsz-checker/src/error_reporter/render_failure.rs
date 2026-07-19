@@ -844,6 +844,44 @@ impl<'a> CheckerState<'a> {
                 self.normalized_anchor_span(idx, pos, end.saturating_sub(pos))
             });
         let file_name = self.ctx.file_name.clone();
+        // A reduced alias/application body can fail through a property reason
+        // even when the two value-level types have the same declared surface.
+        // Distinct free declaration origins prove the semantic unrelatedness;
+        // the final display equality only selects tsc's TS2719 presentation.
+        if depth == 0
+            && source_display_override.is_none()
+            && crate::query_boundaries::assignability::contains_type_parameters(
+                self.ctx.types,
+                source,
+            )
+            && crate::query_boundaries::assignability::contains_type_parameters(
+                self.ctx.types,
+                target,
+            )
+            && crate::query_boundaries::assignability::
+                have_same_surface_distinct_decl_scoped_free_type_parameters(
+                    self.ctx.types,
+                    &self.ctx,
+                    source,
+                    target,
+                )
+        {
+            let (source_str, target_str) =
+                self.format_top_level_assignability_message_types_at(source, target, idx);
+            if source_str == target_str {
+                let message = format_message(
+                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_TWO_DIFFERENT_TYPES_WITH_THIS_NAME_EXIST_BUT_THEY,
+                    &[&source_str, &target_str],
+                );
+                return Diagnostic::error(
+                    file_name,
+                    start,
+                    length,
+                    message,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_TWO_DIFFERENT_TYPES_WITH_THIS_NAME_EXIST_BUT_THEY,
+                );
+            }
+        }
         // TS2696: property-only failures from the `Object` wrapper use the
         // specialized message unless the target is callable/constructable.
         if depth == 0 {

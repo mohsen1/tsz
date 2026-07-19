@@ -2,7 +2,6 @@
 
 use crate::query_boundaries::class_type::{self, callable_shape_for_type, object_shape_for_type};
 use crate::query_boundaries::common::is_plain_object_type;
-use crate::query_boundaries::signature_building as signature_building_boundary;
 use crate::state::CheckerState;
 use rustc_hash::FxHashMap;
 use tsz_parser::parser::NodeIndex;
@@ -497,31 +496,7 @@ impl<'a> CheckerState<'a> {
             }
         };
 
-        let template_names = Self::jsdoc_template_type_params(&jsdoc);
-        if template_names.is_empty() {
-            return (Vec::new(), Vec::new());
-        }
-
-        let mut type_params = Vec::with_capacity(template_names.len());
-        let mut scope_updates = Vec::with_capacity(template_names.len());
-        let constraint_strs = Self::jsdoc_template_constraint_strings(&jsdoc);
-        for (name, is_const, default_str) in template_names {
-            let atom = self.ctx.types.intern_string(&name);
-            let default = default_str
-                .as_deref()
-                .and_then(|s| self.resolve_jsdoc_reference(s));
-            let constraint = constraint_strs
-                .get(&name)
-                .and_then(|s| self.resolve_jsdoc_reference(s));
-            let info = signature_building_boundary::user_type_param_info(
-                atom, constraint, default, is_const,
-            );
-            let ty = signature_building_boundary::user_type_param(self.ctx.types, info);
-            type_params.push(info);
-            let previous = self.ctx.type_parameter_scope.insert(name.clone(), ty);
-            scope_updates.push((name, previous, false));
-        }
-        (type_params, scope_updates)
+        self.push_jsdoc_template_type_parameters_for_owner(class_idx, &jsdoc)
     }
 
     pub(super) fn register_final_class_instance_type(

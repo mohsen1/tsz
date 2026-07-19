@@ -16,8 +16,8 @@ use crate::types::TypeParamInfo;
 /// Byte-parity-inert when OFF (the default): the pairing falls back to the
 /// historical positional `.zip`. The mis-pairing this flag fixes only becomes
 /// observable under the dormant `TSZ_TYPEPARAM_DECL_IDENTITY` keystone
-/// (#14696), whose distinct `DeclScoped` ids stop same-name source params from
-/// interning to a single id that masks the reorder.
+/// (#14696), whose distinct authoritative declaration-origin ids stop same-name
+/// source params from interning to a single id that masks the reorder.
 pub(super) fn alpha_name_pair_enabled() -> bool {
     use std::sync::OnceLock;
     static ON: OnceLock<bool> = OnceLock::new();
