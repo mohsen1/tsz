@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-18T14:39:04.713Z",
+  "generated_at": "2026-07-19T02:05:56.947Z",
   "source_commit": "e84c9b310b51ed0ee37f7016c495f8bd1fb00858",
   "workflow_name": "local",
   "workflow_run_id": "local",
@@ -7,6 +7,135 @@
   "workflow_run_attempt": null,
   "run_status": "local",
   "benchmark_runner": "scripts/bench/bench-vs-tsgo.sh",
+  "merged_from": [
+    "bench-base3.json",
+    "bench-nextjs-rerun.json"
+  ],
+  "validation": {
+    "hyperfine_exit_codes_required": true,
+    "project_compatibility_required_fields": true,
+    "runner_signature_required": false,
+    "runner_environment_warnings": [],
+    "measurement_profile_warnings": [
+      {
+        "file": "bench-nextjs-rerun.json",
+        "mismatched_fields": [
+          "profile_guided_optimization.profile_fingerprint"
+        ],
+        "expected": {
+          "mode": "release-pgo",
+          "tsz_binary_source": "bench-dist",
+          "rust_target_cpu": "native",
+          "profile_guided_optimization": {
+            "requested": true,
+            "required": false,
+            "optimized": true,
+            "profile_fingerprint": "d8f304c35a72d42c747219e75b91c1cc1ba31f64f7b623b404d9c05ad985bfa9",
+            "training_fingerprint": "c3bd39ab8dbb33a951adc13d8534e0cbff393f977a3bfe8947ba7ed590e02d69",
+            "profile_data_source": "fresh",
+            "training_metadata_available": true,
+            "training_input_count": 23,
+            "training_failure_count": 1,
+            "training_inputs": [
+              "synthetic:complex_generics.ts",
+              "synthetic:deeppartial_optional_chain.ts",
+              "synthetic:recursive_utility_alias.ts",
+              "synthetic:shallow_optional_chain.ts",
+              "synthetic:union_members.ts",
+              "synthetic:recursive_generic.ts",
+              "synthetic:conditional_dist.ts",
+              "synthetic:mapped_type.ts",
+              "synthetic:template_literal.ts",
+              "synthetic:deep_subtype.ts",
+              "synthetic:intersection.ts",
+              "synthetic:infer_stress.ts",
+              "synthetic:cfa_stress.ts",
+              "synthetic:bct_stress.ts",
+              "synthetic:constraint_conflict.ts",
+              "synthetic:mapped_complex_template.ts",
+              "utility-types",
+              "rxjs",
+              "type-fest",
+              "vite-vanilla-ts-app",
+              "nextjs-fresh-app",
+              "manyConstExports.ts",
+              "manyConstExports.ts"
+            ],
+            "training_failed_inputs": [
+              "synthetic:template_literal.ts:1"
+            ],
+            "config": {
+              "synthetic": true,
+              "fetch_utility_types": true,
+              "fetch_core_projects": false,
+              "panic_unwind": false,
+              "extra_inputs": null,
+              "training_timeout_seconds": 900,
+              "cache_enabled": true
+            }
+          }
+        },
+        "actual": {
+          "mode": "release-pgo",
+          "tsz_binary_source": "bench-dist",
+          "rust_target_cpu": "native",
+          "profile_guided_optimization": {
+            "requested": true,
+            "required": false,
+            "optimized": true,
+            "profile_fingerprint": "02174e7a70aef2ac3ae6150d4a51beb788861a849c13d4499f8ed88c416745a4",
+            "training_fingerprint": "c3bd39ab8dbb33a951adc13d8534e0cbff393f977a3bfe8947ba7ed590e02d69",
+            "profile_data_source": "fresh",
+            "training_metadata_available": true,
+            "training_input_count": 23,
+            "training_failure_count": 1,
+            "training_inputs": [
+              "synthetic:complex_generics.ts",
+              "synthetic:deeppartial_optional_chain.ts",
+              "synthetic:recursive_utility_alias.ts",
+              "synthetic:shallow_optional_chain.ts",
+              "synthetic:union_members.ts",
+              "synthetic:recursive_generic.ts",
+              "synthetic:conditional_dist.ts",
+              "synthetic:mapped_type.ts",
+              "synthetic:template_literal.ts",
+              "synthetic:deep_subtype.ts",
+              "synthetic:intersection.ts",
+              "synthetic:infer_stress.ts",
+              "synthetic:cfa_stress.ts",
+              "synthetic:bct_stress.ts",
+              "synthetic:constraint_conflict.ts",
+              "synthetic:mapped_complex_template.ts",
+              "utility-types",
+              "rxjs",
+              "type-fest",
+              "vite-vanilla-ts-app",
+              "nextjs-fresh-app",
+              "manyConstExports.ts",
+              "manyConstExports.ts"
+            ],
+            "training_failed_inputs": [
+              "synthetic:template_literal.ts:1"
+            ],
+            "config": {
+              "synthetic": true,
+              "fetch_utility_types": true,
+              "fetch_core_projects": false,
+              "panic_unwind": false,
+              "extra_inputs": null,
+              "training_timeout_seconds": 900,
+              "cache_enabled": true
+            }
+          }
+        }
+      }
+    ],
+    "project_compatibility_advisory": [
+      "type-challenges-solutions-project: missing project row"
+    ],
+    "runner_signature_advisory": [],
+    "dropped_empty_shards": []
+  },
   "runner_environment": {
     "platform": "darwin",
     "arch": "arm64",
@@ -77,13 +206,6 @@
       }
     }
   },
-  "validation": {
-    "hyperfine_exit_codes_required": true
-  },
-  "shard": {
-    "label": null,
-    "filter": null
-  },
   "quick_mode": false,
   "filter": null,
   "binaries": {
@@ -93,13 +215,13 @@
     "tsz_profile": "release-pgo"
   },
   "totals": {
-    "benchmarks_run": 142,
+    "benchmarks_run": 144,
     "rows": 138,
-    "tsz_wins": 99,
+    "tsz_wins": 100,
     "tsgo_wins": 10,
-    "green_tsz_wins": 99,
+    "green_tsz_wins": 100,
     "green_tsgo_wins": 10,
-    "error_cases": 29
+    "error_cases": 28
   },
   "results": [
     {
@@ -5426,168 +5548,6 @@
       }
     },
     {
-      "name": "nextjs-fresh-app",
-      "lines": 282,
-      "kb": 7,
-      "project_files": 7,
-      "tsz_ms": 86.25,
-      "tsgo_ms": 112.41,
-      "tsz_lps": 3269,
-      "tsgo_lps": 2509,
-      "winner": "tsz",
-      "factor": 1.3,
-      "status": null,
-      "readme": "# Fresh Next.js app benchmark\n\nThis fixture is generated by `scripts/bench/generate-next-app-fixture.mjs`.\n\nEach benchmark run recreates the app, installs current npm versions, and type-checks the generated Next.js project with:\n\n```sh\ntsz --noEmit -p tsconfig.json\ntsgo --noEmit -p tsconfig.json\n```\n\nThe app intentionally imports and uses common type-heavy dependencies:\n\n- `zod`\n- `@tanstack/react-query`\n- `react-hook-form`\n- `type-fest`\n- `ts-pattern`\n- `superjson`\n- `date-fns`\n- `clsx`\n- `zustand`\n- `valibot`\n\nThe generated source mixes App Router pages, server actions, schema inference, discriminated unions, form helpers, query typing, store typing, and JSON-safe utility types so the benchmark reflects a modern application rather than a tiny startup file.",
-      "compatibility": {
-        "generated_at": "2026-07-18T10:40:29.047Z",
-        "source_commit": "e84c9b310b51ed0ee37f7016c495f8bd1fb00858",
-        "workflow_name": "local",
-        "workflow_run_id": "local",
-        "workflow_run_url": null,
-        "workflow_run_attempt": null,
-        "run_status": "local",
-        "state": "green",
-        "exit_class": "exit success",
-        "first_failure_class": null,
-        "owner_track": null,
-        "phase": "check",
-        "last_successful_phase": "check",
-        "diagnostic_status": "none",
-        "diagnostic_deltas": [],
-        "diagnostic_codes": [],
-        "diagnostic_subsystems": [],
-        "primary_subsystem": null,
-        "reduction_candidates": [],
-        "emit_status": "not in scope (noEmit project check)",
-        "dts_status": "not in scope (noEmit project check)",
-        "known_blockers": [],
-        "reduced_repro_path": "next-app-live",
-        "repro": {
-          "tsconfig_path": "next-app-live/tsconfig.json",
-          "source_root": "next-app-live",
-          "first_failure_path": null,
-          "first_failure_line": null,
-          "first_failure_column": null,
-          "first_failure_code": null,
-          "reduced_repro_path": "next-app-live",
-          "command": "TSZ_USE_EMBEDDED_LIBS=1 RUST_MIN_STACK=536870912 $TSZ_BIN --noEmit -p next-app-live/tsconfig.json"
-        },
-        "exit_codes": {
-          "tsc": [
-            0
-          ],
-          "tsz": [
-            0
-          ],
-          "tsgo": [
-            0
-          ]
-        },
-        "semantic_owner_family": "generated app-router dependency/config sanity",
-        "files_reached": 7,
-        "files_reached_reason": null,
-        "peak_memory_bytes": null,
-        "peak_memory_bytes_reason": "not measured on platform",
-        "fixture_sources": [
-          {
-            "name": "next-app-router",
-            "repository": "generated:scripts/bench/generate-next-app-fixture.mjs",
-            "ref": "package-lock:dcff80c3abe82efafffe73a1d4e10dd34a546925f24c1ddd0be9b0a066cac9cd"
-          }
-        ]
-      }
-    },
-    {
-      "name": "nextjs",
-      "lines": 222594,
-      "kb": 6946,
-      "project_files": 1396,
-      "tsz_ms": null,
-      "tsgo_ms": null,
-      "tsz_lps": null,
-      "tsgo_lps": null,
-      "winner": "error",
-      "factor": 0,
-      "status": "tsz error; tsc ok",
-      "compatibility": {
-        "generated_at": "2026-07-18T10:40:29.701Z",
-        "source_commit": "e84c9b310b51ed0ee37f7016c495f8bd1fb00858",
-        "workflow_name": "local",
-        "workflow_run_id": "local",
-        "workflow_run_url": null,
-        "workflow_run_attempt": null,
-        "run_status": "local",
-        "state": "yellow",
-        "exit_class": "nonzero exit",
-        "first_failure_class": "unclassified diagnostic",
-        "owner_track": "Track 1 triage",
-        "phase": "check",
-        "last_successful_phase": null,
-        "diagnostic_status": "diagnostic mismatch or compiler error",
-        "diagnostic_deltas": [
-          "tsz: .target-bench/external/next.js/packages/next/tsconfig.json(11,25): error TS5108: Option 'moduleResolution=node10' has been removed. Please remove it from your configuration."
-        ],
-        "diagnostic_codes": [
-          "TS5108"
-        ],
-        "diagnostic_subsystems": [
-          {
-            "subsystem": "unclassified diagnostic",
-            "codes": [
-              "TS5108"
-            ],
-            "count": 1,
-            "examples": [
-              "tsz: .target-bench/external/next.js/packages/next/tsconfig.json(11,25): error TS5108: Option 'moduleResolution=node10' has been removed. Please remove it from your configuration."
-            ]
-          }
-        ],
-        "primary_subsystem": "unclassified diagnostic",
-        "reduction_candidates": [
-          "tsz: .target-bench/external/next.js/packages/next/tsconfig.json(11,25): error TS5108: Option 'moduleResolution=node10' has been removed. Please remove it from your configuration."
-        ],
-        "emit_status": "not in scope (noEmit project check)",
-        "dts_status": "not in scope (noEmit project check)",
-        "known_blockers": [
-          "unclassified diagnostic"
-        ],
-        "reduced_repro_path": ".target-bench/external/next.js/packages/next/tsconfig.json",
-        "repro": {
-          "tsconfig_path": "next.js/packages/next/tsconfig.tsz-bench.json",
-          "source_root": "next.js/packages/next/src",
-          "first_failure_path": ".target-bench/external/next.js/packages/next/tsconfig.json",
-          "first_failure_line": 11,
-          "first_failure_column": 25,
-          "first_failure_code": "TS5108",
-          "reduced_repro_path": ".target-bench/external/next.js/packages/next/tsconfig.json",
-          "command": "TSZ_USE_EMBEDDED_LIBS=1 RUST_MIN_STACK=536870912 $TSZ_BIN --noEmit -p next.js/packages/next/tsconfig.tsz-bench.json"
-        },
-        "exit_codes": {
-          "tsc": [
-            0
-          ],
-          "tsz": [
-            1
-          ],
-          "tsgo": [
-            0
-          ]
-        },
-        "semantic_owner_family": "module graph plus generated app dependencies",
-        "files_reached": 1396,
-        "files_reached_reason": null,
-        "peak_memory_bytes": null,
-        "peak_memory_bytes_reason": "not measured on platform",
-        "fixture_sources": [
-          {
-            "name": "nextjs",
-            "repository": "https://github.com/vercel/next.js.git",
-            "ref": "09851e208cc62c8b6fe7a953b42c88e843129178"
-          }
-        ]
-      }
-    },
-    {
       "name": "large-ts-repo",
       "lines": 1288641,
       "kb": 38451,
@@ -6878,6 +6838,149 @@
         "path": "mapped_complex_200.ts",
         "sha256": "46479ad6d373b8ab5931b9d8b96f80fa3c3cea8507ecb8342d011b72deffb656",
         "content": "// Mapped Type Complex Template Expansion O(N²) stress test\n// Targets: evaluate_rules/mapped.rs — N properties × expensive template evaluation\n//\n// Unlike simple homomorphic mapped types ({ [K in keyof T]: T[K] }) where the\n// template is trivial, these use conditional types and nested mapped types in\n// the template position, making each property evaluation expensive.\n\n// Utility types with non-trivial evaluation\ntype DeepPartial<T> = T extends object ? { [P in keyof T]?: DeepPartial<T[P]> } : T;\ntype Stringify<T> = { [K in keyof T]: T[K] extends number ? string : T[K] extends boolean ? 'true' | 'false' : T[K] extends string ? T[K] : string };\ntype Validate<T> = { [K in keyof T]: T[K] extends string ? { valid: true; value: T[K] } : T[K] extends number ? { valid: true; value: T[K] } : { valid: false; value: never } };\ntype Nullable<T> = { [K in keyof T]: T[K] | null | undefined };\ntype Promisify<T> = { [K in keyof T]: Promise<T[K]> };\n\n// Complex conditional template: each property evaluation triggers conditional\n// type distribution and nested type instantiation\ntype FormField<T> =\n    T extends string ? { type: 'text'; value: T; validate: (v: string) => boolean }\n  : T extends number ? { type: 'number'; value: T; validate: (v: number) => boolean }\n  : T extends boolean ? { type: 'checkbox'; value: T; validate: (v: boolean) => boolean }\n  : T extends (infer U)[] ? { type: 'list'; items: FormField<U>[]; validate: (v: U[]) => boolean }\n  : T extends object ? { type: 'group'; fields: FormFields<T>; validate: (v: T) => boolean }\n  : { type: 'unknown'; value: T };\n\ntype FormFields<T> = { [K in keyof T]: FormField<T[K]> };\n\ninterface BigModel {\n    field0: string;\n    field1: number;\n    field2: boolean;\n    field3: string[];\n    field4: { nested: string; count: number };\n    field5: string;\n    field6: number;\n    field7: boolean;\n    field8: string[];\n    field9: { nested: string; count: number };\n    field10: string;\n    field11: number;\n    field12: boolean;\n    field13: string[];\n    field14: { nested: string; count: number };\n    field15: string;\n    field16: number;\n    field17: boolean;\n    field18: string[];\n    field19: { nested: string; count: number };\n    field20: string;\n    field21: number;\n    field22: boolean;\n    field23: string[];\n    field24: { nested: string; count: number };\n    field25: string;\n    field26: number;\n    field27: boolean;\n    field28: string[];\n    field29: { nested: string; count: number };\n    field30: string;\n    field31: number;\n    field32: boolean;\n    field33: string[];\n    field34: { nested: string; count: number };\n    field35: string;\n    field36: number;\n    field37: boolean;\n    field38: string[];\n    field39: { nested: string; count: number };\n    field40: string;\n    field41: number;\n    field42: boolean;\n    field43: string[];\n    field44: { nested: string; count: number };\n    field45: string;\n    field46: number;\n    field47: boolean;\n    field48: string[];\n    field49: { nested: string; count: number };\n    field50: string;\n    field51: number;\n    field52: boolean;\n    field53: string[];\n    field54: { nested: string; count: number };\n    field55: string;\n    field56: number;\n    field57: boolean;\n    field58: string[];\n    field59: { nested: string; count: number };\n    field60: string;\n    field61: number;\n    field62: boolean;\n    field63: string[];\n    field64: { nested: string; count: number };\n    field65: string;\n    field66: number;\n    field67: boolean;\n    field68: string[];\n    field69: { nested: string; count: number };\n    field70: string;\n    field71: number;\n    field72: boolean;\n    field73: string[];\n    field74: { nested: string; count: number };\n    field75: string;\n    field76: number;\n    field77: boolean;\n    field78: string[];\n    field79: { nested: string; count: number };\n    field80: string;\n    field81: number;\n    field82: boolean;\n    field83: string[];\n    field84: { nested: string; count: number };\n    field85: string;\n    field86: number;\n    field87: boolean;\n    field88: string[];\n    field89: { nested: string; count: number };\n    field90: string;\n    field91: number;\n    field92: boolean;\n    field93: string[];\n    field94: { nested: string; count: number };\n    field95: string;\n    field96: number;\n    field97: boolean;\n    field98: string[];\n    field99: { nested: string; count: number };\n    field100: string;\n    field101: number;\n    field102: boolean;\n    field103: string[];\n    field104: { nested: string; count: number };\n    field105: string;\n    field106: number;\n    field107: boolean;\n    field108: string[];\n    field109: { nested: string; count: number };\n    field110: string;\n    field111: number;\n    field112: boolean;\n    field113: string[];\n    field114: { nested: string; count: number };\n    field115: string;\n    field116: number;\n    field117: boolean;\n    field118: string[];\n    field119: { nested: string; count: number };\n    field120: string;\n    field121: number;\n    field122: boolean;\n    field123: string[];\n    field124: { nested: string; count: number };\n    field125: string;\n    field126: number;\n    field127: boolean;\n    field128: string[];\n    field129: { nested: string; count: number };\n    field130: string;\n    field131: number;\n    field132: boolean;\n    field133: string[];\n    field134: { nested: string; count: number };\n    field135: string;\n    field136: number;\n    field137: boolean;\n    field138: string[];\n    field139: { nested: string; count: number };\n    field140: string;\n    field141: number;\n    field142: boolean;\n    field143: string[];\n    field144: { nested: string; count: number };\n    field145: string;\n    field146: number;\n    field147: boolean;\n    field148: string[];\n    field149: { nested: string; count: number };\n    field150: string;\n    field151: number;\n    field152: boolean;\n    field153: string[];\n    field154: { nested: string; count: number };\n    field155: string;\n    field156: number;\n    field157: boolean;\n    field158: string[];\n    field159: { nested: string; count: number };\n    field160: string;\n    field161: number;\n    field162: boolean;\n    field163: string[];\n    field164: { nested: string; count: number };\n    field165: string;\n    field166: number;\n    field167: boolean;\n    field168: string[];\n    field169: { nested: string; count: number };\n    field170: string;\n    field171: number;\n    field172: boolean;\n    field173: string[];\n    field174: { nested: string; count: number };\n    field175: string;\n    field176: number;\n    field177: boolean;\n    field178: string[];\n    field179: { nested: string; count: number };\n    field180: string;\n    field181: number;\n    field182: boolean;\n    field183: string[];\n    field184: { nested: string; count: number };\n    field185: string;\n    field186: number;\n    field187: boolean;\n    field188: string[];\n    field189: { nested: string; count: number };\n    field190: string;\n    field191: number;\n    field192: boolean;\n    field193: string[];\n    field194: { nested: string; count: number };\n    field195: string;\n    field196: number;\n    field197: boolean;\n    field198: string[];\n    field199: { nested: string; count: number };\n}\n\n// Each mapped type application evaluates a conditional template for 200 properties\ntype BigForm = FormFields<BigModel>;\ntype BigStringified = Stringify<BigModel>;\ntype BigValidated = Validate<BigModel>;\ntype BigNullable = Nullable<BigModel>;\ntype BigPromises = Promisify<BigModel>;\ntype BigDeepPartial = DeepPartial<BigModel>;\n\n// Chained: each composition re-evaluates all 200 properties\ntype Chained1 = Nullable<Stringify<BigModel>>;\ntype Chained2 = Validate<Nullable<BigModel>>;\ntype Chained3 = FormFields<Nullable<BigModel>>;\n\ndeclare const form: BigForm;\ndeclare const stringified: BigStringified;\ndeclare const validated: BigValidated;\ndeclare const chained: Chained3;\n\nconst _f0 = form.field0;\nconst _s0 = stringified.field0;\nconst _v0 = validated.field0;\nconst _fLast = form.field199;\nconst _cLast = chained.field199;"
+      }
+    },
+    {
+      "name": "nextjs-fresh-app",
+      "lines": 282,
+      "kb": 7,
+      "project_files": 7,
+      "tsz_ms": 86.58,
+      "tsgo_ms": 112.2,
+      "tsz_lps": 3257,
+      "tsgo_lps": 2513,
+      "winner": "tsz",
+      "factor": 1.3,
+      "status": null,
+      "readme": "# Fresh Next.js app benchmark\n\nThis fixture is generated by `scripts/bench/generate-next-app-fixture.mjs`.\n\nEach benchmark run recreates the app, installs current npm versions, and type-checks the generated Next.js project with:\n\n```sh\ntsz --noEmit -p tsconfig.json\ntsgo --noEmit -p tsconfig.json\n```\n\nThe app intentionally imports and uses common type-heavy dependencies:\n\n- `zod`\n- `@tanstack/react-query`\n- `react-hook-form`\n- `type-fest`\n- `ts-pattern`\n- `superjson`\n- `date-fns`\n- `clsx`\n- `zustand`\n- `valibot`\n\nThe generated source mixes App Router pages, server actions, schema inference, discriminated unions, form helpers, query typing, store typing, and JSON-safe utility types so the benchmark reflects a modern application rather than a tiny startup file.",
+      "compatibility": {
+        "generated_at": "2026-07-19T02:05:17.351Z",
+        "source_commit": "f3d1fbd99a277545dff11c8355b1fbfbb5ec8516",
+        "workflow_name": "local",
+        "workflow_run_id": "local",
+        "workflow_run_url": null,
+        "workflow_run_attempt": null,
+        "run_status": "local",
+        "state": "green",
+        "exit_class": "exit success",
+        "first_failure_class": null,
+        "owner_track": null,
+        "phase": "check",
+        "last_successful_phase": "check",
+        "diagnostic_status": "none",
+        "diagnostic_deltas": [],
+        "diagnostic_codes": [],
+        "diagnostic_subsystems": [],
+        "primary_subsystem": null,
+        "reduction_candidates": [],
+        "emit_status": "not in scope (noEmit project check)",
+        "dts_status": "not in scope (noEmit project check)",
+        "known_blockers": [],
+        "reduced_repro_path": "next-app-live",
+        "repro": {
+          "tsconfig_path": "next-app-live/tsconfig.json",
+          "source_root": "next-app-live",
+          "first_failure_path": null,
+          "first_failure_line": null,
+          "first_failure_column": null,
+          "first_failure_code": null,
+          "reduced_repro_path": "next-app-live",
+          "command": "TSZ_USE_EMBEDDED_LIBS=1 RUST_MIN_STACK=536870912 $TSZ_BIN --noEmit -p next-app-live/tsconfig.json"
+        },
+        "exit_codes": {
+          "tsc": [
+            0
+          ],
+          "tsz": [
+            0
+          ],
+          "tsgo": [
+            0
+          ]
+        },
+        "semantic_owner_family": "generated app-router dependency/config sanity",
+        "files_reached": 7,
+        "files_reached_reason": null,
+        "peak_memory_bytes": null,
+        "peak_memory_bytes_reason": "not measured on platform",
+        "fixture_sources": [
+          {
+            "name": "next-app-router",
+            "repository": "generated:scripts/bench/generate-next-app-fixture.mjs",
+            "ref": "package-lock:dcff80c3abe82efafffe73a1d4e10dd34a546925f24c1ddd0be9b0a066cac9cd"
+          }
+        ]
+      }
+    },
+    {
+      "name": "nextjs",
+      "lines": 222594,
+      "kb": 6946,
+      "project_files": 1396,
+      "tsz_ms": 167.21,
+      "tsgo_ms": 188.62,
+      "tsz_lps": 1331245,
+      "tsgo_lps": 1180119,
+      "winner": "tsz",
+      "factor": 1.13,
+      "status": null,
+      "compatibility": {
+        "generated_at": "2026-07-19T02:05:25.452Z",
+        "source_commit": "f3d1fbd99a277545dff11c8355b1fbfbb5ec8516",
+        "workflow_name": "local",
+        "workflow_run_id": "local",
+        "workflow_run_url": null,
+        "workflow_run_attempt": null,
+        "run_status": "local",
+        "state": "green",
+        "exit_class": "exit success",
+        "first_failure_class": null,
+        "owner_track": null,
+        "phase": "check",
+        "last_successful_phase": "check",
+        "diagnostic_status": "none",
+        "diagnostic_deltas": [],
+        "diagnostic_codes": [],
+        "diagnostic_subsystems": [],
+        "primary_subsystem": null,
+        "reduction_candidates": [],
+        "emit_status": "not in scope (noEmit project check)",
+        "dts_status": "not in scope (noEmit project check)",
+        "known_blockers": [],
+        "reduced_repro_path": "next.js/packages/next/src",
+        "repro": {
+          "tsconfig_path": "next.js/packages/next/tsconfig.tsz-bench.json",
+          "source_root": "next.js/packages/next/src",
+          "first_failure_path": null,
+          "first_failure_line": null,
+          "first_failure_column": null,
+          "first_failure_code": null,
+          "reduced_repro_path": "next.js/packages/next/src",
+          "command": "TSZ_USE_EMBEDDED_LIBS=1 RUST_MIN_STACK=536870912 $TSZ_BIN --noEmit -p next.js/packages/next/tsconfig.tsz-bench.json"
+        },
+        "exit_codes": {
+          "tsc": [
+            0
+          ],
+          "tsz": [
+            0
+          ],
+          "tsgo": [
+            0
+          ]
+        },
+        "semantic_owner_family": "module graph plus generated app dependencies",
+        "files_reached": 1396,
+        "files_reached_reason": null,
+        "peak_memory_bytes": null,
+        "peak_memory_bytes_reason": "not measured on platform",
+        "fixture_sources": [
+          {
+            "name": "nextjs",
+            "repository": "https://github.com/vercel/next.js.git",
+            "ref": "09851e208cc62c8b6fe7a953b42c88e843129178"
+          }
+        ]
       }
     }
   ]
