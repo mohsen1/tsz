@@ -11,6 +11,13 @@ use std::sync::Arc;
 /// [`crate::caches::db::TypeDatabase`] makes display provenance a visible,
 /// narrower capability.
 pub trait TypeDisplayProvenance {
+    /// Monotonic generation changed by provenance side-table mutations.
+    ///
+    /// Implementations without mutable provenance may keep the default zero.
+    fn display_provenance_generation(&self) -> u64 {
+        0
+    }
+
     /// Store display-only properties for a fresh object literal.
     ///
     /// These are the pre-widened property types shown in error messages.
@@ -141,6 +148,10 @@ pub trait TypeDisplayProvenance {
 }
 
 impl TypeDisplayProvenance for TypeInterner {
+    fn display_provenance_generation(&self) -> u64 {
+        Self::display_provenance_generation(self)
+    }
+
     fn store_display_properties(&self, type_id: TypeId, props: Vec<PropertyInfo>) {
         Self::store_display_properties(self, type_id, props);
     }

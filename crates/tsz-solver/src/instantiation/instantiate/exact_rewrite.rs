@@ -14,6 +14,144 @@ use crate::types::{
 use rustc_hash::FxHashMap;
 use std::collections::hash_map::Entry;
 
+/// Reusable mapping produced by one completed exact-identity rewrite.
+///
+/// The representation is intentionally opaque. It retains direct replacement
+/// pairs and structurally changed source-to-target pairs, but drops unchanged
+/// visitation entries. One memo is reusable for every root that shares the
+/// same exact replacement pairs; root results and shared structural mappings
+/// are retained once per session. Cache owners use
+/// [`Self::refresh_provenance`] before returning an associated rewritten type.
+#[derive(Clone, Debug)]
+pub struct ExactRewriteMemo {
+    mapped: FxHashMap<TypeId, TypeId>,
+    provenance_sources: Vec<TypeId>,
+    root_results: FxHashMap<TypeId, TypeId>,
+    provenance_generation: u64,
+}
+
+/// A shared solver-frame limit prevented an exact rewrite from completing.
+///
+/// Aborted attempts do not publish provenance or reusable memo state. Callers
+/// must preserve the original type and may retry under a fresh frame budget.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ExactRewriteAborted;
+
+impl ExactRewriteMemo {
+    fn merge_delta(&mut self, delta: ExactRewriteDelta) {
+        self.mapped.extend(delta.mapped);
+        self.provenance_sources.extend(delta.provenance_sources);
+    }
+
+    /// Replay all currently attached source provenance onto the previously
+    /// mapped target nodes.
+    ///
+    /// Existing structural mappings seed the walk, so refreshing provenance
+    /// never remints a nested fresh type parameter that the completed rewrite
+    /// already rebuilt. New provenance-only subgraphs extend the memo only after
+    /// the whole refresh completes. On [`ExactRewriteAborted`], neither this memo
+    /// nor any provenance side table is mutated.
+    pub fn refresh_provenance(
+        &mut self,
+        db: &dyn QueryDatabase,
+    ) -> Result<(), ExactRewriteAborted> {
+        let provenance_generation = db.display_provenance_generation();
+        if provenance_generation == self.provenance_generation {
+            return Ok(());
+        }
+
+        let delta = {
+            let mut rewriter = ExactTypeRewriter {
+                db,
+                base_mappings: Some(&self.mapped),
+                rewritten: FxHashMap::default(),
+                provenance_sources: Vec::new(),
+                aborted: false,
+                pending_provenance: Vec::new(),
+            };
+            for &source in &self.provenance_sources {
+                debug_assert!(
+                    self.mapped.contains_key(&source),
+                    "provenance source must have a retained mapping",
+                );
+                let Some(&result) = self.mapped.get(&source) else {
+                    continue;
+                };
+                rewriter.propagate_provenance(source, result);
+                if rewriter.aborted {
+                    break;
+                }
+            }
+            rewriter.commit()?
+        };
+
+        self.merge_delta(delta);
+        // Retain the pre-scan snapshot. Provenance committed by this replay or
+        // written concurrently advances the universe generation and therefore
+        // forces another scan; a no-op scan then converges to the current value.
+        // Reading after commit could acknowledge a write that landed behind the
+        // scan cursor and permanently skip it.
+        self.provenance_generation = provenance_generation;
+        Ok(())
+    }
+
+    /// Rewrite another root with this session's exact replacement pairs.
+    ///
+    /// A previously completed root is an `O(1)` result lookup plus the
+    /// provenance-generation check. A new root reuses all retained structural
+    /// mappings, so shared subgraphs and nested fresh binders keep their exact
+    /// rewritten identities. Provenance refresh and the new root walk commit as
+    /// one transaction: on [`ExactRewriteAborted`], neither the memo nor any
+    /// provenance side table is mutated. Callers must not cache the failed root
+    /// result and may retry it under a fresh frame budget.
+    pub fn rewrite_root(
+        &mut self,
+        db: &dyn QueryDatabase,
+        root: TypeId,
+    ) -> Result<TypeId, ExactRewriteAborted> {
+        if let Some(&result) = self.root_results.get(&root) {
+            self.refresh_provenance(db)?;
+            return Ok(result);
+        }
+
+        let provenance_generation = db.display_provenance_generation();
+        let refresh_provenance = provenance_generation != self.provenance_generation;
+        let (result, delta) = {
+            let mut rewriter = ExactTypeRewriter {
+                db,
+                base_mappings: Some(&self.mapped),
+                rewritten: FxHashMap::default(),
+                provenance_sources: Vec::new(),
+                aborted: false,
+                pending_provenance: Vec::new(),
+            };
+            if refresh_provenance {
+                for &source in &self.provenance_sources {
+                    debug_assert!(
+                        self.mapped.contains_key(&source),
+                        "provenance source must have a retained mapping",
+                    );
+                    let Some(&mapped) = self.mapped.get(&source) else {
+                        continue;
+                    };
+                    rewriter.propagate_provenance(source, mapped);
+                    if rewriter.aborted {
+                        break;
+                    }
+                }
+            }
+            let result = rewriter.rewrite(root);
+            let delta = rewriter.commit()?;
+            (result, delta)
+        };
+
+        self.merge_delta(delta);
+        self.root_results.insert(root, result);
+        self.provenance_generation = provenance_generation;
+        Ok(result)
+    }
+}
+
 /// Replace aligned exact identities throughout `root` in one graph walk.
 ///
 /// Replacements are simultaneous: a replacement value is terminal and is not
@@ -32,9 +170,38 @@ pub fn substitute_exact_types(
     from: &[TypeId],
     to: &[TypeId],
 ) -> TypeId {
+    substitute_exact_types_with_memo(db, root, from, to).map_or(root, |(result, _memo)| result)
+}
+
+/// Replace aligned exact identities and retain the completed structural map
+/// for provenance refreshes by cache owners.
+///
+/// [`ExactRewriteAborted`] is distinct from a successful no-op rewrite. No
+/// provenance is published and no memo is returned when the shared solver-frame
+/// budget aborts the walk. The aligned pairs must be scoped binder identities:
+/// direct replacements are terminal and their source provenance is deliberately
+/// not copied onto the replacement identity. Copying it would repaint a shared
+/// active binder that belongs to the destination scope.
+pub fn substitute_exact_types_with_memo(
+    db: &dyn QueryDatabase,
+    root: TypeId,
+    from: &[TypeId],
+    to: &[TypeId],
+) -> Result<(TypeId, ExactRewriteMemo), ExactRewriteAborted> {
     debug_assert_eq!(from.len(), to.len());
+    let provenance_generation = db.display_provenance_generation();
     if from.len() != to.len() || from.is_empty() {
-        return root;
+        let mut root_results = FxHashMap::default();
+        root_results.insert(root, root);
+        return Ok((
+            root,
+            ExactRewriteMemo {
+                mapped: FxHashMap::default(),
+                provenance_sources: Vec::new(),
+                root_results,
+                provenance_generation,
+            },
+        ));
     }
 
     let mut rewritten = FxHashMap::with_capacity_and_hasher(from.len(), Default::default());
@@ -56,17 +223,40 @@ pub fn substitute_exact_types(
         }
     }
     if rewritten.is_empty() {
-        return root;
+        let mut root_results = FxHashMap::default();
+        root_results.insert(root, root);
+        return Ok((
+            root,
+            ExactRewriteMemo {
+                mapped: rewritten,
+                provenance_sources: Vec::new(),
+                root_results,
+                provenance_generation,
+            },
+        ));
     }
 
     let mut rewriter = ExactTypeRewriter {
         db,
+        base_mappings: None,
         rewritten,
+        provenance_sources: Vec::new(),
         aborted: false,
         pending_provenance: Vec::new(),
     };
     let result = rewriter.rewrite(root);
-    rewriter.finish(root, result)
+    let delta = rewriter.commit()?;
+    let mut root_results = FxHashMap::default();
+    root_results.insert(root, result);
+    Ok((
+        result,
+        ExactRewriteMemo {
+            mapped: delta.mapped,
+            provenance_sources: delta.provenance_sources,
+            root_results,
+            provenance_generation,
+        },
+    ))
 }
 
 /// Replace one exact interned identity throughout a type graph.
@@ -86,9 +276,15 @@ pub fn substitute_exact_type(
 
 struct ExactTypeRewriter<'a> {
     db: &'a dyn QueryDatabase,
-    /// Preloaded with direct replacements, then extended with per-node memoized
-    /// results. Direct replacements therefore remain terminal.
+    /// Retained mappings from a previous completed walk. These are read-only
+    /// until this attempt commits, so an abort cannot poison reusable state.
+    base_mappings: Option<&'a FxHashMap<TypeId, TypeId>>,
+    /// Preloaded with direct replacements on the first walk, then extended with
+    /// this attempt's per-node results. Direct replacements remain terminal.
     rewritten: FxHashMap<TypeId, TypeId>,
+    /// Structurally changed sources discovered by this attempt. Only these
+    /// sources can need future provenance replay.
+    provenance_sources: Vec<TypeId>,
     /// Sticky shared-frame bailout. Once set, every active caller preserves its
     /// source node and the public operation returns its original root.
     aborted: bool,
@@ -96,6 +292,11 @@ struct ExactTypeRewriter<'a> {
     /// interned during a walk, but no side table is mutated unless the whole
     /// reachable graph completes within the shared solver-frame budget.
     pending_provenance: Vec<PendingProvenance>,
+}
+
+struct ExactRewriteDelta {
+    mapped: FxHashMap<TypeId, TypeId>,
+    provenance_sources: Vec<TypeId>,
 }
 
 enum PendingProvenance {
@@ -116,6 +317,12 @@ impl ExactTypeRewriter<'_> {
             return type_id;
         }
         if let Some(&cached) = self.rewritten.get(&type_id) {
+            return cached;
+        }
+        if let Some(&cached) = self
+            .base_mappings
+            .and_then(|mappings| mappings.get(&type_id))
+        {
             return cached;
         }
         if type_id.is_intrinsic() {
@@ -344,14 +551,15 @@ impl ExactTypeRewriter<'_> {
         // provenance can point back into the source graph.
         self.rewritten.insert(type_id, result);
         if result != type_id {
+            self.provenance_sources.push(type_id);
             self.propagate_provenance(type_id, result);
         }
         if self.aborted { type_id } else { result }
     }
 
-    fn finish(self, original: TypeId, result: TypeId) -> TypeId {
+    fn commit(self) -> Result<ExactRewriteDelta, ExactRewriteAborted> {
         if self.aborted {
-            return original;
+            return Err(ExactRewriteAborted);
         }
         for provenance in self.pending_provenance {
             match provenance {
@@ -387,7 +595,15 @@ impl ExactTypeRewriter<'_> {
                 }
             }
         }
-        result
+        let mapped = self
+            .rewritten
+            .into_iter()
+            .filter(|(source, result)| source != result)
+            .collect();
+        Ok(ExactRewriteDelta {
+            mapped,
+            provenance_sources: self.provenance_sources,
+        })
     }
 
     fn rewrite_unary(
@@ -1342,6 +1558,240 @@ mod tests {
         assert_eq!(
             substitute_exact_type(&db, shallow_array, outer, TypeId::STRING),
             db.array(TypeId::STRING),
+        );
+    }
+
+    #[test]
+    fn exact_rewrite_memo_refreshes_late_provenance_and_converges_generation() {
+        let db = TypeInterner::new();
+        let outer = fresh_param(&db, "Outer");
+        let replacement = fresh_param(&db, "Replacement");
+        let alias_base = db.lazy(DefId(31));
+        let source_application = db.application(alias_base, vec![outer]);
+        let nested_source = db.union_preserve_members(vec![outer, TypeId::STRING]);
+        let source = db.union_preserve_members(vec![nested_source, TypeId::NUMBER]);
+
+        let (result, mut memo) =
+            substitute_exact_types_with_memo(&db, source, &[outer], &[replacement])
+                .expect("the initial exact rewrite should complete");
+        let rewritten_nested = db.union_preserve_members(vec![replacement, TypeId::STRING]);
+        let rewritten_application = db.application(alias_base, vec![replacement]);
+        assert!(db.get_display_properties(result).is_none());
+        assert!(db.get_union_origin(result).is_none());
+        assert!(db.get_application_eval_origin(result).is_none());
+        assert!(db.get_display_alias(result).is_none());
+
+        let shown = db.intern_string("shown");
+        db.store_display_properties(
+            source,
+            vec![PropertyInfo {
+                declaration_order: 1,
+                ..PropertyInfo::new(shown, nested_source)
+            }],
+        );
+        db.store_union_origin(source, vec![nested_source, TypeId::NUMBER]);
+        db.record_application_eval_origin(source, source_application);
+        db.store_display_alias_preferring_application(source, source_application);
+
+        memo.refresh_provenance(&db)
+            .expect("late provenance replay should complete");
+        let properties = db
+            .get_display_properties(result)
+            .expect("late display properties should reach the rewritten root");
+        assert_eq!(properties[0].type_id, rewritten_nested);
+        assert_eq!(properties[0].declaration_order, 1);
+        assert_eq!(
+            db.get_union_origin(result)
+                .expect("late union origin should reach the rewritten root")
+                .as_slice(),
+            &[rewritten_nested, TypeId::NUMBER],
+        );
+        assert_eq!(
+            db.get_application_eval_origin(result),
+            Some(rewritten_application),
+        );
+        assert_eq!(db.get_display_alias(result), Some(rewritten_application));
+
+        // A replay can advance the universe generation with its own target
+        // writes. One no-op scan converges; later hits take the `O(1)` gate.
+        let replay_generation = db.display_provenance_generation();
+        memo.refresh_provenance(&db)
+            .expect("the convergence replay should complete");
+        assert_eq!(db.display_provenance_generation(), replay_generation);
+        assert_eq!(memo.provenance_generation, replay_generation);
+        memo.refresh_provenance(&db)
+            .expect("an unchanged generation should be an immediate hit");
+        assert_eq!(db.display_provenance_generation(), replay_generation);
+
+        // `PropertyInfo` structural equality intentionally ignores declaration
+        // order. The provenance epoch must still notice this display-only edit.
+        db.store_display_properties(
+            source,
+            vec![PropertyInfo {
+                declaration_order: 9,
+                ..PropertyInfo::new(shown, nested_source)
+            }],
+        );
+        assert_ne!(db.display_provenance_generation(), replay_generation);
+        memo.refresh_provenance(&db)
+            .expect("display-only metadata changes must replay");
+        assert_eq!(
+            db.get_display_properties(result)
+                .expect("rewritten display properties should be replaced")[0]
+                .declaration_order,
+            9,
+        );
+    }
+
+    #[test]
+    fn exact_rewrite_memo_reuses_nested_fresh_binders_across_roots() {
+        let db = TypeInterner::new();
+        let outer = fresh_param(&db, "Outer");
+        let nested = db.fresh_type_param(TypeParamInfo {
+            name: db.intern_string("Nested"),
+            constraint: Some(outer),
+            default: None,
+            is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
+        });
+        let first_root = db.tuple(vec![
+            TupleElement::fixed(nested),
+            TupleElement::fixed(db.array(nested)),
+        ]);
+
+        let (first_result, mut memo) =
+            substitute_exact_types_with_memo(&db, first_root, &[outer], &[TypeId::STRING])
+                .expect("the initial exact rewrite should complete");
+        let rewritten_nested = tuple_members(&db, first_result)[0];
+        assert_ne!(rewritten_nested, nested);
+        let Some(TypeData::TypeParameter(info)) = db.lookup(rewritten_nested) else {
+            panic!("expected a rewritten fresh type parameter");
+        };
+        assert_eq!(info.constraint, Some(TypeId::STRING));
+
+        db.store_display_properties(
+            first_root,
+            vec![PropertyInfo::new(db.intern_string("shown"), nested)],
+        );
+        memo.refresh_provenance(&db)
+            .expect("late provenance replay should complete");
+        assert_eq!(
+            db.get_display_properties(first_result)
+                .expect("rewritten root should receive late display properties")[0]
+                .type_id,
+            rewritten_nested,
+        );
+        memo.refresh_provenance(&db)
+            .expect("the generation should converge after target writes");
+
+        let second_root = db.array(nested);
+        let second_result = memo
+            .rewrite_root(&db, second_root)
+            .expect("a second root should reuse the completed session");
+        assert_eq!(second_result, db.array(rewritten_nested));
+        assert_eq!(
+            memo.rewrite_root(&db, second_root)
+                .expect("a completed root should be reusable"),
+            second_result,
+        );
+    }
+
+    #[test]
+    fn exact_rewrite_direct_binder_pairs_do_not_repaint_replacements() {
+        let db = TypeInterner::new();
+        let source_binder = fresh_param(&db, "Source");
+        let active_binder = fresh_param(&db, "Active");
+        let shown = db.intern_string("shown");
+        db.store_display_properties(
+            source_binder,
+            vec![PropertyInfo::new(shown, TypeId::STRING)],
+        );
+
+        let root = db.array(source_binder);
+        let (result, mut memo) =
+            substitute_exact_types_with_memo(&db, root, &[source_binder], &[active_binder])
+                .expect("the binder rewrite should complete");
+        assert_eq!(result, db.array(active_binder));
+        assert!(db.get_display_properties(active_binder).is_none());
+
+        db.store_display_properties(
+            source_binder,
+            vec![PropertyInfo::new(shown, TypeId::NUMBER)],
+        );
+        memo.refresh_provenance(&db)
+            .expect("late structural provenance should refresh");
+        assert!(
+            db.get_display_properties(active_binder).is_none(),
+            "a terminal direct pair must not repaint the destination binder",
+        );
+    }
+
+    #[test]
+    fn exact_rewrite_abort_is_retryable_and_refresh_is_transactional() {
+        let db = TypeInterner::new();
+        let outer = fresh_param(&db, "Outer");
+        let shown = db.intern_string("shown");
+        let source = db.array(db.array(outer));
+        let expected = db.array(db.array(TypeId::STRING));
+        db.store_display_properties(source, vec![PropertyInfo::new(shown, outer)]);
+
+        let held_frames: Vec<_> = (0..crate::recursion::MAX_SOLVER_STACK_FRAMES - 1)
+            .map(|_| {
+                crate::recursion::try_enter_solver_frame()
+                    .expect("test should reserve all but one solver frame")
+            })
+            .collect();
+        assert!(matches!(
+            substitute_exact_types_with_memo(&db, source, &[outer], &[TypeId::STRING]),
+            Err(ExactRewriteAborted),
+        ));
+        assert!(db.get_display_properties(expected).is_none());
+        drop(held_frames);
+
+        let (result, mut memo) =
+            substitute_exact_types_with_memo(&db, source, &[outer], &[TypeId::STRING])
+                .expect("the same rewrite should retry under a fresh frame budget");
+        assert_eq!(result, expected);
+        assert_eq!(
+            db.get_display_properties(result)
+                .expect("the completed retry should commit provenance")[0]
+                .type_id,
+            TypeId::STRING,
+        );
+
+        let late_source = db.readonly_type(db.tuple(vec![TupleElement::fixed(outer)]));
+        let late_result = db.readonly_type(db.tuple(vec![TupleElement::fixed(TypeId::STRING)]));
+        db.store_display_properties(source, vec![PropertyInfo::new(shown, late_source)]);
+        let mapped_before = memo.mapped.clone();
+        let sources_before = memo.provenance_sources.clone();
+        let roots_before = memo.root_results.clone();
+        let generation_before = memo.provenance_generation;
+        let held_frames: Vec<_> = (0..crate::recursion::MAX_SOLVER_STACK_FRAMES - 1)
+            .map(|_| {
+                crate::recursion::try_enter_solver_frame()
+                    .expect("test should reserve all but one solver frame")
+            })
+            .collect();
+        assert_eq!(memo.refresh_provenance(&db), Err(ExactRewriteAborted));
+        assert_eq!(memo.mapped, mapped_before);
+        assert_eq!(memo.provenance_sources, sources_before);
+        assert_eq!(memo.root_results, roots_before);
+        assert_eq!(memo.provenance_generation, generation_before);
+        assert_eq!(
+            db.get_display_properties(result)
+                .expect("failed refresh must preserve prior target provenance")[0]
+                .type_id,
+            TypeId::STRING,
+        );
+        drop(held_frames);
+
+        memo.refresh_provenance(&db)
+            .expect("the provenance refresh should retry after frames unwind");
+        assert_eq!(
+            db.get_display_properties(result)
+                .expect("successful retry should commit late provenance")[0]
+                .type_id,
+            late_result,
         );
     }
 }

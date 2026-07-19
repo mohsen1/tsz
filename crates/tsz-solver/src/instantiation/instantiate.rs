@@ -1169,7 +1169,10 @@ use self::api_lazy::{
     mapped_constraint_needs_resolver, template_has_lazy_application_in_composite,
     type_contains_lazy_application,
 };
-pub use self::exact_rewrite::{substitute_exact_type, substitute_exact_types};
+pub use self::exact_rewrite::{
+    ExactRewriteAborted, ExactRewriteMemo, substitute_exact_type, substitute_exact_types,
+    substitute_exact_types_with_memo,
+};
 pub use self::substitution::TypeSubstitution;
 #[cfg(test)]
 #[path = "../../tests/instantiate_tests.rs"]

@@ -25,7 +25,7 @@ use smallvec::SmallVec;
 use std::hash::{Hash, Hasher};
 use std::sync::{
     Arc, OnceLock,
-    atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering},
 };
 use tsz_common::interner::{Atom, ShardedInterner};
 
@@ -406,6 +406,10 @@ pub struct TypeInterner {
     pub(super) no_unchecked_indexed_access: AtomicBool,
     /// Effective value for `exactOptionalPropertyTypes` used by query-boundary helpers.
     pub(super) exact_optional_property_types: AtomicBool,
+    /// Monotonic invalidation generation for diagnostic and semantic provenance
+    /// side tables. Exact graph-rewrite sessions compare this before replaying
+    /// retained source provenance, making unchanged cache hits `O(1)`.
+    pub(super) display_provenance_generation: AtomicU64,
     /// Display properties for fresh object literal types.
     ///
     /// When object literal properties are widened (e.g., `"hello"` → `string`),
@@ -790,6 +794,7 @@ impl TypeInterner {
             poisoned: std::sync::atomic::AtomicBool::new(false),
             no_unchecked_indexed_access: AtomicBool::new(false),
             exact_optional_property_types: AtomicBool::new(false),
+            display_provenance_generation: AtomicU64::new(0),
             display_properties: DashMap::with_hasher(FxBuildHasher),
             display_alias: DashMap::with_hasher(FxBuildHasher),
             merged_intersection_origin: DashMap::with_hasher(FxBuildHasher),

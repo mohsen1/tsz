@@ -704,6 +704,10 @@ impl TypeTupleLimitSignal for QueryCache<'_> {
 }
 
 impl TypeDisplayProvenance for QueryCache<'_> {
+    fn display_provenance_generation(&self) -> u64 {
+        self.interner.display_provenance_generation()
+    }
+
     fn store_display_properties(&self, type_id: TypeId, props: Vec<PropertyInfo>) {
         self.interner.store_display_properties(type_id, props);
     }

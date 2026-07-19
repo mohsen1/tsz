@@ -172,16 +172,17 @@ pub mod computation {
     #[cfg(any(test, debug_assertions))]
     pub use crate::instantiation::instantiate::ProjectInstCacheDisabledGuard;
     pub use crate::instantiation::instantiate::{
-        MAX_INSTANTIATION_DEPTH, TypeInstantiator, TypeSubstitution, fill_application_defaults,
-        free_type_params_named, instantiate_function_with_type_args, instantiate_generic,
-        instantiate_generic_cached, instantiate_type, instantiate_type_cached,
-        instantiate_type_params_to_constraints, instantiate_type_preserving,
-        instantiate_type_preserving_cached, instantiate_type_preserving_meta,
-        instantiate_type_preserving_meta_cached, instantiate_type_with_depth_status,
-        instantiate_type_with_infer, instantiate_type_with_infer_cached,
-        instantiate_type_with_request, resolve_named_type_params_to_defaults,
-        resolve_unbound_type_params_to_declared_fallbacks, resolve_unbound_type_params_to_defaults,
-        substitute_exact_type, substitute_exact_types, substitute_this_type,
+        ExactRewriteAborted, ExactRewriteMemo, MAX_INSTANTIATION_DEPTH, TypeInstantiator,
+        TypeSubstitution, fill_application_defaults, free_type_params_named,
+        instantiate_function_with_type_args, instantiate_generic, instantiate_generic_cached,
+        instantiate_type, instantiate_type_cached, instantiate_type_params_to_constraints,
+        instantiate_type_preserving, instantiate_type_preserving_cached,
+        instantiate_type_preserving_meta, instantiate_type_preserving_meta_cached,
+        instantiate_type_with_depth_status, instantiate_type_with_infer,
+        instantiate_type_with_infer_cached, instantiate_type_with_request,
+        resolve_named_type_params_to_defaults, resolve_unbound_type_params_to_declared_fallbacks,
+        resolve_unbound_type_params_to_defaults, substitute_exact_type, substitute_exact_types,
+        substitute_exact_types_with_memo, substitute_this_type,
         substitute_this_type_at_return_position, substitute_this_type_cached,
     };
     pub use crate::instantiation::request::{InstantiationOptions, InstantiationRequest};
