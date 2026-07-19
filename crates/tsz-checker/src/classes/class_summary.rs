@@ -203,9 +203,8 @@ impl ClassChainSummary {
         self.root_type_params
             .iter()
             .map(|&type_id| {
-                let tsz_solver::TypeData::TypeParameter(info) = db.lookup(type_id)? else {
-                    return None;
-                };
+                let info =
+                    crate::query_boundaries::checkers::generic::named_type_param_info(db, type_id)?;
                 let name = db.resolve_atom_ref(info.name);
                 active_scope.get(name.as_ref()).copied()
             })
