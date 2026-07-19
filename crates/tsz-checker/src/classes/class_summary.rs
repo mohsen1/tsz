@@ -1,7 +1,7 @@
 use crate::class_checker::ClassMemberInfo;
 use crate::flow_analysis::{ComputedKey, PropertyKey};
 use crate::query_boundaries::common::{
-    TypeSubstitution, callable_shape_for_type, object_shape_for_type,
+    ExactTypeRewriteSession, TypeSubstitution, callable_shape_for_type, object_shape_for_type,
 };
 use crate::query_boundaries::construct_signatures::call_only_callable_type;
 use crate::query_boundaries::definite_assignment::constructor_assigned_properties;
@@ -30,7 +30,8 @@ pub(crate) struct ClassPropertyInitializationInfo {
 mod exact_rebind_cache_tests {
     use super::ClassChainSummary;
     use tsz_solver::construction::TypeInterner;
-    use tsz_solver::{FunctionShape, ParamInfo, TypeId, TypeParamInfo};
+    use tsz_solver::def::DefId;
+    use tsz_solver::{FunctionShape, ParamInfo, TypeData, TypeId, TypeParamInfo};
 
     #[test]
     fn repeated_member_rebind_reuses_nested_generic_identity() {
@@ -66,6 +67,78 @@ mod exact_rebind_cache_tests {
 
         assert_eq!(first, second);
         assert_ne!(first, member);
+    }
+
+    #[test]
+    fn cached_member_rebind_refreshes_late_application_display_alias() {
+        let db = TypeInterner::new();
+        let source_outer = db.fresh_type_param(TypeParamInfo::simple(db.intern_string("Outer")));
+        let active_outer = db.fresh_type_param(TypeParamInfo::simple(db.intern_string("Active")));
+        let member = db.array(source_outer);
+        let summary = ClassChainSummary {
+            root_type_params: vec![source_outer],
+            ..ClassChainSummary::default()
+        };
+
+        let first = summary.rebind_root_type_params(&db, &[active_outer], member);
+        assert_eq!(db.get_display_alias(first), None);
+
+        let alias_base = db.lazy(DefId(27));
+        let source_alias = db.application(alias_base, vec![source_outer]);
+        db.store_display_alias_preferring_application(member, source_alias);
+        db.record_application_eval_origin(member, source_alias);
+
+        let second = summary.rebind_root_type_params(&db, &[active_outer], member);
+        let expected_alias = db.application(alias_base, vec![active_outer]);
+
+        assert_eq!(second, first);
+        assert_eq!(db.get_display_alias(second), Some(expected_alias));
+        assert_eq!(db.get_application_eval_origin(second), Some(expected_alias));
+    }
+
+    #[test]
+    fn cached_rebind_session_shares_nested_binder_across_member_roots() {
+        let db = TypeInterner::new();
+        let source_outer = db.fresh_type_param(TypeParamInfo::simple(db.intern_string("Outer")));
+        let active_outer = db.fresh_type_param(TypeParamInfo::simple(db.intern_string("Active")));
+        let nested = db.fresh_type_param(TypeParamInfo {
+            name: db.intern_string("Nested"),
+            constraint: Some(source_outer),
+            default: None,
+            is_const: false,
+            origin: tsz_solver::TypeParamOrigin::User,
+        });
+        let function_member = db.function(FunctionShape {
+            type_params: Vec::new(),
+            params: vec![ParamInfo {
+                type_id: nested,
+                ..ParamInfo::default()
+            }],
+            this_type: None,
+            return_type: TypeId::VOID,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: true,
+        });
+        let array_member = db.array(nested);
+        let summary = ClassChainSummary {
+            root_type_params: vec![source_outer],
+            ..ClassChainSummary::default()
+        };
+
+        let rewritten_function =
+            summary.rebind_root_type_params(&db, &[active_outer], function_member);
+        let rewritten_array = summary.rebind_root_type_params(&db, &[active_outer], array_member);
+
+        let Some(TypeData::Function(function_id)) = db.lookup(rewritten_function) else {
+            panic!("expected rewritten function member");
+        };
+        let rewritten_nested = db.function_shape(function_id).params[0].type_id;
+        let Some(TypeData::Array(array_nested)) = db.lookup(rewritten_array) else {
+            panic!("expected rewritten array member");
+        };
+        assert_eq!(rewritten_nested, array_nested);
+        assert_ne!(rewritten_nested, nested);
     }
 }
 
@@ -140,7 +213,7 @@ pub(crate) struct ClassChainSummary {
     /// Exact rebinds are stable for one cached summary and active binder vector.
     /// This prevents nested generic member binders from being freshly allocated
     /// again on every property access.
-    rebound_root_types: RefCell<FxHashMap<Vec<TypeId>, FxHashMap<TypeId, TypeId>>>,
+    rebind_sessions: RefCell<FxHashMap<Vec<TypeId>, ExactTypeRewriteSession>>,
     /// Unified instance member map: name -> entry (replaces 6 maps + 1 set)
     instance_members: FxHashMap<String, MemberEntry>,
     /// Unified static member map: name -> entry (replaces 6 maps + 1 set)
@@ -167,28 +240,30 @@ impl ClassChainSummary {
         if self.root_type_params.len() != active_root_type_params.len() {
             return type_id;
         }
-        if let Some(cached) = self
-            .rebound_root_types
-            .borrow()
-            .get(active_root_type_params)
-            .and_then(|types| types.get(&type_id))
-            .copied()
         {
-            return cached;
+            let mut cache = self.rebind_sessions.borrow_mut();
+            if let Some(session) = cache.get_mut(active_root_type_params) {
+                // A shared-frame abort must not publish a provenance-stale or
+                // partial result. Keep the completed session so the next access
+                // can retry without reminting structural fresh binders.
+                return session.rewrite_root(db, type_id).unwrap_or(type_id);
+            }
         }
 
-        let rebound = crate::query_boundaries::common::substitute_exact_types(
-            db,
-            type_id,
-            &self.root_type_params,
-            active_root_type_params,
-        );
-        self.rebound_root_types
+        let Some((result, session)) =
+            crate::query_boundaries::common::start_exact_type_rewrite_session(
+                db,
+                type_id,
+                &self.root_type_params,
+                active_root_type_params,
+            )
+        else {
+            return type_id;
+        };
+        self.rebind_sessions
             .borrow_mut()
-            .entry(active_root_type_params.to_vec())
-            .or_default()
-            .insert(type_id, rebound);
-        rebound
+            .insert(active_root_type_params.to_vec(), session);
+        result
     }
 
     /// Resolve the cached summary's declaration-ordered binders through the
