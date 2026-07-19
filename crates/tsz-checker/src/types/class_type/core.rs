@@ -95,20 +95,11 @@ impl<'a> CheckerState<'a> {
 
         // Class member types can reference class type parameters (e.g. `class Box<T> { value: T }`).
         // Keep class type parameters in scope while constructing the instance type.
-        let (mut class_type_params, mut class_type_param_updates) =
-            self.push_type_parameters(&class.type_parameters);
-
-        // In JS files, classes don't have syntax-level type parameters.
-        // JSDoc `@template T` tags serve the same purpose. If no syntax type params
-        // were found, check for JSDoc @template tags on the class declaration.
-        if class_type_params.is_empty() {
-            let (jsdoc_params, jsdoc_updates) =
-                self.push_jsdoc_class_template_type_params(class_idx);
-            if !jsdoc_params.is_empty() {
-                class_type_params = jsdoc_params;
-                class_type_param_updates.extend(jsdoc_updates);
-            }
-        }
+        let (class_type_params, class_type_param_updates) =
+            self.push_effective_class_type_parameters(class_idx, class);
+        let class_type_param_ids = self
+            .exact_type_parameter_ids_in_scope(&class_type_params)
+            .unwrap_or_default();
 
         // PERF: Pre-size maps based on member count to avoid rehashing
         let member_count = class.members.nodes.len();
@@ -118,6 +109,7 @@ impl<'a> CheckerState<'a> {
             current_sym,
             flags,
             class_type_params,
+            class_type_param_ids,
             class_type_param_updates,
             member_count,
             properties: FxHashMap::with_capacity_and_hasher(member_count, Default::default()),

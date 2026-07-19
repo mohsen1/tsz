@@ -10,7 +10,8 @@ use crate::caches::application_eval_index::{
 use crate::caches::db::{
     IntersectionMergeCacheEntry, QueryDatabase, TypeBuiltinAccess, TypeCompilerOptions,
     TypeContainsByIdCache, TypeDatabase, TypeDisplayProvenance, TypeExtractParamsCache,
-    TypePruneUnionCache, TypeSubstitutionConstruction, TypeTupleLimitSignal, TypeWidenCache,
+    TypePruneUnionCache, TypeRawIntersectionConstruction, TypeSubstitutionConstruction,
+    TypeTupleLimitSignal, TypeWidenCache,
 };
 use crate::caches::eval_dependency_index::{self, EvalDependencyIndex, EvalDependencyIndexState};
 use crate::caches::instantiation_cache::{InstantiationCache, InstantiationCacheKey};
@@ -703,6 +704,10 @@ impl TypeTupleLimitSignal for QueryCache<'_> {
 }
 
 impl TypeDisplayProvenance for QueryCache<'_> {
+    fn display_provenance_generation(&self) -> u64 {
+        self.interner.display_provenance_generation()
+    }
+
     fn store_display_properties(&self, type_id: TypeId, props: Vec<PropertyInfo>) {
         self.interner.store_display_properties(type_id, props);
     }
@@ -718,6 +723,11 @@ impl TypeDisplayProvenance for QueryCache<'_> {
     fn store_display_alias_preferring_application(&self, evaluated: TypeId, application: TypeId) {
         self.interner
             .store_display_alias_preferring_application(evaluated, application);
+    }
+
+    fn transfer_rewritten_application_display_alias(&self, evaluated: TypeId, application: TypeId) {
+        self.interner
+            .transfer_rewritten_application_display_alias(evaluated, application);
     }
 
     fn get_display_alias(&self, type_id: TypeId) -> Option<TypeId> {
@@ -771,6 +781,16 @@ impl TypeDisplayProvenance for QueryCache<'_> {
             .store_union_origin(union_type_id, origin_members);
     }
 
+    fn store_rewritten_union_origin(
+        &self,
+        union_type_id: TypeId,
+        origin_members: Vec<TypeId>,
+        is_fallback: bool,
+    ) {
+        self.interner
+            .store_rewritten_union_origin(union_type_id, origin_members, is_fallback);
+    }
+
     fn replace_union_origin_for_display(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
         self.interner
             .replace_union_origin_for_display(union_type_id, origin_members);
@@ -790,6 +810,12 @@ impl TypeDisplayProvenance for QueryCache<'_> {
 
     fn mark_union_too_complex(&self) {
         self.interner.set_union_too_complex();
+    }
+}
+
+impl TypeRawIntersectionConstruction for QueryCache<'_> {
+    fn intersect_types_raw_for_replay(&self, members: Vec<TypeId>) -> TypeId {
+        self.interner.intersect_types_raw_for_replay(members)
     }
 }
 

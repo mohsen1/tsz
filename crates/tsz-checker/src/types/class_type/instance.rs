@@ -94,6 +94,7 @@ pub(super) struct ClassInstanceBuilder<'b> {
     pub(super) current_sym: Option<SymbolId>,
     pub(super) flags: ClassInstanceFlags,
     pub(super) class_type_params: Vec<TypeParamInfo>,
+    pub(super) class_type_param_ids: Vec<TypeId>,
     pub(super) class_type_param_updates: Vec<(String, Option<TypeId>, bool)>,
     pub(super) member_count: usize,
     pub(super) properties: FxHashMap<Atom, PropertyInfo>,
@@ -882,6 +883,7 @@ impl<'a> CheckerState<'a> {
                     ),
                     type_param_names: class_type_param_names,
                     class_type_parameters: b.class_type_params.clone(),
+                    class_type_parameter_ids: b.class_type_param_ids.clone(),
                 });
                 RestoreEnclosingClass::To(prev_enclosing_class)
             } else {

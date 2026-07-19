@@ -6,18 +6,83 @@
 //! union member order. None of this affects type identity or semantics; it is
 //! purely the provenance the formatter reads to match `tsc` display.
 
-use super::TypeInterner;
+use super::{DisplayUnionOrigin, TypeInterner};
 use crate::types::{LiteralValue, PropertyInfo, TypeData, TypeId};
-use std::sync::Arc;
+use dashmap::mapref::entry::Entry;
+use std::sync::{Arc, atomic::Ordering};
+
+fn display_properties_equal(left: &[PropertyInfo], right: &[PropertyInfo]) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(left, right)| {
+            let PropertyInfo {
+                name,
+                type_id,
+                write_type,
+                optional,
+                readonly,
+                is_method,
+                is_class_prototype,
+                visibility,
+                parent_id,
+                declaration_order,
+                is_string_named,
+                is_symbol_named,
+                single_quoted_name,
+                non_widening,
+            } = left;
+            *name == right.name
+                && *type_id == right.type_id
+                && *write_type == right.write_type
+                && *optional == right.optional
+                && *readonly == right.readonly
+                && *is_method == right.is_method
+                && *is_class_prototype == right.is_class_prototype
+                && *visibility == right.visibility
+                && *parent_id == right.parent_id
+                && *declaration_order == right.declaration_order
+                && *is_string_named == right.is_string_named
+                && *is_symbol_named == right.is_symbol_named
+                && *single_quoted_name == right.single_quoted_name
+                && *non_widening == right.non_widening
+        })
+}
 
 impl TypeInterner {
+    /// Current universe-wide provenance invalidation generation.
+    ///
+    /// The value changes only when a side-table fact changes, so retained exact
+    /// graph-rewrite sessions can skip provenance scans on unchanged cache hits.
+    #[inline]
+    pub fn display_provenance_generation(&self) -> u64 {
+        self.display_provenance_generation.load(Ordering::Acquire)
+    }
+
+    #[inline]
+    fn advance_display_provenance_generation(&self) {
+        self.display_provenance_generation
+            .fetch_add(1, Ordering::Release);
+    }
+
+    fn replace_display_alias(&self, evaluated: TypeId, application: TypeId) {
+        if self.display_alias.insert(evaluated, application) != Some(application) {
+            self.advance_display_provenance_generation();
+        }
+    }
+
     /// Store display-only properties for a fresh object literal.
     ///
     /// These are the pre-widened property types shown in error messages.
     /// The `shape_id` is the widened (interned) shape; `props` contains
     /// the original literal types from the source code.
     pub fn store_display_properties(&self, type_id: TypeId, props: Vec<PropertyInfo>) {
-        self.display_properties.insert(type_id, Arc::new(props));
+        let props = Arc::new(props);
+        let changed = self
+            .display_properties
+            .insert(type_id, Arc::clone(&props))
+            .is_none_or(|previous| !display_properties_equal(&previous, &props));
+        if changed {
+            self.advance_display_provenance_generation();
+        }
     }
 
     /// Retrieve display-only properties for a fresh object literal.
@@ -113,7 +178,7 @@ impl TypeInterner {
         {
             return;
         }
-        self.display_alias.insert(evaluated, application);
+        self.replace_display_alias(evaluated, application);
     }
 
     /// Prefer a concrete Application display alias over structural provenance
@@ -172,7 +237,55 @@ impl TypeInterner {
         {
             return;
         }
-        self.display_alias.insert(evaluated, application);
+        self.replace_display_alias(evaluated, application);
+    }
+
+    /// Transfer application display provenance while structurally rebuilding
+    /// an already-validated source graph.
+    ///
+    /// The source mapping proves that this is provenance replay rather than a
+    /// new alias-discovery decision, so allocation order must not affect the
+    /// result. The normal global-identity and formatting-cycle safety checks
+    /// still apply.
+    ///
+    /// Callers must only pass an application alias read from an existing
+    /// source graph and structurally rewritten through the same substitution.
+    pub fn transfer_rewritten_application_display_alias(
+        &self,
+        evaluated: TypeId,
+        application: TypeId,
+    ) {
+        if evaluated == application || evaluated.is_intrinsic() {
+            return;
+        }
+        if matches!(self.lookup(evaluated), Some(TypeData::TypeParameter(_))) {
+            return;
+        }
+        let Some(TypeData::Application(app_id)) = self.lookup(application) else {
+            return;
+        };
+        let app = self.type_application(app_id);
+        if app.args.contains(&evaluated) {
+            return;
+        }
+        let preserves_conditional_branch_alias = self.is_conditional_alias_base(app.base)
+            && self.get_display_alias(evaluated).is_some_and(|existing| {
+                matches!(self.lookup(existing), Some(TypeData::Intersection(_)))
+            });
+        if preserves_conditional_branch_alias {
+            return;
+        }
+        // Replaying provenance must not repaint a canonical result that
+        // already has a stable application spelling from another path. A
+        // structural provenance entry is still replaceable by the concrete
+        // rewritten application, matching `store_display_alias_preferring_application`.
+        if self
+            .get_display_alias(evaluated)
+            .is_some_and(|existing| matches!(self.lookup(existing), Some(TypeData::Application(_))))
+        {
+            return;
+        }
+        self.replace_display_alias(evaluated, application);
     }
 
     /// Look up the original Application TypeId for a type that was produced
@@ -206,9 +319,10 @@ impl TypeInterner {
                 return;
             }
         }
-        self.application_eval_origin
-            .entry(evaluated)
-            .or_insert(application);
+        if let Entry::Vacant(entry) = self.application_eval_origin.entry(evaluated) {
+            entry.insert(application);
+            self.advance_display_provenance_generation();
+        }
     }
 
     /// Look up the semantic application origin of an evaluated structural
@@ -231,9 +345,10 @@ impl TypeInterner {
         if !matches!(self.lookup(intersection), Some(TypeData::Intersection(_))) {
             return;
         }
-        self.merged_intersection_origin
-            .entry(merged)
-            .or_insert(intersection);
+        if let Entry::Vacant(entry) = self.merged_intersection_origin.entry(merged) {
+            entry.insert(intersection);
+            self.advance_display_provenance_generation();
+        }
     }
 
     /// Look up the original `Intersection` TypeId a merged object was
@@ -245,7 +360,9 @@ impl TypeInterner {
     /// Record that an application base belongs to a type alias whose body is a
     /// conditional type. This is diagnostic-only provenance.
     pub fn mark_conditional_alias_base(&self, base: TypeId) {
-        self.conditional_alias_bases.insert(base, ());
+        if self.conditional_alias_bases.insert(base, ()).is_none() {
+            self.advance_display_provenance_generation();
+        }
     }
 
     pub fn is_conditional_alias_base(&self, base: TypeId) -> bool {
@@ -256,7 +373,13 @@ impl TypeInterner {
     /// so the formatter renders it as `typeof globalThis` rather than its full
     /// member body. Display-only provenance.
     pub fn mark_global_this_surface_display(&self, type_id: TypeId) {
-        self.global_this_surface_display.insert(type_id, ());
+        if self
+            .global_this_surface_display
+            .insert(type_id, ())
+            .is_none()
+        {
+            self.advance_display_provenance_generation();
+        }
     }
 
     /// Whether `type_id` is a recorded synthetic `typeof globalThis` surface.
@@ -273,7 +396,13 @@ impl TypeInterner {
         if type_id.is_intrinsic() {
             return;
         }
-        self.literal_object_annotations.insert(type_id, ());
+        if self
+            .literal_object_annotations
+            .insert(type_id, ())
+            .is_none()
+        {
+            self.advance_display_provenance_generation();
+        }
     }
 
     /// Whether `type_id` is a recorded hand-written object-type literal
@@ -302,6 +431,30 @@ impl TypeInterner {
     /// anonymous-object cases (e.g., user wrote `"foo" | Refrigerator` but
     /// the interner sorted to `Refrigerator | "foo"` — tsc does the same).
     pub fn store_union_origin(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
+        self.store_union_origin_kind(union_type_id, origin_members, false);
+    }
+
+    /// Store union order reconstructed by an exact graph rewrite.
+    ///
+    /// A fallback captures changed members before canonical sorting when the
+    /// source had no explicit origin. It only fills a vacant target slot. Real
+    /// rewritten source provenance atomically replaces such a tagged fallback,
+    /// but never replaces an untagged origin owned by another source/session.
+    pub fn store_rewritten_union_origin(
+        &self,
+        union_type_id: TypeId,
+        origin_members: Vec<TypeId>,
+        is_fallback: bool,
+    ) {
+        self.store_union_origin_kind(union_type_id, origin_members, is_fallback);
+    }
+
+    fn store_union_origin_kind(
+        &self,
+        union_type_id: TypeId,
+        origin_members: Vec<TypeId>,
+        exact_rewrite_fallback: bool,
+    ) {
         if origin_members.len() < 2 {
             return;
         }
@@ -346,14 +499,39 @@ impl TypeInterner {
                     &origin_members,
                 );
             if !needs_origin {
+                if !exact_rewrite_fallback
+                    && let Entry::Occupied(entry) = self.display_union_origin.entry(union_type_id)
+                    && entry.get().exact_rewrite_fallback
+                {
+                    entry.remove();
+                    self.advance_display_provenance_generation();
+                }
                 return;
             }
         }
-        // First writer wins so deterministic display order is preserved when
-        // the same flattened union is reached from multiple annotation sites.
-        self.display_union_origin
-            .entry(union_type_id)
-            .or_insert_with(|| Arc::new(origin_members));
+        match self.display_union_origin.entry(union_type_id) {
+            Entry::Vacant(entry) => {
+                entry.insert(DisplayUnionOrigin {
+                    members: Arc::new(origin_members),
+                    exact_rewrite_fallback,
+                });
+                self.advance_display_provenance_generation();
+            }
+            Entry::Occupied(mut entry)
+                if !exact_rewrite_fallback && entry.get().exact_rewrite_fallback =>
+            {
+                entry.insert(DisplayUnionOrigin {
+                    members: Arc::new(origin_members),
+                    exact_rewrite_fallback: false,
+                });
+                self.advance_display_provenance_generation();
+            }
+            Entry::Occupied(_) => {
+                // Real origins are first-writer-wins. In particular, a later
+                // exact-rewrite session cannot repaint unrelated provenance on
+                // a shared canonical union target.
+            }
+        }
     }
 
     /// Replace the display origin for a union whose diagnostic context has a
@@ -369,8 +547,23 @@ impl TypeInterner {
         let Some(TypeData::Union(_)) = self.lookup(union_type_id) else {
             return;
         };
-        self.display_union_origin
-            .insert(union_type_id, Arc::new(origin_members));
+        let origin_members = Arc::new(origin_members);
+        let changed = self
+            .display_union_origin
+            .insert(
+                union_type_id,
+                DisplayUnionOrigin {
+                    members: Arc::clone(&origin_members),
+                    exact_rewrite_fallback: false,
+                },
+            )
+            .is_none_or(|previous| {
+                previous.exact_rewrite_fallback
+                    || previous.members.as_ref() != origin_members.as_ref()
+            });
+        if changed {
+            self.advance_display_provenance_generation();
+        }
     }
 
     /// Decide whether storing the as-written origin is needed even when no
@@ -662,6 +855,8 @@ impl TypeInterner {
 
     /// Look up the as-written origin members for a flattened Union TypeId.
     pub fn get_union_origin(&self, type_id: TypeId) -> Option<Arc<Vec<TypeId>>> {
-        self.display_union_origin.get(&type_id).map(|r| r.clone())
+        self.display_union_origin
+            .get(&type_id)
+            .map(|origin| Arc::clone(&origin.members))
     }
 }

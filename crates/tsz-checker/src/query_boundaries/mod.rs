@@ -35,6 +35,7 @@ pub(crate) mod diagnostics;
 pub(crate) mod dispatch;
 pub(crate) mod enum_analysis;
 pub(crate) mod environment;
+pub(crate) mod exact_rewrite;
 pub(crate) mod flow;
 pub(crate) mod flow_analysis;
 pub(crate) mod function_returns;

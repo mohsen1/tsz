@@ -5,8 +5,10 @@ use crate::query_boundaries::common::{
 };
 use crate::query_boundaries::construct_signatures::call_only_callable_type;
 use crate::query_boundaries::definite_assignment::constructor_assigned_properties;
+use crate::query_boundaries::exact_rewrite::ExactTypeRewriteSession;
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::RefCell;
 use tsz_lowering::TypeLowering;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -23,6 +25,155 @@ pub(crate) struct ClassPropertyInitializationInfo {
     pub(crate) has_no_initializer: bool,
     pub(crate) is_abstract: bool,
     pub(crate) requires_initialization: bool,
+}
+
+#[cfg(test)]
+mod exact_rebind_cache_tests {
+    use super::ClassChainSummary;
+    use tsz_solver::construction::TypeInterner;
+    use tsz_solver::def::DefId;
+    use tsz_solver::{ParamInfo, TypeId, TypeParamInfo};
+
+    #[test]
+    fn repeated_member_rebind_reuses_nested_generic_identity() {
+        let db = TypeInterner::new();
+        let source_outer = db.fresh_type_param(TypeParamInfo::simple(db.intern_string("Outer")));
+        let active_outer = db.fresh_type_param(TypeParamInfo::simple(db.intern_string("Active")));
+        let nested = db.fresh_type_param(TypeParamInfo {
+            name: db.intern_string("Nested"),
+            constraint: Some(source_outer),
+            default: None,
+            is_const: false,
+            origin: tsz_solver::TypeParamOrigin::User,
+        });
+        let member = crate::query_boundaries::construct_signatures::function_type_from_parts(
+            &db,
+            Vec::new(),
+            vec![ParamInfo {
+                type_id: nested,
+                ..ParamInfo::default()
+            }],
+            None,
+            TypeId::VOID,
+            None,
+            false,
+            true,
+        );
+        let summary = ClassChainSummary {
+            root_type_params: vec![source_outer],
+            ..ClassChainSummary::default()
+        };
+
+        let first = summary.rebind_root_type_params(&db, &[active_outer], member);
+        let second = summary.rebind_root_type_params(&db, &[active_outer], member);
+
+        assert_eq!(first, second);
+        assert_ne!(first, member);
+    }
+
+    #[test]
+    fn identical_or_empty_class_binder_scopes_skip_rewrite_sessions() {
+        let db = TypeInterner::new();
+        let outer = db.fresh_type_param(TypeParamInfo::simple(db.intern_string("Outer")));
+        let member = db.array(outer);
+        let generic_summary = ClassChainSummary {
+            root_type_params: vec![outer],
+            ..ClassChainSummary::default()
+        };
+
+        assert_eq!(
+            generic_summary.rebind_root_type_params(&db, &[outer], member),
+            member,
+        );
+        assert!(generic_summary.rebind_sessions.borrow().is_empty());
+
+        let plain_summary = ClassChainSummary::default();
+        assert_eq!(
+            plain_summary.rebind_root_type_params(&db, &[], TypeId::STRING),
+            TypeId::STRING,
+        );
+        assert!(plain_summary.rebind_sessions.borrow().is_empty());
+    }
+
+    #[test]
+    fn cached_member_rebind_refreshes_late_application_display_alias() {
+        let db = TypeInterner::new();
+        let source_outer = db.fresh_type_param(TypeParamInfo::simple(db.intern_string("Outer")));
+        let active_outer = db.fresh_type_param(TypeParamInfo::simple(db.intern_string("Active")));
+        // The application is discovered before its evaluated structural result,
+        // matching evaluator allocation order, but its provenance is attached
+        // only after the first cached rewrite.
+        let alias_base = db.lazy(DefId(27));
+        let source_alias = db.application(alias_base, vec![source_outer]);
+        let member = db.array(source_outer);
+        let summary = ClassChainSummary {
+            root_type_params: vec![source_outer],
+            ..ClassChainSummary::default()
+        };
+
+        let first = summary.rebind_root_type_params(&db, &[active_outer], member);
+        assert_eq!(db.get_display_alias(first), None);
+
+        db.store_display_alias_preferring_application(member, source_alias);
+        db.record_application_eval_origin(member, source_alias);
+        assert_eq!(db.get_display_alias(member), Some(source_alias));
+
+        let second = summary.rebind_root_type_params(&db, &[active_outer], member);
+        let expected_alias = db.application(alias_base, vec![active_outer]);
+
+        assert_eq!(second, first);
+        assert_eq!(db.get_display_alias(second), Some(expected_alias));
+        assert_eq!(db.get_application_eval_origin(second), Some(expected_alias));
+    }
+
+    #[test]
+    fn cached_rebind_session_shares_nested_binder_across_member_roots() {
+        let db = TypeInterner::new();
+        let source_outer = db.fresh_type_param(TypeParamInfo::simple(db.intern_string("Outer")));
+        let active_outer = db.fresh_type_param(TypeParamInfo::simple(db.intern_string("Active")));
+        let nested = db.fresh_type_param(TypeParamInfo {
+            name: db.intern_string("Nested"),
+            constraint: Some(source_outer),
+            default: None,
+            is_const: false,
+            origin: tsz_solver::TypeParamOrigin::User,
+        });
+        let function_member =
+            crate::query_boundaries::construct_signatures::function_type_from_parts(
+                &db,
+                Vec::new(),
+                vec![ParamInfo {
+                    type_id: nested,
+                    ..ParamInfo::default()
+                }],
+                None,
+                TypeId::VOID,
+                None,
+                false,
+                true,
+            );
+        let array_member = db.array(nested);
+        let summary = ClassChainSummary {
+            root_type_params: vec![source_outer],
+            ..ClassChainSummary::default()
+        };
+
+        let rewritten_function =
+            summary.rebind_root_type_params(&db, &[active_outer], function_member);
+        let rewritten_array = summary.rebind_root_type_params(&db, &[active_outer], array_member);
+
+        let rewritten_nested = crate::query_boundaries::exact_rewrite::function_parameter_type(
+            &db,
+            rewritten_function,
+            0,
+        )
+        .expect("expected rewritten function member");
+        let array_nested =
+            crate::query_boundaries::exact_rewrite::array_element_type(&db, rewritten_array)
+                .expect("expected rewritten array member");
+        assert_eq!(rewritten_nested, array_nested);
+        assert_ne!(rewritten_nested, nested);
+    }
 }
 
 #[derive(Clone, Default)]
@@ -91,6 +242,12 @@ pub(crate) enum ClassMemberKind {
 
 #[derive(Clone, Default)]
 pub(crate) struct ClassChainSummary {
+    /// Root-class type parameter identities used to build this cached summary.
+    root_type_params: Vec<TypeId>,
+    /// Exact rebinds are stable for one cached summary and active binder vector.
+    /// This prevents nested generic member binders from being freshly allocated
+    /// again on every property access.
+    rebind_sessions: RefCell<FxHashMap<Vec<TypeId>, ExactTypeRewriteSession>>,
     /// Unified instance member map: name -> entry (replaces 6 maps + 1 set)
     instance_members: FxHashMap<String, MemberEntry>,
     /// Unified static member map: name -> entry (replaces 6 maps + 1 set)
@@ -108,6 +265,64 @@ pub(crate) struct ClassChainSummary {
 }
 
 impl ClassChainSummary {
+    pub(crate) fn rebind_root_type_params(
+        &self,
+        db: &dyn tsz_solver::construction::QueryDatabase,
+        active_root_type_params: &[TypeId],
+        type_id: TypeId,
+    ) -> TypeId {
+        if self.root_type_params.len() != active_root_type_params.len() {
+            return type_id;
+        }
+        if self.root_type_params.is_empty()
+            || self.root_type_params.as_slice() == active_root_type_params
+        {
+            return type_id;
+        }
+        {
+            let mut cache = self.rebind_sessions.borrow_mut();
+            if let Some(session) = cache.get_mut(active_root_type_params) {
+                // A shared-frame abort must not publish a provenance-stale or
+                // partial result. Keep the completed session so the next access
+                // can retry without reminting structural fresh binders.
+                return session.rewrite_root(db, type_id).unwrap_or(type_id);
+            }
+        }
+
+        let Some((result, session)) = crate::query_boundaries::exact_rewrite::start_session(
+            db,
+            type_id,
+            &self.root_type_params,
+            active_root_type_params,
+        ) else {
+            return type_id;
+        };
+        self.rebind_sessions
+            .borrow_mut()
+            .insert(active_root_type_params.to_vec(), session);
+        result
+    }
+
+    /// Resolve the cached summary's declaration-ordered binders through the
+    /// current name scope. This is used only during early class construction,
+    /// before `EnclosingClassInfo` is installed and before member-level binders
+    /// can shadow the class parameters.
+    pub(crate) fn root_type_params_from_active_scope(
+        &self,
+        db: &dyn tsz_solver::construction::TypeDatabase,
+        active_scope: &FxHashMap<String, TypeId>,
+    ) -> Option<Vec<TypeId>> {
+        self.root_type_params
+            .iter()
+            .map(|&type_id| {
+                let info =
+                    crate::query_boundaries::checkers::generic::named_type_param_info(db, type_id)?;
+                let name = db.resolve_atom_ref(info.name);
+                active_scope.get(name.as_ref()).copied()
+            })
+            .collect()
+    }
+
     pub(crate) fn lookup(
         &self,
         target_name: &str,
@@ -686,7 +901,14 @@ impl<'a> CheckerState<'a> {
             // Without this, the substitution in check_property_inheritance_compatibility
             // cannot replace the type parameters, causing base member types to remain
             // as `any` and skipping TS2416 checks entirely.
-            let (_, type_param_updates) = self.push_type_parameters(&class.type_parameters);
+            let (class_type_params, type_param_updates) =
+                self.push_effective_class_type_parameters(current_idx, class);
+
+            if is_first {
+                summary.root_type_params = self
+                    .exact_type_parameter_ids_in_scope(&class_type_params)
+                    .unwrap_or_default();
+            }
 
             let own_summary = self.collect_class_members_for_chain(current_idx, class);
 
@@ -782,7 +1004,7 @@ impl<'a> CheckerState<'a> {
             if let Some((base_class_idx, type_arg_ids)) = extends_info {
                 if let Some(base_class) = self.ctx.arena.get_class_at(base_class_idx) {
                     let (base_type_params, base_type_param_updates) =
-                        self.push_type_parameters(&base_class.type_parameters);
+                        self.push_effective_class_type_parameters(base_class_idx, base_class);
                     self.pop_type_parameters(base_type_param_updates);
 
                     if !base_type_params.is_empty() && !type_arg_ids.is_empty() {
@@ -833,7 +1055,7 @@ impl<'a> CheckerState<'a> {
         include_private: bool,
     ) -> Option<TypeId> {
         let class = self.ctx.arena.get_class_at(class_idx)?;
-        let (_, type_param_updates) = self.push_type_parameters(&class.type_parameters);
+        let (_, type_param_updates) = self.push_effective_class_type_parameters(class_idx, class);
         let summary = self.collect_class_members_for_chain(class_idx, class);
         self.pop_type_parameters(type_param_updates);
 
@@ -1062,7 +1284,8 @@ impl<'a> CheckerState<'a> {
                     .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
                     .collect()
             } else {
-                Vec::new()
+                self.jsdoc_extends_type_arguments_for_heritage(class_idx, expr_idx)
+                    .unwrap_or_default()
             };
 
             return Some((base_class_idx, type_arg_ids));

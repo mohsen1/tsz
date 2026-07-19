@@ -1155,6 +1155,7 @@ mod api_lazy;
 mod cache_stability;
 mod conditional;
 mod display_properties;
+mod exact_rewrite;
 pub(crate) mod flags;
 mod homomorphic;
 mod indexed;
@@ -1167,6 +1168,10 @@ use self::api_lazy::{
     conditional_condition_needs_resolver, index_access_operand_needs_resolver,
     mapped_constraint_needs_resolver, template_has_lazy_application_in_composite,
     type_contains_lazy_application,
+};
+pub use self::exact_rewrite::{
+    ExactRewriteAborted, ExactRewriteMemo, substitute_exact_type, substitute_exact_types,
+    substitute_exact_types_with_memo,
 };
 pub use self::substitution::TypeSubstitution;
 #[cfg(test)]

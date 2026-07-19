@@ -6,6 +6,7 @@ use crate::query_boundaries::signature_building as signature_building_boundary;
 use crate::state::CheckerState;
 use rustc_hash::FxHashMap;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::ClassData;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{CallSignature, IndexSignature, TypeId, TypeParamInfo, Visibility};
@@ -15,7 +16,7 @@ use tsz_solver::{CallSignature, IndexSignature, TypeId, TypeParamInfo, Visibilit
 /// scope (so `pop_type_parameters` can restore it), and a flag indicating
 /// whether the push shadowed an enclosing class's type parameter (so the pop
 /// can restore the class scope entry too).
-type ScopeUpdate = (String, Option<TypeId>, bool);
+pub(crate) type ScopeUpdate = (String, Option<TypeId>, bool);
 
 pub(super) struct MethodAggregate {
     pub(super) overload_signatures: Vec<CallSignature>,
@@ -96,6 +97,29 @@ pub(super) fn declaration_is_module_augmentation(
 }
 
 impl<'a> CheckerState<'a> {
+    /// Push the effective class type parameters for either TypeScript syntax or
+    /// a JavaScript `@template` declaration.
+    ///
+    /// Keeping this selection in one place ensures class summaries, statement
+    /// checking, and instance construction all observe the same binder set.
+    pub(crate) fn push_effective_class_type_parameters(
+        &mut self,
+        class_idx: NodeIndex,
+        class: &ClassData,
+    ) -> (Vec<TypeParamInfo>, Vec<ScopeUpdate>) {
+        let (mut type_params, mut scope_updates) =
+            self.push_type_parameters(&class.type_parameters);
+        if type_params.is_empty() {
+            let (jsdoc_params, jsdoc_updates) =
+                self.push_jsdoc_class_template_type_params(class_idx);
+            if !jsdoc_params.is_empty() {
+                type_params = jsdoc_params;
+                scope_updates.extend(jsdoc_updates);
+            }
+        }
+        (type_params, scope_updates)
+    }
+
     /// Whether a just-computed constructor type for this class symbol may be
     /// cached. Two windows forbid caching:
     /// - the class's own constructor resolution is re-entrant

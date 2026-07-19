@@ -178,6 +178,10 @@ pub struct EnclosingClassInfo {
     pub type_param_names: Vec<String>,
     /// The type parameter infos of the class's own type parameters.
     pub class_type_parameters: Vec<tsz_solver::TypeParamInfo>,
+    /// Exact interned identities of the class's own type parameters, in
+    /// declaration order. Kept separately from the name-keyed active scope so
+    /// method-level shadowing cannot hide the enclosing class binders.
+    pub class_type_parameter_ids: Vec<TypeId>,
 }
 
 /// Info about a label in scope for break/continue validation.

@@ -11,6 +11,13 @@ use std::sync::Arc;
 /// [`crate::caches::db::TypeDatabase`] makes display provenance a visible,
 /// narrower capability.
 pub trait TypeDisplayProvenance {
+    /// Monotonic generation changed by provenance side-table mutations.
+    ///
+    /// Implementations without mutable provenance may keep the default zero.
+    fn display_provenance_generation(&self) -> u64 {
+        0
+    }
+
     /// Store display-only properties for a fresh object literal.
     ///
     /// These are the pre-widened property types shown in error messages.
@@ -34,6 +41,15 @@ pub trait TypeDisplayProvenance {
     fn store_display_alias_preferring_application(&self, evaluated: TypeId, application: TypeId) {
         self.store_display_alias(evaluated, application);
     }
+
+    /// Transfer an already-validated application alias while rebuilding its
+    /// evaluated type graph.
+    ///
+    /// Unlike ordinary alias discovery, this operation must not depend on
+    /// whether the rebuilt application or rebuilt result was interned first.
+    /// Implementations still enforce intrinsic, scoped-parameter, and cycle
+    /// safety before accepting the transferred provenance.
+    fn transfer_rewritten_application_display_alias(&self, evaluated: TypeId, application: TypeId);
 
     /// Look up the original `Application` `TypeId` for a type produced by
     /// evaluating an `Application`. Returns `None` if no mapping exists.
@@ -94,6 +110,19 @@ pub trait TypeDisplayProvenance {
     /// See `TypeInterner::store_union_origin` for the full contract.
     fn store_union_origin(&self, _union_type_id: TypeId, _origin_members: Vec<TypeId>) {}
 
+    /// Store a union origin produced by an exact graph rewrite.
+    ///
+    /// A tagged fallback may be superseded by the first later real rewritten
+    /// source origin; an existing real target origin remains first-writer-wins.
+    fn store_rewritten_union_origin(
+        &self,
+        union_type_id: TypeId,
+        origin_members: Vec<TypeId>,
+        _is_fallback: bool,
+    ) {
+        self.store_union_origin(union_type_id, origin_members);
+    }
+
     /// Replace display-origin members for a union in a diagnostic-specific context.
     fn replace_union_origin_for_display(
         &self,
@@ -132,6 +161,10 @@ pub trait TypeDisplayProvenance {
 }
 
 impl TypeDisplayProvenance for TypeInterner {
+    fn display_provenance_generation(&self) -> u64 {
+        Self::display_provenance_generation(self)
+    }
+
     fn store_display_properties(&self, type_id: TypeId, props: Vec<PropertyInfo>) {
         Self::store_display_properties(self, type_id, props);
     }
@@ -146,6 +179,10 @@ impl TypeDisplayProvenance for TypeInterner {
 
     fn store_display_alias_preferring_application(&self, evaluated: TypeId, application: TypeId) {
         Self::store_display_alias_preferring_application(self, evaluated, application);
+    }
+
+    fn transfer_rewritten_application_display_alias(&self, evaluated: TypeId, application: TypeId) {
+        Self::transfer_rewritten_application_display_alias(self, evaluated, application);
     }
 
     fn get_display_alias(&self, type_id: TypeId) -> Option<TypeId> {
@@ -194,6 +231,15 @@ impl TypeDisplayProvenance for TypeInterner {
 
     fn store_union_origin(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
         Self::store_union_origin(self, union_type_id, origin_members);
+    }
+
+    fn store_rewritten_union_origin(
+        &self,
+        union_type_id: TypeId,
+        origin_members: Vec<TypeId>,
+        is_fallback: bool,
+    ) {
+        Self::store_rewritten_union_origin(self, union_type_id, origin_members, is_fallback);
     }
 
     fn replace_union_origin_for_display(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {

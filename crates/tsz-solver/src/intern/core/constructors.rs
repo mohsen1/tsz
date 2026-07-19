@@ -1133,6 +1133,26 @@ impl TypeInterner {
     /// Do NOT use for final compiler output (like .d.ts generation) as the
     /// resulting type will be "unsimplified".
     pub fn intersect_types_raw(&self, members: Vec<TypeId>) -> TypeId {
+        self.intersect_types_raw_impl(members, true)
+    }
+
+    /// Replay an existing raw intersection without emitting a new complexity
+    /// signal.
+    ///
+    /// Exact identity substitution preserves already-admitted structure; it is
+    /// not a new semantic intersection request. This constructor therefore has
+    /// the same `O(N)` flattening, order-preserving deduplication, sentinel
+    /// handling, and interning behavior as [`Self::intersect_types_raw`], but it
+    /// never sets the interner-wide `union_too_complex` diagnostic flag.
+    pub fn intersect_types_raw_for_replay(&self, members: Vec<TypeId>) -> TypeId {
+        self.intersect_types_raw_impl(members, false)
+    }
+
+    fn intersect_types_raw_impl(
+        &self,
+        members: Vec<TypeId>,
+        signal_cross_product_complexity: bool,
+    ) -> TypeId {
         // Use SmallVec to keep stack allocation benefits
         let mut flat: TypeListBuffer = SmallVec::new();
 
@@ -1191,7 +1211,7 @@ impl TypeInterner {
         // TS2590: Cross-product union size check for raw intersections.
         // When an intersection contains union members, the cross-product
         // can grow exponentially. tsc bails at 100,000 constituents.
-        {
+        if signal_cross_product_complexity {
             let mut cross_product_size: u64 = 1;
             for &id in flat.iter() {
                 if let Some(TypeData::Union(members)) = self.lookup(id) {
