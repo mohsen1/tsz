@@ -148,15 +148,12 @@ impl CheckerState<'_> {
                     let constraint = constraint_strs
                         .get(&name)
                         .and_then(|s| self.resolve_jsdoc_reference(s));
-                    template_types.entry(name).or_insert_with(|| {
-                        class_property_query::js_class_type_param_type(
-                            self.ctx.types,
-                            atom,
-                            constraint,
-                            default,
-                            is_const,
-                        )
-                    });
+                    let info = class_property_query::js_class_type_param_info(
+                        atom, constraint, default, is_const,
+                    );
+                    let (type_id, _) =
+                        self.intern_jsdoc_type_param_for_owner_stamped(parent_idx, info);
+                    template_types.entry(name).or_insert(type_id);
                 }
                 return template_types;
             }
@@ -216,15 +213,11 @@ impl CheckerState<'_> {
                 let constraint = constraint_strs
                     .get(&name)
                     .and_then(|s| self.resolve_jsdoc_reference(s));
-                function_template_types.entry(name).or_insert_with(|| {
-                    class_property_query::js_class_type_param_type(
-                        self.ctx.types,
-                        atom,
-                        constraint,
-                        default,
-                        is_const,
-                    )
-                });
+                let info = class_property_query::js_class_type_param_info(
+                    atom, constraint, default, is_const,
+                );
+                let (type_id, _) = self.intern_jsdoc_type_param_for_owner_stamped(parent_idx, info);
+                function_template_types.entry(name).or_insert(type_id);
             }
         }
         let jsdoc_param_names: Vec<String> = jsdoc
@@ -482,13 +475,12 @@ impl CheckerState<'_> {
                             let constraint = constraint_strs
                                 .get(&name)
                                 .and_then(|s| self.resolve_jsdoc_reference(s));
-                            return Some(class_property_query::js_class_type_param_type(
-                                self.ctx.types,
-                                atom,
-                                constraint,
-                                default,
-                                is_const,
-                            ));
+                            let info = class_property_query::js_class_type_param_info(
+                                atom, constraint, default, is_const,
+                            );
+                            let (type_id, _) =
+                                self.intern_jsdoc_type_param_for_owner_stamped(parent_idx, info);
+                            return Some(type_id);
                         }
                     }
                 }
@@ -560,13 +552,12 @@ impl CheckerState<'_> {
                         let constraint = constraint_strs
                             .get(&name)
                             .and_then(|s| self.resolve_jsdoc_reference(s));
-                        return Some(class_property_query::js_class_type_param_type(
-                            self.ctx.types,
-                            atom,
-                            constraint,
-                            default,
-                            is_const,
-                        ));
+                        let info = class_property_query::js_class_type_param_info(
+                            atom, constraint, default, is_const,
+                        );
+                        let (type_id, _) =
+                            self.intern_jsdoc_type_param_for_owner_stamped(parent_idx, info);
+                        return Some(type_id);
                     }
                 }
             }

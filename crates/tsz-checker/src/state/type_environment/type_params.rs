@@ -186,13 +186,19 @@ impl<'a> CheckerState<'a> {
                 .get(&name)
                 .map(String::as_str)
                 .and_then(crate::types_domain::queries::lib_resolution::keyword_name_to_type_id);
-            params.push(tsz_solver::TypeParamInfo {
+            let info = tsz_solver::TypeParamInfo {
                 name: self.ctx.types.intern_string(&name),
                 constraint,
                 default,
                 is_const,
                 origin: tsz_solver::TypeParamOrigin::User,
-            });
+            };
+            let (_, stamped_info) = self.intern_cross_arena_jsdoc_type_param_for_owner_stamped(
+                &sf.file_name,
+                decl_idx,
+                info,
+            );
+            params.push(stamped_info);
         }
 
         if params.is_empty() {
@@ -360,13 +366,16 @@ impl<'a> CheckerState<'a> {
             let constraint = constraint_strs
                 .get(&name)
                 .and_then(|s| checker.resolve_jsdoc_reference(s));
-            params.push(tsz_solver::TypeParamInfo {
+            let info = tsz_solver::TypeParamInfo {
                 name: checker.ctx.types.intern_string(&name),
                 constraint,
                 default,
                 is_const,
                 origin: tsz_solver::TypeParamOrigin::User,
-            });
+            };
+            let (_, stamped_info) =
+                checker.intern_jsdoc_type_param_for_owner_stamped(decl_idx, info);
+            params.push(stamped_info);
         }
 
         if params.is_empty() {

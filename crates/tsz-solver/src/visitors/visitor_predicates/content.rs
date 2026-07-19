@@ -6,6 +6,7 @@
 //! child set each walker descends into is an explicit [`ChildPolicy`].
 
 use std::ops::ControlFlow;
+use std::sync::Arc;
 
 use crate::construction::TypeDatabase;
 use crate::types::IntrinsicKind;
@@ -622,6 +623,159 @@ pub fn free_type_parameter_ids_in(
     out
 }
 
+/// Collect authoritative declaration origins (and their display names) that
+/// occur free across `roots`.
+///
+/// Unlike [`free_type_parameter_ids_in`], this walk enters generic signature
+/// bodies. It scopes out only each signature's own declaration origins, so an
+/// object property such as `<Inner>(value: Outer) => Outer` still reports the
+/// captured `Outer` while excluding `Inner`. The visited key includes the
+/// active origin scope, making shared and recursive type graphs cycle-safe
+/// without confusing the same node reached under different binders.
+pub fn free_decl_scoped_type_parameter_origins_in(
+    types: &dyn TypeDatabase,
+    roots: impl IntoIterator<Item = TypeId>,
+) -> FxHashSet<(crate::types::TypeParamOrigin, Atom)> {
+    use crate::types::{CallSignature, TypeParamInfo, TypeParamOrigin};
+
+    fn with_signature_origins(
+        bound: &Arc<[TypeParamOrigin]>,
+        type_params: &[TypeParamInfo],
+    ) -> Arc<[TypeParamOrigin]> {
+        let mut next: Vec<_> = bound.iter().copied().collect();
+        for origin in type_params.iter().map(|param| param.origin) {
+            if origin.is_decl_scoped() && !next.contains(&origin) {
+                next.push(origin);
+            }
+        }
+        if next.len() == bound.len() {
+            Arc::clone(bound)
+        } else {
+            Arc::from(next)
+        }
+    }
+
+    fn push_signature(
+        stack: &mut Vec<(TypeId, Arc<[TypeParamOrigin]>)>,
+        bound: &Arc<[TypeParamOrigin]>,
+        signature: &CallSignature,
+    ) {
+        let signature_bound = with_signature_origins(bound, &signature.type_params);
+        stack.push((signature.return_type, Arc::clone(&signature_bound)));
+        if let Some(this_type) = signature.this_type {
+            stack.push((this_type, Arc::clone(&signature_bound)));
+        }
+        if let Some(predicate_type) = signature
+            .type_predicate
+            .as_ref()
+            .and_then(|predicate| predicate.type_id)
+        {
+            stack.push((predicate_type, Arc::clone(&signature_bound)));
+        }
+        for param in &signature.params {
+            stack.push((param.type_id, Arc::clone(&signature_bound)));
+        }
+        for type_param in &signature.type_params {
+            if let Some(constraint) = type_param.constraint {
+                stack.push((constraint, Arc::clone(&signature_bound)));
+            }
+            if let Some(default) = type_param.default {
+                stack.push((default, Arc::clone(&signature_bound)));
+            }
+        }
+    }
+
+    let empty_scope: Arc<[TypeParamOrigin]> = Arc::from([]);
+    let mut stack: Vec<_> = roots
+        .into_iter()
+        .map(|root| (root, Arc::clone(&empty_scope)))
+        .collect();
+    let mut visited: FxHashSet<(TypeId, Arc<[TypeParamOrigin]>)> = FxHashSet::default();
+    let mut origins = FxHashSet::default();
+
+    while let Some((type_id, bound)) = stack.pop() {
+        if type_id.is_intrinsic() || !visited.insert((type_id, Arc::clone(&bound))) {
+            continue;
+        }
+        let Some(key) = types.lookup(type_id) else {
+            continue;
+        };
+        match key {
+            TypeData::TypeParameter(info) => {
+                if info.origin.is_decl_scoped() && !bound.contains(&info.origin) {
+                    origins.insert((info.origin, info.name));
+                }
+            }
+            TypeData::Infer(_) => {}
+            TypeData::Function(shape_id) => {
+                let shape = types.function_shape(shape_id);
+                let signature_bound = with_signature_origins(&bound, &shape.type_params);
+                stack.push((shape.return_type, Arc::clone(&signature_bound)));
+                if let Some(this_type) = shape.this_type {
+                    stack.push((this_type, Arc::clone(&signature_bound)));
+                }
+                if let Some(predicate_type) = shape
+                    .type_predicate
+                    .as_ref()
+                    .and_then(|predicate| predicate.type_id)
+                {
+                    stack.push((predicate_type, Arc::clone(&signature_bound)));
+                }
+                for param in &shape.params {
+                    stack.push((param.type_id, Arc::clone(&signature_bound)));
+                }
+                for type_param in &shape.type_params {
+                    if let Some(constraint) = type_param.constraint {
+                        stack.push((constraint, Arc::clone(&signature_bound)));
+                    }
+                    if let Some(default) = type_param.default {
+                        stack.push((default, Arc::clone(&signature_bound)));
+                    }
+                }
+            }
+            TypeData::Callable(shape_id) => {
+                let shape = types.callable_shape(shape_id);
+                for signature in shape
+                    .call_signatures
+                    .iter()
+                    .chain(shape.construct_signatures.iter())
+                {
+                    push_signature(&mut stack, &bound, signature);
+                }
+                for property in &shape.properties {
+                    stack.push((property.type_id, Arc::clone(&bound)));
+                    stack.push((property.write_type, Arc::clone(&bound)));
+                }
+                for index in [shape.string_index.as_ref(), shape.number_index.as_ref()]
+                    .into_iter()
+                    .flatten()
+                {
+                    stack.push((index.key_type, Arc::clone(&bound)));
+                    stack.push((index.value_type, Arc::clone(&bound)));
+                }
+            }
+            TypeData::Mapped(mapped_id) => {
+                let mapped = types.get_mapped(mapped_id);
+                stack.push((mapped.constraint, Arc::clone(&bound)));
+                let mapped_bound =
+                    with_signature_origins(&bound, std::slice::from_ref(&mapped.type_param));
+                stack.push((mapped.template, Arc::clone(&mapped_bound)));
+                if let Some(name_type) = mapped.name_type {
+                    stack.push((name_type, Arc::clone(&mapped_bound)));
+                }
+                if let Some(default) = mapped.type_param.default {
+                    stack.push((default, Arc::clone(&mapped_bound)));
+                }
+            }
+            _ => for_each_child_with_policy(types, &key, &ChildPolicy::EVERYTHING, |child| {
+                stack.push((child, Arc::clone(&bound)));
+            }),
+        }
+    }
+
+    origins
+}
+
 struct FreeTypeParamCollector<'a> {
     types: &'a dyn TypeDatabase,
     /// Memoized free-parameter set per `TypeId`. Freeness is a pure function of
@@ -724,7 +878,67 @@ pub fn contains_free_type_parameters_except_name(
 mod tests {
     use super::*;
     use crate::intern::TypeInterner;
-    use crate::types::{TupleElement, TypeParamInfo};
+    use crate::types::{
+        FunctionShape, ParamInfo, PropertyInfo, TupleElement, TypeParamInfo, TypeParamOrigin,
+    };
+
+    #[test]
+    fn free_decl_origins_scope_nested_generic_binders_but_keep_outer_captures() {
+        let interner = TypeInterner::new();
+        let file = interner.intern_string("capture.js");
+        let outer_info = TypeParamInfo {
+            origin: TypeParamOrigin::DeclScoped { file, node: 10 },
+            ..TypeParamInfo::simple(interner.intern_string("OuterValue"))
+        };
+        let inner_info = TypeParamInfo {
+            origin: TypeParamOrigin::DeclScoped { file, node: 20 },
+            ..TypeParamInfo::simple(interner.intern_string("InnerValue"))
+        };
+        let outer = interner.type_param(outer_info);
+        let inner = interner.type_param(inner_info);
+        let nested_generic = interner.function(FunctionShape {
+            type_params: vec![inner_info],
+            ..FunctionShape::new(vec![ParamInfo::unnamed(inner)], outer)
+        });
+        let object = interner.object(vec![PropertyInfo::new(
+            interner.intern_string("transform"),
+            nested_generic,
+        )]);
+
+        let origins = free_decl_scoped_type_parameter_origins_in(&interner, [object]);
+        assert_eq!(origins.len(), 1);
+        assert!(origins.contains(&(outer_info.origin, outer_info.name)));
+        assert!(!origins.contains(&(inner_info.origin, inner_info.name)));
+    }
+
+    #[test]
+    fn free_decl_origins_deduplicate_reminted_ids_and_ignore_legacy_user_params() {
+        let interner = TypeInterner::new();
+        let file = interner.intern_string("remint.js");
+        let name = interner.intern_string("Value");
+        let origin = TypeParamOrigin::DeclScoped { file, node: 30 };
+        let first = interner.type_param(TypeParamInfo {
+            origin,
+            ..TypeParamInfo::simple(name)
+        });
+        let second = interner.type_param(TypeParamInfo {
+            constraint: Some(TypeId::STRING),
+            origin,
+            ..TypeParamInfo::simple(name)
+        });
+        let legacy = interner.type_param(TypeParamInfo::simple(name));
+        assert_ne!(first, second, "the witness must use separately minted ids");
+
+        let origins = free_decl_scoped_type_parameter_origins_in(
+            &interner,
+            [interner.tuple(vec![
+                TupleElement::fixed(first),
+                TupleElement::fixed(second),
+                TupleElement::fixed(legacy),
+            ])],
+        );
+        assert_eq!(origins, FxHashSet::from_iter([(origin, name)]));
+    }
 
     #[test]
     fn predicate_worklist_visit_state_names_intrinsic_entered_and_revisit() {

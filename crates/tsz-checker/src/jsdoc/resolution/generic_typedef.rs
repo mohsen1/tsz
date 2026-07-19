@@ -48,13 +48,17 @@ impl<'a> CheckerState<'a> {
             let content = get_jsdoc_content(comment, &source_file.text);
             for (name, typedef_info) in Self::parse_jsdoc_typedefs(&content) {
                 if name == base_name {
-                    best_def = Some(typedef_info);
+                    best_def = Some((typedef_info, comment.pos));
                 }
             }
         }
 
-        let (body_type, type_params) =
-            self.type_from_jsdoc_typedef_inner(best_def?, Some(base_name))?;
+        let (typedef_info, comment_pos) = best_def?;
+        let previous_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
+        self.ctx.jsdoc_typedef_anchor_pos.set(comment_pos);
+        let result = self.type_from_jsdoc_typedef_inner(typedef_info, Some(base_name), comment_pos);
+        self.ctx.jsdoc_typedef_anchor_pos.set(previous_anchor);
+        let (body_type, type_params) = result?;
         if type_args.is_empty() {
             return Some(body_type);
         }

@@ -6,10 +6,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{CallSignature, TypeId, TypeParamInfo};
-
-type JsdocTemplateParamScopeUpdates = Vec<(String, Option<TypeId>, bool)>;
-type JsdocTemplateParamPushResult = (Vec<TypeParamInfo>, JsdocTemplateParamScopeUpdates);
+use tsz_solver::{CallSignature, TypeId};
 
 // =============================================================================
 // Signature Building Methods
@@ -83,7 +80,8 @@ impl<'a> CheckerState<'a> {
         overload_docs
             .into_iter()
             .map(|(jsdoc, comment_pos)| {
-                let (type_params, updates) = self.push_jsdoc_overload_template_params(&jsdoc);
+                let (type_params, updates) =
+                    self.push_jsdoc_template_type_parameters_for_comment(comment_pos, &jsdoc);
                 let mut signature = base_signature.clone();
                 signature.type_params = type_params;
                 let jsdoc_params = Self::extract_jsdoc_param_names(&jsdoc);
@@ -132,30 +130,6 @@ impl<'a> CheckerState<'a> {
             .collect()
     }
 
-    fn push_jsdoc_overload_template_params(&mut self, jsdoc: &str) -> JsdocTemplateParamPushResult {
-        let template_names = Self::jsdoc_template_type_params(jsdoc);
-        if template_names.is_empty() {
-            return (Vec::new(), Vec::new());
-        }
-
-        let mut type_params = Vec::with_capacity(template_names.len());
-        let mut updates = Vec::with_capacity(template_names.len());
-
-        for (name, is_const, default_str) in template_names {
-            let atom = self.ctx.types.intern_string(&name);
-            let default = default_str
-                .as_deref()
-                .and_then(|type_expr| self.resolve_jsdoc_reference(type_expr));
-            let info = signature_query::user_type_param_info(atom, None, default, is_const);
-            let type_id = signature_query::user_type_param(self.ctx.types, info);
-            let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
-            updates.push((name, previous, false));
-            type_params.push(info);
-        }
-
-        (type_params, updates)
-    }
-
     /// Build a `CallSignature` from a method declaration.
     pub(crate) fn call_signature_from_method(
         &mut self,
@@ -175,14 +149,25 @@ impl<'a> CheckerState<'a> {
     ) -> tsz_solver::CallSignature {
         let enclosing_updates = self.push_enclosing_type_parameters(method_idx);
         self.exclude_params_for_type_param_constraints(&method.parameters);
-        let (type_params, type_param_updates) = self.push_type_parameters(&method.type_parameters);
+        let (mut type_params, type_param_updates) =
+            self.push_type_parameters(&method.type_parameters);
         self.clear_excluded_params_for_type_param_constraints();
-        let (mut params, this_type) = self.extract_params_from_parameter_list(&method.parameters);
         let method_jsdoc = if self.is_js_file() {
             self.find_jsdoc_for_function(method_idx)
         } else {
             None
         };
+        let jsdoc_type_param_updates = if type_params.is_empty() {
+            let (jsdoc_type_params, updates) = method_jsdoc.as_ref().map_or_else(
+                || (Vec::new(), Vec::new()),
+                |jsdoc| self.push_jsdoc_template_type_parameters_for_owner(method_idx, jsdoc),
+            );
+            type_params = jsdoc_type_params;
+            updates
+        } else {
+            Vec::new()
+        };
+        let (mut params, this_type) = self.extract_params_from_parameter_list(&method.parameters);
         if let Some(jsdoc) = method_jsdoc.as_ref() {
             let comment_start = self.get_jsdoc_comment_pos_for_function(method_idx);
             let jsdoc_param_names: Vec<String> = Self::extract_jsdoc_param_names(jsdoc)
@@ -315,6 +300,7 @@ impl<'a> CheckerState<'a> {
                 .application(promise_base, vec![return_type]);
         }
 
+        self.pop_type_parameters(jsdoc_type_param_updates);
         self.pop_type_parameters(type_param_updates);
         self.pop_type_parameters(enclosing_updates);
 

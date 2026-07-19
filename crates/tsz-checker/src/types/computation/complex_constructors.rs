@@ -124,36 +124,11 @@ impl<'a> CheckerState<'a> {
                 })
                 .unwrap_or_default();
 
-            if type_parameters.is_none() {
-                let factory = self.ctx.types.factory();
-                let constraint_strs = func_jsdoc
-                    .as_ref()
-                    .map(|jsdoc| Self::jsdoc_template_constraint_strings(jsdoc))
-                    .unwrap_or_default();
-                for (name, is_const, default_str) in func_jsdoc
-                    .as_ref()
-                    .map(|jsdoc| Self::jsdoc_template_type_params(jsdoc))
-                    .unwrap_or_default()
-                {
-                    let atom = self.ctx.types.intern_string(&name);
-                    let default = default_str
-                        .as_deref()
-                        .and_then(|s| self.resolve_jsdoc_reference(s));
-                    let constraint = constraint_strs
-                        .get(&name)
-                        .and_then(|s| self.resolve_jsdoc_reference(s));
-                    let info = tsz_solver::TypeParamInfo {
-                        name: atom,
-                        constraint,
-                        default,
-                        is_const,
-                        origin: tsz_solver::TypeParamOrigin::User,
-                    };
-                    let ty = factory.type_param(info);
-                    let previous = self.ctx.type_parameter_scope.insert(name.clone(), ty);
-                    jsdoc_type_param_updates.push((name, previous, false));
-                    type_params.push(info);
-                }
+            if type_parameters.is_none()
+                && let Some(jsdoc) = func_jsdoc.as_deref()
+            {
+                (type_params, jsdoc_type_param_updates) =
+                    self.push_jsdoc_template_type_parameters_for_owner(callable_idx, jsdoc);
             }
         }
 

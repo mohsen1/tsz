@@ -1203,13 +1203,15 @@ impl CheckerState<'_> {
             let constraint = constraint_strs
                 .get(&name)
                 .and_then(|s| self.resolve_jsdoc_reference(s));
-            params.push(tsz_solver::TypeParamInfo {
+            let info = tsz_solver::TypeParamInfo {
                 name: self.ctx.types.intern_string(&name),
                 constraint,
                 default,
                 is_const,
                 origin: tsz_solver::TypeParamOrigin::User,
-            });
+            };
+            let (_, stamped_info) = self.intern_jsdoc_type_param_for_owner_stamped(decl_idx, info);
+            params.push(stamped_info);
         }
         if params.is_empty() {
             None

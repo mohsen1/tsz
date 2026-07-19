@@ -231,7 +231,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // #14345 WAVE-1: when the decl-origin-through-reduction flag is on,
             // a reduced-body `Kind<F,A>` param leaf survives the name-keyed
             // re-mint as a THIRD id (not the registered pre-instantiate id) but
-            // KEEPS its carried `DeclScoped { file, node }` origin. The id-keyed
+            // KEEPS its carried authoritative declaration origin. The id-keyed
             // match below misses that leaf; the origin-keyed match bridges it
             // when — and only when — the leaf's origin pair was registered by
             // the alpha-rename (same declaration site on both sides). A

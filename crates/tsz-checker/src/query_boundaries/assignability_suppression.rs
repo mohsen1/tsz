@@ -468,6 +468,18 @@ impl<'a> CheckerState<'a> {
             && !is_callable_or_function(target)
             && !target_contains_indexed_access()
             && !target_is_template_literal_from_bare_type_param;
+        // A free declaration-scoped parameter is an ordinary value-level type
+        // variable here, not a binder introduced by this relation. Distinct
+        // declaration sets therefore remain unrelated even when alias
+        // reduction leaves the same outer object shape. Generic callables are
+        // already excluded above and establish their own alpha-equivalence
+        // scope in the solver.
+        let distinct_decl_scoped_free_params = target_allows_complex_generic_suppression
+            && crate::query_boundaries::assignability::have_distinct_decl_scoped_free_type_parameters(
+                self.ctx.types,
+                source,
+                target,
+            );
 
         matches!(source, TypeId::ERROR)
             || matches!(target, TypeId::ERROR | TypeId::ANY)
@@ -501,7 +513,7 @@ impl<'a> CheckerState<'a> {
             // `\`...${Uppercase<T>}.4\`` vs `\`...${Uppercase<T>}.3\``) keep
             // their existing suppression — tsc tolerates those under generic
             // constraint relationships.
-            || target_allows_complex_generic_suppression
+            || (target_allows_complex_generic_suppression && !distinct_decl_scoped_free_params)
             // Suppress TS2322 for callable types where the source contains generic type
             // parameters that may not have been fully inferred from context. When both
             // source and target contain type parameters that are COMPLETELY disjoint

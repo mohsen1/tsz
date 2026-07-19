@@ -2,7 +2,7 @@
 
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::jsdoc::types::JsdocTypedefInfo;
-use crate::query_boundaries::jsdoc_construction::{jsdoc_type_param_info, jsdoc_type_param_type};
+use crate::query_boundaries::jsdoc_construction::jsdoc_type_param_info;
 use crate::state::CheckerState;
 
 pub(super) struct JsdocImportTypeConstraintDiagnostic<'a> {
@@ -41,7 +41,7 @@ impl<'a> CheckerState<'a> {
                 .and_then(|c| self.resolve_jsdoc_type_str(c));
             let atom = self.ctx.types.intern_string(&tp.name);
             let param = jsdoc_type_param_info(atom, constraint, None);
-            let type_id = jsdoc_type_param_type(self.ctx.types, param);
+            let (type_id, _) = self.intern_jsdoc_type_param_for_comment_stamped(comment_pos, param);
             let previous = self
                 .ctx
                 .type_parameter_scope

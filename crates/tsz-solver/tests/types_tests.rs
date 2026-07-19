@@ -583,10 +583,10 @@ fn test_property_info_eq_ignores_single_quoted_name() {
     );
 }
 
-/// #14344 layout guard: the `DeclScoped { file: Atom, node: u32 }` decl-identity
-/// variant must stay SIZE-NEUTRAL — its `(Atom, u32)` = 8-byte payload fits inside
-/// the pre-existing `InferSource { id: u64, origin_name: Option<Atom> }` 16-byte
-/// envelope, so `TypeParamOrigin` stays 16 bytes and `TypeParamInfo` stays 40.
+/// #14344 layout guard: authoritative declaration-origin variants must stay
+/// size-neutral. Their `(Atom, u32)` payload fits inside the pre-existing
+/// `InferSource { id: u64, origin_name: Option<Atom> }` 16-byte envelope, so
+/// `TypeParamOrigin` stays 16 bytes and `TypeParamInfo` stays 40 bytes.
 /// `TypeParamInfo` rides every `collect_type_parameters` frame in the deep
 /// `lower_type_parameter` recursion; any growth re-introduces the fp-ts
 /// stack-overflow the dispatch-split fixes. Keep this assertion green.
@@ -596,7 +596,7 @@ fn typeparam_origin_layout_is_size_neutral() {
     assert_eq!(
         size_of::<TypeParamOrigin>(),
         16,
-        "TypeParamOrigin must stay 16 bytes (DeclScoped fits inside InferSource's envelope)"
+        "TypeParamOrigin must stay 16 bytes (declaration origins fit InferSource's envelope)"
     );
     assert_eq!(align_of::<TypeParamOrigin>(), 8);
     assert_eq!(

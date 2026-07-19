@@ -9,7 +9,7 @@ use crate::query_boundaries::common::ContextualTypeContext;
 use crate::state::CheckerState;
 use tsz_parser::parser::{NodeIndex, node::NodeAccess, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{TypeId, TypeParamInfo};
+use tsz_solver::TypeId;
 
 struct FunctionBodyCtx<'a> {
     func_idx: NodeIndex,
@@ -197,7 +197,23 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Keep the declaration's JSDoc template binders active for the entire
+        // callback. In particular, nested declarations must shadow an outer
+        // binder even when both tags use identical text; their owner nodes are
+        // the stable declaration identity used by signature construction too.
+        let func_decl_jsdoc = self.get_jsdoc_for_function(func_idx);
         let (_type_params, type_param_updates) = self.push_type_parameters(&func.type_parameters);
+        let (_jsdoc_type_params, jsdoc_type_param_updates) = if self.is_js_file()
+            && func
+                .type_parameters
+                .as_ref()
+                .is_none_or(|params| params.nodes.is_empty())
+            && let Some(jsdoc) = func_decl_jsdoc.as_deref()
+        {
+            self.push_jsdoc_template_type_parameters_for_owner(func_idx, jsdoc)
+        } else {
+            (Vec::new(), Vec::new())
+        };
 
         self.check_duplicate_type_parameters(&func.type_parameters);
         self.check_type_parameters_for_missing_names(&func.type_parameters);
@@ -298,9 +314,6 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
-
-        // Extract JSDoc for function declarations to suppress TS7006/TS7010 in JS files
-        let func_decl_jsdoc = self.get_jsdoc_for_function(func_idx);
 
         // TS7006: Check parameters for implicit any.
         // For closures (function expressions and arrow functions), TS7006 is already
@@ -419,6 +432,7 @@ impl<'a> CheckerState<'a> {
             self.check_overload_compatibility(func_idx);
         }
 
+        self.pop_type_parameters(jsdoc_type_param_updates);
         self.pop_type_parameters(type_param_updates);
     }
 
@@ -488,52 +502,6 @@ impl<'a> CheckerState<'a> {
             jsdoc_return_type,
             func_decl_jsdoc,
         } = ctx;
-        // For JS files, push the function's `@template T` JSDoc declarations
-        // into `type_parameter_scope` so that `@type {T}` annotations inside
-        // the function body resolve to the same type parameter the signature
-        // builder created. Without this, body checking sees `T` as an
-        // undeclared identifier and emits a false-positive TS2304.
-        // The signature builder (`function_type.rs`) push/pops these around
-        // signature construction, so by body-check time they have been
-        // popped — re-push them locally for the body walk and pop at end.
-        let body_jsdoc_template_updates: Vec<(String, Option<TypeId>, bool)> = if self.is_js_file()
-            && func
-                .type_parameters
-                .as_ref()
-                .is_none_or(|tp| tp.nodes.is_empty())
-            && let Some(jsdoc) = func_decl_jsdoc.as_ref()
-        {
-            let template_names = Self::jsdoc_template_type_params(jsdoc);
-            let mut updates = Vec::with_capacity(template_names.len());
-            let factory = self.ctx.types.factory();
-            let constraint_strs = Self::jsdoc_template_constraint_strings(jsdoc);
-            for (name, is_const, default_str) in template_names {
-                if self.ctx.type_parameter_scope.contains_key(&name) {
-                    continue;
-                }
-                let atom = self.ctx.types.intern_string(&name);
-                let default = default_str
-                    .as_deref()
-                    .and_then(|s| self.resolve_jsdoc_reference(s));
-                let constraint = constraint_strs
-                    .get(&name)
-                    .and_then(|s| self.resolve_jsdoc_reference(s));
-                let info = TypeParamInfo {
-                    name: atom,
-                    constraint,
-                    default,
-                    is_const,
-                    origin: tsz_solver::TypeParamOrigin::User,
-                };
-                let ty = factory.type_param(info);
-                let previous = self.ctx.type_parameter_scope.insert(name.clone(), ty);
-                updates.push((name, previous, false));
-            }
-            updates
-        } else {
-            Vec::new()
-        };
-
         let mut return_type = if has_type_annotation {
             self.get_type_from_type_node(func.type_annotation)
         } else if let Some(jsdoc_ret) = jsdoc_return_type {
@@ -858,9 +826,6 @@ impl<'a> CheckerState<'a> {
         if let Some(outer_this) = masked_outer_this {
             self.ctx.this_type_stack.push(outer_this);
         }
-
-        // Restore the @template T scope pushed at the top of this function.
-        self.pop_type_parameters(body_jsdoc_template_updates);
     }
 
     /// TS2677: Check that a type predicate's type is assignable to its parameter's type

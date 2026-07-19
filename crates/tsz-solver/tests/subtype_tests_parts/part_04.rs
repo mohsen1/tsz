@@ -471,6 +471,59 @@ fn test_deferred_hkt_index_access_relates_decl_scoped_alpha_equivalent_binders()
 }
 
 #[test]
+fn test_authoritative_origins_are_distinct_bare_but_alpha_equivalent_in_signatures() {
+    let interner = TypeInterner::new();
+    let file = interner.intern_string("generic.js");
+    let left_info = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(TypeId::OBJECT),
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::DeclScoped {
+            file,
+            node: 10,
+        },
+    };
+    let right_info = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(TypeId::OBJECT),
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::JsdocCommentScoped {
+            file,
+            pos: 10,
+        },
+    };
+    let left_param = interner.type_param(left_info);
+    let right_param = interner.type_param(right_info);
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(
+        !checker.is_subtype_of(left_param, right_param),
+        "bare node/comment binders with the same numeric payload must remain unrelated"
+    );
+
+    let generic = |info: TypeParamInfo, param: TypeId| {
+        interner.function(FunctionShape {
+            type_params: vec![info],
+            params: vec![ParamInfo::unnamed(param)],
+            this_type: None,
+            return_type: param,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        })
+    };
+    let left = generic(left_info, left_param);
+    let right = generic(right_info, right_param);
+
+    assert!(
+        checker.is_subtype_of(left, right) && checker.is_subtype_of(right, left),
+        "generic-signature alpha equivalence must dominate declaration identity"
+    );
+}
+
+#[test]
 fn test_generic_covariant_return_position() {
     // Producer<T> = { get(): T } - T is in covariant position
     // Producer<string> <: Producer<string | number> (covariant)

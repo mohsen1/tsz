@@ -27,7 +27,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && (!self.strict_function_types || (is_method_like && !self.disable_method_bivariance))
     }
 
-    /// Build a name-keyed substitution that erases `DeclScoped` construction
+    /// Build a name-keyed substitution that erases authoritative declaration
     /// stamps for genuinely alpha-equivalent free type parameters in `roots`.
     ///
     /// Only same-name, same-surface (`constraint`/`default`/`is_const`) params
@@ -46,7 +46,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let Some(info) = type_param_info(self.interner, id) else {
                 continue;
             };
-            if !matches!(info.origin, TypeParamOrigin::DeclScoped { .. }) {
+            if !info.origin.is_decl_scoped() {
                 continue;
             }
 

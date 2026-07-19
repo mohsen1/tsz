@@ -1418,8 +1418,8 @@ impl<'a> CheckerState<'a> {
         // through to other resolution paths (matching TSC behavior where
         // function-scoped typedefs with duplicate names are not visible
         // at the module level).
-        let mut same_scope_def: Option<JsdocTypedefInfo> = None;
-        let mut deeper_defs: Vec<JsdocTypedefInfo> = Vec::new();
+        let mut same_scope_def: Option<(JsdocTypedefInfo, u32)> = None;
+        let mut deeper_defs: Vec<(JsdocTypedefInfo, u32)> = Vec::new();
 
         for comment in comments {
             if !is_jsdoc_comment(comment, source_text) {
@@ -1483,14 +1483,14 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
                 if is_same_scope {
-                    same_scope_def = Some(typedef_info);
+                    same_scope_def = Some((typedef_info, comment.pos));
                 } else if is_deeper {
-                    deeper_defs.push(typedef_info);
+                    deeper_defs.push((typedef_info, comment.pos));
                 } else {
                     // Shallower or same-depth-different-scope: use as fallback
                     // (last one wins, matching original behavior)
                     if same_scope_def.is_none() {
-                        same_scope_def = Some(typedef_info);
+                        same_scope_def = Some((typedef_info, comment.pos));
                     }
                 }
             }
@@ -1505,7 +1505,7 @@ impl<'a> CheckerState<'a> {
             // Multiple deeper-scope defs → ambiguous, or no defs at all
             None
         };
-        let typedef_info = best_def?;
+        let (typedef_info, typedef_comment_pos) = best_def?;
 
         // Mark this typedef as being resolved to prevent re-entrancy.
         self.ctx
@@ -1513,7 +1513,10 @@ impl<'a> CheckerState<'a> {
             .borrow_mut()
             .insert(type_expr.to_owned());
 
-        let result = self.type_from_jsdoc_typedef(typedef_info);
+        let previous_anchor = self.ctx.jsdoc_typedef_anchor_pos.get();
+        self.ctx.jsdoc_typedef_anchor_pos.set(typedef_comment_pos);
+        let result = self.type_from_jsdoc_typedef(typedef_info, typedef_comment_pos);
+        self.ctx.jsdoc_typedef_anchor_pos.set(previous_anchor);
 
         self.ctx
             .jsdoc_typedef_resolving
@@ -1528,8 +1531,9 @@ impl<'a> CheckerState<'a> {
     fn type_from_jsdoc_typedef(
         &mut self,
         info: JsdocTypedefInfo,
+        comment_pos: u32,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
-        self.type_from_jsdoc_typedef_inner(info, None)
+        self.type_from_jsdoc_typedef_inner(info, None, comment_pos)
     }
 
     /// Build the type for a JSDoc `@typedef`. When `recursive_alias_name` is
@@ -1542,6 +1546,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         info: JsdocTypedefInfo,
         recursive_alias_name: Option<&str>,
+        comment_pos: u32,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
         let import_alias_body = info
             .base_type
@@ -1556,7 +1561,8 @@ impl<'a> CheckerState<'a> {
                 .and_then(|expr| self.resolve_jsdoc_type_str(expr));
             let atom = self.ctx.types.intern_string(&template.name);
             let param = jsdoc_construct::jsdoc_type_param_info(atom, constraint, None);
-            let type_id = jsdoc_construct::jsdoc_type_param_type(self.ctx.types, param);
+            let (type_id, param) =
+                self.intern_jsdoc_type_param_for_comment_stamped(comment_pos, param);
             let previous = self
                 .ctx
                 .type_parameter_scope
