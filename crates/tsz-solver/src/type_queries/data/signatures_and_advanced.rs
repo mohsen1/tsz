@@ -1734,6 +1734,13 @@ fn intersection_has_impossible_literal_discriminants(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> bool {
+    // Concrete object intersections are eagerly merged for O(1) member lookup.
+    // Inspect their retained structural origin: a merged required-`never`
+    // discriminant is proof of a conflicting intersection, while the same
+    // property on an authored object is not proof that the object is absent.
+    let type_id = db
+        .get_merged_intersection_origin(type_id)
+        .unwrap_or(type_id);
     let Some(TypeData::Intersection(list_id)) = db.lookup(type_id) else {
         return false;
     };
@@ -1751,19 +1758,25 @@ fn intersection_has_impossible_literal_discriminants(
         };
 
         for prop in &shape.properties {
-            if !crate::type_queries::is_unit_type(db, prop.type_id) {
+            let evaluated_prop = crate::evaluation::evaluate::evaluate_type(db, prop.type_id);
+            let prop_type = if evaluated_prop != prop.type_id {
+                evaluated_prop
+            } else {
+                prop.type_id
+            };
+            if !crate::type_queries::is_unit_type(db, prop_type) {
                 continue;
             }
 
             let seen = discriminants.entry(prop.name).or_default();
             if seen.iter().any(|&other| {
-                !crate::relations::subtype::is_subtype_of(db, prop.type_id, other)
-                    && !crate::relations::subtype::is_subtype_of(db, other, prop.type_id)
+                !crate::relations::subtype::is_subtype_of(db, prop_type, other)
+                    && !crate::relations::subtype::is_subtype_of(db, other, prop_type)
             }) {
                 return true;
             }
-            if !seen.contains(&prop.type_id) {
-                seen.push(prop.type_id);
+            if !seen.contains(&prop_type) {
+                seen.push(prop_type);
             }
         }
     }

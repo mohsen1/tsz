@@ -442,9 +442,9 @@ pub struct TypeInterner {
     /// `Intersection` TypeId. Unlike `display_alias` — which records the
     /// last-written nominal display surface and is overwritten by a later
     /// `Application` evaluation (`Wrap<X>`) — this map is written once at merge
-    /// time and never repainted, so diagnostics can always recover the
-    /// intersection members for a merged target regardless of any alias the type
-    /// later flows through. First write wins.
+    /// time and never repainted, so semantic pruning and diagnostics can always
+    /// recover the intersection members regardless of any alias the type later
+    /// flows through. First write wins.
     pub(super) merged_intersection_origin: DashMap<TypeId, TypeId, FxBuildHasher>,
     /// Application bases whose type-alias body is a conditional type.
     ///

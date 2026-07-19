@@ -31,6 +31,22 @@ const mustReject: number = value.common;
 }
 
 #[test]
+fn merged_intersection_retains_authored_required_never_property() {
+    let source = r#"
+type Branded = { marker: never; common: string } & { extra: boolean };
+declare const value: Branded | { common: number };
+
+const mustReject: number = value.common;
+"#;
+
+    assert_eq!(
+        codes(source),
+        vec![2322],
+        "intersection provenance alone must not make an authored required-`never` property impossible"
+    );
+}
+
+#[test]
 fn generic_nullable_class_with_required_never_property_remains_callable() {
     let source = r#"
 abstract class Schema {

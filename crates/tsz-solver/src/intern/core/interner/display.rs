@@ -222,8 +222,8 @@ impl TypeInterner {
     /// members of `intersection`, carrying `ObjectFlags::INTERSECTION_MERGED`)
     /// originated from `intersection`. Written once at merge time and never
     /// repainted, so it survives any later alias/application the merged object
-    /// flows through. Consumed only by diagnostics to elaborate an intersection
-    /// target member-by-member. First write wins.
+    /// flows through. Consumed by discriminant pruning and diagnostics to recover
+    /// the original intersection members. First write wins.
     pub fn store_merged_intersection_origin(&self, merged: TypeId, intersection: TypeId) {
         if merged == intersection || merged.is_intrinsic() {
             return;

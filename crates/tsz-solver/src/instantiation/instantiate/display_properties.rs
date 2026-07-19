@@ -86,6 +86,48 @@ impl<'a> TypeInstantiator<'a> {
         self.interner.store_display_properties(result, props);
     }
 
+    /// Preserve the structural origin of an eagerly merged object intersection.
+    ///
+    /// Substituting a property creates a new object `TypeId`, so the origin map
+    /// recorded when the generic intersection was merged cannot be reused by
+    /// identity. Instantiating the raw origin rebuilds the same concrete merged
+    /// object and records its concrete raw intersection. This lets later
+    /// discriminant pruning distinguish a conflict-created required `never`
+    /// from an authored required-`never` property.
+    pub(super) fn propagate_instantiated_merged_intersection_origin(
+        &mut self,
+        source: TypeId,
+        result: TypeId,
+    ) {
+        if source == result {
+            return;
+        }
+        let Some(origin) = self.interner.get_merged_intersection_origin(source) else {
+            return;
+        };
+
+        // The raw origin contains the pre-substitution component objects rather
+        // than `source`, so this walk cannot recurse through the object currently
+        // being instantiated. Intersection normalization records the rebuilt
+        // concrete origin on `result` as a side effect.
+        let instantiated_origin = self.instantiate(origin);
+
+        // Usually normalization returns `result` and has already installed the
+        // mapping. Keep the fallback explicit for structurally equivalent
+        // results whose canonical identity differs.
+        if self
+            .interner
+            .get_merged_intersection_origin(result)
+            .is_none()
+            && let Some(raw_origin) = self
+                .interner
+                .get_merged_intersection_origin(instantiated_origin)
+        {
+            self.interner
+                .store_merged_intersection_origin(result, raw_origin);
+        }
+    }
+
     /// Propagate semantic application provenance through instantiation.
     ///
     /// A nominal class/interface instantiation that evaluation lowered to a

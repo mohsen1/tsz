@@ -570,10 +570,11 @@ impl TypeInterner {
             // display as `{ x: string; } & { x: string; }` everywhere.
             if raw_intersection != merged_id && !original_objects.contains(&merged_id) {
                 self.store_display_alias(merged_id, raw_intersection);
-                // Stable structural provenance for diagnostics. Unlike the display
-                // alias above, this is never repainted by a later `Application`
-                // evaluation (`Wrap<X> = X & B`), so an intersection target can be
-                // elaborated member-by-member however it was constructed.
+                // Stable structural provenance for semantic pruning and
+                // diagnostics. Unlike the display alias above, this is never
+                // repainted by a later `Application` evaluation (`Wrap<X> = X &
+                // B`), so the original members remain recoverable however the
+                // intersection was constructed.
                 self.store_merged_intersection_origin(merged_id, raw_intersection);
             }
         }

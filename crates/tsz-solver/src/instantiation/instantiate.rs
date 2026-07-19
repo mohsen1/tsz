@@ -1005,6 +1005,7 @@ impl<'a> TypeInstantiator<'a> {
                     // Object; no need to re-intern `*key` to recover it before
                     // propagating display/application provenance.
                     self.propagate_instantiated_display_properties(type_id, result);
+                    self.propagate_instantiated_merged_intersection_origin(type_id, result);
                     self.propagate_instantiated_application_origin(type_id, result);
                     result
                 } else {
@@ -1046,6 +1047,7 @@ impl<'a> TypeInstantiator<'a> {
                         symbol: shape.symbol,
                     });
                     self.propagate_instantiated_display_properties(type_id, result);
+                    self.propagate_instantiated_merged_intersection_origin(type_id, result);
                     self.propagate_instantiated_application_origin(type_id, result);
                     result
                 } else {
