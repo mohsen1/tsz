@@ -5,18 +5,22 @@ use tsz_common::diagnostics::format_message;
 use super::normalize_option;
 
 /// A compiler option or option value that TypeScript 7 rejects after parsing.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct RemovedOptionNotice {
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct RemovalNotice {
     key: &'static str,
     value: Option<&'static str>,
+    /// For `baseUrl` only: the literal string value, used to derive tsc's
+    /// `Use '"paths": {"*": ["<value>/*"]}'` guidance (tsc embeds the actual
+    /// configured directory, e.g. `"./src"` -> `"./src/*"`).
+    base_url_guidance: Option<String>,
 }
 
-impl RemovedOptionNotice {
-    pub(super) const fn key(self) -> &'static str {
+impl RemovalNotice {
+    pub(super) const fn key(&self) -> &'static str {
         self.key
     }
 
-    pub(super) const fn code(self) -> u32 {
+    pub(super) const fn code(&self) -> u32 {
         if self.value.is_some() {
             diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION_2
         } else {
@@ -24,11 +28,11 @@ impl RemovedOptionNotice {
         }
     }
 
-    pub(super) const fn is_value(self) -> bool {
+    pub(super) const fn is_value(&self) -> bool {
         self.value.is_some()
     }
 
-    pub(super) fn message(self) -> String {
+    pub(super) fn message(&self) -> String {
         let base = if let Some(value) = self.value {
             format_message(
                 diagnostic_messages::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION_2,
@@ -42,11 +46,19 @@ impl RemovedOptionNotice {
         };
 
         if self.key == "baseUrl" {
+            // tsc derives the guidance from the configured directory:
+            // `"."` -> `"./*"`, `"./src"` -> `"./src/*"`.
+            let dir = self.base_url_guidance.as_deref().unwrap_or(".");
+            let target = if dir.ends_with('/') {
+                format!("{dir}*")
+            } else {
+                format!("{dir}/*")
+            };
             append_related_message(
                 base,
                 format_message(
                     diagnostic_messages::USE_INSTEAD,
-                    &[r#""paths": {"*": ["./*"]}"#],
+                    &[&format!(r#""paths": {{"*": ["{target}"]}}"#)],
                 ),
             )
         } else {
@@ -59,9 +71,7 @@ impl RemovedOptionNotice {
 ///
 /// Type-invalid and null values are intentionally skipped here: tsc reports
 /// TS5024 for the former and treats the latter as an unset option.
-pub(super) fn removed_option_notices_from_json(
-    options: &Map<String, Value>,
-) -> Vec<RemovedOptionNotice> {
+pub(super) fn removed_option_notices_from_json(options: &Map<String, Value>) -> Vec<RemovalNotice> {
     let mut notices = Vec::new();
 
     push_removed_bool_value(&mut notices, options, "alwaysStrict");
@@ -78,7 +88,7 @@ pub(super) fn removed_option_notices_from_json(
 }
 
 fn push_removed_key(
-    notices: &mut Vec<RemovedOptionNotice>,
+    notices: &mut Vec<RemovalNotice>,
     options: &Map<String, Value>,
     key: &'static str,
 ) {
@@ -88,12 +98,18 @@ fn push_removed_key(
             | ("downlevelIteration", Some(Value::Bool(_)))
     );
     if type_is_valid {
-        notices.push(key_notice(key));
+        let mut notice = key_notice(key);
+        if key == "baseUrl"
+            && let Some(Value::String(dir)) = options.get(key)
+        {
+            notice.base_url_guidance = Some(dir.clone());
+        }
+        notices.push(notice);
     }
 }
 
 fn push_removed_bool_value(
-    notices: &mut Vec<RemovedOptionNotice>,
+    notices: &mut Vec<RemovalNotice>,
     options: &Map<String, Value>,
     key: &'static str,
 ) {
@@ -103,7 +119,7 @@ fn push_removed_bool_value(
 }
 
 fn push_removed_string_value(
-    notices: &mut Vec<RemovedOptionNotice>,
+    notices: &mut Vec<RemovalNotice>,
     options: &Map<String, Value>,
     key: &'static str,
 ) {
@@ -127,14 +143,19 @@ fn removed_string_value(key: &str, value: &str) -> Option<&'static str> {
     }
 }
 
-const fn key_notice(key: &'static str) -> RemovedOptionNotice {
-    RemovedOptionNotice { key, value: None }
+const fn key_notice(key: &'static str) -> RemovalNotice {
+    RemovalNotice {
+        key,
+        value: None,
+        base_url_guidance: None,
+    }
 }
 
-const fn value_notice(key: &'static str, value: &'static str) -> RemovedOptionNotice {
-    RemovedOptionNotice {
+const fn value_notice(key: &'static str, value: &'static str) -> RemovalNotice {
+    RemovalNotice {
         key,
         value: Some(value),
+        base_url_guidance: None,
     }
 }
 

@@ -38,7 +38,10 @@ mod parse;
 mod resolved_options;
 
 pub use option_fanout::apply_non_strict_fanout;
-pub use parse::{ParsedTsConfig, parse_tsconfig, parse_tsconfig_with_diagnostics};
+pub use parse::{
+    ParsedTsConfig, RemovedOptionNotice, parse_tsconfig, parse_tsconfig_with_diagnostics,
+    parse_tsconfig_with_diagnostics_deferred,
+};
 pub use resolved_options::{
     JsxEmit, ModuleResolutionKind, PathMapping, ResolvedCompilerOptions,
     default_module_detection_for_module, default_module_kind_for_target,
@@ -1192,6 +1195,18 @@ pub fn load_tsconfig(path: &Path) -> Result<TsConfig> {
 
 /// Load tsconfig.json and collect config-level diagnostics.
 pub fn load_tsconfig_with_diagnostics(path: &Path) -> Result<ParsedTsConfig> {
+    let mut parsed = load_tsconfig_with_diagnostics_deferred(path)?;
+    parsed.flush_pending_removed_option_notices();
+    Ok(parsed)
+}
+
+/// [`load_tsconfig_with_diagnostics`] with removed-option notices left in
+/// `pending_removed_option_notices` (already entry-anchored) instead of
+/// flushed into `diagnostics`. The CLI driver uses this to retract notices
+/// for options the command line overrides with valid values before flushing —
+/// tsc validates removals on the final CLI-merged options (#15806 adjacent
+/// case).
+pub fn load_tsconfig_with_diagnostics_deferred(path: &Path) -> Result<ParsedTsConfig> {
     let mut visited = FxHashSet::default();
     let config_dir = root_config_dir(path);
     load_tsconfig_inner_with_diagnostics(path, &mut visited, false, &config_dir)
@@ -1293,7 +1308,7 @@ fn load_tsconfig_inner_with_diagnostics(
     let source = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read tsconfig: {}", path.display()))?;
     let file_display = path.display().to_string();
-    let mut parsed = parse_tsconfig_with_diagnostics(&source, &file_display)
+    let mut parsed = parse::parse_tsconfig_with_diagnostics_deferred(&source, &file_display)
         .with_context(|| format!("failed to parse tsconfig: {}", path.display()))?;
     // Resolve `${configDir}` against the root config's directory before any
     // `extends` anchoring, which only fires on the leftover relative paths.
@@ -1310,6 +1325,15 @@ fn load_tsconfig_inner_with_diagnostics(
             ExtendsValue::Array(arr) => arr,
         };
         let mut accumulated: Option<TsConfig> = None;
+        // Removed-option notices (TS5102/TS5108 family) from base configs stay
+        // pending until the whole chain merges: tsc runs the removal check
+        // once on the merged effective options (fixes the false TS5108
+        // tracked by #15806). VALUE notices are suppressed by a shallower
+        // VALID override; KEY notices dedup to the shallowest literal
+        // occurrence (whose message embeds the effective value).
+        let mut inherited_pending: Vec<RemovedOptionNotice> = Vec::new();
+        let mut inherited_explicit_keys: FxHashSet<String> = FxHashSet::default();
+        let mut inherited_literal_keys: FxHashSet<String> = FxHashSet::default();
         let stripped = strip_jsonc(&source);
         for extends_path_str in &extends_paths {
             // An `extends` specifier that names no existing config file is a
@@ -1333,9 +1357,27 @@ fn load_tsconfig_inner_with_diagnostics(
             // fire on the *base* file (matching tsc's `base.json(L,C):` anchor)
             // instead of the child's invalid option being silently coerced through
             // the type-validating-free `load_tsconfig_inner`.
-            let base_parsed =
+            let mut base_parsed =
                 load_tsconfig_inner_with_diagnostics(&base_path, visited, true, config_dir)?;
             parsed.diagnostics.extend(base_parsed.diagnostics);
+            // Later `extends` entries override earlier ones: a VALUE notice is
+            // dropped when this base's subtree sets the key to a valid value;
+            // a KEY notice is dropped when this base writes the key at all
+            // (the base generated its own, shallower notice). Then adopt the
+            // base's own survivors.
+            inherited_pending.retain(|notice| {
+                if notice.is_value {
+                    !base_parsed
+                        .explicit_compiler_option_keys
+                        .contains(&notice.key)
+                } else {
+                    !base_parsed.subtree_literal_keys.contains(&notice.key)
+                }
+            });
+            inherited_pending.append(&mut base_parsed.pending_removed_option_notices);
+            inherited_explicit_keys
+                .extend(base_parsed.explicit_compiler_option_keys.iter().cloned());
+            inherited_literal_keys.extend(base_parsed.subtree_literal_keys.iter().cloned());
             accumulated = Some(match accumulated {
                 Some(acc) => merge_configs(acc, base_parsed.config),
                 None => base_parsed.config,
@@ -1344,12 +1386,67 @@ fn load_tsconfig_inner_with_diagnostics(
         if let Some(base) = accumulated {
             parsed.config = merge_configs(base, parsed.config);
         }
+        // This config overrides every base: value notices die to its valid
+        // keys, key notices to its literal keys; survivors precede this
+        // file's own pending notices so deeper (base) options report before
+        // shallower ones. Union the subtree's key sets so a grandparent chain
+        // can apply the same rules to us.
+        inherited_pending.retain(|notice| {
+            if notice.is_value {
+                !parsed.explicit_compiler_option_keys.contains(&notice.key)
+            } else {
+                !parsed.literal_value_spans.contains_key(&notice.key)
+            }
+        });
+        if !inherited_pending.is_empty() {
+            inherited_pending.append(&mut parsed.pending_removed_option_notices);
+            parsed.pending_removed_option_notices = inherited_pending;
+        }
+        parsed
+            .explicit_compiler_option_keys
+            .extend(inherited_explicit_keys);
+        // `literal_value_spans` stays file-local for entry anchoring; only the
+        // key SET unions across the subtree for parent-chain dedup.
+        parsed.subtree_literal_keys.extend(inherited_literal_keys);
     }
 
     if config_ignore_deprecations_silences_6_0(&parsed.config) {
         parsed
             .diagnostics
             .retain(|diag| !is_ts60_deprecation_diagnostic_code(diag.code));
+        parsed
+            .pending_removed_option_notices
+            .retain(|notice| !is_ts60_deprecation_diagnostic_code(notice.diagnostic.code));
+    }
+
+    if !inherited {
+        // Entry config: re-anchor surviving base-file notices the way tsc's
+        // `createCompilerOptionsDiagnostic` does — at the entry's own value
+        // span when the entry literally writes the key (e.g. a TS5024-invalid
+        // override of an inherited removed value), else at the entry's
+        // `"compilerOptions"` key span, else as a global file-less diagnostic
+        // (empty `file` renders with no location prefix). A notice generated
+        // by the entry file itself keeps its original value-span anchor.
+        for notice in &mut parsed.pending_removed_option_notices {
+            if notice.diagnostic.file == file_display {
+                continue;
+            }
+            if let Some((start, length)) = parsed.literal_value_spans.get(&notice.key) {
+                notice.diagnostic.file = file_display.clone();
+                notice.diagnostic.start = *start;
+                notice.diagnostic.length = *length;
+            } else if let Some(offset) = parsed.compiler_options_key_offset {
+                notice.diagnostic.file = file_display.clone();
+                notice.diagnostic.start = offset;
+                notice.diagnostic.length = "\"compilerOptions\"".len() as u32;
+            } else {
+                notice.diagnostic.file = String::new();
+                notice.diagnostic.start = 0;
+                notice.diagnostic.length = 0;
+            }
+        }
+        // The flush happens in the public load wrappers so the CLI driver's
+        // deferred path can retract CLI-overridden notices first.
     }
 
     visited.remove(&canonical);

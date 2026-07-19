@@ -12,10 +12,67 @@ pub fn parse_tsconfig(source: &str) -> Result<TsConfig> {
     Ok(config)
 }
 
+/// A removed-option notice (the TS5102/TS5108 family) held out of
+/// `diagnostics` until the `extends` chain is resolved: tsc runs
+/// `verifyDeprecatedCompilerOptions` ONCE on the merged EFFECTIVE options and
+/// anchors the result in the ENTRY config, so
+/// - a base config's removed VALUE that a shallower config overrides with a
+///   valid value produces no diagnostic at all (a type-invalid override does
+///   NOT mask it — tsc reports both TS5024 and the removal),
+/// - a removed KEY set at several levels reports once, with the shallowest
+///   occurrence's message (its guidance text embeds the effective value),
+/// - a surviving notice from a base file re-anchors at the entry config: the
+///   entry's own value span when the entry writes the key, else the entry's
+///   `"compilerOptions"` key span, else a global file-less diagnostic.
+pub struct RemovedOptionNotice {
+    pub key: String,
+    /// True for removed option VALUES (`moduleResolution=node10`); false for
+    /// removed option KEYS (`baseUrl`). Values are suppressed by a valid
+    /// override; keys only dedup (no override legitimizes a removed key).
+    pub is_value: bool,
+    pub diagnostic: Diagnostic,
+}
+
 /// Result of parsing a tsconfig.json with diagnostic collection.
 pub struct ParsedTsConfig {
     pub config: TsConfig,
     pub diagnostics: Vec<Diagnostic>,
+    /// Removed-option notices pending the `extends`-merge decision. Direct
+    /// (non-`extends`-aware) consumers get them flushed by
+    /// [`parse_tsconfig_with_diagnostics`]; only the deferred parse leaves
+    /// them here.
+    pub pending_removed_option_notices: Vec<RemovedOptionNotice>,
+    /// Compiler-option keys carrying a VALID value in this file's
+    /// `compilerOptions` JSON (post canonical-casing rename, post TS5024
+    /// strip). Only these suppress an inherited removed VALUE.
+    pub explicit_compiler_option_keys: rustc_hash::FxHashSet<String>,
+    /// Every compiler-option key literally written in THIS file (post-rename,
+    /// including TS5024-invalid ones) with its value span. Strictly
+    /// file-local: used for tsc's entry-file anchoring rules. Byte offsets
+    /// are meaningless outside this file's source.
+    pub literal_value_spans: rustc_hash::FxHashMap<String, (u32, u32)>,
+    /// Keys literally written anywhere in this config's `extends` subtree
+    /// (this file plus every base it reaches). Seeded with this file's
+    /// literal keys by the parser; the config loader unions base subtrees in.
+    /// Used by a shallower config to dedup inherited removed-KEY notices.
+    pub subtree_literal_keys: rustc_hash::FxHashSet<String>,
+    /// Byte offset of this file's top-level `"compilerOptions"` key in the
+    /// JSONC-stripped source, used to anchor inherited removed-option notices
+    /// the way tsc does.
+    pub compiler_options_key_offset: Option<u32>,
+}
+
+impl ParsedTsConfig {
+    /// Commit pending removed-option notices as plain diagnostics. Used by
+    /// direct parses (no `extends` resolution) where every literal option is
+    /// also the effective one.
+    pub fn flush_pending_removed_option_notices(&mut self) {
+        self.diagnostics.extend(
+            self.pending_removed_option_notices
+                .drain(..)
+                .map(|n| n.diagnostic),
+        );
+    }
 }
 
 /// Parse tsconfig.json source and collect diagnostics for unknown compiler options.
@@ -24,13 +81,40 @@ pub struct ParsedTsConfig {
 /// 1. Detects unknown/miscased compiler option keys in the JSON
 /// 2. Normalizes them to canonical casing so serde can deserialize them
 /// 3. Returns TS5025 when a spelling suggestion exists, otherwise TS5023
+///
+/// Direct-parse semantics: every literal option value is also the effective
+/// value, so removed-value notices are committed straight into `diagnostics`.
+/// The `extends`-aware config loader uses
+/// [`parse_tsconfig_with_diagnostics_deferred`] instead, which leaves them in
+/// `pending_removed_option_notices` for the effective-options decision.
 pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<ParsedTsConfig> {
+    let mut parsed = parse_tsconfig_with_diagnostics_deferred(source, file_path)?;
+    parsed.flush_pending_removed_option_notices();
+    Ok(parsed)
+}
+
+/// [`parse_tsconfig_with_diagnostics`] without the final removed-value flush:
+/// notices stay in `pending_removed_option_notices` so the `extends`
+/// resolver can suppress base values that shallower configs override (#15806).
+pub fn parse_tsconfig_with_diagnostics_deferred(
+    source: &str,
+    file_path: &str,
+) -> Result<ParsedTsConfig> {
     let stripped = strip_jsonc(source);
     let normalized = remove_trailing_commas(&stripped);
     let mut raw: serde_json::Value =
         serde_json::from_str(&normalized).context("failed to parse tsconfig JSON")?;
 
     let mut diagnostics = Vec::new();
+    let mut pending_removed_option_notices: Vec<RemovedOptionNotice> = Vec::new();
+    let mut explicit_compiler_option_keys: rustc_hash::FxHashSet<String> =
+        rustc_hash::FxHashSet::default();
+    let mut literal_value_spans: rustc_hash::FxHashMap<String, (u32, u32)> =
+        rustc_hash::FxHashMap::default();
+    let mut subtree_literal_keys: rustc_hash::FxHashSet<String> = rustc_hash::FxHashSet::default();
+    let compiler_options_key_offset = stripped
+        .find("\"compilerOptions\"")
+        .map(|offset| offset as u32);
     // Track options that had TS5024 type errors — defaults should not be applied for these.
     let mut ts5024_keys_outer: Vec<String> = Vec::new();
 
@@ -147,6 +231,22 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         // Track TS5024 keys so invalid values stay unavailable to later
         // option-combination and removal validation.
         let keys_after_rename: Vec<String> = compiler_opts.keys().cloned().collect();
+        // Literal spans are captured before the TS5024 strip so a type-invalid
+        // value still records where the key was written (tsc anchors an
+        // inherited removal at the entry's own value span even when that value
+        // is itself TS5024-invalid).
+        for key in &keys_after_rename {
+            if let Some(value) = compiler_opts.get(key) {
+                literal_value_spans.insert(
+                    key.clone(),
+                    (
+                        find_value_offset_in_source(&stripped, key),
+                        estimate_json_value_len(value),
+                    ),
+                );
+                subtree_literal_keys.insert(key.clone());
+            }
+        }
         let mut bad_keys: Vec<String> = Vec::new();
         let mut ts5024_keys: Vec<String> = Vec::new();
         for key in &keys_after_rename {
@@ -215,6 +315,8 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         // TypeScript 7 turns the complete 6.0 deprecation wave into
         // unsuppressible removals. Keep the policy in deprecation_helpers so
         // config and direct CLI validation share aliases and display values.
+        explicit_compiler_option_keys.extend(compiler_opts.keys().cloned());
+
         for notice in deprecation_helpers::removed_option_notices_from_json(compiler_opts) {
             let key = notice.key();
             let start = if notice.is_value() {
@@ -227,13 +329,15 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             } else {
                 key.len() as u32 + 2
             };
-            diagnostics.push(Diagnostic::error(
-                file_path,
-                start,
-                length,
-                notice.message(),
-                notice.code(),
-            ));
+            let diagnostic =
+                Diagnostic::error(file_path, start, length, notice.message(), notice.code());
+            // Effective-options decision is deferred to the `extends`
+            // resolver (or the flush in the non-deferred parse).
+            pending_removed_option_notices.push(RemovedOptionNotice {
+                key: key.to_string(),
+                is_value: notice.is_value(),
+                diagnostic,
+            });
         }
 
         // Check command-line-only options in tsconfig (TS6266)
@@ -1258,5 +1362,10 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
     Ok(ParsedTsConfig {
         config,
         diagnostics,
+        pending_removed_option_notices,
+        explicit_compiler_option_keys,
+        literal_value_spans,
+        subtree_literal_keys,
+        compiler_options_key_offset,
     })
 }

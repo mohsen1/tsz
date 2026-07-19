@@ -739,6 +739,60 @@ pub(super) fn validate_cli_compiler_option_diagnostics(
         }
     }
 
+    let compiler_options = cli_explicit_compiler_options_map(args, config);
+
+    if compiler_options.is_empty() {
+        return Ok(diagnostics);
+    }
+
+    let mut root = serde_json::Map::new();
+    root.insert(
+        "compilerOptions".to_string(),
+        serde_json::Value::Object(compiler_options),
+    );
+    let source = serde_json::Value::Object(root).to_string();
+    let parsed = parse_tsconfig_with_diagnostics(&source, "")?;
+    diagnostics.extend(parsed.diagnostics);
+    Ok(diagnostics)
+}
+
+/// Compiler-option keys the CLI explicitly sets to a VALID, non-removed
+/// value. tsc merges CLI options over the config chain before running the
+/// removed-option check, so a config-chain removal diagnostic (TS5108 family)
+/// for one of these keys is retracted — `tsc -p . --moduleResolution bundler`
+/// over a chain-effective `node10` compiles clean.
+pub(super) fn cli_valid_override_keys(
+    args: &CliArgs,
+    config: Option<&TsConfig>,
+) -> Result<rustc_hash::FxHashSet<String>> {
+    let compiler_options = cli_explicit_compiler_options_map(args, config);
+    if compiler_options.is_empty() {
+        return Ok(rustc_hash::FxHashSet::default());
+    }
+    let mut root = serde_json::Map::new();
+    root.insert(
+        "compilerOptions".to_string(),
+        serde_json::Value::Object(compiler_options),
+    );
+    let source = serde_json::Value::Object(root).to_string();
+    let parsed = tsz::config::parse_tsconfig_with_diagnostics_deferred(&source, "")?;
+    let mut keys = parsed.explicit_compiler_option_keys;
+    // A CLI value that is itself removed (e.g. `--moduleResolution node10`)
+    // parses as a valid string but carries its own pending removal notice; it
+    // must not retract the config chain's diagnostic.
+    for notice in &parsed.pending_removed_option_notices {
+        keys.remove(&notice.key);
+    }
+    Ok(keys)
+}
+
+/// The `compilerOptions` JSON object equivalent to the options explicitly
+/// passed on the command line (shared by CLI validation and the
+/// removed-option override computation so both see the same key set).
+fn cli_explicit_compiler_options_map(
+    args: &CliArgs,
+    config: Option<&TsConfig>,
+) -> serde_json::Map<String, serde_json::Value> {
     let mut compiler_options = serde_json::Map::new();
 
     if let Some(target) = args.target {
@@ -959,19 +1013,7 @@ pub(super) fn validate_cli_compiler_option_diagnostics(
         compiler_options.insert("out".to_string(), out.to_string_lossy().into_owned().into());
     }
 
-    if compiler_options.is_empty() {
-        return Ok(diagnostics);
-    }
-
-    let mut root = serde_json::Map::new();
-    root.insert(
-        "compilerOptions".to_string(),
-        serde_json::Value::Object(compiler_options),
-    );
-    let source = serde_json::Value::Object(root).to_string();
-    let parsed = parse_tsconfig_with_diagnostics(&source, "")?;
-    diagnostics.extend(parsed.diagnostics);
-    Ok(diagnostics)
+    compiler_options
 }
 
 pub(super) const fn is_direct_cli_parse_diagnostic_code(code: u32) -> bool {

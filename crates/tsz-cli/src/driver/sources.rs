@@ -390,6 +390,11 @@ pub(crate) fn load_config(path: Option<&Path>) -> Result<Option<TsConfig>> {
 pub(crate) struct LoadedConfig {
     pub config: Option<TsConfig>,
     pub diagnostics: Vec<Diagnostic>,
+    /// Entry-anchored removed-option notices not yet committed to
+    /// `diagnostics`: the driver drops the ones the CLI overrides with valid
+    /// values (tsc validates removals on the CLI-merged effective options),
+    /// then flushes the rest.
+    pub pending_removed_option_notices: Vec<RemovedOptionNotice>,
 }
 
 pub(crate) fn load_config_with_diagnostics(path: Option<&Path>) -> Result<LoadedConfig> {
@@ -397,13 +402,15 @@ pub(crate) fn load_config_with_diagnostics(path: Option<&Path>) -> Result<Loaded
         return Ok(LoadedConfig {
             config: None,
             diagnostics: Vec::new(),
+            pending_removed_option_notices: Vec::new(),
         });
     };
 
-    let parsed = load_tsconfig_with_diagnostics(path)?;
+    let parsed = load_tsconfig_with_diagnostics_deferred(path)?;
     Ok(LoadedConfig {
         config: Some(parsed.config),
         diagnostics: parsed.diagnostics,
+        pending_removed_option_notices: parsed.pending_removed_option_notices,
     })
 }
 

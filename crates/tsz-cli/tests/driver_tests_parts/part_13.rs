@@ -1008,3 +1008,407 @@ module.exports = LazySet;
         result.diagnostics
     );
 }
+
+// ---------------------------------------------------------------------------
+// Removed option values across `extends` chains (#15806).
+//
+// Structural rule: tsc validates removed option VALUES (the TS5108 family)
+// against the merged EFFECTIVE compilerOptions. A base config's removed value
+// that a shallower config overrides produces no diagnostic at all; an
+// inherited un-overridden value is reported once, anchored at the ENTRY
+// config's `compilerOptions` key. Removed option KEYS (TS5023/TS5102 family)
+// stay per-file: no override can make a removed option valid.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn extends_base_removed_value_overridden_by_child_is_clean() {
+    // Mirrors the Next.js full-project bench fixture: base pins the removed
+    // `moduleResolution=node10`, the extending config overrides it with a
+    // valid value. tsc 6.0.3 and tsgo both exit 0 with no diagnostics.
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("base.json"),
+        r#"{
+          "compilerOptions": {
+            "moduleResolution": "node10",
+            "target": "es2020"
+          }
+        }"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "extends": "./base.json",
+          "files": ["src/a.ts"],
+          "compilerOptions": {
+            "moduleResolution": "bundler",
+            "noEmit": true
+          }
+        }"#,
+    );
+    write_file(&base.join("src/a.ts"), "export const n: number = 1;\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "an overridden base removed-value must not diagnose: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn extends_base_removed_value_inherited_reports_at_entry_config() {
+    // No override: the removed value is effective, so it is reported — but
+    // anchored at the ENTRY config's `compilerOptions` key (tsc emits
+    // `tsconfig.json(L,C): TS5108` for the child, not for base.json).
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("base.json"),
+        r#"{
+          "compilerOptions": {
+            "moduleResolution": "node10"
+          }
+        }"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "extends": "./base.json",
+          "files": ["src/a.ts"],
+          "compilerOptions": {
+            "noEmit": true
+          }
+        }"#,
+    );
+    write_file(&base.join("src/a.ts"), "export const n: number = 1;\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(
+        codes,
+        [5108],
+        "inherited removed value must report exactly once: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        result.diagnostics[0].file.ends_with("tsconfig.json")
+            && !result.diagnostics[0].file.ends_with("base.json"),
+        "inherited removed-value diagnostics anchor at the entry config, got {}",
+        result.diagnostics[0].file
+    );
+    assert_eq!(
+        result.diagnostics[0].message_text,
+        "Option 'moduleResolution=node10' has been removed. Please remove it from your configuration."
+    );
+}
+
+#[test]
+fn extends_chain_grandparent_removed_value_overridden_mid_chain_is_clean() {
+    // Grandparent sets the removed `target=es5`; the middle config overrides
+    // it. The whole chain merges clean — different option family than the
+    // moduleResolution cases so the rule is not key-specific.
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("grand.json"),
+        r#"{ "compilerOptions": { "target": "es5" } }"#,
+    );
+    write_file(
+        &base.join("mid.json"),
+        r#"{
+          "extends": "./grand.json",
+          "compilerOptions": { "target": "es2021" }
+        }"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "extends": "./mid.json",
+          "files": ["src/a.ts"],
+          "compilerOptions": { "noEmit": true }
+        }"#,
+    );
+    write_file(&base.join("src/a.ts"), "export const n: number = 1;\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "a mid-chain override must suppress the grandparent's removed value: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn extends_array_later_base_overrides_earlier_removed_value() {
+    // `extends` arrays merge left-to-right with later entries winning: a later
+    // base's valid value suppresses an earlier base's removed value...
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("a.json"),
+        r#"{ "compilerOptions": { "moduleResolution": "node10" } }"#,
+    );
+    write_file(
+        &base.join("b.json"),
+        r#"{ "compilerOptions": { "moduleResolution": "bundler" } }"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "extends": ["./a.json", "./b.json"],
+          "files": ["src/a.ts"],
+          "compilerOptions": { "noEmit": true }
+        }"#,
+    );
+    write_file(&base.join("src/a.ts"), "export const n: number = 1;\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "later-base override must suppress the earlier base's removed value: {:?}",
+        result.diagnostics
+    );
+
+    // ...and with the order flipped the removed value IS effective again.
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "extends": ["./b.json", "./a.json"],
+          "files": ["src/a.ts"],
+          "compilerOptions": { "noEmit": true }
+        }"#,
+    );
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(
+        codes,
+        [5108],
+        "flipped order makes the removed value effective: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn extends_base_unknown_key_reports_per_file_regardless_of_override() {
+    // UNKNOWN option keys (TS5023 — dropped from the option table entirely,
+    // like suppressImplicitAnyIndexErrors in TS7) are per-file config errors
+    // in tsc: writing the key in both base and child reports at BOTH files.
+    // Known-but-removed keys (TS5102, e.g. baseUrl) instead go through the
+    // merged-effective machinery — see the tests below.
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("base.json"),
+        r#"{ "compilerOptions": { "suppressImplicitAnyIndexErrors": true } }"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "extends": "./base.json",
+          "files": ["src/a.ts"],
+          "compilerOptions": {
+            "suppressImplicitAnyIndexErrors": false,
+            "noEmit": true
+          }
+        }"#,
+    );
+    write_file(&base.join("src/a.ts"), "export const n: number = 1;\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(
+        codes,
+        [5023, 5023],
+        "removed keys report per file (base and child): {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn extends_type_invalid_override_does_not_mask_inherited_removed_value() {
+    // A TS5024-invalid child value does NOT mask the base's removed value:
+    // tsc 6.0.3 reports BOTH the TS5024 and the TS5108, and anchors the
+    // TS5108 at the ENTRY's own (invalid) value span, since the entry
+    // literally writes the key.
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("base.json"),
+        r#"{ "compilerOptions": { "moduleResolution": "node10" } }"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "extends": "./base.json",
+          "files": ["src/a.ts"],
+          "compilerOptions": { "moduleResolution": 42, "noEmit": true }
+        }"#,
+    );
+    write_file(&base.join("src/a.ts"), "export const n: number = 1;\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let mut codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    codes.sort_unstable();
+    assert_eq!(
+        codes,
+        [5024, 5108],
+        "invalid override masks nothing — TS5024 and TS5108 both fire: {:?}",
+        result.diagnostics
+    );
+    let removal = result
+        .diagnostics
+        .iter()
+        .find(|d| d.code == 5108)
+        .expect("TS5108 present");
+    assert!(
+        removal.file.ends_with("tsconfig.json"),
+        "inherited removal anchors at the entry when it writes the key, got {}",
+        removal.file
+    );
+}
+
+#[test]
+fn extends_removed_value_without_entry_compiler_options_is_global() {
+    // Entry config with NO compilerOptions object at all (the preset-style
+    // `{"extends": ..., "files": [...]}` shape): tsc falls back to a GLOBAL
+    // diagnostic with no file/position prefix.
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("base.json"),
+        r#"{ "compilerOptions": { "moduleResolution": "node10" } }"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "extends": "./base.json",
+          "files": ["src/a.ts"]
+        }"#,
+    );
+    write_file(&base.join("src/a.ts"), "export const n: number = 1;\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(codes, [5108], "one global removal: {:?}", result.diagnostics);
+    assert!(
+        result.diagnostics[0].file.is_empty(),
+        "no compilerOptions in the entry -> global file-less diagnostic, got {:?}",
+        result.diagnostics[0].file
+    );
+}
+
+#[test]
+fn extends_base_removed_key_reports_once_at_entry() {
+    // Known-but-removed KEYS (TS5102) run on the merged chain like values:
+    // a base-only `baseUrl` reports ONCE, anchored at the entry's
+    // compilerOptions key (not at base.json), and setting the key at both
+    // levels reports once at the entry's own value span.
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("base.json"),
+        r#"{ "compilerOptions": { "baseUrl": "." } }"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "extends": "./base.json",
+          "files": ["src/a.ts"],
+          "compilerOptions": { "noEmit": true }
+        }"#,
+    );
+    write_file(&base.join("src/a.ts"), "export const n: number = 1;\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(
+        codes,
+        [5102],
+        "base-only removed key reports exactly once: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        result.diagnostics[0].file.ends_with("tsconfig.json"),
+        "removed-key notice anchors at the entry config, got {}",
+        result.diagnostics[0].file
+    );
+
+    // Both levels set it: still exactly one notice, at the entry.
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "extends": "./base.json",
+          "files": ["src/a.ts"],
+          "compilerOptions": { "baseUrl": "./src", "noEmit": true }
+        }"#,
+    );
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(
+        codes,
+        [5102],
+        "duplicated removed key still reports once: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        result.diagnostics[0].file.ends_with("tsconfig.json"),
+        "shallowest occurrence wins, got {}",
+        result.diagnostics[0].file
+    );
+    assert!(
+        result.diagnostics[0].message_text.contains("./src/*"),
+        "guidance embeds the EFFECTIVE (entry) value: {}",
+        result.diagnostics[0].message_text
+    );
+}
+
+#[test]
+fn cli_override_retracts_chain_effective_removed_value() {
+    // tsc merges explicit CLI options over the config chain BEFORE the
+    // removal check: `--moduleResolution bundler` over a chain-effective
+    // node10 compiles clean, while a CLI value that is itself removed
+    // (`--moduleResolution node10`) still errors.
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("base.json"),
+        r#"{ "compilerOptions": { "moduleResolution": "node10" } }"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "extends": "./base.json",
+          "files": ["src/a.ts"],
+          "compilerOptions": { "noEmit": true }
+        }"#,
+    );
+    write_file(&base.join("src/a.ts"), "export const n: number = 1;\n");
+
+    let mut args = default_args();
+    args.module_resolution = Some(super::args::ModuleResolution::Bundler);
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "a valid CLI override retracts the chain's removed value: {:?}",
+        result.diagnostics
+    );
+}
