@@ -17,13 +17,15 @@ use std::collections::hash_map::Entry;
 /// Replace aligned exact identities throughout `root` in one graph walk.
 ///
 /// Replacements are simultaneous: a replacement value is terminal and is not
-/// itself rewritten through another pair. The walk is `O(P + V + E)`, where
+/// itself rewritten through another pair. The walk is
+/// `O(P + V + E + Σ Uₖ log Uₖ)`, where
 /// `P` is the number of non-identity replacement pairs, `V` is the number of
 /// reachable interned nodes, and `E` is the number of structural and provenance
-/// slots traversed. Shared nodes are rebuilt once, every union/intersection
-/// member list is reconstructed in one linear pass, and a no-op graph retains
-/// its original interned identity. Auxiliary storage is `O(P + V + Q)`, where
-/// `Q` is the provenance transfer count staged for all-or-nothing commit.
+/// slots traversed; each `Uₖ` is the size of a changed union whose canonical
+/// member order is restored. Shared nodes are rebuilt once, intersection member
+/// lists are reconstructed in one linear pass, and a no-op graph retains its
+/// original interned identity. Auxiliary storage is `O(P + V + Q)`, where `Q`
+/// is the provenance transfer count staged for all-or-nothing commit.
 pub fn substitute_exact_types(
     db: &dyn QueryDatabase,
     root: TypeId,
@@ -190,9 +192,18 @@ impl ExactTypeRewriter<'_> {
                     })
                 }
             }
-            TypeData::Union(list_id) => self
-                .rewrite_type_ids(self.db.type_list(list_id).as_ref())
-                .map_or(type_id, |members| self.db.union_preserve_members(members)),
+            TypeData::Union(list_id) => {
+                let Some(members) = self.rewrite_type_ids(self.db.type_list(list_id).as_ref())
+                else {
+                    return type_id;
+                };
+                let result = self.db.union_preserve_members(members.clone());
+                if self.db.get_union_origin(type_id).is_none() {
+                    self.pending_provenance
+                        .push(PendingProvenance::UnionOrigin(result, members));
+                }
+                result
+            }
             TypeData::Intersection(list_id) => self
                 .rewrite_type_ids(self.db.type_list(list_id).as_ref())
                 .map_or(type_id, |members| self.db.intersect_types_raw(members)),
@@ -815,6 +826,44 @@ mod tests {
     }
 
     #[test]
+    fn exact_rewrite_preserves_pre_sort_union_member_order() {
+        let db = TypeInterner::new();
+        let source = fresh_param(&db, "Source");
+        let other = fresh_param(&db, "Other");
+        let union = db.union_preserve_members(vec![source, other]);
+        assert_eq!(db.get_union_origin(union), None);
+
+        let replacement = fresh_param(&db, "Replacement");
+        let result = substitute_exact_type(&db, union, source, replacement);
+
+        assert_eq!(
+            db.get_union_origin(result).map(|origin| origin.to_vec()),
+            Some(vec![replacement, other]),
+        );
+    }
+
+    #[test]
+    fn exact_rewrite_prefers_an_existing_union_origin() {
+        let db = TypeInterner::new();
+        let first = fresh_param(&db, "First");
+        let source = fresh_param(&db, "Source");
+        let union = db.union_preserve_members(vec![first, source]);
+        db.store_union_origin(union, vec![source, first]);
+        assert_eq!(
+            db.get_union_origin(union).map(|origin| origin.to_vec()),
+            Some(vec![source, first]),
+        );
+
+        let replacement = fresh_param(&db, "Replacement");
+        let result = substitute_exact_type(&db, union, source, replacement);
+
+        assert_eq!(
+            db.get_union_origin(result).map(|origin| origin.to_vec()),
+            Some(vec![replacement, first]),
+        );
+    }
+
+    #[test]
     fn exact_rewrite_reaches_mapped_binder_and_surface_fields() {
         let db = TypeInterner::new();
         let outer = fresh_param(&db, "Outer");
@@ -1136,6 +1185,29 @@ mod tests {
     }
 
     #[test]
+    fn exact_rewrite_does_not_repaint_an_existing_application_alias() {
+        let db = TypeInterner::new();
+        let source_param = fresh_param(&db, "Source");
+        let replacement = fresh_param(&db, "Replacement");
+        let source_base = db.lazy(DefId(24));
+        let existing_base = db.lazy(DefId(25));
+
+        let source_alias = db.application(source_base, vec![source_param]);
+        let source = db.array(source_param);
+        db.store_display_alias_preferring_application(source, source_alias);
+
+        let existing_alias = db.application(existing_base, vec![replacement]);
+        let expected = db.array(replacement);
+        db.store_display_alias_preferring_application(expected, existing_alias);
+        assert_eq!(db.get_display_alias(expected), Some(existing_alias));
+
+        let result = substitute_exact_type(&db, source, source_param, replacement);
+
+        assert_eq!(result, expected);
+        assert_eq!(db.get_display_alias(result), Some(existing_alias));
+    }
+
+    #[test]
     fn rewritten_display_alias_transfer_retains_global_identity_and_cycle_guards() {
         let db = TypeInterner::new();
         let parameter = fresh_param(&db, "Parameter");
@@ -1151,6 +1223,23 @@ mod tests {
         let cyclic_alias = db.application(base, vec![evaluated]);
         db.transfer_rewritten_application_display_alias(evaluated, cyclic_alias);
         assert_eq!(db.get_display_alias(evaluated), None);
+    }
+
+    #[test]
+    fn rewritten_application_alias_replaces_structural_provenance() {
+        let db = TypeInterner::new();
+        let evaluated = db.array(TypeId::STRING);
+        let structural_alias = db.object(vec![PropertyInfo::new(
+            db.intern_string("value"),
+            TypeId::STRING,
+        )]);
+        db.store_display_alias(evaluated, structural_alias);
+        assert_eq!(db.get_display_alias(evaluated), Some(structural_alias));
+
+        let application = db.application(db.lazy(DefId(26)), vec![TypeId::STRING]);
+        db.transfer_rewritten_application_display_alias(evaluated, application);
+
+        assert_eq!(db.get_display_alias(evaluated), Some(application));
     }
 
     #[test]

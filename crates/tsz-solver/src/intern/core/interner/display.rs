@@ -210,6 +210,16 @@ impl TypeInterner {
         if preserves_conditional_branch_alias {
             return;
         }
+        // Replaying provenance must not repaint a canonical result that
+        // already has a stable application spelling from another path. A
+        // structural provenance entry is still replaceable by the concrete
+        // rewritten application, matching `store_display_alias_preferring_application`.
+        if self
+            .get_display_alias(evaluated)
+            .is_some_and(|existing| matches!(self.lookup(existing), Some(TypeData::Application(_))))
+        {
+            return;
+        }
         self.display_alias.insert(evaluated, application);
     }
 
