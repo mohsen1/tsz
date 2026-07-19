@@ -258,7 +258,7 @@ function switchResponseWrong(x: unknown): SomeResponse {
         diagnostics.iter().any(|(code, message)| {
             *code == 2322
                 && message
-                    == "Type '\"maybe\" | \"yes\" | \"no\"' is not assignable to type 'SomeResponse'."
+                    == "Type '\"maybe\" | \"no\" | \"yes\"' is not assignable to type 'SomeResponse'."
         }),
         "Expected TS2322 to display the narrowed switch-case union, got: {diagnostics:#?}"
     );
