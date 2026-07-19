@@ -126,7 +126,7 @@ impl<'a> TypeInstantiator<'a> {
             .iter()
             .map(|&member| self.rebuild_merged_origin_member(member, result, &mut rebuilt_members))
             .collect();
-        let instantiated_origin = self.interner.intersect_types_raw(instantiated_members);
+        let instantiated_origin = self.raw_intersection(instantiated_members);
         self.interner
             .store_merged_intersection_origin(result, instantiated_origin);
     }
@@ -242,7 +242,7 @@ impl<'a> TypeInstantiator<'a> {
                     )
                 })
                 .collect();
-            let instantiated_nested = self.interner.intersect_types_raw(instantiated_nested);
+            let instantiated_nested = self.raw_intersection(instantiated_nested);
             self.interner
                 .store_display_alias(rebuilt, instantiated_nested);
             self.interner
@@ -255,6 +255,16 @@ impl<'a> TypeInstantiator<'a> {
     #[inline]
     fn completed_instantiation(&self, type_id: TypeId) -> TypeId {
         self.visiting.get(&type_id).copied().unwrap_or(type_id)
+    }
+
+    fn raw_intersection(&self, members: Vec<TypeId>) -> TypeId {
+        let mut members = members.into_iter();
+        let Some(first) = members.next() else {
+            return TypeId::UNKNOWN;
+        };
+        members.fold(first, |left, right| {
+            self.interner.intersect_types_raw2(left, right)
+        })
     }
 
     /// Propagate semantic application provenance through instantiation.
