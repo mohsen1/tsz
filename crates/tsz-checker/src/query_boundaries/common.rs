@@ -200,43 +200,6 @@ pub(crate) fn resolve_unbound_type_params_to_declared_fallbacks<S: std::hash::Bu
     )
 }
 
-/// Completed exact-identity rewrite session retained for stable structural reuse.
-///
-/// The solver-owned memo stays opaque to checker orchestration. Cache owners
-/// reuse it for every root in the same binder scope so shared subgraphs and
-/// nested fresh binders keep one rewritten identity. The solver refreshes late
-/// provenance before returning a previously completed root.
-#[derive(Clone)]
-pub(crate) struct ExactTypeRewriteSession {
-    memo: c::ExactRewriteMemo,
-}
-
-impl ExactTypeRewriteSession {
-    /// Rewrite another root through the retained structural map. An aborted
-    /// attempt leaves the session reusable and does not cache that root.
-    pub(crate) fn rewrite_root(
-        &mut self,
-        db: &dyn QueryDatabase,
-        type_id: TypeId,
-    ) -> Option<TypeId> {
-        self.memo.rewrite_root(db, type_id).ok()
-    }
-}
-
-/// Rebind aligned exact interned identities in one graph walk, retaining the
-/// completed solver memo for provenance-safe cache hits. An aborted walk is
-/// reported as `None` and must not be cached.
-pub(crate) fn start_exact_type_rewrite_session(
-    db: &dyn QueryDatabase,
-    type_id: TypeId,
-    from: &[TypeId],
-    to: &[TypeId],
-) -> Option<(TypeId, ExactTypeRewriteSession)> {
-    let (result, memo) =
-        tsz_solver::computation::substitute_exact_types_with_memo(db, type_id, from, to).ok()?;
-    Some((result, ExactTypeRewriteSession { memo }))
-}
-
 /// Free type parameters of `roots` whose declared name is in `names`, as
 /// `(name, TypeId)` pairs (the exact interned parameter ids). See
 /// [`tsz_solver::computation::free_type_params_named`].

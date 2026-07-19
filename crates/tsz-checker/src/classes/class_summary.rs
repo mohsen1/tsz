@@ -1,10 +1,11 @@
 use crate::class_checker::ClassMemberInfo;
 use crate::flow_analysis::{ComputedKey, PropertyKey};
 use crate::query_boundaries::common::{
-    ExactTypeRewriteSession, TypeSubstitution, callable_shape_for_type, object_shape_for_type,
+    TypeSubstitution, callable_shape_for_type, object_shape_for_type,
 };
 use crate::query_boundaries::construct_signatures::call_only_callable_type;
 use crate::query_boundaries::definite_assignment::constructor_assigned_properties;
+use crate::query_boundaries::exact_rewrite::ExactTypeRewriteSession;
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
@@ -31,7 +32,7 @@ mod exact_rebind_cache_tests {
     use super::ClassChainSummary;
     use tsz_solver::construction::TypeInterner;
     use tsz_solver::def::DefId;
-    use tsz_solver::{FunctionShape, ParamInfo, TypeData, TypeId, TypeParamInfo};
+    use tsz_solver::{FunctionShape, ParamInfo, TypeId, TypeParamInfo};
 
     #[test]
     fn repeated_member_rebind_reuses_nested_generic_identity() {
@@ -134,13 +135,15 @@ mod exact_rebind_cache_tests {
             summary.rebind_root_type_params(&db, &[active_outer], function_member);
         let rewritten_array = summary.rebind_root_type_params(&db, &[active_outer], array_member);
 
-        let Some(TypeData::Function(function_id)) = db.lookup(rewritten_function) else {
-            panic!("expected rewritten function member");
-        };
-        let rewritten_nested = db.function_shape(function_id).params[0].type_id;
-        let Some(TypeData::Array(array_nested)) = db.lookup(rewritten_array) else {
-            panic!("expected rewritten array member");
-        };
+        let rewritten_nested = crate::query_boundaries::exact_rewrite::function_parameter_type(
+            &db,
+            rewritten_function,
+            0,
+        )
+        .expect("expected rewritten function member");
+        let array_nested =
+            crate::query_boundaries::exact_rewrite::array_element_type(&db, rewritten_array)
+                .expect("expected rewritten array member");
         assert_eq!(rewritten_nested, array_nested);
         assert_ne!(rewritten_nested, nested);
     }
@@ -254,14 +257,12 @@ impl ClassChainSummary {
             }
         }
 
-        let Some((result, session)) =
-            crate::query_boundaries::common::start_exact_type_rewrite_session(
-                db,
-                type_id,
-                &self.root_type_params,
-                active_root_type_params,
-            )
-        else {
+        let Some((result, session)) = crate::query_boundaries::exact_rewrite::start_session(
+            db,
+            type_id,
+            &self.root_type_params,
+            active_root_type_params,
+        ) else {
             return type_id;
         };
         self.rebind_sessions
