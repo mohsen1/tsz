@@ -2392,6 +2392,10 @@ name = "required_never_property_union_tests"
 path = "tests/required_never_property_union_tests.rs"
 
 [[test]]
+name = "application_member_type_parameter_substitution_tests"
+path = "tests/application_member_type_parameter_substitution_tests.rs"
+
+[[test]]
 name = "partial_record_optional_index_assignability_tests"
 path = "tests/partial_record_optional_index_assignability_tests.rs"
 

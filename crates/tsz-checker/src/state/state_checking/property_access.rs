@@ -532,9 +532,9 @@ impl<'a> CheckerState<'a> {
         // If the receiver is an Application (e.g. Promise<number> or Pick<T, K>),
         // the QueryCache's noop TypeResolver can't expand it. Evaluate the
         // Application to its structural form so mapped-type revalidation can use
-        // the real object shape. Only retry the initial lookup when it already
-        // failed; otherwise preserve the original first-pass result and use the
-        // expanded type only for mapped-property validation below.
+        // the real object shape. The expanded identity is also authoritative for
+        // namespace-local nominal applications whose first pass resolved through
+        // a colliding global declaration.
         if crate::query_boundaries::common::is_generic_application(self.ctx.types, object_type) {
             let expanded = self.evaluate_application_type(object_type);
             if expanded != object_type && expanded != TypeId::ANY && expanded != TypeId::ERROR {

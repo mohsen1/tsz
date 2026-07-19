@@ -210,10 +210,15 @@ impl<'a> CheckerState<'a> {
         ) {
             return Some(member_type);
         }
-        summary
-            .as_ref()?
-            .member_info(property_name, is_static_access, true)
-            .map(|member| member.type_id)
+        let summary = summary.as_ref()?;
+        let member_type = summary
+            .member_info(property_name, is_static_access, true)?
+            .type_id;
+        Some(summary.rebind_root_type_params(
+            self.ctx.types,
+            &self.ctx.type_parameter_scope,
+            member_type,
+        ))
     }
 
     pub(super) fn recover_direct_this_class_chain_member(
@@ -249,7 +254,12 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        Some((member.type_id, member_is_method_like))
+        let member_type = summary.rebind_root_type_params(
+            self.ctx.types,
+            &self.ctx.type_parameter_scope,
+            member.type_id,
+        );
+        Some((member_type, member_is_method_like))
     }
 
     fn enclosing_class_declares_member(&self, property_name: &str) -> bool {

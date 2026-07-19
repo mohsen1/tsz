@@ -1,0 +1,199 @@
+//! Explicit generic arguments must retain their enclosing declaration's type-
+//! parameter identity through inherited application-member lookup.
+
+use tsz_checker::test_utils::check_source_strict_codes;
+
+fn codes(source: &str) -> Vec<u32> {
+    check_source_strict_codes(source)
+}
+
+#[test]
+fn inherited_definition_member_keeps_explicit_secondary_binder() {
+    let source = r#"
+interface TypeDefinition {}
+
+abstract class Schema<
+  Output,
+  Definition extends TypeDefinition = TypeDefinition,
+  Input = Output,
+> {
+  readonly output!: Output;
+  readonly input!: Input;
+  readonly definition!: Definition;
+
+  abstract parse(): Output;
+}
+
+type AnySchema = Schema<any, any, any>;
+type SchemaItems = [AnySchema, ...AnySchema[]];
+
+type Outputs<Items extends SchemaItems | []> = {
+  [Key in keyof Items]: Items[Key] extends Schema<infer Output, any, any>
+    ? Output
+    : never;
+};
+
+type Inputs<Items extends SchemaItems | []> = {
+  [Key in keyof Items]: Items[Key] extends Schema<any, any, infer Input>
+    ? Input
+    : never;
+};
+
+type OutputsWithTail<
+  Items extends SchemaItems | [],
+  Tail extends AnySchema | null = null,
+> = Tail extends AnySchema ? [...Outputs<Items>, ...Tail["output"][]] : Outputs<Items>;
+
+type InputsWithTail<
+  Items extends SchemaItems | [],
+  Tail extends AnySchema | null = null,
+> = Tail extends AnySchema ? [...Inputs<Items>, ...Tail["input"][]] : Inputs<Items>;
+
+interface TupleDefinition<
+  Items extends SchemaItems | [] = SchemaItems,
+  Tail extends AnySchema | null = null,
+> extends TypeDefinition {
+  items: Items;
+  tail: Tail;
+}
+
+class TupleSchema<
+  Items extends SchemaItems | [] = SchemaItems,
+  Tail extends AnySchema | null = null,
+> extends Schema<
+  OutputsWithTail<Items, Tail>,
+  TupleDefinition<Items, Tail>,
+  InputsWithTail<Items, Tail>
+> {
+  parse(): OutputsWithTail<Items, Tail> {
+    const tail = this.definition.tail;
+    if (tail) {
+      tail.parse();
+    }
+    return [] as any;
+  }
+}
+"#;
+
+    assert!(
+        codes(source).is_empty(),
+        "a successful member lookup on the instantiated definition must retain the secondary class binder",
+    );
+}
+
+#[test]
+fn inherited_member_application_uses_enclosing_renamed_binder() {
+    let source = r#"
+abstract class Runnable {
+  abstract run(): void;
+}
+
+interface Definition<Slot extends Runnable | null = null> {
+  tail: Slot;
+}
+
+class Base<Configuration> {
+  config!: Configuration;
+}
+
+class Derived<Tail extends Runnable | null = null>
+  extends Base<Definition<Tail>> {
+  exact(): Tail {
+    return this.config.tail;
+  }
+
+  call(): void {
+    const tail = this.config.tail;
+    if (tail) tail.run();
+  }
+}
+"#;
+
+    assert!(
+        codes(source).is_empty(),
+        "the explicit application argument must remain the enclosing class binder",
+    );
+}
+
+#[test]
+fn wrapped_inherited_member_application_keeps_explicit_binder() {
+    let source = r#"
+abstract class Runnable {
+  abstract run(): void;
+}
+
+interface Definition<Value extends Runnable | null = null> {
+  tail: Value;
+}
+
+type Wrapped<Item extends Runnable | null> = Definition<Item>;
+
+class Base<Configuration> {
+  config!: Configuration;
+}
+
+class Derived<Tail extends Runnable | null = null>
+  extends Base<Wrapped<Tail>> {
+  exact(): Tail {
+    return this.config.tail;
+  }
+}
+"#;
+
+    assert!(
+        codes(source).is_empty(),
+        "an alias wrapper must not replace the explicit outer binder with its own binder",
+    );
+}
+
+#[test]
+fn omitted_application_argument_uses_target_default() {
+    let source = r#"
+abstract class Runnable {
+  abstract run(): void;
+}
+
+interface Definition<Slot extends Runnable | null = null> {
+  tail: Slot;
+}
+
+class Base<Configuration> {
+  config!: Configuration;
+}
+
+class Derived<Tail extends Runnable | null = null> extends Base<Definition> {
+  invalid(): Tail {
+    return this.config.tail;
+  }
+}
+"#;
+
+    assert_eq!(
+        codes(source),
+        vec![2322],
+        "an omitted argument must keep `Definition`'s `null` default",
+    );
+}
+
+#[test]
+fn unrelated_same_named_default_is_not_captured() {
+    let source = r#"
+class Slot<Head, Tail = null> {
+  value!: Tail;
+}
+
+class Derived<Tail extends object | null = null> {
+  slot!: Slot<number>;
+
+  invalid(): Tail {
+    return this.slot.value;
+  }
+}
+"#;
+
+    assert_eq!(
+        codes(source),
+        vec![2322],
+        "a foreign omitted binder with the same spelling must retain its own default",
+    );
+}
