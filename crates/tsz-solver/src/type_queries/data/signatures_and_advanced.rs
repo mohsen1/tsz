@@ -1771,70 +1771,11 @@ fn intersection_has_impossible_literal_discriminants(
     false
 }
 
-fn object_member_has_impossible_required_property(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    let evaluated_type = crate::evaluation::evaluate::evaluate_type(db, type_id);
-    let type_id = if evaluated_type != type_id {
-        evaluated_type
-    } else {
-        type_id
-    };
-    let Some(shape) = get_object_shape(db, type_id) else {
-        return false;
-    };
-
-    shape.properties.iter().any(|prop| {
-        !prop.optional
-            && (crate::evaluation::evaluate::evaluate_type(db, prop.type_id) == TypeId::NEVER
-                || unit_intersection_is_impossible(db, prop.type_id))
-    })
-}
-
-fn unit_intersection_is_impossible(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    if type_id.is_intrinsic() {
-        return false;
-    }
-    let evaluated = crate::evaluation::evaluate::evaluate_type(db, type_id);
-    let type_id = if evaluated != type_id {
-        evaluated
-    } else {
-        type_id
-    };
-    if type_id.is_intrinsic() {
-        return false;
-    }
-    let Some(TypeData::Intersection(list_id)) = db.lookup(type_id) else {
-        return false;
-    };
-
-    let mut units = Vec::new();
-    for &member in db.type_list(list_id).iter() {
-        let evaluated_member = crate::evaluation::evaluate::evaluate_type(db, member);
-        let member = if evaluated_member != member {
-            evaluated_member
-        } else {
-            member
-        };
-        if !crate::type_queries::is_unit_type(db, member) {
-            continue;
-        }
-        if units.iter().any(|&other| {
-            !crate::relations::subtype::is_subtype_of(db, member, other)
-                && !crate::relations::subtype::is_subtype_of(db, other, member)
-        }) {
-            return true;
-        }
-        if !units.contains(&member) {
-            units.push(member);
-        }
-    }
-
-    false
-}
-
 /// Prune union members whose object/intersection shape is structurally
-/// impossible (conflicting literal discriminants, never-typed or impossible-unit
-/// required properties), returning the narrowed union (or `never` / the single
-/// survivor / the input unchanged).
+/// impossible because of conflicting literal discriminants, returning the
+/// narrowed union (or `never` / the single survivor / the input unchanged).
+/// A required `never` property does not make an object member impossible in
+/// TypeScript and is therefore deliberately retained.
 ///
 /// Pure function of the input union `TypeId`: it consults only structural
 /// predicates over the immutable interned type `DAG` via resolver-free
@@ -1857,10 +1798,7 @@ pub fn prune_impossible_object_union_members(db: &dyn TypeDatabase, type_id: Typ
     let retained: Vec<_> = members
         .iter()
         .copied()
-        .filter(|&member| {
-            !intersection_has_impossible_literal_discriminants(db, member)
-                && !object_member_has_impossible_required_property(db, member)
-        })
+        .filter(|&member| !intersection_has_impossible_literal_discriminants(db, member))
         .collect();
 
     let result = match retained.len() {
