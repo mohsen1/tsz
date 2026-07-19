@@ -1285,8 +1285,8 @@ impl TypeResolver for TypeInterner {
 }
 
 impl TypeRawIntersectionConstruction for TypeInterner {
-    fn intersect_types_raw(&self, members: Vec<TypeId>) -> TypeId {
-        TypeInterner::intersect_types_raw(self, members)
+    fn intersect_types_raw_for_replay(&self, members: Vec<TypeId>) -> TypeId {
+        TypeInterner::intersect_types_raw_for_replay(self, members)
     }
 }
 

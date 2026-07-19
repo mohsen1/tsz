@@ -800,8 +800,8 @@ impl TypeDisplayProvenance for QueryCache<'_> {
 }
 
 impl TypeRawIntersectionConstruction for QueryCache<'_> {
-    fn intersect_types_raw(&self, members: Vec<TypeId>) -> TypeId {
-        self.interner.intersect_types_raw(members)
+    fn intersect_types_raw_for_replay(&self, members: Vec<TypeId>) -> TypeId {
+        self.interner.intersect_types_raw_for_replay(members)
     }
 }
 

@@ -1,14 +1,16 @@
 use crate::types::TypeId;
 
-/// Construction capability for an unsimplified intersection member list.
+/// Construction capability for replaying an unsimplified intersection member
+/// list without producing a new diagnostic signal.
 ///
 /// This is intentionally narrower than [`crate::caches::db::TypeDatabase`].
 /// Structural graph replay needs to preserve an existing intersection without
 /// invoking semantic normalization or repeatedly folding two-member helpers.
 pub trait TypeRawIntersectionConstruction {
     /// Flatten and order-deduplicate `members`, then intern the remaining raw
-    /// intersection in `O(N)` time without subtype or object-merge reduction.
-    fn intersect_types_raw(&self, members: Vec<TypeId>) -> TypeId;
+    /// intersection in `O(N)` time without subtype reduction, object merging,
+    /// or mutation of the interner-wide union-complexity flag.
+    fn intersect_types_raw_for_replay(&self, members: Vec<TypeId>) -> TypeId;
 }
 
 /// Cache hooks for solver type-content traversal predicates.

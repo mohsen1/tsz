@@ -206,7 +206,9 @@ impl ExactTypeRewriter<'_> {
             }
             TypeData::Intersection(list_id) => self
                 .rewrite_type_ids(self.db.type_list(list_id).as_ref())
-                .map_or(type_id, |members| self.db.intersect_types_raw(members)),
+                .map_or(type_id, |members| {
+                    self.db.intersect_types_raw_for_replay(members)
+                }),
             TypeData::Array(element) => {
                 let rewritten = self.rewrite(element);
                 if self.aborted || rewritten == element {
@@ -746,6 +748,25 @@ mod tests {
             .collect()
     }
 
+    const COMPLEX_REPLAY_UNION_WIDTH: usize = 317;
+    const _: () = assert!(COMPLEX_REPLAY_UNION_WIDTH * COMPLEX_REPLAY_UNION_WIDTH >= 100_000);
+
+    fn complex_replay_intersection(db: &TypeInterner, outer: TypeId) -> TypeId {
+        let mut left = Vec::with_capacity(COMPLEX_REPLAY_UNION_WIDTH);
+        left.push(outer);
+        for index in 1..COMPLEX_REPLAY_UNION_WIDTH {
+            left.push(db.literal_string(&format!("left{index}")));
+        }
+        let left = db.union_preserve_members(left);
+
+        let right = (0..COMPLEX_REPLAY_UNION_WIDTH)
+            .map(|index| db.literal_number(index as f64))
+            .collect();
+        let right = db.union_preserve_members(right);
+
+        db.intersect_types_raw_for_replay(vec![left, right])
+    }
+
     #[test]
     fn exact_rewrite_batches_shared_nodes_and_is_simultaneous() {
         let db = TypeInterner::new();
@@ -860,6 +881,48 @@ mod tests {
         assert_eq!(
             db.get_union_origin(result).map(|origin| origin.to_vec()),
             Some(vec![replacement, first]),
+        );
+    }
+
+    #[test]
+    fn exact_rewrite_complex_intersection_replay_does_not_signal_union_complexity() {
+        let db = TypeInterner::new();
+        let outer = fresh_param(&db, "Outer");
+        let source = complex_replay_intersection(&db, outer);
+        assert!(!db.is_union_too_complex());
+
+        let result = substitute_exact_type(&db, source, outer, db.literal_string("replacement"));
+        assert_ne!(result, source);
+        assert!(matches!(db.lookup(result), Some(TypeData::Intersection(_))));
+        assert!(
+            !db.is_union_too_complex(),
+            "replaying admitted structure must not request TS2590",
+        );
+    }
+
+    #[test]
+    fn exact_rewrite_complex_intersection_before_depth_bail_does_not_leak_flag() {
+        let db = TypeInterner::new();
+        let outer = fresh_param(&db, "Outer");
+        let intersection = complex_replay_intersection(&db, outer);
+        assert!(!db.is_union_too_complex());
+
+        let mut deep = outer;
+        for _ in 0..=crate::recursion::MAX_SOLVER_STACK_FRAMES {
+            deep = db.array(deep);
+        }
+        let root = db.tuple(vec![
+            TupleElement::fixed(intersection),
+            TupleElement::fixed(deep),
+        ]);
+
+        assert_eq!(
+            substitute_exact_type(&db, root, outer, TypeId::STRING),
+            root,
+        );
+        assert!(
+            !db.is_union_too_complex(),
+            "discarded replay work must not leak a TS2590 signal",
         );
     }
 
