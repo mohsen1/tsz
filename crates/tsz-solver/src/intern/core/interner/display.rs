@@ -6,7 +6,7 @@
 //! union member order. None of this affects type identity or semantics; it is
 //! purely the provenance the formatter reads to match `tsc` display.
 
-use super::TypeInterner;
+use super::{DisplayUnionOrigin, TypeInterner};
 use crate::types::{LiteralValue, PropertyInfo, TypeData, TypeId};
 use dashmap::mapref::entry::Entry;
 use std::sync::{Arc, atomic::Ordering};
@@ -431,6 +431,30 @@ impl TypeInterner {
     /// anonymous-object cases (e.g., user wrote `"foo" | Refrigerator` but
     /// the interner sorted to `Refrigerator | "foo"` — tsc does the same).
     pub fn store_union_origin(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
+        self.store_union_origin_kind(union_type_id, origin_members, false);
+    }
+
+    /// Store union order reconstructed by an exact graph rewrite.
+    ///
+    /// A fallback captures changed members before canonical sorting when the
+    /// source had no explicit origin. It only fills a vacant target slot. Real
+    /// rewritten source provenance atomically replaces such a tagged fallback,
+    /// but never replaces an untagged origin owned by another source/session.
+    pub fn store_rewritten_union_origin(
+        &self,
+        union_type_id: TypeId,
+        origin_members: Vec<TypeId>,
+        is_fallback: bool,
+    ) {
+        self.store_union_origin_kind(union_type_id, origin_members, is_fallback);
+    }
+
+    fn store_union_origin_kind(
+        &self,
+        union_type_id: TypeId,
+        origin_members: Vec<TypeId>,
+        exact_rewrite_fallback: bool,
+    ) {
         if origin_members.len() < 2 {
             return;
         }
@@ -475,14 +499,38 @@ impl TypeInterner {
                     &origin_members,
                 );
             if !needs_origin {
+                if !exact_rewrite_fallback
+                    && let Entry::Occupied(entry) = self.display_union_origin.entry(union_type_id)
+                    && entry.get().exact_rewrite_fallback
+                {
+                    entry.remove();
+                    self.advance_display_provenance_generation();
+                }
                 return;
             }
         }
-        // First writer wins so deterministic display order is preserved when
-        // the same flattened union is reached from multiple annotation sites.
-        if let Entry::Vacant(entry) = self.display_union_origin.entry(union_type_id) {
-            entry.insert(Arc::new(origin_members));
-            self.advance_display_provenance_generation();
+        match self.display_union_origin.entry(union_type_id) {
+            Entry::Vacant(entry) => {
+                entry.insert(DisplayUnionOrigin {
+                    members: Arc::new(origin_members),
+                    exact_rewrite_fallback,
+                });
+                self.advance_display_provenance_generation();
+            }
+            Entry::Occupied(mut entry)
+                if !exact_rewrite_fallback && entry.get().exact_rewrite_fallback =>
+            {
+                entry.insert(DisplayUnionOrigin {
+                    members: Arc::new(origin_members),
+                    exact_rewrite_fallback: false,
+                });
+                self.advance_display_provenance_generation();
+            }
+            Entry::Occupied(_) => {
+                // Real origins are first-writer-wins. In particular, a later
+                // exact-rewrite session cannot repaint unrelated provenance on
+                // a shared canonical union target.
+            }
         }
     }
 
@@ -502,8 +550,17 @@ impl TypeInterner {
         let origin_members = Arc::new(origin_members);
         let changed = self
             .display_union_origin
-            .insert(union_type_id, Arc::clone(&origin_members))
-            .is_none_or(|previous| previous.as_ref() != origin_members.as_ref());
+            .insert(
+                union_type_id,
+                DisplayUnionOrigin {
+                    members: Arc::clone(&origin_members),
+                    exact_rewrite_fallback: false,
+                },
+            )
+            .is_none_or(|previous| {
+                previous.exact_rewrite_fallback
+                    || previous.members.as_ref() != origin_members.as_ref()
+            });
         if changed {
             self.advance_display_provenance_generation();
         }
@@ -798,6 +855,8 @@ impl TypeInterner {
 
     /// Look up the as-written origin members for a flattened Union TypeId.
     pub fn get_union_origin(&self, type_id: TypeId) -> Option<Arc<Vec<TypeId>>> {
-        self.display_union_origin.get(&type_id).map(|r| r.clone())
+        self.display_union_origin
+            .get(&type_id)
+            .map(|origin| Arc::clone(&origin.members))
     }
 }

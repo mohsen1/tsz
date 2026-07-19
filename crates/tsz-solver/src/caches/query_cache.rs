@@ -781,6 +781,16 @@ impl TypeDisplayProvenance for QueryCache<'_> {
             .store_union_origin(union_type_id, origin_members);
     }
 
+    fn store_rewritten_union_origin(
+        &self,
+        union_type_id: TypeId,
+        origin_members: Vec<TypeId>,
+        is_fallback: bool,
+    ) {
+        self.interner
+            .store_rewritten_union_origin(union_type_id, origin_members, is_fallback);
+    }
+
     fn replace_union_origin_for_display(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
         self.interner
             .replace_union_origin_for_display(union_type_id, origin_members);

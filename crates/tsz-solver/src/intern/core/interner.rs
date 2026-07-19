@@ -34,6 +34,14 @@ use tsz_common::interner::{Atom, ShardedInterner};
 /// that gates replaying it under a different resolver.
 pub type SharedDefVariance = (Arc<[crate::types::Variance]>, Arc<[DefId]>);
 
+/// One as-written union display order plus whether it is only the exact
+/// rewriter's pre-sort fallback. Real source provenance may atomically replace
+/// a fallback, while unrelated real origins remain first-writer-wins.
+pub(super) struct DisplayUnionOrigin {
+    pub(super) members: Arc<Vec<TypeId>>,
+    pub(super) exact_rewrite_fallback: bool,
+}
+
 mod cache;
 mod display;
 mod storage;
@@ -494,7 +502,7 @@ pub struct TypeInterner {
     ///
     /// Key: the flattened Union `TypeId` returned to the checker.
     /// Value: the unflattened input member list, in the order the user wrote.
-    pub(super) display_union_origin: DashMap<TypeId, Arc<Vec<TypeId>>, FxBuildHasher>,
+    pub(super) display_union_origin: DashMap<TypeId, DisplayUnionOrigin, FxBuildHasher>,
     /// Flag set when union normalization detects that a union type is too complex
     /// to represent (would require > 1M pairwise subtype comparisons during
     /// reduction). Mirrors tsc's `removeSubtypes` complexity heuristic that

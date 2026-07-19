@@ -110,6 +110,19 @@ pub trait TypeDisplayProvenance {
     /// See `TypeInterner::store_union_origin` for the full contract.
     fn store_union_origin(&self, _union_type_id: TypeId, _origin_members: Vec<TypeId>) {}
 
+    /// Store a union origin produced by an exact graph rewrite.
+    ///
+    /// A tagged fallback may be superseded by the first later real rewritten
+    /// source origin; an existing real target origin remains first-writer-wins.
+    fn store_rewritten_union_origin(
+        &self,
+        union_type_id: TypeId,
+        origin_members: Vec<TypeId>,
+        _is_fallback: bool,
+    ) {
+        self.store_union_origin(union_type_id, origin_members);
+    }
+
     /// Replace display-origin members for a union in a diagnostic-specific context.
     fn replace_union_origin_for_display(
         &self,
@@ -218,6 +231,15 @@ impl TypeDisplayProvenance for TypeInterner {
 
     fn store_union_origin(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
         Self::store_union_origin(self, union_type_id, origin_members);
+    }
+
+    fn store_rewritten_union_origin(
+        &self,
+        union_type_id: TypeId,
+        origin_members: Vec<TypeId>,
+        is_fallback: bool,
+    ) {
+        Self::store_rewritten_union_origin(self, union_type_id, origin_members, is_fallback);
     }
 
     fn replace_union_origin_for_display(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {

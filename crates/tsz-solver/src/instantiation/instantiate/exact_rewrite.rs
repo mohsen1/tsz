@@ -301,7 +301,7 @@ struct ExactRewriteDelta {
 
 enum PendingProvenance {
     DisplayProperties(TypeId, Vec<PropertyInfo>),
-    UnionOrigin(TypeId, Vec<TypeId>),
+    RewrittenUnionOrigin(TypeId, Vec<TypeId>, bool),
     ApplicationEvalOrigin(TypeId, TypeId),
     MergedIntersectionOrigin(TypeId, TypeId),
     RewrittenApplicationDisplayAlias(TypeId, TypeId),
@@ -407,7 +407,9 @@ impl ExactTypeRewriter<'_> {
                 let result = self.db.union_preserve_members(members.clone());
                 if self.db.get_union_origin(type_id).is_none() {
                     self.pending_provenance
-                        .push(PendingProvenance::UnionOrigin(result, members));
+                        .push(PendingProvenance::RewrittenUnionOrigin(
+                            result, members, true,
+                        ));
                 }
                 result
             }
@@ -566,8 +568,9 @@ impl ExactTypeRewriter<'_> {
                 PendingProvenance::DisplayProperties(type_id, properties) => {
                     self.db.store_display_properties(type_id, properties);
                 }
-                PendingProvenance::UnionOrigin(type_id, members) => {
-                    self.db.store_union_origin(type_id, members);
+                PendingProvenance::RewrittenUnionOrigin(type_id, members, is_fallback) => {
+                    self.db
+                        .store_rewritten_union_origin(type_id, members, is_fallback);
                 }
                 PendingProvenance::ApplicationEvalOrigin(type_id, origin) => {
                     self.db.record_application_eval_origin(type_id, origin);
@@ -888,7 +891,9 @@ impl ExactTypeRewriter<'_> {
                 .rewrite_type_ids(origin.as_ref())
                 .unwrap_or_else(|| origin.as_ref().clone());
             self.pending_provenance
-                .push(PendingProvenance::UnionOrigin(result, origin));
+                .push(PendingProvenance::RewrittenUnionOrigin(
+                    result, origin, false,
+                ));
         }
 
         // Application provenance is first-write-wins. Stage it before replaying
@@ -1565,19 +1570,23 @@ mod tests {
     fn exact_rewrite_memo_refreshes_late_provenance_and_converges_generation() {
         let db = TypeInterner::new();
         let outer = fresh_param(&db, "Outer");
-        let replacement = fresh_param(&db, "Replacement");
+        let other = fresh_param(&db, "Other");
+        let third = fresh_param(&db, "Third");
         let alias_base = db.lazy(DefId(31));
         let source_application = db.application(alias_base, vec![outer]);
-        let nested_source = db.union_preserve_members(vec![outer, TypeId::STRING]);
-        let source = db.union_preserve_members(vec![nested_source, TypeId::NUMBER]);
+        let nested_source = db.array(outer);
+        let source = db.union_preserve_members(vec![outer, other, third]);
+        let replacement = fresh_param(&db, "Replacement");
 
         let (result, mut memo) =
             substitute_exact_types_with_memo(&db, source, &[outer], &[replacement])
                 .expect("the initial exact rewrite should complete");
-        let rewritten_nested = db.union_preserve_members(vec![replacement, TypeId::STRING]);
+        let rewritten_nested = db.array(replacement);
         let rewritten_application = db.application(alias_base, vec![replacement]);
         assert!(db.get_display_properties(result).is_none());
-        assert!(db.get_union_origin(result).is_none());
+        let synthesized_union_fallback = db
+            .get_union_origin(result)
+            .expect("changed union should retain its pre-sort rewritten members");
         assert!(db.get_application_eval_origin(result).is_none());
         assert!(db.get_display_alias(result).is_none());
 
@@ -1589,7 +1598,7 @@ mod tests {
                 ..PropertyInfo::new(shown, nested_source)
             }],
         );
-        db.store_union_origin(source, vec![nested_source, TypeId::NUMBER]);
+        db.replace_union_origin_for_display(source, vec![third, other, outer]);
         db.record_application_eval_origin(source, source_application);
         db.store_display_alias_preferring_application(source, source_application);
 
@@ -1600,11 +1609,16 @@ mod tests {
             .expect("late display properties should reach the rewritten root");
         assert_eq!(properties[0].type_id, rewritten_nested);
         assert_eq!(properties[0].declaration_order, 1);
+        assert_ne!(
+            synthesized_union_fallback.as_slice(),
+            &[third, other, replacement],
+            "the test must replace a distinct synthesized fallback",
+        );
         assert_eq!(
             db.get_union_origin(result)
                 .expect("late union origin should reach the rewritten root")
                 .as_slice(),
-            &[rewritten_nested, TypeId::NUMBER],
+            &[third, other, replacement],
         );
         assert_eq!(
             db.get_application_eval_origin(result),
@@ -1640,6 +1654,73 @@ mod tests {
                 .expect("rewritten display properties should be replaced")[0]
                 .declaration_order,
             9,
+        );
+    }
+
+    #[test]
+    fn exact_rewrite_union_fallback_never_repaints_unrelated_real_origin() {
+        let db = TypeInterner::new();
+        let source_param = fresh_param(&db, "Source");
+        let other = fresh_param(&db, "Other");
+        let replacement = fresh_param(&db, "Replacement");
+        let source = db.union_preserve_members(vec![source_param, other]);
+        let expected = db.union_preserve_members(vec![replacement, other]);
+        let unrelated_target_origin = vec![replacement, other];
+        db.replace_union_origin_for_display(expected, unrelated_target_origin.clone());
+
+        let (result, mut memo) =
+            substitute_exact_types_with_memo(&db, source, &[source_param], &[replacement])
+                .expect("the initial exact rewrite should complete");
+        assert_eq!(result, expected);
+        assert_eq!(
+            db.get_union_origin(result).map(|origin| origin.to_vec()),
+            Some(unrelated_target_origin.clone()),
+            "a synthesized fallback must not replace a real target origin",
+        );
+
+        db.replace_union_origin_for_display(source, vec![other, source_param]);
+        memo.refresh_provenance(&db)
+            .expect("late real source provenance should replay");
+        assert_eq!(
+            db.get_union_origin(result).map(|origin| origin.to_vec()),
+            Some(unrelated_target_origin),
+            "late provenance from another rewrite session must remain sticky",
+        );
+    }
+
+    #[test]
+    fn exact_rewrite_late_canonical_union_origin_clears_fallback() {
+        let db = TypeInterner::new();
+        let source_param = fresh_param(&db, "Source");
+        let other = fresh_param(&db, "Other");
+        let replacement = fresh_param(&db, "Replacement");
+        let source = db.union_preserve_members(vec![source_param, other]);
+        let (result, mut memo) =
+            substitute_exact_types_with_memo(&db, source, &[source_param], &[replacement])
+                .expect("the initial exact rewrite should complete");
+        assert!(db.get_union_origin(result).is_some());
+
+        let Some(TypeData::Union(result_list)) = db.lookup(result) else {
+            panic!("expected rewritten union");
+        };
+        let canonical_source_origin = db
+            .type_list(result_list)
+            .iter()
+            .map(|&member| {
+                if member == replacement {
+                    source_param
+                } else {
+                    member
+                }
+            })
+            .collect();
+        db.replace_union_origin_for_display(source, canonical_source_origin);
+        memo.refresh_provenance(&db)
+            .expect("late canonical provenance should replay");
+        assert_eq!(
+            db.get_union_origin(result),
+            None,
+            "a canonical real origin should clear the stale tagged fallback",
         );
     }
 
