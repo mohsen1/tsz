@@ -56,6 +56,9 @@ path = "tests/delete_narrowing_reset_tests.rs"
 name = "sibling_defaulted_conditional_constraint_tests"
 path = "tests/sibling_defaulted_conditional_constraint_tests.rs"
 [[test]]
+name = "arguments_walk_cyclic_ast_guard_tests"
+path = "tests/arguments_walk_cyclic_ast_guard_tests.rs"
+[[test]]
 name = "predicate_callback_any_inference_tests"
 path = "tests/predicate_callback_any_inference_tests.rs"
 [[test]]

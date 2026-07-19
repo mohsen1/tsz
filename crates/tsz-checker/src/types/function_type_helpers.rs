@@ -1219,6 +1219,33 @@ impl<'a> CheckerState<'a> {
     /// Walks the AST recursively but stops at nested function boundaries.
     /// Used by JS files to determine if a function needs an implicit rest parameter.
     pub(crate) fn body_has_arguments_reference(&self, body: NodeIndex) -> bool {
+        // Guard this uncached structural walk against a node graph that is not a
+        // finite tree. The walk assumes every child link strictly descends, but
+        // a body node can end up reachable from itself (observed while checking
+        // `async` generic methods in the config-broken canary apps: immich-server,
+        // cal-com, infisical). Without a guard the recursion never terminates and
+        // overflows the worker stack (SIGABRT) — the parser bounds genuine
+        // nesting via `MAX_PARSER_RECURSION_DEPTH`, so unbounded depth here means
+        // a cycle, not deep input. A well-formed tree never revisits a node, so
+        // the visited set changes no result on valid input while terminating on
+        // cyclic input — the same `FxHashSet<NodeIndex>` cycle guard used for
+        // node-index walks elsewhere in this crate.
+        let mut visited: rustc_hash::FxHashSet<NodeIndex> = rustc_hash::FxHashSet::default();
+        self.body_has_arguments_reference_guarded(body, &mut visited)
+    }
+
+    fn body_has_arguments_reference_guarded(
+        &self,
+        body: NodeIndex,
+        visited: &mut rustc_hash::FxHashSet<NodeIndex>,
+    ) -> bool {
+        if !visited.insert(body) {
+            // Already on the current walk: a cyclic AST link. Stop instead of
+            // recursing forever. Any real `arguments` reference reachable from a
+            // well-formed position was already visited on first descent.
+            return false;
+        }
+
         let Some(node) = self.ctx.arena.get(body) else {
             return false;
         };
@@ -1243,98 +1270,98 @@ impl<'a> CheckerState<'a> {
         // Walk children based on node kind
         if let Some(block) = self.ctx.arena.get_block(node) {
             for &stmt in &block.statements.nodes {
-                if self.body_has_arguments_reference(stmt) {
+                if self.body_has_arguments_reference_guarded(stmt, visited) {
                     return true;
                 }
             }
         } else if let Some(expr_stmt) = self.ctx.arena.get_expression_statement(node) {
-            if self.body_has_arguments_reference(expr_stmt.expression) {
+            if self.body_has_arguments_reference_guarded(expr_stmt.expression, visited) {
                 return true;
             }
         } else if let Some(var_stmt) = self.ctx.arena.get_variable(node) {
             for &decl in &var_stmt.declarations.nodes {
-                if self.body_has_arguments_reference(decl) {
+                if self.body_has_arguments_reference_guarded(decl, visited) {
                     return true;
                 }
             }
         } else if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) {
-            if self.body_has_arguments_reference(var_decl.initializer) {
+            if self.body_has_arguments_reference_guarded(var_decl.initializer, visited) {
                 return true;
             }
         } else if let Some(ret) = self.ctx.arena.get_return_statement(node) {
-            if self.body_has_arguments_reference(ret.expression) {
+            if self.body_has_arguments_reference_guarded(ret.expression, visited) {
                 return true;
             }
         } else if let Some(call) = self.ctx.arena.get_call_expr(node) {
-            if self.body_has_arguments_reference(call.expression) {
+            if self.body_has_arguments_reference_guarded(call.expression, visited) {
                 return true;
             }
             if let Some(ref args) = call.arguments {
                 for &arg in &args.nodes {
-                    if self.body_has_arguments_reference(arg) {
+                    if self.body_has_arguments_reference_guarded(arg, visited) {
                         return true;
                     }
                 }
             }
         } else if let Some(bin) = self.ctx.arena.get_binary_expr(node) {
-            if self.body_has_arguments_reference(bin.left)
-                || self.body_has_arguments_reference(bin.right)
+            if self.body_has_arguments_reference_guarded(bin.left, visited)
+                || self.body_has_arguments_reference_guarded(bin.right, visited)
             {
                 return true;
             }
         } else if let Some(access) = self.ctx.arena.get_access_expr(node) {
-            if self.body_has_arguments_reference(access.expression) {
+            if self.body_has_arguments_reference_guarded(access.expression, visited) {
                 return true;
             }
             // Element access: also check the index expression (e.g. obj[arguments]).
             // Property names like `holder.arguments` are not references to the
             // function's implicit `arguments` object.
             if node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-                && self.body_has_arguments_reference(access.name_or_argument)
+                && self.body_has_arguments_reference_guarded(access.name_or_argument, visited)
             {
                 return true;
             }
         } else if let Some(if_stmt) = self.ctx.arena.get_if_statement(node) {
-            if self.body_has_arguments_reference(if_stmt.expression)
-                || self.body_has_arguments_reference(if_stmt.then_statement)
-                || self.body_has_arguments_reference(if_stmt.else_statement)
+            if self.body_has_arguments_reference_guarded(if_stmt.expression, visited)
+                || self.body_has_arguments_reference_guarded(if_stmt.then_statement, visited)
+                || self.body_has_arguments_reference_guarded(if_stmt.else_statement, visited)
             {
                 return true;
             }
         } else if let Some(loop_stmt) = self.ctx.arena.get_loop(node) {
-            if self.body_has_arguments_reference(loop_stmt.initializer)
-                || self.body_has_arguments_reference(loop_stmt.condition)
-                || self.body_has_arguments_reference(loop_stmt.incrementor)
-                || self.body_has_arguments_reference(loop_stmt.statement)
+            if self.body_has_arguments_reference_guarded(loop_stmt.initializer, visited)
+                || self.body_has_arguments_reference_guarded(loop_stmt.condition, visited)
+                || self.body_has_arguments_reference_guarded(loop_stmt.incrementor, visited)
+                || self.body_has_arguments_reference_guarded(loop_stmt.statement, visited)
             {
                 return true;
             }
         } else if let Some(for_in_of) = self.ctx.arena.get_for_in_of(node) {
-            if self.body_has_arguments_reference(for_in_of.expression)
-                || self.body_has_arguments_reference(for_in_of.statement)
+            if self.body_has_arguments_reference_guarded(for_in_of.expression, visited)
+                || self.body_has_arguments_reference_guarded(for_in_of.statement, visited)
             {
                 return true;
             }
         } else if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
-            if self.body_has_arguments_reference(paren.expression) {
+            if self.body_has_arguments_reference_guarded(paren.expression, visited) {
                 return true;
             }
         } else if let Some(unary) = self.ctx.arena.get_unary_expr(node) {
-            if self.body_has_arguments_reference(unary.operand) {
+            if self.body_has_arguments_reference_guarded(unary.operand, visited) {
                 return true;
             }
         } else if let Some(unary_ex) = self.ctx.arena.get_unary_expr_ex(node) {
-            if self.body_has_arguments_reference(unary_ex.expression) {
+            if self.body_has_arguments_reference_guarded(unary_ex.expression, visited) {
                 return true;
             }
         } else if let Some(spread) = self.ctx.arena.get_spread(node) {
-            if self.body_has_arguments_reference(spread.expression) {
+            if self.body_has_arguments_reference_guarded(spread.expression, visited) {
                 return true;
             }
         } else if let Some(cond) = self.ctx.arena.get_conditional_expr(node)
-            && (self.body_has_arguments_reference(cond.condition)
-                || self.body_has_arguments_reference(cond.when_true)
-                || self.body_has_arguments_reference(cond.when_false))
+            && (self.body_has_arguments_reference_guarded(cond.condition, visited)
+                || self.body_has_arguments_reference_guarded(cond.when_true, visited)
+                || self.body_has_arguments_reference_guarded(cond.when_false, visited))
         {
             return true;
         }
