@@ -360,3 +360,229 @@ fn test_env_eval_cache_def_invalidation_follows_registered_alias_bodies() {
         "unrelated entries must survive transitive def invalidation",
     );
 }
+
+#[test]
+fn test_body_republication_invalidates_intervening_evaluation_entries() {
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
+    let types = TypeInterner::new();
+    let ctx = CheckerContext::new(
+        &arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    let oscillating_def = DefId(12_301);
+    let unrelated_def = DefId(12_302);
+    let body_a = types.object(vec![tsz_solver::PropertyInfo::new(
+        types.intern_string("left"),
+        TypeId::STRING,
+    )]);
+    let body_b = types.object(vec![tsz_solver::PropertyInfo::new(
+        types.intern_string("right"),
+        TypeId::NUMBER,
+    )]);
+    let params = vec![tsz_solver::TypeParamInfo::simple(
+        types.intern_string("Element"),
+    )];
+    let dependent_key = types.lazy(oscillating_def);
+    let unrelated_key = types.lazy(unrelated_def);
+
+    ctx.register_def_with_params_in_envs(oscillating_def, body_a, params.clone());
+    ctx.register_def_with_params_in_envs(oscillating_def, body_b, params.clone());
+    ctx.cache_env_eval_result(dependent_key, body_b, false);
+    ctx.cache_env_eval_result(unrelated_key, TypeId::BOOLEAN, false);
+    let contextual_stamp = ((1, 2, 3, 4), true, false, true, false);
+    ctx.cache_contextual_signature_normalization_result(dependent_key, contextual_stamp, body_b);
+    ctx.cache_contextual_signature_normalization_result(
+        unrelated_key,
+        contextual_stamp,
+        TypeId::BOOLEAN,
+    );
+    ctx.flow_shared
+        .narrowing_cache
+        .resolve_cache
+        .borrow_mut()
+        .insert(dependent_key, body_b);
+    ctx.flow_shared
+        .narrowing_cache
+        .resolve_cache
+        .borrow_mut()
+        .insert(unrelated_key, TypeId::BOOLEAN);
+    ctx.flow_shared
+        .narrowing_cache
+        .contextual_resolve_cache
+        .borrow_mut()
+        .insert(dependent_key, body_b);
+    ctx.flow_shared
+        .narrowing_cache
+        .contextual_resolve_cache
+        .borrow_mut()
+        .insert(unrelated_key, TypeId::BOOLEAN);
+    assert_eq!(
+        ctx.env_eval_cache_indexed_key_count_for_def(oscillating_def),
+        1,
+        "the entry filled under body B must be indexed by its definition",
+    );
+
+    // Re-publishing A is a real rewrite. The cache entry was populated while B
+    // was active, so reusing it under A would be stale even though A appeared
+    // earlier in the publication sequence.
+    ctx.register_def_with_params_in_envs(oscillating_def, body_a, params);
+
+    assert!(ctx.lookup_env_eval_cache(dependent_key).is_none());
+    assert_eq!(
+        ctx.lookup_contextual_signature_normalization_cache(dependent_key, contextual_stamp,),
+        None,
+        "the contextual signature result filled under body B must be invalidated",
+    );
+    assert!(
+        ctx.flow_shared
+            .narrowing_cache
+            .resolve_cache
+            .borrow()
+            .get(&dependent_key)
+            .is_none(),
+        "the narrowing resolve entry filled under body B must also be invalidated",
+    );
+    assert!(
+        ctx.flow_shared
+            .narrowing_cache
+            .contextual_resolve_cache
+            .borrow()
+            .get(&dependent_key)
+            .is_none(),
+        "the contextual resolve entry filled under body B must also be invalidated",
+    );
+    assert_eq!(
+        ctx.lookup_env_eval_cache(unrelated_key)
+            .map(|entry| entry.result),
+        Some(TypeId::BOOLEAN),
+        "reverse-index invalidation must preserve unrelated entries",
+    );
+    assert_eq!(
+        ctx.lookup_contextual_signature_normalization_cache(unrelated_key, contextual_stamp,),
+        Some(TypeId::BOOLEAN),
+        "contextual signature invalidation must preserve unrelated entries",
+    );
+    assert_eq!(
+        ctx.flow_shared
+            .narrowing_cache
+            .resolve_cache
+            .borrow()
+            .get(&unrelated_key)
+            .copied(),
+        Some(TypeId::BOOLEAN),
+        "structural narrowing invalidation must preserve unrelated entries",
+    );
+    assert_eq!(
+        ctx.flow_shared
+            .narrowing_cache
+            .contextual_resolve_cache
+            .borrow()
+            .get(&unrelated_key)
+            .copied(),
+        Some(TypeId::BOOLEAN),
+        "contextual narrowing invalidation must preserve unrelated entries",
+    );
+}
+
+#[test]
+fn test_non_generic_body_republication_invalidates_intervening_evaluation_entry() {
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
+    let types = TypeInterner::new();
+    let ctx = CheckerContext::new(
+        &arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    let def_id = DefId(12_305);
+    let body_a = types.object(vec![tsz_solver::PropertyInfo::new(
+        types.intern_string("left"),
+        TypeId::STRING,
+    )]);
+    let body_b = types.object(vec![tsz_solver::PropertyInfo::new(
+        types.intern_string("right"),
+        TypeId::NUMBER,
+    )]);
+    let dependent_key = types.lazy(def_id);
+
+    ctx.register_def_in_envs(def_id, body_a);
+    ctx.register_def_in_envs(def_id, body_b);
+    ctx.cache_env_eval_result(dependent_key, body_b, false);
+
+    ctx.register_def_in_envs(def_id, body_a);
+
+    assert!(
+        ctx.lookup_env_eval_cache(dependent_key).is_none(),
+        "the non-generic registration path must treat A -> B -> A as a real rewrite",
+    );
+}
+
+#[test]
+fn test_params_only_republication_invalidates_application_evaluation_entries() {
+    use tsz_solver::construction::{QueryCache, QueryDatabase};
+
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
+    let types = TypeInterner::new();
+    let query_cache = QueryCache::new(&types);
+    let db: &dyn QueryDatabase = &query_cache;
+    let ctx = CheckerContext::new(
+        &arena,
+        &binder,
+        db,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    let def_id = DefId(12_303);
+    let body = types.lazy(DefId(12_304));
+    let mut old_param = TypeParamInfo::simple(types.intern_string("Value"));
+    old_param.default = Some(TypeId::STRING);
+    let mut new_param = old_param;
+    new_param.default = Some(TypeId::NUMBER);
+
+    let dependent_key = types.lazy(def_id);
+
+    ctx.register_def_with_params_in_envs(def_id, body, vec![old_param]);
+    db.insert_application_eval_cache(def_id, &[], false, TypeId::STRING);
+    db.insert_eval_memo(dependent_key, false, TypeId::STRING);
+    db.insert_closed_eval_cache(dependent_key, false, TypeId::STRING);
+    assert_eq!(
+        db.lookup_application_eval_cache(def_id, &[], false),
+        Some(TypeId::STRING),
+    );
+    assert_eq!(
+        db.lookup_eval_memo(dependent_key, false),
+        Some(TypeId::STRING),
+    );
+    assert_eq!(
+        db.lookup_closed_eval_cache(dependent_key, false),
+        Some(TypeId::STRING),
+    );
+
+    ctx.register_def_with_params_in_envs(def_id, body, vec![new_param]);
+
+    assert_eq!(
+        db.lookup_application_eval_cache(def_id, &[], false),
+        None,
+        "a changed default or constraint can change application evaluation even when the body TypeId is unchanged",
+    );
+    assert_eq!(
+        db.lookup_eval_memo(dependent_key, false),
+        None,
+        "a params-only rewrite must invalidate ordinary evaluation memo entries",
+    );
+    assert_eq!(
+        db.lookup_closed_eval_cache(dependent_key, false),
+        None,
+        "a params-only rewrite must invalidate closed evaluation memo entries",
+    );
+}

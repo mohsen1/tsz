@@ -1042,28 +1042,6 @@ pub struct CheckerContext<'a> {
     pub(crate) type_position_resolution_cache:
         RefCell<FxHashMap<(usize, u32), crate::symbol_resolver::TypeSymbolResolution>>,
 
-    /// Per-`DefId` history of body `TypeId`s already published to the
-    /// definition store, used to suppress redundant cache invalidation when a
-    /// generic alias re-resolves to an equivalent-but-distinct interned body.
-    ///
-    /// A type reference like `Chain<X>` re-resolves the alias declaration on
-    /// every application (`type_reference_symbol_type_with_params`), and the
-    /// re-lowering can produce one of a small set of structurally-equivalent
-    /// interned bodies (observed: a 2-state flip-flop between the
-    /// declaration-time body and the application-time re-lowered body). Each
-    /// `body_changed` re-publication previously fired a full
-    /// `clear_type_evaluation_caches_for_def` sweep, so a file with `N` distinct
-    /// applications of the same alias paid `O(N)` sweeps over an `O(N)`-growing
-    /// `env_eval_cache` — `O(N^2)`. Recording the bodies a def has already held
-    /// lets the registration path recognize the oscillation: re-publishing a
-    /// body the def already published before is a benign re-resolution that
-    /// introduces no new staleness beyond what the first occurrence already
-    /// invalidated, so the sweep is skipped. The set is tiny (bounded by the
-    /// number of distinct equivalent re-lowerings, typically 1-2 per def) and
-    /// is keyed by `DefId`, a structural identity, not by any name or fixture.
-    pub(crate) def_published_bodies:
-        RefCell<FxHashMap<tsz_solver::def::DefId, smallvec::SmallVec<[TypeId; 2]>>>,
-
     /// Memoizes parsed `package.json` payloads (keyed by package-root path) for
     /// the `typesVersions` import-redirect fallback. Without it,
     /// `types_versions_redirected_target_index` re-reads and re-parses the same
