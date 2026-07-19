@@ -217,6 +217,9 @@ impl<'a> CheckerContext<'a> {
         &mut self,
         mapped_idx: tsz_parser::parser::NodeIndex,
     ) {
+        if !self.compiler_options.no_implicit_any {
+            return;
+        }
         let Some((start, end)) = self.get_node_span(mapped_idx) else {
             return;
         };

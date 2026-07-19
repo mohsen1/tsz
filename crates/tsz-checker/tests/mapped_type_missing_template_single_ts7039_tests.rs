@@ -117,3 +117,27 @@ fn mapped_type_with_template_emits_no_ts7039() {
         "a mapped type with a template type must not emit TS7039, got: {diags:#?}",
     );
 }
+
+#[test]
+fn mapped_type_without_template_is_silent_when_no_implicit_any_is_disabled() {
+    let source = "type Result<Input> = ({[Slot in keyof Input]}) extends ({[key in Slot]: Input[Slot]}) ? number : never;";
+    let diagnostics = check_with_options(
+        source,
+        CheckerOptions {
+            strict: false,
+            no_implicit_any: false,
+            ..CheckerOptions::default()
+        },
+    );
+    let relevant_codes: Vec<_> = diagnostics
+        .iter()
+        .filter(|diagnostic| matches!(diagnostic.code, 2304 | 7039))
+        .map(|diagnostic| diagnostic.code)
+        .collect();
+
+    assert_eq!(
+        relevant_codes,
+        vec![2304, 2304],
+        "without noImplicitAny, the malformed mapped type should retain only the two unresolved-name diagnostics: {diagnostics:#?}",
+    );
+}
