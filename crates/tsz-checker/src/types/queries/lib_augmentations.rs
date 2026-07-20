@@ -193,14 +193,43 @@ impl<'a> CheckerState<'a> {
     ///      unconditionally clears type evaluation caches for the def,
     ///      which is wasted work on repeated lookups.
     pub(crate) fn register_finalized_lib_body(&mut self, name: &str, ty: TypeId) {
+        self.register_finalized_lib_body_for_def(name, ty, None);
+    }
+
+    /// Finalize against the exact lib definition selected while lowering.
+    /// Falling back to the name index preserves callers that do not carry a
+    /// symbol-owned `DefId` (notably post-resolution global augmentations).
+    pub(crate) fn register_finalized_lib_body_for_def(
+        &mut self,
+        name: &str,
+        ty: TypeId,
+        selected_def_id: Option<tsz_solver::DefId>,
+    ) {
+        // A selected per-arena definition is authoritative only for deciding
+        // whether lowering returned that definition's public `Lazy(DefId)`
+        // identity. Final structural bodies still publish through the stable
+        // canonical name entry: parallel source-file checkers can select
+        // equivalent lib declarations from different arenas, and letting that
+        // selection choose the finalized body makes cross-file consumers depend
+        // on worker completion order.
+        if selected_def_id.is_some_and(|def_id| {
+            crate::query_boundaries::lib_augmentations::is_lazy_def_identity(
+                self.ctx.types,
+                ty,
+                def_id,
+            )
+        }) {
+            return;
+        }
         let name_atom = self.ctx.types.intern_string(name);
-        let Some(defs) = self.ctx.definition_store.find_defs_by_name(name_atom) else {
+        let def_id = self
+            .ctx
+            .definition_store
+            .find_defs_by_name(name_atom)
+            .and_then(|defs| defs.first().copied());
+        let Some(def_id) = def_id else {
             return;
         };
-        let Some(&def_id) = defs.first() else {
-            return;
-        };
-        self.ctx.definition_store.register_type_to_def(ty, def_id);
         if crate::query_boundaries::lib_augmentations::is_lazy_def_identity(
             self.ctx.types,
             ty,
@@ -208,6 +237,7 @@ impl<'a> CheckerState<'a> {
         ) {
             return;
         }
+        self.ctx.definition_store.register_type_to_def(ty, def_id);
         let existing_body = self.ctx.definition_store.get_body(def_id);
         if existing_body == Some(ty) {
             return;
@@ -336,5 +366,121 @@ impl<'a> CheckerState<'a> {
             self.ctx.types,
             type_id,
         )
+    }
+}
+
+#[cfg(test)]
+mod finalized_lib_body_identity_tests {
+    use super::*;
+    use crate::context::CheckerOptions;
+    use tsz_binder::BinderState;
+    use tsz_solver::construction::TypeInterner;
+    use tsz_solver::def::DefinitionInfo;
+
+    #[test]
+    fn selected_same_name_lazy_identity_does_not_rewrite_or_bump_generation() {
+        let arena = NodeArena::default();
+        let binder = BinderState::new();
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            &arena,
+            &binder,
+            &types,
+            "identity.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        let name = types.intern_string("AliasToken");
+        let canonical = checker
+            .ctx
+            .definition_store
+            .register(DefinitionInfo::type_alias(name, Vec::new(), TypeId::STRING));
+        let sibling = checker
+            .ctx
+            .definition_store
+            .register(DefinitionInfo::type_alias(name, Vec::new(), TypeId::NUMBER));
+
+        let sibling_ref = types.lazy(sibling);
+        let generation = checker.ctx.definition_store.generation();
+        checker.register_finalized_lib_body_for_def("AliasToken", sibling_ref, Some(sibling));
+
+        assert_eq!(checker.ctx.definition_store.generation(), generation);
+        assert_eq!(
+            checker.ctx.definition_store.get_body(canonical),
+            Some(TypeId::STRING),
+            "a same-name sibling wrapper is its own public identity, not a body for the first def",
+        );
+        assert_eq!(
+            checker.ctx.definition_store.get_body(sibling),
+            Some(TypeId::NUMBER),
+            "finalization must preserve the sibling's already-published structural body",
+        );
+    }
+
+    #[test]
+    fn selected_same_name_structural_body_still_finalizes_canonical_definition() {
+        let arena = NodeArena::default();
+        let binder = BinderState::new();
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            &arena,
+            &binder,
+            &types,
+            "structural.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        let name = types.intern_string("AliasToken");
+        let canonical = checker
+            .ctx
+            .definition_store
+            .register(DefinitionInfo::type_alias(name, Vec::new(), TypeId::STRING));
+        let sibling = checker
+            .ctx
+            .definition_store
+            .register(DefinitionInfo::type_alias(name, Vec::new(), TypeId::NUMBER));
+
+        checker.register_finalized_lib_body_for_def("AliasToken", TypeId::BOOLEAN, Some(sibling));
+
+        assert_eq!(
+            checker.ctx.definition_store.get_body(canonical),
+            Some(TypeId::BOOLEAN),
+            "structural lib bodies must publish through the stable canonical name entry",
+        );
+        assert_eq!(
+            checker.ctx.definition_store.get_body(sibling),
+            Some(TypeId::NUMBER),
+            "a worker-local selected sibling must not become the structural finalization target",
+        );
+    }
+
+    #[test]
+    fn same_basename_distinct_lazy_target_remains_a_real_alias_chain() {
+        let arena = NodeArena::default();
+        let binder = BinderState::new();
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            &arena,
+            &binder,
+            &types,
+            "same-basename-chain.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        let name = types.intern_string("AliasToken");
+        let source = checker
+            .ctx
+            .definition_store
+            .register(DefinitionInfo::type_alias(name, Vec::new(), TypeId::STRING));
+        let target = checker
+            .ctx
+            .definition_store
+            .register(DefinitionInfo::type_alias(name, Vec::new(), TypeId::NUMBER));
+        let target_ref = types.lazy(target);
+
+        checker.register_finalized_lib_body_for_def("AliasToken", target_ref, Some(source));
+
+        assert_eq!(
+            checker.ctx.definition_store.get_body(source),
+            Some(target_ref),
+            "a same-basename but distinct lazy target is a valid alias chain",
+        );
     }
 }
