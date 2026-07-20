@@ -393,27 +393,37 @@ impl<'a> CheckerState<'a> {
         value_decl: NodeIndex,
         declarations: &[NodeIndex],
     ) -> (TypeId, Vec<tsz_solver::TypeParamInfo>) {
-        let decl_idx = if value_decl.is_some()
-            && self
-                .ctx
-                .arena
-                .get(value_decl)
-                .and_then(|n| self.ctx.arena.get_class(n))
-                .is_some()
-        {
+        // `NodeIndex` is only meaningful together with its arena. Cross-file class
+        // symbols carry declaration indices from the owner arena; the same raw index
+        // can name an unrelated class in the requester. Accept a current-arena class
+        // only when declaration provenance is local and either the symbol's stable
+        // owner is this file or the current binder maps the node back to this exact
+        // symbol. The owner alternative preserves export/self-import wrappers whose
+        // related symbol identity differs; the O(1) provenance check still rejects a
+        // foreign declaration collision. Foreign classes fall through to the
+        // owner-arena search below.
+        let symbol_is_owned_by_current_file =
+            self.ctx.resolve_symbol_file_index_stable(sym_id) == Some(self.ctx.current_file_idx);
+        let is_local_class_declaration = |decl_idx: NodeIndex| {
+            decl_idx.is_some()
+                && self
+                    .ctx
+                    .declaration_is_local_to_current_arena(sym_id, decl_idx)
+                && (symbol_is_owned_by_current_file
+                    || self.ctx.binder.get_node_symbol(decl_idx) == Some(sym_id))
+                && self
+                    .ctx
+                    .arena
+                    .get(decl_idx)
+                    .and_then(|node| self.ctx.arena.get_class(node))
+                    .is_some()
+        };
+        let decl_idx = if is_local_class_declaration(value_decl) {
             value_decl
         } else {
             declarations
                 .iter()
-                .find(|&&d| {
-                    d.is_some()
-                        && self
-                            .ctx
-                            .arena
-                            .get(d)
-                            .and_then(|n| self.ctx.arena.get_class(n))
-                            .is_some()
-                })
+                .find(|&&decl_idx| is_local_class_declaration(decl_idx))
                 .copied()
                 .unwrap_or(NodeIndex::NONE)
         };
