@@ -1,9 +1,9 @@
 //! Regression tests for deferred conditional evaluation through the public solver API.
 
-use tsz_solver::computation::evaluate_conditional;
+use tsz_solver::computation::{evaluate_conditional, evaluate_type};
 use tsz_solver::construction::TypeInterner;
 use tsz_solver::query::conditional_type_id;
-use tsz_solver::type_handles::{ConditionalType, PropertyInfo, TypeId, TypeParamInfo};
+use tsz_solver::type_handles::{ConditionalType, PropertyInfo, TypeData, TypeId, TypeParamInfo};
 
 fn type_param(interner: &TypeInterner, name: &str) -> TypeId {
     interner.type_param(TypeParamInfo {
@@ -23,6 +23,92 @@ fn infer_param(interner: &TypeInterner, name: &str) -> TypeId {
         is_const: false,
         origin: tsz_solver::TypeParamOrigin::User,
     })
+}
+
+fn constrained_type_param(interner: &TypeInterner, name: &str, constraint: TypeId) -> TypeId {
+    interner.type_param(TypeParamInfo {
+        name: interner.intern_string(name),
+        constraint: Some(constraint),
+        default: None,
+        is_const: false,
+        origin: tsz_solver::TypeParamOrigin::User,
+    })
+}
+
+fn evaluated_exact_constraint_substitution(
+    interner: &TypeInterner,
+    check_type: TypeId,
+    branch_type: TypeId,
+) -> TypeId {
+    let conditional = interner.conditional(ConditionalType {
+        check_type,
+        extends_type: TypeId::UNKNOWN,
+        true_type: branch_type,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    });
+    let substituted =
+        tsz_solver::type_queries::conditional_check_type_substituted_constraint_exact(
+            interner,
+            conditional,
+        )
+        .expect("the constrained check type should be substituted");
+    evaluate_type(interner, substituted)
+}
+
+fn object_property_type(interner: &TypeInterner, object: TypeId, name: &str) -> TypeId {
+    let shape_id = match interner.lookup(object) {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => shape_id,
+        other => panic!("expected object result, got {other:?}"),
+    };
+    let name = interner.intern_string(name);
+    interner
+        .object_shape(shape_id)
+        .properties
+        .iter()
+        .find(|property| property.name == name)
+        .map(|property| property.type_id)
+        .expect("expected result property")
+}
+
+#[test]
+fn conditional_constraint_substitution_preserves_same_named_foreign_parameter() {
+    let interner = TypeInterner::new();
+    let owned = constrained_type_param(&interner, "Ref", TypeId::BOOLEAN);
+    let foreign = constrained_type_param(&interner, "Ref", TypeId::STRING);
+    let branch = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("owned"), owned),
+        PropertyInfo::new(interner.intern_string("foreign"), foreign),
+    ]);
+
+    assert_ne!(
+        owned, foreign,
+        "the declarations must have distinct identities"
+    );
+    let result = evaluated_exact_constraint_substitution(&interner, owned, branch);
+    assert_eq!(
+        object_property_type(&interner, result, "owned"),
+        TypeId::BOOLEAN,
+        "the conditional-owned binder must still be substituted with its constraint",
+    );
+    assert_eq!(
+        object_property_type(&interner, result, "foreign"),
+        foreign,
+        "substituting the conditional's check binder must not rewrite a same-named sibling binder",
+    );
+}
+
+#[test]
+fn conditional_constraint_substitution_keeps_renamed_foreign_parameter() {
+    let interner = TypeInterner::new();
+    let owned = constrained_type_param(&interner, "Ref", TypeId::BOOLEAN);
+    let foreign = constrained_type_param(&interner, "OuterRef", TypeId::STRING);
+
+    assert_eq!(
+        evaluated_exact_constraint_substitution(&interner, owned, foreign),
+        foreign,
+        "renaming a foreign binder must not change conditional constraint substitution",
+    );
 }
 
 #[test]

@@ -541,10 +541,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         {
             return None;
         }
-        let substituted = crate::type_queries::conditional_check_type_substituted_constraint(
-            self.interner,
-            type_id,
-        )?;
+        // Checker-owned relations carry a query database, so they can rewrite
+        // the exact check-binder identity without touching same-named foreign
+        // binders. Standalone TypeDatabase-only relations retain the legacy
+        // instantiation fallback.
+        let substituted = if let Some(query_db) = self.query_db {
+            crate::type_queries::conditional_check_type_substituted_constraint_exact(
+                query_db, type_id,
+            )
+        } else {
+            crate::type_queries::conditional_check_type_substituted_constraint(
+                self.interner,
+                type_id,
+            )
+        }?;
         let evaluated = self.evaluate_type(substituted);
         (evaluated != TypeId::NEVER).then_some(evaluated)
     }
