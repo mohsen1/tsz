@@ -21,54 +21,6 @@ fn enter_raw_constraint_materialization(
     true
 }
 
-#[cfg(test)]
-mod raw_constraint_materialization_guard_tests {
-    use super::*;
-
-    #[test]
-    fn fuel_stops_before_the_sixty_fifth_unique_node() {
-        let mut active = FxHashSet::default();
-        let mut steps = 0;
-        for offset in 0..MAX_RAW_CONSTRAINT_MATERIALIZATION_STEPS {
-            assert!(enter_raw_constraint_materialization(
-                TypeId(1_000 + offset as u32),
-                &mut active,
-                &mut steps,
-            ));
-        }
-        assert!(!enter_raw_constraint_materialization(
-            TypeId(2_000),
-            &mut active,
-            &mut steps,
-        ));
-        assert_eq!(steps, MAX_RAW_CONSTRAINT_MATERIALIZATION_STEPS);
-    }
-
-    #[test]
-    fn cycle_guard_is_path_scoped_for_shared_nodes() {
-        let shared = TypeId(1_000);
-        let mut active = FxHashSet::default();
-        let mut steps = 0;
-        assert!(enter_raw_constraint_materialization(
-            shared,
-            &mut active,
-            &mut steps,
-        ));
-        assert!(!enter_raw_constraint_materialization(
-            shared,
-            &mut active,
-            &mut steps,
-        ));
-        active.remove(&shared);
-        assert!(enter_raw_constraint_materialization(
-            shared,
-            &mut active,
-            &mut steps,
-        ));
-        assert_eq!(steps, 2);
-    }
-}
-
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     pub(super) fn object_constraint_properties_are_any(&self, constraint: TypeId) -> bool {
         let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) =
@@ -793,5 +745,53 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         if changed {
             instantiated_rest_param.type_id = self.interner.tuple(elements);
         }
+    }
+}
+
+#[cfg(test)]
+mod raw_constraint_materialization_guard_tests {
+    use super::*;
+
+    #[test]
+    fn fuel_stops_before_the_sixty_fifth_unique_node() {
+        let mut active = FxHashSet::default();
+        let mut steps = 0;
+        for offset in 0..MAX_RAW_CONSTRAINT_MATERIALIZATION_STEPS {
+            assert!(enter_raw_constraint_materialization(
+                TypeId(1_000 + offset as u32),
+                &mut active,
+                &mut steps,
+            ));
+        }
+        assert!(!enter_raw_constraint_materialization(
+            TypeId(2_000),
+            &mut active,
+            &mut steps,
+        ));
+        assert_eq!(steps, MAX_RAW_CONSTRAINT_MATERIALIZATION_STEPS);
+    }
+
+    #[test]
+    fn cycle_guard_is_path_scoped_for_shared_nodes() {
+        let shared = TypeId(1_000);
+        let mut active = FxHashSet::default();
+        let mut steps = 0;
+        assert!(enter_raw_constraint_materialization(
+            shared,
+            &mut active,
+            &mut steps,
+        ));
+        assert!(!enter_raw_constraint_materialization(
+            shared,
+            &mut active,
+            &mut steps,
+        ));
+        active.remove(&shared);
+        assert!(enter_raw_constraint_materialization(
+            shared,
+            &mut active,
+            &mut steps,
+        ));
+        assert_eq!(steps, 2);
     }
 }
