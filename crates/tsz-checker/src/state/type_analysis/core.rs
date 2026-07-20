@@ -672,23 +672,8 @@ impl CheckerState<'_> {
             // shadowing; require an enclosing declaration in the AST before
             // opting into the exact domain. Record the name node so every
             // refinement pass reuses the same origin.
-            let needs_identity_scope = self
-                .ctx
-                .type_parameter_scope
-                .get(&name)
-                .copied()
-                .and_then(|active| {
-                    common_query::type_param_info(self.ctx.types, active)
-                        .map(|active_info| (active, active_info))
-                })
-                .is_some_and(|(active, active_info)| {
-                    super::lexical_type_param_scope::is_lexical_type_parameter_shadow(
-                        self,
-                        active,
-                        active_info,
-                        data.name,
-                    )
-                });
+            let needs_identity_scope =
+                self.type_parameter_decl_needs_identity_scope(&name, data.name);
             if needs_identity_scope {
                 identity_scoped_param_names.push(data.name.0);
             }
@@ -1008,7 +993,7 @@ impl CheckerState<'_> {
         self.intern_type_param_for_decl_stamped_with_identity(name_node, info, false)
     }
 
-    fn intern_type_param_for_decl_stamped_with_identity(
+    pub(crate) fn intern_type_param_for_decl_stamped_with_identity(
         &mut self,
         name_node: tsz_parser::parser::NodeIndex,
         mut info: tsz_solver::TypeParamInfo,
@@ -1086,6 +1071,36 @@ impl CheckerState<'_> {
             .insert((name_node.0, info), type_id);
 
         (type_id, info)
+    }
+
+    /// Whether this declaration needs exact identity because it shadows an
+    /// active same-named parameter from a lexically enclosing generic owner.
+    ///
+    /// Keep the active-scope check paired with binder ancestry: an unrelated
+    /// re-entrant scratch entry must not opt a declaration into the exact
+    /// domain, while every scope-reconstruction path must make the same
+    /// decision as [`Self::push_type_parameters`].
+    pub(crate) fn type_parameter_decl_needs_identity_scope(
+        &self,
+        name: &str,
+        name_node: NodeIndex,
+    ) -> bool {
+        self.ctx
+            .type_parameter_scope
+            .get(name)
+            .copied()
+            .and_then(|active| {
+                common_query::type_param_info(self.ctx.types, active)
+                    .map(|active_info| (active, active_info))
+            })
+            .is_some_and(|(active, active_info)| {
+                super::lexical_type_param_scope::is_lexical_type_parameter_shadow(
+                    self,
+                    active,
+                    active_info,
+                    name_node,
+                )
+            })
     }
 
     pub(super) fn empty_type_literal_satisfies_optional_mapped_constraint(

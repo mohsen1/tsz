@@ -1434,7 +1434,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut updates = Vec::new();
-        let mut added_params: Vec<NodeIndex> = Vec::new();
+        let mut added_params: Vec<(NodeIndex, bool)> = Vec::new();
 
         // Pass 1: Add all type parameters to scope WITHOUT constraints
         for param_indices in enclosing_param_indices.into_iter().rev() {
@@ -1463,6 +1463,8 @@ impl<'a> CheckerState<'a> {
                     .has_modifier(&data.modifiers, tsz_scanner::SyntaxKind::ConstKeyword);
                 let info =
                     signature_building_boundary::user_type_param_info(atom, None, None, is_const);
+                let needs_identity_scope =
+                    self.type_parameter_decl_needs_identity_scope(&name, data.name);
                 // Mint through the declaration-scoped cache (not a structural
                 // `factory.type_param` intern) so the enclosing parameter
                 // resolves to the SAME `TypeId` here as under
@@ -1471,11 +1473,17 @@ impl<'a> CheckerState<'a> {
                 // parameter than the one the `implements`-clause type
                 // arguments resolve to, breaking the alias-application
                 // identity fast path (false TS2416, #13044).
-                let type_id = self.intern_type_param_for_decl(data.name, info);
+                let type_id = self
+                    .intern_type_param_for_decl_stamped_with_identity(
+                        data.name,
+                        info,
+                        needs_identity_scope,
+                    )
+                    .0;
 
                 let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
                 updates.push((name, previous, false));
-                added_params.push(param_idx);
+                added_params.push((param_idx, needs_identity_scope));
             }
         }
 
@@ -1490,7 +1498,7 @@ impl<'a> CheckerState<'a> {
         // treats the enclosing parameter as unbound and collapses e.g.
         // `Box<R>.get`'s `R` to its declared default inside nested-function
         // bodies (`f<R = unknown>(box: Box<R>) { () => box.get() }`).
-        for param_idx in added_params {
+        for (param_idx, needs_identity_scope) in added_params {
             let Some(node) = self.ctx.arena.get(param_idx) else {
                 continue;
             };
@@ -1527,7 +1535,13 @@ impl<'a> CheckerState<'a> {
             let info = signature_building_boundary::user_type_param_info(
                 atom, constraint, default, is_const,
             );
-            let refined_type_id = self.intern_type_param_for_decl(data.name, info);
+            let refined_type_id = self
+                .intern_type_param_for_decl_stamped_with_identity(
+                    data.name,
+                    info,
+                    needs_identity_scope,
+                )
+                .0;
             self.ctx.type_parameter_scope.insert(name, refined_type_id);
         }
 
