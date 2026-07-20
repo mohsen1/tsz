@@ -4,6 +4,18 @@ use crate::intern::TypeInterner;
 use crate::types::{PropertyInfo, TypeId};
 use std::sync::Arc;
 
+/// Request-local snapshot of the exceptional `TS2590` side channel.
+///
+/// The concrete interner scopes the snapshot to both its own type universe and
+/// the current worker thread. Callers keep the token opaque and use the trait
+/// methods below to test, consume, or discard only events produced after it.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct UnionComplexityCheckpoint {
+    pub(crate) produced_epoch: u64,
+    pub(crate) interner_instance_id: u32,
+    pub(crate) pending_count: u32,
+}
+
 /// Diagnostic display and provenance hooks for interned types.
 ///
 /// These methods preserve source-facing type identities and display-only object
@@ -136,10 +148,10 @@ pub trait TypeDisplayProvenance {
         None
     }
 
-    /// Atomically read and clear the "union too complex" flag.
+    /// Read and clear the current worker's "union too complex" signal.
     ///
     /// Returns `true` if a union construction was aborted due to complexity
-    /// since the last call. The checker uses this to emit `TS2590`.
+    /// since its last call. The checker uses this to emit `TS2590`.
     fn take_union_too_complex(&self) -> bool {
         false
     }
@@ -151,6 +163,42 @@ pub trait TypeDisplayProvenance {
     /// re-evaluation. Default is `false`.
     fn is_union_too_complex(&self) -> bool {
         false
+    }
+
+    /// Snapshot the current worker's `TS2590` signal state.
+    fn union_complexity_checkpoint(&self) -> UnionComplexityCheckpoint {
+        UnionComplexityCheckpoint {
+            pending_count: if self.is_union_too_complex() { 1 } else { 0 },
+            ..UnionComplexityCheckpoint::default()
+        }
+    }
+
+    /// Return whether this worker produced a new complexity event after
+    /// `checkpoint`.
+    fn union_complexity_changed_since(&self, checkpoint: UnionComplexityCheckpoint) -> bool {
+        self.is_union_too_complex() && checkpoint.pending_count == 0
+    }
+
+    /// Consume a pending event only when it was produced after `checkpoint`,
+    /// preserving an event that was already pending for an outer owner.
+    fn take_union_too_complex_since(&self, checkpoint: UnionComplexityCheckpoint) -> bool {
+        if self.union_complexity_changed_since(checkpoint) {
+            if checkpoint.pending_count != 0 {
+                self.is_union_too_complex()
+            } else {
+                self.take_union_too_complex()
+            }
+        } else {
+            false
+        }
+    }
+
+    /// Discard events produced after `checkpoint` while preserving an event
+    /// that was already pending when the speculative operation began.
+    fn discard_union_too_complex_since(&self, checkpoint: UnionComplexityCheckpoint) {
+        if checkpoint.pending_count == 0 && self.union_complexity_changed_since(checkpoint) {
+            let _ = self.take_union_too_complex();
+        }
     }
 
     /// Mark the current operation as having produced a too-complex union.
@@ -256,6 +304,22 @@ impl TypeDisplayProvenance for TypeInterner {
 
     fn is_union_too_complex(&self) -> bool {
         Self::is_union_too_complex(self)
+    }
+
+    fn union_complexity_checkpoint(&self) -> UnionComplexityCheckpoint {
+        Self::union_complexity_checkpoint(self)
+    }
+
+    fn union_complexity_changed_since(&self, checkpoint: UnionComplexityCheckpoint) -> bool {
+        Self::union_complexity_changed_since(self, checkpoint)
+    }
+
+    fn take_union_too_complex_since(&self, checkpoint: UnionComplexityCheckpoint) -> bool {
+        Self::take_union_too_complex_since(self, checkpoint)
+    }
+
+    fn discard_union_too_complex_since(&self, checkpoint: UnionComplexityCheckpoint) {
+        Self::discard_union_too_complex_since(self, checkpoint);
     }
 
     fn mark_union_too_complex(&self) {

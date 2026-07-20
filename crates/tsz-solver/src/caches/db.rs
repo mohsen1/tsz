@@ -27,7 +27,7 @@ use std::sync::Arc;
 use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
 
-pub use crate::caches::display_provenance::TypeDisplayProvenance;
+pub use crate::caches::display_provenance::{TypeDisplayProvenance, UnionComplexityCheckpoint};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IntersectionMergeCacheEntry {

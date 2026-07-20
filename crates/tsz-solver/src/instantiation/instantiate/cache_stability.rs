@@ -1,8 +1,8 @@
-use crate::construction::TypeDatabase;
+use crate::construction::{TypeDatabase, UnionComplexityCheckpoint};
 
 #[derive(Clone, Copy)]
 pub(super) struct ProjectInstantiationCacheLimitSnapshot {
-    union_too_complex: bool,
+    union_complexity: UnionComplexityCheckpoint,
     tuple_too_large: bool,
     solver_frame_bail_count: u32,
 }
@@ -45,7 +45,7 @@ impl ProjectInstantiationCacheStability {
 impl ProjectInstantiationCacheLimitSnapshot {
     pub(super) fn capture(interner: &dyn TypeDatabase) -> Self {
         Self {
-            union_too_complex: interner.is_union_too_complex(),
+            union_complexity: interner.union_complexity_checkpoint(),
             tuple_too_large: interner.is_tuple_too_large(),
             solver_frame_bail_count: crate::recursion::solver_frame_bail_count(),
         }
@@ -62,7 +62,7 @@ impl ProjectInstantiationCacheLimitSnapshot {
         //  - solver-frame curtailment: a nested `evaluate_*` can return an
         //    under-evaluated form without flipping the instantiator's own
         //    `depth_exceeded`; the monotonic counter changing detects it.
-        let newly_too_complex = interner.is_union_too_complex() && !self.union_too_complex;
+        let newly_too_complex = interner.union_complexity_changed_since(self.union_complexity);
         let newly_tuple_too_large = interner.is_tuple_too_large() && !self.tuple_too_large;
         let frame_curtailed =
             crate::recursion::solver_frame_bail_count() != self.solver_frame_bail_count;
@@ -93,7 +93,11 @@ impl ProjectInstantiationCacheLimitSnapshot {
 
 #[cfg(test)]
 mod tests {
-    use super::{ProjectInstantiationCacheStability, ProjectInstantiationCacheTaint};
+    use super::{
+        ProjectInstantiationCacheLimitSnapshot, ProjectInstantiationCacheStability,
+        ProjectInstantiationCacheTaint,
+    };
+    use crate::intern::TypeInterner;
 
     #[test]
     fn stable_request_state_allows_project_cache_publication() {
@@ -150,5 +154,25 @@ mod tests {
                 ProjectInstantiationCacheTaint::UnionTooComplex
             )
         );
+    }
+
+    #[test]
+    fn second_union_event_taints_pre_existing_pending_snapshot() {
+        let interner = TypeInterner::new();
+        interner.set_union_too_complex();
+        let snapshot = ProjectInstantiationCacheLimitSnapshot::capture(&interner);
+
+        assert_eq!(
+            snapshot.request_state_stability_after(&interner),
+            ProjectInstantiationCacheStability::Stable,
+        );
+        interner.set_union_too_complex();
+        assert_eq!(
+            snapshot.request_state_stability_after(&interner),
+            ProjectInstantiationCacheStability::Unstable(
+                ProjectInstantiationCacheTaint::UnionTooComplex,
+            ),
+        );
+        assert!(interner.take_union_too_complex());
     }
 }

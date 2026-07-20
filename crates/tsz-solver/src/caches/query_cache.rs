@@ -11,7 +11,7 @@ use crate::caches::db::{
     IntersectionMergeCacheEntry, QueryDatabase, TypeBuiltinAccess, TypeCompilerOptions,
     TypeContainsByIdCache, TypeDatabase, TypeDisplayProvenance, TypeExtractParamsCache,
     TypePruneUnionCache, TypeRawIntersectionConstruction, TypeSubstitutionConstruction,
-    TypeTupleLimitSignal, TypeWidenCache,
+    TypeTupleLimitSignal, TypeWidenCache, UnionComplexityCheckpoint,
 };
 use crate::caches::eval_dependency_index::{self, EvalDependencyIndex, EvalDependencyIndexState};
 use crate::caches::instantiation_cache::{InstantiationCache, InstantiationCacheKey};
@@ -806,6 +806,22 @@ impl TypeDisplayProvenance for QueryCache<'_> {
 
     fn is_union_too_complex(&self) -> bool {
         self.interner.is_union_too_complex()
+    }
+
+    fn union_complexity_checkpoint(&self) -> UnionComplexityCheckpoint {
+        self.interner.union_complexity_checkpoint()
+    }
+
+    fn union_complexity_changed_since(&self, checkpoint: UnionComplexityCheckpoint) -> bool {
+        self.interner.union_complexity_changed_since(checkpoint)
+    }
+
+    fn take_union_too_complex_since(&self, checkpoint: UnionComplexityCheckpoint) -> bool {
+        self.interner.take_union_too_complex_since(checkpoint)
+    }
+
+    fn discard_union_too_complex_since(&self, checkpoint: UnionComplexityCheckpoint) {
+        self.interner.discard_union_too_complex_since(checkpoint);
     }
 
     fn mark_union_too_complex(&self) {

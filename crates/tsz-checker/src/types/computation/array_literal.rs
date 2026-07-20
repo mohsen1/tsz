@@ -1342,8 +1342,8 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Snapshot the solver's `union_too_complex` flag before computing this
-        // array's element union. The flag is global and sticky: a recursive
+        // Snapshot the solver's worker-local complexity epoch before computing
+        // this array's element union. A recursive
         // type-alias evaluation triggered while computing the *contextual* element
         // type (e.g. `RecArray<T> = Array<T | RecArray<T>>` in a generic call
         // argument position) can set it, and an unrelated earlier expression can
@@ -1354,7 +1354,7 @@ impl<'a> CheckerState<'a> {
         // declaration/cache-order-dependent way. Mirror the evaluator
         // (`commit_closed_eval_writes`): attribute complexity only when this
         // array's own union computation newly trips the flag.
-        let union_too_complex_before = self.ctx.types.is_union_too_complex();
+        let union_complexity_checkpoint = self.ctx.types.union_complexity_checkpoint();
 
         // TS2590: Pre-check element count before BCT. tsc's removeSubtypes only
         // increments its cost counter for StructuredOrInstantiable source types —
@@ -1413,8 +1413,11 @@ impl<'a> CheckerState<'a> {
         // Only attribute the complexity to this array when its own union computation
         // newly tripped the flag — a flag inherited from contextual-type evaluation
         // or an earlier expression must not turn this array into `Array<error>`.
-        let union_too_complex_now = self.ctx.types.take_union_too_complex();
-        if union_too_complex_now && !union_too_complex_before {
+        if self
+            .ctx
+            .types
+            .take_union_too_complex_since(union_complexity_checkpoint)
+        {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             self.error_at_node(
                 idx,

@@ -51,14 +51,17 @@ pub(super) fn evaluate_index_union_distribution<R: TypeResolver>(
     // the whole union; the sticky `union_too_complex` flag then drives TS2590
     // in the checker. A nested distribution that already overflowed is detected
     // via the pre-loop flag snapshot so deeper keys are not re-expanded.
-    let union_complex_before_index = evaluator.interner().is_union_too_complex();
+    let union_complexity_checkpoint = evaluator.interner().union_complexity_checkpoint();
     let mut cumulative_members: usize = 0;
     let mut results = Vec::new();
     for &member in members {
         if evaluator.is_depth_exceeded() {
             return TypeId::ERROR;
         }
-        if !union_complex_before_index && evaluator.interner().is_union_too_complex() {
+        if evaluator
+            .interner()
+            .union_complexity_changed_since(union_complexity_checkpoint)
+        {
             break;
         }
         let result = evaluator.recurse_index_access(object_type, member);
