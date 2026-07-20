@@ -389,6 +389,82 @@ impl CheckerContext<'_> {
             })
     }
 
+    /// Owner-carrying form of [`Self::resolve_export_in_target_file`]. Raw
+    /// `SymbolId`s are binder-relative, so callers that feed a resolved export
+    /// into an owner-keyed cache must keep the declaring file attached instead
+    /// of recovering it from the mutable symbol-target overlay afterward.
+    pub fn resolve_export_in_target_file_with_owner(
+        &self,
+        target_idx: usize,
+        export_name: &str,
+        visited: &mut FxHashSet<usize>,
+        remaining_steps: &mut usize,
+    ) -> Option<(tsz_binder::SymbolId, usize)> {
+        let next = remaining_steps.checked_sub(1)?;
+        *remaining_steps = next;
+        if !visited.insert(target_idx) {
+            return None;
+        }
+        let target_binder = self.get_binder_for_file(target_idx)?;
+        let target_arena = self.get_arena_for_file(target_idx as u32);
+        let file_name = target_arena.source_files.first()?.file_name.clone();
+
+        // Direct exports (program-aware).
+        if let Some(exports) = self.module_exports_for_module(target_binder, &file_name)
+            && let Some(sym_id) = exports.get(export_name)
+            && target_binder.get_symbol(sym_id).is_some()
+        {
+            self.register_symbol_file_target(sym_id, target_idx);
+            return Some((sym_id, target_idx));
+        }
+
+        // Named re-exports: `export { foo } from './other'` (and `as` renames).
+        if let Some(reexports) = self.reexports_for_file(target_binder, &file_name)
+            && let Some((source_module, original_name)) = reexports.get(export_name)
+        {
+            let name = original_name.as_deref().unwrap_or(export_name);
+            if let Some(source_idx) =
+                self.resolve_import_target_from_file(target_idx, source_module)
+                && let Some(resolved) = self.resolve_export_in_target_file_with_owner(
+                    source_idx,
+                    name,
+                    visited,
+                    remaining_steps,
+                )
+            {
+                return Some(resolved);
+            }
+        }
+
+        // Wildcard re-exports: `export * from './other'`.
+        if let Some(source_modules) = self.wildcard_reexports_for_file(target_binder, &file_name) {
+            let source_modules = source_modules.clone();
+            for (source_module, _is_type_only) in &source_modules {
+                if let Some(source_idx) =
+                    self.resolve_import_target_from_file(target_idx, source_module)
+                    && let Some(resolved) = self.resolve_export_in_target_file_with_owner(
+                        source_idx,
+                        export_name,
+                        visited,
+                        remaining_steps,
+                    )
+                {
+                    return Some(resolved);
+                }
+            }
+        }
+
+        // Fallback: the target binder's own re-export resolution for
+        // single-file / ambient-module binders whose local tables are
+        // populated (e.g. `declare module "x" { ... }`).
+        target_binder
+            .resolve_import_with_reexports_type_only(&file_name, export_name)
+            .map(|(sym_id, _)| {
+                self.register_symbol_file_target(sym_id, target_idx);
+                (sym_id, target_idx)
+            })
+    }
+
     /// When `alias_id` is a *named* import bound to an `export * as NS from '<m>'`
     /// namespace re-export, return the file index of the re-exported module `<m>`
     /// — the backing module whose exports are the anchor's members. Returns

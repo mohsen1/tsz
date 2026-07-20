@@ -526,6 +526,22 @@ pub(crate) fn resolve_call<C: AssignabilityChecker>(
     )
 }
 
+pub(crate) fn resolve_single_non_rest_generic_call_with_context(
+    db: &dyn QueryDatabase,
+    ctx: &crate::context::CheckerContext<'_>,
+    env: &TypeEnvironment,
+    func_type: TypeId,
+    arg_types: &[TypeId],
+) -> Option<TypeId> {
+    tsz_solver::operations::resolve_single_non_rest_generic_call_with_compat_checker(
+        db,
+        env,
+        func_type,
+        arg_types,
+        |checker| ctx.configure_compat_checker(checker),
+    )
+}
+
 pub(crate) struct CallArgSourceOptions<'a> {
     pub(crate) force_bivariant_callbacks: bool,
     pub(crate) contextual_type: Option<TypeId>,

@@ -221,6 +221,9 @@ path = "tests/recursive_lib_type_relation_tests.rs"
 name = "assignment_branch_merge_narrowing_tests"
 path = "tests/assignment_branch_merge_narrowing_tests.rs"
 [[test]]
+name = "generic_call_assignment_flow_tests"
+path = "tests/generic_call_assignment_flow_tests.rs"
+[[test]]
 name = "mapped_remapped_excess_function_property_tests"
 path = "tests/mapped_remapped_excess_function_property_tests.rs"
 [[test]]

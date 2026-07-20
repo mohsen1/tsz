@@ -1826,6 +1826,7 @@ pub fn resolve_call_with_checker<C: AssignabilityChecker>(
         },
     )
 }
+
 pub fn resolve_call_with_checker_and_arg_sources<C: AssignabilityChecker>(
     interner: &dyn QueryDatabase,
     checker: &mut C,

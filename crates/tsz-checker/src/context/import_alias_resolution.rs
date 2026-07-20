@@ -6,9 +6,17 @@
 //! `SymbolId`s, so each hop is read from the binder of the file that declares
 //! it and pinned into the cross-file target overlay for cross-arena delegation.
 
+use smallvec::SmallVec;
 use tsz_binder::{BinderState, SymbolId};
 
 use super::CheckerContext;
+
+/// Total owner-carrying alias/re-export steps allowed for one flow fallback.
+///
+/// This budget is shared by direct alias hops and recursive named/wildcard
+/// barrel traversal so a wide or deeply nested project cannot turn the
+/// conservative recovery path into an unbounded walk.
+const MAX_OWNER_ALIAS_RESOLUTION_STEPS: usize = 64;
 
 /// Look up `import_name` among a binder's exports for `file_name`, falling back
 /// to its file-local declarations. Shared by the single-hop and chain import
@@ -127,6 +135,98 @@ impl CheckerContext<'_> {
         None
     }
 
+    /// Resolve one import hop and carry the target binder index with the raw
+    /// symbol id. The overlay registration remains for legacy consumers, but
+    /// owner-aware callers never need to read that lossy raw-id map back.
+    fn resolve_import_alias_with_owner_and_register(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+        remaining_steps: &mut usize,
+    ) -> Option<(tsz_binder::SymbolId, usize)> {
+        let symbol = self.binder.symbols.get(sym_id).or_else(|| {
+            self.all_binders
+                .as_ref()
+                .and_then(|bs| bs.iter().find_map(|b| b.symbols.get(sym_id)))
+        })?;
+
+        if (symbol.flags & tsz_binder::symbol_flags::ALIAS) == 0 {
+            return None;
+        }
+
+        let source_file_idx = if self
+            .binder
+            .get_symbol(sym_id)
+            .is_some_and(|local| local.flags & tsz_binder::symbol_flags::ALIAS != 0)
+        {
+            self.current_file_idx
+        } else {
+            symbol.decl_file_idx as usize
+        };
+        self.resolve_import_alias_from_file_with_owner_and_register(
+            sym_id,
+            source_file_idx,
+            remaining_steps,
+        )
+    }
+
+    /// Resolve one alias hop from the binder that owns `sym_id`, carrying the
+    /// resolved export's owner through direct, named, wildcard, and ambient
+    /// module paths.
+    fn resolve_import_alias_from_file_with_owner_and_register(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+        source_file_idx: usize,
+        remaining_steps: &mut usize,
+    ) -> Option<(tsz_binder::SymbolId, usize)> {
+        let source_binder = self.get_binder_for_file(source_file_idx)?;
+        let symbol = source_binder.get_symbol(sym_id)?;
+        if (symbol.flags & tsz_binder::symbol_flags::ALIAS) == 0 {
+            return None;
+        }
+        let module_specifier = symbol.import_module()?;
+        let import_name = symbol.import_name().unwrap_or(symbol.escaped_name.as_str());
+
+        if let Some(target_idx) =
+            self.resolve_import_target_from_file(source_file_idx, module_specifier)
+        {
+            let target_binder = self.get_binder_for_file(target_idx)?;
+            let target_arena = self.get_arena_for_file(target_idx as u32);
+            let file_name = &target_arena.source_files.first()?.file_name;
+            let resolved = if let Some(result) =
+                binder_named_export_or_local(target_binder, file_name, import_name)
+            {
+                let next = remaining_steps.checked_sub(1)?;
+                *remaining_steps = next;
+                (result, target_idx)
+            } else {
+                let mut visited = rustc_hash::FxHashSet::default();
+                self.resolve_export_in_target_file_with_owner(
+                    target_idx,
+                    import_name,
+                    &mut visited,
+                    remaining_steps,
+                )?
+            };
+            self.register_symbol_file_target(resolved.0, resolved.1);
+            return Some(resolved);
+        }
+
+        // Fallback: check ambient module exports (declare module "X" { ... }).
+        // These are keyed by the module specifier in binder.module_exports.
+        // For ambient modules, the symbol lives in the same binder that declared
+        // the module, so we also register it in cross_file_symbol_targets with
+        // the declaring file's index for proper cross-arena delegation.
+        if let Some((result, file_idx)) =
+            self.resolve_import_from_ambient_module_with_file_idx(module_specifier, import_name)
+        {
+            let next = remaining_steps.checked_sub(1)?;
+            *remaining_steps = next;
+            self.register_symbol_file_target(result, file_idx);
+            return Some((result, file_idx));
+        }
+        None
+    }
+
     /// Follow an import-alias / re-export chain to its terminal target symbol,
     /// registering every hop's owning file so cross-arena delegation can locate
     /// it.
@@ -197,6 +297,47 @@ impl CheckerContext<'_> {
             current = next;
         }
         Some(current)
+    }
+
+    /// Follow an import/re-export chain while carrying the terminal symbol's
+    /// binder-relative owner as part of the result. Consumers must prefer this
+    /// over re-reading the mutable raw-id ownership overlay.
+    pub fn resolve_import_alias_chain_with_owner_and_register(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> Option<(tsz_binder::SymbolId, usize)> {
+        // Resolve the first hop with its owner attached. Re-reading the raw-id
+        // overlay here would be ambiguous when two target binders minted the
+        // same `SymbolId`.
+        let mut remaining_steps = MAX_OWNER_ALIAS_RESOLUTION_STEPS;
+        let (mut current, mut current_file_idx) =
+            self.resolve_import_alias_with_owner_and_register(sym_id, &mut remaining_steps)?;
+        let mut seen = SmallVec::<[(usize, SymbolId); 4]>::new();
+        loop {
+            let owned_symbol = (current_file_idx, current);
+            if seen.contains(&owned_symbol) {
+                return None;
+            }
+            seen.push(owned_symbol);
+            // Read the intermediate from the binder that actually owns it.
+            let binder = self.get_binder_for_file(current_file_idx)?;
+            let symbol = binder.get_symbol(current)?;
+            if (symbol.flags & tsz_binder::symbol_flags::ALIAS) == 0 {
+                return Some((current, current_file_idx));
+            }
+            let (next, target_idx) = self.resolve_import_alias_from_file_with_owner_and_register(
+                current,
+                current_file_idx,
+                &mut remaining_steps,
+            )?;
+            // Raw ids are binder-relative. Equal ids in different owner files
+            // are a forward alias hop, not a re-export cycle.
+            if next == current && target_idx == current_file_idx {
+                return None;
+            }
+            current = next;
+            current_file_idx = target_idx;
+        }
     }
 
     /// Resolve an import name from ambient module exports (`declare module "X" { ... }`).

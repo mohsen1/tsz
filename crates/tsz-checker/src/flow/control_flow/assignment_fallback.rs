@@ -12,9 +12,11 @@ use crate::query_boundaries::flow_analysis::{
     is_promise_like_type, literal_value, optional_flow_property, union_members_for_type,
     unwrap_promise_type_argument, widen_literal_to_primitive,
 };
+use crate::query_boundaries::operator_wrappers::is_equality_comparison_operator;
 use crate::types_domain::queries::lib_resolution::{
     keyword_name_to_type_id, keyword_syntax_to_type_id,
 };
+use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
@@ -170,6 +172,17 @@ impl<'a> FlowAnalyzer<'a> {
             k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
                 self.fallback_object_literal_type_from_syntax(expr)
             }
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                self.fallback_property_access_type(expr)
+            }
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                let binary = self.arena.get_binary_expr(expr_node)?;
+                self.fallback_binary_expression_type(
+                    binary.left,
+                    binary.right,
+                    binary.operator_token,
+                )
+            }
             k if k == syntax_kind_ext::NEW_EXPRESSION => self.fallback_new_expression_type(expr),
             _ => None,
         }
@@ -297,17 +310,23 @@ impl<'a> FlowAnalyzer<'a> {
                 // Without this, generic new expressions with type parameter arguments
                 // fail the fallback path, losing the type argument information.
                 if (symbol.flags & tsz_binder::symbol_flags::TYPE_PARAMETER) != 0 {
-                    return symbol.declarations.iter().copied().find_map(|decl| {
-                        self.node_types
-                            .and_then(|nt| nt.get(&decl.0).copied())
-                            .filter(|&ty| ty != TypeId::ERROR)
-                    });
+                    return symbol
+                        .declarations
+                        .iter()
+                        .copied()
+                        .find_map(|decl| {
+                            self.node_types
+                                .and_then(|nt| nt.get(&decl.0).copied())
+                                .filter(|&ty| ty != TypeId::ERROR)
+                        })
+                        .or_else(|| self.fallback_cached_stable_symbol_type(sym_id));
                 }
                 let base_type = symbol
                     .declarations
                     .iter()
                     .copied()
-                    .find_map(|decl| self.fallback_named_type_declaration_type(decl));
+                    .find_map(|decl| self.fallback_named_type_declaration_type(decl))
+                    .or_else(|| self.fallback_cached_stable_symbol_type(sym_id));
                 // For generic type references with type arguments (e.g., Box<K>),
                 // apply the type arguments to the base type.
                 if let Some(base) = base_type
@@ -498,6 +517,64 @@ impl<'a> FlowAnalyzer<'a> {
 
     fn fallback_call_expression_type(&self, call_expr: NodeIndex) -> Option<TypeId> {
         self.reject_unresolved_generic_result(self.fallback_call_expression_type_inner(call_expr))
+            .or_else(|| self.fallback_instantiated_generic_call_type(call_expr))
+    }
+
+    /// Recover a concrete return for the one unambiguous generic-call shape.
+    /// Call selection, inference, constraints, and return instantiation stay in
+    /// the solver's canonical call resolver; flow only supplies cached argument
+    /// types and fails closed for explicit type arguments or spread syntax.
+    fn fallback_instantiated_generic_call_type(&self, call_expr: NodeIndex) -> Option<TypeId> {
+        let call_node = self.arena.get(call_expr)?;
+        if call_node.kind != syntax_kind_ext::CALL_EXPRESSION || call_node.is_optional_chain() {
+            return None;
+        }
+
+        let call = self.arena.get_call_expr(call_node)?;
+        let callee = self.skip_parens_and_assertions(call.expression);
+        let callee_type = self
+            .fallback_cached_callable_reference_type(callee)
+            .or_else(|| self.fallback_type_for_reference(callee))
+            .or_else(|| self.fallback_expression_type_from_syntax(callee))
+            .map(|ty| self.resolve_lazy_via_env(ty))?;
+        if call.type_arguments.is_some() {
+            return None;
+        }
+
+        let arguments = call
+            .arguments
+            .as_ref()
+            .map_or(&[][..], |arguments| arguments.nodes.as_slice());
+        let node_types = self.node_types?;
+        let mut argument_types = Vec::with_capacity(arguments.len());
+        for argument in arguments.iter().copied() {
+            let argument_node = self.arena.get(argument)?;
+            if argument_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+                return None;
+            }
+            let stripped_argument = self.skip_parens_and_assertions(argument);
+            let argument_type = node_types
+                .get(&argument.0)
+                .or_else(|| node_types.get(&stripped_argument.0))
+                .copied()
+                .filter(|&ty| ty != TypeId::ERROR)
+                .or_else(|| self.fallback_expression_type_from_syntax(stripped_argument))
+                .filter(|&ty| ty != TypeId::ERROR)
+                .map(|ty| self.resolve_lazy_via_env(ty))?;
+            argument_types.push(argument_type);
+        }
+
+        let ctx = self.checker_context?;
+        let env = self.type_environment?.borrow();
+        let return_type =
+            crate::query_boundaries::checkers::call::resolve_single_non_rest_generic_call_with_context(
+                self.interner,
+                ctx,
+                &env,
+                callee_type,
+                &argument_types,
+            )?;
+        self.reject_unresolved_generic_result((return_type != TypeId::ERROR).then_some(return_type))
     }
 
     fn fallback_call_expression_type_inner(&self, call_expr: NodeIndex) -> Option<TypeId> {
@@ -705,6 +782,15 @@ impl<'a> FlowAnalyzer<'a> {
                     .filter(|&ty| ty != TypeId::ERROR)
             })
             .or_else(|| {
+                // Contextually typed callback parameters are published on their
+                // symbol before deferred body flow runs, even when speculative
+                // return inference has rolled back the per-node cache. Reuse that
+                // concrete declared/contextual type before manufacturing a Lazy
+                // fallback, whose body is not registered during the provisional
+                // walk and cannot participate in structural argument inference.
+                self.fallback_cached_stable_symbol_type(sym_id)
+            })
+            .or_else(|| {
                 self.resolve_symbol_to_lazy(SymbolRef(sym_id.0))
                     .map(|ty| self.resolve_lazy_via_env(ty))
             });
@@ -736,6 +822,83 @@ impl<'a> FlowAnalyzer<'a> {
         declared_type.or_else(|| self.fallback_declaration_type(decl))
     }
 
+    /// Read a stable declared/contextual symbol type already published by the
+    /// checker. Semantic `any` is usable here once symbol resolution has
+    /// completed: TypeScript infers through it and a non-null generic result still
+    /// kills `undefined`. In-flight entries, `unknown`, error sentinels, unresolved
+    /// lazy refs, and free parameters are incomplete evidence.
+    fn fallback_cached_stable_symbol_type(&self, sym_id: SymbolId) -> Option<TypeId> {
+        let ctx = self.checker_context?;
+        if ctx.symbol_resolution_set.contains(&sym_id) {
+            return None;
+        }
+        let ty = ctx.symbol_types.get(&sym_id)?;
+        let ty = self.resolve_lazy_via_env(ty);
+        (!matches!(ty, TypeId::ERROR | TypeId::UNKNOWN)
+            && !self.is_unresolved_lazy_type(ty)
+            && !contains_free_type_parameters(self.interner, ty))
+        .then_some(ty)
+    }
+
+    /// Read a callable symbol type without rejecting its signature-scoped type
+    /// parameters as free. Imported generic functions have no local function
+    /// declaration for the syntax fallback, but their checked alias symbol type
+    /// is stable and carries the call signature needed for ordinary inference.
+    fn fallback_cached_callable_reference_type(&self, reference: NodeIndex) -> Option<TypeId> {
+        let reference = self.skip_parenthesized(reference);
+        // Preserve the raw symbol bound in this file before `reference_symbol`
+        // follows imports. Per-file binders mint colliding raw `SymbolId`s, so a
+        // terminal foreign id must never be inspected through the current binder.
+        let local_sym_id = self.binder.get_node_symbol(reference).or_else(|| {
+            self.binder
+                .resolve_identifier_with_filter(self.arena, reference, &[], |_| true)
+        });
+        let sym_id = self.reference_symbol(reference)?;
+        let ctx = self.checker_context?;
+        let local_is_alias = local_sym_id
+            .and_then(|local| self.binder.get_symbol(local))
+            .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS));
+        let (target, target_file_idx) = if local_is_alias {
+            let (target, owner) = local_sym_id
+                .and_then(|local| ctx.resolve_import_alias_chain_with_owner_and_register(local))?;
+            (target, Some(owner))
+        } else {
+            let owner = if local_sym_id == Some(sym_id) {
+                Some(ctx.current_file_idx)
+            } else {
+                ctx.resolve_dynamic_symbol_file_index(sym_id)
+                    .or_else(|| ctx.resolve_symbol_file_index_stable(sym_id))
+            };
+            (sym_id, owner)
+        };
+        let cross_file = target_file_idx
+            .and_then(|file_idx| ctx.cached_cross_file_symbol_type(target, file_idx as u32));
+        // Interactive/LSP contexts intentionally disable persistent owner-cache
+        // sharing. Their cross-arena checker still publishes the canonical
+        // declaration body through the owner-keyed `DefId` environment, which
+        // is safe to read here without consulting any raw-`SymbolId` cache.
+        let owner_def_type = target_file_idx
+            .and_then(|file_idx| {
+                ctx.definition_store
+                    .lookup_by_symbol(target.0, file_idx as u32)
+            })
+            .and_then(|def_id| {
+                self.type_environment
+                    .and_then(|env| env.borrow().get_def(def_id))
+            });
+        let target_env_type = self
+            .type_environment
+            .and_then(|env| env.borrow().get(SymbolRef(target.0)));
+        let target_is_current = target_file_idx == Some(ctx.current_file_idx);
+        let ty = cross_file
+            .map(|(ty, _)| ty)
+            .or(owner_def_type)
+            .or_else(|| target_is_current.then_some(target_env_type).flatten())?;
+        let ty = self.resolve_lazy_via_env(ty);
+        (!matches!(ty, TypeId::ERROR | TypeId::UNKNOWN) && !self.is_unresolved_lazy_type(ty))
+            .then_some(ty)
+    }
+
     /// True when `ty` is a `Lazy(DefId)` that no `TypeEnvironment` resolution has
     /// collapsed to a concrete type. Such a type carries no structural shape, so
     /// flow narrowing (`narrow_assignment`, truthiness filtering) cannot reduce a
@@ -750,7 +913,7 @@ impl<'a> FlowAnalyzer<'a> {
     /// `Lazy(DefId)` can leak unresolved during inferred-return inference. Returns
     /// `None` when the declaration has no annotation or the annotation syntax is
     /// not one the syntactic resolver understands (callers then keep the `Lazy`).
-    fn fallback_declared_annotation_type(&self, decl: NodeIndex) -> Option<TypeId> {
+    pub(super) fn fallback_declared_annotation_type(&self, decl: NodeIndex) -> Option<TypeId> {
         let node = self.arena.get(decl)?;
         let annotation = match node.kind {
             k if k == syntax_kind_ext::PARAMETER => self.arena.get_parameter(node)?.type_annotation,
@@ -913,6 +1076,13 @@ impl<'a> FlowAnalyzer<'a> {
         right: NodeIndex,
         operator: u16,
     ) -> Option<TypeId> {
+        // Equality expressions always have boolean result type. Operand checking
+        // and any comparison diagnostic remain owned by the ordinary checker;
+        // flow only needs the structural result while reconstructing an uncached
+        // object-literal argument.
+        if is_equality_comparison_operator(operator) {
+            return Some(TypeId::BOOLEAN);
+        }
         if operator == SyntaxKind::QuestionQuestionToken as u16 {
             // x ?? y -> NonNullable<typeof x> | typeof y
             let left_type = self.resolve_operand_type(left)?;
@@ -1066,5 +1236,46 @@ impl<'a> FlowAnalyzer<'a> {
             );
         }
         resolved
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FlowAnalyzer;
+    use crate::state::CheckerState;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+    use tsz_solver::{TypeId, construction::TypeInterner};
+
+    #[test]
+    fn stable_symbol_fallback_rejects_in_flight_any_sentinel() {
+        let mut parser = ParserState::new("test.ts".to_string(), "const payload = 1;".to_string());
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(arena, root);
+        let symbol = binder.file_locals.get("payload").expect("payload symbol");
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            arena,
+            &binder,
+            &types,
+            "test.ts".to_string(),
+            crate::context::CheckerOptions::default(),
+        );
+
+        checker.ctx.symbol_types.insert(symbol, TypeId::ANY);
+        assert_eq!(
+            FlowAnalyzer::from_ctx(&checker.ctx).fallback_cached_stable_symbol_type(symbol),
+            Some(TypeId::ANY),
+            "resolved semantic any remains valid generic inference evidence"
+        );
+
+        checker.ctx.symbol_resolution_set.insert(symbol);
+        assert_eq!(
+            FlowAnalyzer::from_ctx(&checker.ctx).fallback_cached_stable_symbol_type(symbol),
+            None,
+            "an in-flight any sentinel must not become current-pass flow evidence"
+        );
     }
 }

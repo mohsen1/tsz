@@ -1366,6 +1366,31 @@ impl<'a> FlowAnalyzer<'a> {
         }
     }
 
+    /// Recover the declared type for any value declaration used as a flow
+    /// target, including parameters whose annotation is not represented by a
+    /// `VARIABLE_DECLARATION` node.
+    pub(crate) fn declared_type_from_value_declaration_with_stability(
+        &self,
+        declaration: NodeIndex,
+    ) -> (Option<TypeId>, bool) {
+        let cached = self
+            .annotation_type_from_var_decl_node(declaration)
+            .filter(|&type_id| type_id != TypeId::ERROR)
+            .or_else(|| {
+                self.node_types
+                    .and_then(|types| types.get(&declaration.0).copied())
+                    .filter(|&type_id| type_id != TypeId::ERROR)
+            });
+        if cached.is_some() {
+            return (cached, false);
+        }
+        (
+            self.fallback_declared_annotation_type(declaration)
+                .filter(|&type_id| type_id != TypeId::ERROR),
+            true,
+        )
+    }
+
     pub(crate) fn annotation_type_from_assignment_node(
         &self,
         assignment_node: NodeIndex,
