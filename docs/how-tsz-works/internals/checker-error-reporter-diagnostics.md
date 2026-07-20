@@ -421,14 +421,18 @@ floor(len * 0.34))` and initial `bestDistance = floor(len * 0.4) + 1`.
 case-only rule for short names, and `best_spelling_suggestion` owns the
 single per-candidate loop.
 
-`find_similar_identifiers` searches local visible binder names, then global lib
-contexts. A documented divergence from `tsc`'s ordering is corrected here:
-because tsz resolves names demand-driven rather than sequentially with a per-file
-suggestion cap, TYPE-only lookups conservatively restrict the lib search to
-*core* lib files (`lib.es*`, `lib.scripthost`, `lib.decorators` — see
-`lib_context_is_core_typings`) and suppress non-core lib-origin TYPE candidates,
-so user code is not flooded with DOM-interface noise like
-`ParseNode -> ParentNode` (#3282). `find_similar_property` collects accessible
+`find_similar_identifiers` searches local visible binder names, including the
+loaded lib symbols merged into the file binder, then uses global lib contexts as
+a fallback. TypeScript 7 has no per-file suggestion cap or core-vs-DOM filter, so
+loaded DOM candidates such as `ParseNode -> ParentNode` participate normally.
+Direct checker contexts whose binders have not merged their attached libs retain
+a TYPE-only lib-context fallback scoped to core lib files (`lib.es*`,
+`lib.scripthost`, `lib.decorators` — see `lib_context_is_core_typings`).
+Production binders skip that duplicate scan because the merged visible-name
+table already covers every loaded lib. Candidate scans are deferred until a diagnostic is emitted.
+The visible candidate universe is memoized per `(lexical scope, meaning)`, and
+the final suggestion per `(lexical scope, misspelled name, meaning)`.
+`find_similar_property` collects accessible
 property names through the query boundary (resolving primitives to their boxed
 interface types, and enum/namespace members from binder exports), and never
 suggests a public property for a `#private` access.

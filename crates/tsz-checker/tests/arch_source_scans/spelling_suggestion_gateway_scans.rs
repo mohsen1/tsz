@@ -2,7 +2,7 @@
 //!
 //! `find_similar_identifiers` walks the visible symbol universe and performs
 //! spelling-distance work. Namespace diagnostics used to call it directly,
-//! bypassing the memoized `(node, meaning)` gateway and the shared cap. Keep
+//! bypassing the memoized `(scope, name, meaning)` gateway. Keep
 //! production checker call sites routed through
 //! `error_reporter::name_resolution::scan_similar_identifiers_for_meaning`.
 
@@ -65,7 +65,7 @@ fn production_spelling_suggestions_use_memoized_gateway() {
     assert!(
         violations.is_empty(),
         "checker production code should route spelling scans through \
-         scan_similar_identifiers_for_meaning so memoization and cap gating stay shared:\n{}",
+         scan_similar_identifiers_for_meaning so memoization and suppression gating stay shared:\n{}",
         violations.join("\n")
     );
 }

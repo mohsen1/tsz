@@ -440,7 +440,9 @@ impl BinderState {
     }
 
     /// Collect visible symbol names filtered by meaning flags.
-    /// If `meaning_flags` is non-zero, only include symbols whose flags overlap with `meaning_flags`.
+    /// If `meaning_flags` is non-zero, only include symbols whose flags overlap with
+    /// `meaning_flags`. Receiver-only class members are excluded because they are
+    /// not bare lexical names; class type parameters remain eligible.
     pub fn collect_visible_symbol_names_filtered(
         &self,
         arena: &NodeArena,
@@ -449,12 +451,28 @@ impl BinderState {
     ) -> Vec<String> {
         let mut names = FxHashSet::default();
 
-        let passes_filter = |sym_id: &SymbolId| -> bool {
-            if meaning_flags == 0 {
-                return true;
-            }
-            self.get_symbol(*sym_id)
-                .is_none_or(|sym| sym.flags & meaning_flags != 0)
+        const RECEIVER_MEMBER_FLAGS: u32 = symbol_flags::PROPERTY
+            | symbol_flags::METHOD
+            | symbol_flags::GET_ACCESSOR
+            | symbol_flags::SET_ACCESSOR
+            | symbol_flags::CONSTRUCTOR;
+        const SEMANTIC_MEANING_FLAGS: u32 = symbol_flags::VALUE
+            | symbol_flags::TYPE
+            | symbol_flags::NAMESPACE
+            | symbol_flags::ALIAS;
+        let passes_filter = |sym_id: &SymbolId, class_scope: bool| -> bool {
+            self.get_symbol(*sym_id).is_none_or(|symbol| {
+                let lexical_flags = if class_scope {
+                    symbol.flags & !RECEIVER_MEMBER_FLAGS
+                } else {
+                    symbol.flags
+                };
+                if meaning_flags == 0 {
+                    lexical_flags & SEMANTIC_MEANING_FLAGS != 0
+                } else {
+                    lexical_flags & meaning_flags != 0
+                }
+            })
         };
 
         if let Some(mut scope_id) = self.find_enclosing_scope(arena, node_idx) {
@@ -468,7 +486,7 @@ impl BinderState {
                     break;
                 };
                 for (symbol_name, sym_id) in scope.table.iter() {
-                    if passes_filter(sym_id) {
+                    if passes_filter(sym_id, scope.kind == ContainerKind::Class) {
                         names.insert(symbol_name.clone());
                     }
                 }
@@ -477,7 +495,7 @@ impl BinderState {
         }
 
         for (symbol_name, sym_id) in self.file_locals.iter() {
-            if passes_filter(sym_id) {
+            if passes_filter(sym_id, false) {
                 names.insert(symbol_name.clone());
             }
         }

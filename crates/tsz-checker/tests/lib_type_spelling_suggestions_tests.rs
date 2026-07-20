@@ -1,8 +1,7 @@
-//! Issue #3282: TYPE-position lookups must surface spelling suggestions
-//! for core lib globals (`Array`, `Promise`, `Map`, ...). tsz used to
-//! suppress every lib-origin candidate for TYPE-only lookups, so typos
-//! like `Arrray`, `Prommise`, `Mapp` reported plain TS2304 instead of
-//! tsc's TS2552 with a "Did you mean 'Array'?" suggestion.
+//! TYPE-position lookups must surface spelling suggestions from every loaded
+//! lib. Core globals (`Array`, `Promise`, `Map`, ...) cover issue #3282, while
+//! TypeScript 7 also exposes loaded DOM candidates such as `ParentNode` and
+//! `CSSStyleDeclaration`. An unloaded lib must not contribute candidates.
 
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::diagnostics::Diagnostic;
@@ -21,6 +20,24 @@ fn check_with_es2015(source: &str) -> Vec<Diagnostic> {
     assert!(
         !lib_files.is_empty(),
         "expected lib.es*.d.ts to be available"
+    );
+    tsz_checker::test_utils::check_source_with_libs(
+        source,
+        "repro.ts",
+        CheckerOptions::default(),
+        &lib_files,
+    )
+}
+
+fn check_with_dom(source: &str) -> Vec<Diagnostic> {
+    let lib_files = tsz_checker::test_utils::load_compiled_lib_files(&[
+        "lib.es5.d.ts",
+        "lib.dom.d.ts",
+        "lib.dom.iterable.d.ts",
+    ]);
+    assert!(
+        !lib_files.is_empty(),
+        "expected DOM lib files to be available"
     );
     tsz_checker::test_utils::check_source_with_libs(
         source,
@@ -65,6 +82,39 @@ fn type_position_mapp_suggests_map() {
     assert!(
         finds_suggestion(&diags, "Mapp", "Map"),
         "expected TS2552 'Mapp' -> 'Map', got: {diags:?}"
+    );
+}
+
+/// TypeScript 7 surfaces loaded DOM/lib types even after many unresolved names;
+/// the old cap-compensation filter incorrectly discarded these candidates.
+#[test]
+fn type_position_dom_lib_candidates_are_suggested() {
+    let diags = check_with_dom(
+        r#"
+let declaration: TypeDeclaration;
+let parsed: ParseNode;
+let parent: ParentNod;
+"#,
+    );
+    for (typo, suggestion) in [
+        ("TypeDeclaration", "CSSStyleDeclaration"),
+        ("ParseNode", "ParentNode"),
+        ("ParentNod", "ParentNode"),
+    ] {
+        assert!(
+            finds_suggestion(&diags, typo, suggestion),
+            "expected TS2552 '{typo}' -> '{suggestion}', got: {diags:?}"
+        );
+    }
+}
+
+/// Candidates from an unloaded lib must not leak into the visible-name scan.
+#[test]
+fn type_position_dom_lib_candidate_requires_dom_lib() {
+    let diags = check_with_es2015("let declaration: TypeDeclaration;\n");
+    assert!(
+        is_bare_not_found(&diags, "TypeDeclaration"),
+        "expected bare TS2304 without lib.dom, got: {diags:?}"
     );
 }
 

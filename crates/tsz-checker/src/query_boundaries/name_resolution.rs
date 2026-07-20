@@ -154,9 +154,9 @@ pub(crate) struct ResolutionFailure {
     pub suggestions: Vec<String>,
     /// For `NotFound` failures whose suggestion scan was deferred: whether the
     /// spelling-suggestion candidate scan should still run when (and only when)
-    /// a diagnostic is actually emitted. The cap counter and the cheap
-    /// suppression predicates have already been applied to produce this flag, so
-    /// the deferred scan reproduces exactly what an eager
+    /// a diagnostic is actually emitted. The cheap suppression predicates have
+    /// already been applied to produce this flag, so the deferred scan reproduces
+    /// exactly what an eager
     /// `collect_spelling_suggestions` would have returned — without paying for
     /// the full-symbol-universe Levenshtein walk on failures that are suppressed
     /// or recovered before any diagnostic is emitted.
@@ -184,8 +184,8 @@ impl ResolutionFailure {
 
     /// Create a "not found" failure whose spelling-suggestion scan is deferred to
     /// the diagnostic-emission path. `eligible` is the result of the cheap
-    /// eligibility check (suppression predicates + cap counter), which has
-    /// already been applied; pass `true` only when an eager scan would have run.
+    /// eligibility check (the suppression predicates), which has already been
+    /// applied; pass `true` only when an eager scan would have run.
     pub const fn not_found_deferred(eligible: bool) -> Self {
         Self {
             kind: ResolutionFailureKind::NotFound,
@@ -349,10 +349,8 @@ impl<'a> CheckerState<'a> {
     fn resolve_scoped_name(&self, request: &NameResolutionRequest<'_>) -> NameResolutionResult {
         let sym_id = self.resolve_identifier_symbol(request.idx);
         let Some(sym_id) = sym_id else {
-            // Not found. Apply the cheap suggestion bookkeeping now (suppression
-            // predicates + the eager cap counter, which must advance in
-            // resolution order to match tsc's sequential `suggestionCount`), but
-            // *defer* the expensive full-symbol-universe candidate scan to the
+            // Not found. Apply the cheap suggestion suppression predicates now,
+            // but *defer* the expensive full-symbol-universe candidate scan to the
             // diagnostic-emission path. Many of these failures are suppressed or
             // recovered before any diagnostic is emitted (e.g. clean projects
             // that ultimately resolve every name), so scanning here would be
@@ -777,9 +775,9 @@ impl<'a> CheckerState<'a> {
                     // deferred `NotFound` failures run the full candidate scan
                     // here — and *only* here, so failures that were suppressed
                     // above or never reached a diagnostic never pay for it. The
-                    // cap counter / suppression predicates were already applied
-                    // when `suggestions_eligible` was computed, so this produces
-                    // the same suggestions an eager scan would have.
+                    // Suppression predicates were already applied when
+                    // `suggestions_eligible` was computed, so this produces the
+                    // same suggestions an eager scan would have.
                     // `suggestions_eligible` already excludes the parse-error case
                     // that drives `suppress_suggestions`, so the scan only runs
                     // when suggestions could actually be emitted; the emission
@@ -1065,8 +1063,8 @@ impl<'a> CheckerState<'a> {
     ///
     /// Collects spelling suggestions via `collect_spelling_suggestions` (which
     /// respects all tsc suppression rules: accessibility modifiers, spread
-    /// elements, `arguments`, max-suggestion cap, parse-error suppression) and
-    /// emits TS2304 or TS2552 accordingly.
+    /// elements, `arguments`, and parse errors) and emits TS2304 or TS2552
+    /// accordingly.
     ///
     /// Use this when the caller already knows the name is not found (e.g.,
     /// after binder resolution failed) but wants suggestion-enriched diagnostics
@@ -1089,7 +1087,7 @@ impl<'a> CheckerState<'a> {
 
         // Delegate to the shared suggestion collector which applies all
         // suppression predicates (accessibility modifiers, spread elements,
-        // arguments, max cap, parse errors).
+        // `arguments`, and parse errors).
         let suggestions = self.collect_spelling_suggestions(name, idx);
 
         let failure = if suggestions.is_empty() {

@@ -181,16 +181,13 @@ impl<'a> CheckerContext<'a> {
         self.object_literal_tracking.property_diag_targets.clear();
         self.object_literal_tracking.contextual_targets.clear();
         self.object_literal_tracking.partial_initializers.clear();
-        // `name_resolution_diagnostics.reported_nodes` holds the
-        // `NodeIndex` set per file for TS2304/TS2552 dedup; clear it
-        // alongside the counter.
-        self.name_resolution_diagnostics.reported_nodes.clear();
+        // Spelling candidates and scan results are keyed by binder-local
+        // `ScopeId`; clear both so a new file's identically-numbered scopes never
+        // inherit the previous file's symbol universe or suggestions.
         self.name_resolution_diagnostics
-            .spelling_suggestions_emitted
-            .set(0);
-        // The suggestion-scan memo is keyed by per-file `NodeIndex`; clear it
-        // alongside `reported_nodes` so a new file's identically-numbered nodes
-        // never inherit the previous file's cached suggestions.
+            .spelling_candidate_cache
+            .borrow_mut()
+            .clear();
         self.name_resolution_diagnostics
             .suggestion_scan_cache
             .borrow_mut()

@@ -2,13 +2,18 @@
 
 use rustc_hash::FxHashMap;
 use std::mem;
+#[cfg(test)]
+use std::rc::Rc;
+#[cfg(test)]
+use tsz_binder::ScopeId;
 use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
 use tsz_solver::def::DefId;
 use tsz_solver::{TypeId, TypeParamInfo};
 
 use super::{
-    CheckerContext, accessor_levels_cache_entries, accessor_levels_cache_estimated_size_bytes,
+    CheckerContext, SpellingCandidateCache, SpellingSuggestionScanCache,
+    accessor_levels_cache_entries, accessor_levels_cache_estimated_size_bytes,
     callback_mismatch_memo_entries, callback_mismatch_memo_estimated_size_bytes,
     cross_file_type_params_cache_statistics, env_eval_cache, export_equals_named_cache_entries,
     export_equals_named_cache_estimated_size_bytes, member_access_info_cache_entries,
@@ -39,6 +44,8 @@ pub struct CheckerContextCacheStatistics {
     pub lazy_lib_member_resolution_cache_estimated_size_bytes: usize,
     pub symbol_name_candidates_cache_entries: usize,
     pub symbol_name_candidates_cache_estimated_size_bytes: usize,
+    pub spelling_candidate_cache_entries: usize,
+    pub spelling_candidate_cache_estimated_size_bytes: usize,
     pub suggestion_scan_cache_entries: usize,
     pub suggestion_scan_cache_estimated_size_bytes: usize,
     pub namespace_member_resolution_cache_entries: usize,
@@ -120,6 +127,7 @@ impl CheckerContextCacheStatistics {
             + self.lib_type_resolution_cache_estimated_size_bytes
             + self.lazy_lib_member_resolution_cache_estimated_size_bytes
             + self.symbol_name_candidates_cache_estimated_size_bytes
+            + self.spelling_candidate_cache_estimated_size_bytes
             + self.suggestion_scan_cache_estimated_size_bytes
             + self.namespace_member_resolution_cache_estimated_size_bytes
             + self.export_equals_named_cache_estimated_size_bytes
@@ -165,6 +173,7 @@ impl CheckerContextCacheStatistics {
             + self.lib_type_resolution_cache_entries
             + self.lazy_lib_member_resolution_cache_entries
             + self.symbol_name_candidates_cache_entries
+            + self.spelling_candidate_cache_entries
             + self.suggestion_scan_cache_entries
             + self.namespace_member_resolution_cache_entries
             + self.export_equals_named_cache_entries
@@ -223,6 +232,10 @@ impl<'a> CheckerContext<'a> {
             .lazy_member_receiver_properties
             .borrow();
         let symbol_name_candidates_cache = self.symbol_name_candidates_cache.borrow();
+        let spelling_candidate_cache = self
+            .name_resolution_diagnostics
+            .spelling_candidate_cache
+            .borrow();
         let suggestion_scan_cache = self
             .name_resolution_diagnostics
             .suggestion_scan_cache
@@ -314,10 +327,12 @@ impl<'a> CheckerContext<'a> {
             symbol_name_candidates_cache_entries: symbol_name_candidates_cache.len(),
             symbol_name_candidates_cache_estimated_size_bytes:
                 string_symbol_vec_cache_estimated_size_bytes(&symbol_name_candidates_cache),
-            suggestion_scan_cache_entries: suggestion_scan_cache.len(),
-            suggestion_scan_cache_estimated_size_bytes: keyed_string_vec_cache_estimated_size_bytes(
-                &suggestion_scan_cache,
-            ),
+            spelling_candidate_cache_entries: spelling_candidate_cache.len(),
+            spelling_candidate_cache_estimated_size_bytes:
+                scoped_string_slice_cache_estimated_size_bytes(&spelling_candidate_cache),
+            suggestion_scan_cache_entries: suggestion_scan_cache.values().map(FxHashMap::len).sum(),
+            suggestion_scan_cache_estimated_size_bytes:
+                scoped_name_string_vec_cache_estimated_size_bytes(&suggestion_scan_cache),
             namespace_member_resolution_cache_entries: namespace_member_resolution_cache_entries(
                 &namespace_member_resolution_cache,
             ),
@@ -547,6 +562,32 @@ fn keyed_string_vec_cache_estimated_size_bytes<K>(cache: &FxHashMap<K, Vec<Strin
     )
 }
 
+fn scoped_name_string_vec_cache_estimated_size_bytes(cache: &SpellingSuggestionScanCache) -> usize {
+    fx_hash_map_estimated_size_bytes(cache).saturating_add(
+        cache
+            .values()
+            .map(|by_name| {
+                keyed_string_vec_cache_estimated_size_bytes(by_name)
+                    .saturating_add(by_name.keys().map(String::len).sum::<usize>())
+            })
+            .sum::<usize>(),
+    )
+}
+
+fn scoped_string_slice_cache_estimated_size_bytes(cache: &SpellingCandidateCache) -> usize {
+    fx_hash_map_estimated_size_bytes(cache).saturating_add(
+        cache
+            .values()
+            .map(|names| {
+                mem::size_of::<usize>()
+                    .saturating_mul(2)
+                    .saturating_add(names.len().saturating_mul(mem::size_of::<String>()))
+                    .saturating_add(names.iter().map(String::len).sum::<usize>())
+            })
+            .sum::<usize>(),
+    )
+}
+
 fn string_symbol_vec_cache_estimated_size_bytes(cache: &FxHashMap<String, Vec<SymbolId>>) -> usize {
     fx_hash_map_estimated_size_bytes(cache)
         .saturating_add(cache.keys().map(String::len).sum::<usize>())
@@ -586,17 +627,36 @@ mod tests {
     #[test]
     fn suggestion_scan_cache_statistics_report_entries_and_size() {
         let mut cache = FxHashMap::default();
-        assert_eq!(keyed_string_vec_cache_estimated_size_bytes(&cache), 0);
+        assert_eq!(scoped_name_string_vec_cache_estimated_size_bytes(&cache), 0);
 
-        cache.insert((7, 1), vec!["candidate".to_string()]);
+        cache.insert(
+            (ScopeId(7), 1),
+            FxHashMap::from_iter([("misspelled".to_string(), vec!["candidate".to_string()])]),
+        );
 
         assert_eq!(cache.len(), 1);
-        assert!(keyed_string_vec_cache_estimated_size_bytes(&cache) > 0);
+        assert!(scoped_name_string_vec_cache_estimated_size_bytes(&cache) > 0);
+    }
+
+    #[test]
+    fn spelling_candidate_cache_statistics_report_entries_and_size() {
+        let mut cache = FxHashMap::default();
+        assert_eq!(scoped_string_slice_cache_estimated_size_bytes(&cache), 0);
+
+        cache.insert(
+            (ScopeId(7), 1),
+            Rc::<[String]>::from(vec!["candidate".to_string()]),
+        );
+
+        assert_eq!(cache.len(), 1);
+        assert!(scoped_string_slice_cache_estimated_size_bytes(&cache) > 0);
     }
 
     #[test]
     fn checker_context_cache_statistics_roll_up_diagnostic_and_switch_caches() {
         let stats = CheckerContextCacheStatistics {
+            spelling_candidate_cache_entries: 2,
+            spelling_candidate_cache_estimated_size_bytes: 3,
             suggestion_scan_cache_entries: 1,
             suggestion_scan_cache_estimated_size_bytes: 2,
             flow_switch_case_literal_cache_entries: 4,
@@ -606,7 +666,7 @@ mod tests {
             ..CheckerContextCacheStatistics::default()
         };
 
-        assert_eq!(stats.entries(), 21);
-        assert_eq!(stats.estimated_size_bytes(), 42);
+        assert_eq!(stats.entries(), 23);
+        assert_eq!(stats.estimated_size_bytes(), 45);
     }
 }
