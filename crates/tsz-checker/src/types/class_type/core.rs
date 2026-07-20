@@ -125,14 +125,35 @@ impl<'a> CheckerState<'a> {
             restore_enclosing_class: RestoreEnclosingClass::Skip,
         };
 
+        // Class construction can type-check property initializers before any
+        // method/accessor has been deferred. Install the exact class binder
+        // identities before those phases when an instance arrow initializer can
+        // capture `this`; a nested generic callable must not hide them in the
+        // active type-parameter scope. The structural gate preserves the old
+        // no-scan fast path for non-generic classes and generic classes without
+        // initialized instance fields.
+        let installed_early_enclosing = self.class_instance_needs_early_enclosing(class, &builder);
+        if installed_early_enclosing {
+            self.class_instance_setup_enclosing(class, class_idx, &mut builder, true);
+        }
+
         // Phase 0: Pre-scan annotated properties to push a partial `this`.
         self.class_instance_phase0_prescan_this(class_idx, class, &mut builder);
 
         // Phase 1: Process all non-method members; methods/accessors are deferred.
         self.class_instance_phase1_non_method_members(class, class_idx, &mut builder);
 
-        // Pop the prescan `this` and set up `enclosing_class` for deferred bodies.
-        self.class_instance_setup_deferred_enclosing(class, class_idx, &mut builder);
+        // Preserve the former deferred-body setup path for classes that did not
+        // need an early enclosing-class snapshot.
+        if !installed_early_enclosing
+            && (!builder.deferred_methods.is_empty() || !builder.deferred_accessors.is_empty())
+        {
+            self.class_instance_setup_enclosing(class, class_idx, &mut builder, false);
+        }
+
+        // Pop the prescan `this` at the original phase boundary. Phase 2 pushes
+        // its own partial type when deferred bodies exist.
+        self.class_instance_finish_prescan_this(&builder);
 
         // Phase 2: Process deferred methods under a partial `this`.
         self.class_instance_phase2_deferred_methods(class, class_idx, &mut builder);

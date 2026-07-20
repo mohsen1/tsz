@@ -694,7 +694,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if let (Some(source_info), Some(target_info)) = (
             type_param_info(self.interner, source),
             type_param_info(self.interner, target),
-        ) && source_info.name == target_info.name
+        ) && source_info.is_same_binder(target_info)
         {
             return true;
         }

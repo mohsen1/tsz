@@ -1266,7 +1266,7 @@ impl<'a> CheckerState<'a> {
                     .unwrap_or(TypeId::UNKNOWN)
             })
             .collect();
-        let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
+        let substitution = crate::query_boundaries::common::TypeSubstitution::from_signature_args(
             self.ctx.types,
             type_params,
             &type_args,
@@ -1491,11 +1491,12 @@ impl<'a> CheckerState<'a> {
                         .unwrap_or(TypeId::UNKNOWN)
                 })
                 .collect();
-            let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
-                self.ctx.types,
-                &first_sig.type_params,
-                &type_args,
-            );
+            let substitution =
+                crate::query_boundaries::common::TypeSubstitution::from_signature_args(
+                    self.ctx.types,
+                    &first_sig.type_params,
+                    &type_args,
+                );
             crate::query_boundaries::common::instantiate_type(
                 self.ctx.types,
                 first_sig.return_type,
@@ -1520,11 +1521,12 @@ impl<'a> CheckerState<'a> {
                                 .unwrap_or(TypeId::UNKNOWN)
                         })
                         .collect();
-                    let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
-                        self.ctx.types,
-                        &first_sig.type_params,
-                        &type_args,
-                    );
+                    let substitution =
+                        crate::query_boundaries::common::TypeSubstitution::from_signature_args(
+                            self.ctx.types,
+                            &first_sig.type_params,
+                            &type_args,
+                        );
                     first_sig.params.first().map(|param| {
                         crate::query_boundaries::common::instantiate_type(
                             self.ctx.types,

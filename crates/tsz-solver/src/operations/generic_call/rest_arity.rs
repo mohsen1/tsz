@@ -3,11 +3,11 @@ use crate::operations::{AssignabilityChecker, CallEvaluator};
 use crate::types::{FunctionShape, TypeData, TypeId};
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
-    pub(super) fn type_param_name_if_generic_rest_tuple_param(
+    pub(super) fn type_param_index_if_generic_rest_tuple_param(
         &self,
         func: &FunctionShape,
         type_id: TypeId,
-    ) -> Option<tsz_common::Atom> {
+    ) -> Option<usize> {
         let type_id = self.unwrap_readonly(type_id);
         let Some(TypeData::TypeParameter(info)) = self.interner.lookup(type_id) else {
             return None;
@@ -15,8 +15,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         func.type_params
             .iter()
-            .any(|type_param| type_param.name == info.name)
-            .then_some(info.name)
+            .position(|type_param| type_param.is_same_binder(info))
     }
 
     /// Mirror tsc's implied-arity assignment for a non-array rest type parameter.
@@ -36,17 +35,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let Some(rest_param) = func.params.last().filter(|param| param.rest) else {
             return;
         };
-        let Some(rest_name) =
-            self.type_param_name_if_generic_rest_tuple_param(func, rest_param.type_id)
+        let Some(rest_index) =
+            self.type_param_index_if_generic_rest_tuple_param(func, rest_param.type_id)
         else {
             return;
         };
-        let Some(var) = func
-            .type_params
-            .iter()
-            .zip(type_param_vars.iter())
-            .find_map(|(tp, &var)| (tp.name == rest_name).then_some(var))
-        else {
+        let Some(&var) = type_param_vars.get(rest_index) else {
             return;
         };
 

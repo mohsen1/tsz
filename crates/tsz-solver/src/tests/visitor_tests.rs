@@ -1302,3 +1302,79 @@ fn test_is_type_parameter_at_top_level_inside_array_is_false() {
     // tsc's rule does not unwrap arrays; `U[]` is not "U at top level".
     assert!(!is_type_parameter_at_top_level(&interner, arr, u_atom));
 }
+
+#[test]
+fn this_type_contravariance_query_distinguishes_function_positions() {
+    let interner = TypeInterner::new();
+    let resolver = crate::def::resolver::NoopResolver;
+    let is_contravariant = |type_id| {
+        crate::relations::variance::contains_this_type_in_strict_contravariant_position_with_resolver(
+            &interner,
+            &resolver,
+            type_id,
+        )
+    };
+    let this_type = interner.this_type();
+    let direct_return = interner.function(FunctionShape::new(Vec::new(), this_type));
+    let direct_parameter = interner.function(FunctionShape::new(
+        vec![ParamInfo::unnamed(this_type)],
+        TypeId::VOID,
+    ));
+
+    assert!(!is_contravariant(direct_return));
+    assert!(is_contravariant(direct_parameter));
+}
+
+#[test]
+fn this_type_contravariance_query_tracks_nesting_and_double_flips() {
+    let interner = TypeInterner::new();
+    let resolver = crate::def::resolver::NoopResolver;
+    let is_contravariant = |type_id| {
+        crate::relations::variance::contains_this_type_in_strict_contravariant_position_with_resolver(
+            &interner,
+            &resolver,
+            type_id,
+        )
+    };
+    let this_type = interner.this_type();
+    let callback = interner.function(FunctionShape::new(
+        vec![ParamInfo::unnamed(this_type)],
+        TypeId::VOID,
+    ));
+    let nested_property = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("visit"),
+        callback,
+    )]);
+    let callback_parameter = interner.function(FunctionShape::new(
+        vec![ParamInfo::unnamed(callback)],
+        TypeId::VOID,
+    ));
+
+    assert!(is_contravariant(nested_property));
+    assert!(
+        !is_contravariant(callback_parameter),
+        "a callback parameter nested in another parameter has two polarity flips"
+    );
+}
+
+#[test]
+fn this_type_contravariance_query_respects_method_bivariance() {
+    let interner = TypeInterner::new();
+    let resolver = crate::def::resolver::NoopResolver;
+    let is_contravariant = |type_id| {
+        crate::relations::variance::contains_this_type_in_strict_contravariant_position_with_resolver(
+            &interner,
+            &resolver,
+            type_id,
+        )
+    };
+    let this_type = interner.this_type();
+    let mut method_shape = FunctionShape::new(vec![ParamInfo::unnamed(this_type)], TypeId::VOID);
+    method_shape.is_method = true;
+    let method = interner.function(method_shape);
+
+    assert!(
+        !is_contravariant(method),
+        "a method parameter is bivariant even under strict function checking"
+    );
+}

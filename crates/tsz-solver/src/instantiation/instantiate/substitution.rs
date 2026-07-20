@@ -1,16 +1,75 @@
 use super::api::instantiate_type;
 use super::api_lazy::{maybe_evaluate_concrete_conditional, type_references_param};
 use crate::construction::TypeDatabase;
-use crate::types::{TypeId, TypeParamInfo};
-use rustc_hash::FxHashMap;
+use crate::types::{TypeId, TypeParamBinderKey, TypeParamInfo};
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 use tsz_common::interner::Atom;
 
-/// A substitution map from type parameter names to concrete types.
+/// A substitution map from type parameters to concrete types.
+///
+/// Most substitutions use the legacy name map. A substitution for a
+/// declaration-scoped generic signature additionally records the exact
+/// declaration origins owned by that signature. Once a name has that exact
+/// domain, a same-named foreign binder is protected from both substitution and
+/// constraint fallback.
 #[derive(Clone, Debug, Default)]
 pub struct TypeSubstitution {
     /// Maps type parameter names to their substituted types.
     pub(super) map: FxHashMap<Atom, TypeId>,
+    /// Rare exact-identity overlay. Reference-counted out of line so the legacy
+    /// substitution stays one name map plus one nullable pointer, while scratch
+    /// substitutions can share the immutable domain without copying its maps.
+    identity_domain: Option<Arc<IdentitySubstitutionDomain>>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct IdentitySubstitutionDomain {
+    /// Exact declaration binders owned by this substitution. The declared name
+    /// is part of the key because sibling JSDoc parameters share one owner
+    /// node/comment position.
+    identity_binders: FxHashSet<TypeParamBinderKey>,
+    /// Names for which name-only fallback is forbidden. Kept separately so a
+    /// same-named foreign `TypeId` can be rejected in O(1).
+    identity_names: FxHashSet<Atom>,
+    /// Canonical content used by cross-call cache keys. Kept sorted as the
+    /// domain is built so hashing a cache probe does not allocate or sort.
+    canonical_binders: SmallVec<[TypeParamBinderKey; 4]>,
+}
+
+impl PartialEq for IdentitySubstitutionDomain {
+    fn eq(&self, other: &Self) -> bool {
+        self.canonical_binders == other.canonical_binders
+    }
+}
+
+impl Eq for IdentitySubstitutionDomain {}
+
+impl Hash for IdentitySubstitutionDomain {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.canonical_binders.hash(state);
+    }
+}
+
+impl IdentitySubstitutionDomain {
+    /// Heap retained by one exact-identity domain allocation.
+    ///
+    /// The `Arc` allocation owns the domain value itself plus both hash-table
+    /// buffers and, for unusually wide generic signatures, the spilled
+    /// canonical binder buffer. Callers deduplicate this amount by `Arc`
+    /// pointer when multiple cache keys share one immutable domain.
+    pub(crate) fn estimated_heap_bytes(&self, bucket_overhead: usize) -> usize {
+        let mut size = std::mem::size_of::<Self>();
+        size += self.identity_binders.capacity()
+            * (bucket_overhead + std::mem::size_of::<TypeParamBinderKey>());
+        size += self.identity_names.capacity() * (bucket_overhead + std::mem::size_of::<Atom>());
+        if self.canonical_binders.spilled() {
+            size += self.canonical_binders.capacity() * std::mem::size_of::<TypeParamBinderKey>();
+        }
+        size
+    }
 }
 
 impl TypeSubstitution {
@@ -18,7 +77,21 @@ impl TypeSubstitution {
     pub fn new() -> Self {
         Self {
             map: FxHashMap::default(),
+            identity_domain: None,
         }
+    }
+
+    /// Create an empty substitution whose ownership domain is the supplied
+    /// callable signature's type parameters.
+    ///
+    /// This is used by contextual-inference collectors before they have chosen
+    /// concrete bindings. It stays allocation-equivalent to [`Self::new`] for
+    /// ordinary unstamped signatures; only declaration-scoped signatures add
+    /// the rare exact-identity overlay.
+    pub fn for_signature_domain(type_params: &[TypeParamInfo]) -> Self {
+        let mut substitution = Self::new();
+        substitution.protect_type_parameters(type_params);
+        substitution
     }
 
     /// Create a substitution containing a single `name -> type_id` binding.
@@ -26,13 +99,18 @@ impl TypeSubstitution {
     pub fn single(name: Atom, type_id: TypeId) -> Self {
         let mut map = FxHashMap::with_capacity_and_hasher(1, Default::default());
         map.insert(name, type_id);
-        Self { map }
+        Self {
+            map,
+            identity_domain: None,
+        }
     }
 
-    /// Clear the substitution for reuse, preserving allocated capacity.
+    /// Clear the substitution for reuse, preserving the name-map capacity and
+    /// releasing any rare exact-identity overlay.
     #[inline]
     pub fn clear(&mut self) {
         self.map.clear();
+        self.identity_domain = None;
     }
 
     /// Create a substitution from type parameters and arguments.
@@ -49,6 +127,15 @@ impl TypeSubstitution {
         interner: &dyn TypeDatabase,
         type_params: &[TypeParamInfo],
         type_args: &[TypeId],
+    ) -> Self {
+        Self::from_args_impl(interner, type_params, type_args, false)
+    }
+
+    fn from_args_impl(
+        interner: &dyn TypeDatabase,
+        type_params: &[TypeParamInfo],
+        type_args: &[TypeId],
+        protect_signature_domain: bool,
     ) -> Self {
         let mut map = FxHashMap::with_capacity_and_hasher(type_params.len(), Default::default());
 
@@ -104,7 +191,13 @@ impl TypeSubstitution {
         // allocation churn is removed. This matters for deeply-defaulted generic
         // and recursive utility shapes, where the previous clone was O(map) work
         // repeated once for every defaulted parameter.
-        let mut subst = Self { map };
+        let mut subst = Self {
+            map,
+            identity_domain: None,
+        };
+        if protect_signature_domain {
+            subst.protect_type_parameters(type_params);
+        }
         for (i, param) in type_params.iter().enumerate() {
             if i < type_args.len() {
                 continue; // already provided explicitly
@@ -123,7 +216,7 @@ impl TypeSubstitution {
                     // Circular default detection: if the resolved default is (or
                     // contains) the type parameter itself, fall back to `any`.
                     // This matches tsc behavior for `type T<X extends C = X>`.
-                    let final_type = if type_references_param(interner, resolved, param.name) {
+                    let final_type = if type_references_param(interner, resolved, *param) {
                         TypeId::ANY
                     } else {
                         resolved
@@ -141,6 +234,21 @@ impl TypeSubstitution {
         subst
     }
 
+    /// Create an explicit-argument substitution for a callable signature.
+    ///
+    /// Unlike general application substitution, a callable's locally-owned
+    /// declaration-scoped parameters must not rewrite same-named binders
+    /// captured in its parameter or return shapes. The rare identity overlay is
+    /// installed up front so defaults and every later signature component share
+    /// the same exact domain.
+    pub fn from_signature_args(
+        interner: &dyn TypeDatabase,
+        type_params: &[TypeParamInfo],
+        type_args: &[TypeId],
+    ) -> Self {
+        Self::from_args_impl(interner, type_params, type_args, true)
+    }
+
     /// Add a single substitution.
     pub fn insert(&mut self, name: Atom, type_id: TypeId) {
         self.map.insert(name, type_id);
@@ -154,6 +262,122 @@ impl TypeSubstitution {
     /// Look up a substitution.
     pub fn get(&self, name: Atom) -> Option<TypeId> {
         self.map.get(&name).copied()
+    }
+
+    /// Restrict declaration-scoped parameter names to the exact origins owned
+    /// by a generic signature.
+    ///
+    /// The overlay is absent for the common legacy `User` origin. Selectively
+    /// stamped signatures allocate it once, then every reconstructed occurrence
+    /// of the same declaration resolves through the one name-map slot.
+    pub(crate) fn protect_type_parameters(&mut self, type_params: &[TypeParamInfo]) {
+        let mut scoped = type_params
+            .iter()
+            .filter(|type_param| type_param.origin.is_decl_scoped());
+        let Some(first) = scoped.next() else {
+            return;
+        };
+        let domain = self
+            .identity_domain
+            .get_or_insert_with(|| Arc::new(IdentitySubstitutionDomain::default()));
+        let domain = Arc::make_mut(domain);
+        for type_param in std::iter::once(first).chain(scoped) {
+            let binder = type_param
+                .declaration_binder_key()
+                .expect("filtered declaration-scoped parameter must have a binder key");
+            if domain.identity_binders.insert(binder) {
+                domain.canonical_binders.push(binder);
+            }
+            domain.identity_names.insert(type_param.name);
+        }
+        domain.canonical_binders.sort_unstable();
+    }
+
+    /// Look up a concrete type-parameter occurrence under the hybrid domain.
+    /// Exact declaration origins win; a protected same-named foreign identity
+    /// never falls through to the legacy name map.
+    pub(crate) fn get_for_type_parameter(&self, info: &TypeParamInfo) -> Option<TypeId> {
+        if let Some(domain) = self.identity_domain.as_deref() {
+            if info
+                .declaration_binder_key()
+                .is_some_and(|binder| domain.identity_binders.contains(&binder))
+            {
+                return self.map.get(&info.name).copied();
+            }
+            if domain.identity_names.contains(&info.name) {
+                return None;
+            }
+        }
+        self.get(info.name)
+    }
+
+    /// Whether this substitution owns a concrete type-parameter occurrence.
+    /// Used by generic-call fast-path classification so a captured same-named
+    /// binder cannot masquerade as the called signature's local parameter.
+    pub(crate) fn binds_type_parameter(&self, info: &TypeParamInfo) -> bool {
+        if let Some(domain) = self.identity_domain.as_deref() {
+            if info
+                .declaration_binder_key()
+                .is_some_and(|binder| domain.identity_binders.contains(&binder))
+            {
+                return self.map.contains_key(&info.name);
+            }
+            if domain.identity_names.contains(&info.name) {
+                return false;
+            }
+        }
+        self.map.contains_key(&info.name)
+    }
+
+    /// Whether `info` belongs to the signature domain represented by
+    /// `fallback_names` and this substitution's optional exact overlay.
+    ///
+    /// The fallback set preserves the common unstamped name-keyed path. For a
+    /// protected declaration name, only the exact declaration origin is owned;
+    /// a captured same-spelled binder is foreign even before the substitution
+    /// has collected a value for the owned parameter.
+    pub fn domain_contains_type_parameter(
+        &self,
+        info: &TypeParamInfo,
+        fallback_names: &FxHashSet<Atom>,
+    ) -> bool {
+        if let Some(domain) = self.identity_domain.as_deref() {
+            if info
+                .declaration_binder_key()
+                .is_some_and(|binder| domain.identity_binders.contains(&binder))
+            {
+                return true;
+            }
+            if domain.identity_names.contains(&info.name) {
+                return false;
+            }
+        }
+        fallback_names.contains(&info.name)
+    }
+
+    /// Start an empty collection with the same exact signature domain.
+    ///
+    /// Return-context union probing needs isolated candidate maps, but binder
+    /// ownership must remain identical in every probe.
+    pub fn empty_with_same_domain(&self) -> Self {
+        Self {
+            map: FxHashMap::default(),
+            identity_domain: self.identity_domain.clone(),
+        }
+    }
+
+    /// Whether `name` is excluded from the unmapped-parameter constraint
+    /// fallback. Exact-domain misses must remain their original binder rather
+    /// than silently widening through a constraint.
+    pub(crate) fn protects_type_parameter_name(&self, name: Atom) -> bool {
+        self.identity_domain
+            .as_deref()
+            .is_some_and(|domain| domain.identity_names.contains(&name))
+    }
+
+    /// Share the immutable exact binder domain with a cache key.
+    pub(crate) fn identity_domain_for_cache(&self) -> Option<Arc<IdentitySubstitutionDomain>> {
+        self.identity_domain.clone()
     }
 
     /// Check if substitution is empty.
@@ -205,6 +429,9 @@ impl TypeSubstitution {
     /// `InstantiationCacheKey`. Substitution *interning* (for example, a
     /// global `u32` handle) intentionally does not live here: the cache
     /// lifetime is owned by `QueryCache`, not the global `TypeInterner`.
+    /// Exact-identity domains are intentionally absent from this pair vector:
+    /// request key construction attaches the substitution's shared immutable
+    /// domain as a separate content-hashable key component.
     ///
     /// Most substitutions have 1-4 entries (matching the shape of the
     /// existing `application_eval_cache`), so the `SmallVec<[_; 4]>`
@@ -226,8 +453,11 @@ impl TypeSubstitution {
 #[cfg(test)]
 mod tests {
     use super::TypeSubstitution;
+    use super::instantiate_type;
     use crate::TypeInterner;
-    use crate::types::{TypeId, TypeParamInfo};
+    use crate::types::{
+        FunctionShape, TupleElement, TypeData, TypeId, TypeParamInfo, TypeParamOrigin,
+    };
     use tsz_common::interner::Atom;
 
     fn param(name: Atom, default: Option<TypeId>) -> TypeParamInfo {
@@ -238,6 +468,489 @@ mod tests {
             default,
             origin: crate::types::TypeParamOrigin::User,
         }
+    }
+
+    fn tuple_members(interner: &TypeInterner, type_id: TypeId) -> Vec<TypeId> {
+        let Some(TypeData::Tuple(list_id)) = interner.lookup(type_id) else {
+            panic!("expected tuple, got {:?}", interner.lookup(type_id));
+        };
+        interner
+            .tuple_list(list_id)
+            .iter()
+            .map(|element| element.type_id)
+            .collect()
+    }
+
+    #[test]
+    fn exact_domain_substitutes_only_the_owned_same_surface_binder() {
+        let interner = TypeInterner::new();
+        let name = interner.intern_string("U");
+        let file = interner.intern_string("identity.ts");
+        let local_info = TypeParamInfo {
+            name,
+            constraint: Some(TypeId::STRING),
+            default: None,
+            is_const: false,
+            origin: TypeParamOrigin::DeclScoped { file, node: 1 },
+        };
+        let foreign_info = TypeParamInfo {
+            origin: TypeParamOrigin::DeclScoped { file, node: 2 },
+            ..local_info
+        };
+        let local = interner.fresh_type_param(local_info);
+        let foreign = interner.fresh_type_param(foreign_info);
+        assert_ne!(local, foreign);
+        let root = interner.tuple(vec![
+            TupleElement::fixed(local),
+            TupleElement::fixed(foreign),
+        ]);
+
+        let mut substitution = TypeSubstitution::new();
+        substitution.insert(name, TypeId::NUMBER);
+        substitution.protect_type_parameters(&[local_info]);
+        let result = instantiate_type(&interner, root, &substitution);
+
+        assert_eq!(
+            tuple_members(&interner, result),
+            vec![TypeId::NUMBER, foreign]
+        );
+
+        // The name/value cache component is identical, but changing the exact
+        // owner must produce a distinct result rather than hitting a name-only
+        // project-cache entry.
+        let mut other_owner = TypeSubstitution::new();
+        other_owner.insert(name, TypeId::NUMBER);
+        other_owner.protect_type_parameters(&[foreign_info]);
+        let other_result = instantiate_type(&interner, root, &other_owner);
+        assert_eq!(
+            tuple_members(&interner, other_result),
+            vec![local, TypeId::NUMBER],
+        );
+    }
+
+    #[test]
+    fn jsdoc_exact_domain_uses_comment_position_and_origin_kind() {
+        let interner = TypeInterner::new();
+        let name = interner.intern_string("Value");
+        let file = interner.intern_string("identity.js");
+        let owned_info = TypeParamInfo {
+            name,
+            constraint: None,
+            default: None,
+            is_const: false,
+            origin: TypeParamOrigin::JsdocCommentScoped { file, pos: 10 },
+        };
+        let reconstructed_info = TypeParamInfo {
+            constraint: Some(TypeId::STRING),
+            ..owned_info
+        };
+        let foreign_jsdoc_info = TypeParamInfo {
+            origin: TypeParamOrigin::JsdocCommentScoped { file, pos: 20 },
+            ..owned_info
+        };
+        let ast_info = TypeParamInfo {
+            origin: TypeParamOrigin::DeclScoped { file, node: 10 },
+            ..owned_info
+        };
+        let legacy_info = TypeParamInfo::simple(name);
+
+        assert!(owned_info.is_same_binder(reconstructed_info));
+        assert!(!owned_info.is_same_binder(foreign_jsdoc_info));
+        assert!(!owned_info.is_same_binder(ast_info));
+        assert!(legacy_info.is_same_binder(TypeParamInfo {
+            constraint: Some(TypeId::NUMBER),
+            ..legacy_info
+        }));
+
+        let reconstructed = interner.fresh_type_param(reconstructed_info);
+        let foreign_jsdoc = interner.fresh_type_param(foreign_jsdoc_info);
+        let ast = interner.fresh_type_param(ast_info);
+        let root = interner.tuple(vec![
+            TupleElement::fixed(reconstructed),
+            TupleElement::fixed(foreign_jsdoc),
+            TupleElement::fixed(ast),
+        ]);
+        let substitution =
+            TypeSubstitution::from_signature_args(&interner, &[owned_info], &[TypeId::NUMBER]);
+
+        assert_eq!(
+            tuple_members(&interner, instantiate_type(&interner, root, &substitution)),
+            vec![TypeId::NUMBER, foreign_jsdoc, ast],
+        );
+    }
+
+    #[test]
+    fn exact_domain_distinguishes_sibling_binders_at_one_jsdoc_site() {
+        let interner = TypeInterner::new();
+        let file = interner.intern_string("siblings.js");
+        let t_name = interner.intern_string("T");
+        let u_name = interner.intern_string("U");
+
+        for origin in [
+            TypeParamOrigin::DeclScoped { file, node: 10 },
+            TypeParamOrigin::JsdocOwnerScoped { file, node: 10 },
+            TypeParamOrigin::JsdocCommentScoped { file, pos: 20 },
+        ] {
+            let t_info = TypeParamInfo {
+                origin,
+                ..TypeParamInfo::simple(t_name)
+            };
+            let u_info = TypeParamInfo {
+                origin,
+                ..TypeParamInfo::simple(u_name)
+            };
+            assert!(!t_info.is_same_binder(u_info));
+
+            let reconstructed_t = interner.fresh_type_param(TypeParamInfo {
+                constraint: Some(TypeId::OBJECT),
+                ..t_info
+            });
+            let reconstructed_u = interner.fresh_type_param(TypeParamInfo {
+                default: Some(TypeId::UNKNOWN),
+                ..u_info
+            });
+            let tuple = interner.tuple(vec![
+                TupleElement::fixed(reconstructed_t),
+                TupleElement::fixed(reconstructed_u),
+            ]);
+            let substitution = TypeSubstitution::from_signature_args(
+                &interner,
+                &[t_info, u_info],
+                &[TypeId::NUMBER, TypeId::STRING],
+            );
+
+            assert_eq!(
+                tuple_members(&interner, instantiate_type(&interner, tuple, &substitution)),
+                vec![TypeId::NUMBER, TypeId::STRING],
+            );
+        }
+    }
+
+    #[test]
+    fn exact_domain_scratch_shares_the_out_of_line_domain() {
+        let interner = TypeInterner::new();
+        let info = TypeParamInfo {
+            name: interner.intern_string("U"),
+            constraint: None,
+            default: None,
+            is_const: false,
+            origin: TypeParamOrigin::DeclScoped {
+                file: interner.intern_string("scratch-domain.ts"),
+                node: 1,
+            },
+        };
+        let substitution = TypeSubstitution::for_signature_domain(&[info]);
+        let scratch = substitution.empty_with_same_domain();
+
+        assert!(std::sync::Arc::ptr_eq(
+            substitution
+                .identity_domain
+                .as_ref()
+                .expect("scoped signature must have an exact domain"),
+            scratch
+                .identity_domain
+                .as_ref()
+                .expect("scratch substitution must preserve the exact domain"),
+        ));
+        assert!(
+            TypeSubstitution::for_signature_domain(&[TypeParamInfo::simple(info.name)])
+                .identity_domain
+                .is_none(),
+            "the common unstamped path must not allocate an exact domain",
+        );
+    }
+
+    #[test]
+    fn exact_domain_foreign_binder_skips_constraint_fallback() {
+        let interner = TypeInterner::new();
+        let u = interner.intern_string("U");
+        let v = interner.intern_string("V");
+        let file = interner.intern_string("identity.ts");
+        let dependency = interner.fresh_type_param(TypeParamInfo {
+            name: v,
+            constraint: None,
+            default: None,
+            is_const: false,
+            origin: TypeParamOrigin::DeclScoped { file, node: 3 },
+        });
+        let local_info = TypeParamInfo {
+            name: u,
+            constraint: Some(dependency),
+            default: None,
+            is_const: false,
+            origin: TypeParamOrigin::DeclScoped { file, node: 1 },
+        };
+        let foreign = interner.fresh_type_param(TypeParamInfo {
+            name: u,
+            constraint: Some(dependency),
+            default: None,
+            is_const: false,
+            origin: TypeParamOrigin::DeclScoped { file, node: 2 },
+        });
+
+        let mut substitution = TypeSubstitution::new();
+        substitution.insert(u, TypeId::STRING);
+        substitution.insert(v, TypeId::NUMBER);
+        substitution.protect_type_parameters(&[local_info]);
+
+        assert_eq!(instantiate_type(&interner, foreign, &substitution), foreign);
+    }
+
+    #[test]
+    fn legacy_unstamped_substitution_remains_name_keyed() {
+        let interner = TypeInterner::new();
+        let name = interner.intern_string("T");
+        let info = param(name, None);
+        let first = interner.fresh_type_param(info);
+        let second = interner.fresh_type_param(info);
+        let root = interner.tuple(vec![
+            TupleElement::fixed(first),
+            TupleElement::fixed(second),
+        ]);
+
+        let substitution = TypeSubstitution::single(name, TypeId::BOOLEAN);
+        let result = instantiate_type(&interner, root, &substitution);
+
+        assert_eq!(
+            tuple_members(&interner, result),
+            vec![TypeId::BOOLEAN, TypeId::BOOLEAN],
+        );
+    }
+
+    #[test]
+    fn exact_domain_does_not_affect_a_renamed_foreign_binder() {
+        let interner = TypeInterner::new();
+        let local_name = interner.intern_string("Local");
+        let foreign_name = interner.intern_string("Foreign");
+        let file = interner.intern_string("identity.ts");
+        let local_info = TypeParamInfo {
+            name: local_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+            origin: TypeParamOrigin::DeclScoped { file, node: 1 },
+        };
+        let local = interner.fresh_type_param(local_info);
+        let foreign = interner.fresh_type_param(TypeParamInfo {
+            name: foreign_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+            origin: TypeParamOrigin::DeclScoped { file, node: 2 },
+        });
+        let root = interner.tuple(vec![
+            TupleElement::fixed(local),
+            TupleElement::fixed(foreign),
+        ]);
+
+        let mut substitution = TypeSubstitution::new();
+        substitution.insert(local_name, TypeId::STRING);
+        substitution.protect_type_parameters(&[local_info]);
+
+        assert_eq!(
+            tuple_members(&interner, instantiate_type(&interner, root, &substitution)),
+            vec![TypeId::STRING, foreign],
+        );
+    }
+
+    #[test]
+    fn signature_exact_domain_descends_into_nested_generic_return() {
+        let interner = TypeInterner::new();
+        let file = interner.intern_string("nested.ts");
+        let u = interner.intern_string("U");
+        let v = interner.intern_string("V");
+        let owned_info = TypeParamInfo {
+            name: u,
+            constraint: Some(TypeId::STRING),
+            default: None,
+            is_const: false,
+            origin: TypeParamOrigin::DeclScoped { file, node: 1 },
+        };
+        let foreign = interner.fresh_type_param(TypeParamInfo {
+            origin: TypeParamOrigin::DeclScoped { file, node: 2 },
+            ..owned_info
+        });
+        // A reconstructed occurrence of the owned declaration deliberately has
+        // a distinct `TypeId`; its declaration origin is the stable identity.
+        let reconstructed_owned = interner.fresh_type_param(owned_info);
+        let nested_param = TypeParamInfo {
+            name: v,
+            constraint: None,
+            default: None,
+            is_const: false,
+            origin: TypeParamOrigin::DeclScoped { file, node: 3 },
+        };
+        let nested = interner.function(FunctionShape {
+            type_params: vec![nested_param],
+            params: Vec::new(),
+            this_type: None,
+            return_type: interner.tuple(vec![
+                TupleElement::fixed(foreign),
+                TupleElement::fixed(reconstructed_owned),
+            ]),
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+
+        let substitution =
+            TypeSubstitution::from_signature_args(&interner, &[owned_info], &[TypeId::NUMBER]);
+        let result = instantiate_type(&interner, nested, &substitution);
+        let Some(TypeData::Function(shape_id)) = interner.lookup(result) else {
+            panic!(
+                "expected nested function, got {:?}",
+                interner.lookup(result)
+            );
+        };
+        let shape = interner.function_shape(shape_id);
+
+        assert_eq!(shape.type_params, vec![nested_param]);
+        assert_eq!(
+            tuple_members(&interner, shape.return_type),
+            vec![foreign, TypeId::NUMBER],
+        );
+    }
+
+    #[test]
+    fn nested_same_named_binder_shadows_only_its_own_identity() {
+        let interner = TypeInterner::new();
+        let file = interner.intern_string("nested-shadow.ts");
+        let name = interner.intern_string("U");
+        let owned_info = TypeParamInfo {
+            name,
+            constraint: None,
+            default: None,
+            is_const: false,
+            origin: TypeParamOrigin::DeclScoped { file, node: 1 },
+        };
+        let nested_info = TypeParamInfo {
+            origin: TypeParamOrigin::DeclScoped { file, node: 2 },
+            ..owned_info
+        };
+        let captured_outer = interner.fresh_type_param(owned_info);
+        let nested_local = interner.fresh_type_param(nested_info);
+        let nested = interner.function(FunctionShape {
+            type_params: vec![nested_info],
+            params: vec![crate::types::ParamInfo::unnamed(nested_local)],
+            this_type: None,
+            return_type: interner.tuple(vec![
+                TupleElement::fixed(captured_outer),
+                TupleElement::fixed(nested_local),
+            ]),
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+
+        let substitution =
+            TypeSubstitution::from_signature_args(&interner, &[owned_info], &[TypeId::NUMBER]);
+        let result = instantiate_type(&interner, nested, &substitution);
+        let Some(TypeData::Function(shape_id)) = interner.lookup(result) else {
+            panic!(
+                "expected nested function, got {:?}",
+                interner.lookup(result)
+            );
+        };
+        let shape = interner.function_shape(shape_id);
+
+        assert_eq!(shape.type_params, vec![nested_info]);
+        assert_eq!(shape.params[0].type_id, nested_local);
+        assert_eq!(
+            tuple_members(&interner, shape.return_type),
+            vec![TypeId::NUMBER, nested_local],
+        );
+    }
+
+    #[test]
+    fn rewritten_nested_local_lookup_is_declaration_aware() {
+        let interner = TypeInterner::new();
+        let file = interner.intern_string("nested-local.ts");
+        let u = interner.intern_string("U");
+        let v = interner.intern_string("V");
+        let owned_u = TypeParamInfo {
+            name: u,
+            constraint: None,
+            default: None,
+            is_const: false,
+            origin: TypeParamOrigin::DeclScoped { file, node: 1 },
+        };
+        let owned_v = TypeParamInfo {
+            name: v,
+            origin: TypeParamOrigin::DeclScoped { file, node: 2 },
+            ..owned_u
+        };
+        let owned_v_occurrence = interner.fresh_type_param(owned_v);
+        let nested_u = TypeParamInfo {
+            name: u,
+            constraint: Some(owned_v_occurrence),
+            default: None,
+            is_const: false,
+            origin: TypeParamOrigin::DeclScoped { file, node: 3 },
+        };
+        let captured_u = interner.fresh_type_param(owned_u);
+        let nested_u_occurrence = interner.fresh_type_param(nested_u);
+        let nested = interner.function(FunctionShape {
+            type_params: vec![nested_u],
+            params: vec![crate::types::ParamInfo::unnamed(nested_u_occurrence)],
+            this_type: None,
+            return_type: interner.tuple(vec![
+                TupleElement::fixed(captured_u),
+                TupleElement::fixed(nested_u_occurrence),
+            ]),
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+
+        let substitution = TypeSubstitution::from_signature_args(
+            &interner,
+            &[owned_u, owned_v],
+            &[TypeId::NUMBER, TypeId::STRING],
+        );
+        let result = instantiate_type(&interner, nested, &substitution);
+        let Some(TypeData::Function(shape_id)) = interner.lookup(result) else {
+            panic!(
+                "expected nested function, got {:?}",
+                interner.lookup(result)
+            );
+        };
+        let shape = interner.function_shape(shape_id);
+        let rewritten_local = shape.type_params[0];
+
+        assert_eq!(rewritten_local.origin, nested_u.origin);
+        assert_eq!(rewritten_local.constraint, Some(TypeId::STRING));
+        assert_eq!(
+            shape.params[0].type_id,
+            interner.type_param(rewritten_local)
+        );
+        assert_eq!(
+            tuple_members(&interner, shape.return_type),
+            vec![TypeId::NUMBER, interner.type_param(rewritten_local)],
+        );
+    }
+
+    #[test]
+    fn signature_default_can_capture_foreign_same_named_binder() {
+        let interner = TypeInterner::new();
+        let file = interner.intern_string("default-capture.ts");
+        let name = interner.intern_string("U");
+        let foreign_info = TypeParamInfo {
+            name,
+            constraint: None,
+            default: None,
+            is_const: false,
+            origin: TypeParamOrigin::DeclScoped { file, node: 1 },
+        };
+        let foreign = interner.fresh_type_param(foreign_info);
+        let owned_info = TypeParamInfo {
+            default: Some(foreign),
+            origin: TypeParamOrigin::DeclScoped { file, node: 2 },
+            ..foreign_info
+        };
+
+        let substitution = TypeSubstitution::from_signature_args(&interner, &[owned_info], &[]);
+
+        assert_eq!(substitution.get(name), Some(foreign));
     }
 
     /// When every type parameter has a corresponding argument, `from_args`

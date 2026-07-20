@@ -178,7 +178,7 @@ impl<'a> CheckerState<'a> {
                     } else {
                         missing_base_type_arg_fill(self.ctx.types, param.default, param.constraint)
                     };
-                    let substitution = TypeSubstitution::from_args(
+                    let substitution = TypeSubstitution::from_signature_args(
                         self.ctx.types,
                         &sig.type_params[..param_index],
                         &args,
@@ -261,7 +261,7 @@ impl<'a> CheckerState<'a> {
                         };
                         // Substitute earlier type params in the default
                         // (e.g., `U = T` → `U = number` when T = number)
-                        let substitution = TypeSubstitution::from_args(
+                        let substitution = TypeSubstitution::from_signature_args(
                             self.ctx.types,
                             &sig.type_params[..param_index],
                             &args,
@@ -478,7 +478,7 @@ impl<'a> CheckerState<'a> {
                 None => return true, // No default/constraint → treat as resolved (will be UNKNOWN)
             };
             // Substitute the already-resolved args into the default.
-            let substitution = TypeSubstitution::from_args(
+            let substitution = TypeSubstitution::from_signature_args(
                 self.ctx.types,
                 &sig.type_params[..param_index],
                 supplied_args,

@@ -1,5 +1,6 @@
 use crate::query_boundaries::assignability as assign_query;
 use crate::query_boundaries::common;
+use crate::query_boundaries::generic_instantiation;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_solver::TypeId;
@@ -21,7 +22,8 @@ impl<'a> CheckerState<'a> {
         arg_is_sensitive: bool,
         round2_substitution: &mut crate::query_boundaries::common::TypeSubstitution,
     ) {
-        let mut arg_substitution = crate::query_boundaries::common::TypeSubstitution::new();
+        let mut arg_substitution =
+            generic_instantiation::signature_domain_substitution(&shape.type_params);
         let mut visited = FxHashSet::default();
         self.collect_return_context_substitution(
             shape_param_type,

@@ -2,7 +2,7 @@ use super::SolverLiteralValue as LiteralValue;
 use super::ts7_sort_order::{
     Ts7SortNameSource, ts7_sort_literal, ts7_sort_name_source, ts7_union_sort_rank,
 };
-use super::{TypeId, TypePrinter, TypeSubstitution, instantiate_type_cached, visitor};
+use super::{TypeId, TypePrinter, free_type_params_named, substitute_exact_types, visitor};
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_common::interner::Atom;
 
@@ -407,8 +407,8 @@ impl<'a> TypePrinter<'a> {
                 return type_id;
             }
 
-            let mut subst = TypeSubstitution::new();
             let mut renamed_names = Vec::with_capacity(func.type_params.len());
+            let mut renamed_type_ids = Vec::with_capacity(func.type_params.len());
             let mut reserved_names = Vec::with_capacity(func.type_params.len());
             for tp in &func.type_params {
                 let name = self.recursive_expansion_type_param_name(tp.name, &reserved_names);
@@ -419,62 +419,77 @@ impl<'a> TypePrinter<'a> {
                             constraint: None,
                             default: None,
                             is_const: tp.is_const,
-                            origin: tp.origin,
+                            origin: tsz_solver::types::TypeParamOrigin::User,
                         });
-                subst.insert(tp.name, placeholder);
+                renamed_type_ids.push(placeholder);
                 reserved_names.push(self.interner.resolve_atom(name));
                 renamed_names.push(name);
             }
 
-            let type_params = func
+            let owned_names: std::collections::HashSet<_> =
+                func.type_params.iter().map(|param| param.name).collect();
+            let mut roots = Vec::with_capacity(func.type_params.len() * 2 + func.params.len() + 3);
+            for param in &func.type_params {
+                roots.extend(param.constraint);
+                roots.extend(param.default);
+            }
+            roots.extend(func.params.iter().map(|param| param.type_id));
+            roots.extend(func.this_type);
+            roots.push(func.return_type);
+            roots.extend(func.type_predicate.and_then(|predicate| predicate.type_id));
+
+            let mut from = Vec::new();
+            let mut to = Vec::new();
+            for (index, param) in func.type_params.iter().enumerate() {
+                let canonical = self.interner.type_param(*param);
+                from.push(canonical);
+                to.push(renamed_type_ids[index]);
+            }
+            for (_, occurrence) in free_type_params_named(self.interner, roots, &owned_names) {
+                let Some(info) = visitor::type_param_info(self.interner, occurrence) else {
+                    continue;
+                };
+                let Some(index) = func
+                    .type_params
+                    .iter()
+                    .position(|param| param.is_same_binder(info))
+                else {
+                    continue;
+                };
+                if !from.contains(&occurrence) {
+                    from.push(occurrence);
+                    to.push(renamed_type_ids[index]);
+                }
+            }
+
+            let rewritten_type = substitute_exact_types(self.interner, type_id, &from, &to);
+            let Some(rewritten_func_id) = visitor::function_shape_id(self.interner, rewritten_type)
+            else {
+                return type_id;
+            };
+            let rewritten = self.interner.function_shape(rewritten_func_id);
+
+            let type_params = rewritten
                 .type_params
                 .iter()
                 .zip(renamed_names)
                 .map(|(tp, name)| tsz_solver::types::TypeParamInfo {
                     name,
-                    constraint: tp.constraint.map(|constraint| {
-                        instantiate_type_cached(self.interner, None, constraint, &subst)
-                    }),
-                    default: tp.default.map(|default| {
-                        instantiate_type_cached(self.interner, None, default, &subst)
-                    }),
+                    constraint: tp.constraint,
+                    default: tp.default,
                     is_const: tp.is_const,
-                    origin: tp.origin,
+                    origin: tsz_solver::types::TypeParamOrigin::User,
                 })
                 .collect();
-            let params = func
-                .params
-                .iter()
-                .map(|param| tsz_solver::types::ParamInfo {
-                    name: param.name,
-                    type_id: instantiate_type_cached(self.interner, None, param.type_id, &subst),
-                    optional: param.optional,
-                    rest: param.rest,
-                })
-                .collect();
-            let return_type =
-                instantiate_type_cached(self.interner, None, func.return_type, &subst);
-            let this_type = func
-                .this_type
-                .map(|this_type| instantiate_type_cached(self.interner, None, this_type, &subst));
-            let type_predicate = func.type_predicate.map(|predicate| {
-                let type_id = predicate
-                    .type_id
-                    .map(|type_id| instantiate_type_cached(self.interner, None, type_id, &subst));
-                tsz_solver::types::TypePredicate {
-                    type_id,
-                    ..predicate
-                }
-            });
 
             return self.interner.function(tsz_solver::types::FunctionShape {
                 type_params,
-                params,
-                this_type,
-                return_type,
-                type_predicate,
-                is_constructor: func.is_constructor,
-                is_method: func.is_method,
+                params: rewritten.params.clone(),
+                this_type: rewritten.this_type,
+                return_type: rewritten.return_type,
+                type_predicate: rewritten.type_predicate,
+                is_constructor: rewritten.is_constructor,
+                is_method: rewritten.is_method,
             });
         }
 

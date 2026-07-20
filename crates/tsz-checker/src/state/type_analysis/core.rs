@@ -621,6 +621,7 @@ impl CheckerState<'_> {
         let mut params = Vec::new();
         let mut param_indices = Vec::new();
         let mut seen_names = FxHashSet::default();
+        let mut identity_scoped_param_names = smallvec::SmallVec::<[u32; 2]>::new();
 
         // First pass: Add all type parameters to scope WITHOUT resolving constraints
         // This allows self-referential constraints like T extends Box<T>
@@ -664,6 +665,33 @@ impl CheckerState<'_> {
                 is_const: false,
                 origin: tsz_solver::TypeParamOrigin::User,
             };
+            // A syntax-local declaration that lexically shadows an active type
+            // parameter needs declaration identity even while the broader
+            // declaration-identity campaign is disabled. A scratch-scope
+            // collision from unrelated re-entrant resolution is not lexical
+            // shadowing; require an enclosing declaration in the AST before
+            // opting into the exact domain. Record the name node so every
+            // refinement pass reuses the same origin.
+            let needs_identity_scope = self
+                .ctx
+                .type_parameter_scope
+                .get(&name)
+                .copied()
+                .and_then(|active| {
+                    common_query::type_param_info(self.ctx.types, active)
+                        .map(|active_info| (active, active_info))
+                })
+                .is_some_and(|(active, active_info)| {
+                    super::lexical_type_param_scope::is_lexical_type_parameter_shadow(
+                        self,
+                        active,
+                        active_info,
+                        data.name,
+                    )
+                });
+            if needs_identity_scope {
+                identity_scoped_param_names.push(data.name.0);
+            }
             let mut shadowed_class_param = false;
             if let Some(ref mut c) = self.ctx.enclosing_class
                 && let Some(pos) = c.type_param_names.iter().position(|x| *x == name)
@@ -672,7 +700,13 @@ impl CheckerState<'_> {
                 shadowed_class_param = true;
             }
 
-            let type_id = self.intern_type_param_for_decl(data.name, info);
+            let type_id = self
+                .intern_type_param_for_decl_stamped_with_identity(
+                    data.name,
+                    info,
+                    needs_identity_scope,
+                )
+                .0;
             let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
             updates.push((name, previous, shadowed_class_param));
             param_indices.push(param_idx);
@@ -805,9 +839,14 @@ impl CheckerState<'_> {
                 // EXACT `DeclScoped(file, name_node)` origin the lowered body
                 // refs hold, so the solver's `is_identity_for` primary check
                 // (`type_param(stored) == map id`) fires. Flag-OFF,
-                // `stamped_info == info` (`User`) → stored list byte-parity.
-                let (constrained_type_id, stamped_info) =
-                    self.intern_type_param_for_decl_stamped(data.name, info);
+                // `stamped_info == info` (`User`) → stored list byte-parity
+                // unless this declaration shadows an active parameter.
+                let (constrained_type_id, stamped_info) = self
+                    .intern_type_param_for_decl_stamped_with_identity(
+                        data.name,
+                        info,
+                        identity_scoped_param_names.contains(&data.name.0),
+                    );
                 if self.ctx.type_parameter_scope.get(&name).copied() != Some(constrained_type_id) {
                     self.ctx
                         .type_parameter_scope
@@ -958,29 +997,40 @@ impl CheckerState<'_> {
     /// stored list and the lowered body refs share the SAME `DeclScoped` origin
     /// — a separately-reconstructed stamp diverges, and the stored list must
     /// re-intern to the canonical `TypeId` for `is_identity_for`'s primary
-    /// `type_param(stored) == map id` check to fire. Flag-OFF the returned info
-    /// is identical to the input (`User`), so the stored list is byte-parity
-    /// unchanged.
+    /// `type_param(stored) == map id` check to fire. With broad activation off,
+    /// the returned info remains byte-parity `User` unless the internal caller
+    /// explicitly marks a binder that shadows an active type parameter.
     pub(crate) fn intern_type_param_for_decl_stamped(
         &mut self,
         name_node: tsz_parser::parser::NodeIndex,
-        mut info: tsz_solver::TypeParamInfo,
+        info: tsz_solver::TypeParamInfo,
     ) -> (tsz_solver::TypeId, tsz_solver::TypeParamInfo) {
-        // #14345 construction stamp (flag-ON only): stamp the def-type-param
+        self.intern_type_param_for_decl_stamped_with_identity(name_node, info, false)
+    }
+
+    fn intern_type_param_for_decl_stamped_with_identity(
+        &mut self,
+        name_node: tsz_parser::parser::NodeIndex,
+        mut info: tsz_solver::TypeParamInfo,
+        needs_identity_scope: bool,
+    ) -> (tsz_solver::TypeId, tsz_solver::TypeParamInfo) {
+        // #14345 construction stamp (broad activation or a selective shadow):
+        // stamp the def-type-param
         // mint with the IDENTICAL `DeclScoped(file, name_node)` the carrier's
         // lowering body refs carry, BEFORE the cache/decl-node lookups so every
         // key reflects the stamp and the stored list + lowered refs converge on
         // the SAME `DeclScoped` `TypeId`.
         //
-        // Flag-OFF the stamp AND the early `intern_string(file_name)` are both
-        // skipped: the flag-OFF body must be BYTE-IDENTICAL to the pre-#14345
-        // sequence, INCLUDING the position at which the file name is interned
+        // When neither activation applies, the stamp AND the early
+        // `intern_string(file_name)` are both skipped: that body must be
+        // BYTE-IDENTICAL to the pre-#14345 sequence, INCLUDING the position at
+        // which the file name is interned
         // (after the L1 cache lookup + `registered_def`, below). Interning it
         // early shifts the program's atom-allocation order — observable in
         // order-sensitive structures even though the `TypeId`s are equivalent
         // (the conformance leak). So flag-OFF reuses the original position.
         let mut file_atom = None;
-        if decl_identity_activation() {
+        if needs_identity_scope || decl_identity_activation() {
             let atom = self.ctx.types.intern_string(&self.ctx.file_name);
             file_atom = Some(atom);
             info.origin = tsz_solver::TypeParamOrigin::DeclScoped {

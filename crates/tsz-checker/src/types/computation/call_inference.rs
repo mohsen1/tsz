@@ -17,6 +17,7 @@ use crate::query_boundaries::common::CallResult;
 use crate::query_boundaries::common::LiteralTypeKind;
 use crate::query_boundaries::common::{QueryDatabase, TypeDatabase};
 use crate::query_boundaries::construct_signatures as signature_construction;
+use crate::query_boundaries::generic_instantiation;
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
@@ -441,7 +442,11 @@ impl<'a> CheckerState<'a> {
             let Some(tp_info) = common::type_param_info(self.ctx.types, param_type) else {
                 continue;
             };
-            if !shape.type_params.iter().any(|tp| tp.name == tp_info.name) {
+            if !shape
+                .type_params
+                .iter()
+                .any(|tp| tp.is_same_binder(tp_info))
+            {
                 continue;
             }
 
@@ -523,7 +528,8 @@ impl<'a> CheckerState<'a> {
                 || ty == TypeId::UNKNOWN
                 || common::contains_infer_types(self.ctx.types, ty)
         });
-        let mut contextual_substitution = crate::query_boundaries::common::TypeSubstitution::new();
+        let mut contextual_substitution =
+            generic_instantiation::empty_substitution_with_same_domain(substitution);
         for (&name, &type_id) in substitution.map() {
             let aliases_current_type_param = type_id == type_param_type;
             if (should_drop_self && name == tp_info.name) || aliases_current_type_param {
@@ -543,7 +549,11 @@ impl<'a> CheckerState<'a> {
         // With `O → unknown`, the constraint evaluates to `RepeatOptions<A>`,
         // giving the correct contextual type for properties like `until`.
         if substitution.get(tp_info.name).is_none()
-            && common::contains_type_parameter_named(self.ctx.types, constraint, tp_info.name)
+            && generic_instantiation::type_contains_type_parameter_binder(
+                self.ctx.types,
+                constraint,
+                *tp_info,
+            )
         {
             contextual_substitution.insert(tp_info.name, TypeId::UNKNOWN);
         }
@@ -677,7 +687,7 @@ impl<'a> CheckerState<'a> {
                         .into_iter()
                         .any(|ty| {
                             common::type_param_info(self.ctx.types, ty)
-                                .is_some_and(|info| info.name == tp.name)
+                                .is_some_and(|info| tp.is_same_binder(info))
                         })
                 })
             });
@@ -943,7 +953,7 @@ impl<'a> CheckerState<'a> {
         type_params: &[tsz_solver::TypeParamInfo],
     ) -> crate::query_boundaries::common::TypeSubstitution {
         let tracked_type_params: FxHashSet<_> = type_params.iter().map(|tp| tp.name).collect();
-        let mut substitution = crate::query_boundaries::common::TypeSubstitution::new();
+        let mut substitution = generic_instantiation::signature_domain_substitution(type_params);
         if tracked_type_params.is_empty() {
             return substitution;
         }
@@ -1439,7 +1449,8 @@ impl<'a> CheckerState<'a> {
         // using the checker's intra-expression Round 2 inferences. Skip type
         // parameters where the checker's value is not concrete or where the
         // checker matches the constraint (no improvement).
-        let mut merged = common::TypeSubstitution::new();
+        let mut merged =
+            generic_instantiation::signature_domain_substitution(&orig_shape.type_params);
         let mut any_override = false;
         for tp in &orig_shape.type_params {
             let Some(checker_val) = checker_sub.get(tp.name) else {
@@ -1466,10 +1477,6 @@ impl<'a> CheckerState<'a> {
         // are safe to override with the checker's value: when the solver
         // bound a type parameter to anything else, it had information from the
         // arg-type unification step that the checker doesn't see.
-        let mut constraint_default = common::TypeSubstitution::new();
-        for tp in &orig_shape.type_params {
-            constraint_default.insert(tp.name, tp.constraint.unwrap_or(TypeId::UNKNOWN));
-        }
         let param_type_param_refs: Vec<_> = orig_shape
             .params
             .iter()
@@ -1489,7 +1496,7 @@ impl<'a> CheckerState<'a> {
             // shape.params with the solver's instantiated_params at any
             // position whose type contains this tp. If they agree, the
             // solver defaulted this tp.
-            let mut probe = common::TypeSubstitution::new();
+            let mut probe = generic_instantiation::empty_substitution_with_same_domain(&merged);
             for other_tp in &orig_shape.type_params {
                 if other_tp.name == tp.name {
                     probe.insert(
@@ -1548,7 +1555,8 @@ impl<'a> CheckerState<'a> {
         }
         // Drop checker overrides for type params the solver did NOT default —
         // the solver had non-default information we shouldn't clobber.
-        let mut filtered_merged = common::TypeSubstitution::new();
+        let mut filtered_merged =
+            generic_instantiation::empty_substitution_with_same_domain(&merged);
         let mut any_filtered_override = false;
         for tp in &orig_shape.type_params {
             if let Some(val) = merged.get(tp.name)

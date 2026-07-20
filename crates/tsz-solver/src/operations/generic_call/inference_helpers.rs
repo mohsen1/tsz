@@ -3,7 +3,9 @@
 use crate::inference::infer::{InferenceContext, InferenceVar};
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::{AssignabilityChecker, CallEvaluator};
-use crate::types::{FunctionShape, ObjectFlags, ParamInfo, TypeData, TypeId, TypePredicate};
+use crate::types::{
+    FunctionShape, ObjectFlags, ParamInfo, TypeData, TypeId, TypeParamInfo, TypePredicate,
+};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 /// A lower-bound inference candidate is "concrete evidence" when it carries a
@@ -1070,7 +1072,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     pub(super) fn function_like_type_param_appears_in_parameter_position(
         &self,
         ty: TypeId,
-        tracked_type_params: &FxHashSet<tsz_common::Atom>,
+        tracked_type_params: &[TypeParamInfo],
     ) -> bool {
         let params_contain_tracked_type_param = |params: &[ParamInfo]| {
             params.iter().any(|param| {
@@ -1078,7 +1080,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     .into_iter()
                     .any(|candidate| {
                         crate::type_param_info(self.interner.as_type_database(), candidate)
-                            .is_some_and(|info| tracked_type_params.contains(&info.name))
+                            .is_some_and(|info| {
+                                tracked_type_params
+                                    .iter()
+                                    .any(|type_param| type_param.is_same_binder(info))
+                            })
                     })
             })
         };
@@ -1133,9 +1139,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         func: &FunctionShape,
         arg_types: &[TypeId],
         start_index: usize,
-        type_param_name: tsz_common::Atom,
+        type_param: TypeParamInfo,
     ) -> bool {
-        let tracked_type_params = FxHashSet::from_iter([type_param_name]);
+        let tracked_type_params = [type_param];
 
         func.params
             .iter()
@@ -1652,7 +1658,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     .into_iter()
                     .any(|ty| {
                         crate::type_param_info(self.interner.as_type_database(), ty)
-                            .is_some_and(|info| info.name == tp.name)
+                            .is_some_and(|info| tp.is_same_binder(info))
                     })
                 })
             });
@@ -1736,7 +1742,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             source_fn.params.iter().any(|param| {
                 matches!(
                     self.interner.lookup(param.type_id),
-                    Some(TypeData::TypeParameter(info)) if info.name == tp.name
+                    Some(TypeData::TypeParameter(info)) if tp.is_same_binder(info)
                 )
             })
         });
@@ -1794,18 +1800,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 && matches!(
                     self.interner.lookup(source_fn.params[0].type_id),
                     Some(TypeData::TypeParameter(param_tp))
-                        if param_tp.name == source_fn.type_params[0].name
+                        if source_fn.type_params[0].is_same_binder(param_tp)
                 )
                 && matches!(
                     self.interner.lookup(source_fn.return_type),
                     Some(TypeData::TypeParameter(ret_tp))
-                        if ret_tp.name == source_fn.type_params[0].name
+                        if source_fn.type_params[0].is_same_binder(ret_tp)
                 );
             if preserve_callable_alias {
                 return source_ty;
             }
             // Case 3: erase to constraints/unknown
             let mut erasure_sub = TypeSubstitution::new();
+            erasure_sub.protect_type_parameters(&source_fn.type_params);
             for tp in &source_fn.type_params {
                 erasure_sub.insert(tp.name, tp.constraint.unwrap_or(TypeId::UNKNOWN));
             }
@@ -1952,6 +1959,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             )
         {
             let mut erasure_sub = TypeSubstitution::new();
+            erasure_sub.protect_type_parameters(&source_fn.type_params);
             for tp in &source_fn.type_params {
                 erasure_sub.insert(tp.name, tp.constraint.unwrap_or(TypeId::UNKNOWN));
             }

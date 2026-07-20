@@ -44,8 +44,8 @@ impl<'a> TypeInstantiator<'a> {
         if !self.preserve_meta_types
             && let Some(TypeData::KeyOf(keyof_source)) = self.interner.lookup(mapped.constraint)
             && let Some(TypeData::TypeParameter(tp_info)) = self.interner.lookup(keyof_source)
-            && !self.is_shadowed(tp_info.name)
-            && let Some(substituted) = self.substitution.get(tp_info.name)
+            && !self.is_shadowed(&tp_info)
+            && let Some(substituted) = self.substitution.get_for_type_parameter(&tp_info)
         {
             let resolved = self.evaluate_type(substituted);
             // tsc's `instantiateMappedType` maps the homomorphic source type
@@ -74,7 +74,7 @@ impl<'a> TypeInstantiator<'a> {
                 // `instantiate_key` rewrites `K` to its instantiated
                 // constraint and produces `<member>[keyof <member>]`
                 // where the source said `<member>[K]`.
-                let iter_var_shadow = [mapped.type_param.name];
+                let iter_var_shadow = [mapped.type_param];
                 // Reuse one substitution map across distributed
                 // members. The only per-member semantic change is the
                 // homomorphic source parameter (`tp_info.name`), so a
@@ -125,13 +125,13 @@ impl<'a> TypeInstantiator<'a> {
             && crate::type_queries::mapped::is_identity_name_mapping(self.interner, &mapped)
             && let Some(TypeData::KeyOf(keyof_source)) = self.interner.lookup(mapped.constraint)
             && let Some(TypeData::TypeParameter(tp_info)) = self.interner.lookup(keyof_source)
-            && !self.is_shadowed(tp_info.name)
-            && let Some(substituted) = self.substitution.get(tp_info.name)
+            && !self.is_shadowed(&tp_info)
+            && let Some(substituted) = self.substitution.get_for_type_parameter(&tp_info)
             && !Self::mapped_template_uses_source_index(
                 self.interner,
                 mapped.template,
                 keyof_source,
-                mapped.type_param.name,
+                mapped.type_param,
             )
             && self.evaluate_type(substituted) == TypeId::ANY
             && tp_info.constraint.is_some_and(|c| {
@@ -176,14 +176,14 @@ impl<'a> TypeInstantiator<'a> {
             && crate::type_queries::mapped::is_identity_name_mapping(self.interner, &mapped)
             && let Some(TypeData::KeyOf(keyof_source)) = self.interner.lookup(mapped.constraint)
             && let Some(TypeData::TypeParameter(tp_info)) = self.interner.lookup(keyof_source)
-            && !self.is_shadowed(tp_info.name)
-            && let Some(substituted) = self.substitution.get(tp_info.name)
+            && !self.is_shadowed(&tp_info)
+            && let Some(substituted) = self.substitution.get_for_type_parameter(&tp_info)
         {
             let template_uses_source_index = Self::mapped_template_uses_source_index(
                 self.interner,
                 mapped.template,
                 keyof_source,
-                mapped.type_param.name,
+                mapped.type_param,
             );
             let resolved = self.evaluate_type(substituted);
 
@@ -481,7 +481,7 @@ impl<'a> TypeInstantiator<'a> {
             tp_name = ?self.interner.resolve_atom_ref(mapped.type_param.name),
             constraint = mapped.constraint.0,
             constraint_key = ?self.interner.lookup(mapped.constraint),
-            shadowed = ?self.shadowed.iter().map(|a| self.interner.resolve_atom_ref(*a)).collect::<Vec<_>>(),
+            shadowed = ?self.shadowed.iter().map(|p| self.interner.resolve_atom_ref(p.name)).collect::<Vec<_>>(),
             subst = ?self.substitution.map.iter().map(|(k, v)| (self.interner.resolve_atom_ref(*k), v.0)).collect::<Vec<_>>(),
             "instantiate Mapped: about to instantiate constraint"
         );

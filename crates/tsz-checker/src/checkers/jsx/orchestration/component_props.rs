@@ -1188,7 +1188,9 @@ impl<'a> CheckerState<'a> {
             *ty = self.widen_jsx_object_attr_type(*ty);
         }
         let mut substitution = if concrete_attrs.is_empty() {
-            crate::query_boundaries::common::TypeSubstitution::new()
+            crate::query_boundaries::generic_instantiation::signature_domain_substitution(
+                &function_shape.type_params,
+            )
         } else {
             let attrs_type = self.build_jsx_provided_attrs_object_type(&concrete_attrs);
             let env = self.ctx.type_env.borrow();

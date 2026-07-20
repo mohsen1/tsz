@@ -143,6 +143,7 @@ impl<'a> InstantiationRequest<'a> {
             self.options.mode_bits(),
             self.this_type,
         )
+        .with_identity_domain(self.substitution.identity_domain_for_cache())
     }
 }
 
@@ -164,6 +165,25 @@ mod tests {
         assert!(!options.preserve_meta_types());
         assert!(!options.preserve_unsubstituted_type_params());
         assert!(!options.shallow_this_only());
+    }
+
+    #[test]
+    fn unstamped_request_key_keeps_the_identity_domain_pointer_empty() {
+        let interner = TypeInterner::new();
+        let name = interner.intern_string("T");
+        let substitution = TypeSubstitution::from_signature_args(
+            &interner,
+            &[TypeParamInfo::simple(name)],
+            &[TypeId::STRING],
+        );
+        let key = InstantiationRequest::new(TypeId::OBJECT, &substitution).cache_key();
+
+        assert!(key.identity_domain.is_none());
+        assert_eq!(
+            std::mem::size_of_val(&key.identity_domain),
+            std::mem::size_of::<usize>(),
+            "the common key pays one nullable pointer and no domain allocation"
+        );
     }
 
     #[test]

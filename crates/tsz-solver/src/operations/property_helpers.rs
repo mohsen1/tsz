@@ -973,7 +973,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             {
                 let func_shape = self.interner().function_shape(func_shape_id);
                 if !func_shape.type_params.is_empty() && !app.args.is_empty() {
-                    let subst = TypeSubstitution::from_args(
+                    let subst = TypeSubstitution::from_signature_args(
                         self.interner(),
                         &func_shape.type_params,
                         &app.args,

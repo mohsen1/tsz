@@ -58,15 +58,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let placeholder_id = self.checker.next_inference_placeholder_id();
             crate::operations::generic_call::write_placeholder_name(&mut name_buf, placeholder_id);
             let fresh_name = self.interner.intern_string(&name_buf);
-            let fresh_type = self.interner.type_param(TypeParamInfo {
+            let fresh_info = TypeParamInfo {
                 name: fresh_name,
                 constraint: None,
                 default: None,
                 is_const: tp.is_const,
                 origin: crate::types::TypeParamOrigin::InferPlaceholder { id: placeholder_id },
-            });
+            };
+            let fresh_type = self.interner.type_param(fresh_info);
             substitution.insert(tp.name, fresh_type);
-            fresh_params.push((tp, fresh_name));
+            fresh_params.push((tp, fresh_info));
         }
 
         Some(FunctionShape {
@@ -86,8 +87,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 .map(|this_type| instantiate_type(self.interner, this_type, &substitution)),
             type_params: fresh_params
                 .into_iter()
-                .map(|(tp, fresh_name)| TypeParamInfo {
-                    name: fresh_name,
+                .map(|(tp, fresh_info)| TypeParamInfo {
+                    name: fresh_info.name,
                     constraint: tp.constraint.map(|constraint| {
                         instantiate_type(self.interner, constraint, &substitution)
                     }),
@@ -95,7 +96,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         .default
                         .map(|default| instantiate_type(self.interner, default, &substitution)),
                     is_const: tp.is_const,
-                    origin: tp.origin,
+                    // The quantifier and every substituted leaf represent the
+                    // same freshly minted binder. If the quantifier keeps the
+                    // declaration origin while its leaves use
+                    // `InferPlaceholder`, exact-domain instantiation treats
+                    // the signature's own leaves as foreign binders.
+                    origin: fresh_info.origin,
                 })
                 .collect(),
             type_predicate: func.type_predicate.as_ref().map(|predicate| {

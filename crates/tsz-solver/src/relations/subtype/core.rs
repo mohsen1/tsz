@@ -26,7 +26,7 @@ use crate::operations::AssignabilityChecker;
 use crate::types::*;
 use crate::types::{
     IntrinsicKind, LiteralValue, ObjectFlags, ObjectShape, PropertyInfo, RelationCacheKey,
-    SymbolRef, TemplateSpan, TypeData, TypeId, TypeListId, TypeParamOrigin,
+    SymbolRef, TemplateSpan, TypeData, TypeId, TypeListId, TypeParamBinderKey, TypeParamInfo,
 };
 use crate::visitor::{
     TypeVisitor, application_id, array_element_type, callable_shape_id, conditional_type_id,
@@ -229,7 +229,7 @@ impl RelationEvaluationResult {
 #[cfg(test)]
 mod type_param_equivalence_tests {
     use super::TypeParamEquivalence;
-    use crate::types::{TypeId, TypeParamOrigin};
+    use crate::types::{TypeId, TypeParamBinderKey, TypeParamInfo, TypeParamOrigin};
     use tsz_common::interner::Atom;
 
     fn decl(file: u32, node: u32) -> TypeParamOrigin {
@@ -239,8 +239,22 @@ mod type_param_equivalence_tests {
         }
     }
 
-    /// An id-only equivalence carries no decl-origin discriminator, so it never
-    /// matches on origins and keeps the historical id-keyed behavior.
+    fn binder(file: u32, node: u32, name: u32) -> TypeParamBinderKey {
+        TypeParamBinderKey {
+            origin: decl(file, node),
+            name: Atom(name),
+        }
+    }
+
+    fn info(file: u32, node: u32, name: u32) -> TypeParamInfo {
+        TypeParamInfo {
+            origin: decl(file, node),
+            ..TypeParamInfo::simple(Atom(name))
+        }
+    }
+
+    /// An id-only equivalence carries no exact-binder discriminator, so it keeps
+    /// the historical id-keyed behavior.
     #[test]
     fn ids_equivalence_matches_only_by_id() {
         let a = TypeId(100);
@@ -249,25 +263,25 @@ mod type_param_equivalence_tests {
         assert!(eq.matches_ids(a, b));
         assert!(eq.matches_ids(b, a), "id match is order-insensitive");
         assert!(!eq.matches_ids(a, TypeId(300)));
-        // No origins recorded -> origin match never fires.
-        assert!(!eq.matches_origins(decl(1, 2), decl(3, 4)));
+        // No binders recorded -> binder match never fires.
+        assert!(!eq.matches_binders(info(1, 2, 10), info(3, 4, 10)));
     }
 
-    /// A registered decl-origin pair matches a same-origin leaf pair in either
+    /// A registered exact-binder pair matches a reconstructed leaf pair in either
     /// order (the accepted `B ≡ A` bridge). This is the #14345 WAVE-1 positive
     /// case: two reduced-body leaves whose `(file, node)` origins equal the
     /// registered signature params relate.
     #[test]
-    fn origin_equivalence_matches_registered_pair_both_orders() {
+    fn binder_equivalence_matches_registered_pair_both_orders() {
         let eq = TypeParamEquivalence {
             source: TypeId(100),
             target: TypeId(200),
-            origins: Some((decl(57, 20), decl(5, 20))),
+            binders: Some((binder(57, 20, 10), binder(5, 20, 10))),
         };
-        assert!(eq.matches_origins(decl(57, 20), decl(5, 20)));
+        assert!(eq.matches_binders(info(57, 20, 10), info(5, 20, 10)));
         assert!(
-            eq.matches_origins(decl(5, 20), decl(57, 20)),
-            "origin match is order-insensitive"
+            eq.matches_binders(info(5, 20, 10), info(57, 20, 10)),
+            "binder match is order-insensitive"
         );
     }
 
@@ -275,32 +289,35 @@ mod type_param_equivalence_tests {
     /// registered) must NOT match — the sound discriminator the name+surface
     /// strip cannot express. A single differing node is enough to reject.
     #[test]
-    fn origin_equivalence_rejects_unregistered_pair() {
+    fn binder_equivalence_rejects_unregistered_pair() {
         let eq = TypeParamEquivalence {
             source: TypeId(100),
             target: TypeId(200),
-            origins: Some((decl(57, 20), decl(5, 20))),
+            binders: Some((binder(57, 20, 10), binder(5, 20, 10))),
         };
         // Different file on one side.
-        assert!(!eq.matches_origins(decl(99, 20), decl(5, 20)));
+        assert!(!eq.matches_binders(info(99, 20, 10), info(5, 20, 10)));
         // Different node on one side (same file) — distinct declaration site.
-        assert!(!eq.matches_origins(decl(57, 21), decl(5, 20)));
+        assert!(!eq.matches_binders(info(57, 21, 10), info(5, 20, 10)));
+        // Same declaration sites but a different sibling name is also distinct.
+        assert!(!eq.matches_binders(info(57, 20, 11), info(5, 20, 10)));
         // Both sides different.
-        assert!(!eq.matches_origins(decl(1, 1), decl(2, 2)));
+        assert!(!eq.matches_binders(info(1, 1, 10), info(2, 2, 10)));
     }
 
     /// A `User` (unstamped) leaf carries no declaration site and must never
-    /// match on origins, even against a registered declaration-origin pair.
+    /// match on binders, even against a registered declaration-binder pair.
     #[test]
-    fn origin_equivalence_never_matches_user_leaves() {
+    fn binder_equivalence_never_matches_user_leaves() {
         let eq = TypeParamEquivalence {
             source: TypeId(100),
             target: TypeId(200),
-            origins: Some((decl(57, 20), decl(5, 20))),
+            binders: Some((binder(57, 20, 10), binder(5, 20, 10))),
         };
-        assert!(!eq.matches_origins(TypeParamOrigin::User, decl(5, 20)));
-        assert!(!eq.matches_origins(decl(57, 20), TypeParamOrigin::User));
-        assert!(!eq.matches_origins(TypeParamOrigin::User, TypeParamOrigin::User));
+        let user = TypeParamInfo::simple(Atom(10));
+        assert!(!eq.matches_binders(user, info(5, 20, 10)));
+        assert!(!eq.matches_binders(info(57, 20, 10), user));
+        assert!(!eq.matches_binders(user, user));
     }
 }
 
@@ -409,43 +426,36 @@ impl RelationEventCounter {
 /// function subtype checking.
 ///
 /// The `source`/`target` `TypeId`s are the pre-instantiate signature-param ids
-/// (the historical `(TypeId, TypeId)` pair). `origins` additionally records the
-/// two params' declaration origins when both carry authoritative declaration
-/// stamps (`DeclScoped` or `JsdocCommentScoped`).
+/// (the historical `(TypeId, TypeId)` pair). `binders` additionally records the
+/// two params' exact `(origin, name)` identities when both carry authoritative
+/// declaration stamps (`DeclScoped`, `JsdocOwnerScoped`, or
+/// `JsdocCommentScoped`).
 ///
-/// #14345 WAVE-1 decl-origin-through-reduction: the name-keyed re-mint
-/// (`instantiate_function_shape`) rewrites deeper, arg-position `Kind<F,A>`
-/// param leaves to a THIRD id that the registered `TypeId` pair never contains,
-/// so the id-keyed consult (`check_subtype`) misses and the two alpha-equivalent
-/// bodies fail to relate. The declaration origin is stable across that re-mint
-/// (a substitution hit maps the leaf to the same-origin top-level param, a miss
-/// returns the original id, and the `TypeParameter` re-intern preserves the
-/// origin field). So the consult can
-/// additionally match a reduced-body leaf against a registered equivalence by
-/// its CARRIED origin: a same-origin leaf pair relates, a different-origin pair
-/// (never registered) does not. This is the sound discriminator the name-keyed
-/// structural strip cannot express (a name-keyed substitution collapses
-/// colliding names to one `User` id).
+/// #14345 WAVE-1 binder-through-reduction: reconstructing a deeper
+/// argument-position leaf can give it a fresh `TypeId`, so the historical id
+/// pair misses even though the declaration binder was preserved. The exact
+/// binder pair bridges only that registered equivalence; including the declared
+/// name keeps sibling JSDoc parameters at one comment owner distinct.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct TypeParamEquivalence {
     pub(crate) source: TypeId,
     pub(crate) target: TypeId,
-    /// Declaration origins of the two paired params, recorded only when both
-    /// carry authoritative declaration stamps. `None` for every other
+    /// Exact binders of the two paired params, recorded only when both carry
+    /// authoritative declaration stamps. `None` for every other
     /// registration path (mapped-key constraints, index-access keys,
     /// non-stamped params) so those keep the pure id-keyed behavior.
-    pub(crate) origins: Option<(TypeParamOrigin, TypeParamOrigin)>,
+    pub(crate) binders: Option<(TypeParamBinderKey, TypeParamBinderKey)>,
 }
 
 impl TypeParamEquivalence {
-    /// An id-only equivalence (no decl-origin discriminator). Used by every
-    /// registration path except the decl-origin-aware alpha-rename.
+    /// An id-only equivalence (no exact-binder discriminator). Used by every
+    /// registration path except the declaration-aware alpha-rename.
     #[inline]
     pub(crate) const fn ids(source: TypeId, target: TypeId) -> Self {
         Self {
             source,
             target,
-            origins: None,
+            binders: None,
         }
     }
 
@@ -457,27 +467,22 @@ impl TypeParamEquivalence {
             || (self.source == target && self.target == source)
     }
 
-    /// Whether this registered pair matches the given leaf ORIGIN pair
-    /// (order-insensitive), for the #14345 WAVE-1 decl-origin consult. Both the
-    /// registered entry and the queried leaves must carry authoritative
-    /// declaration origins. Equality includes the origin variant, so an AST
-    /// node and a JSDoc comment remain distinct even with equal numeric payloads.
+    /// Whether this registered pair matches the given exact leaf-binder pair
+    /// (order-insensitive). Both the registered entry and queried leaves must
+    /// carry authoritative declaration identities.
     #[inline]
-    pub(crate) fn matches_origins(
-        &self,
-        source_origin: TypeParamOrigin,
-        target_origin: TypeParamOrigin,
-    ) -> bool {
-        let Some((reg_source, reg_target)) = self.origins else {
+    pub(crate) fn matches_binders(&self, source: TypeParamInfo, target: TypeParamInfo) -> bool {
+        let Some((reg_source, reg_target)) = self.binders else {
             return false;
         };
-        // Only authoritative declaration origins are a sound discriminator; a
-        // `User` origin carries no declaration site so it must never match here.
-        if !source_origin.is_decl_scoped() || !target_origin.is_decl_scoped() {
+        let (Some(source_binder), Some(target_binder)) = (
+            source.declaration_binder_key(),
+            target.declaration_binder_key(),
+        ) else {
             return false;
-        }
-        (reg_source == source_origin && reg_target == target_origin)
-            || (reg_source == target_origin && reg_target == source_origin)
+        };
+        (reg_source == source_binder && reg_target == target_binder)
+            || (reg_source == target_binder && reg_target == source_binder)
     }
 }
 

@@ -241,3 +241,83 @@ fn test_tuple_object_typeparam_to_typeparam_array_rejects() {
         "[U, T] should NOT be assignable to T[] (U is unrelated, no any to absorb)"
     );
 }
+
+#[test]
+fn generic_alpha_rename_preserves_captured_same_named_binder() {
+    let interner = TypeInterner::new();
+    let file = interner.intern_string("generic-alpha-capture.ts");
+    let u = interner.intern_string("U");
+    let v = interner.intern_string("V");
+    let owned_u = TypeParamInfo {
+        name: u,
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: TypeParamOrigin::DeclScoped { file, node: 1 },
+    };
+    let foreign_u = TypeParamInfo {
+        origin: TypeParamOrigin::DeclScoped { file, node: 2 },
+        ..owned_u
+    };
+    let target_v = TypeParamInfo {
+        name: v,
+        origin: TypeParamOrigin::DeclScoped { file, node: 3 },
+        ..owned_u
+    };
+    let owned_u_type = interner.fresh_type_param(owned_u);
+    let foreign_u_type = interner.fresh_type_param(foreign_u);
+    let target_v_type = interner.fresh_type_param(target_v);
+
+    let function = |type_param, param_type, return_type| {
+        interner.function(FunctionShape {
+            type_params: vec![type_param],
+            params: vec![ParamInfo::unnamed(param_type)],
+            this_type: None,
+            return_type,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        })
+    };
+    let source = function(
+        owned_u,
+        owned_u_type,
+        interner.readonly_tuple(vec![
+            TupleElement::fixed(owned_u_type),
+            TupleElement::fixed(foreign_u_type),
+        ]),
+    );
+    let good_target = function(
+        target_v,
+        target_v_type,
+        interner.readonly_tuple(vec![
+            TupleElement::fixed(target_v_type),
+            TupleElement::fixed(foreign_u_type),
+        ]),
+    );
+    let bad_target = function(
+        target_v,
+        target_v_type,
+        interner.readonly_tuple(vec![
+            TupleElement::fixed(target_v_type),
+            TupleElement::fixed(target_v_type),
+        ]),
+    );
+
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(checker.is_subtype_of(source, good_target));
+    assert!(!checker.is_subtype_of(source, bad_target));
+}
+
+#[test]
+fn unstamped_type_parameter_relation_retains_name_fallback() {
+    let interner = TypeInterner::new();
+    let name = interner.intern_string("Legacy");
+    let legacy = TypeParamInfo::simple(name);
+    let left = interner.fresh_type_param(legacy);
+    let right = interner.fresh_type_param(legacy);
+
+    assert_ne!(left, right, "the control must compare distinct type ids");
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(checker.is_subtype_of(left, right));
+}

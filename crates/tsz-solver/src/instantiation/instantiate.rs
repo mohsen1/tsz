@@ -92,7 +92,7 @@ impl LocalTypeParamBinding {
     }
 
     fn matches(&self, candidate: &TypeParamInfo) -> bool {
-        *candidate == self.declaration || *candidate == self.placeholder
+        self.declaration.is_same_binder(*candidate)
     }
 }
 
@@ -142,15 +142,14 @@ pub struct TypeInstantiator<'a> {
     substitution: &'a TypeSubstitution,
     /// Track visited types to handle cycles
     visiting: FxHashMap<TypeId, InstantiationMemoEntry>,
-    /// Type parameter names that are shadowed in the current scope.
-    shadowed: Vec<Atom>,
+    /// Type parameter binders that are shadowed in the current scope.
+    shadowed: Vec<TypeParamInfo>,
     /// Freshly-instantiated local type parameters for the current nested generic scope.
     ///
-    /// Bindings match full declaration/placeholder info, including a
-    /// `DeclScoped` origin when present; a user-chosen name alone never selects
-    /// a local. Legacy `User` parameters with byte-identical full info remain
-    /// indistinguishable because signatures store `TypeParamInfo`, not the
-    /// declaration-scoped fresh `TypeId` (#14344).
+    /// Authoritative declaration origins select the exact local even after its
+    /// constraint/default changes. Legacy unstamped `User` parameters retain
+    /// the historical name-keyed fallback because signatures store
+    /// `TypeParamInfo`, not the declaration-scoped fresh `TypeId` (#14344).
     local_type_params: Vec<LocalTypeParamBinding>,
     /// Version of the semantic environment that affects per-walk memo results.
     /// Incrementing this is O(1); completed entries from older versions are
@@ -213,8 +212,10 @@ impl<'a> TypeInstantiator<'a> {
         }
     }
 
-    fn is_shadowed(&self, name: Atom) -> bool {
-        self.shadowed.contains(&name)
+    fn is_shadowed(&self, info: &TypeParamInfo) -> bool {
+        self.shadowed
+            .iter()
+            .any(|shadowed| shadowed.is_same_binder(*info))
     }
 
     pub(crate) fn with_query_db(mut self, query_db: Option<&'a dyn QueryDatabase>) -> Self {
@@ -317,8 +318,8 @@ impl<'a> TypeInstantiator<'a> {
         else {
             return None;
         };
-        let p_name = constraint_param.name;
-        if p_name == mapped.type_param.name || self.is_shadowed(p_name) {
+        if constraint_param.is_same_binder(mapped.type_param) || self.is_shadowed(&constraint_param)
+        {
             return None;
         }
         // Template must be the self-index `T[P]` (index is the constraint
@@ -331,13 +332,15 @@ impl<'a> TypeInstantiator<'a> {
         let TypeData::TypeParameter(index_param) = self.interner.lookup(index)? else {
             return None;
         };
-        if index_param.name != p_name {
+        if !index_param.is_same_binder(constraint_param) {
             return None;
         }
         // `P` must be substituted with a single property key. A union of keys
         // would change `T[P]` (the union of all key values) into a per-key
         // `T[Q]`, so it is intentionally excluded.
-        let substituted = self.substitution.get(p_name)?;
+        let substituted = self
+            .substitution
+            .get_for_type_parameter(&constraint_param)?;
         let resolved = self.evaluate_type(substituted);
         if !crate::type_queries::is_type_usable_as_property_name(self.interner, resolved) {
             return None;
@@ -500,7 +503,7 @@ impl<'a> TypeInstantiator<'a> {
         interner: &dyn TypeDatabase,
         template: TypeId,
         source_obj: TypeId,
-        param_name: Atom,
+        param: TypeParamInfo,
     ) -> bool {
         crate::visitor::collect_all_types(interner, template)
             .into_iter()
@@ -513,7 +516,7 @@ impl<'a> TypeInstantiator<'a> {
                         !idx.is_intrinsic()
                             && matches!(
                                 interner.lookup(idx),
-                                Some(TypeData::TypeParameter(info)) if info.name == param_name
+                                Some(TypeData::TypeParameter(info)) if param.is_same_binder(info)
                             )
                     }
                     _ => false,
@@ -669,12 +672,12 @@ impl<'a> TypeInstantiator<'a> {
         };
         if !type_params.is_empty() {
             // Completed composite entries can contain a type parameter whose
-            // name becomes shadowed here. Advance the environment version so
+            // binder becomes shadowed here. Advance the environment version so
             // those entries miss lazily; removing only the direct parameter
             // entry would leave composites rewritten by an outer binding.
             self.advance_memo_environment();
         }
-        self.shadowed.extend(type_params.iter().map(|tp| tp.name));
+        self.shadowed.extend_from_slice(type_params);
         (shadowed_len, saved_visiting)
     }
 
@@ -707,7 +710,6 @@ impl<'a> TypeInstantiator<'a> {
             self.advance_memo_environment();
         }
     }
-
     fn lookup_local_type_param(&self, info: &TypeParamInfo) -> Option<TypeId> {
         self.local_type_params
             .iter()
@@ -795,10 +797,12 @@ impl<'a> TypeInstantiator<'a> {
         if let Some(local_type_param) = self.lookup_local_type_param(&info) {
             return local_type_param;
         }
-        if self.is_shadowed(info.name) {
+        if self.is_shadowed(&info) {
             return type_id;
         }
-        self.substitution.get(info.name).unwrap_or(type_id)
+        self.substitution
+            .get_for_type_parameter(&info)
+            .unwrap_or(type_id)
     }
 
     fn instantiate_inner(&mut self, type_id: TypeId) -> TypeId {
@@ -900,10 +904,10 @@ impl<'a> TypeInstantiator<'a> {
                 if let Some(local_type_param) = self.lookup_local_type_param(info) {
                     return local_type_param;
                 }
-                if self.is_shadowed(info.name) {
+                if self.is_shadowed(info) {
                     tracing::trace!(
                         name = ?self.interner.resolve_atom_ref(info.name),
-                        shadowed = ?self.shadowed.iter().map(|a| self.interner.resolve_atom_ref(*a)).collect::<Vec<_>>(),
+                        shadowed = ?self.shadowed.iter().map(|p| self.interner.resolve_atom_ref(p.name)).collect::<Vec<_>>(),
                         "instantiate TypeParameter: SHADOWED"
                     );
                     // Return the ORIGINAL id, not a structural re-intern:
@@ -914,7 +918,10 @@ impl<'a> TypeInstantiator<'a> {
                     // (#13044).
                     return type_id;
                 }
-                if let Some(substituted) = self.substitution.get(info.name) {
+                if let Some(substituted) = self
+                    .substitution
+                    .get_for_type_parameter(info)
+                {
                     tracing::trace!(
                         name = ?self.interner.resolve_atom_ref(info.name),
                         substituted = substituted.0,
@@ -922,7 +929,8 @@ impl<'a> TypeInstantiator<'a> {
                     );
                     substituted
                 } else {
-                    if !self.preserve_unsubstituted_type_params
+                    if !self.substitution.protects_type_parameter_name(info.name)
+                        && !self.preserve_unsubstituted_type_params
                         && self.should_apply_constraint_fallback(info.name)
                     {
                         // No direct substitution found. If the type parameter has a constraint
@@ -1270,8 +1278,10 @@ impl<'a> TypeInstantiator<'a> {
             // Infer: keep as-is unless explicitly substituting inference variables
             TypeData::Infer(info) => {
                 if self.substitute_infer
-                    && !self.is_shadowed(info.name)
-                    && let Some(substituted) = self.substitution.get(info.name)
+                    && !self.is_shadowed(info)
+                    && let Some(substituted) = self
+                        .substitution
+                        .get_for_type_parameter(info)
                 {
                     return substituted;
                 }
@@ -1316,6 +1326,7 @@ pub use self::exact_rewrite::{
     ExactRewriteAborted, ExactRewriteMemo, substitute_exact_type, substitute_exact_types,
     substitute_exact_types_with_memo,
 };
+pub(crate) use self::substitution::IdentitySubstitutionDomain;
 pub use self::substitution::TypeSubstitution;
 #[cfg(test)]
 #[path = "../../tests/instantiate_tests.rs"]

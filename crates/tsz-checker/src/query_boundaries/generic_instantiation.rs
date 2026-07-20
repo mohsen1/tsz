@@ -1,4 +1,4 @@
-use tsz_solver::construction::QueryDatabase;
+use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::{
     FunctionShape, ParamInfo, TypeId, TypeParamInfo, TypePredicate, computation as c,
 };
@@ -24,6 +24,32 @@ pub(crate) fn instantiate_generic(
         type_params,
         type_args,
     )
+}
+
+pub(crate) fn signature_domain_substitution(type_params: &[TypeParamInfo]) -> c::TypeSubstitution {
+    c::TypeSubstitution::for_signature_domain(type_params)
+}
+
+pub(crate) fn substitution_domain_contains_type_parameter(
+    substitution: &c::TypeSubstitution,
+    info: &TypeParamInfo,
+    fallback_names: &rustc_hash::FxHashSet<tsz_common::Atom>,
+) -> bool {
+    substitution.domain_contains_type_parameter(info, fallback_names)
+}
+
+pub(crate) fn empty_substitution_with_same_domain(
+    substitution: &c::TypeSubstitution,
+) -> c::TypeSubstitution {
+    substitution.empty_with_same_domain()
+}
+
+pub(crate) fn type_contains_type_parameter_binder(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    type_param: TypeParamInfo,
+) -> bool {
+    tsz_solver::visitor::contains_type_parameter_binder(db, type_id, type_param)
 }
 
 // ── FunctionShape transformation helpers ──
@@ -79,7 +105,7 @@ pub(crate) fn instantiate_shape_to_defaults(
         return func.clone();
     }
 
-    let mut substitution = c::TypeSubstitution::new();
+    let mut substitution = c::TypeSubstitution::for_signature_domain(&func.type_params);
     for tp in &func.type_params {
         let Some(replacement) = tp.default.or(tp.constraint) else {
             continue;

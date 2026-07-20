@@ -65,7 +65,7 @@ impl CheckerState<'_> {
                     .unwrap_or(TypeId::UNKNOWN)
             })
             .collect();
-        let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
+        let substitution = crate::query_boundaries::common::TypeSubstitution::from_signature_args(
             self.ctx.types,
             &sig.type_params,
             &type_args,

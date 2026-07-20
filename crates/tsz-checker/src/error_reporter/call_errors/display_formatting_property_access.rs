@@ -50,7 +50,7 @@ impl<'a> CheckerState<'a> {
             .filter_map(|raw_tp| replacements.get(&raw_tp.name).copied())
             .collect();
         if type_args.len() == raw_shape.type_params.len() {
-            let subst = crate::query_boundaries::common::TypeSubstitution::from_args(
+            let subst = crate::query_boundaries::common::TypeSubstitution::from_signature_args(
                 self.ctx.types,
                 &raw_shape.type_params,
                 &type_args,

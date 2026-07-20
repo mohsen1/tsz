@@ -179,7 +179,8 @@ impl<'a> CheckerState<'a> {
             if type_args.len() > params.len() {
                 type_args.truncate(params.len());
             }
-            let substitution = TypeSubstitution::from_args(self.ctx.types, &params, &type_args);
+            let substitution =
+                TypeSubstitution::from_signature_args(self.ctx.types, &params, &type_args);
             return Some(crate::query_boundaries::common::instantiate_type(
                 self.ctx.types,
                 return_type,

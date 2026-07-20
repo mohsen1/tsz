@@ -64,3 +64,14 @@ pub(crate) fn compute_actual_type_param_variances_with_resolver(
         db, resolver, def_id,
     )
 }
+
+/// Solver-owned strict variance query for polymorphic `this` in a class member.
+pub(crate) fn contains_this_type_in_strict_contravariant_position_with_resolver(
+    db: &dyn TypeDatabase,
+    resolver: &dyn TypeResolver,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::relations::variance::contains_this_type_in_strict_contravariant_position_with_resolver(
+        db, resolver, type_id,
+    )
+}

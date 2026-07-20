@@ -488,7 +488,7 @@ pub fn get_base_construct_return_type(
     // arity filter admitted the shorter count) and read the instantiated return
     // type — tsc's `getSignatureInstantiation`. `from_args` resolves the default
     // chain in declaration order.
-    let substitution = TypeSubstitution::from_args(db, &sig.type_params, &[]);
+    let substitution = TypeSubstitution::from_signature_args(db, &sig.type_params, &[]);
     Some(instantiate_type(db, sig.return_type, &substitution))
 }
 

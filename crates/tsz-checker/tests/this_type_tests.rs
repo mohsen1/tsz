@@ -478,6 +478,44 @@ class D extends C {
     );
 }
 
+#[test]
+fn test_recursive_self_constructed_field_before_method_keeps_nominal_type() {
+    let source = r#"
+class ParentNode {
+    self = this;
+    parentOnly = 0;
+    parent = new ParentNode();
+    make() {
+        return this;
+    }
+}
+
+class ChildNode extends ParentNode {
+    childSelf = this.self;
+    childOnly = 1;
+    child = new ChildNode();
+    check() {
+        this.child = this.parent;
+    }
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2739 = errors_with_code(&diagnostics, 2739);
+
+    assert_eq!(
+        ts2739.len(),
+        1,
+        "Expected the recursive field to retain ChildNode as its target type: {diagnostics:?}"
+    );
+    assert!(
+        ts2739[0].contains(
+            "Type 'ParentNode' is missing the following properties from type 'ChildNode'"
+        ),
+        "Expected nominal ParentNode-to-ChildNode diagnostic: {ts2739:?}"
+    );
+}
+
 /// Regression: assigning a polymorphic-this call result to a base class variable
 /// must not emit TS2322. `derived.clone()` returns `Derived` (the polymorphic
 /// this), which IS assignable to `Base`. tsc accepts this without error.

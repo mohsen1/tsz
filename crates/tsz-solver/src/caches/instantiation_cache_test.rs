@@ -30,7 +30,9 @@ use crate::instantiation::instantiate::{
     substitute_this_type_cached,
 };
 use crate::intern::TypeInterner;
-use crate::types::{ConditionalType, PropertyInfo, TypeId, TypeParamInfo, Visibility};
+use crate::types::{
+    ConditionalType, PropertyInfo, TypeId, TypeParamInfo, TypeParamOrigin, Visibility,
+};
 
 fn param_info(atom: tsz_common::interner::Atom) -> TypeParamInfo {
     TypeParamInfo {
@@ -218,6 +220,50 @@ fn cache_canonicalizes_substitution_insertion_order() {
     assert!(
         stats_after_second.instantiation_cache_hits > stats_after_first.instantiation_cache_hits,
         "reversed insertion order should register a cache hit"
+    );
+}
+
+#[test]
+fn exact_domain_cache_hits_equivalent_content_and_separates_distinct_owners() {
+    let _g = ProjectInstCacheDisabledGuard::new();
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let name = interner.intern_string("T");
+    let file = interner.intern_string("cache-domain.ts");
+    let owned = TypeParamInfo {
+        origin: TypeParamOrigin::DeclScoped { file, node: 1 },
+        ..TypeParamInfo::simple(name)
+    };
+    let foreign = TypeParamInfo {
+        origin: TypeParamOrigin::DeclScoped { file, node: 2 },
+        ..owned
+    };
+    let body = object_with(&interner, interner.fresh_type_param(owned));
+
+    let first = TypeSubstitution::from_signature_args(&interner, &[owned], &[TypeId::STRING]);
+    let equivalent = TypeSubstitution::from_signature_args(&interner, &[owned], &[TypeId::STRING]);
+    let distinct = TypeSubstitution::from_signature_args(&interner, &[foreign], &[TypeId::STRING]);
+
+    let owned_result = instantiate_type_cached(&interner, Some(&db), body, &first);
+    let stats_after_first = db.statistics();
+    let equivalent_result = instantiate_type_cached(&interner, Some(&db), body, &equivalent);
+    let stats_after_equivalent = db.statistics();
+
+    assert_eq!(owned_result, equivalent_result);
+    assert!(
+        stats_after_equivalent.instantiation_cache_hits
+            > stats_after_first.instantiation_cache_hits,
+        "an independently rebuilt equivalent domain must hit"
+    );
+
+    let distinct_result = instantiate_type_cached(&interner, Some(&db), body, &distinct);
+    let stats_after_distinct = db.statistics();
+    assert_eq!(distinct_result, body, "a foreign domain must not rewrite T");
+    assert_ne!(owned_result, distinct_result);
+    assert!(
+        stats_after_distinct.instantiation_cache_entries
+            > stats_after_equivalent.instantiation_cache_entries,
+        "the same name map under a different owner needs a separate entry"
     );
 }
 

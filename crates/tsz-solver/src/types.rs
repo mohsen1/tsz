@@ -1390,7 +1390,7 @@ impl ParamInfo {
 /// on memoized walk hot paths and risked colliding with a user type parameter
 /// literally named `__infer_0` (legal TS). This field makes the classification
 /// an O(1) structured read; the `name` atom is display-only.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub enum TypeParamOrigin {
     /// A type parameter written in user source (or any non-inference synthetic).
     #[default]
@@ -1430,8 +1430,30 @@ pub enum TypeParamOrigin {
     /// appends arena nodes. This dedicated variant's discriminant keeps the
     /// identity distinct from every real `NodeIndex`, even when the numeric
     /// payloads match. The payload matches [`Self::DeclScoped`], so this remains
-    /// size-neutral. Kept last so existing variant discriminants remain stable.
+    /// size-neutral.
     JsdocCommentScoped { file: Atom, pos: u32 },
+    /// A user-written type parameter declared by JSDoc attached to an AST
+    /// owner, such as a class or function.
+    ///
+    /// Owner-attached JSDoc parameters have no individual name nodes, so every
+    /// sibling in one `@template T, U` list shares `(file, node)`. The origin
+    /// discriminant keeps this namespace separate from syntax name nodes and
+    /// standalone-comment positions; the parameter name completes the binder
+    /// identity for sibling JSDoc parameters.
+    JsdocOwnerScoped { file: Atom, node: u32 },
+}
+
+/// Stable identity of a user-declared type-parameter binder.
+///
+/// The declaration origin identifies the owning syntax node or JSDoc comment,
+/// while the declared name distinguishes sibling JSDoc parameters that share
+/// that owner. Syntax type parameters already have one name node per binder,
+/// so including the name is redundant there but keeps every authoritative
+/// identity consumer on one collision-free representation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub(crate) struct TypeParamBinderKey {
+    pub(crate) origin: TypeParamOrigin,
+    pub(crate) name: Atom,
 }
 
 impl TypeParamOrigin {
@@ -1450,6 +1472,7 @@ impl TypeParamOrigin {
             Self::User
                 | Self::DeclScoped { .. }
                 | Self::JsdocCommentScoped { .. }
+                | Self::JsdocOwnerScoped { .. }
                 | Self::OverloadRenamed { .. }
         )
     }
@@ -1459,7 +1482,9 @@ impl TypeParamOrigin {
     pub const fn is_decl_scoped(self) -> bool {
         matches!(
             self,
-            Self::DeclScoped { .. } | Self::JsdocCommentScoped { .. }
+            Self::DeclScoped { .. }
+                | Self::JsdocCommentScoped { .. }
+                | Self::JsdocOwnerScoped { .. }
         )
     }
 
@@ -1527,6 +1552,38 @@ impl TypeParamInfo {
             default: None,
             is_const: false,
             origin: TypeParamOrigin::User,
+        }
+    }
+
+    /// Authoritative declaration identity, when this parameter has one.
+    #[inline]
+    pub(crate) const fn declaration_binder_key(self) -> Option<TypeParamBinderKey> {
+        if self.origin.is_decl_scoped() {
+            Some(TypeParamBinderKey {
+                origin: self.origin,
+                name: self.name,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Whether two occurrences denote the same logical binder for lexical
+    /// shadowing and ownership checks.
+    ///
+    /// Declaration-scoped parameters carry authoritative identity in their
+    /// origin. Once either side has that identity, a same-spelled parameter
+    /// from another declaration is foreign. Unstamped parameters retain the
+    /// historical name-keyed behavior.
+    #[inline]
+    pub fn is_same_binder(self, other: Self) -> bool {
+        match (
+            self.declaration_binder_key(),
+            other.declaration_binder_key(),
+        ) {
+            (Some(left), Some(right)) => left.origin == right.origin && left.name.0 == right.name.0,
+            (Some(_), None) | (None, Some(_)) => false,
+            (None, None) => self.name.0 == other.name.0,
         }
     }
 

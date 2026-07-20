@@ -873,13 +873,25 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_TWO_DIFFERENT_TYPES_WITH_THIS_NAME_EXIST_BUT_THEY,
                     &[&source_str, &target_str],
                 );
-                return Diagnostic::error(
+                let mut diagnostic = Diagnostic::error(
                     file_name,
                     start,
                     length,
                     message,
                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_TWO_DIFFERENT_TYPES_WITH_THIS_NAME_EXIST_BUT_THEY,
                 );
+                if let Some(related) = self.unrelated_type_parameter_target_related_info(
+                    source,
+                    target,
+                    &source_str,
+                    &target_str,
+                    start,
+                    length,
+                    0,
+                ) {
+                    diagnostic.related_information.push(related);
+                }
+                return diagnostic;
             }
         }
         // TS2696: property-only failures from the `Object` wrapper use the

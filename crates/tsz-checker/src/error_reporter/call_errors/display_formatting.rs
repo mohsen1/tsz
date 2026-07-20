@@ -426,7 +426,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let subst = crate::query_boundaries::common::TypeSubstitution::from_args(
+        let subst = crate::query_boundaries::common::TypeSubstitution::from_signature_args(
             self.ctx.types,
             &raw_sig.type_params,
             &type_args,

@@ -14,7 +14,7 @@ use tsz_solver::construction::TypeDatabase;
 use tsz_solver::relations::subtype::TypeResolver;
 use tsz_solver::type_queries::TypeIdList;
 
-fn free_decl_origins_and_names(
+fn free_decl_binders(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> rustc_hash::FxHashSet<(tsz_solver::TypeParamOrigin, tsz_common::Atom)> {
@@ -37,14 +37,10 @@ pub(crate) fn have_distinct_decl_scoped_free_type_parameters(
     if source == target {
         return false;
     }
-    let source_entries = free_decl_origins_and_names(db, source);
-    let target_entries = free_decl_origins_and_names(db, target);
-    let source_origins: rustc_hash::FxHashSet<_> =
-        source_entries.iter().map(|(origin, _)| *origin).collect();
-    let target_origins: rustc_hash::FxHashSet<_> =
-        target_entries.iter().map(|(origin, _)| *origin).collect();
+    let source_binders = free_decl_binders(db, source);
+    let target_binders = free_decl_binders(db, target);
 
-    !source_origins.is_empty() && !target_origins.is_empty() && source_origins != target_origins
+    !source_binders.is_empty() && !target_binders.is_empty() && source_binders != target_binders
 }
 
 /// Whether a pair with different authoritative free-binder identities has the
@@ -59,13 +55,9 @@ pub(crate) fn have_same_surface_distinct_decl_scoped_free_type_parameters<R: Typ
     source: TypeId,
     target: TypeId,
 ) -> bool {
-    let source_entries = free_decl_origins_and_names(db, source);
-    let target_entries = free_decl_origins_and_names(db, target);
-    let source_origins: rustc_hash::FxHashSet<_> =
-        source_entries.iter().map(|(origin, _)| *origin).collect();
-    let target_origins: rustc_hash::FxHashSet<_> =
-        target_entries.iter().map(|(origin, _)| *origin).collect();
-    if source_origins.is_empty() || target_origins.is_empty() || source_origins == target_origins {
+    let source_entries = free_decl_binders(db, source);
+    let target_entries = free_decl_binders(db, target);
+    if source_entries.is_empty() || target_entries.is_empty() || source_entries == target_entries {
         return false;
     }
 
@@ -196,6 +188,21 @@ mod tests {
             legacy_left,
             legacy_right,
         ));
+    }
+
+    #[test]
+    fn declaration_origin_queries_distinguish_siblings_at_one_owner_site() {
+        let db = TypeInterner::new();
+        let file = db.intern_string("siblings.js");
+        let left = boxed(&db, declared_param(&db, file, "T", 45));
+        let right = boxed(&db, declared_param(&db, file, "U", 45));
+
+        assert!(have_distinct_decl_scoped_free_type_parameters(
+            &db, left, right
+        ));
+        assert!(
+            !have_same_surface_distinct_decl_scoped_free_type_parameters(&db, &db, left, right,)
+        );
     }
 
     #[test]

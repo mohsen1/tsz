@@ -312,7 +312,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
+        let substitution = crate::query_boundaries::common::TypeSubstitution::from_signature_args(
             self.ctx.types,
             &sig.type_params,
             explicit_type_args,

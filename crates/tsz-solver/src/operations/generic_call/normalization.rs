@@ -76,16 +76,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let tp = &func.type_params[0];
         let param_ty = func.params[0].type_id;
         let return_ty = func.return_type;
+        let mut subst = TypeSubstitution::single(tp.name, TypeId::UNKNOWN);
+        subst.protect_type_parameters(&func.type_params);
 
         let is_tp = |ty: TypeId| {
             matches!(
                 self.interner.lookup(ty),
-                Some(TypeData::TypeParameter(info)) if info.name == tp.name
+                Some(TypeData::TypeParameter(info)) if subst.binds_type_parameter(&info)
             )
         };
         let param_is_tp = is_tp(param_ty);
         let param_is_direct_union =
-            !param_is_tp && self.union_contains_bare_type_parameter_member(param_ty, tp.name);
+            !param_is_tp && self.union_contains_bound_type_parameter_member(param_ty, &subst);
         if !param_is_tp && !param_is_direct_union {
             return None;
         }
@@ -94,10 +96,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return None;
         }
         let return_contains_tp = return_is_tp
-            || crate::visitor::contains_type_parameter_named(
+            || crate::visitors::visitor_predicates::contains_type_matching(
                 self.interner.as_type_database(),
                 return_ty,
-                tp.name,
+                |type_data| {
+                    matches!(
+                        type_data,
+                        TypeData::TypeParameter(info) if subst.binds_type_parameter(info)
+                    )
+                },
             );
         if !return_contains_tp {
             return None;
@@ -138,10 +145,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // deep-widens object properties. The normal inference path handles this
         // correctly by instantiating the constraint with `final_subst`.
         if let Some(constraint) = tp.constraint
-            && crate::visitor::contains_type_parameter_named(
+            && crate::visitors::visitor_predicates::contains_type_matching(
                 self.interner.as_type_database(),
                 constraint,
-                tp.name,
+                |type_data| {
+                    matches!(
+                        type_data,
+                        TypeData::TypeParameter(info) if subst.binds_type_parameter(info)
+                    )
+                },
             )
         {
             return None;
@@ -237,6 +249,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         } else {
             inferred_ty
         };
+        subst.insert(tp.name, effective_arg_ty);
         if let Some(constraint) = constraint
             && !self.arg_satisfies_type_parameter_constraint(effective_arg_ty, constraint)
             && !self.is_function_union_compat(effective_arg_ty, constraint)
@@ -256,7 +269,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         if param_is_direct_union {
-            let subst = TypeSubstitution::single(tp.name, effective_arg_ty);
             let expected_param_ty = instantiate_type(self.interner, param_ty, &subst);
             if !self.checker.is_assignable_to(arg_ty, expected_param_ty) {
                 return Some(CallResult::ArgumentTypeMismatch {
@@ -271,17 +283,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let return_type = if return_is_tp {
             effective_arg_ty
         } else {
-            let subst = TypeSubstitution::single(tp.name, effective_arg_ty);
             instantiate_type(self.interner, return_ty, &subst)
         };
 
         Some(CallResult::Success(return_type))
     }
 
-    fn union_contains_bare_type_parameter_member(
+    fn union_contains_bound_type_parameter_member(
         &self,
         type_id: TypeId,
-        type_param_name: tsz_common::Atom,
+        substitution: &TypeSubstitution,
     ) -> bool {
         let Some(TypeData::Union(members_id)) = self.interner.lookup(type_id) else {
             return false;
@@ -289,7 +300,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         self.interner.type_list(members_id).iter().any(|&member| {
             matches!(
                 self.interner.lookup(member),
-                Some(TypeData::TypeParameter(info)) if info.name == type_param_name
+                Some(TypeData::TypeParameter(info)) if substitution.binds_type_parameter(&info)
             )
         })
     }
@@ -315,7 +326,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         &mut self,
         param_type: TypeId,
         infer_subst: &TypeSubstitution,
-        tracked_type_params: &FxHashSet<tsz_common::Atom>,
+        tracked_type_params: &[TypeParamInfo],
     ) -> TypeId {
         if self
             .function_like_type_param_appears_in_parameter_position(param_type, tracked_type_params)
@@ -824,6 +835,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             infer_ctx.resolver = Some(shim);
         }
         let mut substitution = TypeSubstitution::new();
+        substitution.protect_type_parameters(&func.type_params);
         let mut var_map: FxHashMap<TypeId, crate::inference::infer::InferenceVar> =
             FxHashMap::default();
         let mut type_param_vars = Vec::with_capacity(func.type_params.len());
@@ -1163,6 +1175,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // so that instantiate_type can find and replace TypeParameter nodes.
         let infer_subst = infer_ctx.get_current_substitution();
         let mut result_subst = TypeSubstitution::new();
+        result_subst.protect_type_parameters(&func.type_params);
 
         // Pass 1: Collect all resolved (non-UNKNOWN) type parameters
         let mut unresolved_indices = Vec::new();

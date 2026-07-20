@@ -255,6 +255,33 @@ impl<'a> CheckerState<'a> {
             .any(|&node| self.is_in_flight_class_property_initializer(node, class_sym))
     }
 
+    /// Whether class construction was re-entered from the root expression of
+    /// one of the class's own property initializers. Such a nested build can
+    /// contain the node-resolution cycle sentinel and must not replace the
+    /// enclosing class's stable receiver snapshot.
+    pub(super) fn class_build_reenters_in_flight_property_initializer(
+        &self,
+        class_sym: tsz_binder::SymbolId,
+    ) -> bool {
+        self.ctx.node_resolution_stack.iter().any(|&node| {
+            let Some(ext) = self.ctx.arena.get_extended(node) else {
+                return false;
+            };
+            let property_idx = ext.parent;
+            let Some(property_node) = self.ctx.arena.get(property_idx) else {
+                return false;
+            };
+            if property_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                return false;
+            }
+            let Some(property) = self.ctx.arena.get_property_decl(property_node) else {
+                return false;
+            };
+            property.initializer == node
+                && self.node_enclosing_class_symbol(property_idx) == Some(class_sym)
+        })
+    }
+
     /// Whether `node` is an arrow/function-expression initializer of a property
     /// member of `class_sym`.
     fn is_in_flight_class_property_initializer(

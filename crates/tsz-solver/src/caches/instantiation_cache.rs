@@ -11,7 +11,7 @@
 //! ### Key shape
 //!
 //! ```text
-//! InstantiationCacheKey = (TypeId, CanonicalSubst, u8 mode_bits, Option<TypeId>)
+//! InstantiationCacheKey = (TypeId, CanonicalSubst, identity_domain, u8 mode_bits, Option<TypeId>)
 //! ```
 //!
 //! - `TypeId` — the source type being substituted into. This is required
@@ -50,10 +50,12 @@
 //! on `QueryCache` and feed `QueryCacheStatistics`; raw `TypeInterner` callers
 //! use the trait defaults, which always miss and do not update counters.
 
+use crate::instantiation::instantiate::IdentitySubstitutionDomain;
 use crate::types::TypeId;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::cell::RefCell;
+use std::sync::Arc;
 use tsz_common::interner::Atom;
 
 /// Canonical, content-hashable form of a `TypeSubstitution`.
@@ -116,6 +118,11 @@ pub struct InstantiationCacheKey {
     pub type_id: TypeId,
     /// Canonicalized substitution pairs.
     pub subst: CanonicalSubst,
+    /// Optional exact declaration-binder ownership domain. The common
+    /// unstamped path stores only a null pointer. Exact-domain keys share the
+    /// substitution's immutable `Arc` and compare/hash by canonical content,
+    /// so equivalent rebuilt domains hit while distinct owners cannot alias.
+    pub(crate) identity_domain: Option<Arc<IdentitySubstitutionDomain>>,
     /// Packed instantiator flags (bit 0: `substitute_infer`, bit 1: `preserve_meta_types`,
     /// bit 2: `preserve_unsubstituted_type_params`).
     pub mode_bits: u8,
@@ -135,9 +142,40 @@ impl InstantiationCacheKey {
         Self {
             type_id,
             subst,
+            identity_domain: None,
             mode_bits,
             this_type,
         }
+    }
+
+    /// Attach an exact declaration-binder domain to this key.
+    #[must_use]
+    pub(crate) fn with_identity_domain(
+        mut self,
+        identity_domain: Option<Arc<IdentitySubstitutionDomain>>,
+    ) -> Self {
+        self.identity_domain = identity_domain;
+        self
+    }
+
+    /// Heap owned or retained by this key beyond its inline representation.
+    /// Shared identity domains are counted once per cache estimator.
+    pub(crate) fn estimated_heap_bytes(
+        &self,
+        seen_identity_domains: &mut FxHashSet<usize>,
+        bucket_overhead: usize,
+    ) -> usize {
+        let mut size = 0;
+        if self.subst.0.spilled() {
+            size += self.subst.0.capacity() * std::mem::size_of::<(Atom, TypeId)>();
+        }
+        if let Some(domain) = self.identity_domain.as_ref() {
+            let pointer = Arc::as_ptr(domain) as usize;
+            if seen_identity_domains.insert(pointer) {
+                size += domain.estimated_heap_bytes(bucket_overhead);
+            }
+        }
+        size
     }
 }
 
@@ -197,11 +235,24 @@ impl InstantiationCache {
     pub fn capacity(&self) -> usize {
         self.inner.borrow().capacity()
     }
+
+    /// Heap retained by canonical substitutions and shared exact-identity
+    /// domains inside keys. Domain allocations are deduplicated by `Arc`
+    /// pointer because many entries can share one signature domain.
+    pub(crate) fn estimated_key_heap_bytes(&self, bucket_overhead: usize) -> usize {
+        let map = self.inner.borrow();
+        let mut seen_identity_domains = FxHashSet::default();
+        map.keys()
+            .map(|key| key.estimated_heap_bytes(&mut seen_identity_domains, bucket_overhead))
+            .sum()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::instantiation::instantiate::TypeSubstitution;
+    use crate::types::{TypeParamInfo, TypeParamOrigin};
     use tsz_common::interner::Atom;
 
     fn atom(value: u32) -> Atom {
@@ -321,5 +372,30 @@ mod tests {
         assert!(empty.is_empty());
         assert_eq!(empty.len(), 0);
         assert!(empty.as_slice().is_empty());
+    }
+
+    #[test]
+    fn shared_identity_domain_heap_is_counted_once_by_arc_pointer() {
+        let parameter = TypeParamInfo {
+            origin: TypeParamOrigin::DeclScoped {
+                file: atom(99),
+                node: 7,
+            },
+            ..TypeParamInfo::simple(atom(1))
+        };
+        let substitution = TypeSubstitution::for_signature_domain(&[parameter]);
+        let domain = substitution
+            .identity_domain_for_cache()
+            .expect("declaration-scoped parameter creates an exact domain");
+        let first = InstantiationCacheKey::new(type_id(10), canonical(&[(1, 100)]), 0, None)
+            .with_identity_domain(Some(Arc::clone(&domain)));
+        let second = InstantiationCacheKey::new(type_id(11), canonical(&[(1, 100)]), 0, None)
+            .with_identity_domain(Some(domain));
+
+        let mut seen = FxHashSet::default();
+        let first_heap = first.estimated_heap_bytes(&mut seen, 64);
+        let second_heap = second.estimated_heap_bytes(&mut seen, 64);
+        assert!(first_heap >= std::mem::size_of::<IdentitySubstitutionDomain>());
+        assert_eq!(second_heap, 0, "the shared `Arc` target is counted once");
     }
 }

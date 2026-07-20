@@ -127,12 +127,28 @@ impl<'a> CheckerState<'a> {
             &mut walk_state,
             apply_module_augmentations,
         );
-
         if apply_module_augmentations {
             self.ctx
                 .class_instance_type_cache
                 .borrow_mut()
                 .insert(class_idx, result);
+            // Keep the enclosing fast path synchronized with completed class
+            // construction. A build re-entered from this class's own property
+            // initializer is excluded: its result can contain the
+            // node-resolution cycle sentinel for that initializer, while the
+            // enclosing snapshot remains the stable receiver for later members.
+            let reentered_from_own_initializer = current_sym.is_some_and(|class_sym| {
+                self.class_build_reenters_in_flight_property_initializer(class_sym)
+            });
+            if !reentered_from_own_initializer
+                && let Some(info) = self
+                    .ctx
+                    .enclosing_class
+                    .as_mut()
+                    .filter(|info| info.class_idx == class_idx)
+            {
+                info.cached_instance_this_type = Some(result);
+            }
         }
 
         result

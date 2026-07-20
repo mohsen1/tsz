@@ -30,9 +30,45 @@ pub(crate) struct ClassPropertyInitializationInfo {
 #[cfg(test)]
 mod exact_rebind_cache_tests {
     use super::ClassChainSummary;
+    use rustc_hash::FxHashMap;
     use tsz_solver::construction::TypeInterner;
     use tsz_solver::def::DefId;
-    use tsz_solver::{ParamInfo, TypeId, TypeParamInfo};
+    use tsz_solver::{ParamInfo, TypeId, TypeParamInfo, TypeParamOrigin};
+
+    #[test]
+    fn active_scope_rebind_rejects_same_named_foreign_binder() {
+        let db = TypeInterner::new();
+        let name = db.intern_string("Outer");
+        let file = db.intern_string("scope.ts");
+        let source_info = TypeParamInfo {
+            origin: TypeParamOrigin::DeclScoped { file, node: 10 },
+            ..TypeParamInfo::simple(name)
+        };
+        let source = db.fresh_type_param(source_info);
+        let equivalent = db.fresh_type_param(source_info);
+        let foreign = db.fresh_type_param(TypeParamInfo {
+            origin: TypeParamOrigin::DeclScoped { file, node: 20 },
+            ..source_info
+        });
+        let summary = ClassChainSummary {
+            root_type_params: vec![source],
+            ..ClassChainSummary::default()
+        };
+
+        let mut scope = FxHashMap::default();
+        scope.insert("Outer".to_string(), equivalent);
+        assert_eq!(
+            summary.root_type_params_from_active_scope(&db, &scope),
+            Some(vec![equivalent]),
+        );
+
+        scope.insert("Outer".to_string(), foreign);
+        assert_eq!(
+            summary.root_type_params_from_active_scope(&db, &scope),
+            None,
+            "a same-named nested binder must not replace the class binder",
+        );
+    }
 
     #[test]
     fn repeated_member_rebind_reuses_nested_generic_identity() {
@@ -265,6 +301,13 @@ pub(crate) struct ClassChainSummary {
 }
 
 impl ClassChainSummary {
+    /// Declaration-ordered binder ids that own member types in this summary.
+    /// Construction recovery can install these exact ids temporarily when an
+    /// innermost same-named callable binder hides the class scope.
+    pub(crate) fn root_type_params(&self) -> &[TypeId] {
+        &self.root_type_params
+    }
+
     pub(crate) fn rebind_root_type_params(
         &self,
         db: &dyn tsz_solver::construction::QueryDatabase,
@@ -318,7 +361,10 @@ impl ClassChainSummary {
                 let info =
                     crate::query_boundaries::checkers::generic::named_type_param_info(db, type_id)?;
                 let name = db.resolve_atom_ref(info.name);
-                active_scope.get(name.as_ref()).copied()
+                let active = active_scope.get(name.as_ref()).copied()?;
+                let active_info =
+                    crate::query_boundaries::checkers::generic::named_type_param_info(db, active)?;
+                info.is_same_binder(active_info).then_some(active)
             })
             .collect()
     }

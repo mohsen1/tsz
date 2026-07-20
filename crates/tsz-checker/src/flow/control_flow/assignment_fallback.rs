@@ -581,8 +581,11 @@ impl<'a> FlowAnalyzer<'a> {
                         );
                     }
                 }
-                let substitution =
-                    TypeSubstitution::from_args(self.interner, &sig.type_params, &applied_args);
+                let substitution = TypeSubstitution::from_signature_args(
+                    self.interner,
+                    &sig.type_params,
+                    &applied_args,
+                );
                 instantiate_type(self.interner, sig.return_type, &substitution)
             };
             return_types.push(return_type);

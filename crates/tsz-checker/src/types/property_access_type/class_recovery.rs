@@ -9,6 +9,74 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// Recover a bare-`this` member whose syntactically nearest class is only a
+    /// class-header evaluation boundary, not the owner of lexical `this`.
+    ///
+    /// Decorators, heritage expressions, and computed names on a nested class
+    /// execute in the enclosing lexical scope. During early class construction
+    /// that enclosing instance may not have merged inherited members into its
+    /// partial object shape yet. The ordinary recovery path starts from the
+    /// syntactically nearest class and therefore cannot find those members.
+    /// Keep this parent walk on the `PropertyNotFound` edge only; the common
+    /// class-`this` lookup continues to use `ctx.enclosing_class` in O(1).
+    pub(super) fn recover_bare_this_lexical_class_header_member(
+        &mut self,
+        receiver_expr: NodeIndex,
+        property_name: &str,
+    ) -> Option<(TypeId, Vec<TypeId>)> {
+        let receiver_expr = self.ctx.arena.skip_parenthesized(receiver_expr);
+        if !self.is_this_expression(receiver_expr) {
+            return None;
+        }
+
+        let syntactic_class = self.nearest_enclosing_class(receiver_expr)?;
+        let lexical_class =
+            tsz_parser::syntax::transform_utils::nearest_enclosing_lexical_this_class(
+                self.ctx.arena,
+                receiver_expr,
+            )?;
+        if lexical_class == syntactic_class {
+            return None;
+        }
+
+        let is_static_access = self
+            .direct_child_below_ancestor(receiver_expr, lexical_class)
+            .is_some_and(|member_idx| self.class_member_is_static(member_idx));
+        let lexical_summary = self.summarize_class_chain(lexical_class);
+        let bound_type_params = self
+            .active_class_summary_root_type_params(lexical_class, &lexical_summary, true)
+            .unwrap_or_else(|| lexical_summary.root_type_params().to_vec());
+        let mut summary = Some(lexical_summary);
+        let recovered = self.recover_property_from_class_chain_summary(
+            true,
+            Some((lexical_class, is_static_access)),
+            &mut summary,
+            property_name,
+        )?;
+        Some((recovered, bound_type_params))
+    }
+
+    fn direct_child_below_ancestor(
+        &self,
+        node_idx: NodeIndex,
+        ancestor_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let mut current = node_idx;
+        let mut iterations = 0;
+        while current.is_some() {
+            iterations += 1;
+            if iterations > 1024 {
+                return None;
+            }
+            let parent = self.ctx.arena.get_extended(current)?.parent;
+            if parent == ancestor_idx {
+                return Some(current);
+            }
+            current = parent;
+        }
+        None
+    }
+
     fn active_class_summary_root_type_params(
         &self,
         class_idx: NodeIndex,
@@ -222,15 +290,25 @@ impl<'a> CheckerState<'a> {
         if summary.is_none() {
             *summary = Some(self.summarize_class_chain(class_idx));
         }
-        if let Some(member_type) = self.own_class_member_type_for_recovery(
+        let own_member_type = self.own_class_member_type_for_recovery(
             class_idx,
             property_name,
             is_static_access,
             true,
-        ) {
+        );
+        let summary = summary.as_ref()?;
+        if let Some(member_type) = own_member_type {
+            if let Some(active_root_type_params) =
+                self.active_class_summary_root_type_params(class_idx, summary, true)
+            {
+                return Some(summary.rebind_root_type_params(
+                    self.ctx.types,
+                    &active_root_type_params,
+                    member_type,
+                ));
+            }
             return Some(member_type);
         }
-        let summary = summary.as_ref()?;
         let member_type = summary
             .member_info(property_name, is_static_access, true)?
             .type_id;
@@ -386,6 +464,7 @@ impl<'a> CheckerState<'a> {
 
     fn property_access_is_in_class_property_initializer(&self, idx: NodeIndex) -> bool {
         let mut current = idx;
+        let mut child = NodeIndex::NONE;
         let mut iterations = 0;
         while current.is_some() {
             iterations += 1;
@@ -397,30 +476,58 @@ impl<'a> CheckerState<'a> {
             };
             match node.kind {
                 syntax_kind_ext::PROPERTY_DECLARATION => {
-                    return self
-                        .ctx
-                        .arena
-                        .get_property_decl(node)
-                        .is_some_and(|prop| prop.initializer.is_some());
+                    let Some(property) = self.ctx.arena.get_property_decl(node) else {
+                        return false;
+                    };
+                    let is_active_class_member = self.ctx.enclosing_class.as_ref().is_some_and(
+                        |class_info| {
+                            self.ctx
+                                .arena
+                                .get_extended(current)
+                                .is_some_and(|ext| ext.parent == class_info.class_idx)
+                        },
+                    );
+                    if is_active_class_member && property.initializer == child {
+                        return true;
+                    }
+                    if !child.is_some()
+                        || !tsz_parser::syntax::transform_utils::child_is_in_enclosing_lexical_this_scope(
+                            self.ctx.arena,
+                            current,
+                            child,
+                        )
+                    {
+                        return false;
+                    }
                 }
-                // Nested function bodies are checked with their own or lexical `this`;
-                // they are not part of the initializer expression being recovered.
-                syntax_kind_ext::ARROW_FUNCTION
-                | syntax_kind_ext::FUNCTION_EXPRESSION
-                | syntax_kind_ext::FUNCTION_DECLARATION => {
+                // A regular nested function owns a distinct `this`; an arrow is
+                // deliberately not a boundary because it retains the field
+                // initializer's lexical class receiver.
+                syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::FUNCTION_DECLARATION => {
                     return false;
                 }
                 syntax_kind_ext::METHOD_DECLARATION
                 | syntax_kind_ext::GET_ACCESSOR
                 | syntax_kind_ext::SET_ACCESSOR
-                | syntax_kind_ext::CONSTRUCTOR
                 | syntax_kind_ext::CLASS_DECLARATION
-                | syntax_kind_ext::CLASS_EXPRESSION => return false,
+                | syntax_kind_ext::CLASS_EXPRESSION => {
+                    if !child.is_some()
+                        || !tsz_parser::syntax::transform_utils::child_is_in_enclosing_lexical_this_scope(
+                            self.ctx.arena,
+                            current,
+                            child,
+                        )
+                    {
+                        return false;
+                    }
+                }
+                syntax_kind_ext::CONSTRUCTOR => return false,
                 _ => {}
             }
             let Some(ext) = self.ctx.arena.get_extended(current) else {
                 return false;
             };
+            child = current;
             current = ext.parent;
         }
         false

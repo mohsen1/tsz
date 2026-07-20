@@ -3,12 +3,11 @@
 //! Contains the core `check_function_subtype` entry point and related
 //! signature comparison logic (call signatures, constructors, params).
 
-use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::instantiation::instantiate::TypeSubstitution;
 use crate::type_param_info;
 use crate::types::{
     CallSignature, CallableShape, CallableShapeId, FunctionShape, FunctionShapeId, ObjectFlags,
-    ObjectShape, ParamInfo, PropertyInfo, TupleElement, TypeData, TypeId, TypeParamInfo,
-    Visibility,
+    ObjectShape, ParamInfo, PropertyInfo, TypeData, TypeId, TypeParamInfo, Visibility,
 };
 use crate::visitor::callable_shape_id;
 
@@ -21,6 +20,7 @@ mod cowalk;
 mod evaluation;
 mod generic_constraints;
 mod name_pairing;
+mod nonlocal_type_params;
 mod overloads;
 mod params;
 
@@ -121,8 +121,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         );
         for id in free {
             if !ids.contains(&id)
-                && type_param_info(self.interner, id)
-                    .is_some_and(|info| shape.type_params.iter().any(|tp| tp.name == info.name))
+                && type_param_info(self.interner, id).is_some_and(|info| {
+                    shape
+                        .type_params
+                        .iter()
+                        .any(|type_param| type_param.is_same_binder(info))
+                })
             {
                 ids.push(id);
             }
@@ -147,20 +151,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// on top of `TSZ_TYPEPARAM_DECL_IDENTITY`).
     ///
     /// When ON (and the construction stamp is ON), the alpha-rename registration
-    /// records each paired param's authoritative declaration origin alongside
+    /// records each paired param's authoritative exact binder alongside
     /// the pre-instantiate `TypeId` pair, and the consult
     /// (`check_subtype`) additionally accepts two reduced-body `TypeParameter`
-    /// leaves whose carried decl-origins form a registered pair — the same-origin
+    /// leaves whose carried binders form a registered pair — the same-binder
     /// `B ≡ A` bridge that the name-keyed re-mint loses (the leaf id is a THIRD
-    /// identity, but its declaration origin survives). A different-origin pair
+    /// identity, but its declaration binder survives). A different-binder pair
     /// (`T`/`U` from distinct declarations that were never registered) is not
     /// accepted, which is the sound discriminator the name+surface structural
     /// strip cannot express.
     ///
     /// Requires `TSZ_TYPEPARAM_DECL_IDENTITY=1` to have any effect: without the
-    /// construction stamp no leaf carries an authoritative declaration origin,
+    /// construction stamp no leaf carries an authoritative declaration binder,
     /// so the extra match never fires. With the flag off, the registered
-    /// `origins` field is always `None` and the consult is byte-identical to the
+    /// `binders` field is always `None` and the consult is byte-identical to the
     /// id-only match.
     pub(crate) fn decl_origin_reduction_enabled() -> bool {
         use std::sync::OnceLock;
@@ -330,8 +334,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     .collect(),
             };
 
-            let mut target_to_source_substitution = TypeSubstitution::new();
-            let mut source_identity_substitution = TypeSubstitution::new();
+            let mut target_to_source_substitution =
+                TypeSubstitution::for_signature_domain(&target_instantiated.type_params);
+            let mut source_identity_substitution =
+                TypeSubstitution::for_signature_domain(&source_instantiated.type_params);
             for (source_tp, target_tp) in &paired_type_params {
                 let source_type_param_type = self.interner.type_param(*source_tp);
                 target_to_source_substitution.insert(target_tp.name, source_type_param_type);
@@ -339,23 +345,31 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
 
             let mapped_constraint_sensitive =
-                source_instantiated.type_params.iter().any(|tp| {
-                    source_instantiated.params.iter().any(|param| {
-                        self.type_param_appears_in_mapped_context(param.type_id, tp.name)
-                    }) || source_instantiated.this_type.is_some_and(|this_type| {
-                        self.type_param_appears_in_mapped_context(this_type, tp.name)
-                    }) || self.type_param_appears_in_mapped_context(
-                        source_instantiated.return_type,
-                        tp.name,
-                    ) || target_instantiated.params.iter().any(|param| {
-                        self.type_param_appears_in_mapped_context(param.type_id, tp.name)
-                    }) || target_instantiated.this_type.is_some_and(|this_type| {
-                        self.type_param_appears_in_mapped_context(this_type, tp.name)
-                    }) || self.type_param_appears_in_mapped_context(
-                        target_instantiated.return_type,
-                        tp.name,
-                    )
-                });
+                paired_type_params
+                    .iter()
+                    .any(|(source_type_param, target_type_param)| {
+                        source_instantiated.params.iter().any(|param| {
+                            self.type_param_appears_in_mapped_context(
+                                param.type_id,
+                                *source_type_param,
+                            )
+                        }) || source_instantiated.this_type.is_some_and(|this_type| {
+                            self.type_param_appears_in_mapped_context(this_type, *source_type_param)
+                        }) || self.type_param_appears_in_mapped_context(
+                            source_instantiated.return_type,
+                            *source_type_param,
+                        ) || target_instantiated.params.iter().any(|param| {
+                            self.type_param_appears_in_mapped_context(
+                                param.type_id,
+                                *target_type_param,
+                            )
+                        }) || target_instantiated.this_type.is_some_and(|this_type| {
+                            self.type_param_appears_in_mapped_context(this_type, *target_type_param)
+                        }) || self.type_param_appears_in_mapped_context(
+                            target_instantiated.return_type,
+                            *target_type_param,
+                        )
+                    });
 
             // Mapped/indexed generic signatures are constraint-sensitive: a stricter
             // target constraint like `U extends string[]` must stay visible rather
@@ -406,26 +420,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     let source_tp_type = self.interner.type_param(*source_tp);
                     let target_tp_type = self.interner.type_param(*target_tp);
                     if source_tp_type != target_tp_type {
-                        // #14345 WAVE-1: additionally record the decl-origin pair
+                        // #14345 WAVE-1: additionally record the exact binder pair
                         // when both params carry authoritative declaration
-                        // origins, so the consult can bridge
-                        // reduced-body `Kind<F,A>` leaves that survive the
-                        // name-keyed re-mint as a THIRD id but keep their carried
-                        // origin. Gated behind `decl_origin_reduction_enabled`
+                        // identities, so the consult can bridge
+                        // reduced-body `Kind<F,A>` leaves reconstructed under a
+                        // fresh `TypeId` while preserving their exact binder.
+                        // Gated behind `decl_origin_reduction_enabled`
                         // (composes with `TSZ_TYPEPARAM_DECL_IDENTITY`); OFF ->
-                        // `origins: None`, byte-identical id-only behavior.
-                        let origins = if Self::decl_origin_reduction_enabled()
-                            && source_tp.origin.is_decl_scoped()
-                            && target_tp.origin.is_decl_scoped()
-                        {
-                            Some((source_tp.origin, target_tp.origin))
+                        // `binders: None`, byte-identical id-only behavior.
+                        let binders = if Self::decl_origin_reduction_enabled() {
+                            source_tp
+                                .declaration_binder_key()
+                                .zip(target_tp.declaration_binder_key())
                         } else {
                             None
                         };
                         self.type_param_equivalences.push(TypeParamEquivalence {
                             source: source_tp_type,
                             target: target_tp_type,
-                            origins,
+                            binders,
                         });
                     }
                 }
@@ -441,10 +454,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
                 // #14345 WAVE-1 register-through-reduction co-walk (flag-gated,
                 // byte-parity-inert OFF). Registers the DEEPER corresponding leaf
-                // origin-pairs the top-level registration misses; must run before
+                // binder pairs the top-level registration misses; must run before
                 // the strip below (which erases declaration origins). See the
                 // `cowalk` module.
-                self.register_cowalk_leaf_origins(&source_instantiated, &target_instantiated);
+                self.register_cowalk_leaf_binders(&source_instantiated, &target_instantiated);
                 // #14345 scoped structural-strip (flag-gated, byte-parity-inert
                 // OFF). The construction stamp gives every user-written type
                 // parameter an authoritative declaration origin so two distinct
@@ -472,10 +485,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // level — registration/`is_identity_for`), so it is additive to
                 // the construction fix.
                 if Self::scoped_decl_param_strip_enabled() {
-                    let strip = self.build_decl_param_structural_strip(
+                    let mut strip = self.build_decl_param_structural_strip(
                         &source_instantiated,
                         &target_instantiated,
                     );
+                    // `instantiate_function_shape` clears the quantifier lists,
+                    // so retain their exact domains through the pairs captured
+                    // above. The strip may canonicalize the alpha-paired local
+                    // binders, but a captured same-named class binder is foreign
+                    // and must remain declaration-scoped.
+                    for (source_type_param, target_type_param) in &paired_type_params {
+                        strip.protect_type_parameters(std::slice::from_ref(source_type_param));
+                        strip.protect_type_parameters(std::slice::from_ref(target_type_param));
+                    }
                     if !strip.is_empty() {
                         source_instantiated =
                             self.instantiate_function_shape(&source_instantiated, &strip);
@@ -520,7 +542,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 //   target: <S extends {p: string}[]>(x: S) => void
                 // (`T` clamps to `{p: string}`, source param becomes `{p: string}[]`,
                 // which the opaque `S extends {p: string}[]` marker accepts).
-                let mut source_substitution = TypeSubstitution::new();
+                let mut source_substitution =
+                    TypeSubstitution::for_signature_domain(&source_instantiated.type_params);
                 for (source_tp, target_tp) in &paired_type_params {
                     let relation = self.classify_generic_tp_constraint(
                         source_tp,
@@ -771,7 +794,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // and the name-keyed substitution would erase it anyway — a
                 // covariant leak that wrongly accepts a concrete member for a
                 // universally-quantified one (issue #10812).
-                let mut target_canonical = TypeSubstitution::new();
+                let mut target_canonical =
+                    TypeSubstitution::for_signature_domain(&target_instantiated.type_params);
                 for tp in &target_instantiated.type_params {
                     let tp_id = self.interner.type_param(*tp);
                     if let Some(constraint) = tp.constraint
@@ -868,7 +892,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             && let Some(t_tp) = type_param_info(self.interner, t_inner_return)
                         {
                             // Different type parameters should not be assignable
-                            if s_tp.name != t_tp.name {
+                            if !s_tp.is_same_binder(t_tp) {
                                 // Check if there's a constraint relationship
                                 let s_constrained_to_t = s_tp.constraint == Some(t_inner_return);
                                 let t_constrained_to_s = t_tp.constraint == Some(s_inner_return);
@@ -1274,18 +1298,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // This matches tsc's `getErasedSignature` behavior for interface extension
         // checks (TS2430) where inference over-constrains type parameters by
         // intersecting inferred types with their constraints.
-        let source_before_has_mapped_type_param_context = source_before_generic_instantiation
-            .as_ref()
-            .is_some_and(|source_before| {
-                source_before.type_params.iter().any(|tp| {
-                    source_before.params.iter().any(|param| {
-                        self.type_param_appears_in_mapped_context(param.type_id, tp.name)
-                    }) || source_before.this_type.is_some_and(|this_type| {
-                        self.type_param_appears_in_mapped_context(this_type, tp.name)
-                    }) || self
-                        .type_param_appears_in_mapped_context(source_before.return_type, tp.name)
-                })
-            });
+        let source_before_has_mapped_type_param_context =
+            source_before_generic_instantiation
+                .as_ref()
+                .is_some_and(|source_before| {
+                    source_before.type_params.iter().any(|tp| {
+                        source_before.params.iter().any(|param| {
+                            self.type_param_appears_in_mapped_context(param.type_id, *tp)
+                        }) || source_before.this_type.is_some_and(|this_type| {
+                            self.type_param_appears_in_mapped_context(this_type, *tp)
+                        }) || self
+                            .type_param_appears_in_mapped_context(source_before.return_type, *tp)
+                    })
+                });
         if !result.is_true()
             && used_inference_for_generic_source
             && !source_before_has_mapped_type_param_context
@@ -1301,182 +1326,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Clean up type parameter equivalences established in this scope.
         self.type_param_equivalences.truncate(equiv_start);
         result
-    }
-
-    fn hoist_matching_nonlocal_type_params(
-        &mut self,
-        source: &FunctionShape,
-        target: &FunctionShape,
-    ) -> Option<HoistedTypeParams> {
-        let mut source_params = Vec::new();
-        let mut collect_from = |type_id: TypeId| {
-            for ty in crate::visitor::collect_all_types(self.interner, type_id) {
-                let Some(info) = type_param_info(self.interner, ty) else {
-                    continue;
-                };
-                if !source_params
-                    .iter()
-                    .any(|existing: &TypeParamInfo| existing.name == info.name)
-                {
-                    source_params.push(info);
-                }
-            }
-        };
-
-        for param in &source.params {
-            collect_from(param.type_id);
-        }
-        if let Some(this_type) = source.this_type {
-            collect_from(this_type);
-        }
-        collect_from(source.return_type);
-        if let Some(predicate) = &source.type_predicate
-            && let Some(predicate_type) = predicate.type_id
-        {
-            collect_from(predicate_type);
-        }
-
-        if source_params.len() != target.type_params.len() {
-            return None;
-        }
-
-        let mut target_to_source = TypeSubstitution::new();
-        let mut hoisted = Vec::with_capacity(target.type_params.len());
-        let mut replacements = Vec::new();
-        for target_tp in &target.type_params {
-            let source_tp = source_params
-                .iter()
-                .copied()
-                .find(|source_tp| source_tp.name == target_tp.name)?;
-            target_to_source.insert(target_tp.name, self.interner.type_param(source_tp));
-            hoisted.push(
-                if source_tp.constraint.is_none() && target_tp.constraint.is_some() {
-                    *target_tp
-                } else {
-                    source_tp
-                },
-            );
-        }
-
-        for ((source_tp, hoisted_tp), target_tp) in source_params
-            .iter()
-            .zip(hoisted.iter())
-            .zip(target.type_params.iter())
-        {
-            let source_constraint = source_tp.constraint.unwrap_or(TypeId::UNKNOWN);
-            let target_constraint = target_tp.constraint.map_or(TypeId::UNKNOWN, |constraint| {
-                instantiate_type(self.interner, constraint, &target_to_source)
-            });
-            let constraints_match = self
-                .check_subtype(source_constraint, target_constraint)
-                .is_true()
-                && self
-                    .check_subtype(target_constraint, source_constraint)
-                    .is_true();
-            if constraints_match {
-                continue;
-            }
-
-            if source_tp.constraint.is_none()
-                && target_tp.constraint.is_some()
-                && target_constraint != TypeId::UNKNOWN
-            {
-                replacements.push((target_constraint, self.interner.type_param(*hoisted_tp)));
-                continue;
-            }
-
-            return None;
-        }
-
-        Some((hoisted, replacements))
-    }
-
-    fn replace_function_type_exact(
-        &mut self,
-        shape: &FunctionShape,
-        from: TypeId,
-        to: TypeId,
-    ) -> FunctionShape {
-        FunctionShape {
-            type_params: shape.type_params.clone(),
-            params: shape
-                .params
-                .iter()
-                .map(|param| ParamInfo {
-                    name: param.name,
-                    type_id: self.replace_type_exact(param.type_id, from, to),
-                    optional: param.optional,
-                    rest: param.rest,
-                })
-                .collect(),
-            this_type: shape
-                .this_type
-                .map(|this_type| self.replace_type_exact(this_type, from, to)),
-            return_type: self.replace_type_exact(shape.return_type, from, to),
-            type_predicate: shape.type_predicate.as_ref().map(|predicate| {
-                crate::types::TypePredicate {
-                    asserts: predicate.asserts,
-                    target: predicate.target,
-                    type_id: predicate
-                        .type_id
-                        .map(|ty| self.replace_type_exact(ty, from, to)),
-                    parameter_index: predicate.parameter_index,
-                }
-            }),
-            is_constructor: shape.is_constructor,
-            is_method: shape.is_method,
-        }
-    }
-
-    fn replace_type_exact(&mut self, type_id: TypeId, from: TypeId, to: TypeId) -> TypeId {
-        if type_id == from {
-            return to;
-        }
-        let Some(type_data) = self.interner.lookup(type_id) else {
-            return type_id;
-        };
-        match type_data {
-            TypeData::Array(elem) => {
-                let replaced = self.replace_type_exact(elem, from, to);
-                if replaced == elem {
-                    type_id
-                } else {
-                    self.interner.array(replaced)
-                }
-            }
-            TypeData::Tuple(list_id) => {
-                let elements = self.interner.tuple_list(list_id);
-                let mut changed = false;
-                let replaced = elements
-                    .iter()
-                    .map(|elem| {
-                        let replaced_type = self.replace_type_exact(elem.type_id, from, to);
-                        changed |= replaced_type != elem.type_id;
-                        TupleElement {
-                            type_id: replaced_type,
-                            name: elem.name,
-                            optional: elem.optional,
-                            rest: elem.rest,
-                        }
-                    })
-                    .collect();
-                if changed {
-                    self.interner.tuple(replaced)
-                } else {
-                    type_id
-                }
-            }
-            TypeData::Function(shape_id) => {
-                let shape = self.interner.function_shape(shape_id);
-                let replaced = self.replace_function_type_exact(&shape, from, to);
-                if *shape == replaced {
-                    type_id
-                } else {
-                    self.interner.function(replaced)
-                }
-            }
-            _ => type_id,
-        }
     }
 
     fn is_tuple_list_rest_type(&mut self, type_id: TypeId) -> bool {
@@ -1686,7 +1535,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Create a substitution mapping type parameters to the target's parameter types
         // This is a simplified instantiation - we map each source type param to the corresponding target param type
-        let mut substitution = TypeSubstitution::new();
+        let mut substitution = TypeSubstitution::for_signature_domain(&s_sig.type_params);
 
         // For a simple case like <V>(x: V) => R vs (x: T) => S, map V to T
         // This handles the common case where type parameters flow through from parameters to return type
