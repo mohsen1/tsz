@@ -276,6 +276,415 @@ pub fn contains_async_arrow_function(arena: &NodeArena, node_idx: NodeIndex) -> 
     }
 }
 
+/// Check whether an expression contains an arrow in the current lexical
+/// `this` scope.
+///
+/// Expression wrappers (arrays, objects, calls, conditionals, comma
+/// expressions, parentheses, and assertions) are transparent. A nested
+/// class's decorators/heritage, class-element and parameter decorators, and
+/// computed member names are also evaluated in the enclosing lexical `this`
+/// scope. Ordinary function bodies, member/constructor bodies, and nested class
+/// field initializers are opaque because an arrow below one of those nodes
+/// captures a different `this`. The arrow body itself need not be traversed:
+/// finding the arrow is the complete answer.
+#[must_use]
+pub fn contains_lexical_arrow_function(arena: &NodeArena, node_idx: NodeIndex) -> bool {
+    let mut traversal = Vec::new();
+    contains_lexical_arrow_function_with_scratch(arena, node_idx, &mut traversal)
+}
+
+/// Allocation-reusing form of [`contains_lexical_arrow_function`].
+///
+/// `traversal` is cleared on entry and can be retained across several class
+/// initializers, keeping the scan to at most one buffer allocation per class.
+#[must_use]
+pub fn contains_lexical_arrow_function_with_scratch(
+    arena: &NodeArena,
+    node_idx: NodeIndex,
+    traversal: &mut Vec<NodeIndex>,
+) -> bool {
+    traversal.clear();
+    traversal.push(node_idx);
+
+    while let Some(current) = traversal.pop() {
+        let Some(node) = arena.get(current) else {
+            continue;
+        };
+        if node.kind == syntax_kind_ext::ARROW_FUNCTION {
+            traversal.clear();
+            return true;
+        }
+        append_lexical_arrow_children(arena, current, traversal);
+    }
+
+    false
+}
+
+/// Whether `child_idx` is evaluated in its parent's enclosing lexical `this`
+/// scope according to the same boundary routing used by transform scans.
+///
+/// This direct-edge predicate lets checker parent walks cross nested class
+/// heritage/decorators and computed-name wrappers without opening method
+/// bodies or class field initializers.
+#[must_use]
+pub fn child_is_in_enclosing_lexical_this_scope(
+    arena: &NodeArena,
+    parent_idx: NodeIndex,
+    child_idx: NodeIndex,
+) -> bool {
+    let Some(parent) = arena.get(parent_idx) else {
+        return false;
+    };
+    match parent.kind {
+        kind if kind == syntax_kind_ext::CLASS_DECLARATION
+            || kind == syntax_kind_ext::CLASS_EXPRESSION =>
+        {
+            arena.get_class(parent).is_some_and(|class_data| {
+                decorator_is_child(arena, class_data.modifiers.as_ref(), child_idx)
+                    || class_data
+                        .heritage_clauses
+                        .as_ref()
+                        .is_some_and(|clauses| clauses.nodes.contains(&child_idx))
+                    || (class_data.members.nodes.contains(&child_idx)
+                        && class_element_has_enclosing_lexical_header(arena, child_idx))
+            })
+        }
+        kind if kind == syntax_kind_ext::METHOD_DECLARATION => {
+            arena.get_method_decl(parent).is_some_and(|method| {
+                decorator_is_child(arena, method.modifiers.as_ref(), child_idx)
+                    || computed_name_is_child(arena, method.name, child_idx)
+                    || parameter_with_decorators_is_child(arena, &method.parameters, child_idx)
+            })
+        }
+        kind if kind == syntax_kind_ext::GET_ACCESSOR || kind == syntax_kind_ext::SET_ACCESSOR => {
+            arena.get_accessor(parent).is_some_and(|accessor| {
+                decorator_is_child(arena, accessor.modifiers.as_ref(), child_idx)
+                    || computed_name_is_child(arena, accessor.name, child_idx)
+                    || parameter_with_decorators_is_child(arena, &accessor.parameters, child_idx)
+            })
+        }
+        kind if kind == syntax_kind_ext::PROPERTY_DECLARATION => {
+            arena.get_property_decl(parent).is_some_and(|property| {
+                decorator_is_child(arena, property.modifiers.as_ref(), child_idx)
+                    || computed_name_is_child(arena, property.name, child_idx)
+            })
+        }
+        kind if kind == syntax_kind_ext::CONSTRUCTOR => {
+            arena.get_constructor(parent).is_some_and(|constructor| {
+                decorator_is_child(arena, constructor.modifiers.as_ref(), child_idx)
+                    || parameter_with_decorators_is_child(arena, &constructor.parameters, child_idx)
+            })
+        }
+        kind if kind == syntax_kind_ext::PARAMETER => {
+            arena.get_parameter(parent).is_some_and(|parameter| {
+                decorator_is_child(arena, parameter.modifiers.as_ref(), child_idx)
+            })
+        }
+        kind if kind == syntax_kind_ext::FUNCTION_DECLARATION
+            || kind == syntax_kind_ext::FUNCTION_EXPRESSION =>
+        {
+            false
+        }
+        _ => lexical_arrow_children(arena, parent_idx).contains(&child_idx),
+    }
+}
+
+/// Find the nearest class that owns lexical `this` for `node_idx`.
+///
+/// Class decorators, heritage expressions, computed member names, and
+/// class-element/parameter decorator expressions execute outside the class's
+/// own `this` scope, so this walk crosses those exact edges. Member bodies,
+/// field initializers, parameter initializers, and static blocks stop at their
+/// containing class. Ordinary functions and object-literal methods own `this`
+/// without a class and therefore terminate the search.
+#[must_use]
+pub fn nearest_enclosing_lexical_this_class(
+    arena: &NodeArena,
+    node_idx: NodeIndex,
+) -> Option<NodeIndex> {
+    let mut current = node_idx;
+    let mut child = NodeIndex::NONE;
+    let mut class_member_scope_owns_this = false;
+    let mut iterations = 0;
+
+    while current.is_some() {
+        iterations += 1;
+        if iterations > 1024 {
+            return None;
+        }
+        let node = arena.get(current)?;
+        match node.kind {
+            kind if kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || kind == syntax_kind_ext::FUNCTION_EXPRESSION =>
+            {
+                return None;
+            }
+            kind if kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                if class_member_scope_owns_this {
+                    return None;
+                }
+            }
+            kind if kind == syntax_kind_ext::CLASS_DECLARATION
+                || kind == syntax_kind_ext::CLASS_EXPRESSION =>
+            {
+                if class_member_scope_owns_this
+                    || !child.is_some()
+                    || !child_is_in_enclosing_lexical_this_scope(arena, current, child)
+                {
+                    return Some(current);
+                }
+            }
+            kind if (kind == syntax_kind_ext::PROPERTY_DECLARATION
+                || kind == syntax_kind_ext::METHOD_DECLARATION
+                || kind == syntax_kind_ext::GET_ACCESSOR
+                || kind == syntax_kind_ext::SET_ACCESSOR
+                || kind == syntax_kind_ext::CONSTRUCTOR
+                || kind == syntax_kind_ext::PARAMETER)
+                && child.is_some()
+                && !child_is_in_enclosing_lexical_this_scope(arena, current, child) =>
+            {
+                class_member_scope_owns_this = true;
+            }
+            _ => {}
+        }
+
+        child = current;
+        current = arena.get_extended(current)?.parent;
+    }
+    None
+}
+
+/// Children that remain in the current lexical-`this` scope while searching
+/// for arrows. Kept separate from `target_reference_children`: emitter target
+/// scans may start at a property/constructor node and must inspect its runtime
+/// children, whereas entering that node through a nested class must remain
+/// opaque except for a computed name.
+fn lexical_arrow_children(arena: &NodeArena, node_idx: NodeIndex) -> Vec<NodeIndex> {
+    let mut children = Vec::new();
+    append_lexical_arrow_children(arena, node_idx, &mut children);
+    children
+}
+
+fn append_lexical_arrow_children(
+    arena: &NodeArena,
+    node_idx: NodeIndex,
+    children: &mut Vec<NodeIndex>,
+) {
+    let Some(node) = arena.get(node_idx) else {
+        return;
+    };
+    match node.kind {
+        kind if kind == syntax_kind_ext::FUNCTION_DECLARATION
+            || kind == syntax_kind_ext::FUNCTION_EXPRESSION => {}
+        kind if kind == syntax_kind_ext::CLASS_DECLARATION
+            || kind == syntax_kind_ext::CLASS_EXPRESSION =>
+        {
+            if let Some(class_data) = arena.get_class(node) {
+                if let Some(modifiers) = class_data.modifiers.as_ref() {
+                    append_decorator_children(arena, modifiers, children);
+                }
+                if let Some(heritage_clauses) = class_data.heritage_clauses.as_ref() {
+                    children.extend(heritage_clauses.nodes.iter().copied());
+                }
+                for &member_idx in &class_data.members.nodes {
+                    if class_element_has_enclosing_lexical_header(arena, member_idx) {
+                        children.push(member_idx);
+                    }
+                }
+            }
+        }
+        kind if kind == syntax_kind_ext::PROPERTY_DECLARATION => {
+            let Some(property) = arena.get_property_decl(node) else {
+                return;
+            };
+            append_lexical_property_header_children(
+                arena,
+                property.modifiers.as_ref(),
+                property.name,
+                children,
+            );
+        }
+        kind if kind == syntax_kind_ext::METHOD_DECLARATION => {
+            let Some(method) = arena.get_method_decl(node) else {
+                return;
+            };
+            append_lexical_callable_member_header_children(
+                arena,
+                method.modifiers.as_ref(),
+                Some(method.name),
+                &method.parameters,
+                children,
+            );
+        }
+        kind if kind == syntax_kind_ext::CONSTRUCTOR => {
+            let Some(constructor) = arena.get_constructor(node) else {
+                return;
+            };
+            append_lexical_callable_member_header_children(
+                arena,
+                constructor.modifiers.as_ref(),
+                None,
+                &constructor.parameters,
+                children,
+            );
+        }
+        kind if kind == syntax_kind_ext::GET_ACCESSOR || kind == syntax_kind_ext::SET_ACCESSOR => {
+            let Some(accessor) = arena.get_accessor(node) else {
+                return;
+            };
+            append_lexical_callable_member_header_children(
+                arena,
+                accessor.modifiers.as_ref(),
+                Some(accessor.name),
+                &accessor.parameters,
+                children,
+            );
+        }
+        kind if kind == syntax_kind_ext::PARAMETER => {
+            if let Some(modifiers) = arena
+                .get_parameter(node)
+                .and_then(|parameter| parameter.modifiers.as_ref())
+            {
+                append_decorator_children(arena, modifiers, children);
+            }
+        }
+        _ => arena.append_children(node_idx, children),
+    }
+}
+
+fn class_element_has_enclosing_lexical_header(arena: &NodeArena, member_idx: NodeIndex) -> bool {
+    let Some(member) = arena.get(member_idx) else {
+        return false;
+    };
+    match member.kind {
+        kind if kind == syntax_kind_ext::PROPERTY_DECLARATION => {
+            arena.get_property_decl(member).is_some_and(|property| {
+                has_decorators(arena, property.modifiers.as_ref())
+                    || computed_member_name_child(arena, property.name).is_some()
+            })
+        }
+        kind if kind == syntax_kind_ext::METHOD_DECLARATION => {
+            arena.get_method_decl(member).is_some_and(|method| {
+                has_decorators(arena, method.modifiers.as_ref())
+                    || computed_member_name_child(arena, method.name).is_some()
+                    || method
+                        .parameters
+                        .nodes
+                        .iter()
+                        .any(|&parameter| parameter_has_decorators(arena, parameter))
+            })
+        }
+        kind if kind == syntax_kind_ext::CONSTRUCTOR => {
+            arena.get_constructor(member).is_some_and(|constructor| {
+                has_decorators(arena, constructor.modifiers.as_ref())
+                    || constructor
+                        .parameters
+                        .nodes
+                        .iter()
+                        .any(|&parameter| parameter_has_decorators(arena, parameter))
+            })
+        }
+        kind if kind == syntax_kind_ext::GET_ACCESSOR || kind == syntax_kind_ext::SET_ACCESSOR => {
+            arena.get_accessor(member).is_some_and(|accessor| {
+                has_decorators(arena, accessor.modifiers.as_ref())
+                    || computed_member_name_child(arena, accessor.name).is_some()
+                    || accessor
+                        .parameters
+                        .nodes
+                        .iter()
+                        .any(|&parameter| parameter_has_decorators(arena, parameter))
+            })
+        }
+        _ => false,
+    }
+}
+
+fn append_lexical_property_header_children(
+    arena: &NodeArena,
+    modifiers: Option<&crate::parser::NodeList>,
+    name: NodeIndex,
+    children: &mut Vec<NodeIndex>,
+) {
+    if let Some(modifiers) = modifiers {
+        append_decorator_children(arena, modifiers, children);
+    }
+    if let Some(name) = computed_member_name_child(arena, name) {
+        children.push(name);
+    }
+}
+
+fn append_lexical_callable_member_header_children(
+    arena: &NodeArena,
+    modifiers: Option<&crate::parser::NodeList>,
+    name: Option<NodeIndex>,
+    parameters: &crate::parser::NodeList,
+    children: &mut Vec<NodeIndex>,
+) {
+    if let Some(modifiers) = modifiers {
+        append_decorator_children(arena, modifiers, children);
+    }
+    if let Some(name) = name.and_then(|name| computed_member_name_child(arena, name)) {
+        children.push(name);
+    }
+    children.extend(
+        parameters
+            .nodes
+            .iter()
+            .copied()
+            .filter(|&parameter| parameter_has_decorators(arena, parameter)),
+    );
+}
+
+fn append_decorator_children(
+    arena: &NodeArena,
+    modifiers: &crate::parser::NodeList,
+    children: &mut Vec<NodeIndex>,
+) {
+    children.extend(modifiers.nodes.iter().copied().filter(|&modifier| {
+        arena
+            .get(modifier)
+            .is_some_and(|node| node.kind == syntax_kind_ext::DECORATOR)
+    }));
+}
+
+fn decorator_is_child(
+    arena: &NodeArena,
+    modifiers: Option<&crate::parser::NodeList>,
+    child_idx: NodeIndex,
+) -> bool {
+    modifiers.is_some_and(|modifiers| {
+        modifiers.nodes.contains(&child_idx)
+            && arena
+                .get(child_idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::DECORATOR)
+    })
+}
+
+fn has_decorators(arena: &NodeArena, modifiers: Option<&crate::parser::NodeList>) -> bool {
+    modifiers.is_some_and(|modifiers| {
+        modifiers.nodes.iter().any(|&modifier| {
+            arena
+                .get(modifier)
+                .is_some_and(|node| node.kind == syntax_kind_ext::DECORATOR)
+        })
+    })
+}
+
+fn parameter_has_decorators(arena: &NodeArena, parameter_idx: NodeIndex) -> bool {
+    arena
+        .get(parameter_idx)
+        .and_then(|parameter| arena.get_parameter(parameter))
+        .is_some_and(|parameter| has_decorators(arena, parameter.modifiers.as_ref()))
+}
+
+fn parameter_with_decorators_is_child(
+    arena: &NodeArena,
+    parameters: &crate::parser::NodeList,
+    child_idx: NodeIndex,
+) -> bool {
+    parameters.nodes.contains(&child_idx) && parameter_has_decorators(arena, child_idx)
+}
+
 fn contains_target_reference(
     arena: &NodeArena,
     node_idx: NodeIndex,
@@ -491,14 +900,8 @@ fn target_reference_children(
     }
 }
 
-fn push_computed_member_name(
-    arena: &NodeArena,
-    member_idx: NodeIndex,
-    children: &mut Vec<NodeIndex>,
-) {
-    let Some(member) = arena.get(member_idx) else {
-        return;
-    };
+fn computed_member_name(arena: &NodeArena, member_idx: NodeIndex) -> Option<NodeIndex> {
+    let member = arena.get(member_idx)?;
 
     let name_idx = match member.kind {
         kind if kind == syntax_kind_ext::PROPERTY_DECLARATION => {
@@ -513,11 +916,30 @@ fn push_computed_member_name(
         _ => None,
     };
 
-    if let Some(name_idx) = name_idx
-        && arena
+    name_idx.filter(|&name_idx| {
+        arena
             .get(name_idx)
             .is_some_and(|name| name.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
-    {
+    })
+}
+
+fn computed_member_name_child(arena: &NodeArena, name_idx: NodeIndex) -> Option<NodeIndex> {
+    arena
+        .get(name_idx)
+        .is_some_and(|name| name.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+        .then_some(name_idx)
+}
+
+fn computed_name_is_child(arena: &NodeArena, name_idx: NodeIndex, child_idx: NodeIndex) -> bool {
+    name_idx == child_idx && computed_member_name_child(arena, name_idx).is_some()
+}
+
+fn push_computed_member_name(
+    arena: &NodeArena,
+    member_idx: NodeIndex,
+    children: &mut Vec<NodeIndex>,
+) {
+    if let Some(name_idx) = computed_member_name(arena, member_idx) {
         children.push(name_idx);
     }
 }

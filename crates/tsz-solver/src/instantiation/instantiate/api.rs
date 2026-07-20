@@ -244,7 +244,8 @@ fn alpha_instantiation_cache_key(
             CanonicalSubst::from_pairs(alpha_pairs),
             request.options().mode_bits(),
             request.this_type(),
-        ),
+        )
+        .with_identity_domain(request.substitution().identity_domain_for_cache()),
         bindings,
     })
 }
@@ -1043,7 +1044,7 @@ pub(crate) fn instantiate_type_with_shadowed_cached(
     query_db: Option<&dyn QueryDatabase>,
     type_id: TypeId,
     substitution: &TypeSubstitution,
-    shadowed_params: &[Atom],
+    shadowed_params: &[TypeParamInfo],
 ) -> TypeId {
     if type_id.is_intrinsic() {
         return type_id;
@@ -1085,7 +1086,7 @@ pub fn instantiate_type_cached(
     // MUST run BEFORE any CanonicalSubst construction so we don't pay
     // hash/alloc for trivial leaf substitutions.
     if let Some(TypeData::TypeParameter(info)) = interner.lookup(type_id)
-        && let Some(result) = substitution.get(info.name)
+        && let Some(result) = substitution.get_for_type_parameter(&info)
     {
         return result;
     }
@@ -1694,7 +1695,7 @@ pub fn instantiate_function_with_type_args(
         return None;
     }
 
-    let subst = TypeSubstitution::from_args(interner, &shape.type_params, type_args);
+    let subst = TypeSubstitution::from_signature_args(interner, &shape.type_params, type_args);
 
     let new_params: Vec<_> = shape
         .params

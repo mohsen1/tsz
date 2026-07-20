@@ -233,7 +233,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let first_param = common::type_param_info(self.ctx.types, shape.params[0].type_id)?;
-        if first_param.name != shape.type_params[0].name {
+        if !first_param.is_same_binder(shape.type_params[0]) {
             return None;
         }
 
@@ -242,7 +242,10 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let mut substitution = crate::query_boundaries::common::TypeSubstitution::new();
+        let mut substitution =
+            crate::query_boundaries::generic_instantiation::signature_domain_substitution(
+                &shape.type_params,
+            );
         substitution.insert(shape.type_params[0].name, self.ctx.types.this_type());
         substitution.insert(shape.type_params[1].name, arg_types[1]);
         let target = crate::query_boundaries::common::instantiate_type_preserving_meta(
@@ -827,8 +830,6 @@ impl<'a> CheckerState<'a> {
         // Check that at least one source type parameter can be mapped from
         // the target's parameter types, confirming these are comparable
         // callable signatures worth building a concrete display target for.
-        let tracked_type_params: FxHashSet<_> =
-            source_fn.type_params.iter().map(|tp| tp.name).collect();
         let has_mappable_param = source_fn.params.iter().zip(target_fn.params.iter()).any(
             |(source_param, target_param)| {
                 let target_type = target_param.type_id;
@@ -838,8 +839,12 @@ impl<'a> CheckerState<'a> {
                 common::collect_all_types(self.ctx.types, source_param.type_id)
                     .into_iter()
                     .any(|ty| {
-                        common::type_param_info(self.ctx.types, ty)
-                            .is_some_and(|tp| tracked_type_params.contains(&tp.name))
+                        common::type_param_info(self.ctx.types, ty).is_some_and(|tp| {
+                            source_fn
+                                .type_params
+                                .iter()
+                                .any(|source_tp| source_tp.is_same_binder(tp))
+                        })
                     })
             },
         );

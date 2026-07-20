@@ -210,6 +210,37 @@ pub fn compute_actual_type_param_variances_with_resolver(
     computer.compute_def_variances(def_id)
 }
 
+/// Whether polymorphic `this` occurs in a proven, strictly contravariant
+/// position within `type_id`.
+///
+/// This deliberately uses the actual structural variance walk rather than a
+/// conservative shape predicate. In particular, generic applications compose
+/// the variance of their referenced definition (`Envelope<this>` stays
+/// covariant, while `Visitor<this>` becomes contravariant), and method
+/// parameters retain TypeScript's bivariance exception. Callers own the
+/// `strictFunctionTypes` option gate: when it is disabled, function-valued
+/// property parameters are bivariant too and this query must not control the
+/// relation.
+///
+/// The cheap shared `contains_this_type` memo avoids starting a variance walk
+/// for the overwhelmingly common `this`-free member. Once entered, the
+/// [`VarianceComputer`] memoizes every referenced generic definition for the
+/// duration of the walk, so repeated applications in one member are analyzed
+/// once.
+pub fn contains_this_type_in_strict_contravariant_position_with_resolver(
+    db: &dyn TypeDatabase,
+    resolver: &dyn TypeResolver,
+    type_id: TypeId,
+) -> bool {
+    if !crate::contains_this_type(db, type_id) {
+        return false;
+    }
+
+    let mut computer = VarianceComputer::new_actual(db, resolver);
+    let variance = computer.compute_this_type(type_id);
+    variance.has_direct_usage() && (variance.is_contravariant() || variance.is_invariant())
+}
+
 /// Session-cached form of [`compute_type_param_variances_with_resolver`].
 ///
 /// Variance of a generic `DefId` is a pure function of that definition's
@@ -398,7 +429,12 @@ impl<'a> VarianceComputer<'a> {
     }
 
     fn compute(&mut self, type_id: TypeId, target_param: Atom) -> Variance {
-        let visitor = VarianceVisitor::new(self, target_param);
+        let visitor = VarianceVisitor::for_type_parameter(self, target_param);
+        visitor.compute(type_id)
+    }
+
+    fn compute_this_type(&mut self, type_id: TypeId) -> Variance {
+        let visitor = VarianceVisitor::for_this_type(self);
         visitor.compute(type_id)
     }
 
@@ -621,8 +657,8 @@ impl<'a> VarianceComputer<'a> {
 struct VarianceVisitor<'a, 'b> {
     /// Shared variance computation host.
     computer: &'b mut VarianceComputer<'a>,
-    /// The name of the type parameter we're searching for (e.g., 'T').
-    target_param: Atom,
+    /// The semantic leaf whose variance is being measured.
+    target: VarianceTarget,
     /// The accumulated variance result so far.
     result: Variance,
     /// Unified recursion guard for (`TypeId`, Polarity) cycle detection.
@@ -681,6 +717,12 @@ struct VarianceVisitor<'a, 'b> {
     completed: FxHashSet<VarianceVisitKey>,
 }
 
+#[derive(Clone, Copy)]
+enum VarianceTarget {
+    TypeParameter(Atom),
+    ThisType,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct VarianceVisitKey {
     type_id: TypeId,
@@ -693,10 +735,18 @@ struct VarianceVisitKey {
 
 impl<'a, 'b> VarianceVisitor<'a, 'b> {
     /// Create a new `VarianceVisitor`.
-    fn new(computer: &'b mut VarianceComputer<'a>, target_param: Atom) -> Self {
+    fn for_type_parameter(computer: &'b mut VarianceComputer<'a>, target_param: Atom) -> Self {
+        Self::new(computer, VarianceTarget::TypeParameter(target_param))
+    }
+
+    fn for_this_type(computer: &'b mut VarianceComputer<'a>) -> Self {
+        Self::new(computer, VarianceTarget::ThisType)
+    }
+
+    fn new(computer: &'b mut VarianceComputer<'a>, target: VarianceTarget) -> Self {
         Self {
             computer,
-            target_param,
+            target,
             result: Variance::empty(),
             guard: crate::recursion::RecursionGuard::with_profile(
                 crate::recursion::RecursionProfile::Variance,
@@ -713,7 +763,37 @@ impl<'a, 'b> VarianceVisitor<'a, 'b> {
         }
     }
 
-    /// Entry point: computes the variance of `target_param` within `type_id`.
+    const fn target_param_name(&self) -> Option<Atom> {
+        match self.target {
+            VarianceTarget::TypeParameter(name) => Some(name),
+            VarianceTarget::ThisType => None,
+        }
+    }
+
+    fn is_target_type_parameter(&self, info: &TypeParamInfo) -> bool {
+        self.target_param_name() == Some(info.name)
+    }
+
+    fn type_is_target_leaf(&self, type_id: TypeId) -> bool {
+        match (self.target, self.computer.db.lookup(type_id)) {
+            (VarianceTarget::TypeParameter(name), Some(TypeData::TypeParameter(info))) => {
+                info.name == name
+            }
+            (VarianceTarget::ThisType, Some(TypeData::ThisType)) => true,
+            _ => false,
+        }
+    }
+
+    fn target_occurs_shallow(&self, type_id: TypeId) -> bool {
+        match self.target {
+            VarianceTarget::TypeParameter(name) => {
+                crate::contains_type_parameter_named_shallow(self.computer.db, type_id, name)
+            }
+            VarianceTarget::ThisType => crate::contains_this_type(self.computer.db, type_id),
+        }
+    }
+
+    /// Entry point: computes the selected target's variance within `type_id`.
     fn compute(mut self, type_id: TypeId) -> Variance {
         self.visit_with_polarity(type_id, true);
         // When the type parameter is used as the object of an indexed access
@@ -841,22 +921,27 @@ impl<'a, 'b> VarianceVisitor<'a, 'b> {
     /// on S via keyof, so the variance shortcut is unreliable even without modifiers.
     fn constraint_uses_keyof_of_target(&self, constraint: TypeId) -> bool {
         if let Some(crate::types::TypeData::KeyOf(inner)) = self.computer.db.lookup(constraint) {
-            self.type_references_target_param(inner)
+            self.type_references_target(inner)
         } else {
             false
         }
     }
 
-    /// Check if a type references the target type parameter (directly or nested).
-    fn type_references_target_param(&self, type_id: TypeId) -> bool {
+    /// Check if a type references the target leaf (directly or nested).
+    fn type_references_target(&self, type_id: TypeId) -> bool {
         if type_id.is_intrinsic() {
             return false;
         }
         match self.computer.db.lookup(type_id) {
-            Some(crate::types::TypeData::TypeParameter(info)) => info.name == self.target_param,
-            Some(crate::types::TypeData::KeyOf(inner)) => self.type_references_target_param(inner),
+            Some(crate::types::TypeData::TypeParameter(info)) => {
+                self.is_target_type_parameter(&info)
+            }
+            Some(crate::types::TypeData::ThisType) => {
+                matches!(self.target, VarianceTarget::ThisType)
+            }
+            Some(crate::types::TypeData::KeyOf(inner)) => self.type_references_target(inner),
             Some(crate::types::TypeData::IndexAccess(obj, idx)) => {
-                self.type_references_target_param(obj) || self.type_references_target_param(idx)
+                self.type_references_target(obj) || self.type_references_target(idx)
             }
             _ => false,
         }
@@ -877,7 +962,11 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
 
     fn visit_error(&mut self) {}
 
-    fn visit_this_type(&mut self) {}
+    fn visit_this_type(&mut self) {
+        if matches!(self.target, VarianceTarget::ThisType) {
+            self.add_occurrence(self.get_current_polarity());
+        }
+    }
 
     // ===== Composite types =====
 
@@ -1073,7 +1162,7 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
 
     /// Type parameters: check if this is our target.
     fn visit_type_parameter(&mut self, info: &TypeParamInfo) {
-        if info.name == self.target_param {
+        if self.is_target_type_parameter(info) {
             let current_polarity = self.get_current_polarity();
             self.add_occurrence(current_polarity);
         }
@@ -1291,21 +1380,10 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
         // mark the result as needing the structural fallback rather than
         // asserting a co/contra/invariant direction we cannot reliably model —
         // the structural comparison then judges the pair.
-        let in_check = crate::contains_type_parameter_named_shallow(
-            self.computer.db,
-            cond.check_type,
-            self.target_param,
-        );
+        let in_check = self.target_occurs_shallow(cond.check_type);
         if in_check {
-            let in_branch = crate::contains_type_parameter_named_shallow(
-                self.computer.db,
-                cond.true_type,
-                self.target_param,
-            ) || crate::contains_type_parameter_named_shallow(
-                self.computer.db,
-                cond.false_type,
-                self.target_param,
-            );
+            let in_branch = self.target_occurs_shallow(cond.true_type)
+                || self.target_occurs_shallow(cond.false_type);
             if !in_branch {
                 self.result |= Variance::NEEDS_STRUCTURAL_FALLBACK;
             }
@@ -1374,7 +1452,7 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
         }
 
         // Type parameter constraint: check if it's our target
-        if mapped.type_param.name == self.target_param {
+        if self.is_target_type_parameter(&mapped.type_param) {
             // The iteration variable K itself doesn't contribute to variance
             // It's a binder, not a usage of T
         }
@@ -1427,9 +1505,7 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
         // Track when the target parameter appears as the object of an indexed
         // access. This indicates that the type mapping S → S["key"] may
         // normalize away differences between type arguments.
-        if let Some(TypeData::TypeParameter(tp)) = self.computer.db.lookup(object_type)
-            && tp.name == self.target_param
-        {
+        if self.type_is_target_leaf(object_type) {
             self.seen_target_in_index_access = true;
         }
         let before = self.result;

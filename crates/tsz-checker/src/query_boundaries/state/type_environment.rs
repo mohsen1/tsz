@@ -188,8 +188,11 @@ fn instantiate_type_environment_signature(
     signature: &CallSignature,
     type_args: &[TypeId],
 ) -> CallSignature {
-    let substitution =
-        TypeSubstitution::from_args(db.as_type_database(), &signature.type_params, type_args);
+    let substitution = TypeSubstitution::from_signature_args(
+        db.as_type_database(),
+        &signature.type_params,
+        type_args,
+    );
     let params = signature
         .params
         .iter()

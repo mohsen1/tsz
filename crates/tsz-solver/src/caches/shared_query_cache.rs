@@ -310,6 +310,12 @@ impl SharedQueryCache {
             * (DASHMAP_ENTRY_OVERHEAD
                 + std::mem::size_of::<InstantiationCacheKey>()
                 + std::mem::size_of::<TypeId>());
+        let mut seen_identity_domains = FxHashSet::default();
+        for entry in &self.instantiation_cache {
+            size += entry
+                .key()
+                .estimated_heap_bytes(&mut seen_identity_domains, DASHMAP_ENTRY_OVERHEAD);
+        }
         size
     }
 }

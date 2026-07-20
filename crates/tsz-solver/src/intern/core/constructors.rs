@@ -1919,6 +1919,13 @@ impl TypeInterner {
             * (DASHMAP_ENTRY_OVERHEAD
                 + std::mem::size_of::<crate::caches::instantiation_cache::InstantiationCacheKey>()
                 + std::mem::size_of::<TypeId>());
+        let mut seen_instantiation_identity_domains = rustc_hash::FxHashSet::default();
+        for entry in &self.proto_instantiation_cache {
+            size += entry.key().estimated_heap_bytes(
+                &mut seen_instantiation_identity_domains,
+                DASHMAP_ENTRY_OVERHEAD,
+            );
+        }
         size += self
             .contravariant_infer_names_cache
             .iter()

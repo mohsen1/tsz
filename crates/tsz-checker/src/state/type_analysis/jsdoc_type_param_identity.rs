@@ -97,13 +97,12 @@ impl CheckerState<'_> {
     ///
     /// JSDoc template parameters do not have their own parser node, so the
     /// containing class/function/method node is their stable declaration key.
-    /// These parameters are always stamped as
-    /// [`tsz_solver::TypeParamOrigin::DeclScoped`]: unlike syntax declarations,
-    /// they have no lowering-owned identity path and would otherwise collapse
-    /// structurally when a nested declaration repeats the same binder spelling,
-    /// constraint, and default. Structural interning then makes repeated
-    /// construction stable without the fresh-id declaration cache used by the
-    /// syntax/lowering convergence path.
+    /// These parameters are stamped as
+    /// [`tsz_solver::TypeParamOrigin::JsdocOwnerScoped`]: unlike syntax
+    /// declarations, siblings have no individual name nodes and therefore use
+    /// `(file, owner_node, name)` as their logical binder identity. Structural
+    /// interning then makes repeated construction stable without the fresh-id
+    /// declaration cache used by the syntax/lowering convergence path.
     pub(crate) fn intern_jsdoc_type_param_for_owner_stamped(
         &mut self,
         owner_node: NodeIndex,
@@ -137,7 +136,7 @@ impl CheckerState<'_> {
         mut info: tsz_solver::TypeParamInfo,
     ) -> (tsz_solver::TypeId, tsz_solver::TypeParamInfo) {
         let file_atom = self.ctx.types.intern_string(file_name);
-        info.origin = tsz_solver::TypeParamOrigin::DeclScoped {
+        info.origin = tsz_solver::TypeParamOrigin::JsdocOwnerScoped {
             file: file_atom,
             node: owner_node.0,
         };
@@ -153,7 +152,7 @@ impl CheckerState<'_> {
         let file = self.ctx.types.intern_string(&self.ctx.file_name);
         info.origin = match declaration_site {
             JsdocTypeParamSite::Owner(node) => {
-                tsz_solver::TypeParamOrigin::DeclScoped { file, node }
+                tsz_solver::TypeParamOrigin::JsdocOwnerScoped { file, node }
             }
             JsdocTypeParamSite::Comment(pos) => {
                 tsz_solver::TypeParamOrigin::JsdocCommentScoped { file, pos }

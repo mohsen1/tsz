@@ -4,8 +4,10 @@ use crate::parser::test_fixture::parse_source;
 use crate::parser::{NodeIndex, ParserState};
 use crate::syntax::transform_utils::arrow_captures_lexical_this;
 use crate::syntax::transform_utils::contains_arguments_reference;
+use crate::syntax::transform_utils::contains_lexical_arrow_function;
 use crate::syntax::transform_utils::contains_new_target_reference;
 use crate::syntax::transform_utils::contains_this_reference;
+use crate::syntax::transform_utils::nearest_enclosing_lexical_this_class;
 
 fn class_member_initializer(source: &str, member_index: usize) -> (ParserState, NodeIndex) {
     let (parser, root) = parse_source(source);
@@ -146,6 +148,129 @@ fn contains_this_reference_detects_nested_class_heritage_clauses() {
     );
 
     assert!(contains_this_reference(parser.get_arena(), initializer));
+}
+
+#[test]
+fn contains_lexical_arrow_function_follows_expression_wrappers() {
+    for source in [
+        "class C { field = [() => this]; }",
+        "class C { field = { handler: () => this }; }",
+        "class C { field = true ? (() => this) : null; }",
+        "class C { field = consume(() => this); }",
+        "class C { field = (0, () => this); }",
+    ] {
+        let (parser, initializer) = class_member_initializer(source, 0);
+        assert!(
+            contains_lexical_arrow_function(parser.get_arena(), initializer),
+            "wrapper should be transparent: {source}",
+        );
+    }
+}
+
+#[test]
+fn contains_lexical_arrow_function_stops_at_regular_this_boundaries() {
+    for source in [
+        "class C { field = function () { return () => this; }; }",
+        "class C { field = { method() { return () => this; } }; }",
+        "class C { field = class Inner { method = () => this }; }",
+    ] {
+        let (parser, initializer) = class_member_initializer(source, 0);
+        assert!(
+            !contains_lexical_arrow_function(parser.get_arena(), initializer),
+            "regular `this` owner should be opaque: {source}",
+        );
+    }
+}
+
+#[test]
+fn contains_lexical_arrow_function_follows_computed_method_and_accessor_names() {
+    for source in [
+        "class C { field = { [consume(() => this)]() {} }; }",
+        "class C { field = { get [consume(() => this)]() { return 1; } }; }",
+        "class C { field = { set [consume(() => this)](value) {} }; }",
+    ] {
+        let (parser, initializer) = class_member_initializer(source, 0);
+        assert!(
+            contains_lexical_arrow_function(parser.get_arena(), initializer),
+            "computed member name should retain the enclosing lexical scope: {source}",
+        );
+    }
+}
+
+#[test]
+fn contains_lexical_arrow_function_follows_nested_class_headers() {
+    for source in [
+        "class C { field = class Inner extends factory(() => this) {}; }",
+        "class C { field = class Inner { [consume(() => this)]() {} }; }",
+    ] {
+        let (parser, initializer) = class_member_initializer(source, 0);
+        assert!(
+            contains_lexical_arrow_function(parser.get_arena(), initializer),
+            "nested class heritage and computed names run in the outer lexical scope: {source}",
+        );
+    }
+}
+
+#[test]
+fn contains_lexical_arrow_function_follows_class_element_and_parameter_decorators() {
+    for source in [
+        "class C { field = class Inner { @decorate(<U extends string>() => this.value) method() {} }; }",
+        "class C { field = class Inner { @decorate(() => this) property = 1; }; }",
+        "class C { field = class Inner { @decorate(() => this) get property() { return 1; } }; }",
+        "class C { field = class Inner { method(@decorate(() => this) value: unknown) {} }; }",
+        "class C { field = class Inner { constructor(@decorate(() => this) value: unknown) {} }; }",
+    ] {
+        let (parser, initializer) = class_member_initializer(source, 0);
+        assert!(
+            contains_lexical_arrow_function(parser.get_arena(), initializer),
+            "decorator expression should retain the enclosing lexical scope: {source}",
+        );
+    }
+}
+
+#[test]
+fn decorator_arrow_lexical_this_owner_skips_the_nested_class() {
+    let (parser, inner_class) = class_member_initializer(
+        "class Outer<U> { value!: U; field = class Inner { @decorate(() => this.value) method() {} }; }",
+        1,
+    );
+    let arena = parser.get_arena();
+    let arrow = first_arrow_function(&parser, inner_class);
+    let arrow_data = arena
+        .get(arrow)
+        .and_then(|node| arena.get_function(node))
+        .expect("decorator arrow");
+    let this_expression = arena
+        .get(arrow_data.body)
+        .and_then(|node| arena.get_access_expr(node))
+        .map(|access| access.expression)
+        .expect("this.value body");
+    let field = arena
+        .get_extended(inner_class)
+        .expect("inner class parent")
+        .parent;
+    let outer_class = arena.get_extended(field).expect("field parent").parent;
+
+    assert_eq!(
+        nearest_enclosing_lexical_this_class(arena, this_expression),
+        Some(outer_class),
+    );
+}
+
+#[test]
+fn contains_lexical_arrow_function_keeps_nested_class_bodies_and_fields_opaque() {
+    for source in [
+        "class C { field = class Inner { method() { return () => this; } }; }",
+        "class C { field = class Inner { @decorate(plain) method() { return () => this; } }; }",
+        "class C { field = class Inner { value = () => this; }; }",
+        "class C { field = class Inner { get value() { return () => this; } }; }",
+    ] {
+        let (parser, initializer) = class_member_initializer(source, 0);
+        assert!(
+            !contains_lexical_arrow_function(parser.get_arena(), initializer),
+            "nested class body should own its arrows: {source}",
+        );
+    }
 }
 
 /// Find the first arrow-function node reachable from `root` (breadth-first).

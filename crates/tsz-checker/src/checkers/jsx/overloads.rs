@@ -288,7 +288,8 @@ impl<'a> CheckerState<'a> {
             .iter()
             .map(|param| param.default.or(param.constraint).unwrap_or(TypeId::ANY))
             .collect();
-        let substitution = TypeSubstitution::from_args(self.ctx.types, type_params, &type_args);
+        let substitution =
+            TypeSubstitution::from_signature_args(self.ctx.types, type_params, &type_args);
         instantiate_type(self.ctx.types, type_id, &substitution)
     }
 

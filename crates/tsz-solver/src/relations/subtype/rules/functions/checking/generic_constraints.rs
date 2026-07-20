@@ -55,7 +55,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             type_param_info(self.interner, type_id),
             type_param_info(self.interner, tp_id),
         ) {
-            (Some(a), Some(b)) => a.name == b.name,
+            (Some(a), Some(b)) => a.is_same_binder(b),
             _ => false,
         }
     }

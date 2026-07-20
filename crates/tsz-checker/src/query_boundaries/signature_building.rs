@@ -125,7 +125,7 @@ pub(crate) fn instantiate_signature(
     sig: &CallSignature,
     type_args: &[TypeId],
 ) -> CallSignature {
-    let substitution = TypeSubstitution::from_args(db, &sig.type_params, type_args);
+    let substitution = TypeSubstitution::from_signature_args(db, &sig.type_params, type_args);
     call_signature(
         Vec::new(),
         instantiate_params(db, &sig.params, &substitution),
@@ -144,8 +144,11 @@ pub(crate) fn partially_instantiate_signature(
 ) -> CallSignature {
     debug_assert!(supplied_args.len() < sig.type_params.len());
 
-    let substitution =
-        TypeSubstitution::from_args(db, &sig.type_params[..supplied_args.len()], supplied_args);
+    let substitution = TypeSubstitution::from_signature_args(
+        db,
+        &sig.type_params[..supplied_args.len()],
+        supplied_args,
+    );
 
     let remaining_type_params = sig.type_params[supplied_args.len()..]
         .iter()

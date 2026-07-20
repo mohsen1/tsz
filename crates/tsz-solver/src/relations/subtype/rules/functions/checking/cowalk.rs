@@ -1,33 +1,33 @@
 //! #14345 WAVE-1 register-through-reduction co-walk.
 //!
 //! The alpha-rename registration in `check_function_subtype_impl` records the
-//! two signatures' TOP-LEVEL type-param origin-pairs (source[i], target[i]).
+//! two signatures' TOP-LEVEL exact binder pairs (source[i], target[i]).
 //! But after both bodies are re-minted via `instantiate_function_shape`, the
 //! reduced `Kind<F, A>` leaves reaching the relation consult carry THIRD
-//! declaration origins (nested HKT type-constructor / caller-arg params) — no
-//! leaf origin-pair equals a registered top-level pair, so the origin-keyed
+//! declaration binders (nested HKT type-constructor / caller-arg params) — no
+//! leaf binder pair equals a registered top-level pair, so the exact-keyed
 //! consult never fires on them and two alpha-equivalent bodies fail to relate.
 //!
 //! This co-walk closes that gap: it walks the two re-minted bodies STRUCTURALLY
-//! IN LOCKSTEP and registers the corresponding DEEPER leaf origin-pairs (the
-//! arg-position `TypeParameter`s carrying authoritative declaration origins)
+//! IN LOCKSTEP and registers the corresponding DEEPER leaf binder pairs (the
+//! arg-position `TypeParameter`s carrying authoritative declaration identities)
 //! into `type_param_equivalences`.
 //!
 //! Soundness: a pair is registered ONLY at a structurally-CORRESPONDING
 //! position — the walk descends both bodies together and, the moment the two
 //! shapes DIVERGE in structural kind at any node, it stops descending that
 //! branch (a genuine structural mismatch must still fail to relate). Because the
-//! consult matches by exact carried declaration origin, registering the genuine
+//! consult matches by exact carried declaration binder, registering the genuine
 //! structural correspondence is sound; the only hazard — pairing
 //! non-corresponding leaves — is prevented by the lockstep divergence guard.
 //! Registration is further limited to `TypeParameter`-vs-`TypeParameter`
-//! leaves where both carry authoritative declaration origins; any other leaf
+//! leaves where both carry authoritative declaration identities; any other leaf
 //! pairing registers nothing.
 //!
 //! Gated behind `TSZ_DECL_ORIGIN_REDUCTION` (composing with
 //! `TSZ_TYPEPARAM_DECL_IDENTITY`); flag-OFF this walk never runs.
 
-use crate::types::{FunctionShape, TypeData, TypeId, TypeParamOrigin};
+use crate::types::{FunctionShape, TypeData, TypeId, TypeParamInfo};
 
 use super::super::super::super::{SubtypeChecker, TypeParamEquivalence, TypeResolver};
 
@@ -39,14 +39,14 @@ const COWALK_MAX_DEPTH: u32 = 64;
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Co-walk the two re-minted bodies in lockstep and register the deeper
-    /// corresponding authoritative declaration-origin pairs. No-op unless the
+    /// corresponding authoritative declaration-binder pairs. No-op unless the
     /// decl-origin-reduction flag is on.
     ///
     /// The pushed equivalences are appended after the top-level pairs the caller
     /// already registered; the caller truncates `type_param_equivalences` back to
     /// its scope start at every exit, so this augments the scope without owning
     /// its cleanup.
-    pub(in crate::relations::subtype::rules::functions) fn register_cowalk_leaf_origins(
+    pub(in crate::relations::subtype::rules::functions) fn register_cowalk_leaf_binders(
         &mut self,
         source: &FunctionShape,
         target: &FunctionShape,
@@ -71,8 +71,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     /// Walk `src`/`tgt` structurally in lockstep. At a `TypeParameter`-vs-
-    /// `TypeParameter` leaf where both carry authoritative declaration origins,
-    /// register the origin pair. Recurse into corresponding children only while
+    /// `TypeParameter` leaf where both carry authoritative declaration binders,
+    /// register the binder pair. Recurse into corresponding children only while
     /// the two structural kinds agree; on any kind divergence, stop (do not
     /// register past it).
     fn cowalk_register(
@@ -101,10 +101,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         match (s_data, t_data) {
             // The leaf we care about: two type parameters at the SAME structural
-            // position. Register their origins when both are authoritatively
+            // position. Register their binders when both are authoritatively
             // stamped.
             (TypeData::TypeParameter(s_info), TypeData::TypeParameter(t_info)) => {
-                self.register_leaf_origin_pair(src, tgt, s_info.origin, t_info.origin);
+                self.register_leaf_binder_pair(src, tgt, s_info, t_info);
             }
 
             // Applications: `Kind<F, A>` / `ReaderTaskEither<R, E, A>` etc. Walk
@@ -214,27 +214,30 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
-    /// Register a single deeper leaf origin-pair when both origins are
+    /// Register a single deeper exact-binder pair when both identities are
     /// authoritative and the pair is not already present. Duplicate suppression
     /// keeps the equivalence vector small and avoids re-registering the
     /// top-level pairs the caller already pushed.
-    fn register_leaf_origin_pair(
+    fn register_leaf_binder_pair(
         &mut self,
         src: TypeId,
         tgt: TypeId,
-        s_origin: TypeParamOrigin,
-        t_origin: TypeParamOrigin,
+        s_info: TypeParamInfo,
+        t_info: TypeParamInfo,
     ) {
-        if !s_origin.is_decl_scoped() || !t_origin.is_decl_scoped() {
+        let (Some(s_binder), Some(t_binder)) = (
+            s_info.declaration_binder_key(),
+            t_info.declaration_binder_key(),
+        ) else {
             return;
-        }
+        };
         // Same declaration site on both sides is already an identity; nothing to
         // bridge.
-        if s_origin == t_origin && src == tgt {
+        if s_binder == t_binder && src == tgt {
             return;
         }
         let already = self.type_param_equivalences.iter().any(|eq| {
-            eq.origins == Some((s_origin, t_origin)) || eq.origins == Some((t_origin, s_origin))
+            eq.binders == Some((s_binder, t_binder)) || eq.binders == Some((t_binder, s_binder))
         });
         if already {
             return;
@@ -242,7 +245,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.type_param_equivalences.push(TypeParamEquivalence {
             source: src,
             target: tgt,
-            origins: Some((s_origin, t_origin)),
+            binders: Some((s_binder, t_binder)),
         });
     }
 }

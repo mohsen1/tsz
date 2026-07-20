@@ -92,6 +92,144 @@ class DraftColl extends CollCtor {
     );
 }
 
+/// Polymorphic `this` in a function-valued property's parameter is
+/// contravariant. Resolving it to the base instance for the whole member would
+/// incorrectly accept this narrower callback.
+#[test]
+fn function_property_parameter_this_still_reports_ts2416() {
+    let source = r#"
+interface BaseItem { p: (value: BaseItem) => void; }
+interface ItemFactory { new (): BaseItem; }
+declare const ItemFactory: ItemFactory;
+class DerivedItem extends ItemFactory {
+    p = (value: this) => {};
+}
+"#;
+    assert!(
+        codes(source).contains(&2416),
+        "expected TS2416 for contravariant polymorphic `this`, got {:?}",
+        diagnostics(source)
+    );
+}
+
+/// The polarity rule is structural: nesting and renamed declarations must not
+/// turn a callback parameter into a covariant occurrence.
+#[test]
+fn nested_function_property_parameter_this_still_reports_ts2416_after_rename() {
+    let source = r#"
+type Visitor<Candidate> = (candidate: Candidate) => void;
+interface ParentShape { config: Visitor<ParentShape>; }
+interface ShapeMaker { new (): ParentShape; }
+declare const ShapeMaker: ShapeMaker;
+class DescendantShape extends ShapeMaker {
+    config: Visitor<this> = candidate => {};
+}
+"#;
+    let actual = diagnostics(source);
+    assert!(
+        actual.iter().any(|(code, _)| *code == 2416),
+        "expected nested contravariant `this` to remain incompatible, got {actual:?}"
+    );
+    assert!(
+        !actual.iter().any(|(code, _)| *code == 2526),
+        "nested alias application is a valid class-member `this` position, got {actual:?}"
+    );
+}
+
+/// A direct function return remains covariant even for a property rather than
+/// method syntax, so it keeps the concrete receiver binding.
+#[test]
+fn function_property_direct_this_return_is_covariant() {
+    let source = r#"
+interface RootValue { make: () => RootValue; }
+interface ValueMaker { new (): RootValue; }
+declare const ValueMaker: ValueMaker;
+class BranchValue extends ValueMaker {
+    make = (): this => this;
+}
+"#;
+    let ts2416: Vec<_> = diagnostics(source)
+        .into_iter()
+        .filter(|(code, _)| *code == 2416)
+        .collect();
+    assert!(
+        ts2416.is_empty(),
+        "expected direct covariant `this` return to remain compatible, got {ts2416:?}"
+    );
+}
+
+/// A covariant generic wrapper must not be mistaken for a variance-unknown
+/// occurrence. Its argument follows `Envelope`'s actual output variance.
+#[test]
+fn covariant_generic_application_of_this_remains_compatible() {
+    let source = r#"
+interface Envelope<Payload> { readonly value: Payload; }
+interface RootValue { payload: Envelope<RootValue>; }
+interface ValueMaker { new (): RootValue; }
+declare const ValueMaker: ValueMaker;
+class BranchValue extends ValueMaker {
+    payload: Envelope<this> = { value: this };
+}
+"#;
+    let ts2416: Vec<_> = diagnostics(source)
+        .into_iter()
+        .filter(|(code, _)| *code == 2416)
+        .collect();
+    assert!(
+        ts2416.is_empty(),
+        "expected covariant `Envelope<this>` to bind to the class instance, got {ts2416:?}"
+    );
+}
+
+/// Method parameters retain TypeScript's bivariance exception under
+/// `strictFunctionTypes`; only function-valued properties use the strict
+/// contravariant preservation path.
+#[test]
+fn method_parameter_this_remains_bivariant() {
+    let source = r#"
+interface RootValue { visit(value: RootValue): void; }
+interface ValueMaker { new (): RootValue; }
+declare const ValueMaker: ValueMaker;
+class BranchValue extends ValueMaker {
+    visit(value: this): void {}
+}
+"#;
+    let ts2416: Vec<_> = diagnostics(source)
+        .into_iter()
+        .filter(|(code, _)| *code == 2416)
+        .collect();
+    assert!(
+        ts2416.is_empty(),
+        "expected a method parameter to remain bivariant, got {ts2416:?}"
+    );
+}
+
+/// With `strictFunctionTypes` disabled, function-valued property parameters
+/// use the same compatibility bivariance and must not preserve raw `this`.
+#[test]
+fn function_property_parameter_this_is_bivariant_when_strict_function_types_is_disabled() {
+    let source = r#"
+interface RootValue { visit: (value: RootValue) => void; }
+interface ValueMaker { new (): RootValue; }
+declare const ValueMaker: ValueMaker;
+class BranchValue extends ValueMaker {
+    visit = (value: this): void => {};
+}
+"#;
+    let actual = tsz_checker::test_utils::check_with_options_code_messages(
+        source,
+        tsz_checker::context::CheckerOptions {
+            strict_function_types: false,
+            ..Default::default()
+        },
+    );
+    let ts2416: Vec<_> = actual.iter().filter(|(code, _)| *code == 2416).collect();
+    assert!(
+        ts2416.is_empty(),
+        "expected non-strict function-property parameters to remain bivariant, got {actual:?}"
+    );
+}
+
 /// Declaration order must not matter: the generic signature declared *first* is
 /// still filtered out for a zero-type-argument base, leaving the non-generic
 /// signature as the base.

@@ -213,13 +213,17 @@ impl QueryCache<'_> {
             .borrow()
             .estimated_size_bytes(BUCKET_OVERHEAD);
 
-        // instantiation_cache: (TypeId, CanonicalSubst, u8, Option<TypeId>) -> TypeId
+        // instantiation_cache:
+        // (TypeId, CanonicalSubst, identity_domain, u8, Option<TypeId>) -> TypeId
         // CanonicalSubst's inline SmallVec buffer is included in the
         // `InstantiationCacheKey` size; spilled entries pay extra heap.
         size += self.instantiation_cache.capacity()
             * (BUCKET_OVERHEAD
                 + std::mem::size_of::<InstantiationCacheKey>()
                 + std::mem::size_of::<TypeId>());
+        size += self
+            .instantiation_cache
+            .estimated_key_heap_bytes(BUCKET_OVERHEAD);
 
         // subtype_reduction_cache: request-owned (SortedTypeIds, u8) -> Arc<[TypeId]>
         // Inline buffer is part of `SubtypeReductionKey`; request options

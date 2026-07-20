@@ -546,6 +546,55 @@ impl BinderState {
         (symbols, saw_class_scope)
     }
 
+    /// Whether a type-parameter declaration shadows a same-named parameter
+    /// from a lexically enclosing generic declaration.
+    ///
+    /// Generic declarations own persistent binder scopes. Walking those
+    /// scopes keeps declaration ownership in the binder and automatically
+    /// covers every syntax form that binds type parameters. The declaration's
+    /// own symbol is ignored; only a distinct same-named type-parameter symbol
+    /// in a parent scope counts as lexical shadowing.
+    pub fn type_parameter_has_enclosing_same_name_declaration(
+        &self,
+        arena: &NodeArena,
+        param_name_idx: NodeIndex,
+    ) -> bool {
+        let Some(name) = arena
+            .get_identifier_at(param_name_idx)
+            .map(|identifier| identifier.escaped_text.as_str())
+        else {
+            return false;
+        };
+        let Some(param_symbol) = self.get_node_symbol(param_name_idx) else {
+            return false;
+        };
+        let Some(mut scope_id) = self.find_enclosing_scope(arena, param_name_idx) else {
+            return false;
+        };
+
+        let mut iterations = 0;
+        while scope_id.is_some() {
+            iterations += 1;
+            if iterations > MAX_SCOPE_WALK_ITERATIONS {
+                break;
+            }
+            let Some(scope) = self.scopes.get(scope_id.0 as usize) else {
+                break;
+            };
+            if let Some(candidate) = scope.table.get(name)
+                && candidate != param_symbol
+                && self
+                    .get_symbol(candidate)
+                    .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE_PARAMETER))
+            {
+                return true;
+            }
+            scope_id = scope.parent;
+        }
+
+        false
+    }
+
     // =========================================================================
     // Import Resolution
     // =========================================================================

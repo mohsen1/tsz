@@ -13,7 +13,7 @@ use crate::types::IntrinsicKind;
 use crate::visitors::child_policy::{
     ChildPolicy, for_each_child_with_policy, has_policy_children, try_for_each_child_with_policy,
 };
-use crate::{TypeData, TypeId};
+use crate::{TypeData, TypeId, TypeParamInfo};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::Atom;
 
@@ -142,6 +142,25 @@ pub fn contains_type_parameter_named(
         types,
         type_id,
         |td| matches!(td, TypeData::TypeParameter(info) if info.name == name),
+    )
+}
+
+/// Check if a type contains an occurrence of the supplied logical type-
+/// parameter binder.
+///
+/// Declaration-scoped parameters compare by their authoritative origin;
+/// unstamped parameters retain the legacy name-keyed behavior. The walk uses
+/// the same short-circuiting child policy as [`contains_type_parameter_named`]
+/// and does not materialize the reachable type graph.
+pub fn contains_type_parameter_binder(
+    types: &dyn TypeDatabase,
+    type_id: TypeId,
+    target: TypeParamInfo,
+) -> bool {
+    contains_type_matching(
+        types,
+        type_id,
+        |td| matches!(td, TypeData::TypeParameter(info) if target.is_same_binder(*info)),
     )
 }
 
@@ -315,6 +334,29 @@ pub fn mapped_context_references_type_param_named(
             || mapped.name_type.is_some_and(|name_type| {
                 contains_type_parameter_named(types, name_type, param_name)
             })
+    })
+}
+
+/// Binder-aware variant of [`mapped_context_references_type_param_named`].
+///
+/// This preserves the same full mapped-context traversal while preventing a
+/// captured same-spelled declaration from being classified as the signature's
+/// locally-owned parameter.
+pub fn mapped_context_references_type_param_binder(
+    types: &dyn TypeDatabase,
+    type_id: TypeId,
+    param: TypeParamInfo,
+) -> bool {
+    worklist_contains_matching(types, type_id, &ChildPolicy::EVERYTHING, |_, data| {
+        let Some(TypeData::Mapped(mapped_id)) = data else {
+            return false;
+        };
+        let mapped = types.get_mapped(*mapped_id);
+        contains_type_parameter_binder(types, mapped.constraint, param)
+            || contains_type_parameter_binder(types, mapped.template, param)
+            || mapped
+                .name_type
+                .is_some_and(|name_type| contains_type_parameter_binder(types, name_type, param))
     })
 }
 
@@ -636,16 +678,19 @@ pub fn free_decl_scoped_type_parameter_origins_in(
     types: &dyn TypeDatabase,
     roots: impl IntoIterator<Item = TypeId>,
 ) -> FxHashSet<(crate::types::TypeParamOrigin, Atom)> {
-    use crate::types::{CallSignature, TypeParamInfo, TypeParamOrigin};
+    use crate::types::{CallSignature, TypeParamBinderKey, TypeParamInfo};
 
     fn with_signature_origins(
-        bound: &Arc<[TypeParamOrigin]>,
+        bound: &Arc<[TypeParamBinderKey]>,
         type_params: &[TypeParamInfo],
-    ) -> Arc<[TypeParamOrigin]> {
+    ) -> Arc<[TypeParamBinderKey]> {
         let mut next: Vec<_> = bound.iter().copied().collect();
-        for origin in type_params.iter().map(|param| param.origin) {
-            if origin.is_decl_scoped() && !next.contains(&origin) {
-                next.push(origin);
+        for binder in type_params
+            .iter()
+            .filter_map(|param| param.declaration_binder_key())
+        {
+            if !next.contains(&binder) {
+                next.push(binder);
             }
         }
         if next.len() == bound.len() {
@@ -656,8 +701,8 @@ pub fn free_decl_scoped_type_parameter_origins_in(
     }
 
     fn push_signature(
-        stack: &mut Vec<(TypeId, Arc<[TypeParamOrigin]>)>,
-        bound: &Arc<[TypeParamOrigin]>,
+        stack: &mut Vec<(TypeId, Arc<[TypeParamBinderKey]>)>,
+        bound: &Arc<[TypeParamBinderKey]>,
         signature: &CallSignature,
     ) {
         let signature_bound = with_signature_origins(bound, &signature.type_params);
@@ -685,12 +730,12 @@ pub fn free_decl_scoped_type_parameter_origins_in(
         }
     }
 
-    let empty_scope: Arc<[TypeParamOrigin]> = Arc::from([]);
+    let empty_scope: Arc<[TypeParamBinderKey]> = Arc::from([]);
     let mut stack: Vec<_> = roots
         .into_iter()
         .map(|root| (root, Arc::clone(&empty_scope)))
         .collect();
-    let mut visited: FxHashSet<(TypeId, Arc<[TypeParamOrigin]>)> = FxHashSet::default();
+    let mut visited: FxHashSet<(TypeId, Arc<[TypeParamBinderKey]>)> = FxHashSet::default();
     let mut origins = FxHashSet::default();
 
     while let Some((type_id, bound)) = stack.pop() {
@@ -702,8 +747,10 @@ pub fn free_decl_scoped_type_parameter_origins_in(
         };
         match key {
             TypeData::TypeParameter(info) => {
-                if info.origin.is_decl_scoped() && !bound.contains(&info.origin) {
-                    origins.insert((info.origin, info.name));
+                if let Some(binder) = info.declaration_binder_key()
+                    && !bound.contains(&binder)
+                {
+                    origins.insert((binder.origin, binder.name));
                 }
             }
             TypeData::Infer(_) => {}
@@ -985,6 +1032,42 @@ mod tests {
 
         assert!(contains_type_by_id(&interner, root, child));
         assert!(!contains_type_by_id(&interner, root, TypeId::STRING));
+    }
+
+    #[test]
+    fn type_parameter_binder_predicate_uses_scoped_identity_with_legacy_fallback() {
+        let interner = TypeInterner::new();
+        let file = interner.intern_string("binder-predicate.ts");
+        let name = interner.intern_string("U");
+        let owned = TypeParamInfo {
+            name,
+            constraint: None,
+            default: None,
+            is_const: false,
+            origin: TypeParamOrigin::DeclScoped { file, node: 1 },
+        };
+        let foreign = TypeParamInfo {
+            origin: TypeParamOrigin::DeclScoped { file, node: 2 },
+            ..owned
+        };
+
+        assert!(contains_type_parameter_binder(
+            &interner,
+            interner.fresh_type_param(owned),
+            owned,
+        ));
+        assert!(!contains_type_parameter_binder(
+            &interner,
+            interner.fresh_type_param(foreign),
+            owned,
+        ));
+
+        let unstamped = TypeParamInfo::simple(name);
+        assert!(contains_type_parameter_binder(
+            &interner,
+            interner.fresh_type_param(unstamped),
+            TypeParamInfo::simple(name),
+        ));
     }
 
     #[test]

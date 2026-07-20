@@ -243,9 +243,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if eq.matches_ids(source, target) {
                     return SubtypeResult::True;
                 }
-                if origin_match_enabled
-                    && eq.matches_origins(source_info.origin, target_info.origin)
-                {
+                if origin_match_enabled && eq.matches_binders(source_info, target_info) {
                     return SubtypeResult::True;
                 }
             }

@@ -33,9 +33,19 @@ impl<'a> CheckerState<'a> {
         request: IdentifierPropertyAccessRequest,
     ) -> TypeId {
         let is_this_access = request.is_this_access;
-        let member_type =
-            self.resolve_identifier_property_access_inner(idx, access, name_node, request);
-        self.bind_omitted_base_type_args_for_this_member(member_type, is_this_access)
+        let mut additional_bound_type_params = None;
+        let member_type = self.resolve_identifier_property_access_inner(
+            idx,
+            access,
+            name_node,
+            request,
+            &mut additional_bound_type_params,
+        );
+        self.bind_omitted_base_type_args_for_this_member(
+            member_type,
+            is_this_access,
+            additional_bound_type_params.as_deref(),
+        )
     }
 
     /// Bind "dangling" base-class type parameters of a `this`-member read to the
@@ -60,6 +70,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         member_type: TypeId,
         is_this_access: bool,
+        additional_bound_type_params: Option<&[TypeId]>,
     ) -> TypeId {
         if !is_this_access
             || !crate::query_boundaries::common::contains_free_type_parameters(
@@ -69,7 +80,10 @@ impl<'a> CheckerState<'a> {
         {
             return member_type;
         }
-        let in_scope = self.member_type_parameter_ids_in_scope();
+        let mut in_scope = self.member_type_parameter_ids_in_scope();
+        if let Some(additional_bound_type_params) = additional_bound_type_params {
+            in_scope.extend(additional_bound_type_params.iter().copied());
+        }
         crate::query_boundaries::common::resolve_unbound_type_params_to_defaults(
             self.ctx.types,
             member_type,
@@ -83,6 +97,7 @@ impl<'a> CheckerState<'a> {
         access: &AccessExprData,
         name_node: &Node,
         request: IdentifierPropertyAccessRequest,
+        additional_bound_type_params: &mut Option<Vec<TypeId>>,
     ) -> TypeId {
         let IdentifierPropertyAccessRequest {
             object_type,
@@ -663,6 +678,21 @@ impl<'a> CheckerState<'a> {
                 skip_flow_narrowing,
                 false,
             );
+        }
+        if matches!(result, PropertyAccessResult::PropertyNotFound { .. })
+            && direct_class_this_receiver
+            && let Some((member_type, bound_type_params)) =
+                self.recover_bare_this_lexical_class_header_member(access.expression, property_name)
+        {
+            let result = self.finalize_property_access_result_with_bound_type_params(
+                idx,
+                member_type,
+                skip_flow_narrowing,
+                false,
+                &bound_type_params,
+            );
+            *additional_bound_type_params = Some(bound_type_params);
+            return result;
         }
         // Flow predicate narrowing can produce unions/intersections like
         // `C2 | (C2 & C1)` or `(D1 & C2) | (D1 & C1)`. Looking up properties

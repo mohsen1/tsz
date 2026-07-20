@@ -16,8 +16,8 @@ impl<'a> TypeInstantiator<'a> {
         let cond = self.interner.get_conditional(*cond_id);
         if cond.is_distributive
             && let Some(TypeData::TypeParameter(info)) = self.interner.lookup(cond.check_type)
-            && !self.is_shadowed(info.name)
-            && let Some(substituted) = self.substitution.get(info.name)
+            && !self.is_shadowed(&info)
+            && let Some(substituted) = self.substitution.get_for_type_parameter(&info)
         {
             // When substituting with `never`, the result is `never`
             if substituted == crate::types::TypeId::NEVER {

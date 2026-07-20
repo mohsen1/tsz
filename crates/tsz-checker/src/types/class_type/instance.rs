@@ -23,8 +23,8 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{IndexSignature, PropertyInfo, TypeId, TypeParamInfo, Visibility};
 
-/// Whether Phase 2 swapped in a temporary `enclosing_class` and, if so, the
-/// previous value to restore afterward.
+/// Whether class-instance construction swapped in a temporary
+/// `enclosing_class` and, if so, the previous value to restore afterward.
 ///
 /// This flattens what would otherwise be an `Option<Option<EnclosingClassInfo>>`
 /// (outer = "did we swap?", inner = "the prior enclosing class, possibly none").
@@ -162,6 +162,66 @@ impl ClassInstanceBuilder<'_> {
 }
 
 impl<'a> CheckerState<'a> {
+    /// Whether Phase 0/1 can recover a `this` member while a nested arrow's type
+    /// parameters shadow the class scope. The check short-circuits for
+    /// non-generic classes and reuses one traversal buffer across candidate
+    /// initializers. Expression wrappers and nested class headers/computed names
+    /// preserve lexical `this`; ordinary function and member bodies remain
+    /// boundaries.
+    pub(super) fn class_instance_needs_early_enclosing(
+        &self,
+        class: &tsz_parser::parser::node::ClassData,
+        b: &ClassInstanceBuilder<'_>,
+    ) -> bool {
+        if b.class_type_param_ids.is_empty() {
+            return false;
+        }
+
+        let mut traversal = Vec::new();
+        class.members.nodes.iter().any(|&member_idx| {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    return false;
+                };
+                match member_node.kind {
+                    syntax_kind_ext::PROPERTY_DECLARATION => self
+                        .ctx
+                        .arena
+                        .get_property_decl(member_node)
+                        .is_some_and(|property| {
+                            !self.has_static_modifier(&property.modifiers)
+                                && property.initializer.is_some()
+                                && tsz_parser::syntax::transform_utils::contains_lexical_arrow_function_with_scratch(
+                                    self.ctx.arena,
+                                    property.initializer,
+                                    &mut traversal,
+                                )
+                        }),
+                    syntax_kind_ext::CONSTRUCTOR => self
+                        .ctx
+                        .arena
+                        .get_constructor(member_node)
+                        .is_some_and(|constructor| {
+                            constructor.parameters.nodes.iter().any(|&param_idx| {
+                                let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                                    return false;
+                                };
+                                let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                                    return false;
+                                };
+                                self.has_parameter_property_modifier(&param.modifiers)
+                                    && param.initializer.is_some()
+                                    && tsz_parser::syntax::transform_utils::contains_lexical_arrow_function_with_scratch(
+                                        self.ctx.arena,
+                                        param.initializer,
+                                        &mut traversal,
+                                    )
+                            })
+                        }),
+                    _ => false,
+                }
+            })
+    }
+
     /// Phase 0: Pre-scan annotated properties to build a preliminary partial
     /// `this` type. Property initializers like `n = this.s` need `this` to
     /// resolve during Phase 1. The type builder is called from
@@ -342,6 +402,14 @@ impl<'a> CheckerState<'a> {
                             if !self.has_parameter_property_modifier(&param.modifiers) {
                                 continue;
                             }
+                            if param.initializer.is_some()
+                                && tsz_parser::syntax::transform_utils::contains_this_reference(
+                                    self.ctx.arena,
+                                    param.initializer,
+                                )
+                            {
+                                needs_inherited_prescan_this = true;
+                            }
                             let Some(name) = self.get_property_name(param.name) else {
                                 continue;
                             };
@@ -388,6 +456,14 @@ impl<'a> CheckerState<'a> {
                     .class_instance_type_cache
                     .borrow_mut()
                     .insert(class_idx, prescan_type);
+                if let Some(info) = self
+                    .ctx
+                    .enclosing_class
+                    .as_mut()
+                    .filter(|info| info.class_idx == class_idx)
+                {
+                    info.cached_instance_this_type = Some(prescan_type);
+                }
                 self.ctx.this_type_stack.push(prescan_type);
                 b.prescan_this_type = Some(prescan_type);
                 b.set_pushed_prescan_this();
@@ -839,56 +915,58 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Set up `enclosing_class` for deferred method/accessor body checking, and
-    /// pop the prescan `this` pushed in phase 0. Stores the previous
-    /// `enclosing_class` (if any) on the builder for later restoration.
-    pub(super) fn class_instance_setup_deferred_enclosing<'b>(
+    /// Install the current class for the remaining construction phases and save
+    /// the previous `enclosing_class` for unconditional restoration afterward.
+    /// Early callers may not have published a partial instance cache yet; late
+    /// callers retain the historical `TypeId::ERROR` sentinel. The exact
+    /// parameter identities stored here remain visible when a property
+    /// initializer pushes a same-named local binder.
+    pub(super) fn class_instance_setup_enclosing<'b>(
         &mut self,
         class: &'b tsz_parser::parser::node::ClassData,
         class_idx: NodeIndex,
         b: &mut ClassInstanceBuilder<'b>,
+        cache_may_be_unpublished: bool,
     ) {
-        // Pop the prescan `this` type — Phase 2 will push its own partial type.
+        let prev_enclosing_class = self.ctx.enclosing_class.take();
+        if let Some(ref prev) = prev_enclosing_class {
+            self.ctx.enclosing_class_chain.push(prev.class_idx);
+        }
+        let class_type_param_names: Vec<String> = b
+            .class_type_param_updates
+            .iter()
+            .map(|(name, _, _)| name.clone())
+            .collect();
+        let cached_instance_this_type = self
+            .ctx
+            .class_instance_type_cache
+            .borrow()
+            .get(&class_idx)
+            .copied()
+            .or_else(|| (!cache_may_be_unpublished).then_some(TypeId::ERROR));
+        self.ctx.enclosing_class = Some(EnclosingClassInfo {
+            name: self.get_class_name_from_decl(class_idx),
+            class_idx,
+            member_nodes: class.members.nodes.clone(),
+            in_constructor: false,
+            is_declared: self.is_ambient_class_declaration(class_idx),
+            in_static_property_initializer: false,
+            in_static_member: false,
+            has_super_call_in_current_constructor: false,
+            cached_instance_this_type,
+            type_param_names: class_type_param_names,
+            class_type_parameters: b.class_type_params.clone(),
+            class_type_parameter_ids: b.class_type_param_ids.clone(),
+        });
+        b.restore_enclosing_class = RestoreEnclosingClass::To(prev_enclosing_class);
+    }
+
+    /// Pop the Phase-0 prescan `this` at the original boundary between field
+    /// construction and deferred bodies.
+    pub(super) fn class_instance_finish_prescan_this(&mut self, b: &ClassInstanceBuilder<'_>) {
         if b.pushed_prescan_this() {
             self.ctx.this_type_stack.pop();
         }
-
-        b.restore_enclosing_class =
-            if !b.deferred_methods.is_empty() || !b.deferred_accessors.is_empty() {
-                let prev_enclosing_class = self.ctx.enclosing_class.take();
-                if let Some(ref prev) = prev_enclosing_class {
-                    self.ctx.enclosing_class_chain.push(prev.class_idx);
-                }
-                let class_type_param_names: Vec<String> = b
-                    .class_type_param_updates
-                    .iter()
-                    .map(|(name, _, _)| name.clone())
-                    .collect();
-                self.ctx.enclosing_class = Some(EnclosingClassInfo {
-                    name: self.get_class_name_from_decl(class_idx),
-                    class_idx,
-                    member_nodes: class.members.nodes.clone(),
-                    in_constructor: false,
-                    is_declared: self.is_ambient_class_declaration(class_idx),
-                    in_static_property_initializer: false,
-                    in_static_member: false,
-                    has_super_call_in_current_constructor: false,
-                    cached_instance_this_type: Some(
-                        self.ctx
-                            .class_instance_type_cache
-                            .borrow()
-                            .get(&class_idx)
-                            .copied()
-                            .unwrap_or(TypeId::ERROR),
-                    ),
-                    type_param_names: class_type_param_names,
-                    class_type_parameters: b.class_type_params.clone(),
-                    class_type_parameter_ids: b.class_type_param_ids.clone(),
-                });
-                RestoreEnclosingClass::To(prev_enclosing_class)
-            } else {
-                RestoreEnclosingClass::Skip
-            };
     }
 
     /// Phase 2: Process deferred methods with a partial `this` type so that

@@ -838,6 +838,43 @@ impl<'a> CheckerState<'a> {
         skip_result_flow_for_result: bool,
     ) -> TypeId {
         let result_type = self.resolve_unbound_property_member_defaults(result_type);
+        self.finalize_resolved_property_access_result(
+            idx,
+            result_type,
+            skip_flow_narrowing,
+            skip_result_flow_for_result,
+        )
+    }
+
+    /// Finalize a recovered property while treating the supplied exact class
+    /// binders as in scope for default resolution.
+    pub(crate) fn finalize_property_access_result_with_bound_type_params(
+        &mut self,
+        idx: NodeIndex,
+        result_type: TypeId,
+        skip_flow_narrowing: bool,
+        skip_result_flow_for_result: bool,
+        additional_bound_type_params: &[TypeId],
+    ) -> TypeId {
+        let result_type = self.resolve_unbound_property_member_defaults_with_bound_type_params(
+            result_type,
+            additional_bound_type_params,
+        );
+        self.finalize_resolved_property_access_result(
+            idx,
+            result_type,
+            skip_flow_narrowing,
+            skip_result_flow_for_result,
+        )
+    }
+
+    fn finalize_resolved_property_access_result(
+        &mut self,
+        idx: NodeIndex,
+        result_type: TypeId,
+        skip_flow_narrowing: bool,
+        skip_result_flow_for_result: bool,
+    ) -> TypeId {
         if self.ctx.types.take_union_too_complex()
             || self.property_access_result_exceeds_complexity_limit(result_type)
         {

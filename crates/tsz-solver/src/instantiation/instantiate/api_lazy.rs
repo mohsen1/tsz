@@ -278,7 +278,7 @@ pub(super) fn maybe_evaluate_concrete_conditional(
     branch
 }
 
-/// Check whether `type_id` references a type parameter with the given `name`.
+/// Check whether `type_id` references the given logical type-parameter binder.
 ///
 /// Used to detect circular type parameter defaults. When a default resolves
 /// to (or contains) the parameter it is defaulting, tsc falls back to `any`.
@@ -287,18 +287,18 @@ pub(super) fn maybe_evaluate_concrete_conditional(
 pub(super) fn type_references_param(
     interner: &dyn TypeDatabase,
     type_id: TypeId,
-    param_name: tsz_common::interner::Atom,
+    param: TypeParamInfo,
 ) -> bool {
     if type_id.is_intrinsic() {
         return false;
     }
     match interner.lookup(type_id) {
-        Some(TypeData::TypeParameter(info)) => info.name == param_name,
+        Some(TypeData::TypeParameter(info)) => info.is_same_binder(param),
         Some(TypeData::Union(members_id)) | Some(TypeData::Intersection(members_id)) => {
             let members = interner.type_list(members_id);
             members
                 .iter()
-                .any(|&m| type_references_param(interner, m, param_name))
+                .any(|&m| type_references_param(interner, m, param))
         }
         _ => false,
     }

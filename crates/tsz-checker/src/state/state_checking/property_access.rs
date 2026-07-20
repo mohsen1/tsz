@@ -275,6 +275,17 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn resolve_unbound_property_member_defaults(&self, member_type: TypeId) -> TypeId {
+        self.resolve_unbound_property_member_defaults_with_bound_type_params(member_type, &[])
+    }
+
+    /// Resolve genuinely unbound member parameters while preserving exact
+    /// binders supplied by a recovery path whose lexical owner is not the
+    /// syntactically nearest class.
+    pub(crate) fn resolve_unbound_property_member_defaults_with_bound_type_params(
+        &self,
+        member_type: TypeId,
+        additional_bound_type_params: &[TypeId],
+    ) -> TypeId {
         if !crate::query_boundaries::common::contains_free_type_parameters(
             self.ctx.types,
             member_type,
@@ -282,7 +293,8 @@ impl<'a> CheckerState<'a> {
             return member_type;
         }
 
-        let in_scope = self.member_type_parameter_ids_in_scope();
+        let mut in_scope = self.member_type_parameter_ids_in_scope();
+        in_scope.extend(additional_bound_type_params.iter().copied());
         crate::query_boundaries::common::resolve_unbound_type_params_to_declared_fallbacks(
             self.ctx.types,
             member_type,

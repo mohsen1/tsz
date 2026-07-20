@@ -217,6 +217,35 @@ pub trait NodeAccess {
     fn get_children(&self, index: NodeIndex) -> Vec<NodeIndex>;
 }
 
+impl NodeArena {
+    /// Append a node's children to a caller-owned traversal buffer.
+    ///
+    /// Reusing one buffer avoids allocating a fresh `Vec` at every node in
+    /// iterative syntax scans. Existing consumers that need ownership can keep
+    /// using [`NodeAccess::get_children`].
+    pub(crate) fn append_children(&self, index: NodeIndex, children: &mut Vec<NodeIndex>) {
+        if index.is_none() {
+            return;
+        }
+
+        let Some(node) = self.nodes.get(index.0 as usize) else {
+            return;
+        };
+
+        let _handled = self.collect_name_children(node, children)
+            || self.collect_expression_children(node, children)
+            || self.collect_statement_children(node, children)
+            || self.collect_declaration_children(node, children)
+            || self.collect_import_export_children(node, children)
+            || self.collect_type_children(node, children)
+            || self.collect_member_children(node, children)
+            || self.collect_pattern_children(node, children)
+            || self.collect_jsx_children(node, children)
+            || self.collect_signature_children(node, children)
+            || self.collect_source_children(node, children);
+    }
+}
+
 /// Implementation of `NodeAccess` for `NodeArena`
 impl NodeAccess for NodeArena {
     fn node_info(&self, index: NodeIndex) -> Option<NodeInfo> {
@@ -256,31 +285,8 @@ impl NodeAccess for NodeArena {
     }
 
     fn get_children(&self, index: NodeIndex) -> Vec<NodeIndex> {
-        if index.is_none() {
-            return Vec::new();
-        }
-
-        let Some(node) = self.nodes.get(index.0 as usize) else {
-            return Vec::new();
-        };
-
         let mut children = Vec::new();
-
-        if self.collect_name_children(node, &mut children)
-            || self.collect_expression_children(node, &mut children)
-            || self.collect_statement_children(node, &mut children)
-            || self.collect_declaration_children(node, &mut children)
-            || self.collect_import_export_children(node, &mut children)
-            || self.collect_type_children(node, &mut children)
-            || self.collect_member_children(node, &mut children)
-            || self.collect_pattern_children(node, &mut children)
-            || self.collect_jsx_children(node, &mut children)
-            || self.collect_signature_children(node, &mut children)
-            || self.collect_source_children(node, &mut children)
-        {
-            return children;
-        }
-
+        self.append_children(index, &mut children);
         children
     }
 }

@@ -4,6 +4,7 @@
 //! source-file line cap.
 
 use super::*;
+use crate::query_boundaries::generic_instantiation;
 
 /// Locals from `get_type_of_call_expression_inner` consumed by argument
 /// collection.
@@ -436,7 +437,9 @@ impl<'a> CheckerState<'a> {
                             continue;
                         };
                         let mut partial_substitution =
-                            crate::query_boundaries::common::TypeSubstitution::new();
+                            generic_instantiation::empty_substitution_with_same_domain(
+                                &substitution,
+                            );
                         let mut visited = FxHashSet::default();
                         self.collect_return_context_substitution(
                             param_type,
@@ -509,7 +512,9 @@ impl<'a> CheckerState<'a> {
                                 round1_arg_types[i] = refined_partial;
                             }
                             let mut partial_substitution =
-                                crate::query_boundaries::common::TypeSubstitution::new();
+                                generic_instantiation::empty_substitution_with_same_domain(
+                                    &substitution,
+                                );
                             let mut visited = FxHashSet::default();
                             self.collect_return_context_substitution(
                                 param_type,
@@ -624,7 +629,9 @@ impl<'a> CheckerState<'a> {
                             let names_to_strip: rustc_hash::FxHashSet<_> =
                                 names_to_strip.into_iter().collect();
                             let mut filtered =
-                                crate::query_boundaries::common::TypeSubstitution::new();
+                                generic_instantiation::empty_substitution_with_same_domain(
+                                    &substitution,
+                                );
                             for (&name, &type_id) in substitution.map() {
                                 if !names_to_strip.contains(&name) {
                                     filtered.insert(name, type_id);
@@ -674,7 +681,9 @@ impl<'a> CheckerState<'a> {
                             && !return_context_specializes_return_params
                         {
                             let mut filtered =
-                                crate::query_boundaries::common::TypeSubstitution::new();
+                                generic_instantiation::empty_substitution_with_same_domain(
+                                    &return_context_substitution,
+                                );
                             for (&name, &type_id) in return_context_substitution.map() {
                                 if !return_param_names.contains(&name) {
                                     filtered.insert(name, type_id);
@@ -805,8 +814,10 @@ impl<'a> CheckerState<'a> {
                                         shape_fn_param.type_id,
                                     )
                                 {
-                                    let is_callee_tp =
-                                        shape.type_params.iter().any(|tp| tp.name == tp_info.name);
+                                    let is_callee_tp = shape
+                                        .type_params
+                                        .iter()
+                                        .any(|tp| tp.is_same_binder(tp_info));
                                     // Only override the substitution if it was
                                     // defaulted to the constraint (not inferred
                                     // from concrete arguments).
@@ -958,7 +969,9 @@ impl<'a> CheckerState<'a> {
                             {
                                 let first_branch_type = self.get_type_of_node(first_branch_idx);
                                 let mut first_branch_substitution =
-                                    crate::query_boundaries::common::TypeSubstitution::new();
+                                    generic_instantiation::empty_substitution_with_same_domain(
+                                        &round2_substitution,
+                                    );
                                 let mut visited = FxHashSet::default();
                                 self.collect_return_context_substitution(
                                     callback_shape.return_type,
@@ -1019,7 +1032,9 @@ impl<'a> CheckerState<'a> {
                                     .collect();
                                 if !names_to_strip.is_empty() {
                                     let mut filtered =
-                                        crate::query_boundaries::common::TypeSubstitution::new();
+                                        generic_instantiation::empty_substitution_with_same_domain(
+                                            &contextual_substitution,
+                                        );
                                     for (&name, &type_id) in contextual_substitution.map() {
                                         if !names_to_strip.contains(&name) {
                                             filtered.insert(name, type_id);
@@ -1277,7 +1292,7 @@ impl<'a> CheckerState<'a> {
                     // contextual types so `[]` does not feed raw `T[]` back into inference.
                     let type_param_eraser = {
                         use crate::query_boundaries::common::TypeSubstitution;
-                        let mut sub = TypeSubstitution::new();
+                        let mut sub = TypeSubstitution::for_signature_domain(&shape.type_params);
                         for tp in &shape.type_params {
                             sub.insert(tp.name, tp.constraint.unwrap_or(TypeId::UNKNOWN));
                         }
@@ -1322,7 +1337,7 @@ impl<'a> CheckerState<'a> {
                                 contextual_type,
                             )
                         } else {
-                            crate::query_boundaries::common::TypeSubstitution::new()
+                            generic_instantiation::signature_domain_substitution(&shape.type_params)
                         };
                     trace!(
                         contextual_type = ?contextual_type.map(|t| t.0),

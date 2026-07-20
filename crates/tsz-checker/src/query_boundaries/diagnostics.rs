@@ -419,7 +419,7 @@ pub(crate) fn instantiate_call_signature_for_display(
         return None;
     }
 
-    let subst = TypeSubstitution::from_args(db, &sig.type_params, type_args);
+    let subst = TypeSubstitution::from_signature_args(db, &sig.type_params, type_args);
     Some(CallSignature {
         type_params: Vec::new(),
         params: sig

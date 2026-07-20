@@ -1,8 +1,7 @@
 use crate::query_boundaries::common;
 use crate::state::CheckerState;
-use tsz_common::Atom;
 use tsz_parser::parser::NodeIndex;
-use tsz_solver::{FunctionShape, TypeId};
+use tsz_solver::{FunctionShape, TypeId, TypeParamInfo};
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn direct_round1_literal_index_key_type_params(
@@ -28,14 +27,18 @@ impl<'a> CheckerState<'a> {
             let Some(tp_info) = common::type_param_info(self.ctx.types, param.type_id) else {
                 continue;
             };
-            if !shape.type_params.iter().any(|tp| tp.name == tp_info.name) {
+            if !shape
+                .type_params
+                .iter()
+                .any(|tp| tp.is_same_binder(tp_info))
+            {
                 continue;
             }
             if !type_param_feeds_sensitive_indexed_callback_param(
                 self.ctx.types,
                 shape,
                 sensitive_args,
-                tp_info.name,
+                tp_info,
             ) {
                 continue;
             }
@@ -58,18 +61,18 @@ fn type_param_feeds_sensitive_indexed_callback_param(
     db: &dyn tsz_solver::construction::TypeDatabase,
     shape: &FunctionShape,
     sensitive_args: &[bool],
-    type_param_name: Atom,
+    type_param: TypeParamInfo,
 ) -> bool {
     shape.params.iter().enumerate().any(|(i, param)| {
         sensitive_args.get(i).copied().unwrap_or(false)
-            && type_contains_index_access_indexed_by_param(db, param.type_id, type_param_name, 8)
+            && type_contains_index_access_indexed_by_param(db, param.type_id, type_param, 8)
     })
 }
 
 fn type_contains_index_access_indexed_by_param(
     db: &dyn tsz_solver::construction::TypeDatabase,
     type_id: TypeId,
-    type_param_name: Atom,
+    type_param: TypeParamInfo,
     depth: usize,
 ) -> bool {
     if depth == 0 || type_id.is_any_unknown_or_error() {
@@ -79,58 +82,55 @@ fn type_contains_index_access_indexed_by_param(
     if let Some((object, index)) =
         crate::query_boundaries::checkers::generic::index_access_components(db, type_id)
     {
-        return common::contains_type_parameter_named(db, index, type_param_name)
-            || type_contains_index_access_indexed_by_param(db, object, type_param_name, depth - 1)
-            || type_contains_index_access_indexed_by_param(db, index, type_param_name, depth - 1);
+        return crate::query_boundaries::generic_instantiation::type_contains_type_parameter_binder(
+            db, index, type_param,
+        ) || type_contains_index_access_indexed_by_param(db, object, type_param, depth - 1)
+            || type_contains_index_access_indexed_by_param(db, index, type_param, depth - 1);
     }
 
     if let Some(shape) = common::function_shape_for_type(db, type_id) {
         return shape.params.iter().any(|param| {
-            type_contains_index_access_indexed_by_param(
-                db,
-                param.type_id,
-                type_param_name,
-                depth - 1,
-            )
+            type_contains_index_access_indexed_by_param(db, param.type_id, type_param, depth - 1)
         }) || type_contains_index_access_indexed_by_param(
             db,
             shape.return_type,
-            type_param_name,
+            type_param,
             depth - 1,
         );
     }
 
     match common::classify_for_traversal(db, type_id) {
         common::TypeTraversalKind::Application { base, args, .. } => {
-            type_contains_index_access_indexed_by_param(db, base, type_param_name, depth - 1)
+            type_contains_index_access_indexed_by_param(db, base, type_param, depth - 1)
                 || args.into_iter().any(|arg| {
-                    type_contains_index_access_indexed_by_param(db, arg, type_param_name, depth - 1)
+                    type_contains_index_access_indexed_by_param(db, arg, type_param, depth - 1)
                 })
         }
         common::TypeTraversalKind::TypeParameter {
             constraint,
             default,
-        } => constraint.into_iter().chain(default).any(|ty| {
-            type_contains_index_access_indexed_by_param(db, ty, type_param_name, depth - 1)
-        }),
+        } => constraint
+            .into_iter()
+            .chain(default)
+            .any(|ty| type_contains_index_access_indexed_by_param(db, ty, type_param, depth - 1)),
         common::TypeTraversalKind::Members(members)
         | common::TypeTraversalKind::TemplateLiteral(members) => {
             members.into_iter().any(|member| {
-                type_contains_index_access_indexed_by_param(db, member, type_param_name, depth - 1)
+                type_contains_index_access_indexed_by_param(db, member, type_param, depth - 1)
             })
         }
         common::TypeTraversalKind::Array(inner)
         | common::TypeTraversalKind::Readonly(inner)
         | common::TypeTraversalKind::KeyOf(inner)
         | common::TypeTraversalKind::StringIntrinsic(inner) => {
-            type_contains_index_access_indexed_by_param(db, inner, type_param_name, depth - 1)
+            type_contains_index_access_indexed_by_param(db, inner, type_param, depth - 1)
         }
         common::TypeTraversalKind::Tuple(elements_id) => {
             db.tuple_list(elements_id).iter().any(|element| {
                 type_contains_index_access_indexed_by_param(
                     db,
                     element.type_id,
-                    type_param_name,
+                    type_param,
                     depth - 1,
                 )
             })

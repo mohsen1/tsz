@@ -1433,8 +1433,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // 3. Build the substitution map
                 // Maps generic parameters (e.g., T) to arguments (e.g., string)
                 // This handles default type parameters automatically
-                let subst =
-                    TypeSubstitution::from_args(self.db, &base_shape.type_params, &app.args);
+                let subst = TypeSubstitution::from_signature_args(
+                    self.db,
+                    &base_shape.type_params,
+                    &app.args,
+                );
 
                 // Optimization: If no substitution is needed, return base as-is
                 if subst.is_empty() {

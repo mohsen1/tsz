@@ -400,7 +400,15 @@ pub(crate) fn instantiate_function_shape_preserving_unresolved_params(
     func: &FunctionShape,
     substitution: &TypeSubstitution,
 ) -> FunctionShape {
-    let mut full_substitution = substitution.clone();
+    // JSX Round 1 may produce an empty substitution before callback attributes
+    // are contextually typed. Install the callable's exact ownership domain at
+    // this boundary rather than relying on the producer to have collected a
+    // value already; captured same-spelled binders must remain foreign even in
+    // that empty bootstrap pass.
+    let mut full_substitution = TypeSubstitution::for_signature_domain(&func.type_params);
+    for (&name, &type_id) in substitution.map() {
+        full_substitution.insert(name, type_id);
+    }
     for type_param in &func.type_params {
         if full_substitution.get(type_param.name).is_none() {
             let preserved_type_param = db.as_type_database().type_param(*type_param);
@@ -837,6 +845,57 @@ fn contains_anonymous_object_surface_inner(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use tsz_solver::TypeParamOrigin;
+    use tsz_solver::construction::TypeInterner;
+
+    #[test]
+    fn unresolved_jsx_signature_substitution_preserves_captured_same_named_binder() {
+        let interner = TypeInterner::new();
+        let file = interner.intern_string("jsx-exact-domain.tsx");
+        let name = interner.intern_string("U");
+        let captured = TypeParamInfo {
+            name,
+            constraint: None,
+            default: None,
+            is_const: false,
+            origin: TypeParamOrigin::DeclScoped { file, node: 1 },
+        };
+        let local = TypeParamInfo {
+            origin: TypeParamOrigin::DeclScoped { file, node: 2 },
+            ..captured
+        };
+        let captured_type = interner.fresh_type_param(captured);
+        let local_type = interner.fresh_type_param(local);
+        let function = FunctionShape {
+            type_params: vec![local],
+            params: vec![
+                ParamInfo::unnamed(captured_type),
+                ParamInfo::unnamed(local_type),
+            ],
+            this_type: None,
+            return_type: TypeId::VOID,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        };
+
+        let instantiated = instantiate_function_shape_preserving_unresolved_params(
+            &interner,
+            &function,
+            &TypeSubstitution::new(),
+        );
+
+        assert_eq!(
+            tsz_solver::type_param_info(&interner, instantiated.params[0].type_id),
+            Some(captured),
+        );
+        assert_eq!(
+            tsz_solver::type_param_info(&interner, instantiated.params[1].type_id),
+            Some(local),
+        );
+    }
+
     #[test]
     fn component_element_type_check_uses_relation_outcome_boundary() {
         let source = include_str!("jsx.rs");

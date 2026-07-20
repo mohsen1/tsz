@@ -6,6 +6,7 @@
 mod application_infer;
 mod application_reduction;
 mod array_infer;
+mod callable_relation;
 mod object_infer;
 mod permissive;
 mod phases;
@@ -1642,7 +1643,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             if sig.type_params.len() != type_args.len() {
                 return None;
             }
-            let subst = TypeSubstitution::from_args(interner, &sig.type_params, type_args);
+            let subst =
+                TypeSubstitution::from_signature_args(interner, &sig.type_params, type_args);
             let params: Vec<ParamInfo> = sig
                 .params
                 .iter()
@@ -1843,69 +1845,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
         let specialized = self.try_instantiate_callable_type_params(resolved, args)?;
         Some(self.evaluate(specialized))
-    }
-
-    /// Check if this is a primitive type vs Function/callable target.
-    ///
-    /// Primitive types (string, number, boolean, bigint, symbol) are never
-    /// subtypes of `Function` in TypeScript. However, the structural subtype
-    /// checker may incorrectly find compatibility when it autoboxes the
-    /// primitive to its wrapper type (e.g., `String` has `toString()` and
-    /// `length` which partially overlap with `Function`'s structural shape).
-    ///
-    /// This fast-path prevents false positives like `string extends Function`
-    /// evaluating to true in conditional types.
-    fn is_primitive_vs_function(
-        interner: &dyn crate::construction::TypeDatabase,
-        check_type: TypeId,
-        extends_type: TypeId,
-    ) -> bool {
-        use crate::types::IntrinsicKind;
-        // Check if source is a primitive type
-        let is_primitive = matches!(
-            check_type,
-            TypeId::STRING | TypeId::NUMBER | TypeId::BOOLEAN | TypeId::BIGINT | TypeId::SYMBOL
-        );
-        if !is_primitive {
-            return false;
-        }
-        // Check if target is the Function intrinsic or resolved Function interface
-        if extends_type == TypeId::FUNCTION {
-            return true;
-        }
-        if let Some(crate::types::TypeData::Intrinsic(IntrinsicKind::Function)) =
-            interner.lookup(extends_type)
-        {
-            return true;
-        }
-        // Canonical query (issue #13090): boxed-registry identity first, then
-        // the shared structural fallback — this catches cases where the
-        // Function type was resolved from a Lazy(DefId) to its ObjectShape form.
-        crate::type_queries::is_global_function_interface(interner, extends_type)
-    }
-
-    fn function_intrinsic_extends_callable_target(
-        interner: &dyn crate::construction::TypeDatabase,
-        check_type: TypeId,
-        extends_type: TypeId,
-    ) -> bool {
-        use crate::types::IntrinsicKind;
-
-        let check_is_function_intrinsic = check_type == TypeId::FUNCTION
-            || matches!(
-                interner.lookup(check_type),
-                Some(TypeData::Intrinsic(IntrinsicKind::Function))
-            );
-        if !check_is_function_intrinsic {
-            return false;
-        }
-
-        if function_shape_id(interner, extends_type).is_some() {
-            return true;
-        }
-
-        callable_shape_id(interner, extends_type)
-            .is_some_and(|shape_id| !interner.callable_shape(shape_id).call_signatures.is_empty())
     }
 
     /// Distribute a conditional type over a union.

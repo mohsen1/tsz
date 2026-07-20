@@ -10,7 +10,7 @@
 //!
 //! These tests exercise the REAL relation path (`SubtypeChecker::check_subtype`
 //! with a populated `type_param_equivalences` table), not just the isolated
-//! `matches_origins` helper. They run under the flag-ON process env
+//! `matches_binders` helper. They run under the flag-ON process env
 //! (`TSZ_TYPEPARAM_DECL_IDENTITY=1 TSZ_DECL_ORIGIN_REDUCTION=1`); when the flag
 //! is OFF the origin branch is inert and only the id-keyed match applies, which
 //! these tests also tolerate (the false pair still must not relate, and the
@@ -19,7 +19,7 @@
 
 use crate::construction::TypeInterner;
 use crate::relations::subtype::{SubtypeChecker, TypeParamEquivalence};
-use crate::types::{TypeData, TypeId, TypeParamInfo, TypeParamOrigin};
+use crate::types::{TypeData, TypeId, TypeParamBinderKey, TypeParamInfo, TypeParamOrigin};
 use tsz_common::interner::Atom;
 
 /// Whether the decl-origin consult is active in THIS process (both gate flags
@@ -42,13 +42,30 @@ fn decl(file: u32, node: u32) -> TypeParamOrigin {
 /// DISTINCT ids (the decl-identity stamp differentiates the bare info), which is
 /// exactly the name-collision the WAVE-1 fix must survive.
 fn param_leaf(interner: &TypeInterner, name: &str, origin: TypeParamOrigin) -> TypeId {
-    interner.intern(TypeData::TypeParameter(TypeParamInfo {
+    interner.intern(TypeData::TypeParameter(param_info(interner, name, origin)))
+}
+
+fn fresh_param_leaf(interner: &TypeInterner, name: &str, origin: TypeParamOrigin) -> TypeId {
+    interner.fresh_type_param(param_info(interner, name, origin))
+}
+
+fn param_info(interner: &TypeInterner, name: &str, origin: TypeParamOrigin) -> TypeParamInfo {
+    TypeParamInfo {
         name: interner.intern_string(name),
         constraint: None,
         default: None,
         is_const: false,
         origin,
-    }))
+    }
+}
+
+fn binder_key(interner: &TypeInterner, type_id: TypeId) -> TypeParamBinderKey {
+    match interner.lookup(type_id) {
+        Some(TypeData::TypeParameter(info)) => info
+            .declaration_binder_key()
+            .expect("test parameter must have authoritative binder identity"),
+        other => panic!("expected type parameter, got {other:?}"),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -77,7 +94,7 @@ fn over_relate_oracle_rejects_unregistered_origin_pair() {
     checker.type_param_equivalences.push(TypeParamEquivalence {
         source: t_leaf,
         target: u_leaf,
-        origins: Some((decl(57, 20), decl(5, 20))),
+        binders: Some((binder_key(&interner, t_leaf), binder_key(&interner, u_leaf))),
     });
 
     // KNOWN-FALSE leaf pair: V (file 88, node 3) and W (file 91, node 7) —
@@ -112,7 +129,7 @@ fn over_relate_oracle_rejects_half_registered_origin_pair() {
     checker.type_param_equivalences.push(TypeParamEquivalence {
         source: t_leaf,
         target: u_leaf,
-        origins: Some((decl(57, 20), decl(5, 20))),
+        binders: Some((binder_key(&interner, t_leaf), binder_key(&interner, u_leaf))),
     });
 
     // Source leaf carries the registered T origin; target leaf carries a THIRD
@@ -164,7 +181,7 @@ fn over_relate_oracle_same_origin_both_sides_not_registered_as_pair() {
     checker.type_param_equivalences.push(TypeParamEquivalence {
         source: t_leaf,
         target: u_leaf,
-        origins: Some((decl(57, 20), decl(5, 20))),
+        binders: Some((binder_key(&interner, t_leaf), binder_key(&interner, u_leaf))),
     });
 
     // Two DISTINCT leaves both carrying the T origin but a third leaf carrying a
@@ -202,23 +219,22 @@ fn positive_control_genuine_same_decl_pair_relates() {
     checker.type_param_equivalences.push(TypeParamEquivalence {
         source: a_leaf,
         target: b_leaf,
-        origins: Some((decl(57, 20), decl(5, 20))),
+        binders: Some((binder_key(&interner, a_leaf), binder_key(&interner, b_leaf))),
     });
 
-    // Reduced-body leaves that carry the SAME declaration origins but are freshly
-    // re-interned with a THIRD surface name (the name-keyed re-mint). Because the
-    // origin is preserved and the surface name changed, these leaves intern to
-    // ids DISTINCT from the registered ids — so ONLY the origin consult can
-    // bridge them.
-    let a_remint = param_leaf(&interner, "renamedA", decl(57, 20));
-    let b_remint = param_leaf(&interner, "renamedB", decl(5, 20));
+    // Reduced-body leaves carry the SAME exact declaration binders but can have
+    // fresh TypeIds after reconstruction. The declared names remain part of the
+    // binder keys, which prevents sibling JSDoc parameters sharing one owner
+    // from aliasing through this consult.
+    let a_remint = fresh_param_leaf(&interner, "A", decl(57, 20));
+    let b_remint = fresh_param_leaf(&interner, "B", decl(5, 20));
     assert_ne!(
         a_remint, a_leaf,
-        "the re-minted A leaf must have a distinct id (name changed, origin kept)"
+        "the re-minted A leaf must have a distinct id despite preserving its exact binder"
     );
     assert_ne!(
         b_remint, b_leaf,
-        "the re-minted B leaf must have a distinct id (name changed, origin kept)"
+        "the re-minted B leaf must have a distinct id despite preserving its exact binder"
     );
 
     let related = checker.check_subtype(a_remint, b_remint).is_true();
@@ -275,11 +291,11 @@ fn positive_control_genuine_pair_relates_both_orders() {
     checker.type_param_equivalences.push(TypeParamEquivalence {
         source: a_leaf,
         target: b_leaf,
-        origins: Some((decl(57, 20), decl(5, 20))),
+        binders: Some((binder_key(&interner, a_leaf), binder_key(&interner, b_leaf))),
     });
 
-    let a_remint = param_leaf(&interner, "renamedA", decl(57, 20));
-    let b_remint = param_leaf(&interner, "renamedB", decl(5, 20));
+    let a_remint = fresh_param_leaf(&interner, "A", decl(57, 20));
+    let b_remint = fresh_param_leaf(&interner, "B", decl(5, 20));
 
     let related_reversed = checker.check_subtype(b_remint, a_remint).is_true();
     if origin_consult_active() {
@@ -305,28 +321,40 @@ fn positive_control_genuine_pair_relates_both_orders() {
 
 #[test]
 fn discriminator_matches_genuine_and_rejects_false() {
+    let interner = TypeInterner::new();
+    let source = param_info(&interner, "A", decl(57, 20));
+    let target = param_info(&interner, "B", decl(5, 20));
     let eq = TypeParamEquivalence {
         source: TypeId(100),
         target: TypeId(200),
-        origins: Some((decl(57, 20), decl(5, 20))),
+        binders: Some((
+            source.declaration_binder_key().unwrap(),
+            target.declaration_binder_key().unwrap(),
+        )),
     };
 
-    // Genuine same-origin pair (either order) matches.
-    assert!(eq.matches_origins(decl(57, 20), decl(5, 20)));
-    assert!(eq.matches_origins(decl(5, 20), decl(57, 20)));
+    // Genuine exact-binder pair (either order) matches.
+    assert!(eq.matches_binders(source, target));
+    assert!(eq.matches_binders(target, source));
 
-    // False pairs: any differing (file, node) on either side rejects.
-    assert!(!eq.matches_origins(decl(57, 21), decl(5, 20)));
-    assert!(!eq.matches_origins(decl(57, 20), decl(5, 21)));
-    assert!(!eq.matches_origins(decl(58, 20), decl(5, 20)));
-    assert!(!eq.matches_origins(decl(1, 1), decl(2, 2)));
+    // False pairs: any differing owner or declared name on either side rejects.
+    assert!(!eq.matches_binders(param_info(&interner, "A", decl(57, 21)), target,));
+    assert!(!eq.matches_binders(source, param_info(&interner, "B", decl(5, 21)),));
+    assert!(!eq.matches_binders(param_info(&interner, "A", decl(58, 20)), target,));
+    assert!(!eq.matches_binders(param_info(&interner, "Sibling", decl(57, 20)), target,));
+    assert!(!eq.matches_binders(
+        param_info(&interner, "A", decl(1, 1)),
+        param_info(&interner, "B", decl(2, 2)),
+    ));
 
     // User (unstamped) leaves never match — no declaration site.
-    assert!(!eq.matches_origins(TypeParamOrigin::User, decl(5, 20)));
-    assert!(!eq.matches_origins(decl(57, 20), TypeParamOrigin::User));
-    assert!(!eq.matches_origins(TypeParamOrigin::User, TypeParamOrigin::User));
+    let user_source = param_info(&interner, "A", TypeParamOrigin::User);
+    let user_target = param_info(&interner, "B", TypeParamOrigin::User);
+    assert!(!eq.matches_binders(user_source, target));
+    assert!(!eq.matches_binders(source, user_target));
+    assert!(!eq.matches_binders(user_source, user_target));
 
-    // An id-only equivalence (origins None) never matches on origins.
+    // An id-only equivalence (origins None) never matches on binders.
     let id_only = TypeParamEquivalence::ids(TypeId(100), TypeId(200));
-    assert!(!id_only.matches_origins(decl(57, 20), decl(5, 20)));
+    assert!(!id_only.matches_binders(source, target));
 }

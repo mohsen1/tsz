@@ -1274,6 +1274,57 @@ mod tests {
     }
 
     #[test]
+    fn exact_rewrite_concretizes_outer_constraint_and_keeps_nested_local_identity() {
+        let db = TypeInterner::new();
+        let outer = fresh_param(&db, "Outer");
+        let key = fresh_param(&db, "Key");
+        let local_info = TypeParamInfo {
+            name: db.intern_string("Local"),
+            constraint: Some(db.union(vec![outer, key])),
+            default: None,
+            is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
+        };
+        let local = db.fresh_type_param(local_info);
+        let method = db.function(FunctionShape {
+            type_params: vec![local_info],
+            params: vec![ParamInfo::required(db.intern_string("value"), local)],
+            this_type: None,
+            return_type: local,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: true,
+        });
+        let concrete_key = db.literal_string("table");
+
+        let result =
+            substitute_exact_types(&db, method, &[outer, key], &[TypeId::NUMBER, concrete_key]);
+        let Some(TypeData::Function(shape_id)) = db.lookup(result) else {
+            panic!("expected materialized method, got {:?}", db.lookup(result));
+        };
+        let shape = db.function_shape(shape_id);
+        let rewritten_local = shape.params[0].type_id;
+        assert_eq!(shape.return_type, rewritten_local);
+        assert_eq!(shape.type_params.len(), 1);
+        assert_eq!(
+            db.lookup(rewritten_local),
+            Some(TypeData::TypeParameter(shape.type_params[0])),
+        );
+        assert_eq!(
+            shape.type_params[0].constraint,
+            Some(db.union(vec![TypeId::NUMBER, concrete_key])),
+        );
+        let constraint_members = crate::visitor::collect_all_types(
+            &db,
+            shape.type_params[0]
+                .constraint
+                .expect("local constraint should remain present"),
+        );
+        assert!(!constraint_members.contains(&outer));
+        assert!(!constraint_members.contains(&key));
+    }
+
+    #[test]
     fn exact_rewrite_reaches_parameter_infer_enum_and_substitution_fields() {
         let db = TypeInterner::new();
         let outer = fresh_param(&db, "Outer");

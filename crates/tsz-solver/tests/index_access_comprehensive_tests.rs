@@ -1208,6 +1208,37 @@ fn meta_rereduce_identity_stack_keeps_distinct_decl_scoped_type_params_separate(
 }
 
 #[test]
+fn meta_rereduce_identity_stack_keeps_sibling_jsdoc_owner_params_separate() {
+    use crate::evaluation::evaluate::TypeEvaluator;
+
+    let interner = TypeInterner::new();
+    let file = interner.intern_string("types.js");
+    let first = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: TypeParamOrigin::JsdocOwnerScoped { file, node: 42 },
+    }));
+    let sibling = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("U"),
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: TypeParamOrigin::JsdocOwnerScoped { file, node: 42 },
+    }));
+    let mut evaluator = TypeEvaluator::new(&interner);
+
+    evaluator.seed_meta_rereduce_recursion_identity_for_test(first, 4);
+    let _ = evaluator.recurse_keyof(sibling);
+
+    assert!(
+        !evaluator.has_incomplete_request_verdict(),
+        "sibling JSDoc parameters sharing one owner must remain distinct by name"
+    );
+}
+
+#[test]
 fn meta_rereduce_identity_stack_keeps_user_type_param_names_distinct() {
     use crate::evaluation::evaluate::TypeEvaluator;
 

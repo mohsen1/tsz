@@ -6,6 +6,7 @@ use crate::query_boundaries::checkers::call::is_type_parameter_type;
 use crate::query_boundaries::common;
 use crate::query_boundaries::common::CallResult;
 use crate::query_boundaries::common::ContextualTypeContext;
+use crate::query_boundaries::generic_instantiation;
 use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
@@ -1398,7 +1399,9 @@ impl<'a> CheckerState<'a> {
                 && !same_return_context_application
                 && !return_context_specializes_return_params
             {
-                let mut filtered = crate::query_boundaries::common::TypeSubstitution::new();
+                let mut filtered = generic_instantiation::empty_substitution_with_same_domain(
+                    &return_context_substitution,
+                );
                 for (&name, &type_id) in return_context_substitution.map() {
                     if !return_param_names.contains(&name) {
                         filtered.insert(name, type_id);

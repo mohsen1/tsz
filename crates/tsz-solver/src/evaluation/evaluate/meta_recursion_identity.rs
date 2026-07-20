@@ -26,7 +26,8 @@ pub(super) enum MetaRecursionIdentity {
     InferSource(u64),
     BoundParameter(u32),
     Recursive(u32),
-    TypeParamJsdocComment { file: Atom, pos: u32 },
+    TypeParamJsdocComment { file: Atom, pos: u32, name: Atom },
+    TypeParamJsdocOwner { file: Atom, node: u32, name: Atom },
 }
 
 fn leftmost_index_access_object(
@@ -245,7 +246,18 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
                 MetaRecursionIdentity::TypeParamDecl { file, node }
             }
             TypeParamOrigin::JsdocCommentScoped { file, pos } => {
-                MetaRecursionIdentity::TypeParamJsdocComment { file, pos }
+                MetaRecursionIdentity::TypeParamJsdocComment {
+                    file,
+                    pos,
+                    name: info.name,
+                }
+            }
+            TypeParamOrigin::JsdocOwnerScoped { file, node } => {
+                MetaRecursionIdentity::TypeParamJsdocOwner {
+                    file,
+                    node,
+                    name: info.name,
+                }
             }
             TypeParamOrigin::InferPlaceholder { id } => MetaRecursionIdentity::InferPlaceholder(id),
             TypeParamOrigin::InferSource { id, .. } => MetaRecursionIdentity::InferSource(id),

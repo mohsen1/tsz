@@ -1,4 +1,5 @@
 use crate::query_boundaries::common::{self, TypeSubstitution};
+use crate::query_boundaries::generic_instantiation;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_common::Atom;
@@ -22,8 +23,11 @@ impl<'a> CheckerState<'a> {
                 let Some(tp) = common::type_param_info(self.ctx.types, referenced) else {
                     continue;
                 };
-                if tracked_type_params.contains(&tp.name)
-                    && target != TypeId::UNKNOWN
+                if generic_instantiation::substitution_domain_contains_type_parameter(
+                    substitution,
+                    &tp,
+                    tracked_type_params,
+                ) && target != TypeId::UNKNOWN
                     && target != TypeId::ERROR
                     && !self.return_context_binding_target_blocked(
                         referenced,
@@ -64,7 +68,11 @@ impl<'a> CheckerState<'a> {
                     common::index_access_parts(self.ctx.types, awaited_arg)
                 && common::is_number_type(self.ctx.types, indexed_key)
                 && let Some(tp) = common::type_param_info(self.ctx.types, indexed_object)
-                && tracked_type_params.contains(&tp.name)
+                && generic_instantiation::substitution_domain_contains_type_parameter(
+                    substitution,
+                    &tp,
+                    tracked_type_params,
+                )
                 && target != TypeId::UNKNOWN
                 && target != TypeId::ERROR
                 && !self.return_context_binding_target_blocked(

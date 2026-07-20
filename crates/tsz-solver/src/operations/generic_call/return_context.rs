@@ -95,23 +95,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // context-sensitive-argument case, e.g. `arrayFilter(x => …)`
             // against a generic contextual signature): tsc keeps the call
             // generic, so the result re-quantifies the callee's own parameter.
-            // When it instead resolved to a *free enclosing* type parameter
-            // (the outer `T` of the caller's own generic function — a DIFFERENT
-            // parameter name), tsc keeps it as a free reference in the result
-            // (`() => T`) rather than quantifying it into a fresh signature
-            // (`<T>() => T`): that type parameter is bound by the enclosing
-            // scope, not by this call's result. (A same-named enclosing
-            // parameter is indistinguishable from the unresolved-own case under
-            // name-keyed `User` identity — #14344; the hoist is the pre-existing
-            // behavior for that corner.)
-            if !info.is_infer_placeholder() && info.name != tp.name {
+            // When it instead resolved to a *free enclosing* type parameter,
+            // tsc keeps it as a free reference in the result (`() => T`) rather
+            // than quantifying it into a fresh signature (`<T>() => T`). Exact
+            // declaration identity distinguishes that captured binder even when
+            // it has the same spelling; unstamped parameters retain the legacy
+            // name-keyed fallback.
+            if !info.is_infer_placeholder() && !tp.is_same_binder(info) {
                 continue;
             }
             if seen.insert(info.name)
-                && crate::contains_type_parameter_named(
+                && crate::visitor::contains_type_parameter_binder(
                     self.interner.as_type_database(),
                     return_type,
-                    info.name,
+                    info,
                 )
             {
                 hoisted.push(info);
@@ -440,10 +437,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let target_is_bare_outer_param = hkt_application_unknown_drop_fix_enabled()
             && matches!(
                 self.interner.lookup(target),
-                Some(TypeData::TypeParameter(t)) if !tracked_type_params.contains(&t.name)
+                Some(TypeData::TypeParameter(t))
+                    if !substitution
+                        .domain_contains_type_parameter(&t, tracked_type_params)
             );
         if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(source)
-            && tracked_type_params.contains(&tp.name)
+            && substitution.domain_contains_type_parameter(&tp, tracked_type_params)
             && target != TypeId::UNKNOWN
             && target != TypeId::ERROR
             && substitution.get(tp.name).is_none()
@@ -453,12 +452,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // A bare outer-scope param target is exempt (flag-ON): it is the
             // contextual binding itself, not a nested contaminant.
             && (target_is_bare_outer_param
-                || !self.target_contains_untracked_type_params(target, tracked_type_params))
+                || !self.target_contains_untracked_type_params(
+                    target,
+                    tracked_type_params,
+                    substitution,
+                ))
             // Don't insert if target contains OTHER tracked type parameters.
             // This prevents incorrect mappings when both TResult1 and TResult2
             // from a source union would be mapped to the same target that
             // references both of them.
-            && !self.type_references_other_tracked_params(target, tp.name, tracked_type_params)
+            && !self.type_references_other_tracked_params(
+                target,
+                &tp,
+                tracked_type_params,
+                substitution,
+            )
         {
             substitution.insert(tp.name, target);
             return;
@@ -483,7 +491,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let all_tracked_type_params = !non_nullish.is_empty()
                 && non_nullish.iter().all(|&member| {
                     if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(member) {
-                        tracked_type_params.contains(&tp.name)
+                        substitution.domain_contains_type_parameter(&tp, tracked_type_params)
                     } else {
                         false
                     }
@@ -531,7 +539,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 .into_iter()
                 .filter(|member| *member != TypeId::NULL && *member != TypeId::UNDEFINED)
             {
-                let mut member_substitution = TypeSubstitution::new();
+                let mut member_substitution = substitution.empty_with_same_domain();
                 let mut member_visited = FxHashSet::default();
                 self.collect_return_context_substitution(
                     source,
@@ -630,7 +638,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 for (i, source_param) in source_fn.params.iter().enumerate() {
                     if let Some(TypeData::TypeParameter(tp)) =
                         self.interner.lookup(source_param.type_id)
-                        && tracked_type_params.contains(&tp.name)
+                        && substitution.domain_contains_type_parameter(&tp, tracked_type_params)
                         && substitution.get(tp.name).is_none()
                         && let Some(target_type) = if source_param.rest {
                             if let Some(target_param) = target_fn.params.get(i)
@@ -667,7 +675,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 }
                 if let Some(TypeData::TypeParameter(tp)) =
                     self.interner.lookup(source_fn.return_type)
-                    && tracked_type_params.contains(&tp.name)
+                    && substitution.domain_contains_type_parameter(&tp, tracked_type_params)
                     && substitution.get(tp.name).is_none()
                     && target_fn.return_type != TypeId::UNKNOWN
                     && target_fn.return_type != TypeId::ERROR
@@ -929,7 +937,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             if source_args.len() == target_args.len() {
                 let has_tracked_source_arg = source_args.iter().any(|&arg| {
                     if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(arg) {
-                        tracked_type_params.contains(&tp.name)
+                        substitution.domain_contains_type_parameter(&tp, tracked_type_params)
                     } else {
                         false
                     }
@@ -993,9 +1001,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 })
             && source_args.len() == 1
             && let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(source_args[0])
-            && tracked_type_params.contains(&tp.name)
+            && substitution.domain_contains_type_parameter(&tp, tracked_type_params)
             && substitution.get(tp.name).is_none()
-            && !self.target_contains_untracked_type_params(target, tracked_type_params)
+            && !self.target_contains_untracked_type_params(
+                target,
+                tracked_type_params,
+                substitution,
+            )
         {
             // Verify: Application(Base, [target]) should evaluate to target
             // for the substitution to be correct.
@@ -1023,7 +1035,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ) {
         // Direct TypeParameter leaf — insert without guards
         if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(source)
-            && tracked_type_params.contains(&tp.name)
+            && substitution.domain_contains_type_parameter(&tp, tracked_type_params)
             && target != TypeId::UNKNOWN
             && target != TypeId::ERROR
             && substitution.get(tp.name).is_none()
@@ -1097,26 +1109,28 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     fn type_references_other_tracked_params(
         &self,
         type_id: TypeId,
-        exclude_name: tsz_common::Atom,
+        exclude: &TypeParamInfo,
         tracked: &FxHashSet<tsz_common::Atom>,
+        substitution: &TypeSubstitution,
     ) -> bool {
         if type_id.is_intrinsic() {
             return false;
         }
         if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(type_id) {
-            return tp.name != exclude_name && tracked.contains(&tp.name);
+            return !tp.is_same_binder(*exclude)
+                && substitution.domain_contains_type_parameter(&tp, tracked);
         }
         match self.interner.lookup(type_id) {
             Some(TypeData::Union(members_id) | TypeData::Intersection(members_id)) => {
                 let members = self.interner.type_list(members_id);
-                members
-                    .iter()
-                    .any(|&m| self.type_references_other_tracked_params(m, exclude_name, tracked))
+                members.iter().any(|&m| {
+                    self.type_references_other_tracked_params(m, exclude, tracked, substitution)
+                })
             }
             Some(TypeData::Application(app_id)) => {
                 let app = self.interner.type_application(app_id);
                 app.args.iter().any(|&arg| {
-                    self.type_references_other_tracked_params(arg, exclude_name, tracked)
+                    self.type_references_other_tracked_params(arg, exclude, tracked, substitution)
                 })
             }
             _ => false,
@@ -1130,25 +1144,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         &self,
         type_id: TypeId,
         tracked: &FxHashSet<tsz_common::Atom>,
+        substitution: &TypeSubstitution,
     ) -> bool {
         if type_id.is_intrinsic() {
             return false;
         }
         if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(type_id) {
-            return !tracked.contains(&tp.name);
+            return !substitution.domain_contains_type_parameter(&tp, tracked);
         }
         match self.interner.lookup(type_id) {
             Some(TypeData::Union(members_id) | TypeData::Intersection(members_id)) => {
                 let members = self.interner.type_list(members_id);
                 members
                     .iter()
-                    .any(|&m| self.target_contains_untracked_type_params(m, tracked))
+                    .any(|&m| self.target_contains_untracked_type_params(m, tracked, substitution))
             }
             Some(TypeData::Application(app_id)) => {
                 let app = self.interner.type_application(app_id);
-                app.args
-                    .iter()
-                    .any(|&arg| self.target_contains_untracked_type_params(arg, tracked))
+                app.args.iter().any(|&arg| {
+                    self.target_contains_untracked_type_params(arg, tracked, substitution)
+                })
             }
             _ => false,
         }
@@ -1169,6 +1184,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         let mut substitution = TypeSubstitution::new();
+        substitution.protect_type_parameters(&func.type_params);
         if func.is_constructor {
             let return_type_eval = self.evaluate_return_context_match_type(func.return_type);
             let contextual_app = crate::type_queries::get_application_info(
@@ -1689,6 +1705,40 @@ mod tests {
         fn is_assignable_to(&mut self, _source: TypeId, _target: TypeId) -> bool {
             true
         }
+    }
+
+    #[test]
+    fn return_context_does_not_bind_foreign_same_named_scoped_parameter() {
+        let interner = TypeInterner::new();
+        let file = interner.intern_string("return-context-domain.ts");
+        let name = interner.intern_string("U");
+        let owned = TypeParamInfo {
+            name,
+            constraint: None,
+            default: None,
+            is_const: false,
+            origin: crate::types::TypeParamOrigin::DeclScoped { file, node: 1 },
+        };
+        let foreign = interner.fresh_type_param(TypeParamInfo {
+            origin: crate::types::TypeParamOrigin::DeclScoped { file, node: 2 },
+            ..owned
+        });
+        let func = FunctionShape {
+            type_params: vec![owned],
+            params: Vec::new(),
+            this_type: None,
+            return_type: foreign,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        };
+        let mut checker = BoundaryChecker;
+        let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+        let substitution =
+            evaluator.compute_return_context_substitution(&func, Some(TypeId::STRING));
+
+        assert!(substitution.get(name).is_none());
     }
 
     #[test]

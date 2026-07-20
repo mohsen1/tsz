@@ -17,6 +17,20 @@ use tracing::trace;
 use super::FinishGenericCallResolutionArgs;
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
+    /// Register the exact declaration-scoped identities owned by `func`.
+    ///
+    /// Declaration origins are stable across reconstructed `TypeId`s, including
+    /// occurrences below nested generic return signatures, so installation is
+    /// O(type params) and needs no graph walk. The common unstamped signature
+    /// remains on the legacy name-only path.
+    fn protect_call_owned_type_parameters(
+        &self,
+        func: &FunctionShape,
+        substitution: &mut TypeSubstitution,
+    ) {
+        substitution.protect_type_parameters(&func.type_params);
+    }
+
     /// Inference vars a context-sensitive callback argument reaches only through
     /// a callback **parameter** (contravariant) position, never a callback
     /// **return** (covariant) position. Round 2 body inference cannot recover
@@ -83,7 +97,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             substitution,
             type_param_vars,
             type_param_placeholder_atoms,
-            local_type_param_names,
             var_map,
             direct_param_vars,
             callback_placeholder_subst,
@@ -153,6 +166,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             self.callback_param_only_inference_vars(func, callback_placeholder_subst, var_map);
 
         let mut final_subst = TypeSubstitution::new();
+        self.protect_call_owned_type_parameters(func, &mut final_subst);
         let mut infer_subst_cache: Option<TypeSubstitution> = None;
         // Track type parameters that fell back to their defaults because inference
         // produced no candidates. For these, we should NOT check argument assignability
@@ -278,8 +292,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                     crate::operations::generic_call::foreign_param_shapes::is_bare_foreign_type_param_shape(
                                         self.interner.as_type_database(),
                                         bound,
-                                        local_type_param_names,
-                                        type_param_placeholder_atoms,
+                                        &func.type_params,
+                                        var_map,
                                     )
                                 });
                             let mut ty = if all_return_type {
@@ -337,25 +351,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                         for (other_tp, &other_var) in
                                             func.type_params.iter().zip(type_param_vars.iter())
                                         {
-                                            if other_tp.name == tp.name {
+                                            if other_tp.is_same_binder(*tp) {
                                                 continue;
                                             }
                                             let Some(other_constraint) = other_tp.constraint else {
                                                 continue;
                                             };
-                                            let direct_constraint_on_current =
-                                                crate::type_param_info(
+                                            let constraint_references_current =
+                                                crate::visitor::contains_type_parameter_binder(
                                                     self.interner.as_type_database(),
                                                     other_constraint,
-                                                )
-                                                .is_some_and(|info| info.name == tp.name);
-                                            if !direct_constraint_on_current
-                                                && !crate::visitors::visitor_predicates::contains_type_parameter_named(
-                                                    self.interner,
-                                                    other_constraint,
-                                                    tp.name,
-                                                )
-                                            {
+                                                    *tp,
+                                                );
+                                            if !constraint_references_current {
                                                 continue;
                                             }
                                             let Some(other_constraints) =
@@ -632,8 +640,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 && is_bare_foreign_type_param(
                     self.interner.as_type_database(),
                     ty,
-                    local_type_param_names,
-                    type_param_placeholder_atoms,
+                    &func.type_params,
+                    var_map,
                 ) {
                 let concrete_lower_bounds = lower_bounds
                     .iter()
@@ -642,8 +650,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         is_substantive_inference_candidate(
                             self.interner.as_type_database(),
                             bound,
-                            local_type_param_names,
-                            type_param_placeholder_atoms,
+                            &func.type_params,
+                            var_map,
                         )
                     })
                     .collect::<Vec<_>>();
@@ -670,8 +678,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let contextual_can_replace_foreign_source = is_bare_foreign_type_param(
                     self.interner.as_type_database(),
                     ty,
-                    local_type_param_names,
-                    type_param_placeholder_atoms,
+                    &func.type_params,
+                    var_map,
                 ) && infer_ctx
                     .all_candidates_are_return_type(var);
                 // When a type parameter had NO inference candidates at all
@@ -920,7 +928,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             final_subst.insert(tp.name, ty_for_check);
                             continue;
                         }
-                        // Both are keyof <TypeParam> with same-named params
+                        // Both are `keyof <TypeParam>` with the same logical
+                        // binder. Scoped origins prevent a captured same-spelled
+                        // parameter from satisfying this shortcut.
                         if let (Some(c_inner), Some(t_inner)) = (
                             crate::visitor::keyof_inner_type(self.interner, tp_constraint),
                             crate::visitor::keyof_inner_type(self.interner, constraint_ty),
@@ -928,7 +938,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             Some(crate::TypeData::TypeParameter(c_tp)),
                             Some(crate::TypeData::TypeParameter(t_tp)),
                         ) = (self.interner.lookup(c_inner), self.interner.lookup(t_inner))
-                            && c_tp.name == t_tp.name
+                            && c_tp.is_same_binder(t_tp)
                         {
                             final_subst.insert(tp.name, ty_for_check);
                             continue;
@@ -1082,7 +1092,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             // Direct TypeParameter rest param (e.g., `...args: T`)
             if let Some(crate::TypeData::TypeParameter(tp_info)) = self.interner.lookup(p.type_id)
-                && constraint_fallback_tp_names.contains(&tp_info.name)
+                && func.type_params.iter().any(|type_param| {
+                    constraint_fallback_tp_names.contains(&type_param.name)
+                        && type_param.is_same_binder(tp_info)
+                })
             {
                 return true;
             }
@@ -1096,7 +1109,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         && let Some(crate::TypeData::TypeParameter(tp_info)) =
                             self.interner.lookup(elem.type_id)
                     {
-                        return constraint_fallback_tp_names.contains(&tp_info.name);
+                        return func.type_params.iter().any(|type_param| {
+                            constraint_fallback_tp_names.contains(&type_param.name)
+                                && type_param.is_same_binder(tp_info)
+                        });
                     }
                     false
                 });
@@ -1287,15 +1303,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let app = self.interner.application(func.return_type, resolved_args);
             self.interner.store_display_alias(return_type, app);
         }
-        let tracked_final_type_params: FxHashSet<_> =
-            func.type_params.iter().map(|tp| tp.name).collect();
         let mut instantiated_params: Vec<ParamInfo> = {
             let mut finalized = Vec::with_capacity(instantiated_params.len());
             for param in instantiated_params {
                 let type_id = self.finalize_instantiated_param_type(
                     param.type_id,
                     &final_arg_subst,
-                    &tracked_final_type_params,
+                    &func.type_params,
                 );
                 finalized.push(ParamInfo {
                     name: param.name,
@@ -1450,12 +1464,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     let param_type = self
                         .param_type_for_arg_index(&func.params, index, final_args.len())
                         .unwrap_or(expected);
-                    let should_skip = default_fallback_tp_names.iter().any(|&tp_name| {
-                        crate::visitors::visitor_predicates::contains_type_parameter_named(
-                            self.interner,
-                            param_type,
-                            tp_name,
-                        )
+                    let should_skip = func.type_params.iter().any(|type_param| {
+                        default_fallback_tp_names.contains(&type_param.name)
+                            && crate::visitor::contains_type_parameter_binder(
+                                self.interner.as_type_database(),
+                                param_type,
+                                *type_param,
+                            )
                     });
                     if should_skip {
                         tracing::debug!(
@@ -1486,7 +1501,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             && !constraint_fallback_tp_names.contains(&tp.name)
                             && matches!(
                                 self.interner.lookup(param_type),
-                                Some(TypeData::TypeParameter(info)) if info.name == tp.name
+                                Some(TypeData::TypeParameter(info)) if tp.is_same_binder(info)
                             )
                     });
                     if is_bare_const_type_param {
@@ -1642,5 +1657,99 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             super::super::inference_helpers::is_concrete_inference_bound(db, bound)
                 && !self.checker.is_assignable_to(bound, contextual_ty)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::TypeInterner;
+    use crate::computation::CompatChecker;
+    use crate::instantiation::instantiate::instantiate_type;
+    use crate::types::{TupleElement, TypeParamInfo, TypeParamOrigin};
+
+    fn scoped_param(name: tsz_common::Atom, file: tsz_common::Atom, node: u32) -> TypeParamInfo {
+        TypeParamInfo {
+            name,
+            constraint: None,
+            default: None,
+            is_const: false,
+            origin: TypeParamOrigin::DeclScoped { file, node },
+        }
+    }
+
+    fn tuple_members(interner: &TypeInterner, type_id: TypeId) -> Vec<TypeId> {
+        let Some(TypeData::Tuple(list_id)) = interner.lookup(type_id) else {
+            panic!("expected tuple, got {:?}", interner.lookup(type_id));
+        };
+        interner
+            .tuple_list(list_id)
+            .iter()
+            .map(|element| element.type_id)
+            .collect()
+    }
+
+    #[test]
+    fn exact_domain_includes_constraint_and_default_only_owned_binders() {
+        let interner = TypeInterner::new();
+        let file = interner.intern_string("metadata.ts");
+        let constraint_name = interner.intern_string("U");
+        let default_name = interner.intern_string("W");
+
+        let owned_constraint_info = scoped_param(constraint_name, file, 1);
+        let foreign_constraint_info = scoped_param(constraint_name, file, 2);
+        let owned_default_info = scoped_param(default_name, file, 3);
+        let foreign_default_info = scoped_param(default_name, file, 4);
+        let owned_constraint = interner.fresh_type_param(owned_constraint_info);
+        let foreign_constraint = interner.fresh_type_param(foreign_constraint_info);
+        let owned_default = interner.fresh_type_param(owned_default_info);
+        let foreign_default = interner.fresh_type_param(foreign_default_info);
+
+        let constraint = interner.tuple(vec![
+            TupleElement::fixed(owned_constraint),
+            TupleElement::fixed(foreign_constraint),
+        ]);
+        let default = interner.tuple(vec![
+            TupleElement::fixed(owned_default),
+            TupleElement::fixed(foreign_default),
+        ]);
+        let carrier = TypeParamInfo {
+            name: interner.intern_string("Carrier"),
+            constraint: Some(constraint),
+            default: Some(default),
+            is_const: false,
+            origin: TypeParamOrigin::User,
+        };
+        let func = FunctionShape {
+            type_params: vec![owned_constraint_info, owned_default_info, carrier],
+            params: Vec::new(),
+            this_type: None,
+            return_type: TypeId::VOID,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        };
+
+        let mut substitution = TypeSubstitution::new();
+        substitution.insert(constraint_name, TypeId::NUMBER);
+        substitution.insert(default_name, TypeId::STRING);
+        let mut checker = CompatChecker::new(&interner);
+        let evaluator = CallEvaluator::new(&interner, &mut checker);
+        evaluator.protect_call_owned_type_parameters(&func, &mut substitution);
+
+        assert_eq!(
+            tuple_members(
+                &interner,
+                instantiate_type(&interner, constraint, &substitution),
+            ),
+            vec![TypeId::NUMBER, foreign_constraint],
+        );
+        assert_eq!(
+            tuple_members(
+                &interner,
+                instantiate_type(&interner, default, &substitution),
+            ),
+            vec![TypeId::STRING, foreign_default],
+        );
     }
 }

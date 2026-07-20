@@ -603,7 +603,7 @@ function second(value) { return value; }
         assert_eq!(params, repeated_params, "same owner must reuse its origin");
         assert!(matches!(
             params[0].origin,
-            tsz_solver::TypeParamOrigin::DeclScoped {
+            tsz_solver::TypeParamOrigin::JsdocOwnerScoped {
                 node,
                 ..
             } if node == owner.0
@@ -674,7 +674,7 @@ fn cross_arena_same_node_index_uses_the_declaring_file_identity() {
     );
 
     let origin_parts = |origin| match origin {
-        tsz_solver::TypeParamOrigin::DeclScoped { file, node } => (file, node),
+        tsz_solver::TypeParamOrigin::JsdocOwnerScoped { file, node } => (file, node),
         other => panic!("expected owner-scoped JSDoc binder, got {other:?}"),
     };
     let (left_file, left_node) = origin_parts(left[0].origin);
@@ -872,6 +872,64 @@ fn comment_binder_identity_survives_incremental_arena_growth_and_is_node_disjoin
     let same_payload_comment_id = types.factory().type_param(same_payload_comment_info);
     assert_ne!(syntax_info.origin, same_payload_comment_info.origin);
     assert_ne!(syntax_id, same_payload_comment_id);
+}
+
+#[test]
+fn one_comment_gives_sibling_template_parameters_distinct_stable_binders() {
+    use tsz_common::comments::get_jsdoc_content;
+
+    let source = "/** @template T, U */\nconst marker = 1;";
+    let file_name = "siblings.js";
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let comment = parser
+        .get_arena()
+        .source_files
+        .first()
+        .and_then(|source_file| source_file.comments.first())
+        .cloned()
+        .expect("JSDoc comment");
+    let jsdoc = get_jsdoc_content(&comment, source);
+
+    let mut binder = tsz_binder::BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        file_name.to_string(),
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let (first_params, first_updates) =
+        checker.push_jsdoc_template_type_parameters_for_comment(comment.pos, &jsdoc);
+    assert_eq!(first_params.len(), 2);
+    let first_ids = [
+        checker.ctx.type_parameter_scope["T"],
+        checker.ctx.type_parameter_scope["U"],
+    ];
+    checker.pop_type_parameters(first_updates);
+
+    assert_eq!(first_params[0].origin, first_params[1].origin);
+    assert_ne!(first_params[0].name, first_params[1].name);
+    assert!(!first_params[0].is_same_binder(first_params[1]));
+    assert_ne!(first_ids[0], first_ids[1]);
+
+    let (repeated_params, repeated_updates) =
+        checker.push_jsdoc_template_type_parameters_for_comment(comment.pos, &jsdoc);
+    let repeated_ids = [
+        checker.ctx.type_parameter_scope["T"],
+        checker.ctx.type_parameter_scope["U"],
+    ];
+    checker.pop_type_parameters(repeated_updates);
+
+    assert_eq!(repeated_params, first_params);
+    assert_eq!(repeated_ids, first_ids);
 }
 
 #[test]

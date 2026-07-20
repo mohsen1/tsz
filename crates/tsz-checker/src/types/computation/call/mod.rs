@@ -20,6 +20,7 @@ mod tail_helpers;
 
 use crate::context::TypingRequest;
 use crate::query_boundaries::checkers::call as call_checker;
+use crate::query_boundaries::generic_instantiation;
 use crate::state::CheckerState;
 use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
 use tsz_parser::parser::{NodeArena, NodeIndex, syntax_kind_ext};
@@ -1214,7 +1215,9 @@ impl<'a> CheckerState<'a> {
                 && !same_return_context_application
                 && !return_context_specializes_return_params
             {
-                let mut filtered = crate::query_boundaries::common::TypeSubstitution::new();
+                let mut filtered = generic_instantiation::empty_substitution_with_same_domain(
+                    &return_context_substitution,
+                );
                 for (&name, &type_id) in return_context_substitution.map() {
                     if !return_param_names.contains(&name) {
                         filtered.insert(name, type_id);

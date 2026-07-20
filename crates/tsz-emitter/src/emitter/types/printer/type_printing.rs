@@ -5,7 +5,9 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::{SyntaxKind, is_ecmascript_identifier_part};
-use tsz_solver::computation::{TypeSubstitution, instantiate_type_cached};
+use tsz_solver::computation::{
+    TypeSubstitution, free_type_params_named, instantiate_type_cached, substitute_exact_types,
+};
 pub(crate) use tsz_solver::type_queries::ts7_sort_order;
 pub(crate) use tsz_solver::types::LiteralValue as SolverLiteralValue;
 use tsz_solver::types::TypeId;

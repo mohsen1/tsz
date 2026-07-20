@@ -3,6 +3,7 @@
 use super::*;
 use crate::query_boundaries::common::TypeSubstitution;
 use crate::query_boundaries::definition_identity::symbol_ref_to_symbol_id;
+use crate::query_boundaries::generic_instantiation;
 
 struct ReturnContextSubstitutionRequest<'a> {
     source: TypeId,
@@ -193,7 +194,11 @@ impl<'a> CheckerState<'a> {
         let visited = &mut *sink.visited;
 
         if let Some(tp) = common::type_param_info(self.ctx.types, source)
-            && tracked_type_params.contains(&tp.name)
+            && generic_instantiation::substitution_domain_contains_type_parameter(
+                substitution,
+                &tp,
+                tracked_type_params,
+            )
             && target != TypeId::UNKNOWN
             && target != TypeId::ERROR
             && !self.return_context_binding_target_blocked(source, target, tracked_type_params)
@@ -236,7 +241,11 @@ impl<'a> CheckerState<'a> {
         // The actual return type of `(x) => 10` is `number`, and the expected return
         // type is `T`, so we infer T = number.
         if let Some(tp) = common::type_param_info(self.ctx.types, target)
-            && tracked_type_params.contains(&tp.name)
+            && generic_instantiation::substitution_domain_contains_type_parameter(
+                substitution,
+                &tp,
+                tracked_type_params,
+            )
             && source != TypeId::UNKNOWN
             && source != TypeId::ERROR
             && !common::references_any_type_param_named(self.ctx.types, source, tracked_type_params)
@@ -261,8 +270,13 @@ impl<'a> CheckerState<'a> {
                 .collect();
             let all_source_members_are_tracked_params = !source_members.is_empty()
                 && source_members.iter().all(|member| {
-                    common::type_param_info(self.ctx.types, *member)
-                        .is_some_and(|tp| tracked_type_params.contains(&tp.name))
+                    common::type_param_info(self.ctx.types, *member).is_some_and(|tp| {
+                        generic_instantiation::substitution_domain_contains_type_parameter(
+                            substitution,
+                            &tp,
+                            tracked_type_params,
+                        )
+                    })
                 });
             if all_source_members_are_tracked_params && source_members.len() == target_members.len()
             {
@@ -290,9 +304,13 @@ impl<'a> CheckerState<'a> {
             }
             let mut matched_structured_member = false;
             for source_member in source_members.iter().copied() {
-                if common::type_param_info(self.ctx.types, source_member)
-                    .is_some_and(|tp| tracked_type_params.contains(&tp.name))
-                {
+                if common::type_param_info(self.ctx.types, source_member).is_some_and(|tp| {
+                    generic_instantiation::substitution_domain_contains_type_parameter(
+                        substitution,
+                        &tp,
+                        tracked_type_params,
+                    )
+                }) {
                     continue;
                 }
                 for target_member in target_members.iter().copied() {
@@ -362,7 +380,8 @@ impl<'a> CheckerState<'a> {
                 .into_iter()
                 .filter(|member| *member != TypeId::NULL && *member != TypeId::UNDEFINED)
             {
-                let mut member_substitution = TypeSubstitution::new();
+                let mut member_substitution =
+                    generic_instantiation::empty_substitution_with_same_domain(substitution);
                 let mut member_visited = FxHashSet::default();
                 self.collect_return_context_substitution(
                     source,
@@ -794,7 +813,8 @@ impl<'a> CheckerState<'a> {
             return TypeSubstitution::new();
         }
 
-        let mut substitution = TypeSubstitution::new();
+        let mut substitution =
+            generic_instantiation::signature_domain_substitution(&shape.type_params);
         let mut visited = FxHashSet::default();
         self.collect_return_context_substitution(
             shape.return_type,

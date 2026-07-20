@@ -7,26 +7,34 @@ use crate::types::{FunctionShape, ParamInfo, TupleElement, TypeId, TypeParamInfo
 use rustc_hash::FxHashMap;
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
-    fn direct_type_param_name(&self, type_id: TypeId) -> Option<tsz_common::Atom> {
-        crate::type_param_info(self.interner.as_type_database(), type_id).map(|info| info.name)
+    fn direct_type_param_info(&self, type_id: TypeId) -> Option<TypeParamInfo> {
+        crate::type_param_info(self.interner.as_type_database(), type_id)
     }
 
     fn function_uses_only_naked_type_params(
         &self,
         func: &FunctionShape,
-        names: &[tsz_common::Atom],
+        type_params: &[TypeParamInfo],
     ) -> bool {
         if func.params.is_empty() {
             return false;
         }
         let params_are_naked = func.params.iter().all(|param| {
-            self.direct_type_param_name(param.type_id)
-                .is_some_and(|name| names.contains(&name))
+            self.direct_type_param_info(param.type_id)
+                .is_some_and(|info| {
+                    type_params
+                        .iter()
+                        .any(|type_param| type_param.is_same_binder(info))
+                })
         });
         params_are_naked
             && self
-                .direct_type_param_name(func.return_type)
-                .is_some_and(|name| names.contains(&name))
+                .direct_type_param_info(func.return_type)
+                .is_some_and(|info| {
+                    type_params
+                        .iter()
+                        .any(|type_param| type_param.is_same_binder(info))
+                })
     }
 
     pub(super) fn constrain_return_context_params_with_rest(
@@ -235,7 +243,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             source_tp_count = source_fn.type_params.len(),
             "check_generic_arg_stricter_constraint_mismatch: source_fn"
         );
-        let source_tp_names: Vec<_> = source_fn.type_params.iter().map(|tp| tp.name).collect();
         let all_source_tps_constrained = source_fn
             .type_params
             .iter()
@@ -245,10 +252,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             .iter()
             .filter_map(|tp| tp.constraint)
             .any(|constraint| constraint != TypeId::UNKNOWN);
-        if source_tp_names.is_empty()
+        if source_fn.type_params.is_empty()
             || !all_source_tps_constrained
             || !has_strict_source_constraint
-            || !self.function_uses_only_naked_type_params(&source_fn, &source_tp_names)
+            || !self.function_uses_only_naked_type_params(&source_fn, &source_fn.type_params)
         {
             tracing::trace!(
                 "check_generic_arg_stricter_constraint_mismatch: source shape is not strict naked generic, skip"
@@ -268,36 +275,43 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Get the target fn shape first so we know which names are local
         // (bound inside raw_param_type itself, e.g. `<V>(x: T, y: V) => T`).
         let target_fn = Self::get_contextual_signature_cached(self.interner, raw_param_type)?;
-        let local_tp_names: rustc_hash::FxHashSet<tsz_common::Atom> =
-            target_fn.type_params.iter().map(|tp| tp.name).collect();
-
-        let outer_tp_names: Vec<_> = outer_type_params.iter().map(|tp| tp.name).collect();
-        if !self.function_uses_only_naked_type_params(&target_fn, &outer_tp_names) {
+        if !self.function_uses_only_naked_type_params(&target_fn, outer_type_params) {
             tracing::trace!(
                 "check_generic_arg_stricter_constraint_mismatch: target shape is not naked outer generic, skip"
             );
             return None;
         }
 
-        let mut all_tp_names_in_param = Vec::new();
+        let mut all_type_params_in_param = Vec::new();
         for ty in target_fn
             .params
             .iter()
             .map(|param| param.type_id)
             .chain(std::iter::once(target_fn.return_type))
         {
-            let name = self.direct_type_param_name(ty)?;
-            if local_tp_names.contains(&name) {
+            let info = self.direct_type_param_info(ty)?;
+            if target_fn
+                .type_params
+                .iter()
+                .any(|type_param| type_param.is_same_binder(info))
+            {
                 return None;
             }
-            if !all_tp_names_in_param.contains(&name) {
-                all_tp_names_in_param.push(name);
+            if !all_type_params_in_param
+                .iter()
+                .any(|type_param: &TypeParamInfo| type_param.is_same_binder(info))
+            {
+                all_type_params_in_param.push(info);
             }
         }
 
         let relevant_outer_tps: Vec<&TypeParamInfo> = outer_type_params
             .iter()
-            .filter(|tp| all_tp_names_in_param.contains(&tp.name))
+            .filter(|tp| {
+                all_type_params_in_param
+                    .iter()
+                    .any(|info| tp.is_same_binder(*info))
+            })
             .collect();
 
         tracing::trace!(
@@ -372,7 +386,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ) -> Option<TypeSubstitution> {
         use crate::type_queries::unpack_tuple_rest_parameter;
 
-        let mut tracked_type_params: Vec<_> = source.type_params.iter().map(|tp| tp.name).collect();
+        let mut tracked_type_params = source.type_params.clone();
         for source_ty in source
             .params
             .iter()
@@ -384,9 +398,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             {
                 if let Some(info) = crate::type_param_info(self.interner.as_type_database(), nested)
                     && info.is_infer_source()
-                    && !tracked_type_params.contains(&info.name)
+                    && !tracked_type_params
+                        .iter()
+                        .any(|type_param| type_param.is_same_binder(info))
                 {
-                    tracked_type_params.push(info.name);
+                    tracked_type_params.push(info);
                 }
             }
         }
@@ -425,7 +441,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
             if let Some(info) =
                 crate::type_param_info(self.interner.as_type_database(), source_effective)
-                && tracked_type_params.contains(&info.name)
+                && tracked_type_params
+                    .iter()
+                    .any(|type_param| type_param.is_same_binder(info))
             {
                 contextual_candidates
                     .entry(info.name)
@@ -455,12 +473,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         let mut substitution = TypeSubstitution::new();
-        for &tp_name in &tracked_type_params {
-            // `tracked_type_params` mixes source-function param atoms with
-            // collected placeholder atoms, so classify the bare atom by name.
-            let is_source_placeholder = super::atom_names_source_inference_placeholder(
-                self.interner.resolve_atom(tp_name).as_str(),
-            );
+        substitution.protect_type_parameters(&source.type_params);
+        for tracked_type_param in &tracked_type_params {
+            let tp_name = tracked_type_param.name;
+            let is_source_placeholder = tracked_type_param.is_infer_source();
             let replacement = contextual_candidates
                 .get(&tp_name)
                 .and_then(|candidates| candidates.first().copied())
@@ -468,7 +484,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     source
                         .type_params
                         .iter()
-                        .find(|tp| tp.name == tp_name)
+                        .find(|type_param| type_param.is_same_binder(*tracked_type_param))
                         .and_then(|tp| tp.constraint)
                 });
             let Some(replacement) =

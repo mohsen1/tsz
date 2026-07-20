@@ -139,7 +139,7 @@ impl<'a> CheckerState<'a> {
                                 .default
                                 .or(param.constraint)
                                 .unwrap_or(TypeId::UNKNOWN);
-                            let substitution = TypeSubstitution::from_args(
+                            let substitution = TypeSubstitution::from_signature_args(
                                 self.ctx.types,
                                 &sig.type_params[..param_index],
                                 &args,
@@ -276,7 +276,7 @@ impl<'a> CheckerState<'a> {
                         .default
                         .or(param.constraint)
                         .unwrap_or(TypeId::UNKNOWN);
-                    let substitution = TypeSubstitution::from_args(
+                    let substitution = TypeSubstitution::from_signature_args(
                         self.ctx.types,
                         &sig.type_params[..param_index],
                         &args,
@@ -337,7 +337,7 @@ impl<'a> CheckerState<'a> {
             }
 
             let substitution =
-                TypeSubstitution::from_args(self.ctx.types, &sig.type_params, type_args);
+                TypeSubstitution::from_signature_args(self.ctx.types, &sig.type_params, type_args);
             let constraint = crate::query_boundaries::common::instantiate_type_preserving_meta(
                 self.ctx.types,
                 constraint,

@@ -79,9 +79,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ) -> SubtypeResult {
         // Type parameter vs type parameter
         if let Some(t_info) = type_param_info(self.interner, target) {
-            // A shared *name* is only a legacy proxy for parameter identity.
-            // Declaration-stamped parameters are distinguished directly;
-            // unstamped parameters retain the constraint-based fallback below.
+            // A shared *name* is only a proxy for legacy unstamped parameters.
+            // Declaration-stamped parameters carry an authoritative binder
+            // identity, so an inner generic and a captured outer parameter with
+            // the same spelling must remain unrelated.
             // When two legacy parameters carry constraints that are provably incompatible
             // (neither assignable to the other), the parameters are definitely
             // distinct — `tsc` treats them as unrelated and reports the failure
@@ -92,7 +93,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // same-parameter case may short-circuit to `True`; the distinct
             // case must fall through to constraint transitivity so a genuine
             // mismatch is reported instead of silently accepted.
-            if s_info.name == t_info.name
+            if s_info.is_same_binder(t_info)
                 && !self.same_named_type_params_are_distinct(s_info, &t_info)
             {
                 return SubtypeResult::True;
@@ -133,7 +134,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // (or a supertype), and the mapped type doesn't remove optionality,
         // the source type parameter is assignable.
         if let Some(mapped_id) = mapped_type_id(self.interner, target)
-            && self.is_assignable_to_homomorphic_mapped(s_info.name, s_info.constraint, mapped_id)
+            && self.is_assignable_to_homomorphic_mapped(*s_info, mapped_id)
         {
             return SubtypeResult::True;
         }
@@ -144,7 +145,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if let Some(app_id) = application_id(self.interner, target)
             && let Some(expanded) = self.try_expand_application_type(target, app_id)
             && let Some(mapped_id) = mapped_type_id(self.interner, expanded)
-            && self.is_assignable_to_homomorphic_mapped(s_info.name, s_info.constraint, mapped_id)
+            && self.is_assignable_to_homomorphic_mapped(*s_info, mapped_id)
         {
             return SubtypeResult::True;
         }
@@ -161,7 +162,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if t_elems.len() == 1
                     && t_elems[0].rest
                     && type_param_info(self.interner, t_elems[0].type_id)
-                        .is_some_and(|inner_info| inner_info.name == s_info.name)
+                        .is_some_and(|inner_info| s_info.is_same_binder(inner_info))
                     && self.type_param_constraint_allows_spread_identity(
                         s_info.constraint,
                         target_is_readonly,
@@ -259,8 +260,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// - `T <: Required<T>` — NO, T may have optional properties that Required demands
     fn is_assignable_to_homomorphic_mapped(
         &mut self,
-        source_name: Atom,
-        source_constraint: Option<TypeId>,
+        source: TypeParamInfo,
         mapped_id: MappedTypeId,
     ) -> bool {
         let mapped = self.interner.mapped_type(mapped_id);
@@ -310,7 +310,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     let identity = match index_access_parts(self.interner, mapped.template) {
                         Some((template_obj, template_idx)) => {
                             let name_matches = type_param_info(self.interner, template_idx)
-                                .is_some_and(|idx_param| idx_param.name == mapped.type_param.name);
+                                .is_some_and(|idx_param| {
+                                    mapped.type_param.is_same_binder(idx_param)
+                                });
                             name_matches
                                 && self.peel_homomorphic_identity_mapped_source(template_obj)
                                     == source
@@ -333,7 +335,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     let Some(idx_param) = type_param_info(self.interner, template_idx) else {
                         return false;
                     };
-                    if idx_param.name != mapped.type_param.name {
+                    if !mapped.type_param.is_same_binder(idx_param) {
                         return false;
                     }
                     let full_key_set = self.interner.keyof(template_obj);
@@ -378,13 +380,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // - Same name: T <: { [K in keyof T]: T[K] } (direct match)
         // - Constraint-based: U extends T => U <: Partial<T>
         if let Some(source_param) = type_param_info(self.interner, constraint_source)
-            && source_param.name == source_name
+            && source.is_same_binder(source_param)
         {
             return true;
         }
 
         // Check if source constraint is assignable to the mapped type source
-        if let Some(constraint) = source_constraint {
+        if let Some(constraint) = source.constraint {
             return self.check_subtype(constraint, constraint_source).is_true();
         }
 

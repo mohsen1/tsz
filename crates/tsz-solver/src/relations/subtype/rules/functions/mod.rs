@@ -27,7 +27,7 @@ use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
 /// behavior — used when generic signatures need to be compared structurally after
 /// erasing their type parameter identities.
 pub(super) fn erase_type_params_to_constraints(type_params: &[TypeParamInfo]) -> TypeSubstitution {
-    let mut sub = TypeSubstitution::new();
+    let mut sub = TypeSubstitution::for_signature_domain(type_params);
     for tp in type_params {
         sub.insert(tp.name, tp.constraint.unwrap_or(TypeId::UNKNOWN));
     }
@@ -40,7 +40,7 @@ pub(super) fn erase_type_params_to_constraints(type_params: &[TypeParamInfo]) ->
 /// signature comparison path (`signaturesRelatedTo` with `erase = true`) where
 /// multiple overloaded signatures are compared against a target.
 pub(super) fn erase_type_params_to_any(type_params: &[TypeParamInfo]) -> TypeSubstitution {
-    let mut sub = TypeSubstitution::new();
+    let mut sub = TypeSubstitution::for_signature_domain(type_params);
     for tp in type_params {
         sub.insert(tp.name, TypeId::ANY);
     }
@@ -145,12 +145,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     pub(crate) fn type_param_appears_in_mapped_context(
         &self,
         type_id: TypeId,
-        param_name: tsz_common::interner::Atom,
+        param: TypeParamInfo,
     ) -> bool {
-        crate::visitors::visitor_predicates::mapped_context_references_type_param_named(
+        crate::visitors::visitor_predicates::mapped_context_references_type_param_binder(
             self.interner,
             type_id,
-            param_name,
+            param,
         )
     }
 
@@ -161,9 +161,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ) -> bool {
         use crate::type_queries::unpack_tuple_rest_parameter;
 
-        let tracked_type_params: FxHashSet<_> =
-            source.type_params.iter().map(|tp| tp.name).collect();
-        if tracked_type_params.is_empty() {
+        if source.type_params.is_empty() {
             return false;
         }
 
@@ -222,7 +220,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // vs `Action1<...>` when K appears in both `type: K` and
             // `listener: (ev: WindowEventMap[K]) => any`).
             if let Some(info) = type_param_info(self.interner, s_effective)
-                && tracked_type_params.contains(&info.name)
+                && source
+                    .type_params
+                    .iter()
+                    .any(|type_param| type_param.is_same_binder(info))
             {
                 contextual_candidates
                     .entry(info.name)
@@ -532,7 +533,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             type_param_info(self.interner, source_type),
             type_param_info(self.interner, target_type),
         ) {
-            return source_param.name == target_param.name;
+            return source_param.is_same_binder(target_param);
         }
         if let (Some(source_app_id), Some(target_app_id)) = (
             crate::visitor::application_id(self.interner, source_type),
@@ -1150,7 +1151,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Alpha-rename the source function's own type parameters before contextual
         // inference so outer target type parameters with the same names do not collide
         // in the inference context.
-        let mut rename_substitution = TypeSubstitution::new();
+        let mut rename_substitution = TypeSubstitution::for_signature_domain(&source.type_params);
         let mut renamed_type_params = Vec::with_capacity(source.type_params.len());
         let mut rename_buf = String::with_capacity(32);
         for (index, tp) in source.type_params.iter().enumerate() {
@@ -1459,7 +1460,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 return Err(e.clone());
             }
         }
-        let mut substitution = TypeSubstitution::new();
+        let mut substitution = TypeSubstitution::for_signature_domain(&source.type_params);
         for (original_tp, renamed_tp) in source
             .type_params
             .iter()
@@ -1556,13 +1557,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     && fallback_ty.is_none()
                     && original_tp.constraint.is_none()
                     && (source.params.iter().any(|param| {
-                        self.type_param_appears_in_mapped_context(param.type_id, original_tp.name)
+                        self.type_param_appears_in_mapped_context(param.type_id, *original_tp)
                     }) || source.this_type.is_some_and(|this_type| {
-                        self.type_param_appears_in_mapped_context(this_type, original_tp.name)
-                    }) || self.type_param_appears_in_mapped_context(
-                        source.return_type,
-                        original_tp.name,
-                    )));
+                        self.type_param_appears_in_mapped_context(this_type, *original_tp)
+                    }) || self
+                        .type_param_appears_in_mapped_context(source.return_type, *original_tp)));
             let fallback = if self.strict_function_types {
                 TypeId::UNKNOWN
             } else {
@@ -1587,7 +1586,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // `S <: { value: S }` instead of the unsatisfiable
         // `S <: { value: __infer_src_ctx_0 }`.
         if !deferred_self_referential_constraints.is_empty() {
-            let mut renamed_solution = TypeSubstitution::new();
+            let mut renamed_solution =
+                TypeSubstitution::for_signature_domain(&renamed_source.type_params);
             for (original_tp, renamed_tp) in source
                 .type_params
                 .iter()

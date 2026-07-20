@@ -417,6 +417,24 @@ impl<'a> CheckerState<'a> {
                         let resolved_base_type = self.resolve_lazy_type(resolved_base_type);
                         let resolved_base_type = self.evaluate_type_with_env(resolved_base_type);
 
+                        // `ThisType` behaves as a type parameter constrained by
+                        // the current class. Preserve its raw marker only for a
+                        // proven strict contravariant occurrence. Function-valued
+                        // properties are strict under `strictFunctionTypes`, while
+                        // methods retain TypeScript's bivariance exception;
+                        // generic wrappers compose their actual structural
+                        // variance in the solver query.
+                        let preserve_polymorphic_this = !info.is_static
+                            && !info.is_method
+                            && self.ctx.strict_function_types()
+                            && crate::query_boundaries::variance::contains_this_type_in_strict_contravariant_position_with_resolver(
+                                self.ctx.types,
+                                &self.ctx,
+                                resolved_member_type,
+                            );
+                        if preserve_polymorphic_this {
+                            self.ctx.this_type_stack.push(self.ctx.types.this_type());
+                        }
                         let should_report = if info.is_method || info.is_static {
                             should_report_member_type_mismatch_bivariant(
                                 self,
@@ -432,7 +450,9 @@ impl<'a> CheckerState<'a> {
                                 info.name_idx,
                             )
                         };
-
+                        if preserve_polymorphic_this {
+                            self.ctx.this_type_stack.pop();
+                        }
                         if should_report {
                             if info.is_static {
                                 let error_idx =

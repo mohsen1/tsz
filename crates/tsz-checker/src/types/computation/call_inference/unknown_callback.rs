@@ -89,10 +89,17 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            let mut substitution = common::TypeSubstitution::new();
+            let mut substitution =
+                crate::query_boundaries::generic_instantiation::signature_domain_substitution(
+                    &shape.type_params,
+                );
             for tp in &shape.type_params {
                 let mentioned_in_callback_params = callback_shape.params.iter().any(|param| {
-                    common::contains_type_parameter_named(self.ctx.types, param.type_id, tp.name)
+                    crate::query_boundaries::generic_instantiation::type_contains_type_parameter_binder(
+                        self.ctx.types,
+                        param.type_id,
+                        *tp,
+                    )
                 });
                 if !mentioned_in_callback_params {
                     continue;
@@ -108,7 +115,7 @@ impl<'a> CheckerState<'a> {
                                 index,
                                 other_index,
                                 other_arg_idx,
-                                tp.name,
+                                *tp,
                             )
                         });
                 if has_other_evidence {
@@ -174,7 +181,7 @@ impl<'a> CheckerState<'a> {
         current_index: usize,
         other_index: usize,
         other_arg_idx: NodeIndex,
-        type_param_name: tsz_common::Atom,
+        type_param: tsz_solver::TypeParamInfo,
     ) -> bool {
         if other_index == current_index {
             return false;
@@ -191,8 +198,11 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
-        if !common::contains_type_parameter_named(self.ctx.types, other_param_type, type_param_name)
-        {
+        if !crate::query_boundaries::generic_instantiation::type_contains_type_parameter_binder(
+            self.ctx.types,
+            other_param_type,
+            type_param,
+        ) {
             return false;
         }
         let other_arg_type = arg_types
@@ -215,10 +225,10 @@ impl<'a> CheckerState<'a> {
         // `T`, not inference FROM the lambda back to `T`.
         self.resolved_callback_contextual_signature(other_param_type)
             .is_some_and(|other_callback| {
-                common::contains_type_parameter_named(
+                crate::query_boundaries::generic_instantiation::type_contains_type_parameter_binder(
                     self.ctx.types,
                     other_callback.return_type,
-                    type_param_name,
+                    type_param,
                 )
             })
     }
