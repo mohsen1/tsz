@@ -275,7 +275,10 @@ impl<'a> DeclarationEmitter<'a> {
         }
         self.js_deferred_prototype_method_statements =
             js_commonjs_expando_declarations.prototype_methods;
-        self.js_prototype_assignments = self.collect_js_prototype_assignments(source_file);
+        let (js_prototype_assignments, js_prototype_object_base_names) =
+            self.collect_js_prototype_assignments(source_file);
+        self.js_prototype_assignments = js_prototype_assignments;
+        self.js_prototype_object_base_names = js_prototype_object_base_names;
         let js_class_like =
             self.collect_js_class_like_prototype_members(source_file, &self.js_export_equals_names);
         self.js_class_like_prototype_members = js_class_like.members;
@@ -780,6 +783,11 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
         let late_bound_members = self.collect_ts_late_bound_assignment_members(func.name);
+        let should_emit_prototype_namespace = self.should_emit_js_function_prototype_namespace(
+            func.name,
+            func.body,
+            !late_bound_members.is_empty(),
+        );
         let function_jsdoc = if self.source_is_js_file {
             self.function_like_jsdoc_for_node(func_idx)
         } else {
@@ -823,6 +831,7 @@ impl<'a> DeclarationEmitter<'a> {
                 func_idx,
                 is_exported,
                 is_exported,
+                should_emit_prototype_namespace,
                 &jsdoc_overload_signatures,
             ) {
                 if should_emit_late_bound_namespace {
@@ -863,7 +872,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.write("export ");
         }
         if self.should_emit_declare_keyword(is_exported)
-            || (is_exported && self.has_direct_js_prototype_object_initializer(func.name))
+            || (is_exported && should_emit_prototype_namespace)
         {
             self.write("declare ");
         }

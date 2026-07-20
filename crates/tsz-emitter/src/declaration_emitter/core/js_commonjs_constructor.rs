@@ -86,22 +86,14 @@ impl<'a> DeclarationEmitter<'a> {
         true
     }
 
-    pub(in crate::declaration_emitter) fn has_direct_js_prototype_object_initializer(
+    pub(in crate::declaration_emitter) fn should_emit_js_function_prototype_namespace(
         &self,
         name_idx: NodeIndex,
+        body_idx: NodeIndex,
+        has_late_bound_members: bool,
     ) -> bool {
-        self.source_is_js_file
-            && self
-                .arena
-                .get_identifier_text(name_idx)
-                .and_then(|name| self.js_prototype_assignments.get(name))
-                .is_some_and(|assignments| {
-                    assignments.iter().any(|assignment| {
-                        !assignment.receiver_is_commonjs
-                            && assignment.whole_prototype
-                            && assignment.initializer_is_object_literal
-                    })
-                })
+        self.js_function_prototype_namespace_initializer(name_idx, body_idx, has_late_bound_members)
+            .is_some()
     }
 
     fn js_function_prototype_namespace_initializer(
@@ -114,6 +106,9 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
         let name = self.arena.get_identifier_text(name_idx)?;
+        if self.js_prototype_object_base_names.contains(name) {
+            return None;
+        }
         let assignments = self.js_prototype_assignments.get(name)?;
         let [assignment] = assignments.as_slice() else {
             return None;
@@ -269,11 +264,15 @@ impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn collect_js_prototype_assignments(
         &self,
         source_file: &tsz_parser::parser::node::SourceFileData,
-    ) -> FxHashMap<String, Vec<JsPrototypeAssignment>> {
+    ) -> (
+        FxHashMap<String, Vec<JsPrototypeAssignment>>,
+        rustc_hash::FxHashSet<String>,
+    ) {
         let mut assignments = FxHashMap::<String, Vec<JsPrototypeAssignment>>::default();
+        let mut prototype_object_base_names = rustc_hash::FxHashSet::<String>::default();
         let mut active_commonjs_exports = FxHashMap::<String, String>::default();
         if !self.source_is_js_file {
-            return assignments;
+            return (assignments, prototype_object_base_names);
         }
         for &stmt_idx in &source_file.statements.nodes {
             if self
@@ -304,6 +303,13 @@ impl<'a> DeclarationEmitter<'a> {
             if let Some((mut name, mut assignment)) =
                 self.js_prototype_assignment_for_statement(stmt_idx)
             {
+                if assignment.whole_prototype
+                    && assignment.initializer_is_object_literal
+                    && let Some(base_name) =
+                        self.js_prototype_object_base_name(assignment.expression)
+                {
+                    prototype_object_base_names.insert(base_name);
+                }
                 if assignment.receiver_is_commonjs
                     && let Some(local_name) = active_commonjs_exports.get(&name)
                 {
@@ -313,7 +319,27 @@ impl<'a> DeclarationEmitter<'a> {
                 assignments.entry(name).or_default().push(assignment);
             }
         }
-        assignments
+        (assignments, prototype_object_base_names)
+    }
+
+    fn js_prototype_object_base_name(&self, initializer: NodeIndex) -> Option<String> {
+        let initializer_node = self.arena.get(initializer)?;
+        let object = self.arena.get_literal_expr(initializer_node)?;
+        object.elements.nodes.iter().find_map(|member_idx| {
+            let member_node = self.arena.get(*member_idx)?;
+            let property = self.arena.get_property_assignment(member_node)?;
+            let property_name = self
+                .arena
+                .get_identifier_text(property.name)
+                .or_else(|| self.arena.get_literal_text(property.name))?;
+            if property_name != "__proto__" {
+                return None;
+            }
+            let base = self
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(property.initializer);
+            self.get_identifier_text(base)
+        })
     }
 
     fn js_prototype_assignment_for_statement(

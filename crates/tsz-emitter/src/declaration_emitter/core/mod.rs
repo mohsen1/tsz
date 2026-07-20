@@ -279,6 +279,11 @@ pub struct DeclarationEmitter<'a> {
     pub(super) js_class_like_prototype_stmts: FxHashSet<NodeIndex>,
     /// Whole-prototype and prototype-member JS assignments, grouped once per source file.
     pub(super) js_prototype_assignments: FxHashMap<String, Vec<JsPrototypeAssignment>>,
+    /// Local JS bindings used as the direct `__proto__` value of another
+    /// whole-prototype object assignment. These connected prototype surfaces
+    /// stay on the existing class projection until the namespace projection
+    /// can represent the whole inheritance group.
+    pub(super) js_prototype_object_base_names: FxHashSet<String>,
     /// JS `Class.staticMember = value` declarations folded into a merged namespace.
     pub(super) js_class_static_members: FxHashMap<String, Vec<(NodeIndex, NodeIndex)>>,
     /// Expression statements consumed by the JS static-member collector.

@@ -123,6 +123,48 @@ VectorSurface.prototype = {
 }
 
 #[test]
+fn test_js_whole_prototype_base_of_rich_surface_keeps_class_projection() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/** @param {number} size */
+export function PrototypeBase(size) {
+    /** @type {number[]} */
+    this.values = new Array(size);
+}
+PrototypeBase.prototype = {
+    first() { return this.values[0]; },
+    last() { return this.values[this.values.length - 1]; }
+};
+
+/** @param {number} size */
+export function PrototypeDerived(size) {
+    PrototypeBase.call(this, size);
+    this.current = size;
+}
+PrototypeDerived.prototype = {
+    __proto__: PrototypeBase,
+    get current() { return this.values[0]; },
+    /** @param {number} value */
+    set current(value) { this.values[0] = value; }
+};
+"#,
+    );
+
+    assert!(
+        output.contains("export function PrototypeBase(size: number): void;")
+            && output.contains("export class PrototypeBase {")
+            && output.contains("first(): any;")
+            && output.contains("last(): any;"),
+        "Expected the prototype base to retain its complete class projection: {output}"
+    );
+    assert!(
+        output.contains("__proto__: typeof PrototypeBase;")
+            && !output.contains("namespace PrototypeBase"),
+        "Expected the connected prototype group to avoid a split namespace/class surface: {output}"
+    );
+}
+
+#[test]
 fn test_js_whole_prototype_namespace_preserves_intervening_jsdoc() {
     let output = emit_js_dts_with_usage_analysis(
         r#"

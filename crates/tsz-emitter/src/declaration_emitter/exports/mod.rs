@@ -1579,6 +1579,11 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
         let late_bound_members = self.collect_ts_late_bound_assignment_members(func.name);
+        let should_emit_prototype_namespace = self.should_emit_js_function_prototype_namespace(
+            func.name,
+            func.body,
+            !late_bound_members.is_empty(),
+        );
 
         if self.source_is_js_file {
             let jsdoc_overload_signatures = self.jsdoc_overload_signatures_for_node(func_idx);
@@ -1586,6 +1591,7 @@ impl<'a> DeclarationEmitter<'a> {
                 func_idx,
                 true,
                 self.should_emit_export_keyword(),
+                should_emit_prototype_namespace,
                 &jsdoc_overload_signatures,
             ) {
                 if should_emit_late_bound_namespace {
@@ -1619,9 +1625,7 @@ impl<'a> DeclarationEmitter<'a> {
         if self.should_emit_export_keyword() {
             self.write("export ");
         }
-        if self.should_emit_declare_keyword(true)
-            || self.has_direct_js_prototype_object_initializer(func.name)
-        {
+        if self.should_emit_declare_keyword(true) || should_emit_prototype_namespace {
             self.write("declare ");
         }
         self.write("function ");
