@@ -562,10 +562,12 @@ impl<'a> CheckerState<'a> {
         } else {
             resolved_type
         };
-        let Some(then_type) = query::thenable_property_type(self.ctx.types, receiver_type) else {
+        let then_type = self
+            .enclosing_class_application_then_declared_type(type_id)
+            .or_else(|| query::thenable_property_type(self.ctx.types, receiver_type));
+        let Some(then_type) = then_type else {
             return ThenableAwaitInfo::default();
         };
-
         if check_this_context
             && let (
                 tsz_solver::operations::CallResult::ThisTypeMismatch { expected_this, .. },
@@ -624,6 +626,62 @@ impl<'a> CheckerState<'a> {
             rejected_this_type,
             has_callable_then: true,
         }
+    }
+
+    /// Recover the actual `then` declaration for an application of the
+    /// enclosing class. Deferred class publication exposes a rest-`any`
+    /// placeholder until later methods have been checked; `await` needs the
+    /// fulfillment callback parameter now.
+    ///
+    /// The recovery is deliberately narrow: exact enclosing-class identity, a
+    /// direct non-static method declaration, and an exact
+    /// class-binder/application-argument substitution. Ordinary structural
+    /// lookup remains the fallback and `implements` clauses are not used as
+    /// evidence of thenability.
+    fn enclosing_class_application_then_declared_type(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<TypeId> {
+        let (class_idx, class_type_parameter_arity) = {
+            let enclosing = self.ctx.enclosing_class.as_ref()?;
+            (
+                enclosing.class_idx,
+                enclosing.class_type_parameter_ids.len(),
+            )
+        };
+        let app = query::promise_application_parts(self.ctx.types, type_id)?;
+        if class_type_parameter_arity != app.args().len() {
+            return None;
+        }
+        let base_sym_id = query::promise_base_symbol_id(self.ctx.types, app.base(), |def_id| {
+            self.ctx.def_to_symbol_id(def_id)
+        })?;
+        let base_sym_id = self
+            .resolve_alias_symbol(base_sym_id, &mut AliasCycleTracker::new())
+            .unwrap_or(base_sym_id);
+
+        if self.get_class_declaration_from_symbol(base_sym_id)? != class_idx {
+            return None;
+        }
+
+        let then_type = self.direct_enclosing_class_method_declared_type("then")?;
+        let class_type_parameter_ids = self
+            .ctx
+            .enclosing_class
+            .as_ref()
+            .filter(|enclosing| enclosing.class_idx == class_idx)?
+            .class_type_parameter_ids
+            .clone();
+        if class_type_parameter_ids.is_empty() {
+            return Some(then_type);
+        }
+        crate::query_boundaries::exact_rewrite::start_session(
+            self.ctx.types,
+            then_type,
+            &class_type_parameter_ids,
+            app.args(),
+        )
+        .map(|(rewritten, _)| rewritten)
     }
 
     /// Extract type argument from a Promise-like base type.

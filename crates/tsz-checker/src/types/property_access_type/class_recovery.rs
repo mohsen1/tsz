@@ -9,6 +9,82 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// Returns the actual declared callable surface for a named instance method
+    /// on the class currently being built.
+    ///
+    /// Phase-2 class publication intentionally gives deferred methods a cheap
+    /// rest-`any` placeholder. Semantic consumers that need a method's parameter
+    /// surface before final publication can use this bounded symbol-table lookup
+    /// instead of scanning the provisional object or the whole class body.
+    pub(crate) fn direct_enclosing_class_method_declared_type(
+        &mut self,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        let (class_idx, member_sym_id, declarations) = {
+            let class_idx = self.ctx.enclosing_class.as_ref()?.class_idx;
+            let class_sym_id = self.ctx.binder.get_node_symbol(class_idx)?;
+            let class_symbol = self.ctx.binder.get_symbol(class_sym_id)?;
+            let member_sym_id = class_symbol.members.as_ref()?.get(property_name)?;
+            let declarations = self
+                .ctx
+                .binder
+                .get_symbol(member_sym_id)?
+                .declarations
+                .clone();
+            (class_idx, member_sym_id, declarations)
+        };
+
+        let mut overload_signatures = Vec::new();
+        let mut implementation_signatures = Vec::new();
+        let mut overload_optional = false;
+        let mut implementation_optional = false;
+        for member_idx in declarations {
+            if !self
+                .ctx
+                .declaration_is_local_to_current_arena(member_sym_id, member_idx)
+                || self.nearest_enclosing_class(member_idx) != Some(class_idx)
+            {
+                continue;
+            }
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::METHOD_DECLARATION {
+                continue;
+            }
+            let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
+                continue;
+            };
+            if self.has_static_modifier(&method.modifiers) {
+                continue;
+            }
+            let signature = self.call_signature_parameter_surface_from_method(method, member_idx);
+            if method.body.is_none() {
+                overload_optional |= method.question_token;
+                overload_signatures.push(signature);
+            } else {
+                implementation_optional |= method.question_token;
+                implementation_signatures.push(signature);
+            }
+        }
+        let (signatures, optional) = if overload_signatures.is_empty() {
+            (implementation_signatures, implementation_optional)
+        } else {
+            (overload_signatures, overload_optional)
+        };
+        if signatures.is_empty() {
+            return None;
+        }
+
+        let method_type =
+            class_type_boundary::class_method_callable_type(self.ctx.types, signatures);
+        Some(class_type_boundary::optional_class_member_type(
+            self.ctx.types,
+            method_type,
+            optional,
+        ))
+    }
+
     /// Recover a bare-`this` member whose syntactically nearest class is only a
     /// class-header evaluation boundary, not the owner of lexical `this`.
     ///
