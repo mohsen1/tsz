@@ -37,6 +37,17 @@ use tsz_solver::construction::TypeInterner;
 
 pub(crate) type JsNestedModuleExportNamespaces = FxHashMap<NodeIndex, Vec<(NodeIndex, NodeIndex)>>;
 
+#[derive(Clone, Copy)]
+pub(super) struct JsPrototypeAssignment {
+    pub(super) statement: NodeIndex,
+    pub(super) expression: NodeIndex,
+    pub(super) receiver_is_commonjs: bool,
+    pub(super) receiver_aliases_local: bool,
+    pub(super) whole_prototype: bool,
+    pub(super) member_name: Option<NodeIndex>,
+    pub(super) initializer_is_object_literal: bool,
+}
+
 /// Declaration emitter for .d.ts files
 pub struct DeclarationEmitter<'a> {
     pub(super) arena: &'a NodeArena,
@@ -266,6 +277,8 @@ pub struct DeclarationEmitter<'a> {
     pub(super) js_class_like_prototype_members: FxHashMap<String, Vec<(NodeIndex, NodeIndex)>>,
     /// Expression statements consumed by the class-like prototype heuristic (skipped during emit).
     pub(super) js_class_like_prototype_stmts: FxHashSet<NodeIndex>,
+    /// Whole-prototype and prototype-member JS assignments, grouped once per source file.
+    pub(super) js_prototype_assignments: FxHashMap<String, Vec<JsPrototypeAssignment>>,
     /// JS `Class.staticMember = value` declarations folded into a merged namespace.
     pub(super) js_class_static_members: FxHashMap<String, Vec<(NodeIndex, NodeIndex)>>,
     /// Expression statements consumed by the JS static-member collector.

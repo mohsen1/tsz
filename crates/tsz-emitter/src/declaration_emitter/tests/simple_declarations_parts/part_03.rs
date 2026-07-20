@@ -1022,7 +1022,7 @@ Point2D.prototype = {
 
     assert!(
         output
-            .contains("/**\n * @param {number} len\n */\nexport function Vec(len: number): void;"),
+            .contains("/**\n * @param {number} len\n */\nexport declare function Vec(len: number): void;"),
         "Expected hoisted function JSDoc to stay multiline: {output}"
     );
     assert!(

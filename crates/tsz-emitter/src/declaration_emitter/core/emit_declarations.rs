@@ -275,6 +275,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
         self.js_deferred_prototype_method_statements =
             js_commonjs_expando_declarations.prototype_methods;
+        self.js_prototype_assignments = self.collect_js_prototype_assignments(source_file);
         let js_class_like =
             self.collect_js_class_like_prototype_members(source_file, &self.js_export_equals_names);
         self.js_class_like_prototype_members = js_class_like.members;
@@ -831,17 +832,27 @@ impl<'a> DeclarationEmitter<'a> {
                         &late_bound_members,
                     );
                 }
-                if !self.emit_js_function_like_class_if_needed(
+                let emitted_prototype_namespace = self.emit_js_function_prototype_namespace(
                     func.name,
-                    &func.parameters,
                     func.body,
                     is_exported,
-                    func_idx,
-                ) {
+                    !late_bound_members.is_empty(),
+                );
+                if !emitted_prototype_namespace
+                    && !self.emit_js_function_like_class_if_needed(
+                        func.name,
+                        &func.parameters,
+                        func.body,
+                        is_exported,
+                        func_idx,
+                    )
+                {
                     self.emit_js_synthetic_prototype_class_if_needed(func.name, is_exported);
                 }
                 self.emit_js_class_static_members_namespace(func.name, is_exported);
-                self.emit_js_namespace_export_aliases_for_name(func.name, is_exported);
+                if !emitted_prototype_namespace {
+                    self.emit_js_namespace_export_aliases_for_name(func.name, is_exported);
+                }
                 return;
             }
         }
@@ -851,7 +862,9 @@ impl<'a> DeclarationEmitter<'a> {
         if is_exported {
             self.write("export ");
         }
-        if self.should_emit_declare_keyword(is_exported) {
+        if self.should_emit_declare_keyword(is_exported)
+            || (is_exported && self.has_direct_js_prototype_object_initializer(func.name))
+        {
             self.write("declare ");
         }
         self.write("function ");
@@ -873,17 +886,27 @@ impl<'a> DeclarationEmitter<'a> {
                     &late_bound_members,
                 );
             }
-            if !self.emit_js_function_like_class_if_needed(
+            let emitted_prototype_namespace = self.emit_js_function_prototype_namespace(
                 func.name,
-                &func.parameters,
                 func.body,
                 is_exported,
-                func_idx,
-            ) {
+                !late_bound_members.is_empty(),
+            );
+            if !emitted_prototype_namespace
+                && !self.emit_js_function_like_class_if_needed(
+                    func.name,
+                    &func.parameters,
+                    func.body,
+                    is_exported,
+                    func_idx,
+                )
+            {
                 self.emit_js_synthetic_prototype_class_if_needed(func.name, is_exported);
             }
             self.emit_js_class_static_members_namespace(func.name, is_exported);
-            self.emit_js_namespace_export_aliases_for_name(func.name, is_exported);
+            if !emitted_prototype_namespace {
+                self.emit_js_namespace_export_aliases_for_name(func.name, is_exported);
+            }
             return;
         }
 
@@ -1313,17 +1336,27 @@ impl<'a> DeclarationEmitter<'a> {
                 &late_bound_members,
             );
         }
-        if !self.emit_js_function_like_class_if_needed(
+        let emitted_prototype_namespace = self.emit_js_function_prototype_namespace(
             func.name,
-            &func.parameters,
             func.body,
             is_exported,
-            func_idx,
-        ) {
+            !late_bound_members.is_empty(),
+        );
+        if !emitted_prototype_namespace
+            && !self.emit_js_function_like_class_if_needed(
+                func.name,
+                &func.parameters,
+                func.body,
+                is_exported,
+                func_idx,
+            )
+        {
             self.emit_js_synthetic_prototype_class_if_needed(func.name, is_exported);
         }
         self.emit_js_class_static_members_namespace(func.name, is_exported);
-        self.emit_js_namespace_export_aliases_for_name(func.name, is_exported);
+        if !emitted_prototype_namespace {
+            self.emit_js_namespace_export_aliases_for_name(func.name, is_exported);
+        }
 
         // Skip comments within the function body to prevent them from
         // leaking as leading comments on the next statement.

@@ -920,7 +920,9 @@ impl<'a> DeclarationEmitter<'a> {
             if emit_export_keyword {
                 self.write("export ");
             }
-            if self.should_emit_declare_keyword(is_exported) {
+            if self.should_emit_declare_keyword(is_exported)
+                || (is_exported && self.has_direct_js_prototype_object_initializer(func.name))
+            {
                 self.write("declare ");
             }
             self.write("function ");

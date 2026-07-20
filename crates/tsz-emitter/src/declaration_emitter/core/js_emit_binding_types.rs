@@ -1050,7 +1050,31 @@ impl<'a> DeclarationEmitter<'a> {
                 if !declared_names.insert(method_name_text) {
                     continue;
                 }
-                self.emit_js_synthetic_class_method(method_name, initializer);
+                self.emit_js_class_like_member(method_name, initializer);
+            }
+        }
+        if let Some(name) = self.get_identifier_text(name_idx)
+            && let Some(assignments) = self.js_prototype_assignments.get(&name).cloned()
+        {
+            for assignment in assignments {
+                if assignment.whole_prototype
+                    || (assignment.receiver_is_commonjs && !assignment.receiver_aliases_local)
+                {
+                    continue;
+                }
+                let Some(member_name) = assignment.member_name else {
+                    continue;
+                };
+                let Some(member_name_text) = self
+                    .get_identifier_text(member_name)
+                    .or_else(|| self.arena.get_literal_text(member_name).map(str::to_owned))
+                else {
+                    continue;
+                };
+                if !declared_names.insert(member_name_text) {
+                    continue;
+                }
+                self.emit_js_class_like_member(member_name, assignment.expression);
             }
         }
 
@@ -1205,7 +1229,44 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(name) = self.get_identifier_text(name_idx) else {
             return Vec::new();
         };
-        self.js_prototype_object_members_for_export_name(&name)
+        let Some(assignments) = self.js_prototype_assignments.get(&name) else {
+            return Vec::new();
+        };
+        let has_direct_assignment = assignments.iter().any(|assignment| {
+            !assignment.receiver_is_commonjs
+                && assignment.whole_prototype
+                && assignment.initializer_is_object_literal
+        });
+        let mut members = Vec::new();
+        let mut included_direct_assignment = false;
+        let mut included_unaliased_commonjs_assignment = false;
+        for assignment in assignments {
+            if !assignment.whole_prototype || !assignment.initializer_is_object_literal {
+                continue;
+            }
+            if assignment.receiver_is_commonjs {
+                if !assignment.receiver_aliases_local
+                    && (has_direct_assignment || included_unaliased_commonjs_assignment)
+                {
+                    continue;
+                }
+                included_unaliased_commonjs_assignment |= !assignment.receiver_aliases_local;
+            } else {
+                if included_direct_assignment {
+                    continue;
+                }
+                included_direct_assignment = true;
+            }
+            let Some(object) = self
+                .arena
+                .get(assignment.expression)
+                .and_then(|node| self.arena.get_literal_expr(node))
+            else {
+                continue;
+            };
+            members.extend_from_slice(&object.elements.nodes);
+        }
+        members
     }
 
     pub(in crate::declaration_emitter) fn js_function_body_returns_new_named(

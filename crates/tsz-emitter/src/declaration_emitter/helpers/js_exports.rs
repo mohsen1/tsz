@@ -1021,6 +1021,7 @@ impl<'a> DeclarationEmitter<'a> {
                         &root_name,
                         member_text.clone(),
                         member_text,
+                        Some(stmt_idx),
                     );
                     continue;
                 }
@@ -1037,6 +1038,7 @@ impl<'a> DeclarationEmitter<'a> {
                         &root_name,
                         member_text.clone(),
                         member_text,
+                        Some(stmt_idx),
                     );
                 }
                 continue;
@@ -1048,6 +1050,7 @@ impl<'a> DeclarationEmitter<'a> {
                 export_name,
                 local_name,
                 use_import_alias,
+                Some(stmt_idx),
             );
         }
 
@@ -1058,6 +1061,7 @@ impl<'a> DeclarationEmitter<'a> {
                     root_name,
                     alias_name.clone(),
                     alias_name,
+                    None,
                 );
             }
         }

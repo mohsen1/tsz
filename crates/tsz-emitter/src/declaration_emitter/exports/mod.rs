@@ -1595,14 +1595,22 @@ impl<'a> DeclarationEmitter<'a> {
                         &late_bound_members,
                     );
                 }
-                self.emit_js_function_like_class_if_needed(
+                let emitted_prototype_namespace = self.emit_js_function_prototype_namespace(
                     func.name,
-                    &func.parameters,
                     func.body,
                     true,
-                    func_idx,
+                    !late_bound_members.is_empty(),
                 );
-                self.emit_js_namespace_export_aliases_for_name(func.name, true);
+                if !emitted_prototype_namespace {
+                    self.emit_js_function_like_class_if_needed(
+                        func.name,
+                        &func.parameters,
+                        func.body,
+                        true,
+                        func_idx,
+                    );
+                    self.emit_js_namespace_export_aliases_for_name(func.name, true);
+                }
                 return;
             }
         }
@@ -1611,7 +1619,9 @@ impl<'a> DeclarationEmitter<'a> {
         if self.should_emit_export_keyword() {
             self.write("export ");
         }
-        if self.should_emit_declare_keyword(true) {
+        if self.should_emit_declare_keyword(true)
+            || self.has_direct_js_prototype_object_initializer(func.name)
+        {
             self.write("declare ");
         }
         self.write("function ");
@@ -1631,14 +1641,22 @@ impl<'a> DeclarationEmitter<'a> {
                     &late_bound_members,
                 );
             }
-            self.emit_js_function_like_class_if_needed(
+            let emitted_prototype_namespace = self.emit_js_function_prototype_namespace(
                 func.name,
-                &func.parameters,
                 func.body,
                 true,
-                func_idx,
+                !late_bound_members.is_empty(),
             );
-            self.emit_js_namespace_export_aliases_for_name(func.name, true);
+            if !emitted_prototype_namespace {
+                self.emit_js_function_like_class_if_needed(
+                    func.name,
+                    &func.parameters,
+                    func.body,
+                    true,
+                    func_idx,
+                );
+                self.emit_js_namespace_export_aliases_for_name(func.name, true);
+            }
             return;
         }
 
@@ -1824,14 +1842,22 @@ impl<'a> DeclarationEmitter<'a> {
             );
         }
         if self.source_is_js_file {
-            self.emit_js_function_like_class_if_needed(
+            let emitted_prototype_namespace = self.emit_js_function_prototype_namespace(
                 func.name,
-                &func.parameters,
                 func.body,
                 true,
-                func_idx,
+                !late_bound_members.is_empty(),
             );
-            self.emit_js_namespace_export_aliases_for_name(func.name, true);
+            if !emitted_prototype_namespace {
+                self.emit_js_function_like_class_if_needed(
+                    func.name,
+                    &func.parameters,
+                    func.body,
+                    true,
+                    func_idx,
+                );
+                self.emit_js_namespace_export_aliases_for_name(func.name, true);
+            }
         }
     }
 
