@@ -6,8 +6,8 @@
 use crate::instantiation::instantiate::TypeSubstitution;
 use crate::type_param_info;
 use crate::types::{
-    CallSignature, CallableShape, CallableShapeId, FunctionShape, FunctionShapeId, ObjectFlags,
-    ObjectShape, ParamInfo, PropertyInfo, TupleElement, TypeData, TypeId, TypeParamInfo, Visibility,
+    CallableShape, CallableShapeId, FunctionShape, FunctionShapeId, ObjectFlags, ObjectShape,
+    ParamInfo, PropertyInfo, TypeData, TypeId, TypeParamInfo, Visibility,
 };
 use crate::visitor::callable_shape_id;
 

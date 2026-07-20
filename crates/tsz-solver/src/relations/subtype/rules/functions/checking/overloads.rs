@@ -928,7 +928,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let s_erased = erase_call_sig_to_any(source, self.interner);
         let t_erased = erase_call_sig_to_any(target, self.interner);
         let normalization = self.normalize_erased_target_return(t_erased.return_type);
-        if self.erased_normalized_return_rejects(s_erased.return_type, normalization) {
+        // Preserve the hard plain-return variance veto without recursively
+        // relating the full returned value here. Conditional returns and the
+        // same-base generic fallback are owned by the helper below.
+        if !normalization.contains_conditional
+            && self.erased_structural_return_variance_rejects(
+                s_erased.return_type,
+                normalization.type_id,
+            )
+        {
             return SubtypeResult::False;
         }
         self.check_erased_function_shapes_params_with_matching_return_base(
