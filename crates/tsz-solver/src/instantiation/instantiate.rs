@@ -1150,6 +1150,7 @@ impl<'a> TypeInstantiator<'a> {
     }
 }
 
+mod alpha_scoped;
 mod api;
 mod api_lazy;
 mod cache_stability;

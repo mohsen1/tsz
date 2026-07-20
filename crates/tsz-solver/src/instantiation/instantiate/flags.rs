@@ -160,3 +160,19 @@ pub(crate) fn infer_hkt_reduce_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| std::env::var("TSZ_INFER_HKT_REDUCE").is_ok_and(|v| v == "1"))
 }
+
+/// `TSZ_ALPHA_SCOPED_KEY=1` extends the deployed #13406 alpha instantiation-cache
+/// canon (bare-unconstrained params only) to the Stage-1′ Slice-1 RESTRICTED
+/// model: recurse into `Application` + composites (never a binder shape, so
+/// capture is impossible), rename EVERY free type parameter keyed on its own
+/// `TypeId` (R1 automatic — a different constraint is a different `TypeParamInfo`
+/// hence a different `TypeId` hence a different marker), and BAIL (no alpha key /
+/// result) on any binder-introducing or otherwise un-canonicalizable variant.
+/// Default-OFF and byte-parity when OFF (the deployed path is untouched). Priced
+/// at 43.22×/225.74× sound instantiation/app-eval key collapse on zustand
+/// (task #87); binder recursion is deliberately excluded — it is not soundly
+/// realizable in tsz's deduped-`type_param` representation and buys <7% more.
+pub(crate) fn alpha_scoped_key_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TSZ_ALPHA_SCOPED_KEY").is_ok_and(|v| v == "1"))
+}

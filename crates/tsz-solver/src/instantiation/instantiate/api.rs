@@ -216,6 +216,13 @@ fn alpha_instantiation_cache_key(
     interner: &dyn TypeDatabase,
     request: InstantiationRequest<'_>,
 ) -> Option<AlphaInstantiationCacheKey> {
+    // Stage-1′ Slice-1 (task #87): the restricted scope-aware canon extends the
+    // bare-param path below to `Application`+composites and all free params,
+    // keyed by `TypeId`. Default-OFF; byte-parity when OFF.
+    if super::flags::alpha_scoped_key_enabled() {
+        return super::alpha_scoped::restricted_instantiation_cache_key(interner, request)
+            .map(|(key, bindings)| AlphaInstantiationCacheKey { key, bindings });
+    }
     if request.options().mode_bits() != 0 || request.this_type().is_some() {
         return None;
     }
@@ -573,6 +580,9 @@ fn restore_alpha_result(
     type_id: TypeId,
     bindings: &[TypeId],
 ) -> Option<TypeId> {
+    if super::flags::alpha_scoped_key_enabled() {
+        return super::alpha_scoped::restricted_restore_alpha_result(interner, type_id, bindings);
+    }
     let mut visited = FxHashSet::default();
     restore_alpha_type(interner, type_id, bindings, &mut visited)
 }
@@ -959,6 +969,11 @@ fn alpha_canonicalize_cached_result(
     type_id: TypeId,
     bindings: &[TypeId],
 ) -> Option<TypeId> {
+    if super::flags::alpha_scoped_key_enabled() {
+        return super::alpha_scoped::restricted_canonicalize_cached_result(
+            interner, type_id, bindings,
+        );
+    }
     let mut binders = FxHashMap::default();
     let mut alpha_bindings = SmallVec::<[TypeId; 4]>::new();
     for (index, binding) in bindings.iter().copied().enumerate() {
