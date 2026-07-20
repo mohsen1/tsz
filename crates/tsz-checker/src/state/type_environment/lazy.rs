@@ -1321,7 +1321,15 @@ impl CheckerState<'_> {
             // checker context didn't propagate them to the main context. The
             // DefinitionStore still has the name, so we can materialize the interface
             // type through the lib type resolution system.
-            if let Some(body) = self.materialize_actual_lib_alias_body(def_id) {
+            // Keep the actual-lib forcing path completely out of no-lib and
+            // ordinary program resolution. Besides avoiding shared-store work
+            // on a hot fallback, this preserves the existing cross-file
+            // program-definition ordering when no library can contribute the
+            // requested alias.
+            if self.ctx.has_lib_loaded()
+                && self.ctx.definition_store.def_is_non_program(def_id)
+                && let Some(body) = self.materialize_actual_lib_alias_body(def_id)
+            {
                 return self.resolve_lazy_type_inner(body, visited);
             }
             if self.ctx.has_lib_loaded()
@@ -1526,7 +1534,13 @@ impl CheckerState<'_> {
         &mut self,
         def_id: tsz_solver::DefId,
     ) -> Option<TypeId> {
-        if let Some(body) = self.materialize_actual_lib_alias_body(def_id) {
+        // Most relation-readiness calls resolve program definitions. Do not
+        // enter the actual-lib materializer unless both structural preconditions
+        // already hold; the helper repeats the checks as its authority guard.
+        if self.ctx.has_lib_loaded()
+            && self.ctx.definition_store.def_is_non_program(def_id)
+            && let Some(body) = self.materialize_actual_lib_alias_body(def_id)
+        {
             self.try_insert_def_in_type_env(def_id, body);
             return Some(body);
         }
