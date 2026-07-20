@@ -1,8 +1,8 @@
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::diagnostics::Diagnostic;
 use tsz_checker::test_utils::{
-    check_multi_file_with_libs, check_source_with_libs, diagnostic_line_column,
-    load_default_lib_files,
+    check_multi_file_with_libs, check_multi_file_with_libs_stamped, check_source_with_libs,
+    diagnostic_line_column, load_default_lib_files,
 };
 
 fn strict_default_lib_diagnostics(source: &str) -> Vec<Diagnostic> {
@@ -108,6 +108,179 @@ builder.select([
     assert!(
         lacks_any_diagnostic_code(&diagnostics, &[7006, 2347, 2693]),
         "imported callback aliases should contextually type selection factories. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn imported_overloaded_method_rebinds_dependent_local_constraint() {
+    let lib_files = load_default_lib_files();
+    let options = CheckerOptions {
+        strict: true,
+        no_implicit_any: true,
+        strict_null_checks: true,
+        ..CheckerOptions::default()
+    };
+    let files = [
+        (
+            "builder.ts",
+            r#"
+type PreserveOuter<Value> = [Value] extends [unknown] ? Value : never;
+type AnyField<Schema, Visible extends keyof Schema> = {
+  [Table in Visible]: keyof Schema[Table]
+}[Visible] & string;
+type AnyQualifiedField<Schema, Visible extends keyof Schema> = {
+  [Table in Visible]: `${Table & string}.${keyof Schema[Table] & string}`
+}[Visible];
+
+interface NamedExpression<Output, Name extends string> {
+  readonly output: Output;
+  readonly name: Name;
+}
+type NamedExpressionFactory<Schema, Visible extends keyof Schema> = (
+  builder: { schema: Schema; visible: Visible },
+) => NamedExpression<any, any>;
+type SourceExpression<Schema, Visible extends keyof Schema> =
+  | (keyof Schema & string)
+  | `${keyof Schema & string} as ${string}`
+  | NamedExpression<any, any>
+  | NamedExpressionFactory<Schema, Visible>;
+
+type ExtractSourceName<Schema, Source> = Source extends string
+  ? Source extends `${string} as ${infer Name}`
+    ? Name
+    : Source extends keyof Schema
+      ? Source
+      : never
+  : Source extends NamedExpression<any, infer Name>
+    ? Name
+    : Source extends (builder: any) => NamedExpression<any, infer Name>
+      ? Name
+      : never;
+type ExtractSourceRow<Schema, Source, Name extends keyof any> =
+  Source extends `${infer Table} as ${infer Alias}`
+    ? Alias extends Name
+      ? Table extends keyof Schema
+        ? Schema[Table]
+        : never
+      : never
+    : Source extends Name
+      ? Source extends keyof Schema
+        ? Schema[Source]
+        : never
+      : Source extends NamedExpression<infer Output, infer Alias>
+        ? Alias extends Name ? Output : never
+        : never;
+type JoinedSchema<Schema, Source> = PreserveOuter<{
+  [Name in keyof Schema | ExtractSourceName<Schema, Source>]:
+    Name extends ExtractSourceName<Schema, Source>
+      ? ExtractSourceRow<Schema, Source, Name>
+      : Name extends keyof Schema ? Schema[Name] : never;
+}>;
+type JoinedVisible<Schema, Visible extends keyof Schema, Source> = PreserveOuter<
+  Visible | ExtractSourceName<Schema, Source>
+>;
+type ReferenceConstraint<
+  Schema,
+  Visible extends keyof Schema,
+  Source,
+> = PreserveOuter<
+  | AnyField<JoinedSchema<Schema, Source>, JoinedVisible<Schema, Visible, Source>>
+  | AnyQualifiedField<
+      JoinedSchema<Schema, Source>,
+      JoinedVisible<Schema, Visible, Source>
+    >
+>;
+
+export interface OverloadedBuilder<Schema, Visible extends keyof Schema> {
+  attach<
+    Source extends SourceExpression<Schema, Visible>,
+    Reference extends ReferenceConstraint<Schema, Visible, Source>,
+  >(source: Source, left: string, right: string): unknown;
+  attach(source: string, callback: unknown): unknown;
+}
+
+export interface SingleBuilder<Schema, Visible extends keyof Schema> {
+  attach<
+    Source extends SourceExpression<Schema, Visible>,
+    Reference extends ReferenceConstraint<Schema, Visible, Source>,
+  >(source: Source, left: string, right: string): unknown;
+}
+
+export interface IndependentOverloadBuilder<Schema, Visible extends keyof Schema> {
+  attach<
+    Source extends SourceExpression<Schema, Visible>,
+    Reference extends string,
+  >(source: Source, left: string, right: string): unknown;
+  attach(source: string, callback: unknown): unknown;
+}
+"#,
+        ),
+        (
+            "main.ts",
+            r#"
+import type {
+  IndependentOverloadBuilder,
+  OverloadedBuilder,
+  SingleBuilder,
+} from "./builder.js";
+
+interface Catalog {
+  "system.tables": { schemaId: number };
+  "system.schemas": { schemaId: number };
+  tables: { schemaId: number };
+}
+
+declare const overloaded: OverloadedBuilder<Catalog, "tables">;
+declare const single: SingleBuilder<Catalog, "tables">;
+declare const independent: IndependentOverloadBuilder<Catalog, "tables">;
+
+overloaded.attach(
+  "system.schemas as joined_schemas",
+  "joined_schemas.schemaId",
+  "tables.schemaId",
+);
+single.attach(
+  "system.schemas as joined_schemas",
+  "joined_schemas.schemaId",
+  "tables.schemaId",
+);
+independent.attach(
+  "system.schemas as joined_schemas",
+  "joined_schemas.schemaId",
+  "tables.schemaId",
+);
+overloaded.attach(
+  123,
+  "joined_schemas.schemaId",
+  "tables.schemaId",
+);
+"#,
+        ),
+    ];
+
+    let diagnostics = check_multi_file_with_libs_stamped(&files, "main.ts", options, &lib_files)
+        .into_iter()
+        .filter(|diagnostic| diagnostic.code != 2318)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        diagnostics.len(),
+        1,
+        "the three valid calls must compile and the adjacent invalid reference must fail once. Got: {diagnostics:#?}"
+    );
+    let diagnostic = &diagnostics[0];
+    let main_source = files[1].1;
+    let invalid_call_start = main_source
+        .rfind("overloaded.attach(")
+        .expect("invalid adjacent call must remain in the witness")
+        as u32;
+    assert_eq!(
+        diagnostic.code, 2345,
+        "the invalid reference must report TS2345"
+    );
+    assert!(diagnostic.file.ends_with("main.ts"));
+    assert!(
+        diagnostic.start >= invalid_call_start,
+        "the sole diagnostic must belong to the invalid adjacent call. Got: {diagnostic:#?}"
     );
 }
 

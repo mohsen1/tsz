@@ -16,20 +16,11 @@ impl<'a> TypeInstantiator<'a> {
     ) -> Option<CallSignature> {
         let (shadowed_len, saved_visiting) = self.enter_shadowing_scope(&sig.type_params);
 
-        let type_params = self.instantiate_type_params_if_changed(&sig.type_params);
         let local_start = self.local_type_params.len();
-        // Redirect occurrences of the signature's own params only when their
-        // infos actually changed (constraint/default instantiated). When
-        // unchanged, pushing a structural re-intern would rewrite
-        // declaration-scoped fresh params to the structural canonical and
-        // erase declaration identity; the shadowing scope already preserves
-        // them as-is (#13044).
-        if let Some(changed_params) = type_params.as_deref() {
-            for type_param in changed_params {
-                self.local_type_params
-                    .push((type_param.name, self.interner.type_param(*type_param)));
-            }
-        }
+        // This also binds each changed local parameter before walking later
+        // dependent constraints; unchanged fresh params remain untouched
+        // (#13044).
+        let type_params = self.instantiate_type_params_if_changed(&sig.type_params);
         let type_predicate = sig
             .type_predicate
             .as_ref()
@@ -150,17 +141,10 @@ impl<'a> TypeInstantiator<'a> {
         }
         let (shadowed_len, saved_visiting) = self.enter_shadowing_scope(&shape.type_params);
 
-        let instantiated_type_params = self.instantiate_type_params_if_changed(&shape.type_params);
         let local_start = self.local_type_params.len();
-        // Redirect own-param occurrences only when the param infos
-        // changed; see `instantiate_call_signature_if_changed` for
-        // the declaration-identity rationale (#13044).
-        if let Some(changed_params) = instantiated_type_params.as_deref() {
-            for type_param in changed_params {
-                self.local_type_params
-                    .push((type_param.name, self.interner.type_param(*type_param)));
-            }
-        }
+        // This also binds each changed local parameter before walking later
+        // dependent constraints; unchanged fresh params remain untouched.
+        let instantiated_type_params = self.instantiate_type_params_if_changed(&shape.type_params);
         let type_predicate = shape
             .type_predicate
             .as_ref()
