@@ -250,29 +250,19 @@ pub fn parse_tsconfig_with_diagnostics_deferred(
         let mut bad_keys: Vec<String> = Vec::new();
         let mut ts5024_keys: Vec<String> = Vec::new();
         for key in &keys_after_rename {
-            let expected_type = compiler_option_expected_type(key);
-            if expected_type.is_empty() {
+            let Some(expected_type) = compiler_option_expected_type(key) else {
                 continue; // Unknown option or no type constraint
-            }
+            };
             let Some(value) = compiler_opts.get(key) else {
                 continue;
             };
-            let type_ok = value.is_null()
-                || match expected_type {
-                    "boolean" => value.is_boolean(),
-                    "string" => value.is_string(),
-                    "number" => value.is_number(),
-                    "Array" => value.is_array(),
-                    "string or Array" => value.is_string() || value.is_array(),
-                    "object" => value.is_object(),
-                    _ => true,
-                };
+            let type_ok = value.is_null() || expected_type.accepts(value);
             if !type_ok {
                 let start = find_value_offset_in_source(&stripped, key);
                 let value_len = estimate_json_value_len(value);
                 let msg = format_message(
                     diagnostic_messages::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE,
-                    &[key, expected_type],
+                    &[key, expected_type.diagnostic_name()],
                 );
                 diagnostics.push(Diagnostic::error(
                     file_path,

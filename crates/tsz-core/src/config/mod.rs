@@ -471,7 +471,7 @@ fn option_is_effectively_enabled(
     invalidated_options: &[String],
     key: &str,
 ) -> bool {
-    if compiler_option_expected_type(key) == "boolean"
+    if compiler_option_expected_type(key) == Some(CompilerOptionValueType::Boolean)
         && invalidated_options.iter().any(|k| k == key)
     {
         return false;
@@ -786,9 +786,41 @@ const fn is_rooted_path_mapping_substitution(specifier: &str) -> bool {
     }
 }
 
-/// Return the expected JSON value type for a compiler option.
-/// Returns "" for unknown/unvalidated options.
-fn compiler_option_expected_type(key: &str) -> &'static str {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CompilerOptionValueType {
+    Boolean,
+    String,
+    Enum,
+    Number,
+    Array,
+    Object,
+}
+
+impl CompilerOptionValueType {
+    const fn diagnostic_name(self) -> &'static str {
+        match self {
+            Self::Boolean => "boolean",
+            Self::String => "string",
+            Self::Enum => "enum",
+            Self::Number => "number",
+            Self::Array => "Array",
+            Self::Object => "object",
+        }
+    }
+
+    fn accepts(self, value: &serde_json::Value) -> bool {
+        match self {
+            Self::Boolean => value.is_boolean(),
+            Self::String | Self::Enum => value.is_string(),
+            Self::Number => value.is_number(),
+            Self::Array => value.is_array(),
+            Self::Object => value.is_object(),
+        }
+    }
+}
+
+/// Return the expected JSON value type for a recognized compiler option.
+fn compiler_option_expected_type(key: &str) -> Option<CompilerOptionValueType> {
     match key {
         // Boolean options
         "allowArbitraryExtensions"
@@ -863,36 +895,35 @@ fn compiler_option_expected_type(key: &str) -> &'static str {
         | "traceResolution"
         | "useDefineForClassFields"
         | "useUnknownInCatchVariables"
-        | "verbatimModuleSyntax" => "boolean",
+        | "verbatimModuleSyntax" => Some(CompilerOptionValueType::Boolean),
+        // Enum options are encoded as strings in JSON, but tsc identifies
+        // their map-backed value domain as `enum` in TS5024.
+        "jsx" | "module" | "moduleDetection" | "moduleResolution" | "newLine" | "target" => {
+            Some(CompilerOptionValueType::Enum)
+        }
         // String options
         "baseUrl"
         | "declarationDir"
-        | "jsx"
         | "jsxFactory"
         | "jsxFragmentFactory"
         | "jsxImportSource"
         | "mapRoot"
-        | "module"
-        | "moduleDetection"
-        | "moduleResolution"
-        | "newLine"
         | "outDir"
         | "outFile"
         | "reactNamespace"
         | "rootDir"
         | "sourceRoot"
-        | "target"
         | "tsBuildInfoFile"
         | "ignoreDeprecations"
-        | "typesVersionsCompilerVersion" => "string",
+        | "typesVersionsCompilerVersion" => Some(CompilerOptionValueType::String),
         // Number options
-        "maxNodeModuleJsDepth" => "number",
+        "maxNodeModuleJsDepth" => Some(CompilerOptionValueType::Number),
         // List options (arrays)
         "lib" | "types" | "typeRoots" | "rootDirs" | "moduleSuffixes" | "customConditions"
-        | "plugins" => "Array",
+        | "plugins" => Some(CompilerOptionValueType::Array),
         // Object options
-        "paths" => "object",
-        _ => "",
+        "paths" => Some(CompilerOptionValueType::Object),
+        _ => None,
     }
 }
 
