@@ -48,6 +48,7 @@ void marker;
 const clockValue = selectClock ? chronometer.now() : 0;
 needsNumber(clockValue);
 const elapsed = clockValue - 1;
+const clockWrong: string = chronometer.now();
 
 const captionOk: string = chronometer.caption();
 const captionWrong: number = chronometer.caption();
@@ -57,6 +58,7 @@ const boxedOk: number = chronometer.parcel(1).value;
 const boxedWrong: string = chronometer.parcel(1).value;
 
 const labelOk: string = chronometer.display().label;
+const labelWrong: number = chronometer.display().label;
 
 type ClockTick = string;
 const localTick: ClockTick = "local";
@@ -101,7 +103,7 @@ fn assert_expected_diagnostics(files: &[(&str, &str)], order: &str) {
     let codes: Vec<u32> = diagnostics.iter().map(|(code, ..)| *code).collect();
     assert_eq!(
         codes,
-        vec![2322, 2362, 2322, 2322],
+        vec![2322, 2322, 2362, 2322, 2322, 2322],
         "primitive/generic/lib-interface aliases must materialize while genuine string and shadow mismatches remain ({order}); got {diagnostics:#?}",
     );
 }

@@ -3,7 +3,8 @@
 //!
 //! Each run uses a separate CLI process because the on-demand forcing switch
 //! is process-cached. Default forcing must agree byte-for-byte with the legacy
-//! eager kill switch in both root orders.
+//! eager kill switch in both root orders, including a negative assignment that
+//! proves the alias remained `number` rather than degrading to `any`.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
@@ -84,19 +85,28 @@ fn assert_default_matches_eager(tsz: &Path, dir: &TempDir, roots: &[&str]) {
     let default = run_tsz(tsz, dir, roots, false);
     let eager = run_tsz(tsz, dir, roots, true);
 
-    assert!(
-        default.status.success(),
-        "default on-demand forcing must accept root order {roots:?}; got:\n{}",
-        default.output,
-    );
-    assert!(
-        eager.status.success(),
-        "legacy eager forcing must accept root order {roots:?}; got:\n{}",
-        eager.output,
-    );
+    assert!(!default.status.success());
+    assert!(!eager.status.success());
     assert_eq!(
         default.output, eager.output,
         "default and eager forcing must agree for root order {roots:?}",
+    );
+    let diagnostics: Vec<_> = default
+        .output
+        .lines()
+        .filter(|line| line.contains("error TS"))
+        .collect();
+    assert_eq!(
+        diagnostics.len(),
+        1,
+        "expected one negative-control diagnostic for root order {roots:?}; got:\n{}",
+        default.output,
+    );
+    assert!(
+        diagnostics[0].contains("error TS2322:")
+            && diagnostics[0].contains("Type 'number' is not assignable to type 'string'."),
+        "DOM primitive alias must materialize as number for root order {roots:?}; got:\n{}",
+        default.output,
     );
 }
 
@@ -131,6 +141,7 @@ import { clockValue } from "./clock.js";
 declare function needsNumber(value: number): void;
 needsNumber(clockValue());
 export const elapsed = clockValue() - 1;
+export const wrong: string = clockValue();
 "#,
     )
     .expect("write consumer");
