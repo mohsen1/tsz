@@ -5,6 +5,7 @@
 //! a stable API for querying type properties without matching on `TypeData` directly.
 
 mod accessors;
+mod conditional_constraint;
 mod conditional_distribution;
 #[cfg(test)]
 mod construct_return_union_tests;
@@ -18,6 +19,7 @@ mod tests;
 mod type_id_list;
 
 pub use accessors::*;
+pub use conditional_constraint::*;
 pub use conditional_distribution::*;
 pub use content_predicates::*;
 pub use signatures_and_advanced::*;
