@@ -261,6 +261,13 @@ impl CheckerState<'_> {
         // `class Foo {}` in file2.js), delegating to the other file's arena would cause
         // compute_class_symbol_type to fail to find the class node and return UNKNOWN,
         // triggering false TS18046 errors. Handle the class locally instead.
+        //
+        // A declaration `NodeIndex` is arena-relative. A foreign class can have the
+        // same raw index as an unrelated class in the requesting file, so seeing class
+        // syntax at that index does not prove this symbol has a local declaration. As
+        // with the FUNCTION guard below, require the current binder's node-to-symbol
+        // map to round-trip to `sym_id`. This keeps the local merge fast path O(1) while
+        // allowing genuine foreign classes to delegate to their owning arena.
         {
             let sym_found = cross_file_symbol;
             if let Some(symbol) = sym_found
@@ -272,6 +279,7 @@ impl CheckerState<'_> {
                         .get(d)
                         .and_then(|n| self.ctx.arena.get_class(n))
                         .is_some()
+                        && self.ctx.binder.get_node_symbol(d) == Some(sym_id)
                 });
                 if has_class_in_current_arena {
                     return None; // Handle locally, don't delegate
