@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-20T10:47:44.857Z",
+  "generated_at": "2026-07-20T12:17:27.885Z",
   "source_commit": "68ca432740d8acf4c89cf0ee03a37303a1a701a0",
   "workflow_name": "local",
   "workflow_run_id": "local",
@@ -7,6 +7,21 @@
   "workflow_run_attempt": null,
   "run_status": "local",
   "benchmark_runner": "scripts/bench/bench-vs-tsgo.sh",
+  "merged_from": [
+    "bench-snapshot.json"
+  ],
+  "validation": {
+    "hyperfine_exit_codes_required": true,
+    "project_compatibility_required_fields": true,
+    "runner_signature_required": false,
+    "runner_environment_warnings": [],
+    "measurement_profile_warnings": [],
+    "project_compatibility_advisory": [
+      "type-challenges-solutions-project: missing project row"
+    ],
+    "runner_signature_advisory": [],
+    "dropped_empty_shards": []
+  },
   "runner_environment": {
     "platform": "darwin",
     "arch": "arm64",
@@ -76,13 +91,6 @@
         "cache_enabled": true
       }
     }
-  },
-  "validation": {
-    "hyperfine_exit_codes_required": true
-  },
-  "shard": {
-    "label": null,
-    "filter": null
   },
   "quick_mode": false,
   "filter": null,
