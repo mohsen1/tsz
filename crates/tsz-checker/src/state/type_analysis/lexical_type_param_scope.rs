@@ -35,3 +35,30 @@ pub(super) fn is_lexical_type_parameter_shadow(
 
     !belongs_to_current_decl
 }
+
+impl CheckerState<'_> {
+    /// Whether this declaration needs exact identity because it shadows an
+    /// active same-named parameter from a lexically enclosing generic owner.
+    ///
+    /// Keep the active-scope check paired with binder ancestry: an unrelated
+    /// re-entrant scratch entry must not opt a declaration into the exact
+    /// domain, while every scope-reconstruction path must make the same
+    /// decision as [`Self::push_type_parameters`].
+    pub(crate) fn type_parameter_decl_needs_identity_scope(
+        &self,
+        name: &str,
+        name_node: NodeIndex,
+    ) -> bool {
+        self.ctx
+            .type_parameter_scope
+            .get(name)
+            .copied()
+            .and_then(|active| {
+                crate::query_boundaries::common::type_param_info(self.ctx.types, active)
+                    .map(|active_info| (active, active_info))
+            })
+            .is_some_and(|(active, active_info)| {
+                is_lexical_type_parameter_shadow(self, active, active_info, name_node)
+            })
+    }
+}

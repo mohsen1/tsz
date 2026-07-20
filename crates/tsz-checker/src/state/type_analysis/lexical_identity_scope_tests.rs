@@ -3,7 +3,7 @@
 
 use crate::context::CheckerOptions;
 use crate::state::CheckerState;
-use tsz_parser::parser::ParserState;
+use tsz_parser::parser::{NodeIndex, ParserState, syntax_kind_ext};
 use tsz_solver::construction::TypeInterner;
 use tsz_solver::{TypeParamInfo, TypeParamOrigin};
 
@@ -99,4 +99,76 @@ fn same_name_lexical_owner_stamps_nested_declaration() {
 
     checker.pop_type_parameters(inner_updates);
     checker.pop_type_parameters(outer_updates);
+}
+
+#[test]
+fn shadowed_declaration_id_is_stable_across_nested_closure_reentry() {
+    let source = r#"
+class Container<Token> {
+  static wrap<Token>(value: Token) {
+    const callback = () => value
+    return callback()
+  }
+}
+"#;
+    let mut parser = ParserState::new("closure-reentry.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let class_idx = arena
+        .get_source_file_at(root)
+        .expect("source file")
+        .statements
+        .nodes[0];
+    let class = arena
+        .get_class(arena.get(class_idx).expect("class node"))
+        .expect("class data");
+    let class_params = class
+        .type_parameters
+        .clone()
+        .expect("class type parameters");
+    let method_idx = class.members.nodes[0];
+    let method_params = arena
+        .get_method_decl(arena.get(method_idx).expect("method node"))
+        .and_then(|method| method.type_parameters.clone())
+        .expect("method type parameters");
+    let arrow_idx = arena
+        .nodes
+        .iter()
+        .position(|node| node.kind == syntax_kind_ext::ARROW_FUNCTION)
+        .map(|idx| NodeIndex(idx as u32))
+        .expect("nested arrow");
+
+    let mut binder = tsz_binder::BinderState::new();
+    binder.bind_source_file(arena, root);
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        arena,
+        &binder,
+        &types,
+        "closure-reentry.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    let (_, class_updates) = checker.push_type_parameters(&Some(class_params));
+    let (_, method_updates) = checker.push_type_parameters(&Some(method_params));
+    let direct = checker.ctx.type_parameter_scope["Token"];
+    checker.pop_type_parameters(method_updates);
+    checker.pop_type_parameters(class_updates);
+
+    let reentry_updates = checker.push_enclosing_type_parameters(arrow_idx);
+    let reentered = checker.ctx.type_parameter_scope["Token"];
+    checker.pop_type_parameters(reentry_updates);
+
+    let repeated_updates = checker.push_enclosing_type_parameters(arrow_idx);
+    let repeated = checker.ctx.type_parameter_scope["Token"];
+    checker.pop_type_parameters(repeated_updates);
+
+    assert_eq!(
+        direct, reentered,
+        "canonical method push and nested closure re-entry must reuse one declaration TypeId"
+    );
+    assert_eq!(
+        direct, repeated,
+        "repeated nested closure re-entry must keep the declaration TypeId stable"
+    );
 }
