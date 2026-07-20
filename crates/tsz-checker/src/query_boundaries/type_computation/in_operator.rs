@@ -18,6 +18,24 @@ use crate::query_boundaries::{common, dispatch as query};
 use tsz_solver::TypeId;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 
+/// Depth cap for the `in`-operator RHS classifiers below. Each one walks a type
+/// by evaluating it a single step at a time (`cx.evaluate`), which resolves
+/// `Lazy(DefId)` references. A self-referential/pathological type can produce a
+/// non-terminating chain of *distinct* interned `TypeId`s — every evaluation
+/// step differs from the last — so the natural `evaluated != ty` termination
+/// never fires and the recursion overflows the worker stack (SIGABRT on the
+/// config-broken canary apps; `tsc` handles the same input without crashing).
+///
+/// A `TypeId` visited-set is unsound here: interned `TypeId`s are legitimately
+/// shared across independent union/intersection branches, so a shared set would
+/// short-circuit correct TS2361/TS2638/TS2322 results. Bounding the walk depth
+/// is the right idiom — the same one the sibling type classifier
+/// `for_of_element_type` uses at the same scale. Genuine type nesting
+/// terminates far below this bound; only degenerate cycles reach it, and each
+/// classifier returns its conservative answer (the one that manufactures no new
+/// diagnostic) when it does.
+const MAX_IN_OPERATOR_RHS_DEPTH: usize = 100;
+
 /// Checker-supplied capabilities the `in`-operator RHS classifier needs beyond
 /// pure type-database queries.
 pub(crate) trait InOperatorRhsClassifier {
@@ -42,6 +60,21 @@ pub(crate) trait InOperatorRhsClassifier {
 /// every member valid; intersections require any member valid; otherwise a
 /// single evaluation step is attempted before rejecting.
 pub(crate) fn is_valid_in_operator_rhs(cx: &mut dyn InOperatorRhsClassifier, ty: TypeId) -> bool {
+    is_valid_in_operator_rhs_with_depth(cx, ty, 0)
+}
+
+fn is_valid_in_operator_rhs_with_depth(
+    cx: &mut dyn InOperatorRhsClassifier,
+    ty: TypeId,
+    depth: usize,
+) -> bool {
+    // See `MAX_IN_OPERATOR_RHS_DEPTH`. Conservatively treat a capped RHS as
+    // valid so a degenerate `Lazy(DefId)` cycle manufactures no new TS2322
+    // assignability failure.
+    if depth > MAX_IN_OPERATOR_RHS_DEPTH {
+        return true;
+    }
+
     if matches!(ty, TypeId::ANY | TypeId::ERROR | TypeId::OBJECT) {
         return true;
     }
@@ -50,7 +83,7 @@ pub(crate) fn is_valid_in_operator_rhs(cx: &mut dyn InOperatorRhsClassifier, ty:
     // Unconstrained type params are NOT valid (could be primitive) → TS2322.
     if common::is_type_parameter_like(cx.types(), ty) {
         return match checking::type_parameter_constraint(cx.types(), ty) {
-            Some(c) => is_valid_in_operator_rhs(cx, c),
+            Some(c) => is_valid_in_operator_rhs_with_depth(cx, c, depth + 1),
             None => false,
         };
     }
@@ -62,18 +95,18 @@ pub(crate) fn is_valid_in_operator_rhs(cx: &mut dyn InOperatorRhsClassifier, ty:
     if let Some(members) = query::union_members(cx.types(), ty) {
         return members
             .iter()
-            .all(|&member| is_valid_in_operator_rhs(cx, member));
+            .all(|&member| is_valid_in_operator_rhs_with_depth(cx, member, depth + 1));
     }
 
     if let Some(members) = query::intersection_members(cx.types(), ty) {
         return members
             .iter()
-            .any(|&member| is_valid_in_operator_rhs(cx, member));
+            .any(|&member| is_valid_in_operator_rhs_with_depth(cx, member, depth + 1));
     }
 
     let evaluated = cx.evaluate(ty);
     if evaluated != ty {
-        return is_valid_in_operator_rhs(cx, evaluated);
+        return is_valid_in_operator_rhs_with_depth(cx, evaluated, depth + 1);
     }
 
     false
@@ -90,6 +123,22 @@ pub(crate) fn type_may_represent_primitive(
     cx: &mut dyn InOperatorRhsClassifier,
     ty: TypeId,
 ) -> bool {
+    type_may_represent_primitive_with_depth(cx, ty, 0)
+}
+
+fn type_may_represent_primitive_with_depth(
+    cx: &mut dyn InOperatorRhsClassifier,
+    ty: TypeId,
+    depth: usize,
+) -> bool {
+    // See `MAX_IN_OPERATOR_RHS_DEPTH`. Conservatively treat a capped type as
+    // NOT primitive-representing — the same answer as the concrete-object
+    // fall-through below — so a degenerate `Lazy(DefId)` cycle manufactures no
+    // new TS2638.
+    if depth > MAX_IN_OPERATOR_RHS_DEPTH {
+        return false;
+    }
+
     // The intrinsic `object` type excludes primitives by definition.
     if ty == TypeId::OBJECT {
         return false;
@@ -112,7 +161,7 @@ pub(crate) fn type_may_represent_primitive(
                 // This handles `T extends {}` (may represent primitive) vs
                 // `T extends object` (may not) vs `T extends { a: number }`
                 // (may not).
-                if type_may_represent_primitive(cx, c) {
+                if type_may_represent_primitive_with_depth(cx, c, depth + 1) {
                     return true;
                 }
                 // For concrete constraints, check if a primitive is assignable.
@@ -123,7 +172,9 @@ pub(crate) fn type_may_represent_primitive(
 
     // Union: any member may represent primitive.
     if let Some(members) = common::union_members(cx.types(), ty) {
-        return members.iter().any(|&m| type_may_represent_primitive(cx, m));
+        return members
+            .iter()
+            .any(|&m| type_may_represent_primitive_with_depth(cx, m, depth + 1));
     }
 
     // Intersection: `T & {}` still may represent a primitive because `{}`
@@ -132,7 +183,7 @@ pub(crate) fn type_may_represent_primitive(
     if let Some(members) = common::intersection_members(cx.types(), ty) {
         let has_instantiable_primitive_member = members.iter().any(|&member| {
             common::is_type_parameter_like(cx.types(), member)
-                && type_may_represent_primitive(cx, member)
+                && type_may_represent_primitive_with_depth(cx, member, depth + 1)
         });
         if has_instantiable_primitive_member
             && !members.iter().any(|&member| {
@@ -142,12 +193,14 @@ pub(crate) fn type_may_represent_primitive(
             return true;
         }
 
-        return members.iter().all(|&m| type_may_represent_primitive(cx, m));
+        return members
+            .iter()
+            .all(|&m| type_may_represent_primitive_with_depth(cx, m, depth + 1));
     }
 
     let evaluated = cx.evaluate(ty);
     if evaluated != ty {
-        return type_may_represent_primitive(cx, evaluated);
+        return type_may_represent_primitive_with_depth(cx, evaluated, depth + 1);
     }
 
     // Concrete object types are NOT considered "may represent primitive" —
@@ -215,18 +268,34 @@ pub(crate) fn in_operator_type_contains_empty_object_shape(
     cx: &mut dyn InOperatorRhsClassifier,
     ty: TypeId,
 ) -> bool {
+    in_operator_type_contains_empty_object_shape_with_depth(cx, ty, 0)
+}
+
+fn in_operator_type_contains_empty_object_shape_with_depth(
+    cx: &mut dyn InOperatorRhsClassifier,
+    ty: TypeId,
+    depth: usize,
+) -> bool {
+    // See `MAX_IN_OPERATOR_RHS_DEPTH`. Conservatively report "no empty-object
+    // shape" — the same answer as the no-further-evaluation fall-through — when
+    // a degenerate `Lazy(DefId)` cycle exhausts the depth budget.
+    if depth > MAX_IN_OPERATOR_RHS_DEPTH {
+        return false;
+    }
+
     if common::is_empty_object_type(cx.types(), ty) {
         return true;
     }
 
     if let Some(members) = common::union_members(cx.types(), ty) {
-        return members
-            .iter()
-            .any(|&member| in_operator_type_contains_empty_object_shape(cx, member));
+        return members.iter().any(|&member| {
+            in_operator_type_contains_empty_object_shape_with_depth(cx, member, depth + 1)
+        });
     }
 
     let evaluated = cx.evaluate(ty);
-    evaluated != ty && in_operator_type_contains_empty_object_shape(cx, evaluated)
+    evaluated != ty
+        && in_operator_type_contains_empty_object_shape_with_depth(cx, evaluated, depth + 1)
 }
 
 /// Whether an intersection member excludes primitives (an object-like, non-empty
@@ -360,6 +429,61 @@ mod tests {
             &mut cx,
             TypeId::NUMBER
         ));
+    }
+
+    /// A classifier whose single-step evaluation never reaches a fixpoint: it
+    /// ping-pongs between two leaf types, mimicking a self-referential
+    /// `Lazy(DefId)` chain where `evaluate` yields an endless run of *distinct*
+    /// interned `TypeId`s. Pre-cap, feeding either endpoint to the classifier
+    /// walks recursed until the worker stack overflowed (SIGABRT on the
+    /// `outline` canary app); `MAX_IN_OPERATOR_RHS_DEPTH` makes each walk
+    /// terminate at its conservative answer instead.
+    struct CyclingClassifier<'a> {
+        db: &'a TypeInterner,
+        a: TypeId,
+        b: TypeId,
+    }
+
+    impl InOperatorRhsClassifier for CyclingClassifier<'_> {
+        fn types(&self) -> &dyn QueryDatabase {
+            self.db
+        }
+        fn evaluate(&mut self, type_id: TypeId) -> TypeId {
+            // Neither endpoint is ever its own evaluation fixpoint, so
+            // `evaluated != ty` holds forever without a depth cap.
+            if type_id == self.a { self.b } else { self.a }
+        }
+        fn primitive_constraint_relates(&mut self, _source: TypeId, _target: TypeId) -> bool {
+            false
+        }
+    }
+
+    /// The three evaluate-driven classifiers must terminate on a non-terminating
+    /// evaluation cycle and return the conservative answer (the one that
+    /// manufactures no new diagnostic), independent of which leaf `TypeId`s form
+    /// the cycle.
+    fn assert_cycle_terminates_conservatively(a: TypeId, b: TypeId) {
+        let db = TypeInterner::new();
+        let mut cx = CyclingClassifier { db: &db, a, b };
+
+        // Conservative for TS2638: not primitive-representing (no TS2638).
+        assert!(!type_may_represent_primitive(&mut cx, a));
+        // Conservative for TS2322: treat as a valid RHS (no assignability error).
+        assert!(is_valid_in_operator_rhs(&mut cx, a));
+        // Conservative for the empty-object probe: report absence.
+        assert!(!in_operator_type_contains_empty_object_shape(&mut cx, a));
+    }
+
+    #[test]
+    fn evaluate_cycle_string_number_terminates_conservatively() {
+        assert_cycle_terminates_conservatively(TypeId::STRING, TypeId::NUMBER);
+    }
+
+    #[test]
+    fn evaluate_cycle_boolean_bigint_terminates_conservatively() {
+        // A different leaf pair proves the cap is a depth mechanism, not a
+        // fast-path keyed on specific `TypeId`s.
+        assert_cycle_terminates_conservatively(TypeId::BOOLEAN, TypeId::BIGINT);
     }
 
     #[test]
