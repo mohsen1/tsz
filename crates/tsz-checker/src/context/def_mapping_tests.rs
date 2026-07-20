@@ -968,6 +968,116 @@ fn augmented_def_registration_deferred_mirror_preserves_params() {
     );
 }
 
+/// Cross-file reads of a standard-library alias can temporarily recover the
+/// alias's public identity (`Lazy(def)`) or its pre-materialization placeholder
+/// (`UNKNOWN`). Once the structural body is published, neither result may
+/// rewrite the shared body or either evaluator environment. Program aliases
+/// remain outside this guard because `type Local = unknown` is meaningful.
+#[test]
+fn non_program_alias_placeholders_do_not_rewrite_materialized_bodies() {
+    use tsz_solver::TypeId;
+    use tsz_solver::def::{DefinitionInfo, DefinitionStore};
+
+    let (arena, binder, types) = minimal_checker_ctx();
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "fixture.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    let type_param = tsz_solver::TypeParamInfo::simple(types.intern_string("Element"));
+    let type_params = vec![type_param];
+    let mut lib_alias = DefinitionInfo::type_alias(
+        types.intern_string("SelectKeys"),
+        type_params.clone(),
+        TypeId::STRING,
+    );
+    lib_alias.file_id = Some(DefinitionStore::NON_PROGRAM_FILE_SENTINEL);
+    let lib_def = ctx.definition_store.register(lib_alias);
+    ctx.register_def_with_params_in_envs(lib_def, TypeId::STRING, type_params.clone());
+
+    let store_generation = ctx.definition_store.generation();
+    let eval_generation = ctx.type_env.borrow().generation();
+    let flow_generation = ctx.type_environment.borrow().generation();
+    let self_identity = types.lazy(lib_def);
+
+    ctx.register_def_with_params_in_envs(lib_def, TypeId::UNKNOWN, type_params.clone());
+    ctx.register_def_with_params_in_envs(lib_def, self_identity, type_params.clone());
+    assert_eq!(
+        ctx.definition_body_for_env_registration(lib_def, TypeId::UNKNOWN),
+        Some(TypeId::STRING),
+    );
+    assert_eq!(
+        ctx.definition_body_for_env_registration(lib_def, self_identity),
+        Some(TypeId::STRING),
+    );
+    assert!(!ctx.publish_definition_body(lib_def, TypeId::UNKNOWN));
+    assert!(!ctx.publish_definition_body_with_params(lib_def, self_identity, type_params.clone(),));
+
+    assert_eq!(ctx.definition_store.get_body(lib_def), Some(TypeId::STRING));
+    assert_eq!(
+        ctx.definition_store.get_type_params(lib_def),
+        Some(type_params.clone()),
+    );
+    assert_eq!(ctx.type_env.borrow().get_def(lib_def), Some(TypeId::STRING));
+    assert_eq!(
+        ctx.type_environment.borrow().get_def(lib_def),
+        Some(TypeId::STRING),
+    );
+    assert_eq!(
+        ctx.definition_store.generation(),
+        store_generation,
+        "rejected placeholders must not invalidate shared definition readers",
+    );
+    assert_eq!(
+        ctx.type_env.borrow().generation(),
+        eval_generation,
+        "rejected placeholders must not invalidate evaluator caches",
+    );
+    assert_eq!(
+        ctx.type_environment.borrow().generation(),
+        flow_generation,
+        "rejected placeholders must not invalidate flow caches",
+    );
+
+    // A different file checker can share the canonical store while starting
+    // with empty local evaluator environments. Replaying its placeholder must
+    // seed those environments with the structural body, not merely avoid the
+    // shared-store rewrite.
+    *ctx.type_env.borrow_mut() = TypeEnvironment::new();
+    *ctx.type_environment.borrow_mut() = TypeEnvironment::new();
+    ctx.register_def_with_params_in_envs(lib_def, TypeId::UNKNOWN, type_params.clone());
+    assert_eq!(ctx.type_env.borrow().get_def(lib_def), Some(TypeId::STRING));
+    assert_eq!(
+        ctx.type_env.borrow().get_def_params(lib_def),
+        Some(type_params.as_slice()),
+    );
+    assert_eq!(
+        ctx.type_environment.borrow().get_def(lib_def),
+        Some(TypeId::STRING),
+    );
+    assert_eq!(
+        ctx.type_environment.borrow().get_def_params(lib_def),
+        Some(type_params.as_slice()),
+    );
+
+    let mut local_alias = DefinitionInfo::type_alias(
+        types.intern_string("LocalUnknown"),
+        Vec::new(),
+        TypeId::STRING,
+    );
+    local_alias.file_id = Some(0);
+    let local_def = ctx.definition_store.register(local_alias);
+    ctx.register_def_in_envs(local_def, TypeId::UNKNOWN);
+    assert_eq!(
+        ctx.definition_store.get_body(local_def),
+        Some(TypeId::UNKNOWN),
+        "program aliases must retain genuine `unknown` bodies",
+    );
+}
+
 /// Companion for the shared-store path: a cross-file checker can observe a
 /// generic def whose params live only in `DefinitionStore`, not in its local
 /// `TypeEnvironment`. Replaying an augmentation merge must still re-insert the

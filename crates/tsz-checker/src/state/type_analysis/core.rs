@@ -1697,7 +1697,8 @@ impl CheckerState<'_> {
             // resolution even after the real instance type is finished.
             && !class_instance_resolution_in_flight
         {
-            self.publish_symbol_result_to_type_envs(sym_id, result, &type_params);
+            let definition_body_is_progress =
+                self.publish_symbol_result_to_type_envs(sym_id, result, &type_params);
 
             // Register TypeId -> DefId reverse mapping for TYPE ALIASES only.
             // This enables diagnostics to display type alias names (e.g., "ExoticAnimal")
@@ -1717,7 +1718,7 @@ impl CheckerState<'_> {
                 .get(&sym_id)
                 .copied()
                 .filter(|_| self.symbol_is_type_alias(sym_id));
-            if let Some(def_id) = alias_def_id {
+            if definition_body_is_progress && let Some(def_id) = alias_def_id {
                 self.ctx
                     .definition_store
                     .register_type_to_def(result, def_id);
