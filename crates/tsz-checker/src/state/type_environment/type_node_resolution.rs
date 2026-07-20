@@ -298,6 +298,12 @@ impl<'a> CheckerState<'a> {
                 // No-ops unless `result` is a bare `typeof` of a merged value
                 // symbol (#15078).
                 self.register_self_referential_merged_value_typeof(result);
+                // [#80] The merged-only path above misses a NESTED cross-file
+                // `typeof X` — e.g. `type Options = Parameters<typeof useStore>[0]`,
+                // whose resolved form is `IndexAccess(App(Parameters, [TypeQuery(X)]))`.
+                // Register each nested cross-file PLAIN value's typeof so the deferred
+                // query resolves in this (consuming, reset) session's env.
+                self.register_nested_cross_file_value_typeofs(result);
                 // Eagerly reduce a concrete `Awaited<…>` reference to its
                 // unwrapped form, the way tsc computes `getAwaitedType` at the
                 // reference site. The solver's lazy conditional/`infer`
