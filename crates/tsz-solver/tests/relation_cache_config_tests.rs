@@ -184,6 +184,7 @@ fn each_relation_flag_bit_produces_a_distinct_key() {
         RelationFlags::STRICT_ANY_PROPAGATION,
         RelationFlags::SKIP_WEAK_TYPE_CHECKS,
         RelationFlags::ASSUME_RELATED_ON_CYCLE,
+        RelationFlags::ASSUME_RELATED_ON_DEPTH,
         // Transient flags set during checker execution — they reach the cache
         // via packed `u16` flags rather than a typed builder field, but they
         // must still partition the cache to keep distinct relation passes in
@@ -758,6 +759,15 @@ fn assume_related_on_cycle_partitions_cache_entries() {
 }
 
 #[test]
+fn assume_related_on_depth_partitions_cache_entries() {
+    assert_subtype_partitions(
+        "assume_related_on_depth",
+        RelationPolicy::default().with_assume_related_on_depth(true),
+        RelationPolicy::default().with_assume_related_on_depth(false),
+    );
+}
+
+#[test]
 fn subtype_cache_assume_related_on_cycle_policy_matches_uncached_relation_query() {
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
@@ -780,8 +790,12 @@ fn subtype_cache_assume_related_on_cycle_policy_matches_uncached_relation_query(
     env.insert_def_kind(left_def, DefKind::TypeAlias);
     env.insert_def_kind(right_def, DefKind::TypeAlias);
 
-    let assume = RelationPolicy::default().with_assume_related_on_cycle(true);
-    let reject = RelationPolicy::default().with_assume_related_on_cycle(false);
+    let assume = RelationPolicy::default()
+        .with_assume_related_on_cycle(true)
+        .with_assume_related_on_depth(false);
+    let reject = RelationPolicy::default()
+        .with_assume_related_on_cycle(false)
+        .with_assume_related_on_depth(false);
     let context = RelationContext {
         query_db: Some(&db),
         ..RelationContext::default()
@@ -810,7 +824,7 @@ fn subtype_cache_assume_related_on_cycle_policy_matches_uncached_relation_query(
 
     assert!(
         assume_uncached,
-        "recursive aliases with the same shape should rely on the cycle assumption",
+        "recursive aliases should remain coinductively related when only depth overflow is strict",
     );
     assert!(
         !reject_uncached,

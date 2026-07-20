@@ -507,6 +507,7 @@ fn relation_policy_fields_are_exhaustively_partitioned_in_cache_keys() {
         strict_any_propagation,
         any_propagation_mode,
         assume_related_on_cycle,
+        assume_related_on_depth,
         skip_weak_type_checks,
         erase_generics,
     } = policy;
@@ -547,6 +548,11 @@ fn relation_policy_fields_are_exhaustively_partitioned_in_cache_keys() {
     assert_subtype_partitions(
         "assume_related_on_cycle",
         policy.with_assume_related_on_cycle(!assume_related_on_cycle),
+        policy,
+    );
+    assert_subtype_partitions(
+        "assume_related_on_depth",
+        policy.with_assume_related_on_depth(!assume_related_on_depth),
         policy,
     );
     assert_assignability_partitions(

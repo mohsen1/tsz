@@ -840,11 +840,14 @@ impl<'a> NarrowingContext<'a> {
         {
             return cached;
         }
+        let budget_events = self.cache.relation_budget_event_count();
         let result = self.is_assignable_to_uncached(source, target);
-        self.cache
-            .narrow_assignable_cache
-            .borrow_mut()
-            .insert(key, generation, result);
+        if self.cache.relation_budget_event_count() == budget_events {
+            self.cache
+                .narrow_assignable_cache
+                .borrow_mut()
+                .insert(key, generation, result);
+        }
         result
     }
 
@@ -987,17 +990,35 @@ impl<'a> NarrowingContext<'a> {
         {
             return cached;
         }
-        let result = if let Some(resolver) = self.resolver {
+        let (result, cacheable) = if let Some(resolver) = self.resolver {
             let mut checker = SubtypeChecker::with_resolver(self.db.as_type_database(), &resolver)
-                .with_query_db(self.db);
-            checker.is_subtype_of(source, target)
+                .with_query_db(self.db)
+                .with_assume_related_on_depth(false);
+            let budget_events = checker.incomplete_evaluation_relation_event_count();
+            let result = checker.is_subtype_of(source, target);
+            (
+                result,
+                checker.incomplete_evaluation_relation_event_count() == budget_events,
+            )
         } else {
-            crate::relations::subtype::is_subtype_of_with_db(self.db, source, target)
+            let mut checker = SubtypeChecker::new(self.db.as_type_database())
+                .with_query_db(self.db)
+                .with_assume_related_on_depth(false);
+            let budget_events = checker.incomplete_evaluation_relation_event_count();
+            let result = checker.is_subtype_of(source, target);
+            (
+                result,
+                checker.incomplete_evaluation_relation_event_count() == budget_events,
+            )
         };
-        self.cache
-            .narrow_subtype_cache
-            .borrow_mut()
-            .insert(key, generation, result);
+        if cacheable {
+            self.cache
+                .narrow_subtype_cache
+                .borrow_mut()
+                .insert(key, generation, result);
+        } else {
+            self.cache.note_relation_budget_event();
+        }
         result
     }
 
@@ -1109,11 +1130,7 @@ impl<'a> NarrowingContext<'a> {
                 sp.name == t_prop.name
                     // Optional source can't satisfy required target
                     && (!sp.optional || t_prop.optional)
-                    && crate::relations::subtype::is_subtype_of_with_db(
-                        self.db,
-                        sp.type_id,
-                        t_prop.type_id,
-                    )
+                    && self.is_subtype_for_narrowing(sp.type_id, t_prop.type_id)
             });
             if !found {
                 return false;

@@ -728,16 +728,12 @@ impl<'a> NarrowingContext<'a> {
                     // Reverse subtype check: target <: member.
                     // Handles narrowing \`string | number\` by \`"hello"\` where
                     // \`"hello" <: string\` so the member should be kept.
-                    // Guard: only use the bare is_subtype_of_with_db (which lacks a
-                    // TypeResolver) for primitive/literal types. For interface/class
-                    // Lazy(DefId) types, the global subtype cache can contain stale
-                    // results that cause false positives.
+                    // Guard: this reverse proof only applies when either side
+                    // has primitive/literal semantics. The narrowing boundary
+                    // still owns the relation so budget exhaustion cannot prove
+                    // membership and resolver-backed aliases stay authoritative.
                     if (self.is_js_primitive(target_type) || self.is_js_primitive(member))
-                        && crate::relations::subtype::is_subtype_of_with_db(
-                            self.db,
-                            target_type,
-                            member,
-                        )
+                        && self.is_subtype_for_narrowing(target_type, member)
                     {
                         // Keep a wide `symbol` member over a `unique symbol`
                         // value; resolved target also catches aliases.
@@ -1087,12 +1083,15 @@ impl<'a> NarrowingContext<'a> {
         let Some(_visit_guard) = self.cache.narrow_excluding_visit_guard(key) else {
             return source_type;
         };
+        let relation_budget_events = self.cache.relation_budget_event_count();
         let result = self.narrow_excluding_type_uncached(source_type, excluded_type);
         // Only memoize when the whole subtree stayed within budget. A result that
         // bottomed out the fuel is truncated and request-local, so caching it
         // would poison a later, fully-budgeted request with the conservative
         // answer.
-        if self.cache.exclusion_within_budget() {
+        if self.cache.exclusion_within_budget()
+            && self.cache.relation_budget_event_count() == relation_budget_events
+        {
             self.cache.narrow_excluding_cache.borrow_mut().insert(
                 stable_key,
                 resolver_generation,
@@ -1431,12 +1430,15 @@ impl<'a> NarrowingContext<'a> {
         if let Some(cached) = self.cache.narrow_type_cache.borrow().get(&key, generation) {
             return cached;
         }
+        let relation_budget_events = self.cache.relation_budget_event_count();
         let narrowed =
             self.narrow_type_uncached(request.source_type(), request.guard(), request.sense());
-        self.cache
-            .narrow_type_cache
-            .borrow_mut()
-            .insert(key, generation, narrowed);
+        if self.cache.relation_budget_event_count() == relation_budget_events {
+            self.cache
+                .narrow_type_cache
+                .borrow_mut()
+                .insert(key, generation, narrowed);
+        }
         narrowed
     }
 

@@ -669,17 +669,24 @@ impl<'a> QueryCache<'a> {
             Some(RelationCacheValue::LimitTrue { .. }) | None => {}
         }
 
-        let result = query_relation(
+        let relation_result = query_relation(
             self.as_type_database(),
             source,
             target,
             relation.relation_kind(),
             policy,
             RelationContext::default(),
-        )
-        .related;
+        );
+        let result = relation_result.related;
 
-        self.insert_policy_relation_cache(relation, key, result);
+        // Keep request-local relation answers out of this outer boolean cache.
+        // The typed stability signal includes local depth/iteration overflow,
+        // global fuel and shared solver-frame limits, truncated evaluation,
+        // and unresolved semantic references; not all of those appear in the
+        // diagnostic termination channel.
+        if relation_result.is_cacheable() {
+            self.insert_policy_relation_cache(relation, key, result);
+        }
         if let Some(query_id) = trace_query_id {
             query_trace::relation_end(query_id, trace_op, result, false);
         }

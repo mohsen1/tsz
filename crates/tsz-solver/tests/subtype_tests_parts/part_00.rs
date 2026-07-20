@@ -1360,6 +1360,43 @@ fn test_recursion_depth_limit_provisional_subtyping() {
     let result = checker.check_subtype(deep_string, deep_number);
     assert!(matches!(result, SubtypeResult::DepthExceeded));
     assert!(checker.guard.is_exceeded());
+
+    let mut strict_depth_checker =
+        SubtypeChecker::new(&interner).with_assume_related_on_depth(false);
+    let strict_result = strict_depth_checker.check_subtype(deep_string, deep_number);
+    assert!(matches!(strict_result, SubtypeResult::False));
+    assert!(strict_depth_checker.guard.is_exceeded());
+}
+
+#[test]
+fn strict_depth_policy_rejects_nested_union_member_overflow() {
+    let interner = TypeInterner::new();
+
+    fn nest_array(interner: &TypeInterner, base: TypeId, depth: usize) -> TypeId {
+        let mut ty = base;
+        for _ in 0..depth {
+            ty = interner.array(ty);
+        }
+        ty
+    }
+
+    let deep_string = nest_array(&interner, TypeId::STRING, 120);
+    let deep_boolean = nest_array(&interner, TypeId::BOOLEAN, 120);
+    let deep_number = nest_array(&interner, TypeId::NUMBER, 120);
+    let source_union = interner.union(vec![deep_string, deep_boolean]);
+
+    let mut ordinary = SubtypeChecker::new(&interner);
+    assert!(matches!(
+        ordinary.check_subtype(source_union, deep_number),
+        SubtypeResult::True
+    ));
+
+    let mut strict = SubtypeChecker::new(&interner).with_assume_related_on_depth(false);
+    assert!(matches!(
+        strict.check_subtype(source_union, deep_number),
+        SubtypeResult::False
+    ));
+    assert!(strict.guard.is_exceeded());
 }
 
 #[test]

@@ -35,8 +35,8 @@ bitflags::bitflags! {
     /// Bits `0..=8` are preserved from the original packed `u16` layout so
     /// legacy callers (e.g. checker boundary helpers that import the
     /// `FLAG_*` constants) continue to interoperate byte-for-byte. Bits
-    /// `9..=15` are new and encode previously-missing Lawyer-layer options
-    /// that were silently missing from the cache key.
+    /// Bits `9` and above encode previously-missing Lawyer-layer and
+    /// operation-policy options that were silently absent from the cache key.
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
     pub struct RelationFlags: u32 {
         /// `strictNullChecks` compiler option.
@@ -102,6 +102,11 @@ bitflags::bitflags! {
         /// class-context verdicts live in the cross-checker shared cache without
         /// poisoning the class-agnostic regime (issue #13828).
         const CLASS_CHECK_CONTEXT           = 1 << 16;
+        /// Treat relation depth/iteration exhaustion as assumed-related. This
+        /// is independent of valid coinductive cycle handling so callers that
+        /// need a definitive proof can reject overflow without rejecting
+        /// recursive structural types.
+        const ASSUME_RELATED_ON_DEPTH       = 1 << 17;
     }
 }
 

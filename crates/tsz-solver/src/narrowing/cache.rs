@@ -191,6 +191,10 @@ pub struct NarrowingCache {
     /// Memo for the narrowing-boundary subtype check keyed by
     /// `(source, target, resolver_generation)`.
     pub(crate) narrow_subtype_cache: RefCell<GenerationMemo<NarrowExcludingStableKey, bool>>,
+    /// Monotonic count of strict relation-limit rejections observed while
+    /// computing narrowing answers. Parent memo boundaries snapshot this value
+    /// and avoid publishing results that depend on the ambient relation budget.
+    pub(crate) narrow_relation_budget_events: Cell<u64>,
     /// Re-entrancy depth of the exclusion-narrowing families.
     pub(crate) narrow_excluding_depth: Cell<u32>,
     /// Remaining cumulative work for the current outermost exclusion-narrowing
@@ -297,6 +301,7 @@ impl NarrowingCache {
             narrow_excluding_visiting: RefCell::new(FxHashSet::default()),
             narrow_assignable_cache: RefCell::new(GenerationMemo::default()),
             narrow_subtype_cache: RefCell::new(GenerationMemo::default()),
+            narrow_relation_budget_events: Cell::new(0),
             narrow_excluding_depth: Cell::new(0),
             narrow_excluding_fuel: Cell::new(0),
             narrow_excluding_budget: Cell::new(0),
@@ -467,6 +472,17 @@ impl NarrowingCache {
             fuel: &self.narrow_excluding_fuel,
             prior,
         }
+    }
+
+    #[inline]
+    pub(in crate::narrowing) fn note_relation_budget_event(&self) {
+        self.narrow_relation_budget_events
+            .set(self.narrow_relation_budget_events.get().wrapping_add(1));
+    }
+
+    #[inline]
+    pub(in crate::narrowing) const fn relation_budget_event_count(&self) -> u64 {
+        self.narrow_relation_budget_events.get()
     }
 
     pub(in crate::narrowing) fn charge_exclusion_work(&self) -> bool {

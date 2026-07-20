@@ -28,6 +28,7 @@ fn effective_cached_any_mode_projection_preserves_policy_bits() {
         | RelationFlags::STRICT_SUBTYPE_CHECKING
         | RelationFlags::STRICT_ANY_PROPAGATION
         | RelationFlags::ASSUME_RELATED_ON_CYCLE
+        | RelationFlags::ASSUME_RELATED_ON_DEPTH
         | RelationFlags::SKIP_WEAK_TYPE_CHECKS
         | RelationFlags::NO_ERASE_GENERICS;
 
@@ -66,6 +67,7 @@ fn effective_cached_any_mode_projection_honors_builder_overrides() {
         .with_strict_any_propagation(false)
         .with_any_propagation_mode(AnyPropagationMode::TopLevelOnly)
         .with_assume_related_on_cycle(false)
+        .with_assume_related_on_depth(false)
         .with_skip_weak_type_checks(false)
         .with_erase_generics(true);
 

@@ -56,6 +56,9 @@ pub struct RelationPolicy {
     pub any_propagation_mode: AnyPropagationMode,
     /// Whether recursive relation cycles should be treated as assumed-related.
     pub assume_related_on_cycle: bool,
+    /// Whether relation depth/iteration exhaustion should be treated as
+    /// assumed-related. This is independent of valid recursive cycles.
+    pub assume_related_on_depth: bool,
     /// Skip weak type checks (TS2559) during assignability.
     ///
     /// In tsc, `isTypeAssignableTo` does NOT include the weak type check.
@@ -80,6 +83,7 @@ impl Default for RelationPolicy {
             strict_any_propagation: false,
             any_propagation_mode: AnyPropagationMode::All,
             assume_related_on_cycle: true,
+            assume_related_on_depth: true,
             skip_weak_type_checks: false,
             erase_generics: true,
         }
@@ -99,6 +103,7 @@ impl RelationPolicy {
             strict_any_propagation: false,
             any_propagation_mode: AnyPropagationMode::All,
             assume_related_on_cycle: true,
+            assume_related_on_depth: true,
             skip_weak_type_checks: false,
             erase_generics: true,
         }
@@ -137,6 +142,7 @@ impl RelationPolicy {
             strict_any_propagation: flags.contains(RelationFlags::STRICT_ANY_PROPAGATION),
             any_propagation_mode: AnyPropagationMode::All,
             assume_related_on_cycle: true,
+            assume_related_on_depth: true,
             skip_weak_type_checks: flags.contains(RelationFlags::SKIP_WEAK_TYPE_CHECKS),
             erase_generics,
         }
@@ -164,6 +170,11 @@ impl RelationPolicy {
 
     pub const fn with_assume_related_on_cycle(mut self, assume: bool) -> Self {
         self.assume_related_on_cycle = assume;
+        self
+    }
+
+    pub const fn with_assume_related_on_depth(mut self, assume: bool) -> Self {
+        self.assume_related_on_depth = assume;
         self
     }
 
@@ -270,6 +281,7 @@ impl RelationPolicy {
             .union(RelationFlags::STRICT_ANY_PROPAGATION)
             .union(RelationFlags::SKIP_WEAK_TYPE_CHECKS)
             .union(RelationFlags::ASSUME_RELATED_ON_CYCLE)
+            .union(RelationFlags::ASSUME_RELATED_ON_DEPTH)
             .union(RelationFlags::NO_ERASE_GENERICS);
         let mut bits =
             RelationFlags::from_bits_retain(self.flags.bits() & !field_owned_bits.bits());
@@ -284,6 +296,9 @@ impl RelationPolicy {
         }
         if self.assume_related_on_cycle {
             bits = bits.union(RelationFlags::ASSUME_RELATED_ON_CYCLE);
+        }
+        if self.assume_related_on_depth {
+            bits = bits.union(RelationFlags::ASSUME_RELATED_ON_DEPTH);
         }
         // `erase_generics=false` maps to NO_ERASE_GENERICS bit. The typed
         // `flags` field may already carry this bit; merging here keeps explicit
@@ -325,6 +340,7 @@ pub struct RelationResult {
     pub kind: RelationKind,
     pub related: bool,
     termination: RelationTermination,
+    cacheable: bool,
 }
 
 /// Whether a relation query completed or stopped at a relation budget.
@@ -370,6 +386,7 @@ impl RelationResult {
             kind,
             related,
             termination: RelationTermination::Complete,
+            cacheable: true,
         }
     }
 
@@ -378,11 +395,13 @@ impl RelationResult {
         related: bool,
         depth_exceeded: bool,
         iteration_exceeded: bool,
+        cacheable: bool,
     ) -> Self {
         Self {
             kind,
             related,
             termination: RelationTermination::from_flags(depth_exceeded, iteration_exceeded),
+            cacheable,
         }
     }
 
@@ -405,6 +424,15 @@ impl RelationResult {
     pub const fn iteration_exceeded(self) -> bool {
         self.termination.iteration_exceeded()
     }
+
+    /// Whether this answer is stable enough for an outer boolean relation
+    /// cache. Kept separate from diagnostic termination because global fuel,
+    /// unresolved semantic references, and shared solver-frame limits can make
+    /// a verdict request-local without tripping the local recursion guard.
+    #[inline]
+    pub(crate) const fn is_cacheable(self) -> bool {
+        self.cacheable
+    }
 }
 
 const fn relation_result_from_compat_checker<R: TypeResolver>(
@@ -417,6 +445,7 @@ const fn relation_result_from_compat_checker<R: TypeResolver>(
         related,
         checker.depth_exceeded(),
         checker.iteration_exceeded(),
+        checker.subtype.relation_result_cacheable(),
     )
 }
 
@@ -430,6 +459,7 @@ const fn relation_result_from_subtype_checker<R: TypeResolver>(
         related,
         checker.depth_exceeded(),
         checker.iteration_exceeded(),
+        checker.relation_result_cacheable(),
     )
 }
 
@@ -562,6 +592,7 @@ where
         related,
         checker.depth_exceeded(),
         checker.iteration_exceeded(),
+        checker.subtype.relation_result_cacheable(),
     );
 
     // The failure analysis runs on the same `checker`, so its relation cache is
@@ -713,6 +744,7 @@ pub fn query_relation_with_overrides<
         related = result.related,
         depth_exceeded = result.depth_exceeded(),
         iteration_exceeded = result.iteration_exceeded(),
+        cacheable = result.is_cacheable(),
         "query_relation result"
     );
 
@@ -738,6 +770,7 @@ pub fn query_erased_overload_params_with_matching_return_base<'a, R: TypeResolve
         related,
         checker.depth_exceeded(),
         checker.iteration_exceeded(),
+        checker.relation_result_cacheable(),
     )
 }
 
@@ -825,6 +858,7 @@ fn configure_compat_checker_policy<R: TypeResolver>(
         AnyPropagationMode::AnySourceNotRelated
     ));
     checker.set_assume_related_on_cycle(policy.assume_related_on_cycle);
+    checker.set_assume_related_on_depth(policy.assume_related_on_depth);
     checker.set_skip_weak_type_checks(policy.skip_weak_type_checks);
     checker.set_erase_generics(policy.erase_generics);
 }
@@ -851,6 +885,7 @@ const fn configure_subtype_checker_policy<'a, R: TypeResolver>(
     configure_subtype_checker_policy_bits(checker, policy)
         .with_any_propagation_mode(policy.any_propagation_mode)
         .with_assume_related_on_cycle(policy.assume_related_on_cycle)
+        .with_assume_related_on_depth(policy.assume_related_on_depth)
 }
 
 const fn configure_subtype_checker_policy_bits<'a, R: TypeResolver>(
