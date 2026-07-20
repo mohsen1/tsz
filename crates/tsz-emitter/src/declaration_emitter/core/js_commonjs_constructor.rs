@@ -1,4 +1,4 @@
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
@@ -266,15 +266,19 @@ impl<'a> DeclarationEmitter<'a> {
         source_file: &tsz_parser::parser::node::SourceFileData,
     ) -> (
         FxHashMap<String, Vec<JsPrototypeAssignment>>,
-        rustc_hash::FxHashSet<String>,
+        FxHashSet<String>,
     ) {
         let mut assignments = FxHashMap::<String, Vec<JsPrototypeAssignment>>::default();
-        let mut prototype_object_base_names = rustc_hash::FxHashSet::<String>::default();
+        let mut prototype_object_base_names = FxHashSet::<String>::default();
+        let mut reassigned_names = FxHashSet::<String>::default();
         let mut active_commonjs_exports = FxHashMap::<String, String>::default();
         if !self.source_is_js_file {
             return (assignments, prototype_object_base_names);
         }
         for &stmt_idx in &source_file.statements.nodes {
+            if let Some(name) = self.js_reassigned_top_level_name(stmt_idx) {
+                reassigned_names.insert(name);
+            }
             if self
                 .js_module_exports_assignment_initializer(stmt_idx)
                 .is_some()
@@ -319,7 +323,37 @@ impl<'a> DeclarationEmitter<'a> {
                 assignments.entry(name).or_default().push(assignment);
             }
         }
+        // TS 7 keeps the class projection only for a stable direct base
+        // binding. Apply writes after the full source-order pass so assignments
+        // before and after the prototype object have the same conservative
+        // fallback.
+        prototype_object_base_names.retain(|name| !reassigned_names.contains(name));
         (assignments, prototype_object_base_names)
+    }
+
+    fn js_reassigned_top_level_name(&self, stmt_idx: NodeIndex) -> Option<String> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+        if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return None;
+        }
+        let expr_stmt = self.arena.get_expression_statement(stmt_node)?;
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_stmt.expression);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.arena.get_binary_expr(expr_node)?;
+        if binary.operator_token < SyntaxKind::EqualsToken as u16
+            || binary.operator_token > SyntaxKind::CaretEqualsToken as u16
+        {
+            return None;
+        }
+        let left = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.left);
+        self.get_identifier_text(left)
     }
 
     fn js_prototype_object_base_name(&self, initializer: NodeIndex) -> Option<String> {

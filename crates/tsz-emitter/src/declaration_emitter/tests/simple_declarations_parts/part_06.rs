@@ -165,6 +165,56 @@ PrototypeDerived.prototype = {
 }
 
 #[test]
+fn test_js_whole_prototype_reassigned_base_before_use_keeps_namespace_projection() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+export function BeforeBase() { this.value = 1; }
+BeforeBase.prototype = { read() { return this.value; } };
+function BeforeReplacement() {}
+BeforeBase = BeforeReplacement;
+
+export function BeforeDerived() {}
+BeforeDerived.prototype = {
+    __proto__: BeforeBase,
+    get current() { return this.value; }
+};
+"#,
+    );
+
+    assert!(
+        output.contains("export declare namespace BeforeBase {")
+            && output.contains("read(): any;")
+            && !output.contains("export class BeforeBase"),
+        "Expected a base reassigned before the prototype use to retain the callable namespace projection: {output}"
+    );
+}
+
+#[test]
+fn test_js_whole_prototype_reassigned_base_after_use_keeps_namespace_projection() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+export function AfterBase() { this.value = 1; }
+AfterBase.prototype = { read() { return this.value; } };
+function AfterReplacement() {}
+
+export function AfterDerived() {}
+AfterDerived.prototype = {
+    __proto__: AfterBase,
+    get current() { return this.value; }
+};
+AfterBase = AfterReplacement;
+"#,
+    );
+
+    assert!(
+        output.contains("export declare namespace AfterBase {")
+            && output.contains("read(): any;")
+            && !output.contains("export class AfterBase"),
+        "Expected a base reassigned after the prototype use to retain the callable namespace projection: {output}"
+    );
+}
+
+#[test]
 fn test_js_whole_prototype_namespace_preserves_intervening_jsdoc() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
