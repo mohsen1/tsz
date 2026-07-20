@@ -494,11 +494,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let instantiated = instantiate_type(self.interner, cond_type_id, &sub);
                 if instantiated != cond_type_id {
                     let evaluated = self.evaluate_type(instantiated);
-                    // A `never` distributive constraint (e.g. `ZeroOf<{}>`, where
-                    // no branch matches) is legitimately assignable to any target,
-                    // so it is kept here rather than guarded out — `never <: T`
-                    // holds and matches tsc's acceptance of such relations.
-                    if evaluated != cond_type_id && self.check_subtype(evaluated, target).is_true()
+                    // A `never` infer-extraction result means there is no
+                    // distributive constraint, so that path falls back to the
+                    // default constraint. For non-infer conditionals such as
+                    // `ZeroOf<T extends {}>`, `never` remains a legitimate
+                    // subtype witness.
+                    if evaluated != cond_type_id
+                        && (!extends_is_inference_pattern || evaluated != TypeId::NEVER)
+                        && self.check_subtype(evaluated, target).is_true()
                     {
                         return SubtypeResult::True;
                     }
@@ -541,18 +544,30 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         {
             return None;
         }
-        // Checker-owned relations carry a query database, so they can rewrite
-        // the exact check-binder identity without touching same-named foreign
-        // binders. Standalone TypeDatabase-only relations retain the legacy
-        // instantiation fallback.
+        // The shallow base query intentionally preserves resolver-owned alias
+        // applications. Expose that application before substitution so a
+        // distributive extraction sees each constraint member rather than an
+        // opaque alias that later collapses to `unknown` as one whole check.
+        let raw_constraint =
+            crate::type_queries::get_base_constraint_of_type(self.interner, cond.check_type);
+        if raw_constraint == cond.check_type {
+            return None;
+        }
+        let exposed_constraint = self.evaluate_type(raw_constraint);
+        // Checker-owned relations use the query-backed exact rewriter so a
+        // same-named sibling binder is not replaced. Standalone
+        // TypeDatabase-only relations retain the legacy name-based fallback.
         let substituted = if let Some(query_db) = self.query_db {
-            crate::type_queries::conditional_check_type_substituted_constraint_exact(
-                query_db, type_id,
+            crate::type_queries::conditional_check_type_substituted_with_constraint_exact(
+                query_db,
+                type_id,
+                exposed_constraint,
             )
         } else {
-            crate::type_queries::conditional_check_type_substituted_constraint(
+            crate::type_queries::conditional_check_type_substituted_with_constraint(
                 self.interner,
                 type_id,
+                exposed_constraint,
             )
         }?;
         let evaluated = self.evaluate_type(substituted);
