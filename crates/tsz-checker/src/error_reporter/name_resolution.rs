@@ -1056,8 +1056,7 @@ impl<'a> CheckerState<'a> {
 
         // The boundary's `report_name_resolution_failure` already checked for
         // spelling suggestions via `collect_spelling_suggestions` before calling
-        // this function. The suggestion counter was incremented eagerly in
-        // `collect_spelling_suggestions`, so no counter update is needed here.
+        // this fallback.
 
         // Emit standard TS2304 "Cannot find name" error without suggestions
         if let Some(loc) = self.get_source_location(idx) {
@@ -1136,8 +1135,8 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Collect spelling suggestions for an unresolved name, respecting all
-    /// suppression rules (accessibility modifiers, `arguments`,
-    /// max-suggestion cap, parse-error suppression).
+    /// suppression rules (accessibility modifiers, `arguments`, and parse
+    /// errors).
     ///
     /// Returns an empty `Vec` when suggestions should be suppressed.
     /// This is the single source of truth for suggestion collection, shared by
@@ -1152,20 +1151,12 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Cheap half of `collect_spelling_suggestions`: apply every suppression
-    /// predicate and advance the eager cap counter, returning whether the
-    /// expensive candidate scan (`scan_similar_identifiers`) should run.
-    ///
-    /// This is split out so the resolution boundary can charge the counter in
-    /// resolution order (matching tsc's sequential `suggestionCount`) while
-    /// deferring the full-symbol-universe Levenshtein scan to the
-    /// diagnostic-emission path. The counter side effects here are identical to
-    /// the previous eager `collect_spelling_suggestions`, so cap behavior and
-    /// the resulting diagnostics are unchanged.
+    /// predicate before the expensive candidate scan
+    /// (`scan_similar_identifiers`) runs.
     pub(crate) fn suggestion_scan_eligible(&self, name: &str, idx: NodeIndex) -> bool {
         // A failure site whose diagnostic can never be emitted from this
-        // checker (node not addressable in the current arena) must skip both
-        // the scan and the cap-counter charge: tsc's `suggestionCount` only
-        // ever advances for failures it reports, and it never reports these.
+        // checker (node not addressable in the current arena) must skip the
+        // presentation-only candidate scan.
         if !self.can_emit_diagnostic_at(idx) {
             return false;
         }
@@ -1185,42 +1176,6 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Eagerly increment the suggestion counter for each unique name resolution
-        // attempt. tsc increments `suggestionCount` synchronously during sequential
-        // checking, but our demand-driven type resolution can resolve many names
-        // before any diagnostics are emitted. Counting eagerly here (via Cell)
-        // ensures the cap of 10 is reached regardless of processing order.
-        let is_new_node = !self
-            .ctx
-            .name_resolution_diagnostics
-            .reported_nodes
-            .contains(&idx);
-        if is_new_node {
-            self.ctx
-                .name_resolution_diagnostics
-                .spelling_suggestions_emitted
-                .set(
-                    self.ctx
-                        .name_resolution_diagnostics
-                        .spelling_suggestions_emitted
-                        .get()
-                        + 1,
-                );
-        }
-
-        // Suppress suggestions when the cap is reached for a new node.
-        // Already-counted nodes can still get suggestions (repeated resolution).
-        if self
-            .ctx
-            .name_resolution_diagnostics
-            .spelling_suggestions_emitted
-            .get()
-            > 10
-            && is_new_node
-        {
-            return false;
-        }
-
         // Suppress spelling suggestions in files with parse errors.
         // When the AST is malformed, symbols may not be properly bound and
         // name resolution cascades are unhelpful.  tsc keeps only primary
@@ -1234,8 +1189,8 @@ impl<'a> CheckerState<'a> {
 
     /// Expensive half of `collect_spelling_suggestions`: the full-symbol-universe
     /// candidate scan. Call only after `suggestion_scan_eligible` returned `true`
-    /// (it does not re-apply the suppression predicates or touch the cap
-    /// counter), and only when a diagnostic is actually being emitted.
+    /// (it does not re-apply the suppression predicates), and only when a
+    /// diagnostic is actually being emitted.
     pub(crate) fn scan_similar_identifiers(&self, name: &str, idx: NodeIndex) -> Vec<String> {
         // Bail before the meaning-detection parent walk: a discarded context
         // returns no candidates regardless of meaning (the same gate inside
@@ -1257,20 +1212,6 @@ impl<'a> CheckerState<'a> {
         self.scan_similar_identifiers_for_meaning(name, idx, suggestion_meaning)
     }
 
-    /// Memoized full-symbol-universe candidate scan for an explicit symbol
-    /// meaning. This is the single owner of `find_similar_identifiers`: every
-    /// spelling-suggestion call site (ordinary `VALUE`/`TYPE` name lookups via
-    /// `scan_similar_identifiers`, and the `Cannot find namespace` path via
-    /// `error_cannot_find_namespace_with_suggestion`) routes through here so the
-    /// expensive Levenshtein walk is memoized exactly once per
-    /// `(reference site, meaning)`.
-    ///
-    /// Before this consolidation the namespace path called
-    /// `find_similar_identifiers` directly, bypassing the memo, so a missing
-    /// namespace re-resolved during demand-driven evaluation re-ran the whole
-    /// scan on every revisit (issue #14349). Callers that need cap/suppression
-    /// gating must still consult `suggestion_scan_eligible` first; this method
-    /// only owns the candidate scan and its cache.
     /// Whether `idx` lives inside a built-in `lib.*.d.ts` declaration file.
     pub(crate) fn node_is_in_builtin_lib_file(&self, idx: NodeIndex) -> bool {
         let mut current = idx;
@@ -1295,6 +1236,20 @@ impl<'a> CheckerState<'a> {
             })
     }
 
+    /// Memoized full-symbol-universe candidate scan for an explicit symbol
+    /// meaning. This is the single owner of `find_similar_identifiers`: every
+    /// spelling-suggestion call site (ordinary `VALUE`/`TYPE` name lookups via
+    /// `scan_similar_identifiers`, and the `Cannot find namespace` path via
+    /// `error_cannot_find_namespace_with_suggestion`) routes through here so the
+    /// expensive Levenshtein walk is memoized exactly once per
+    /// `(lexical scope, misspelled name, meaning)`.
+    ///
+    /// Before this consolidation the namespace path called
+    /// `find_similar_identifiers` directly, bypassing the memo, so a missing
+    /// namespace re-resolved during demand-driven evaluation re-ran the whole
+    /// scan on every revisit (issue #14349). Callers that need suppression
+    /// gating must still consult `suggestion_scan_eligible` first; this method
+    /// only owns the candidate scan and its cache.
     pub(crate) fn scan_similar_identifiers_for_meaning(
         &self,
         name: &str,
@@ -1311,16 +1266,24 @@ impl<'a> CheckerState<'a> {
         if self.ctx.diagnostics_discarded {
             return Vec::new();
         }
-        // Memoize per (reference site, meaning): the same unresolved reference is
-        // re-resolved many times under demand-driven evaluation, and each
-        // revisit would otherwise repeat the full-symbol-universe scan below.
+        // Binder/lib symbol tables are immutable during a file session, so the
+        // candidate set is stable for a lexical scope, spelling, and meaning.
+        // This covers both demand-driven revisits and distinct occurrences of the
+        // same unresolved name without leaking local candidates across scopes.
         // See `NameResolutionDiagnostics::suggestion_scan_cache`.
+        let scope_id = self
+            .ctx
+            .binder
+            .find_enclosing_scope(self.ctx.arena, idx)
+            .unwrap_or(tsz_binder::ScopeId::NONE);
+        let scope_key = (scope_id, meaning);
         if let Some(cached) = self
             .ctx
             .name_resolution_diagnostics
             .suggestion_scan_cache
             .borrow()
-            .get(&(idx, meaning))
+            .get(&scope_key)
+            .and_then(|by_name| by_name.get(name))
         {
             return cached.clone();
         }
@@ -1333,7 +1296,9 @@ impl<'a> CheckerState<'a> {
             .name_resolution_diagnostics
             .suggestion_scan_cache
             .borrow_mut()
-            .insert((idx, meaning), suggestions.clone());
+            .entry(scope_key)
+            .or_default()
+            .insert(name.to_owned(), suggestions.clone());
 
         suggestions
     }
@@ -1475,7 +1440,6 @@ impl<'a> CheckerState<'a> {
 
     /// Report error 2304/2552: Cannot find name 'X' with suggestions.
     /// Provides a list of similar names that might be what the user intended.
-    /// tsc limits spelling suggestions to 10 per file; after that, emits TS2304 only.
     pub fn error_cannot_find_name_with_suggestions(
         &mut self,
         name: &str,
@@ -1488,14 +1452,6 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_name_in_export_default_namespace(idx) {
             return;
         }
-
-        // The suggestion counter was already incremented eagerly in
-        // `collect_spelling_suggestions`. Just mark the node as reported
-        // to prevent future double-counting.
-        self.ctx
-            .name_resolution_diagnostics
-            .reported_nodes
-            .insert(idx);
 
         // Skip TS2304 for identifiers that are clearly not valid names.
         // These are likely parse errors that were added to the AST for error recovery.
@@ -1642,7 +1598,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Report TS2503/TS2833 after the name-resolution boundary has already
-    /// charged the spelling-suggestion cap for this namespace lookup.
+    /// precomputed whether suggestions are eligible for this namespace lookup.
     pub(crate) fn error_cannot_find_namespace_with_precomputed_eligibility(
         &mut self,
         name: &str,
@@ -1675,42 +1631,18 @@ impl<'a> CheckerState<'a> {
         // type (interface / class / type alias) as a namespace suggestion, so
         // including `TYPE` here wrongly suggested e.g. the DOM `Node` interface for
         // a missing `NodeJS` namespace (TS2833) where tsc emits plain TS2503.
-        // Route through the shared memoized scan gateway (keyed by node +
-        // `NAMESPACE` meaning) so a missing namespace re-resolved during
+        // Route through the shared memoized scan gateway so a missing namespace
+        // re-resolved during
         // demand-driven evaluation does not re-run the full-symbol-universe
-        // walk on every revisit (issue #14349). Namespace diagnostics also
-        // share the same spelling-suggestion cap as ordinary missing names; a
-        // capped site records an empty scan result so revisits stay capped.
+        // walk on every revisit (issue #14349).
         let suggestion_meaning = symbol_flags::NAMESPACE;
-        let cache_key = (idx, suggestion_meaning);
-        let cached_suggestions = self
-            .ctx
-            .name_resolution_diagnostics
-            .suggestion_scan_cache
-            .borrow()
-            .get(&cache_key)
-            .cloned();
-        let suggestions = if let Some(suggestions) = cached_suggestions {
-            suggestions
+        let eligible =
+            suggestions_eligible.unwrap_or_else(|| self.suggestion_scan_eligible(name, idx));
+        let suggestions = if eligible {
+            self.scan_similar_identifiers_for_meaning(name, idx, suggestion_meaning)
         } else {
-            let eligible =
-                suggestions_eligible.unwrap_or_else(|| self.suggestion_scan_eligible(name, idx));
-            if eligible {
-                self.scan_similar_identifiers_for_meaning(name, idx, suggestion_meaning)
-            } else {
-                self.ctx
-                    .name_resolution_diagnostics
-                    .suggestion_scan_cache
-                    .borrow_mut()
-                    .insert(cache_key, Vec::new());
-                Vec::new()
-            }
+            Vec::new()
         };
-        self.ctx
-            .name_resolution_diagnostics
-            .reported_nodes
-            .insert(idx);
-
         if let Some(suggestion) = suggestions.first() {
             self.error_at_node_msg(
                 idx,

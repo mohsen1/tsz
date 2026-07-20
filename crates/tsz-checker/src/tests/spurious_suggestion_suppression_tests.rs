@@ -102,10 +102,9 @@ var p: m.Point;
 }
 
 #[test]
-fn namespace_suggestion_respects_spelling_cap() {
-    // tsc's spelling-suggestion cap is shared by namespace "did you mean?"
-    // diagnostics. Once distinct missing namespace sites consume the cap, a
-    // later near-match should stay plain TS2503 rather than escaping as TS2833.
+fn ts7_namespace_suggestions_continue_after_ten_failures() {
+    // TypeScript 7 no longer caps namespace "did you mean?" diagnostics at ten
+    // sites. Every distinct near-match remains TS2833.
     let codes = check_strict(
         r#"
 namespace Foobar { export type X = number; }
@@ -124,13 +123,13 @@ type T10 = Foobaz.X;
     );
     assert_eq!(
         count(&codes, TS2833),
-        10,
-        "only the first ten namespace sites should get suggestions: {codes:?}"
+        11,
+        "every namespace site should get its suggestion: {codes:?}"
     );
     assert_eq!(
         count(&codes, TS2503),
-        1,
-        "the capped namespace failure should fall back to plain TS2503: {codes:?}"
+        0,
+        "no namespace site should fall back to plain TS2503: {codes:?}"
     );
 }
 

@@ -330,8 +330,8 @@ impl<'a> CheckerState<'a> {
                                     // The boundary precomputes suggestion eligibility for true
                                     // not-found failures. Wrong-meaning namespace anchors (for
                                     // example a value-only `m` near namespace `M`) still need the
-                                    // namespace diagnostic owner to apply the suggestion cap at
-                                    // emission time.
+                                    // namespace diagnostic owner to apply suppression eligibility
+                                    // at emission time.
                                     if matches!(
                                         &failure.kind,
                                         crate::query_boundaries::name_resolution::ResolutionFailureKind::NotFound

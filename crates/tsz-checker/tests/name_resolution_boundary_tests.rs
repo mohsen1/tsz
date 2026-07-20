@@ -954,3 +954,156 @@ const a = Foo;
         diagnostic_codes(&diags)
     );
 }
+
+#[test]
+fn ts7_keeps_spelling_suggestions_after_ten_failures() {
+    let diags = check(
+        r#"
+const beacon = 1;
+becon; becon; becon; becon; becon; becon;
+becon; becon; becon; becon; becon; becon;
+"#,
+    );
+    let suggestion_count = diags
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.code == 2552
+                && diagnostic.message_text.contains("'becon'")
+                && diagnostic.message_text.contains("'beacon'")
+        })
+        .count();
+    let bare_not_found_count = diags
+        .iter()
+        .filter(|diagnostic| diagnostic.code == 2304 && diagnostic.message_text.contains("'becon'"))
+        .count();
+
+    assert_eq!(
+        suggestion_count, 12,
+        "expected TS2552 at every site: {diags:#?}"
+    );
+    assert_eq!(
+        bare_not_found_count, 0,
+        "unexpected TS2304 fallback: {diags:#?}"
+    );
+}
+
+#[test]
+fn spelling_suggestions_exclude_receiver_only_class_members() {
+    let diags = check(
+        r#"
+class Example<TargetType> {
+    instanceTarget!: number;
+    static staticTarget: number;
+    methodTarget() {}
+    get accessorTarget() { return 1; }
+
+    method() {
+        let typed: InstanceTarget;
+        StaticTarget;
+        MethodTarget;
+        AccessorTarget;
+        let generic: TargetTyp;
+        const localTarget = 1;
+        localTarge;
+    }
+}
+"#,
+    );
+
+    for missing_name in [
+        "InstanceTarget",
+        "StaticTarget",
+        "MethodTarget",
+        "AccessorTarget",
+    ] {
+        assert!(
+            diags.iter().any(|diagnostic| {
+                diagnostic.code == 2304
+                    && diagnostic
+                        .message_text
+                        .contains(&format!("'{missing_name}'"))
+            }),
+            "expected bare TS2304 for receiver-only class member near-match {missing_name}: {diags:#?}"
+        );
+        assert!(
+            !diags.iter().any(|diagnostic| {
+                diagnostic.code == 2552
+                    && diagnostic
+                        .message_text
+                        .contains(&format!("'{missing_name}'"))
+            }),
+            "receiver-only class member must not become a bare-name suggestion: {diags:#?}"
+        );
+    }
+
+    for (typo, suggestion) in [("TargetTyp", "TargetType"), ("localTarge", "localTarget")] {
+        assert!(
+            diags.iter().any(|diagnostic| {
+                diagnostic.code == 2552
+                    && diagnostic.message_text.contains(&format!("'{typo}'"))
+                    && diagnostic.message_text.contains(&format!("'{suggestion}'"))
+            }),
+            "lexically visible name should remain a suggestion: {diags:#?}"
+        );
+    }
+}
+
+#[test]
+fn spelling_suggestions_preserve_type_params_merged_with_class_members() {
+    let diags = check(
+        r#"
+class PropertyMerge<PropertyType> {
+    PropertyType!: number;
+    method() { let value: PropertyTyp; PropertyTyp; }
+}
+class MethodMerge<MethodType> {
+    MethodType() {}
+    method() { let value: MethodTyp; MethodTyp; }
+}
+"#,
+    );
+
+    for (typo, suggestion) in [("PropertyTyp", "PropertyType"), ("MethodTyp", "MethodType")] {
+        assert!(
+            diags.iter().any(|diagnostic| {
+                diagnostic.code == 2552
+                    && diagnostic.message_text.contains(&format!("'{typo}'"))
+                    && diagnostic.message_text.contains(&format!("'{suggestion}'"))
+            }),
+            "the lexical type-parameter meaning must survive a same-name receiver member: {diags:#?}"
+        );
+        assert!(
+            diags.iter().any(|diagnostic| {
+                diagnostic.code == 2304 && diagnostic.message_text.contains(&format!("'{typo}'"))
+            }),
+            "the same merged symbol must remain receiver-only in value position: {diags:#?}"
+        );
+    }
+}
+
+#[test]
+fn spelling_suggestion_cache_is_lexically_scope_sensitive() {
+    let diags = check(
+        r#"
+function first() {
+    const beacon = 1;
+    becon;
+}
+function second() {
+    const bacon = 1;
+    becon;
+}
+"#,
+    );
+
+    for suggestion in ["beacon", "bacon"] {
+        assert!(
+            diags.iter().any(|diagnostic| {
+                diagnostic.code == 2552
+                    && diagnostic.message_text.contains("'becon'")
+                    && diagnostic.message_text.contains(&format!("'{suggestion}'"))
+            }),
+            "same spelling in distinct lexical scopes must keep its local candidate: {diags:#?}"
+        );
+    }
+}

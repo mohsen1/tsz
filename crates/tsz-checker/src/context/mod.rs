@@ -87,7 +87,7 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::Arc;
 pub use symbol_file_targets::SymbolFileTargetsOverlay;
-use tsz_binder::SymbolId;
+use tsz_binder::{ScopeId, SymbolId};
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
@@ -415,26 +415,27 @@ pub struct DestructuredBindingInfo {
     pub(crate) is_rest: bool,
 }
 
-/// Name-resolution diagnostic counters that must stay coordinated.
+/// Visible spelling candidates for one file session.
+pub type SpellingCandidateCache = FxHashMap<(ScopeId, u32), Rc<[String]>>;
+
+/// Per-spelling suggestion results for one file session.
+pub type SpellingSuggestionScanCache = FxHashMap<(ScopeId, u32), FxHashMap<String, Vec<String>>>;
+
+/// Name-resolution diagnostic caches that must stay coordinated.
 #[derive(Debug, Default)]
 pub struct NameResolutionDiagnostics {
-    /// Count of name resolution attempts (TS2304/TS2552) to limit spelling suggestions.
-    /// tsc caps at 10, counting every resolution failure (not just successful suggestions).
-    pub spelling_suggestions_emitted: Cell<u32>,
+    /// Visible spelling candidates keyed by lexical scope and symbol-meaning
+    /// mask. Binder/lib tables are immutable during a file session, so every
+    /// miss in the same scope can reuse one candidate universe.
+    pub spelling_candidate_cache: RefCell<SpellingCandidateCache>,
 
-    /// Node indices for which a name resolution failure (TS2304/TS2552) has already
-    /// been reported. Used to deduplicate the `spelling_suggestions_emitted` counter
-    /// when the same type reference is resolved multiple times (e.g., due to
-    /// re-evaluation in generic/contextual typing contexts).
-    pub reported_nodes: FxHashSet<NodeIndex>,
-
-    /// Memoized spelling-suggestion candidate scans keyed by failing reference
-    /// node and symbol-meaning mask (`VALUE`/`TYPE`/`NAMESPACE`). The
-    /// full-symbol-universe Levenshtein walk depends only on stable binder/lib
-    /// tables, reference site, and meaning; caching `(node, meaning)` collapses
-    /// repeated demand-driven revisits without reusing the wrong candidate set.
-    /// Cleared at the file-session boundary alongside `reported_nodes`.
-    pub suggestion_scan_cache: RefCell<FxHashMap<(NodeIndex, u32), Vec<String>>>,
+    /// Memoized spelling-suggestion candidate scans keyed by lexical scope,
+    /// misspelled name, and symbol-meaning mask (`VALUE`/`TYPE`/`NAMESPACE`). The
+    /// full-symbol-universe Levenshtein walk depends only on immutable binder/lib
+    /// tables and that key. This collapses both demand-driven revisits and repeated
+    /// misses in one scope without leaking candidates across scopes.
+    /// Cleared at the file-session boundary because `ScopeId` is binder-local.
+    pub suggestion_scan_cache: RefCell<SpellingSuggestionScanCache>,
 }
 
 /// File-session memo tables shared by flow narrowing helpers.
@@ -638,7 +639,7 @@ pub struct CheckerContext<'a> {
     /// Tracking the current computed property name node for TS2467
     pub checking_computed_property_name: Option<NodeIndex>,
 
-    /// Name-resolution diagnostic counters and dedupe state.
+    /// Name-resolution diagnostic scan cache.
     pub name_resolution_diagnostics: NameResolutionDiagnostics,
 
     /// `TypeId`s that represent interfaces extending arrays/tuples.

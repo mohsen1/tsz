@@ -11,6 +11,41 @@ struct Diag {
     message: String,
 }
 
+#[test]
+fn ts7_jsdoc_keeps_spelling_suggestions_after_ten_failures() {
+    let diags = check_js(
+        r#"
+/** @type {sting} */ var a;
+/** @type {sting} */ var b;
+/** @type {sting} */ var c;
+/** @type {sting} */ var d;
+/** @type {sting} */ var e;
+/** @type {sting} */ var f;
+/** @type {sting} */ var g;
+/** @type {sting} */ var h;
+/** @type {sting} */ var i;
+/** @type {sting} */ var j;
+/** @type {sting} */ var k;
+/** @type {sting} */ var l;
+"#,
+    );
+    let suggestion_count = diags
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic.code == 2552
+                && diagnostic.message.contains("'sting'")
+                && diagnostic.message.contains("'string'")
+        })
+        .count();
+    let bare_not_found_count = diags
+        .iter()
+        .filter(|diagnostic| diagnostic.code == 2304 && diagnostic.message.contains("'sting'"))
+        .count();
+
+    assert_eq!(suggestion_count, 12, "expected TS2552 at every site");
+    assert_eq!(bare_not_found_count, 0, "unexpected TS2304 fallback");
+}
+
 fn check_js(source: &str) -> Vec<Diag> {
     tsz_checker::test_utils::check_source(
         source,

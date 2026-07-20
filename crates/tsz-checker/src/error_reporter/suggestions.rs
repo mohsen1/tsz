@@ -375,17 +375,39 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         meaning_flags: u32,
     ) -> Option<Vec<String>> {
-        let visible_names = self.ctx.binder.collect_visible_symbol_names_filtered(
-            self.ctx.arena,
-            idx,
-            meaning_flags,
-        );
+        let scope_id = self
+            .ctx
+            .binder
+            .find_enclosing_scope(self.ctx.arena, idx)
+            .unwrap_or(tsz_binder::ScopeId::NONE);
+        let candidate_key = (scope_id, meaning_flags);
+        let visible_names = if let Some(cached) = self
+            .ctx
+            .name_resolution_diagnostics
+            .spelling_candidate_cache
+            .borrow()
+            .get(&candidate_key)
+        {
+            std::rc::Rc::clone(cached)
+        } else {
+            let candidates: std::rc::Rc<[String]> = self
+                .ctx
+                .binder
+                .collect_visible_symbol_names_filtered(self.ctx.arena, idx, meaning_flags)
+                .into();
+            self.ctx
+                .name_resolution_diagnostics
+                .spelling_candidate_cache
+                .borrow_mut()
+                .insert(candidate_key, std::rc::Rc::clone(&candidates));
+            candidates
+        };
 
         let name_len = name.len();
         let (maximum_length_difference, mut best_distance) = Self::spelling_thresholds(name_len);
         let mut best_candidate: Option<String> = None;
 
-        for candidate in &visible_names {
+        for candidate in visible_names.iter() {
             Self::consider_identifier_suggestion(
                 name,
                 candidate,
@@ -396,16 +418,18 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // For TYPE-only lookups, restrict the lib search to *core* lib files
-        // (lib.es*, lib.scripthost, lib.decorators) to surface useful
-        // suggestions like `Array`, `Promise`, `Map` while keeping DOM
-        // interface noise (`ParentNode`, `Cache`, `CSSStyleDeclaration`, ...)
-        // from drowning out matches in user code (#3282).
-        // VALUE-meaning and unconstrained lookups search the full set as
-        // before so suggestions like `array` -> `Array` keep working.
+        // Production binders merge every loaded lib into the visible-symbol table,
+        // so rescanning each `LibContext` would duplicate the largest candidate
+        // universe for every unresolved name. Direct checker/test contexts can
+        // attach lib contexts without merging them; retain the explicit fallback
+        // only for that shape. TYPE-only fallback stays scoped to core lib files
+        // because an unmerged DOM context historically did not participate here.
+        // Built-in keywords are still searched when this slice is empty.
         let lib_globals_filtered: Vec<crate::context::LibContext>;
         let lib_globals_for_search: &[crate::context::LibContext] =
-            if meaning_flags == tsz_binder::symbol_flags::TYPE {
+            if self.ctx.binder.lib_symbols_are_merged() {
+                &[]
+            } else if meaning_flags == tsz_binder::symbol_flags::TYPE {
                 lib_globals_filtered = self
                     .ctx
                     .lib_contexts
@@ -452,40 +476,13 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Suppress suggestions from lib-only TYPE symbols (DOM interfaces like
-        // ParentNode, Cache, CSSStyleDeclaration, etc.) that were merged into
-        // the user binder's scope tables during checker init. tsc does not
-        // surface these as spelling suggestions for user code. Lib globals
-        // with VALUE meaning (Error, RegExp, Array, etc.) are kept because
-        // they're directly usable.
-        // Suppress lib-origin suggestions for TYPE-only lookups.
-        // tsc's sequential processing and per-file suggestion cap (10) effectively
-        // prevents most lib-origin suggestions from appearing in files with many
-        // unresolved type names. Our demand-driven resolution processes names in a
-        // different order, so the cap doesn't always match. For TYPE-only lookups,
-        // conservatively suppress all lib-origin suggestions to avoid false TS2552
-        // (e.g., TypeDeclaration -> CSSStyleDeclaration, ParseNode -> ParentNode).
-        // VALUE-meaning lookups keep lib suggestions (e.g., array -> Array).
-        if let Some(ref candidate) = best_candidate {
-            // TYPE-only lookup: meaning_flags is exactly TYPE (from type context)
-            let is_type_only_lookup = meaning_flags == tsz_binder::symbol_flags::TYPE;
-            if is_type_only_lookup
-                && self.is_lib_origin_symbol(candidate)
-                && !self.lib_origin_symbol_is_core_typing(candidate)
-                && !is_builtin_lib_file_name(&self.ctx.file_name)
-            {
-                return None;
-            }
-        }
-
         best_candidate.map(|c| vec![c])
     }
 
-    /// Whether a `LibContext` represents one of the *core* TypeScript lib
-    /// files (`lib.es*.d.ts`, `lib.scripthost.d.ts`, `lib.decorators*.d.ts`)
-    /// rather than a DOM-flavoured lib like `lib.dom.d.ts`. Used to scope
-    /// TYPE-only spelling suggestions to widely-used types and avoid
-    /// drowning user diagnostics in DOM interface noise (#3282).
+    /// Whether a `LibContext` represents one of the core TypeScript lib files
+    /// (`lib.es*.d.ts`, `lib.scripthost.d.ts`, `lib.decorators*.d.ts`). Used to
+    /// bound the explicit TYPE-only fallback scan for checker contexts whose lib
+    /// symbols have not been merged into the file binder.
     fn lib_context_is_core_typings(lib_ctx: &crate::context::LibContext) -> bool {
         let Some(file_name) = lib_ctx
             .arena
@@ -511,62 +508,6 @@ impl<'a> CheckerState<'a> {
         base.starts_with("lib.es")
             || base.starts_with("lib.scripthost")
             || base.starts_with("lib.decorators")
-    }
-
-    /// Whether `candidate` is declared (and *only* declared) in one of
-    /// the core lib files. Used to refine the TYPE-only post-filter so
-    /// `Array`, `Promise`, `Map`, etc. survive when they're the closest
-    /// match to a user-typed type name (#3282).
-    fn lib_origin_symbol_is_core_typing(&self, candidate: &str) -> bool {
-        // If the user shadowed the name in their own file, defer to the
-        // existing non-suppressed logic.
-        if let Some(sym_id) = self.ctx.binder.file_locals.get(candidate)
-            && !self.ctx.binder.lib_symbol_ids.contains(&sym_id)
-        {
-            return false;
-        }
-        for lib_ctx in self.ctx.lib_contexts.iter() {
-            if lib_ctx.binder.file_locals.get(candidate).is_some()
-                && Self::lib_context_is_core_typings(lib_ctx)
-            {
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Check if a candidate suggestion originates from a lib file.
-    ///
-    /// Returns true if the symbol was merged from a lib file into the user
-    /// binder's scope tables, or if it exists in any lib binder's `file_locals`.
-    /// User-defined symbols that shadow lib symbols are NOT considered lib-origin.
-    fn is_lib_origin_symbol(&self, candidate: &str) -> bool {
-        // Check 1: candidate is in user binder's file_locals and tracked as lib symbol
-        if let Some(sym_id) = self.ctx.binder.file_locals.get(candidate)
-            && self.ctx.binder.lib_symbol_ids.contains(&sym_id)
-        {
-            return true;
-        }
-
-        // Check 2: candidate exists in a lib binder but not defined by the user
-        let exists_in_lib = self
-            .ctx
-            .lib_contexts
-            .iter()
-            .any(|lib_ctx| lib_ctx.binder.file_locals.get(candidate).is_some());
-
-        if exists_in_lib {
-            // But if the user's own file defines this name (not from lib merge),
-            // don't suppress it.
-            if let Some(sym_id) = self.ctx.binder.file_locals.get(candidate)
-                && !self.ctx.binder.lib_symbol_ids.contains(&sym_id)
-            {
-                return false; // User-defined, keep it
-            }
-            return true;
-        }
-
-        false
     }
 
     /// Search lib globals and built-in type keywords for spelling suggestion
@@ -881,11 +822,96 @@ impl<'a> CheckerState<'a> {
     // Levenshtein Distance
     // =========================================================================
 
+    /// Allocation-free common path for ASCII identifiers. TypeScript source
+    /// identifiers and bundled-lib names are overwhelmingly ASCII, so building
+    /// four heap vectors for every candidate dominated large diagnostic sets.
+    /// The scalar fallback below retains exact Unicode behavior.
+    fn levenshtein_ascii_with_max(s1: &[u8], s2: &[u8], max: f64) -> Option<f64> {
+        if s1.len().abs_diff(s2.len()) as f64 > max {
+            return None;
+        }
+
+        if s1.is_empty() {
+            let dist = s2.len() as f64;
+            return (dist <= max).then_some(dist);
+        }
+        if s2.is_empty() {
+            let dist = s1.len() as f64;
+            return (dist <= max).then_some(dist);
+        }
+
+        let mut previous = smallvec::SmallVec::<[f64; 64]>::new();
+        previous.extend((0..=s2.len()).map(|index| index as f64));
+        let mut current = smallvec::SmallVec::<[f64; 64]>::new();
+        current.resize(s2.len() + 1, 0.0);
+        let big = max + 0.01;
+
+        for (row, &c1) in s1.iter().enumerate() {
+            let i = row + 1;
+            let min_j = if (i as f64) > max {
+                ((i as f64) - max).ceil() as usize
+            } else {
+                1
+            };
+            let max_j = if (s2.len() as f64) > (max + i as f64) {
+                (max + i as f64).floor() as usize
+            } else {
+                s2.len()
+            };
+
+            current[0] = i as f64;
+            let mut col_min = i as f64;
+
+            for value in current.iter_mut().take(min_j).skip(1) {
+                *value = big;
+            }
+
+            for j in min_j..=max_j {
+                let c2 = s2[j - 1];
+                let substitution_distance = if c1.eq_ignore_ascii_case(&c2) {
+                    previous[j - 1] + 0.1
+                } else {
+                    previous[j - 1] + 2.0
+                };
+                let dist = if c1 == c2 {
+                    previous[j - 1]
+                } else {
+                    (previous[j] + 1.0)
+                        .min(current[j - 1] + 1.0)
+                        .min(substitution_distance)
+                };
+                current[j] = dist;
+                col_min = col_min.min(dist);
+            }
+
+            for value in current.iter_mut().take(s2.len() + 1).skip(max_j + 1) {
+                *value = big;
+            }
+
+            if col_min > max {
+                return None;
+            }
+
+            std::mem::swap(&mut previous, &mut current);
+        }
+
+        let result = previous[s2.len()];
+        (result <= max).then_some(result)
+    }
+
     /// Levenshtein distance with threshold pruning, matching tsc's behavior.
     /// Case-only substitutions are cheaper than other substitutions.
     pub(crate) fn levenshtein_with_max(s1: &str, s2: &str, max: f64) -> Option<f64> {
+        if s1.is_ascii() && s2.is_ascii() {
+            return Self::levenshtein_ascii_with_max(s1.as_bytes(), s2.as_bytes(), max);
+        }
+
         let s1_chars: Vec<char> = s1.chars().collect();
         let s2_chars: Vec<char> = s2.chars().collect();
+
+        if s1_chars.len().abs_diff(s2_chars.len()) as f64 > max {
+            return None;
+        }
 
         if s1_chars.is_empty() {
             let dist = s2_chars.len() as f64;
@@ -954,6 +980,39 @@ impl<'a> CheckerState<'a> {
 
         let result = previous[s2_chars.len()];
         (result <= max).then_some(result)
+    }
+}
+
+#[cfg(test)]
+mod spelling_distance_tests {
+    use super::CheckerState;
+
+    fn assert_distance(left: &str, right: &str, max: f64, expected: Option<f64>) {
+        let actual = CheckerState::levenshtein_with_max(left, right, max);
+        match (actual, expected) {
+            (Some(actual), Some(expected)) => assert!(
+                (actual - expected).abs() < f64::EPSILON,
+                "distance for {left:?} -> {right:?}: expected {expected}, got {actual}"
+            ),
+            (actual, expected) => assert_eq!(actual, expected),
+        }
+    }
+
+    #[test]
+    fn ascii_spelling_distance_preserves_weighting_and_thresholds() {
+        assert_distance("ParentNode", "ParentNode", 0.0, Some(0.0));
+        assert_distance("array", "Array", 1.0, Some(0.1));
+        assert_distance("sting", "string", 1.0, Some(1.0));
+        assert_distance("becon", "bacon", 2.0, Some(2.0));
+        assert_distance("becon", "bacon", 1.9, None);
+        assert_distance("", "Map", 3.0, Some(3.0));
+    }
+
+    #[test]
+    fn unicode_spelling_distance_retains_scalar_case_folding() {
+        assert_distance("École", "école", 1.0, Some(0.1));
+        assert_distance("café", "cafe", 1.9, None);
+        assert_distance("café", "cafe", 2.0, Some(2.0));
     }
 }
 
