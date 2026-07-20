@@ -486,7 +486,7 @@ impl<'a> TypeInstantiator<'a> {
             "instantiate Mapped: about to instantiate constraint"
         );
         let saved_preserve_unsubstituted = self.preserve_unsubstituted_type_params;
-        self.preserve_unsubstituted_type_params = true;
+        self.set_preserve_unsubstituted_type_params(true);
 
         let new_constraint = self.instantiate(mapped.constraint);
         let new_template = self.instantiate(mapped.template);
@@ -494,7 +494,7 @@ impl<'a> TypeInstantiator<'a> {
         let new_param_constraint = mapped.type_param.constraint.map(|c| self.instantiate(c));
         let new_param_default = mapped.type_param.default.map(|d| self.instantiate(d));
 
-        self.preserve_unsubstituted_type_params = saved_preserve_unsubstituted;
+        self.set_preserve_unsubstituted_type_params(saved_preserve_unsubstituted);
 
         self.exit_shadowing_scope(shadowed_len, saved_visiting);
 

@@ -254,7 +254,14 @@ impl<'a> TypeInstantiator<'a> {
 
     #[inline]
     fn completed_instantiation(&self, type_id: TypeId) -> TypeId {
-        self.visiting.get(&type_id).copied().unwrap_or(type_id)
+        match self.visiting.get(&type_id).copied() {
+            Some(InstantiationMemoEntry::Completed {
+                result,
+                environment_epoch,
+            }) if environment_epoch == self.memo_environment_epoch => result,
+            Some(InstantiationMemoEntry::Active | InstantiationMemoEntry::Completed { .. })
+            | None => type_id,
+        }
     }
 
     fn raw_intersection(&self, members: Vec<TypeId>) -> TypeId {

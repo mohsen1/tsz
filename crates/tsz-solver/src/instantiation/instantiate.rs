@@ -45,6 +45,57 @@ enum InstantiationFrameState {
     DepthExceeded,
 }
 
+/// Per-walk instantiation memo state.
+///
+/// Active entries are cycle breakers and remain valid while a nested generic
+/// installs rewritten local bindings. Completed entries depend on the exact
+/// shadowing, local-binding, and declaration-preservation environment in which
+/// they were computed, so their epoch must match before reuse.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum InstantiationMemoEntry {
+    Active,
+    Completed {
+        result: TypeId,
+        environment_epoch: u64,
+    },
+}
+
+/// State restored after leaving a generic shadowing scope.
+struct ShadowingScopeSnapshot {
+    visiting: FxHashMap<TypeId, InstantiationMemoEntry>,
+    environment_epoch: u64,
+}
+
+/// One rewritten type parameter in a nested generic scope.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct LocalTypeParamBinding {
+    declaration: TypeParamInfo,
+    placeholder: TypeParamInfo,
+    instantiated: TypeId,
+}
+
+impl LocalTypeParamBinding {
+    const fn new(declaration: TypeParamInfo, instantiated: TypeId) -> Self {
+        // Lowering first binds this declaration-shaped placeholder so its own
+        // constraint/default can refer to it, then replaces that binding with
+        // the complete declaration info for later signature positions.
+        let placeholder = TypeParamInfo {
+            constraint: None,
+            default: None,
+            ..declaration
+        };
+        Self {
+            declaration,
+            placeholder,
+            instantiated,
+        }
+    }
+
+    fn matches(&self, candidate: &TypeParamInfo) -> bool {
+        *candidate == self.declaration || *candidate == self.placeholder
+    }
+}
+
 impl InstantiationWalkState {
     const fn new(max_depth: u32) -> Self {
         Self {
@@ -90,11 +141,21 @@ pub struct TypeInstantiator<'a> {
     query_db: Option<&'a dyn QueryDatabase>,
     substitution: &'a TypeSubstitution,
     /// Track visited types to handle cycles
-    visiting: FxHashMap<TypeId, TypeId>,
+    visiting: FxHashMap<TypeId, InstantiationMemoEntry>,
     /// Type parameter names that are shadowed in the current scope.
     shadowed: Vec<Atom>,
     /// Freshly-instantiated local type parameters for the current nested generic scope.
-    local_type_params: Vec<(Atom, TypeId)>,
+    ///
+    /// Bindings match full declaration/placeholder info, including a
+    /// `DeclScoped` origin when present; a user-chosen name alone never selects
+    /// a local. Legacy `User` parameters with byte-identical full info remain
+    /// indistinguishable because signatures store `TypeParamInfo`, not the
+    /// declaration-scoped fresh `TypeId` (#14344).
+    local_type_params: Vec<LocalTypeParamBinding>,
+    /// Version of the semantic environment that affects per-walk memo results.
+    /// Incrementing this is O(1); completed entries from older versions are
+    /// recomputed lazily, while active entries continue to break cycles.
+    memo_environment_epoch: u64,
     substitute_infer: bool,
     preserve_meta_types: bool,
     preserve_unsubstituted_type_params: bool,
@@ -141,6 +202,7 @@ impl<'a> TypeInstantiator<'a> {
             visiting: FxHashMap::default(),
             shadowed: Vec::new(),
             local_type_params: Vec::new(),
+            memo_environment_epoch: 0,
             substitute_infer: false,
             preserve_meta_types: false,
             preserve_unsubstituted_type_params: false,
@@ -474,13 +536,28 @@ impl<'a> TypeInstantiator<'a> {
         })
     }
 
-    /// Instantiate type parameter constraints and defaults.
+    /// Instantiate type parameter constraints and defaults, binding each changed
+    /// declaration before walking later dependent declarations.
+    ///
+    /// A signature such as `<T extends Outer<X>, U extends Ref<X, T>>`
+    /// needs every occurrence of `T` after outer `X` is substituted to refer to
+    /// the rewritten `T`, not the declaration-scoped pre-instantiation `TypeId`.
+    /// Bind changed parameters incrementally so later constraints/defaults and
+    /// the signature body share that identity. Unchanged parameters stay fresh
+    /// and unbound, preserving their declaration identity.
     fn instantiate_type_params_if_changed(
         &mut self,
         type_params: &[TypeParamInfo],
     ) -> Option<Vec<TypeParamInfo>> {
+        // Nongeneric functions and call signatures reach this helper too.
+        // Their empty declaration list changes no semantic environment, so do
+        // not churn the epoch and invalidate sibling memo entries twice.
+        if type_params.is_empty() {
+            return None;
+        }
+
         let saved_preserve_unsubstituted = self.preserve_unsubstituted_type_params;
-        self.preserve_unsubstituted_type_params = true;
+        self.set_preserve_unsubstituted_type_params(true);
 
         let mut instantiated: Option<Vec<TypeParamInfo>> = None;
         for (index, type_param) in type_params.iter().enumerate() {
@@ -493,6 +570,18 @@ impl<'a> TypeInstantiator<'a> {
                 default,
                 origin: type_param.origin,
             };
+            if new_type_param != *type_param {
+                let local_type = self.interner.type_param(new_type_param);
+                self.local_type_params
+                    .push(LocalTypeParamBinding::new(*type_param, local_type));
+
+                // Constraints/defaults walked before this binding may have
+                // completed memo entries that contain the old local identity,
+                // including shared composite nodes. Advance the environment
+                // version so those entries miss lazily in O(1); active entries
+                // remain usable cycle breakers.
+                self.advance_memo_environment();
+            }
             if let Some(instantiated) = &mut instantiated {
                 instantiated.push(new_type_param);
             } else if new_type_param != *type_param {
@@ -503,7 +592,7 @@ impl<'a> TypeInstantiator<'a> {
             }
         }
 
-        self.preserve_unsubstituted_type_params = saved_preserve_unsubstituted;
+        self.set_preserve_unsubstituted_type_params(saved_preserve_unsubstituted);
         instantiated
     }
 
@@ -549,12 +638,12 @@ impl<'a> TypeInstantiator<'a> {
 
     /// Enter a shadowing scope for type parameters.
     ///
-    /// Returns `(saved_shadowed_len, saved_visiting)` for restoring via
+    /// Returns `(saved_shadowed_len, saved_scope)` for restoring via
     /// [`exit_shadowing_scope`].
     fn enter_shadowing_scope(
         &mut self,
         type_params: &[TypeParamInfo],
-    ) -> (usize, Option<FxHashMap<TypeId, TypeId>>) {
+    ) -> (usize, Option<ShadowingScopeSnapshot>) {
         let shadowed_len = self.shadowed.len();
         let saved_visiting = if type_params.is_empty() {
             None
@@ -563,15 +652,28 @@ impl<'a> TypeInstantiator<'a> {
             // instantiation), no clone needed — just remove the type params
             // (which are no-ops on an empty map) and return an empty map
             // as the "saved" state.
-            Some(FxHashMap::default())
+            Some(ShadowingScopeSnapshot {
+                visiting: FxHashMap::default(),
+                environment_epoch: self.memo_environment_epoch,
+            })
         } else {
             let saved = self.visiting.clone();
             for tp in type_params {
                 let tp_id = self.interner.type_param(*tp);
                 self.visiting.remove(&tp_id);
             }
-            Some(saved)
+            Some(ShadowingScopeSnapshot {
+                visiting: saved,
+                environment_epoch: self.memo_environment_epoch,
+            })
         };
+        if !type_params.is_empty() {
+            // Completed composite entries can contain a type parameter whose
+            // name becomes shadowed here. Advance the environment version so
+            // those entries miss lazily; removing only the direct parameter
+            // entry would leave composites rewritten by an outer binding.
+            self.advance_memo_environment();
+        }
         self.shadowed.extend(type_params.iter().map(|tp| tp.name));
         (shadowed_len, saved_visiting)
     }
@@ -580,19 +682,37 @@ impl<'a> TypeInstantiator<'a> {
     fn exit_shadowing_scope(
         &mut self,
         shadowed_len: usize,
-        saved_visiting: Option<FxHashMap<TypeId, TypeId>>,
+        saved_visiting: Option<ShadowingScopeSnapshot>,
     ) {
         self.shadowed.truncate(shadowed_len);
         if let Some(saved) = saved_visiting {
-            self.visiting = saved;
+            self.visiting = saved.visiting;
+            self.memo_environment_epoch = saved.environment_epoch;
         }
     }
 
-    fn lookup_local_type_param(&self, name: Atom) -> Option<TypeId> {
+    /// Advance the semantic environment used by completed per-walk memo
+    /// entries. A single walk cannot approach 2^64 transitions, so wrapping
+    /// cannot alias a live epoch.
+    const fn advance_memo_environment(&mut self) {
+        self.memo_environment_epoch = self.memo_environment_epoch.wrapping_add(1);
+    }
+
+    /// Set declaration-preservation mode and invalidate completed memo entries
+    /// when the mode changes. Constraint fallback is deliberately disabled in
+    /// preservation mode, so cached results cannot cross this boundary.
+    const fn set_preserve_unsubstituted_type_params(&mut self, preserve: bool) {
+        if self.preserve_unsubstituted_type_params != preserve {
+            self.preserve_unsubstituted_type_params = preserve;
+            self.advance_memo_environment();
+        }
+    }
+
+    fn lookup_local_type_param(&self, info: &TypeParamInfo) -> Option<TypeId> {
         self.local_type_params
             .iter()
             .rev()
-            .find_map(|(bound_name, type_id)| (*bound_name == name).then_some(*type_id))
+            .find_map(|binding| binding.matches(info).then_some(binding.instantiated))
     }
 
     /// Apply the substitution to a type, returning the instantiated type.
@@ -672,7 +792,7 @@ impl<'a> TypeInstantiator<'a> {
             // node, and we are not walking into the structure here.
             return type_id;
         };
-        if let Some(local_type_param) = self.lookup_local_type_param(info.name) {
+        if let Some(local_type_param) = self.lookup_local_type_param(&info) {
             return local_type_param;
         }
         if self.is_shadowed(info.name) {
@@ -683,21 +803,36 @@ impl<'a> TypeInstantiator<'a> {
 
     fn instantiate_inner(&mut self, type_id: TypeId) -> TypeId {
         // Check if we're already processing this type (cycle detection)
-        if let Some(&cached) = self.visiting.get(&type_id) {
-            if cached != type_id
-                || matches!(
-                    self.interner.lookup(type_id),
-                    Some(TypeData::TypeParameter(_))
-                )
-            {
-                tracing::trace!(
-                    type_id = type_id.0,
-                    cached = cached.0,
-                    key = ?self.interner.lookup(type_id),
-                    "instantiate_inner: VISITING CACHE HIT"
-                );
+        if let Some(entry) = self.visiting.get(&type_id).copied() {
+            let cached = match entry {
+                InstantiationMemoEntry::Active => Some(type_id),
+                InstantiationMemoEntry::Completed {
+                    result,
+                    environment_epoch,
+                } if environment_epoch == self.memo_environment_epoch => Some(result),
+                InstantiationMemoEntry::Completed { .. } => None,
+            };
+            if let Some(cached) = cached {
+                if cached != type_id
+                    || matches!(
+                        self.interner.lookup(type_id),
+                        Some(TypeData::TypeParameter(_))
+                    )
+                {
+                    tracing::trace!(
+                        type_id = type_id.0,
+                        cached = cached.0,
+                        key = ?self.interner.lookup(type_id),
+                        "instantiate_inner: VISITING CACHE HIT"
+                    );
+                }
+                return cached;
+            } else {
+                // The type graph is immutable, but its instantiated result can
+                // depend on a newly-installed nested-local binding. Overwrite
+                // stale completed state on the recomputation path below.
+                self.visiting.remove(&type_id);
             }
-            return cached;
         }
 
         // Look up the type structure
@@ -710,13 +845,21 @@ impl<'a> TypeInstantiator<'a> {
             return type_id;
         }
 
-        // Mark as visiting (with original ID as placeholder for cycles)
-        self.visiting.insert(type_id, type_id);
+        // Mark as active before descending so recursive references break their
+        // cycle even if a nested generic advances the completed-entry epoch.
+        self.visiting
+            .insert(type_id, InstantiationMemoEntry::Active);
 
         let result = self.instantiate_key(type_id, &key);
 
         // Update the cache with the actual result
-        self.visiting.insert(type_id, result);
+        self.visiting.insert(
+            type_id,
+            InstantiationMemoEntry::Completed {
+                result,
+                environment_epoch: self.memo_environment_epoch,
+            },
+        );
 
         result
     }
@@ -754,7 +897,7 @@ impl<'a> TypeInstantiator<'a> {
         match key {
             // Type parameters get substituted
             TypeData::TypeParameter(info) => {
-                if let Some(local_type_param) = self.lookup_local_type_param(info.name) {
+                if let Some(local_type_param) = self.lookup_local_type_param(info) {
                     return local_type_param;
                 }
                 if self.is_shadowed(info.name) {
