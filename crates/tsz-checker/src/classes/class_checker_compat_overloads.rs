@@ -31,7 +31,7 @@ impl<'a> CheckerState<'a> {
             substitution,
             interface_self_type,
         } = ctx;
-        let base_method_overloads: Vec<(String, Vec<TypeId>)>;
+        let base_method_groups: Vec<(String, Vec<TypeId>)>;
         {
             let mut by_name: rustc_hash::FxHashMap<String, Vec<TypeId>> =
                 rustc_hash::FxHashMap::default();
@@ -68,7 +68,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
-            base_method_overloads = by_name.into_iter().filter(|(_, v)| v.len() > 1).collect();
+            base_method_groups = by_name.into_iter().collect();
         }
 
         let mut derived_method_overloads: rustc_hash::FxHashMap<String, Vec<(TypeId, NodeIndex)>> =
@@ -89,7 +89,8 @@ impl<'a> CheckerState<'a> {
         tracing::debug!(
             derived = derived_name,
             base = base_name,
-            n_base_overloaded = base_method_overloads.len(),
+            n_base_method_names = base_method_groups.len(),
+            n_derived_method_names = derived_method_overloads.len(),
             interface_self_type = interface_self_type.map(|t| t.0),
             "overload coverage check"
         );
@@ -111,11 +112,24 @@ impl<'a> CheckerState<'a> {
         // both sides and route them through the standard relation, which already
         // implements the N×M rule (`check_callable_subtype`), including method
         // bivariance and method-local generic erasure for multi-signature shapes.
-        'overload_check: for (method_name, base_sigs) in &base_method_overloads {
+        'overload_check: for (method_name, base_sigs) in &base_method_groups {
             let Some(derived_sigs) = derived_method_overloads.get(method_name) else {
                 tracing::debug!(method = method_name, "no derived overloads found");
                 continue;
             };
+            tracing::trace!(
+                method = method_name,
+                base_signatures = base_sigs.len(),
+                derived_signatures = derived_sigs.len(),
+                "checking deferred interface method overload set"
+            );
+            // The member loop defers a method name when either side is
+            // overloaded. Keep single/single names out of this second pass,
+            // while still checking a derived overload set against a single
+            // tuple-union/rest signature on the base.
+            if base_sigs.len() < 2 && derived_sigs.len() < 2 {
+                continue;
+            }
             if base_sigs.iter().copied().any(signature_contains_error)
                 || derived_sigs
                     .iter()
@@ -125,10 +139,11 @@ impl<'a> CheckerState<'a> {
             }
 
             let Some(base_callable) =
-                crate::query_boundaries::class::combine_overloaded_method_callable(
+                crate::query_boundaries::class::build_method_overload_callable(
                     self.ctx.types,
-                    base_sigs,
+                    base_sigs.iter().copied(),
                     method_name,
+                    1,
                 )
             else {
                 continue;

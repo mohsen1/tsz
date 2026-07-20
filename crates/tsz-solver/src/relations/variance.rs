@@ -31,6 +31,7 @@ use crate::caches::db::QueryDatabase;
 use crate::construction::TypeDatabase;
 use crate::def::DefId;
 use crate::def::resolver::TypeResolver;
+use crate::evaluation::session::{EffectiveVarianceCacheKey, EvaluationSession};
 use crate::types::{
     CallableShapeId, ConditionalTypeId, FunctionShapeId, IntrinsicKind, LiteralValue, MappedTypeId,
     ObjectShapeId, StringIntrinsicKind, SymbolRef, TemplateLiteralId, TemplateSpan, TupleListId,
@@ -241,6 +242,76 @@ pub fn contains_this_type_in_strict_contravariant_position_with_resolver(
     variance.has_direct_usage() && (variance.is_contravariant() || variance.is_invariant())
 }
 
+/// Compute the effective application variance of `def_id`.
+///
+/// Explicit `in`/`out` slots are authoritative, while unannotated slots in a
+/// partially annotated declaration are filled from the declaration body.
+/// Nested declarations follow the same rule recursively. Callback parameters
+/// are bivariant when `strict_function_types` is disabled; method and
+/// constructor parameters are bivariant in either mode.
+///
+/// Results use the owning `EvaluationSession` cache when one is available,
+/// keyed by declaration, strictness, database identity, and resolver
+/// identity/generation. A per-walk memo avoids duplicate recursion otherwise.
+pub struct EffectiveVarianceOutcome {
+    pub variances: Arc<[Variance]>,
+    /// The walk observed unresolved or opaque resolver state. The mask may be
+    /// reused to avoid repeated work, but it cannot settle a relation until the
+    /// owning checker has structurally retried under complete registration.
+    pub incomplete: bool,
+}
+
+pub fn compute_effective_type_param_variances_with_resolver_cached(
+    db: &dyn TypeDatabase,
+    resolver: &dyn TypeResolver,
+    evaluation_session: Option<&EvaluationSession>,
+    def_id: DefId,
+    strict_function_types: bool,
+    disable_method_bivariance: bool,
+) -> Option<EffectiveVarianceOutcome> {
+    let resolver_generation = resolver.resolver_generation();
+    let session_key = evaluation_session
+        .filter(|_| variance_cache_enabled())
+        .map(|_| {
+            EffectiveVarianceCacheKey::new(
+                def_id,
+                strict_function_types,
+                disable_method_bivariance,
+                db.type_database_identity(),
+                resolver.resolver_identity(),
+            )
+        });
+    if let (Some(session), Some(key)) = (evaluation_session, session_key)
+        && let Some((variances, incomplete)) =
+            session.effective_variance_get(key, resolver_generation)
+    {
+        return Some(EffectiveVarianceOutcome {
+            variances,
+            incomplete,
+        });
+    }
+    let mut computer = VarianceComputer::new_effective(
+        db,
+        resolver,
+        strict_function_types,
+        disable_method_bivariance,
+    );
+    let variances = computer.compute_def_variances(def_id)?;
+    let outcome = EffectiveVarianceOutcome {
+        variances,
+        incomplete: !computer.gap_log.is_empty() || computer.opaque_gaps != 0,
+    };
+    if let (Some(session), Some(key)) = (evaluation_session, session_key) {
+        session.effective_variance_put(
+            key,
+            resolver_generation,
+            outcome.variances.clone(),
+            outcome.incomplete,
+        );
+    }
+    Some(outcome)
+}
+
 /// Session-cached form of [`compute_type_param_variances_with_resolver`].
 ///
 /// Variance of a generic `DefId` is a pure function of that definition's
@@ -351,10 +422,54 @@ struct DefVarianceEntry {
 /// (per-walk reuse only).
 const MAX_GAP_FINGERPRINT: usize = 16;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum VarianceMode {
+    /// Honor declared masks exactly and use the ordinary shared/session cache.
+    Declared,
+    /// Ignore every declared mask and compute the raw structural variance.
+    Actual,
+    /// Merge declared slots with structural holes while applying the active
+    /// `strictFunctionTypes` callback rule.
+    Effective {
+        strict_function_types: bool,
+        disable_method_bivariance: bool,
+    },
+}
+
+impl VarianceMode {
+    const fn uses_declared_variance(self) -> bool {
+        !matches!(self, Self::Actual)
+    }
+
+    const fn is_effective(self) -> bool {
+        matches!(self, Self::Effective { .. })
+    }
+
+    const fn strict_function_types(self) -> Option<bool> {
+        match self {
+            Self::Effective {
+                strict_function_types,
+                ..
+            } => Some(strict_function_types),
+            Self::Declared | Self::Actual => None,
+        }
+    }
+
+    const fn effective_method_bivariance(self) -> bool {
+        matches!(
+            self,
+            Self::Effective {
+                disable_method_bivariance: false,
+                ..
+            }
+        )
+    }
+}
+
 struct VarianceComputer<'a> {
     db: &'a dyn TypeDatabase,
     resolver: &'a dyn TypeResolver,
-    use_declared_variance: bool,
+    mode: VarianceMode,
     /// In-flight defs on the recursion stack, mapped to their stack depth.
     active_defs: FxHashMap<DefId, usize>,
     /// Stack-ordered in-flight defs (`depth -> DefId`), parallel to
@@ -381,17 +496,16 @@ struct VarianceComputer<'a> {
     opaque_gaps: u64,
     /// Whether canonical, resolution-clean masks may be read from / written to
     /// the universe-shared interner store (`TypeDatabase::shared_def_variance`).
-    /// Only set for `use_declared_variance` computers (the store holds declared
-    /// masks, so the `new_actual` computer must never touch it) and disabled by
-    /// the `TSZ_DISABLE_VARIANCE_CACHE` kill switch.
+    /// Only declared-mode computers use it; effective masks are resolver- and
+    /// option-sensitive and stay in the evaluation-session cache.
     use_shared_store: bool,
     /// Optional session-persistent declared-variance cache.
     ///
     /// When present, `compute_def_variances` reads from and writes to this map
     /// for every def whose mask is canonical (see
     /// [`compute_type_param_variances_with_resolver_cached`]). Only wired in for
-    /// `use_declared_variance` computers: the map stores declared masks, so the
-    /// `new_actual` computer must never touch it.
+    /// declared computers: the map stores declared masks, so the actual and
+    /// effective computers must never touch it.
     session_cache: Option<&'a dyn QueryDatabase>,
 }
 
@@ -400,7 +514,7 @@ impl<'a> VarianceComputer<'a> {
         Self {
             db,
             resolver,
-            use_declared_variance: true,
+            mode: VarianceMode::Declared,
             active_defs: FxHashMap::default(),
             active_stack: Vec::new(),
             cached_def_variances: FxHashMap::default(),
@@ -416,7 +530,31 @@ impl<'a> VarianceComputer<'a> {
         Self {
             db,
             resolver,
-            use_declared_variance: false,
+            mode: VarianceMode::Actual,
+            active_defs: FxHashMap::default(),
+            active_stack: Vec::new(),
+            cached_def_variances: FxHashMap::default(),
+            min_inflight_dep: usize::MAX,
+            gap_log: Vec::new(),
+            opaque_gaps: 0,
+            use_shared_store: false,
+            session_cache: None,
+        }
+    }
+
+    fn new_effective(
+        db: &'a dyn TypeDatabase,
+        resolver: &'a dyn TypeResolver,
+        strict_function_types: bool,
+        disable_method_bivariance: bool,
+    ) -> Self {
+        Self {
+            db,
+            resolver,
+            mode: VarianceMode::Effective {
+                strict_function_types,
+                disable_method_bivariance,
+            },
             active_defs: FxHashMap::default(),
             active_stack: Vec::new(),
             cached_def_variances: FxHashMap::default(),
@@ -438,11 +576,36 @@ impl<'a> VarianceComputer<'a> {
         visitor.compute(type_id)
     }
 
-    fn compute_def_variances(&mut self, def_id: DefId) -> Option<Arc<[Variance]>> {
-        if self.use_declared_variance
-            && let Some(declared) = self.resolver.get_type_param_variance(def_id)
+    fn resolve_body_for_variance(&self, def_id: DefId) -> Option<TypeId> {
+        if self.mode.is_effective()
+            && self.resolver.get_def_kind(def_id) == Some(crate::def::DefKind::TypeAlias)
         {
-            return Some(declared);
+            if let Some(body) = self.resolver.get_def_raw_body(def_id, self.db) {
+                return Some(body);
+            }
+            let body = self.resolver.resolve_lazy(def_id, self.db)?;
+            if matches!(self.db.lookup(body), Some(TypeData::Lazy(body_def)) if body_def == def_id)
+            {
+                return None;
+            }
+            return Some(body);
+        }
+        self.resolver.resolve_lazy(def_id, self.db)
+    }
+
+    fn compute_def_variances(&mut self, def_id: DefId) -> Option<Arc<[Variance]>> {
+        let mut partial_declared = None;
+        let declared = self
+            .mode
+            .uses_declared_variance()
+            .then(|| self.resolver.get_type_param_variance(def_id))
+            .flatten();
+        if let Some(declared) = declared {
+            if self.mode.is_effective() && declared.iter().any(Variance::is_independent) {
+                partial_declared = Some(declared);
+            } else {
+                return Some(declared);
+            }
         }
 
         if let Some(entry) = self.cached_def_variances.get(&def_id) {
@@ -544,13 +707,13 @@ impl<'a> VarianceComputer<'a> {
         let gap_log_at_entry = self.gap_log.len();
         let opaque_at_entry = self.opaque_gaps;
 
-        let result: Option<Arc<[Variance]>> = (|| {
+        let mut result: Option<Arc<[Variance]>> = (|| {
             let params = self.resolver.get_lazy_type_params(def_id)?;
             if params.is_empty() {
                 return None;
             }
 
-            let body = self.resolver.resolve_lazy(def_id, self.db)?;
+            let body = self.resolve_body_for_variance(def_id)?;
             let mut variances = Vec::with_capacity(params.len());
             for param in &params {
                 variances.push(self.compute(body, param.name));
@@ -558,6 +721,23 @@ impl<'a> VarianceComputer<'a> {
             Some(Arc::from(variances))
         })();
 
+        if let (Some(declared), Some(actual)) = (partial_declared.as_ref(), result.as_ref()) {
+            result = (declared.len() == actual.len()).then(|| {
+                Arc::from(
+                    declared
+                        .iter()
+                        .zip(actual.iter())
+                        .map(|(&declared, &actual)| {
+                            if declared.is_independent() {
+                                actual
+                            } else {
+                                declared
+                            }
+                        })
+                        .collect::<Vec<_>>(),
+                )
+            });
+        }
         // A `None` result means params or body did not resolve (or the def is
         // non-generic) — resolver-dependent territory either way. Record the
         // def itself as a fingerprintable gap: the parent's mask is valid for
@@ -624,11 +804,9 @@ impl<'a> VarianceComputer<'a> {
             && self.use_shared_store
             && let Some(variances) = result.as_ref()
         {
-            self.db.insert_shared_def_variance(
-                def_id,
-                variances.clone(),
-                shared_gaps.clone().unwrap_or_else(|| Arc::from([])),
-            );
+            let gaps = shared_gaps.clone().unwrap_or_else(|| Arc::from([]));
+            self.db
+                .insert_shared_def_variance(def_id, variances.clone(), gaps);
         }
 
         let dep = if canonical {
@@ -707,6 +885,11 @@ struct VarianceVisitor<'a, 'b> {
     /// (e.g. `{ container: C1<T> }` should remain bivariant when `C1` is
     /// bivariant).
     inside_unreliable_application: u32,
+    /// Depth below an option-aware method/constructor/callback parameter edge.
+    /// Such an occurrence is bivariant, not independent: ordinary argument
+    /// relations must expand structurally, while `any`/`never` may be accepted
+    /// in either orientation.
+    inside_effective_bivariant_param: u32,
     /// Completed type/context pairs within this target-param walk.
     ///
     /// The recursion guard only catches active cycles. Drizzle-like declaration
@@ -731,6 +914,7 @@ struct VarianceVisitKey {
     suppress_method_bivariance: bool,
     inside_mapped: bool,
     inside_unreliable_application: bool,
+    inside_effective_bivariant_param: bool,
 }
 
 impl<'a, 'b> VarianceVisitor<'a, 'b> {
@@ -759,6 +943,7 @@ impl<'a, 'b> VarianceVisitor<'a, 'b> {
             suppress_method_bivariance: false,
             strict_occurrence_seen: false,
             inside_unreliable_application: 0,
+            inside_effective_bivariant_param: 0,
             completed: FxHashSet::default(),
         }
     }
@@ -820,6 +1005,7 @@ impl<'a, 'b> VarianceVisitor<'a, 'b> {
         // occurrence does NOT make that rejection reliable.
         if self.strict_occurrence_seen && !self.seen_target_in_index_access {
             self.result.remove(Variance::REJECTION_UNRELIABLE);
+            self.result.remove(Variance::BIVARIANT_USAGE);
         }
         self.result
     }
@@ -878,6 +1064,7 @@ impl<'a, 'b> VarianceVisitor<'a, 'b> {
             suppress_method_bivariance: self.suppress_method_bivariance,
             inside_mapped: self.inside_mapped_depth > 0,
             inside_unreliable_application: self.inside_unreliable_application > 0,
+            inside_effective_bivariant_param: self.inside_effective_bivariant_param > 0,
         })
     }
 
@@ -886,9 +1073,30 @@ impl<'a, 'b> VarianceVisitor<'a, 'b> {
         *self.polarity_stack.last().unwrap_or(&true)
     }
 
+    fn visit_effective_bivariant_param(&mut self, type_id: TypeId, polarity: bool) {
+        self.inside_effective_bivariant_param += 1;
+        self.visit_with_polarity(type_id, polarity);
+        self.inside_effective_bivariant_param -= 1;
+    }
+
+    /// Visit after an inner invariant application has consumed an enclosing
+    /// bivariant parameter edge. Either orientation of the outer callback must
+    /// still satisfy the inner invariant generic, so its argument is measured
+    /// in both strict directions. A deeper bivariant generic can introduce a
+    /// fresh bivariant edge during these visits.
+    fn visit_below_inner_invariant(&mut self, type_id: TypeId, polarity: bool) {
+        let saved_depth = self.inside_effective_bivariant_param;
+        self.inside_effective_bivariant_param = 0;
+        self.visit_with_polarity(type_id, polarity);
+        self.visit_with_polarity(type_id, !polarity);
+        self.inside_effective_bivariant_param = saved_depth;
+    }
+
     /// Record an occurrence of the target parameter at the current polarity.
     fn add_occurrence(&mut self, polarity: bool) {
-        if self.method_bivariant_depth > 0 {
+        if self.inside_effective_bivariant_param > 0 {
+            self.result |= Variance::BIVARIANT_USAGE;
+        } else if self.method_bivariant_depth > 0 {
             // Inside method parameter types, always record as COVARIANT.
             // This matches tsc behavior: method bivariance makes T appear in
             // both co and contra positions (BIVARIANT), but tsc checks bivariant
@@ -911,7 +1119,10 @@ impl<'a, 'b> VarianceVisitor<'a, 'b> {
         // is one that's outside method bivariance AND outside an application
         // visit that already inherited unreliability. Such an occurrence pins
         // the variance signal — see `compute()` for how this is consumed.
-        if self.method_bivariant_depth == 0 && self.inside_unreliable_application == 0 {
+        if self.inside_effective_bivariant_param == 0
+            && self.method_bivariant_depth == 0
+            && self.inside_unreliable_application == 0
+        {
             self.strict_occurrence_seen = true;
         }
     }
@@ -1012,6 +1223,11 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
     fn visit_function(&mut self, shape_id: u32) {
         let shape = self.computer.db.function_shape(FunctionShapeId(shape_id));
         let current_polarity = self.get_current_polarity();
+        let effective_strict = self.computer.mode.strict_function_types();
+        let effective_method_bivariance = self.computer.mode.effective_method_bivariance();
+        let bound_len = self.bound_type_params.len();
+        self.bound_type_params
+            .extend(shape.type_params.iter().map(|param| param.name));
 
         let saved_method_depth = self.method_bivariant_depth;
 
@@ -1020,8 +1236,16 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
         // parameters. Treat those occurrences as covariant-first so generic
         // application checks do not classify Promise-like interfaces as
         // independent.
-        if shape.is_method {
-            if !self.suppress_method_bivariance {
+        if shape.is_method || (shape.is_constructor && effective_strict.is_some()) {
+            if effective_strict.is_some() && effective_method_bivariance {
+                for param in &shape.params {
+                    self.visit_effective_bivariant_param(param.type_id, !current_polarity);
+                }
+            } else if effective_strict.is_some() {
+                for param in &shape.params {
+                    self.visit_with_polarity(param.type_id, !current_polarity);
+                }
+            } else if !self.suppress_method_bivariance {
                 self.method_bivariant_depth = saved_method_depth + 1;
                 for param in &shape.params {
                     self.visit_with_polarity(param.type_id, !current_polarity);
@@ -1032,8 +1256,17 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
             // covariant position (matches tsc, where `interface C<T> { m():
             // T }` is COVARIANT).
             self.visit_with_polarity(shape.return_type, current_polarity);
+            if let Some(predicate_type) = shape.type_predicate.and_then(|pred| pred.type_id) {
+                self.visit_with_polarity(predicate_type, current_polarity);
+            }
             if let Some(this_ty) = shape.this_type {
-                self.visit_with_polarity(this_ty, current_polarity);
+                if effective_strict.is_some() && effective_method_bivariance {
+                    self.visit_effective_bivariant_param(this_ty, !current_polarity);
+                } else if effective_strict.is_some() {
+                    self.visit_with_polarity(this_ty, !current_polarity);
+                } else {
+                    self.visit_with_polarity(this_ty, current_polarity);
+                }
             }
         } else {
             // Nested non-method function: T occurrences inside its
@@ -1044,28 +1277,55 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
             // polarity (e.g. `Promise<T>.then(cb: (x: T) => T)` records the
             // return-position T as COVARIANT, not bivariant).
             self.method_bivariant_depth = 0;
-            for param in &shape.params {
-                self.visit_with_polarity(param.type_id, !current_polarity);
+            if effective_strict == Some(false) {
+                for param in &shape.params {
+                    self.visit_effective_bivariant_param(param.type_id, !current_polarity);
+                }
+            } else {
+                for param in &shape.params {
+                    self.visit_with_polarity(param.type_id, !current_polarity);
+                }
             }
             self.visit_with_polarity(shape.return_type, current_polarity);
+            if let Some(predicate_type) = shape.type_predicate.and_then(|pred| pred.type_id) {
+                self.visit_with_polarity(predicate_type, current_polarity);
+            }
             if let Some(this_ty) = shape.this_type {
-                self.visit_with_polarity(this_ty, !current_polarity);
+                if effective_strict == Some(false) {
+                    self.visit_effective_bivariant_param(this_ty, !current_polarity);
+                } else {
+                    self.visit_with_polarity(this_ty, !current_polarity);
+                }
             }
             self.method_bivariant_depth = saved_method_depth;
         }
+        self.bound_type_params.truncate(bound_len);
     }
 
     /// Callable types: same variance rules as functions.
     fn visit_callable(&mut self, shape_id: u32) {
         let callable = self.computer.db.callable_shape(CallableShapeId(shape_id));
         let current_polarity = self.get_current_polarity();
+        let effective_strict = self.computer.mode.strict_function_types();
+        let effective_method_bivariance = self.computer.mode.effective_method_bivariance();
         let saved_method_depth = self.method_bivariant_depth;
 
         // Call signatures
         for sig in &callable.call_signatures {
+            let bound_len = self.bound_type_params.len();
+            self.bound_type_params
+                .extend(sig.type_params.iter().map(|param| param.name));
             // For methods (see visit_function for full rationale).
             if sig.is_method {
-                if !self.suppress_method_bivariance {
+                if effective_strict.is_some() && effective_method_bivariance {
+                    for param in &sig.params {
+                        self.visit_effective_bivariant_param(param.type_id, !current_polarity);
+                    }
+                } else if effective_strict.is_some() {
+                    for param in &sig.params {
+                        self.visit_with_polarity(param.type_id, !current_polarity);
+                    }
+                } else if !self.suppress_method_bivariance {
                     self.method_bivariant_depth = saved_method_depth + 1;
                     for param in &sig.params {
                         self.visit_with_polarity(param.type_id, !current_polarity);
@@ -1074,23 +1334,46 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
                 }
                 // Method return type stays at the outer (saved) depth.
                 self.visit_with_polarity(sig.return_type, current_polarity);
+                if let Some(predicate_type) = sig.type_predicate.and_then(|pred| pred.type_id) {
+                    self.visit_with_polarity(predicate_type, current_polarity);
+                }
                 if let Some(this_ty) = sig.this_type {
-                    self.visit_with_polarity(this_ty, current_polarity);
+                    if effective_strict.is_some() && effective_method_bivariance {
+                        self.visit_effective_bivariant_param(this_ty, !current_polarity);
+                    } else if effective_strict.is_some() {
+                        self.visit_with_polarity(this_ty, !current_polarity);
+                    } else {
+                        self.visit_with_polarity(this_ty, current_polarity);
+                    }
                 }
             } else {
                 // Non-method call signature: reset method bivariance for the
                 // entire signature — parameters, return type, and `this` —
                 // matching `visit_function` for non-method shapes.
                 self.method_bivariant_depth = 0;
-                for param in &sig.params {
-                    self.visit_with_polarity(param.type_id, !current_polarity);
+                if effective_strict == Some(false) {
+                    for param in &sig.params {
+                        self.visit_effective_bivariant_param(param.type_id, !current_polarity);
+                    }
+                } else {
+                    for param in &sig.params {
+                        self.visit_with_polarity(param.type_id, !current_polarity);
+                    }
                 }
                 self.visit_with_polarity(sig.return_type, current_polarity);
+                if let Some(predicate_type) = sig.type_predicate.and_then(|pred| pred.type_id) {
+                    self.visit_with_polarity(predicate_type, current_polarity);
+                }
                 if let Some(this_ty) = sig.this_type {
-                    self.visit_with_polarity(this_ty, !current_polarity);
+                    if effective_strict == Some(false) {
+                        self.visit_effective_bivariant_param(this_ty, !current_polarity);
+                    } else {
+                        self.visit_with_polarity(this_ty, !current_polarity);
+                    }
                 }
                 self.method_bivariant_depth = saved_method_depth;
             }
+            self.bound_type_params.truncate(bound_len);
         }
 
         // Construct signatures follow the same rules. We deliberately do NOT
@@ -1101,13 +1384,30 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
         // behaviour. Changing this changed several `Partial<T>` /
         // `nongenericPartialInstantiations*` baselines without a clear win.
         for sig in &callable.construct_signatures {
-            for param in &sig.params {
-                self.visit_with_polarity(param.type_id, !current_polarity);
+            let bound_len = self.bound_type_params.len();
+            self.bound_type_params
+                .extend(sig.type_params.iter().map(|param| param.name));
+            if effective_strict.is_some() && effective_method_bivariance {
+                for param in &sig.params {
+                    self.visit_effective_bivariant_param(param.type_id, !current_polarity);
+                }
+            } else {
+                for param in &sig.params {
+                    self.visit_with_polarity(param.type_id, !current_polarity);
+                }
             }
             self.visit_with_polarity(sig.return_type, current_polarity);
-            if let Some(this_ty) = sig.this_type {
-                self.visit_with_polarity(this_ty, !current_polarity);
+            if let Some(predicate_type) = sig.type_predicate.and_then(|pred| pred.type_id) {
+                self.visit_with_polarity(predicate_type, current_polarity);
             }
+            if let Some(this_ty) = sig.this_type {
+                if effective_strict.is_some() && effective_method_bivariance {
+                    self.visit_effective_bivariant_param(this_ty, !current_polarity);
+                } else {
+                    self.visit_with_polarity(this_ty, !current_polarity);
+                }
+            }
+            self.bound_type_params.truncate(bound_len);
         }
 
         // Properties follow the same rules as regular objects
@@ -1115,14 +1415,11 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
             // Read type is always checked at current polarity
             self.visit_with_polarity(prop.type_id, current_polarity);
 
-            // CRITICAL FIX: Mutable properties are ALWAYS invariant
-            if !prop.readonly {
-                let write_ty = if prop.write_type != TypeId::NONE {
-                    prop.write_type
-                } else {
-                    prop.type_id
-                };
-                self.visit_with_polarity(write_ty, !current_polarity);
+            // Ordinary properties follow tsc's covariant inference even when
+            // mutable. Only a split accessor contributes an explicit write
+            // surface in the opposite direction.
+            if prop.has_split_accessor() {
+                self.visit_with_polarity(prop.write_type, !current_polarity);
             }
         }
     }
@@ -1153,6 +1450,10 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
         if let Some(ref idx) = shape.number_index {
             self.visit_with_polarity(idx.value_type, current_polarity);
         }
+
+        if let Some(ref idx) = shape.symbol_index {
+            self.visit_with_polarity(idx.value_type, current_polarity);
+        }
     }
 
     /// Object with index signatures: same variance rules as regular objects.
@@ -1162,7 +1463,8 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
 
     /// Type parameters: check if this is our target.
     fn visit_type_parameter(&mut self, info: &TypeParamInfo) {
-        if self.is_target_type_parameter(info) {
+        let is_bound = self.bound_type_params.contains(&info.name);
+        if !is_bound && self.is_target_type_parameter(info) {
             let current_polarity = self.get_current_polarity();
             self.add_occurrence(current_polarity);
         }
@@ -1170,7 +1472,6 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
         // Skip constraint/default for bound type parameters (mapped type iteration
         // variables like K in `{ [K in keyof S]: S[K] }`). Their constraints are
         // already accounted for by visit_mapped visiting mapped.constraint directly.
-        let is_bound = self.bound_type_params.contains(&info.name);
         if !is_bound {
             // Also check constraint (at current polarity).
             // Constraints affect structural shape: `<U extends T>` means T
@@ -1289,14 +1590,13 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
                 // Propagate NEEDS_STRUCTURAL_FALLBACK and REJECTION_UNRELIABLE
                 // from nested applications. If Required<T> needs structural fallback
                 // due to modifiers, then Foo<T> = { a: Required<T> } also needs it.
-                if base_param_variance.needs_structural_fallback() {
+                if base_param_variance.contains(Variance::NEEDS_STRUCTURAL_FALLBACK) {
                     self.result |= Variance::NEEDS_STRUCTURAL_FALLBACK;
                 }
                 let inherits_unreliable = base_param_variance.rejection_unreliable();
                 if inherits_unreliable {
                     self.result |= Variance::REJECTION_UNRELIABLE;
                 }
-
                 // Composition Rules:
                 // - Covariant base param: Argument inherits current polarity
                 // - Contravariant base param: Argument flips current polarity
@@ -1311,11 +1611,18 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
                 if inherits_unreliable {
                     self.inside_unreliable_application += 1;
                 }
-                if base_param_variance.contains(Variance::COVARIANT) {
-                    self.visit_with_polarity(arg, current_polarity);
-                }
-                if base_param_variance.contains(Variance::CONTRAVARIANT) {
-                    self.visit_with_polarity(arg, !current_polarity);
+                if self.inside_effective_bivariant_param > 0 && base_param_variance.is_invariant() {
+                    self.visit_below_inner_invariant(arg, current_polarity);
+                } else {
+                    if base_param_variance.contains(Variance::COVARIANT) {
+                        self.visit_with_polarity(arg, current_polarity);
+                    }
+                    if base_param_variance.contains(Variance::CONTRAVARIANT) {
+                        self.visit_with_polarity(arg, !current_polarity);
+                    }
+                    if base_param_variance.has_bivariant_usage() {
+                        self.visit_effective_bivariant_param(arg, current_polarity);
+                    }
                 }
                 if inherits_unreliable {
                     self.inside_unreliable_application -= 1;
@@ -1580,6 +1887,21 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
     fn visit_readonly_type(&mut self, inner_type: TypeId) {
         let current_polarity = self.get_current_polarity();
         self.visit_with_polarity(inner_type, current_polarity);
+    }
+
+    /// `NoInfer<T>` suppresses inference candidates but is transparent to the
+    /// relation surface, so it preserves the enclosing variance polarity.
+    fn visit_no_infer(&mut self, inner_type: TypeId) {
+        let current_polarity = self.get_current_polarity();
+        self.visit_with_polarity(inner_type, current_polarity);
+    }
+
+    /// A substitution type exposes its narrowed base on the type surface. The
+    /// implied constraint guides evaluation but does not replace the base's
+    /// variance occurrence.
+    fn visit_substitution(&mut self, base_type: TypeId, _constraint: TypeId) {
+        let current_polarity = self.get_current_polarity();
+        self.visit_with_polarity(base_type, current_polarity);
     }
 
     /// Infer types: declaration is not a usage.

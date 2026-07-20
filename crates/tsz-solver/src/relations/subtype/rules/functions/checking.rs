@@ -6,8 +6,8 @@
 use crate::instantiation::instantiate::TypeSubstitution;
 use crate::type_param_info;
 use crate::types::{
-    CallSignature, CallableShape, CallableShapeId, FunctionShape, FunctionShapeId, ObjectFlags,
-    ObjectShape, ParamInfo, PropertyInfo, TypeData, TypeId, TypeParamInfo, Visibility,
+    CallableShape, CallableShapeId, FunctionShape, FunctionShapeId, ObjectFlags, ObjectShape,
+    ParamInfo, PropertyInfo, TypeData, TypeId, TypeParamInfo, Visibility,
 };
 use crate::visitor::callable_shape_id;
 
@@ -1350,6 +1350,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if s_fn.is_constructor {
                 return SubtypeResult::False;
             }
+            if has_multiple_target_sigs
+                && self.erased_fn_to_sig_return_variance_rejects(&s_fn, t_sig)
+            {
+                return SubtypeResult::False;
+            }
             if !self.check_call_signature_subtype_fn(&s_fn, t_sig).is_true() {
                 // tsc N×M path: when the target has multiple call signatures, try
                 // erasing type params to `any` before rejecting. This matches tsc's
@@ -1602,7 +1607,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 found_match = true;
             }
             for s_sig in &source.call_signatures {
-                if self.check_call_signature_subtype(s_sig, t_sig).is_true() {
+                if (!is_multi_sig || !self.erased_call_sig_return_variance_rejects(s_sig, t_sig))
+                    && self.check_call_signature_subtype(s_sig, t_sig).is_true()
+                {
                     found_match = true;
                     break;
                 }
@@ -1611,6 +1618,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // type params to `any` (matching tsc's `getErasedSignature` behavior).
             if !found_match && is_multi_sig {
                 for s_sig in &source.call_signatures {
+                    if self.erased_call_sig_return_variance_rejects(s_sig, t_sig) {
+                        continue;
+                    }
                     if self
                         .check_erased_call_signature_subtype(s_sig, t_sig)
                         .is_true()
@@ -1763,79 +1773,5 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         SubtypeResult::True
-    }
-
-    fn method_overloads_cover_tuple_union_rest_target(
-        &mut self,
-        source_sigs: &[CallSignature],
-        target_sig: &CallSignature,
-    ) -> bool {
-        use crate::type_queries::data::get_union_members;
-        use crate::type_queries::unpack_tuple_rest_parameter;
-
-        let Some(last_target_param) = target_sig.params.last().filter(|param| param.rest) else {
-            return false;
-        };
-        let Some(union_members) = get_union_members(self.interner, last_target_param.type_id)
-        else {
-            return false;
-        };
-
-        let prefix_params = &target_sig.params[..target_sig.params.len().saturating_sub(1)];
-        union_members.iter().all(|member_type_id| {
-            let member_param = ParamInfo {
-                type_id: *member_type_id,
-                rest: true,
-                ..*last_target_param
-            };
-            let mut variant_params = prefix_params.to_vec();
-            variant_params.extend(unpack_tuple_rest_parameter(self.interner, &member_param));
-            source_sigs.iter().any(|source_sig| {
-                let source_fn = FunctionShape {
-                    type_params: source_sig.type_params.clone(),
-                    params: source_sig.params.clone(),
-                    this_type: source_sig.this_type,
-                    return_type: source_sig.return_type,
-                    type_predicate: source_sig.type_predicate,
-                    is_constructor: false,
-                    is_method: source_sig.is_method,
-                };
-                let variant_fn = FunctionShape {
-                    type_params: target_sig.type_params.clone(),
-                    params: variant_params.clone(),
-                    this_type: target_sig.this_type,
-                    return_type: target_sig.return_type,
-                    type_predicate: target_sig.type_predicate,
-                    is_constructor: false,
-                    is_method: target_sig.is_method,
-                };
-                self.check_function_subtype(&source_fn, &variant_fn)
-                    .is_true()
-                    || self.method_overload_prefix_covers_variant(source_sig, &variant_params)
-            })
-        })
-    }
-
-    fn method_overload_prefix_covers_variant(
-        &mut self,
-        source_sig: &CallSignature,
-        variant_params: &[ParamInfo],
-    ) -> bool {
-        if !source_sig.is_method || variant_params.is_empty() {
-            return false;
-        }
-        if source_sig.params.len() < variant_params.len() {
-            return false;
-        }
-        source_sig
-            .params
-            .iter()
-            .zip(variant_params.iter())
-            .take(variant_params.len())
-            .all(|(source_param, target_param)| {
-                let (source_type, target_type) =
-                    self.effective_param_type_pair(source_param, target_param);
-                self.are_parameters_compatible_impl(source_type, target_type, true)
-            })
     }
 }

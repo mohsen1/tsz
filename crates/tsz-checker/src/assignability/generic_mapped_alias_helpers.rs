@@ -60,6 +60,18 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
+        if source_args
+            .iter()
+            .zip(target_args.iter())
+            .any(|(&source_arg, &target_arg)| {
+                (source_arg.is_any() && target_arg == TypeId::NEVER)
+                    || (source_arg == TypeId::NEVER && target_arg.is_any())
+            })
+        {
+            // The option-aware solver classifier owns this exceptional pair;
+            // a partial declared mask cannot safely accept it here.
+            return false;
+        }
 
         let Some(variances) =
             crate::query_boundaries::variance::compute_type_param_variances_with_resolver_cached(

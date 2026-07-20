@@ -606,3 +606,26 @@ fn typeparam_origin_layout_is_size_neutral() {
     );
     assert!(size_of::<(Atom, u32)>() <= size_of::<(u64, Option<Atom>)>());
 }
+
+#[test]
+fn bivariant_variance_composition_stays_structural() {
+    let bivariant = Variance::BIVARIANT_USAGE;
+    assert_eq!(
+        bivariant.compose(Variance::COVARIANT),
+        Variance::BIVARIANT_USAGE
+    );
+    assert_eq!(
+        Variance::CONTRAVARIANT.compose(bivariant),
+        Variance::BIVARIANT_USAGE
+    );
+    assert_eq!(Variance::empty().compose(bivariant), Variance::empty());
+}
+
+#[test]
+fn bivariant_and_invariant_composition_preserves_nesting_order() {
+    let bivariant = Variance::BIVARIANT_USAGE;
+    let invariant = Variance::COVARIANT | Variance::CONTRAVARIANT;
+
+    assert_eq!(invariant.compose(bivariant), Variance::BIVARIANT_USAGE);
+    assert_eq!(bivariant.compose(invariant), invariant);
+}

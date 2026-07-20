@@ -107,6 +107,19 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
+        if source_args
+            .iter()
+            .zip(target_args.iter())
+            .any(|(&source_arg, &target_arg)| {
+                (source_arg.is_any() && target_arg == TypeId::NEVER)
+                    || (source_arg == TypeId::NEVER && target_arg.is_any())
+            })
+        {
+            // Directional any/never application compatibility is owned by the
+            // option-aware solver classifier, not this blanket target-any
+            // assignment shortcut.
+            return false;
+        }
         source_base == target_base
             && source_args.len() == target_args.len()
             && target_args.iter().any(|arg| arg.is_any())
