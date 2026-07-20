@@ -619,7 +619,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // complexity that arose *inside* this evaluation (a nested key's
         // sub-evaluation), never to a flag a sibling type left set before this
         // mapped type was reached.
-        let union_complex_before_mapped = self.interner().is_union_too_complex();
+        let union_complexity_checkpoint = self.interner().union_complexity_checkpoint();
 
         for mapped_key in key_set.keys {
             // Check if depth was exceeded during previous iterations
@@ -630,7 +630,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // overflowed the union-complexity budget, so the whole mapped result
             // is too complex (TS2590). Stop before instantiating/evaluating the
             // remaining keys instead of re-paying the per-key cost for each.
-            if !union_complex_before_mapped && self.interner().is_union_too_complex() {
+            if self
+                .interner()
+                .union_complexity_changed_since(union_complexity_checkpoint)
+            {
                 break;
             }
             let key_name = mapped_key.name;

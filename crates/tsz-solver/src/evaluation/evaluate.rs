@@ -19,6 +19,7 @@ mod array_methods;
 
 use crate::caches::db::QueryDatabase;
 use crate::construction::TypeDatabase;
+use crate::construction::UnionComplexityCheckpoint;
 use crate::def::{DefId, DefKind};
 use crate::diagnostics::display_provenance::{
     self, AliasApplicationPriority, AliasApplicationProvenance,
@@ -245,11 +246,11 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// (issue #13097; see `evaluation::memo_audit`). 0 when perf counters
     /// are disabled.
     audit_evaluator_id: u64,
-    /// `is_union_too_complex` snapshot taken at construction. A memo
+    /// Union-complexity event checkpoint taken at construction. A memo
     /// write-through is suppressed while the flag is newly set relative to
     /// this snapshot, mirroring the top-level boundary drain's `TS2590`
     /// gate (a cached read must not swallow the diagnostic re-derivation).
-    union_complex_at_construction: bool,
+    union_complexity_at_construction: UnionComplexityCheckpoint,
     /// When true, nested `evaluate` nodes consult the persistent eval memo
     /// (`TypeApplicationEvalCache::lookup_eval_memo`) after a local-cache
     /// miss, so this
@@ -420,7 +421,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             closed_eval_writes_allowed: false,
             tainted: FxHashSet::default(),
             audit_evaluator_id: crate::evaluation::memo_audit::next_evaluator_id(),
-            union_complex_at_construction: interner.is_union_too_complex(),
+            union_complexity_at_construction: interner.union_complexity_checkpoint(),
             persistent_memo_reads: false,
             limited_resolver: false,
         }
@@ -1404,7 +1405,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             if self.persistent_memo_reads
                 && !type_id.is_intrinsic()
                 && (self.limit_epoch == 0 || crate::limits::limit_result_cache_enabled())
-                && (self.union_complex_at_construction || !self.interner.is_union_too_complex())
+                && !self
+                    .interner
+                    .union_complexity_changed_since(self.union_complexity_at_construction)
             {
                 self.interner
                     .insert_eval_memo(type_id, self.no_unchecked_indexed_access, result);

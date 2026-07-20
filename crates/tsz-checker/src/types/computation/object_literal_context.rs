@@ -499,15 +499,15 @@ impl<'a> CheckerState<'a> {
                 if common::is_callable_type(self.ctx.types, member) {
                     return Some(member);
                 }
-                let had_prior_complexity = self.ctx.types.take_union_too_complex();
+                let complexity_checkpoint = self.ctx.types.union_complexity_checkpoint();
                 let evaluated = self.evaluate_type_with_env(member);
                 let evaluated = self.resolve_lazy_type(evaluated);
                 let evaluated = self.evaluate_application_type(evaluated);
-                let produced_complexity = self.ctx.types.take_union_too_complex();
-                if had_prior_complexity || produced_complexity {
-                    self.ctx.types.mark_union_too_complex();
-                }
-                if produced_complexity {
+                if self
+                    .ctx
+                    .types
+                    .take_union_too_complex_since(complexity_checkpoint)
+                {
                     return None;
                 }
                 common::is_callable_type(self.ctx.types, evaluated).then_some(evaluated)

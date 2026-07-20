@@ -8,8 +8,8 @@ use crate::{
     TypeInterner, TypeParamInfo, Visibility,
 };
 use rayon::prelude::*;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Barrier};
 use tsz_common::interner::Atom;
 
 #[test]
@@ -451,5 +451,115 @@ fn test_concurrent_template_literal_creation() {
         assert_ne!(type_id, TypeId::ERROR);
         assert!(interner.lookup(type_id).is_some());
     }
+}
+
+#[test]
+fn union_complexity_signal_cannot_be_taken_by_another_worker() {
+    let interner = Arc::new(TypeInterner::new());
+    let observer_checkpoint = interner.union_complexity_checkpoint();
+    let producer_ready = Arc::new(Barrier::new(2));
+    let thief_checked = Arc::new(Barrier::new(2));
+
+    let producer = {
+        let interner = Arc::clone(&interner);
+        let producer_ready = Arc::clone(&producer_ready);
+        let thief_checked = Arc::clone(&thief_checked);
+        std::thread::spawn(move || {
+            let checkpoint = interner.union_complexity_checkpoint();
+            interner.set_union_too_complex();
+            producer_ready.wait();
+            thief_checked.wait();
+
+            assert!(interner.is_union_too_complex());
+            assert!(interner.take_union_too_complex_since(checkpoint));
+            assert!(!interner.is_union_too_complex());
+        })
+    };
+
+    producer_ready.wait();
+    assert!(
+        !interner.union_complexity_changed_since(observer_checkpoint),
+        "another worker's event must not taint this worker's cache snapshot"
+    );
+    assert!(!interner.is_union_too_complex());
+    assert!(!interner.take_union_too_complex());
+    thief_checked.wait();
+    producer.join().expect("producer worker should finish");
+}
+
+#[test]
+fn union_complexity_fixed_slots_overflow_without_losing_ownership() {
+    let interners: Vec<_> = (0..9).map(|_| TypeInterner::new()).collect();
+    for interner in &interners {
+        interner.set_union_too_complex();
+    }
+
+    for interner in &interners {
+        assert!(interner.is_union_too_complex());
+        assert!(interner.take_union_too_complex());
+        assert!(!interner.is_union_too_complex());
+    }
+}
+
+#[test]
+fn union_complexity_checkpoint_cannot_cross_interner_universes() {
+    let first = TypeInterner::new();
+    let second = TypeInterner::new();
+    let foreign_checkpoint = first.union_complexity_checkpoint();
+
+    second.set_union_too_complex();
+    assert!(!second.union_complexity_changed_since(foreign_checkpoint));
+    second.discard_union_too_complex_since(foreign_checkpoint);
+    assert!(
+        second.take_union_too_complex(),
+        "a foreign checkpoint must not consume this interner's signal"
+    );
+}
+
+#[test]
+fn union_complexity_checkpoints_preserve_prior_and_nested_ownership() {
+    let interner = TypeInterner::new();
+
+    let outer = interner.union_complexity_checkpoint();
+    interner.set_union_too_complex();
+    let nested = interner.union_complexity_checkpoint();
+    interner.set_union_too_complex();
+
+    assert!(interner.union_complexity_changed_since(outer));
+    assert!(interner.union_complexity_changed_since(nested));
+    assert!(interner.take_union_too_complex_since(nested));
+    assert!(
+        !interner.take_union_too_complex_since(nested),
+        "a checkpoint must attribute its newer events only once"
+    );
+    assert!(
+        interner.take_union_too_complex_since(outer),
+        "the nested owner must preserve the event pending for its outer owner"
+    );
+    assert!(!interner.is_union_too_complex());
+
+    interner.set_union_too_complex();
+    let pre_existing = interner.union_complexity_checkpoint();
+    interner.set_union_too_complex();
+    interner.discard_union_too_complex_since(pre_existing);
+    assert!(
+        interner.is_union_too_complex(),
+        "discard must preserve the event pending before its checkpoint"
+    );
+    assert!(interner.take_union_too_complex());
+
+    let clean = interner.union_complexity_checkpoint();
+    interner.set_union_too_complex();
+    interner.discard_union_too_complex_since(clean);
+    assert!(!interner.is_union_too_complex());
+    assert!(
+        interner.union_complexity_changed_since(clean),
+        "an encompassing cache snapshot remains tainted after discarded work"
+    );
+    let after_discard = interner.union_complexity_checkpoint();
+    assert!(
+        !interner.union_complexity_changed_since(after_discard),
+        "a fresh checkpoint after discard must start stable"
+    );
 }
 use crate::types::PropertyLookup;
