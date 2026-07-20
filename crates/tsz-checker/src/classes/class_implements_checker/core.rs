@@ -6,7 +6,7 @@ use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 use crate::query_boundaries::class::{
     should_report_member_type_mismatch, should_report_own_member_type_mismatch,
 };
-use crate::query_boundaries::common::{PropertyAccessResult, TypeResolver};
+use crate::query_boundaries::common::TypeResolver;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -190,12 +190,17 @@ impl<'a> CheckerState<'a> {
             (Vec::new(), false)
         };
 
-        // Track interface method-signature names already rebuilt from the AST in
-        // this loop. The first declaration of a name replaces the object-shape
-        // property (which only stores the return type for methods); subsequent
-        // declarations of the same name are overload signatures and must be
-        // *combined* into one callable rather than overwriting each other.
-        let mut method_sig_rebuilt: rustc_hash::FxHashSet<tsz_common::interner::Atom> =
+        // Accumulate each overload family as member type ids and construct its
+        // callable once after scanning. Rebuilding the growing callable for every
+        // declaration would clone and reintern O(n²) signatures for a family of n
+        // overloads.
+        let mut method_signature_accumulators: rustc_hash::FxHashMap<
+            tsz_common::interner::Atom,
+            (Vec<TypeId>, PropertyInfo),
+        > = rustc_hash::FxHashMap::default();
+        let mut rebuilt_member_names: rustc_hash::FxHashSet<tsz_common::interner::Atom> =
+            rustc_hash::FxHashSet::default();
+        let mut frozen_member_names: rustc_hash::FxHashSet<tsz_common::interner::Atom> =
             rustc_hash::FxHashSet::default();
 
         for &decl_idx in interface_declarations {
@@ -233,30 +238,16 @@ impl<'a> CheckerState<'a> {
                 // object-shape property type which only stores the return type.
                 // This ensures proper TS2416 detection when comparing a class
                 // method against a generic interface method signature.
-                let member_type = if member_node.kind == syntax_kind_ext::METHOD_SIGNATURE {
-                    let member_type = self.get_type_of_interface_member_simple(member_idx);
-                    crate::query_boundaries::common::instantiate_type(
-                        self.ctx.types,
-                        member_type,
-                        substitution,
-                    )
-                } else {
-                    match self.resolve_property_access_with_env(interface_type, &name) {
-                        PropertyAccessResult::Success {
-                            type_id,
-                            write_type,
-                            ..
-                        } => write_type.unwrap_or(type_id),
-                        _ => {
-                            let member_type = self.get_type_of_interface_member_simple(member_idx);
-                            crate::query_boundaries::common::instantiate_type(
-                                self.ctx.types,
-                                member_type,
-                                substitution,
-                            )
-                        }
-                    }
-                };
+                // Reconstruct the exact declaration being scanned. A property
+                // lookup on the merged interface shape can return a later
+                // duplicate's type and make property-first recovery silently
+                // adopt a following method declaration.
+                let member_type = self.get_type_of_interface_member_simple(member_idx);
+                let member_type = crate::query_boundaries::common::instantiate_type(
+                    self.ctx.types,
+                    member_type,
+                    substitution,
+                );
 
                 let member_atom = self.ctx.types.intern_string(&name);
                 let property_info = PropertyInfo {
@@ -275,67 +266,74 @@ impl<'a> CheckerState<'a> {
                     single_quoted_name: false,
                     non_widening: false,
                 };
-                if let Some(existing) = properties.iter_mut().find(|p| p.name == member_atom) {
-                    if member_node.kind == syntax_kind_ext::METHOD_SIGNATURE
-                        && existing.is_method
-                        && method_sig_rebuilt.contains(&member_atom)
-                    {
-                        // Overloaded interface method: this is a second (or later)
-                        // overload of an already-rebuilt method. Combine the
-                        // accumulated signature(s) with this declaration's
-                        // signature(s) into one callable so the implements-compat
-                        // check relates the class member against the FULL overload
-                        // set. tsc's `signaturesRelatedTo` erases type parameters
-                        // for the multi-signature (N×M) case; comparing the class
-                        // member against a single overload in isolation produces a
-                        // false TS2416 when the overload's return type depends on
-                        // the method type parameter.
-                        let mut sigs = crate::query_boundaries::class::member_call_signatures(
-                            self.ctx.types,
-                            existing.type_id,
-                        );
-                        sigs.extend(crate::query_boundaries::class::member_call_signatures(
-                            self.ctx.types,
-                            member_type,
-                        ));
-                        if sigs.is_empty() {
-                            // Defensive: if neither declaration yielded a call
-                            // signature, an empty callable would print as `{}` and
-                            // accept anything. Fall back to the single-declaration
-                            // type rather than silently dropping the check.
-                            *existing = property_info;
-                        } else {
-                            // Relate the overload set as a plain call-signature list
-                            // (`is_method = false`). tsc compares a class member
-                            // against an overloaded target with contravariant
-                            // parameters and type-parameter erasure (the N×M
-                            // `signaturesRelatedTo` path), not the bivariant
-                            // single-method parameter rule. Keeping `is_method =
-                            // true` would over-accept — e.g. a narrower impl
-                            // parameter would pass bivariantly — and miss real
-                            // TS2416s.
-                            for sig in &mut sigs {
-                                sig.is_method = false;
-                            }
-                            let combined =
-                                crate::query_boundaries::construct_signatures::call_only_callable_type(
-                                    self.ctx.types,
-                                    sigs,
-                                );
-                            existing.type_id = combined;
-                            existing.write_type = combined;
-                            existing.is_method = false;
-                        }
+                let is_method = member_node.kind == syntax_kind_ext::METHOD_SIGNATURE;
+                if rebuilt_member_names.insert(member_atom) {
+                    if let Some(existing) = properties.iter_mut().find(|p| p.name == member_atom) {
+                        *existing = property_info.clone();
                     } else {
-                        *existing = property_info;
+                        properties.push(property_info.clone());
+                    }
+                    if is_method {
+                        method_signature_accumulators
+                            .insert(member_atom, (vec![member_type], property_info));
+                    } else {
+                        // In invalid mixed method/property declarations, tsc's
+                        // recovery keeps the first property authoritative and
+                        // ignores later same-name method declarations.
+                        frozen_member_names.insert(member_atom);
+                    }
+                    continue;
+                }
+                if frozen_member_names.contains(&member_atom) {
+                    continue;
+                }
+                if is_method {
+                    if let Some((member_types, _)) =
+                        method_signature_accumulators.get_mut(&member_atom)
+                    {
+                        member_types.push(member_type);
                     }
                 } else {
-                    properties.push(property_info);
-                }
-                if member_node.kind == syntax_kind_ext::METHOD_SIGNATURE {
-                    method_sig_rebuilt.insert(member_atom);
+                    // A property terminates an initial method overload family.
+                    // Preserve the methods accumulated before it and ignore all
+                    // later duplicates for member-type reconstruction.
+                    frozen_member_names.insert(member_atom);
                 }
             }
+        }
+
+        for (member_atom, (member_types, fallback)) in method_signature_accumulators {
+            if member_types.len() < 2 {
+                continue;
+            }
+            let mut sigs = Vec::with_capacity(member_types.len());
+            for member_type in member_types {
+                sigs.extend(crate::query_boundaries::class::member_call_signatures(
+                    self.ctx.types,
+                    member_type,
+                ));
+            }
+            let Some(existing) = properties.iter_mut().find(|p| p.name == member_atom) else {
+                continue;
+            };
+            if sigs.is_empty() {
+                // An empty callable would print as `{}` and accept anything.
+                // Preserve the first declaration instead of dropping the check.
+                *existing = fallback;
+                continue;
+            }
+            // tsc relates overload sets as plain call-signature lists through
+            // contravariant N×M parameter comparison with type-parameter erasure.
+            for sig in &mut sigs {
+                sig.is_method = false;
+            }
+            let combined = crate::query_boundaries::construct_signatures::call_only_callable_type(
+                self.ctx.types,
+                sigs,
+            );
+            existing.type_id = combined;
+            existing.write_type = combined;
+            existing.is_method = false;
         }
 
         (properties, has_index_signature, display_name)

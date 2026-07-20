@@ -29,11 +29,6 @@ use std::sync::{
 };
 use tsz_common::interner::{Atom, ShardedInterner};
 
-/// A universe-shared variance result: the def's variance mask plus the
-/// resolution-gap fingerprint (defs whose resolution failed during the walk)
-/// that gates replaying it under a different resolver.
-pub type SharedDefVariance = (Arc<[crate::types::Variance]>, Arc<[DefId]>);
-
 /// One as-written union display order plus whether it is only the exact
 /// rewriter's pre-sort fallback. Real source provenance may atomically replace
 /// a fallback, while unrelated real origins remain first-writer-wins.
@@ -45,6 +40,9 @@ pub(super) struct DisplayUnionOrigin {
 mod cache;
 mod display;
 mod storage;
+mod variance_cache;
+
+pub use variance_cache::SharedDefVariance;
 
 pub(super) use storage::{AppComponentKey, CachedUnionMember, TypeShard};
 use storage::{ConcurrentSliceInterner, ConcurrentValueInterner, write_id_slot};
@@ -816,37 +814,6 @@ impl TypeInterner {
             def_variance_masks: DashMap::with_hasher(FxBuildHasher),
             instance_id: NEXT_INTERNER_INSTANCE_ID.fetch_add(1, Ordering::Relaxed),
         }
-    }
-
-    /// Read a universe-shared variance mask for a generic definition.
-    ///
-    /// Returns `(mask, gap_defs)`. Only canonical masks are stored, together
-    /// with their resolution-failure fingerprint (see `def_variance_masks`);
-    /// callers must validate the fingerprint against their resolver before
-    /// replaying the mask.
-    #[inline]
-    pub fn shared_def_variance(&self, def_id: DefId) -> Option<SharedDefVariance> {
-        self.def_variance_masks
-            .get(&def_id)
-            .map(|entry| entry.value().clone())
-    }
-
-    /// Store a universe-shared variance mask for a generic definition with
-    /// its resolution-failure fingerprint.
-    ///
-    /// Callers must only insert canonical masks whose every resolution gap is
-    /// listed in `gaps`. First write wins, keeping replays deterministic
-    /// within a session.
-    #[inline]
-    pub fn insert_shared_def_variance(
-        &self,
-        def_id: DefId,
-        mask: Arc<[crate::types::Variance]>,
-        gaps: Arc<[DefId]>,
-    ) {
-        self.def_variance_masks
-            .entry(def_id)
-            .or_insert((mask, gaps));
     }
 
     #[inline]

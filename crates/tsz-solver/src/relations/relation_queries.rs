@@ -741,6 +741,25 @@ pub fn query_erased_overload_params_with_matching_return_base<'a, R: TypeResolve
     )
 }
 
+/// Classify the proven return-variance failure hidden inside the erased
+/// overload fallback.
+///
+/// Kept separate from the boolean relation query so the checker can distinguish
+/// a definite `any`/`never` application mismatch from an ordinary uncovered
+/// overload. The latter may still be accepted by another compatibility rule;
+/// the former may not.
+pub fn query_erased_overload_return_variance_rejects<'a, R: TypeResolver>(
+    interner: &'a dyn TypeDatabase,
+    resolver: &'a R,
+    source: TypeId,
+    target: TypeId,
+    policy: RelationPolicy,
+    context: RelationContext<'a>,
+) -> bool {
+    let checker = configured_subtype_checker(interner, resolver, policy, context);
+    checker.erased_function_type_params_return_variance_rejects(source, target)
+}
+
 /// Bundled inputs for relation queries.
 pub struct RelationQueryInputs<'a, R: TypeResolver, P: AssignabilityOverrideProvider + ?Sized> {
     pub interner: &'a dyn TypeDatabase,
@@ -919,6 +938,29 @@ pub fn check_application_variance<R: TypeResolver>(
     }
 
     if !same_base_same_arity {
+        return None;
+    }
+
+    let has_any_never_pair = s_app
+        .args
+        .iter()
+        .zip(t_app.args.iter())
+        .any(|(&source, &target)| {
+            (source.is_any() && target == TypeId::NEVER)
+                || (source == TypeId::NEVER && target.is_any())
+        });
+    if has_any_never_pair {
+        let checker = configured_subtype_checker(db, resolver, policy, context);
+        let def_id = base_def_id(s_app.base)?;
+        if checker
+            .classify_application_args_any_never_variance(def_id, &s_app.args, &t_app.args)?
+            .rejects
+        {
+            return Some(false);
+        }
+        // Non-rejecting exceptional slots may coexist with arguments that
+        // require lawyer-only compatibility (for example the void-return
+        // exception). Leave those to the downstream full relation.
         return None;
     }
 

@@ -9,12 +9,13 @@
 //! via `Rc` across parent/child contexts so counters survive cross-arena
 //! delegation without implicit global state.
 
+use crate::def::DefId;
 use crate::evaluation::request::EvaluationCacheKey;
 use crate::evaluation::result::EvaluationResult;
-use crate::types::RelationCacheKey;
-use crate::types::TypeId;
+use crate::types::{RelationCacheKey, TypeId, Variance};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::{Cell, RefCell};
+use std::sync::Arc;
 
 /// Maximum global instantiation depth — bounds nesting of
 /// `evaluate_application_type` calls across all `CheckerContext` instances.
@@ -134,6 +135,45 @@ pub(crate) struct CompoundSubtypePairKey {
     resolver_generation: u64,
     bypass_evaluation: bool,
     max_depth: u32,
+}
+
+/// Per-query effective-variance memo scope.
+///
+/// Resolver identity is safe here because the memo cannot outlive the
+/// `EvaluationSession` that owns the borrowed resolver contexts. The current
+/// resolver generation lives in the value so publication replaces, rather
+/// than accumulates, stale facts for this scope.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct EffectiveVarianceCacheKey {
+    def_id: DefId,
+    strict_function_types: bool,
+    disable_method_bivariance: bool,
+    type_database_identity: usize,
+    resolver_identity: usize,
+}
+
+impl EffectiveVarianceCacheKey {
+    pub(crate) const fn new(
+        def_id: DefId,
+        strict_function_types: bool,
+        disable_method_bivariance: bool,
+        type_database_identity: usize,
+        resolver_identity: usize,
+    ) -> Self {
+        Self {
+            def_id,
+            strict_function_types,
+            disable_method_bivariance,
+            type_database_identity,
+            resolver_identity,
+        }
+    }
+}
+
+struct EffectiveVarianceCacheEntry {
+    resolver_generation: u64,
+    variances: Arc<[Variance]>,
+    incomplete: bool,
 }
 
 impl CompoundSubtypePairKey {
@@ -267,6 +307,11 @@ pub struct EvaluationSession {
     /// cached here; each simplification reruns them after reading the raw
     /// subtype answer.
     compound_subtype_probe_cache: RefCell<FxHashMap<CompoundSubtypePairKey, bool>>,
+    /// Resolver-scoped effective-variance facts for exceptional `any`/`never`
+    /// application relations. Generation validation makes publication-safe
+    /// hits O(1); replacing the value bounds residency to one entry per scope.
+    effective_variance_cache:
+        RefCell<FxHashMap<EffectiveVarianceCacheKey, EffectiveVarianceCacheEntry>>,
     /// In-flight expansion count per `Application` node across every
     /// evaluator instance in this session. A fresh evaluator re-entering a
     /// node that [`MAX_CROSS_EVAL_APPLICATION_EXPANSION`] instances are
@@ -371,6 +416,7 @@ impl EvaluationSession {
             cross_eval_active: RefCell::new(FxHashSet::default()),
             query_memo: RefCell::new(FxHashMap::default()),
             compound_subtype_probe_cache: RefCell::new(FxHashMap::default()),
+            effective_variance_cache: RefCell::new(FxHashMap::default()),
             application_expansion_active: InFlightTypeCounter::default(),
         }
     }
@@ -708,6 +754,58 @@ impl EvaluationSession {
         self.query_memo.borrow_mut().insert(key, result);
     }
 
+    pub(crate) fn effective_variance_get(
+        &self,
+        key: EffectiveVarianceCacheKey,
+        resolver_generation: u64,
+    ) -> Option<(Arc<[Variance]>, bool)> {
+        let cache = self.effective_variance_cache.borrow();
+        let entry = cache.get(&key)?;
+        (entry.resolver_generation == resolver_generation)
+            .then(|| (entry.variances.clone(), entry.incomplete))
+    }
+
+    pub(crate) fn effective_variance_put(
+        &self,
+        key: EffectiveVarianceCacheKey,
+        resolver_generation: u64,
+        variances: Arc<[Variance]>,
+        incomplete: bool,
+    ) {
+        self.effective_variance_cache.borrow_mut().insert(
+            key,
+            EffectiveVarianceCacheEntry {
+                resolver_generation,
+                variances,
+                incomplete,
+            },
+        );
+    }
+
+    /// Number of option-aware effective-variance masks retained by this query.
+    #[cfg(test)]
+    pub(crate) fn effective_variance_cache_entries(&self) -> usize {
+        self.effective_variance_cache.borrow().len()
+    }
+
+    /// Approximate bytes retained by the effective-variance memo.
+    #[cfg(test)]
+    pub(crate) fn effective_variance_cache_estimated_size_bytes(&self) -> usize {
+        self.effective_variance_cache
+            .borrow()
+            .values()
+            .map(|entry| {
+                std::mem::size_of::<(EffectiveVarianceCacheKey, EffectiveVarianceCacheEntry)>()
+                    .saturating_add(
+                        entry
+                            .variances
+                            .len()
+                            .saturating_mul(std::mem::size_of::<Variance>()),
+                    )
+            })
+            .sum()
+    }
+
     /// Look up a stable compound simplification subtype probe for this query.
     #[inline]
     pub(crate) fn compound_subtype_probe_get(&self, key: CompoundSubtypePairKey) -> Option<bool> {
@@ -752,6 +850,7 @@ impl EvaluationSession {
     #[inline]
     pub(crate) fn reset_query_memo(&self) {
         self.query_memo.borrow_mut().clear();
+        self.effective_variance_cache.borrow_mut().clear();
         self.reset_compound_subtype_probe_cache();
     }
 }
@@ -1171,5 +1270,44 @@ mod tests {
         );
         drop(entries);
         assert_eq!(session.type_reference_resolution_depth(), 0);
+    }
+
+    #[test]
+    fn effective_variance_cache_partitions_options_replaces_generation_and_resets() {
+        let session = EvaluationSession::new();
+        let strict_key = EffectiveVarianceCacheKey::new(DefId(1), true, false, 10, 20);
+        let loose_key = EffectiveVarianceCacheKey::new(DefId(1), false, false, 10, 20);
+        let identity_key = EffectiveVarianceCacheKey::new(DefId(1), true, true, 10, 20);
+        let covariant: Arc<[Variance]> = Arc::from([Variance::COVARIANT]);
+        let contravariant: Arc<[Variance]> = Arc::from([Variance::CONTRAVARIANT]);
+
+        session.effective_variance_put(strict_key, 1, covariant.clone(), false);
+        assert_eq!(
+            session.effective_variance_get(strict_key, 1),
+            Some((covariant, false))
+        );
+        assert_eq!(session.effective_variance_get(strict_key, 2), None);
+
+        session.effective_variance_put(strict_key, 2, contravariant.clone(), true);
+        assert_eq!(
+            session.effective_variance_get(strict_key, 2),
+            Some((contravariant.clone(), true))
+        );
+        assert_eq!(
+            session.effective_variance_cache_entries(),
+            1,
+            "a new resolver generation must replace the stale scope value"
+        );
+
+        session.effective_variance_put(loose_key, 2, contravariant, false);
+        session.effective_variance_put(identity_key, 2, Arc::from([Variance::COVARIANT]), false);
+        assert_eq!(session.effective_variance_cache_entries(), 3);
+        assert!(session.effective_variance_cache_estimated_size_bytes() > 0);
+
+        session.reset_query_memo();
+        assert_eq!(session.effective_variance_cache_entries(), 0);
+        assert_eq!(session.effective_variance_get(strict_key, 2), None);
+        assert_eq!(session.effective_variance_get(loose_key, 2), None);
+        assert_eq!(session.effective_variance_get(identity_key, 2), None);
     }
 }

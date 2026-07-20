@@ -502,7 +502,7 @@ pub trait TypeDatabase:
     /// its resolution-failure fingerprint.
     ///
     /// Callers must only insert canonical masks whose every resolution gap is
-    /// listed in `gaps` (see [`Self::shared_def_variance`]). First write wins.
+    /// listed in `gaps` (see [`Self::shared_def_variance`]).
     /// Default is a no-op.
     fn insert_shared_def_variance(
         &self,
