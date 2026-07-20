@@ -543,8 +543,16 @@ impl<'a> FlowAnalyzer<'a> {
                             // contribute that result; otherwise fall back to the
                             // antecedent type until expression checking catches up.
                             let is_destructuring = self.is_destructuring_assignment(flow.node);
-                            let raw_assigned =
-                                self.get_assigned_type(flow.node, reference, is_destructuring);
+                            let mut assignment_type_is_provisional = false;
+                            let mut preserve_declared_assignment_flow = false;
+                            let raw_assigned = self.get_assigned_type(
+                                flow.node,
+                                reference,
+                                is_destructuring,
+                                Some(initial_type),
+                                &mut assignment_type_is_provisional,
+                                &mut preserve_declared_assignment_flow,
+                            );
                             if let Some(assigned_type) =
                                 raw_assigned.filter(|&t| t != TypeId::ERROR)
                             {
@@ -597,8 +605,16 @@ impl<'a> FlowAnalyzer<'a> {
                             // `len(x)`'s result to determine x's loop type). ERROR is "subtype of
                             // everything" so narrow_assignment would keep all union members,
                             // incorrectly returning the full declared type.
-                            let raw_assigned =
-                                self.get_assigned_type(flow.node, reference, is_destructuring);
+                            let mut assignment_type_is_provisional = false;
+                            let mut preserve_declared_assignment_flow = false;
+                            let raw_assigned = self.get_assigned_type(
+                                flow.node,
+                                reference,
+                                is_destructuring,
+                                Some(initial_type),
+                                &mut assignment_type_is_provisional,
+                                &mut preserve_declared_assignment_flow,
+                            );
                             if let Some(assigned_type) =
                                 raw_assigned.filter(|&t| t != TypeId::ERROR)
                             {
@@ -689,12 +705,12 @@ impl<'a> FlowAnalyzer<'a> {
                                         .and_then(|sid| self.binder.get_symbol(sid))
                                         .filter(|sym| sym.value_declaration.is_some())
                                         .and_then(|sym| {
-                                            self.node_types.and_then(|nt| {
+                                            self.node_types.and_then(|types| {
                                                 self.annotation_type_from_var_decl_node(
                                                     sym.value_declaration,
                                                 )
                                                 .or_else(|| {
-                                                    nt.get(&sym.value_declaration.0).copied()
+                                                    types.get(&sym.value_declaration.0).copied()
                                                 })
                                             })
                                         });
@@ -748,8 +764,8 @@ impl<'a> FlowAnalyzer<'a> {
                                 // for the RHS yet. Do not publish the declared-type result into the
                                 // shared flow cache or later reads will reuse a stale answer.
                                 cache_policy.mark_provisional();
-                                // If we can't resolve the RHS type, conservatively return declared type
-                                // The value HAS changed, so we can't continue to antecedent
+                                // Preserve specialized sound fallbacks; otherwise keep the
+                                // current branch type until canonical RHS typing catches up.
                                 if self.is_await_assignment_for_reference(flow.node, reference) {
                                     // `x = await expr` assigns a realized value. When RHS typing
                                     // isn't available yet, keep this sound by at least excluding
@@ -758,12 +774,12 @@ impl<'a> FlowAnalyzer<'a> {
                                         .and_then(|sid| self.binder.get_symbol(sid))
                                         .filter(|sym| sym.value_declaration.is_some())
                                         .and_then(|sym| {
-                                            self.node_types.and_then(|nt| {
+                                            self.node_types.and_then(|types| {
                                                 self.annotation_type_from_var_decl_node(
                                                     sym.value_declaration,
                                                 )
                                                 .or_else(|| {
-                                                    nt.get(&sym.value_declaration.0).copied()
+                                                    types.get(&sym.value_declaration.0).copied()
                                                 })
                                             })
                                         })
@@ -792,8 +808,8 @@ impl<'a> FlowAnalyzer<'a> {
                                                     sym.value_declaration,
                                                 )
                                                 .or_else(|| {
-                                                    self.node_types.and_then(|nt| {
-                                                        nt.get(&sym.value_declaration.0).copied()
+                                                    self.node_types.and_then(|types| {
+                                                        types.get(&sym.value_declaration.0).copied()
                                                     })
                                                 })
                                             })

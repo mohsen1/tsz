@@ -11,11 +11,16 @@
 //! against tsc 7.0.2 (both clean) before migration.
 
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, ExitStatus};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 struct TempDir {
     path: PathBuf,
+}
+
+struct TszOutput {
+    status: ExitStatus,
+    diagnostics: String,
 }
 
 impl TempDir {
@@ -52,8 +57,8 @@ fn find_tsz_binary() -> Option<PathBuf> {
 
 /// Write `files` (relative path, contents) into a temp dir and run `tsz` over
 /// them (in listed order) with strict cross-file bundler options, returning
-/// combined stdout+stderr.
-fn run_tsz_files(name: &str, files: &[(&str, &str)]) -> Option<String> {
+/// process status and combined stdout+stderr.
+fn run_tsz_files(name: &str, files: &[(&str, &str)]) -> Option<TszOutput> {
     let tsz_bin = find_tsz_binary()?;
     let temp = TempDir::new(name).expect("temp dir");
     let mut args: Vec<String> = Vec::new();
@@ -87,16 +92,23 @@ fn run_tsz_files(name: &str, files: &[(&str, &str)]) -> Option<String> {
         .expect("run tsz");
     let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
     text.push_str(&String::from_utf8_lossy(&output.stderr));
-    Some(text)
+    Some(TszOutput {
+        status: output.status,
+        diagnostics: text,
+    })
 }
 
-fn assert_lacks_codes(out: &str, codes: &[&str], context: &str) {
-    for code in codes {
-        assert!(
-            !out.contains(code),
-            "{context} (tsc 7.0.2 is clean); got {code}:\n{out}"
-        );
-    }
+fn assert_clean_tsc_oracle(out: &TszOutput, context: &str) {
+    assert!(
+        out.status.success(),
+        "{context} (tsc 7.0.2 is clean) must exit successfully:\n{}",
+        out.diagnostics
+    );
+    assert!(
+        out.diagnostics.trim().is_empty(),
+        "{context} (tsc 7.0.2 is clean) must be diagnostic-free:\n{}",
+        out.diagnostics
+    );
 }
 
 const EXPRESSION_BUILDER: &str = r#"
@@ -171,9 +183,8 @@ db.selectFrom("user").select((eb) => [
         println!("tsz binary not found; skipping");
         return;
     };
-    assert_lacks_codes(
+    assert_clean_tsc_oracle(
         &out,
-        &["TS2339", "TS7006", "TS2347"],
         "cross-file Kysely subclass should inherit the generic builder callback context",
     );
 }
@@ -284,9 +295,143 @@ fn kysely_schemable_identifier_factory_preserves_nested_imported_literal_kind() 
         println!("tsz binary not found; skipping");
         return;
     };
-    assert_lacks_codes(
+    assert_clean_tsc_oracle(
         &out,
-        &["TS2322"],
         "Kysely nested imported factory should keep literal node kinds",
     );
+}
+
+const DATABASE_INTROSPECTOR: &str = r#"
+export interface TableMetadata {
+  readonly name: string;
+  readonly isView: boolean;
+  readonly columns: ColumnMetadata[];
+  readonly schema?: string;
+}
+
+export interface ColumnMetadata {
+  readonly name: string;
+}
+"#;
+
+const MYSQL_INTROSPECTOR: &str = r#"
+import type { TableMetadata } from "../database-introspector.js";
+import { freeze } from "../../util/object-utils.js";
+
+interface RawColumnMetadata {
+  readonly tableName: string;
+  readonly tableType: string;
+  readonly columnName: string;
+}
+
+declare function findTable(
+  tables: TableMetadata[],
+  name: string,
+): TableMetadata | undefined;
+
+export function collect(columns: RawColumnMetadata[]): TableMetadata[] {
+  return columns.reduce<TableMetadata[]>((tables, item) => {
+    let table = findTable(tables, item.tableName);
+
+    if (!table) {
+      table = freeze({
+        name: item.tableName,
+        isView: item.tableType === "VIEW",
+        schema: undefined,
+        columns: [],
+      });
+      tables.push(table);
+    }
+
+    table.columns.push({ name: item.columnName });
+    return tables;
+  }, []);
+}
+"#;
+
+/// A generic call assigned to an imported interface union inside a deferred
+/// reducer callback is a killing definition when its instantiated return is
+/// compatible with that interface. Both the callee and the declared assignment
+/// surface cross file boundaries here, matching the `MySQL` introspector shape
+/// that exposed the false TS18048. tsc 7.0.2 is clean.
+#[test]
+fn kysely_imported_generic_assignment_narrows_deferred_reducer_local() {
+    let Some(out) = run_tsz_files(
+        "imported_generic_assignment_flow",
+        &[
+            ("util/object-utils.ts", OBJECT_UTILS),
+            ("dialect/database-introspector.ts", DATABASE_INTROSPECTOR),
+            ("dialect/mysql/mysql-introspector.ts", MYSQL_INTROSPECTOR),
+        ],
+    ) else {
+        println!("tsz binary not found; skipping");
+        return;
+    };
+    assert_clean_tsc_oracle(
+        &out,
+        "an imported generic assignment compatible with an imported interface",
+    );
+}
+
+/// The owner-keyed callable cache must distinguish equal binder-relative
+/// terminal ids. The checker-level companion proves the ids collide; this
+/// production CLI path proves diagnostics are independent of provider order.
+#[test]
+fn colliding_generic_terminal_owners_are_clean_across_provider_orders() {
+    const LEFT: &str = r#"
+export function retain<Value>(value: Value): Readonly<Value> {
+  return value;
+}
+"#;
+    const RIGHT: &str = r#"
+export function enclose<Item>(value: Item): { payload: Item } {
+  return { payload: value };
+}
+"#;
+    const CONSUMER: &str = r#"
+import { retain } from "./left.js";
+import { enclose } from "./right.js";
+
+interface LeftValue { readonly name: string; readonly values: string[]; }
+interface RightValue { readonly payload: { readonly count: number }; }
+
+export function deferred(leftValues: LeftValue[], rightValues: RightValue[]) {
+  return (): void => {
+    let left = leftValues.find((candidate) => candidate.name === "missing");
+    let right = rightValues.find((candidate) => candidate.payload.count === -1);
+    if (!left) left = retain({ name: "left", values: [] });
+    if (!right) right = enclose({ count: 1 });
+    left.values.push(left.name);
+    right.payload.count.toFixed();
+  };
+}
+"#;
+
+    for (name, files) in [
+        (
+            "generic_terminal_owner_left_first",
+            [
+                ("left.ts", LEFT),
+                ("right.ts", RIGHT),
+                ("consumer.ts", CONSUMER),
+            ],
+        ),
+        (
+            "generic_terminal_owner_right_first",
+            [
+                ("right.ts", RIGHT),
+                ("left.ts", LEFT),
+                ("consumer.ts", CONSUMER),
+            ],
+        ),
+    ] {
+        let Some(out) = run_tsz_files(name, &files) else {
+            println!("tsz binary not found; skipping");
+            return;
+        };
+        assert_clean_tsc_oracle(
+            &out,
+            "colliding terminal owners must compile in either provider order",
+        );
+    }
 }
