@@ -28,6 +28,9 @@ impl<'a> DeclarationEmitter<'a> {
     ) {
         if let Some((export_name, local_name)) = self.js_reserved_export_local_text(name) {
             self.write_indent();
+            if self.should_emit_declare_keyword(false) {
+                self.write("declare ");
+            }
             self.write(keyword);
             self.write(&local_name);
             self.write(": ");
@@ -41,6 +44,9 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.write_indent();
         self.write("export ");
+        if self.should_emit_declare_keyword(true) {
+            self.write("declare ");
+        }
         self.write(keyword);
         self.write(name);
         self.write(": ");
@@ -1091,6 +1097,10 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(self.print_type_id(type_id));
         }
 
+        if self.is_js_function_initializer(initializer) {
+            return self.function_expression_type_text_from_ast(initializer);
+        }
+
         if init_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             && let Some(reference_text) = self.nameable_constructor_expression_text(initializer)
             && let Some(assigned_initializer) =
@@ -1144,7 +1154,9 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(init_node) = self.arena.get(resolved_initializer) else {
             return "const ";
         };
-        if init_node.kind == syntax_kind_ext::CLASS_EXPRESSION {
+        if init_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            || self.is_js_function_initializer(resolved_initializer)
+        {
             "var "
         } else {
             "const "

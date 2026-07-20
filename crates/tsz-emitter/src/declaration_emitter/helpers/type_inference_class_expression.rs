@@ -376,7 +376,12 @@ impl<'a> DeclarationEmitter<'a> {
             Self::constructor_static_intersection_type_text(&arrow_type, &static_members)
         } else {
             let construct_head = self.class_expression_construct_head("new", class, &params_text);
-            Self::constructor_object_type_text(&construct_head, members, &static_members)
+            Self::constructor_object_type_text(
+                &construct_head,
+                members,
+                &static_members,
+                self.indent_level,
+            )
         };
 
         if let Some(base_type_text) = base_type_text {
@@ -402,16 +407,20 @@ impl<'a> DeclarationEmitter<'a> {
         construct_head: &str,
         members: &str,
         static_members: &str,
+        depth: u32,
     ) -> String {
+        let member_indent = "    ".repeat((depth + 1) as usize);
+        let closing_indent = "    ".repeat(depth as usize);
         let mut constructor_type = if members.is_empty() {
-            format!("{{\n    {construct_head}: {{}};\n")
+            format!("{{\n{member_indent}{construct_head}: {{}};\n")
         } else {
-            format!("{{\n    {construct_head}: {{\n{members}\n    }};\n")
+            format!("{{\n{member_indent}{construct_head}: {{\n{members}\n{member_indent}}};\n")
         };
         if !static_members.is_empty() {
             constructor_type.push_str(static_members);
             constructor_type.push('\n');
         }
+        constructor_type.push_str(&closing_indent);
         constructor_type.push('}');
         constructor_type
     }
@@ -615,8 +624,12 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         let construct_head = self.class_expression_construct_head("new", class, &params_text);
-        let constructor_type =
-            Self::constructor_object_type_text(&construct_head, &instance_members, &static_members);
+        let constructor_type = Self::constructor_object_type_text(
+            &construct_head,
+            &instance_members,
+            &static_members,
+            self.indent_level,
+        );
 
         if let Some(base_type_text) = extends_parameter_type_text {
             Some(format!("{constructor_type} & {base_type_text}"))

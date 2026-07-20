@@ -15,7 +15,7 @@ Object.defineProperty(module.exports, "use", { value: use });
     );
 
     assert!(
-        output.contains("export function use(input: () => void): void;"),
+        output.contains("export declare function use(input: () => void): void;"),
         "Expected direct JSDoc module.exports function reference to emit a callable type: {output}"
     );
 }
@@ -35,7 +35,9 @@ Object.defineProperty(module.exports, "consume", { value: consume });
     );
 
     assert!(
-        output.contains("export function consume(input: {\n    value: () => void;\n}): void;"),
+        output.contains(
+            "export declare function consume(input: {\n    value: () => void;\n}): void;"
+        ),
         "Expected object JSDoc module.exports function reference to emit a callable member: {output}"
     );
 }

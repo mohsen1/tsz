@@ -229,7 +229,7 @@ impl<'a> DeclarationEmitter<'a> {
                 .get_identifier_text(initializer)
                 .and_then(|local_name| self.js_top_level_variable_initializer(&local_name))
                 .unwrap_or(initializer);
-            if self.emit_js_object_literal_namespace(name_idx, object_initializer, true, false) {
+            if self.emit_js_object_literal_namespace(name_idx, object_initializer, true, true) {
                 return;
             }
         }
@@ -249,6 +249,9 @@ impl<'a> DeclarationEmitter<'a> {
         if is_exported {
             self.record_js_require_property_import_alias_for_new_expression(initializer);
         }
+        let is_commonjs_default_function = is_exported
+            && self.is_js_function_initializer(initializer)
+            && self.js_commonjs_export_name_text(name_idx).as_deref() == Some("default");
 
         self.write_indent();
         let reserved_export_alias = if is_exported {
@@ -258,20 +261,30 @@ impl<'a> DeclarationEmitter<'a> {
         };
         if is_exported && reserved_export_alias.is_none() {
             self.write("export ");
+            if self.should_emit_declare_keyword(true) {
+                self.write("declare ");
+            }
             self.write(self.js_synthetic_export_value_keyword(initializer));
         } else {
             if self.should_emit_declare_keyword(false) {
                 self.write("declare ");
             }
             if is_exported {
-                self.write(self.js_synthetic_export_value_keyword(initializer));
+                if is_commonjs_default_function {
+                    self.write("const ");
+                } else {
+                    self.write(self.js_synthetic_export_value_keyword(initializer));
+                }
             } else {
                 self.write("var ");
             }
         }
-        if let Some((export_name, local_name)) = reserved_export_alias {
+        if let Some((export_name, local_name)) = reserved_export_alias.as_ref() {
             self.write(&local_name);
-            self.js_cjs_export_aliases.push((export_name, local_name));
+            if !is_commonjs_default_function {
+                self.js_cjs_export_aliases
+                    .push((export_name.clone(), local_name.clone()));
+            }
         } else if let Some(export_name) = self.js_commonjs_export_name_text(name_idx) {
             self.write(&export_name);
         } else {
@@ -281,6 +294,16 @@ impl<'a> DeclarationEmitter<'a> {
         self.write(&type_text);
         self.write(";");
         self.write_line();
+        if is_commonjs_default_function
+            && let Some((_, local_name)) = reserved_export_alias.as_ref()
+        {
+            self.write_indent();
+            self.write("export default ");
+            self.write(local_name);
+            self.write(";");
+            self.write_line();
+            self.emitted_scope_marker = true;
+        }
         if is_exported {
             self.emitted_module_indicator = true;
         }
@@ -319,7 +342,11 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.write_indent();
-        self.write("export const ");
+        self.write("export ");
+        if self.should_emit_declare_keyword(true) {
+            self.write("declare ");
+        }
+        self.write("const ");
         self.write(&property.name);
         self.write(": ");
         self.write(&property.type_text);
@@ -334,7 +361,11 @@ impl<'a> DeclarationEmitter<'a> {
         property: &super::super::helpers::JsDefinedPropertyDecl,
     ) {
         self.write_indent();
-        self.write("export namespace ");
+        self.write("export ");
+        if self.should_emit_declare_keyword(true) {
+            self.write("declare ");
+        }
+        self.write("namespace ");
         self.write(root_name);
         self.write(" {");
         self.write_line();
@@ -1010,11 +1041,7 @@ impl<'a> DeclarationEmitter<'a> {
                     } else if let Some(type_text) =
                         self.js_namespace_value_member_type_text(prop.initializer)
                     {
-                        self.emit_js_named_export_value_member(
-                            prop.name,
-                            &type_text,
-                            "declare let ",
-                        );
+                        self.emit_js_named_export_value_member(prop.name, &type_text, "let ");
                     } else {
                         self.emit_js_synthetic_value_declaration(prop.name, prop.initializer, true);
                     }

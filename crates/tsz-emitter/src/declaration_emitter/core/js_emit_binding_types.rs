@@ -946,6 +946,20 @@ impl<'a> DeclarationEmitter<'a> {
         if !self.source_is_js_file || !body_idx.is_some() {
             return false;
         }
+        // TypeScript 7 no longer promotes JavaScript function declarations to
+        // companion classes. A whole-object `Fn.prototype = { ... }` assignment
+        // remains visible as a merged namespace `prototype` value; per-member
+        // prototype writes do not synthesize a declaration surface.
+        if self
+            .arena
+            .get(jsdoc_anchor)
+            .is_some_and(|node| node.kind == syntax_kind_ext::FUNCTION_DECLARATION)
+        {
+            if let Some(body_node) = self.arena.get(body_idx) {
+                self.skip_comments_in_node(body_node.pos, body_node.end);
+            }
+            return true;
+        }
         let this_assignments = self.js_function_body_this_property_assignments(body_idx);
         let prototype_members = self.js_prototype_object_members_for_name(name_idx);
         if this_assignments.is_empty() && prototype_members.is_empty() {

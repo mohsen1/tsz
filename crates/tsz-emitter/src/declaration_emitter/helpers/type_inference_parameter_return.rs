@@ -1,8 +1,8 @@
 //! Source-backed parameter return summaries for declaration inference.
 
 use super::super::DeclarationEmitter;
-use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, NodeList};
 
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn function_body_parameter_return_type_text(
@@ -11,12 +11,46 @@ impl<'a> DeclarationEmitter<'a> {
         body_idx: NodeIndex,
     ) -> Option<String> {
         let returned_identifier = self.function_body_unique_return_identifier(body_idx)?;
-        let type_annotation = self.function_parameter_type_annotation(func, returned_identifier)?;
-        let type_text = self
-            .single_line_mapped_type_annotation_text(type_annotation)
-            .or_else(|| self.returned_parameter_type_literal_text(type_annotation))
-            .or_else(|| self.function_parameter_type_text(func, returned_identifier))?;
-        (!type_text.trim().is_empty()).then_some(type_text)
+        if let Some(type_annotation) =
+            self.function_parameter_type_annotation(func, returned_identifier)
+            && let Some(type_text) = self
+                .single_line_mapped_type_annotation_text(type_annotation)
+                .or_else(|| self.returned_parameter_type_literal_text(type_annotation))
+                .or_else(|| self.function_parameter_type_text(func, returned_identifier))
+            && !type_text.trim().is_empty()
+        {
+            return Some(type_text);
+        }
+
+        self.returned_parameter_jsdoc_type_text(&func.parameters, returned_identifier)
+    }
+
+    pub(in crate::declaration_emitter) fn body_returned_parameter_jsdoc_type_text(
+        &self,
+        parameters: &NodeList,
+        body_idx: NodeIndex,
+    ) -> Option<String> {
+        let returned_identifier = self.function_body_unique_return_identifier(body_idx)?;
+        self.returned_parameter_jsdoc_type_text(parameters, returned_identifier)
+    }
+
+    fn returned_parameter_jsdoc_type_text(
+        &self,
+        parameters: &NodeList,
+        returned_identifier: NodeIndex,
+    ) -> Option<String> {
+        let returned_name = self.get_identifier_text(returned_identifier)?;
+        for (position, &param_idx) in parameters.nodes.iter().enumerate() {
+            let param_node = self.arena.get(param_idx)?;
+            let param = self.arena.get_parameter(param_node)?;
+            if self.get_identifier_text(param.name).as_deref() != Some(returned_name.as_str()) {
+                continue;
+            }
+            let jsdoc_param = self.jsdoc_param_decl_for_parameter(param_idx, position)?;
+            let type_text = self.jsdoc_type_text_for_declaration_emit(&jsdoc_param.type_text);
+            return (!type_text.trim().is_empty()).then_some(type_text);
+        }
+        None
     }
 
     fn returned_parameter_type_literal_text(&self, type_annotation: NodeIndex) -> Option<String> {

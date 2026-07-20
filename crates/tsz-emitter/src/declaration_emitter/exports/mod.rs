@@ -1,6 +1,7 @@
 //! Declaration emitter - export and import emission.
 
 use super::DeclarationEmitter;
+use super::helpers::{JsCjsSourceExport, escape_string_for_double_quote};
 use rustc_hash::FxHashSet;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
@@ -9,6 +10,112 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::type_queries;
 
 impl<'a> DeclarationEmitter<'a> {
+    pub(in crate::declaration_emitter) fn write_js_cjs_export_name(&mut self, export_name: &str) {
+        if Self::is_js_commonjs_export_identifier_text(export_name) {
+            self.write(export_name);
+        } else {
+            self.write("\"");
+            self.write(&escape_string_for_double_quote(export_name));
+            self.write("\"");
+        }
+    }
+
+    /// Emit source CommonJS exports in assignment order before retained local
+    /// declarations and JSDoc typedefs. Direct value assignments and alias
+    /// specifiers share this prelude; generated reserved-name aliases remain on
+    /// the trailing synthetic-alias path.
+    pub(crate) fn emit_js_commonjs_export_prelude(
+        &mut self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) {
+        let mut root_owned_secondary_statements = FxHashSet::default();
+        for &root_stmt_idx in &source_file.statements.nodes {
+            let Some(root_initializer) =
+                self.js_anonymous_module_exports_assignment_initializer(root_stmt_idx)
+            else {
+                continue;
+            };
+            let root_owns_all_secondary = self
+                .js_anonymous_export_equals_value_initializer(root_stmt_idx)
+                .is_some()
+                || self
+                    .js_anonymous_module_exports_named_members_initializer(root_stmt_idx)
+                    .is_some();
+            for (stmt_idx, _, initializer) in
+                self.js_module_exports_secondary_member_stmt_assignments(root_initializer)
+            {
+                if root_owns_all_secondary || self.get_identifier_text(initializer).is_some() {
+                    root_owned_secondary_statements.insert(stmt_idx);
+                }
+            }
+        }
+
+        let saved_comment_idx = self.comment_emit_idx;
+        for &stmt_idx in &source_file.statements.nodes {
+            if root_owned_secondary_statements.contains(&stmt_idx) {
+                self.js_cjs_source_exports.remove(&stmt_idx);
+                self.js_cjs_export_prelude_statements.insert(stmt_idx);
+                continue;
+            }
+            if let Some(source_export) = self.js_cjs_source_exports.remove(&stmt_idx) {
+                self.write_indent();
+                match source_export {
+                    JsCjsSourceExport::Alias {
+                        export_name,
+                        local_name,
+                    } => {
+                        self.write("export { ");
+                        self.write(&local_name);
+                        if local_name != export_name {
+                            self.write(" as ");
+                            self.write_js_cjs_export_name(&export_name);
+                        }
+                        self.write(" };");
+                    }
+                    JsCjsSourceExport::Value {
+                        export_name,
+                        type_text,
+                    } => {
+                        self.write("export declare var ");
+                        self.write_js_cjs_export_name(&export_name);
+                        self.write(": ");
+                        self.write(&type_text);
+                        self.write(";");
+                    }
+                }
+                self.write_line();
+                self.emitted_scope_marker = true;
+                self.emitted_module_indicator = true;
+                if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                    self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+                }
+                self.js_cjs_export_prelude_statements.insert(stmt_idx);
+                continue;
+            }
+
+            let is_direct_export = self
+                .js_deferred_function_export_statements
+                .get(&stmt_idx)
+                .is_some_and(|(_, _, is_exported)| *is_exported)
+                || self
+                    .js_deferred_value_export_statements
+                    .get(&stmt_idx)
+                    .is_some_and(|(_, _, is_exported)| *is_exported);
+            if !is_direct_export {
+                continue;
+            }
+            self.emit_js_synthetic_expression_statement(stmt_idx);
+            self.js_cjs_export_prelude_statements.insert(stmt_idx);
+            self.js_deferred_function_export_statements
+                .remove(&stmt_idx);
+            self.js_deferred_value_export_statements.remove(&stmt_idx);
+        }
+        // Prelude scheduling is independent of source-comment ownership. The
+        // source traversal advances comments at each consumed statement after
+        // intervening retained locals have had a chance to emit theirs.
+        self.comment_emit_idx = saved_comment_idx;
+    }
+
     fn expression_resolves_to_exported_value(&self, expr_idx: NodeIndex) -> bool {
         let Some(binder) = self.binder else {
             return false;
@@ -433,16 +540,6 @@ impl<'a> DeclarationEmitter<'a> {
         if self.js_cjs_export_aliases.is_empty() {
             return;
         }
-        for (export_name, type_text) in self.js_cjs_export_alias_value_declarations.clone() {
-            self.write_indent();
-            self.write("export const ");
-            self.write(&export_name);
-            self.write(": ");
-            self.write(&type_text);
-            self.write(";");
-            self.write_line();
-        }
-        self.js_cjs_export_alias_value_declarations.clear();
         let aliases = self.js_cjs_export_aliases.clone();
         self.write_indent();
         self.write("export { ");
@@ -453,8 +550,10 @@ impl<'a> DeclarationEmitter<'a> {
             }
             first = false;
             self.write(local_name);
-            self.write(" as ");
-            self.write(export_name);
+            if local_name != export_name {
+                self.write(" as ");
+                self.write(export_name);
+            }
         }
         self.write(" };");
         self.write_line();
@@ -799,11 +898,19 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
         let late_bound_members = self.collect_ts_late_bound_assignment_members(func.name);
-        let has_late_bound_default_namespace =
-            !late_bound_members.is_empty() && self.get_identifier_text(func.name).is_some();
+        let function_name = self.get_identifier_text(func.name);
+        let has_js_function_value_namespace = self.source_is_js_file
+            && function_name.as_ref().is_some_and(|name| {
+                self.js_class_static_members.contains_key(name)
+                    || self.js_prototype_object_initializers.contains_key(name)
+                    || self.js_namespace_export_aliases.contains_key(name)
+            });
+        let has_default_namespace = (!late_bound_members.is_empty()
+            || has_js_function_value_namespace)
+            && function_name.is_some();
 
         self.write_indent();
-        if has_late_bound_default_namespace {
+        if has_default_namespace {
             self.write("declare function ");
         } else {
             self.write("export default function ");
@@ -977,17 +1084,22 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.write(";");
         self.write_line();
-        if has_late_bound_default_namespace {
-            self.emit_ts_late_bound_function_namespace_from_members(
-                func.name,
-                false,
-                &late_bound_members,
-            );
+        if has_default_namespace {
             self.write_indent();
             self.write("export default ");
             self.emit_node(func.name);
             self.write(";");
             self.write_line();
+            self.emit_ts_late_bound_function_namespace_from_members(
+                func.name,
+                false,
+                &late_bound_members,
+            );
+            self.emit_js_function_value_namespace(func.name, false);
+            self.emit_js_namespace_export_aliases_for_name(func.name, false);
+            if let Some(body_node) = self.arena.get(func.body) {
+                self.skip_comments_in_node(body_node.pos, body_node.end);
+            }
             return;
         }
         if self.source_is_js_file {
@@ -1602,6 +1714,7 @@ impl<'a> DeclarationEmitter<'a> {
                     true,
                     func_idx,
                 );
+                self.emit_js_function_value_namespace(func.name, true);
                 self.emit_js_namespace_export_aliases_for_name(func.name, true);
                 return;
             }
@@ -1638,6 +1751,7 @@ impl<'a> DeclarationEmitter<'a> {
                 true,
                 func_idx,
             );
+            self.emit_js_function_value_namespace(func.name, true);
             self.emit_js_namespace_export_aliases_for_name(func.name, true);
             return;
         }
@@ -1831,6 +1945,7 @@ impl<'a> DeclarationEmitter<'a> {
                 true,
                 func_idx,
             );
+            self.emit_js_function_value_namespace(func.name, true);
             self.emit_js_namespace_export_aliases_for_name(func.name, true);
         }
     }

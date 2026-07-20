@@ -197,16 +197,18 @@ impl<'a> DeclarationEmitter<'a> {
             self.collect_js_commonjs_define_property_export_local_names(source_file);
         self.js_require_property_import_aliases.clear();
         let cjs_aliases = self.collect_js_cjs_export_aliases(source_file);
-        self.js_cjs_export_aliases = cjs_aliases.aliases;
-        self.js_cjs_export_alias_value_declarations = cjs_aliases.value_declarations;
+        self.js_cjs_export_alias_local_names = cjs_aliases.local_names;
+        self.js_cjs_source_exports = cjs_aliases.source_exports;
+        self.js_cjs_export_aliases.clear();
         self.js_cjs_export_alias_statements = cjs_aliases.skipped_statements;
+        self.js_cjs_export_prelude_statements.clear();
         self.js_deferred_local_export_alias_function_statements =
             self.collect_js_deferred_local_export_alias_function_statements(source_file);
         // Mark CJS alias local names as used so they survive usage analysis pruning.
         if let Some(binder) = self.binder
             && let Some(ref mut used) = self.used_symbols
         {
-            for (_export_name, local_name) in &self.js_cjs_export_aliases {
+            for local_name in &self.js_cjs_export_alias_local_names {
                 if let Some(sym_id) = binder.file_locals.get(local_name) {
                     used.entry(sym_id).or_insert(
                         crate::declaration_emitter::usage_analyzer::UsageKind::VALUE
@@ -275,6 +277,17 @@ impl<'a> DeclarationEmitter<'a> {
         }
         self.js_deferred_prototype_method_statements =
             js_commonjs_expando_declarations.prototype_methods;
+        self.js_prototype_object_initializers =
+            self.collect_js_prototype_object_initializers(source_file);
+        self.js_anonymous_export_equals_dependency_statements = source_file
+            .statements
+            .nodes
+            .iter()
+            .filter_map(|&stmt_idx| {
+                self.js_anonymous_module_exports_assignment_initializer(stmt_idx)
+                    .and_then(|initializer| self.js_new_expression_class_declaration(initializer))
+            })
+            .collect();
         let js_class_like =
             self.collect_js_class_like_prototype_members(source_file, &self.js_export_equals_names);
         self.js_class_like_prototype_members = js_class_like.members;
@@ -333,6 +346,7 @@ impl<'a> DeclarationEmitter<'a> {
             // Auto-generated imports count as external module indicators
             self.emitted_module_indicator = true;
         }
+        self.emit_js_commonjs_export_prelude(source_file);
         self.emit_commonjs_named_export_top_level_jsdoc_type_aliases(source_file);
 
         for &stmt_idx in &source_file.statements.nodes {
@@ -430,7 +444,11 @@ impl<'a> DeclarationEmitter<'a> {
             if let Some(members) = nested_module_export_namespaces.get(&stmt_idx) {
                 if let Some((root_name, _)) = self.js_module_exports_property_assignment(stmt_idx) {
                     self.write_indent();
-                    self.write("export namespace ");
+                    self.write("export ");
+                    if self.should_emit_declare_keyword(true) {
+                        self.write("declare ");
+                    }
+                    self.write("namespace ");
                     self.write(&root_name);
                     self.write(" {");
                     self.write_line();
@@ -483,15 +501,9 @@ impl<'a> DeclarationEmitter<'a> {
                 }
                 continue;
             }
-            if self.js_cjs_export_alias_statements.contains(&stmt_idx) {
+            if self.js_cjs_export_prelude_statements.contains(&stmt_idx) {
                 if let Some(stmt_node) = self.arena.get(stmt_idx) {
                     self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
-                }
-                if self
-                    .js_deferred_local_export_alias_function_statements
-                    .is_empty()
-                {
-                    self.emit_js_cjs_export_aliases();
                 }
                 continue;
             }
@@ -840,7 +852,7 @@ impl<'a> DeclarationEmitter<'a> {
                 ) {
                     self.emit_js_synthetic_prototype_class_if_needed(func.name, is_exported);
                 }
-                self.emit_js_class_static_members_namespace(func.name, is_exported);
+                self.emit_js_function_value_namespace(func.name, is_exported);
                 self.emit_js_namespace_export_aliases_for_name(func.name, is_exported);
                 return;
             }
@@ -882,7 +894,7 @@ impl<'a> DeclarationEmitter<'a> {
             ) {
                 self.emit_js_synthetic_prototype_class_if_needed(func.name, is_exported);
             }
-            self.emit_js_class_static_members_namespace(func.name, is_exported);
+            self.emit_js_function_value_namespace(func.name, is_exported);
             self.emit_js_namespace_export_aliases_for_name(func.name, is_exported);
             return;
         }
@@ -1322,7 +1334,7 @@ impl<'a> DeclarationEmitter<'a> {
         ) {
             self.emit_js_synthetic_prototype_class_if_needed(func.name, is_exported);
         }
-        self.emit_js_class_static_members_namespace(func.name, is_exported);
+        self.emit_js_function_value_namespace(func.name, is_exported);
         self.emit_js_namespace_export_aliases_for_name(func.name, is_exported);
 
         // Skip comments within the function body to prevent them from
@@ -1413,6 +1425,9 @@ impl<'a> DeclarationEmitter<'a> {
             && !self.is_js_export_equals_name(class.name)
             && !self
                 .js_deferred_local_export_alias_function_statements
+                .contains(&class_idx)
+            && !self
+                .js_anonymous_export_equals_dependency_statements
                 .contains(&class_idx)
             && !self.is_confirmed_public_api_dependency(class.name)
         {

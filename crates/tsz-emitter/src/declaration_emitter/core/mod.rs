@@ -21,7 +21,7 @@ mod jsdoc_statement_facts;
 mod preamble;
 mod setup;
 
-use super::helpers::JsNamespaceExportAlias;
+use super::helpers::{JsCjsSourceExport, JsNamespaceExportAlias};
 use crate::output::source_writer::{SourcePosition, SourceWriter};
 use crate::type_cache_view::TypeCacheView;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -231,13 +231,20 @@ pub struct DeclarationEmitter<'a> {
     pub(super) js_deferred_namespace_alias_declaration_stmts: FxHashSet<NodeIndex>,
     /// CJS export aliases for `exports.X = Y` / `module.exports.X = Y`.
     pub(super) js_cjs_export_aliases: Vec<(String, String)>,
-    /// CJS export aliases that also need a value declaration because the same
-    /// export receives additional non-alias values.
-    pub(super) js_cjs_export_alias_value_declarations: Vec<(String, String)>,
+    /// Source CommonJS export-surface events keyed by their assignment statement.
+    pub(super) js_cjs_source_exports: FxHashMap<NodeIndex, JsCjsSourceExport>,
+    /// Local bindings retained by CJS export aliases after the source alias
+    /// statement itself has been consumed.
+    pub(super) js_cjs_export_alias_local_names: FxHashSet<String>,
     /// Statements consumed by CJS export alias collection.
     pub(super) js_cjs_export_alias_statements: FxHashSet<NodeIndex>,
+    /// CommonJS export statements emitted in the source-ordered prelude and
+    /// consumed later only for comment-cursor advancement.
+    pub(super) js_cjs_export_prelude_statements: FxHashSet<NodeIndex>,
     /// Statements consumed by `module.exports = { Name1, Name2 }` object pattern.
     pub(super) js_module_exports_object_stmts: FxHashSet<NodeIndex>,
+    /// Local class declarations referenced by anonymous `module.exports = new C()` roots.
+    pub(super) js_anonymous_export_equals_dependency_statements: FxHashSet<NodeIndex>,
     /// Top-level local JS function declarations consumed by
     /// `Object.defineProperty(module.exports, "name", { value: local })` exports.
     pub(super) js_define_property_export_local_names: FxHashSet<String>,
@@ -266,6 +273,8 @@ pub struct DeclarationEmitter<'a> {
     pub(super) js_class_like_prototype_members: FxHashMap<String, Vec<(NodeIndex, NodeIndex)>>,
     /// Expression statements consumed by the class-like prototype heuristic (skipped during emit).
     pub(super) js_class_like_prototype_stmts: FxHashSet<NodeIndex>,
+    /// Whole-object JS prototype assignment initializers, grouped once per source file.
+    pub(super) js_prototype_object_initializers: FxHashMap<String, Vec<NodeIndex>>,
     /// JS `Class.staticMember = value` declarations folded into a merged namespace.
     pub(super) js_class_static_members: FxHashMap<String, Vec<(NodeIndex, NodeIndex)>>,
     /// Expression statements consumed by the JS static-member collector.

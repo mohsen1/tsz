@@ -676,7 +676,7 @@ fn ts_export_const_generic_class_expr_emits_structural_constructor_type() {
 fn js_export_const_class_expr_synthesizes_class_decl() {
     let output = emit_js_dts("export const C = class {\n    foo() {}\n};");
     assert!(
-        output.contains("export class C {"),
+        output.contains("export declare class C {"),
         "JS class expression export should synthesize a class declaration: {output}"
     );
     assert!(
@@ -684,7 +684,7 @@ fn js_export_const_class_expr_synthesizes_class_decl() {
         "JS synthesized class should preserve members: {output}"
     );
     assert!(
-        !output.contains("export const C: {"),
+        !output.contains("const C: {"),
         "JS class expression export should not emit a constructor object type: {output}"
     );
 }
@@ -703,7 +703,7 @@ exports.RootAlias = exports.Root;
     );
 
     assert!(
-        output.contains("export var RootAlias: {"),
+        output.contains("export declare var RootAlias: {"),
         "Expected exports.* class expression alias to emit a constructor object type: {output}"
     );
     assert!(
@@ -726,7 +726,7 @@ exports.BoxAlias = exports.Box;
     );
 
     assert!(
-        output.contains("export var BoxAlias: {"),
+        output.contains("export declare var BoxAlias: {"),
         "Expected exports.* class expression alias to emit a constructor object type: {output}"
     );
     assert!(

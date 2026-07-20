@@ -283,6 +283,10 @@ impl<'a> DeclarationEmitter<'a> {
             .flatten();
         // For JS files with JSDoc @type, named type takes precedence over literal narrowing.
         let js_has_jsdoc_type = jsdoc_type_text.is_some();
+        let is_js_cjs_alias_local = self.source_is_js_file
+            && self
+                .get_identifier_text(decl_name)
+                .is_some_and(|name| self.js_cjs_export_alias_local_names.contains(&name));
         let bundled_duplicate_global_var_type =
             self.get_identifier_text(decl_name).and_then(|name| {
                 self.bundled_duplicate_global_var_types
@@ -308,10 +312,18 @@ impl<'a> DeclarationEmitter<'a> {
             self.write(": ");
             self.write(&type_text);
         } else if let Some(enum_member_text) = const_enum_member_initializer {
-            self.write(if self.source_is_js_file { ": " } else { " = " });
+            self.write(if self.source_is_js_file && !is_js_cjs_alias_local {
+                ": "
+            } else {
+                " = "
+            });
             self.write(&enum_member_text);
         } else if let Some(literal_initializer_text) = literal_initializer_text {
-            self.write(if self.source_is_js_file { ": " } else { " = " });
+            self.write(if self.source_is_js_file && !is_js_cjs_alias_local {
+                ": "
+            } else {
+                " = "
+            });
             self.write(&literal_initializer_text);
         } else {
             let is_unique_symbol =

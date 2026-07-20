@@ -1311,12 +1311,12 @@ export default A;
 "#,
     );
 
-    let expected = r#"export const x: 1;
+    let expected = r#"export declare const x: 1;
 /**
  * Target element
  * @type {module:A}
  */
-export let el: any;
+export declare let el: any;
 export default A;
 /** @module A */
 declare class A {
@@ -1338,7 +1338,7 @@ export default A;
 "#,
     );
 
-    let expected = "export const A: 1;\nexport default A;\n";
+    let expected = "export declare const A: 1;\nexport default A;\n";
     assert_eq!(
         output, expected,
         "Expected exported default target to stay in source order without a duplicate declaration"
@@ -1804,11 +1804,11 @@ foo.default = 2;
     );
 
     assert!(
-        output.contains("declare namespace foo {\n    export let x: number;"),
-        "Expected direct expando property to get export let when a reserved-word sibling requires aliasing: {output}"
+        output.contains("declare namespace foo {\n    export var x: number;"),
+        "Expected direct expando property to get export var when a reserved-word sibling requires aliasing: {output}"
     );
     assert!(
-        output.contains("let _default: number;\n    export { _default as default };"),
+        output.contains("var _default: number;\n    export { _default as default };"),
         "Expected reserved expando property to use local alias plus export specifier: {output}"
     );
 }
@@ -1828,7 +1828,7 @@ bar.default = 42;
         "Expected function-valued expando member to get export when a reserved-word sibling requires aliasing: {output}"
     );
     assert!(
-        output.contains("let _default: number;\n    export { _default as default };"),
+        output.contains("var _default: number;\n    export { _default as default };"),
         "Expected reserved-word alias emission for default: {output}"
     );
 }

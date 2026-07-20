@@ -9,11 +9,11 @@ baz.default = 2;
     );
 
     assert!(
-        output.contains("export let get: number;"),
-        "Expected contextual-keyword property to get export let when reserved-word sibling requires aliasing: {output}"
+        output.contains("export var get: number;"),
+        "Expected contextual-keyword property to get export var when reserved-word sibling requires aliasing: {output}"
     );
     assert!(
-        output.contains("let _default: number;\n    export { _default as default };"),
+        output.contains("var _default: number;\n    export { _default as default };"),
         "Expected reserved-word alias emission for default: {output}"
     );
 }
@@ -28,7 +28,7 @@ foo.x = 1;
     );
 
     assert!(
-        output.contains("declare namespace foo {\n    let x: number;\n}"),
+        output.contains("declare namespace foo {\n    var x: number;\n}"),
         "Expected ordinary expando property without alias scheduling to omit member export: {output}"
     );
 }
@@ -43,7 +43,7 @@ foo.x = 1;
     );
 
     assert!(
-        output.contains("export namespace foo {\n    let x: number;\n}"),
+        output.contains("export declare namespace foo {\n    var x: number;\n}"),
         "Expected exported function expando namespace to omit member export when no alias is scheduled: {output}"
     );
 }
@@ -596,5 +596,362 @@ export const o = { count? };
     assert!(
         output2.contains("count?: string"),
         "renamed shorthand property with `?` should emit as optional (count?: string): {output2}"
+    );
+}
+
+#[test]
+fn test_js_element_access_whole_prototype_assignment_emits_namespace_surface() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+export function ElementSurface() {}
+ElementSurface["prototype"] = { value: 1 };
+"#,
+    );
+
+    assert!(
+        output.contains("export declare function ElementSurface(): void;")
+            && output.contains(
+                "export declare namespace ElementSurface {\n    var prototype: {\n        value: number;\n    };\n}"
+            ),
+        "Expected string-literal element access to share the whole-prototype namespace path: {output}"
+    );
+    assert!(
+        !output.contains("class ElementSurface"),
+        "Did not expect element-access prototype assignment to synthesize a class: {output}"
+    );
+}
+
+#[test]
+fn test_js_whole_prototype_assignment_collector_matches_dot_and_element_access() {
+    let source = r#"
+function DotSurface() {}
+DotSurface.prototype = { dot: 1 };
+function ElementSurface() {}
+ElementSurface["prototype"] = { element: 1 };
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let _ = emitter.emit(root);
+
+    assert_eq!(
+        emitter
+            .js_prototype_object_initializers_for_export_name("DotSurface")
+            .len(),
+        1
+    );
+    assert_eq!(
+        emitter
+            .js_prototype_object_initializers_for_export_name("ElementSurface")
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn test_js_whole_prototype_assignment_emits_shorthand_and_flattened_spread_members() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+const value = 1;
+function method() { return 1; }
+const base = { inherited: 1 };
+
+export function ShorthandSurface() {}
+ShorthandSurface.prototype = { value, method };
+
+export function SpreadSurface() {}
+SpreadSurface.prototype = { ...base, own: 2 };
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "export declare namespace ShorthandSurface {\n    var prototype: {\n        value: number;\n        method: typeof method;\n    };\n}"
+        ),
+        "Expected shorthand values and function references in the prototype object type: {output}"
+    );
+    assert!(
+        output.contains(
+            "export declare namespace SpreadSurface {\n    var prototype: {\n        inherited: number;\n        own: number;\n    };\n}"
+        ),
+        "Expected spread members to be flattened before own prototype members: {output}"
+    );
+}
+
+#[test]
+fn test_js_prototype_accessor_and_data_property_last_definition_wins() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+export function AccessorWins() {}
+AccessorWins.prototype = {
+    get x() { return 1; },
+    x: "middle",
+    get x() { return true; }
+};
+
+export function DataWins() {}
+DataWins.prototype = {
+    get x() { return 1; },
+    set x(value) {},
+    x: "last"
+};
+"#,
+    );
+
+    assert!(
+        output.contains("var prototype: {\n        readonly x: boolean;\n    };")
+            && output.contains("var prototype: {\n        x: string;\n    };")
+            && !output.contains("x: number;"),
+        "Expected the final property descriptor to determine each prototype member: {output}"
+    );
+}
+
+#[test]
+fn test_js_prototype_accessor_order_and_readonly_follow_effective_descriptor() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+export function PairOrder() {}
+PairOrder.prototype = {
+    get x() { return 1; },
+    y: true,
+    set x(value) {}
+};
+
+export function DuplicateGetter() {}
+DuplicateGetter.prototype = {
+    get x() { return 1; },
+    y: true,
+    get x() { return "last"; }
+};
+
+export function DataSuppliesType() {}
+DataSuppliesType.prototype = {
+    get x() { return 1; },
+    y: true,
+    x: "last"
+};
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "namespace PairOrder {\n    var prototype: {\n        x: number;\n        y: boolean;"
+        ) && output.contains(
+            "namespace DuplicateGetter {\n    var prototype: {\n        y: boolean;\n        readonly x: string;"
+        ) && output.contains(
+            "namespace DataSuppliesType {\n    var prototype: {\n        readonly x: string;\n        y: boolean;"
+        ),
+        "Expected effective accessor descriptors to control order and readonly state: {output}"
+    );
+}
+
+#[test]
+fn test_js_prototype_function_and_object_union_parenthesizes_callable_arm() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+export function MixedArm() {}
+MixedArm.prototype = function () {};
+MixedArm.prototype = { x: 1 };
+"#,
+    );
+
+    assert_eq!(
+        output
+            .matches("var prototype: (() => void) | {\n        x: number;\n    };")
+            .count(),
+        2,
+        "Expected every replacement event to reuse a correctly parenthesized union: {output}"
+    );
+}
+
+#[test]
+fn test_js_prototype_spread_preserves_documented_own_members() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+const base = { inherited: 1 };
+export function SpreadDocs() {}
+SpreadDocs.prototype = {
+    ...base,
+    /** @readonly */
+    own: 2,
+    /** @param {number} value */
+    method(value) { return value; }
+};
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "var prototype: {\n        inherited: number;\n        /** @readonly */\n        readonly own: number;\n        /** @param {number} value */\n        method(value: number): number;\n    };"
+        ),
+        "Expected flattened spread order and own-member JSDoc semantics: {output}"
+    );
+}
+
+#[test]
+fn test_js_multiple_whole_prototype_assignments_repeat_normalized_union() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+export function ReassignedSurface() {}
+ReassignedSurface.prototype = { first: 1 };
+ReassignedSurface.prototype = { second: 2 };
+"#,
+    );
+
+    let expected = "var prototype: {\n        first: number;\n        second?: undefined;\n    } | {\n        first?: undefined;\n        second: number;\n    };";
+    assert_eq!(
+        output.matches(expected).count(),
+        2,
+        "Expected each assignment to emit the same normalized prototype union: {output}"
+    );
+}
+
+#[test]
+fn test_js_duplicate_prototype_accessors_use_last_getter_type() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+export function DuplicateAccessorSurface() {}
+DuplicateAccessorSurface.prototype = {
+    get value() { return 1; },
+    get value() { return "last"; }
+};
+"#,
+    );
+
+    assert!(
+        output.contains("readonly value: string;"),
+        "Expected duplicate accessors to use the last getter's return type: {output}"
+    );
+    assert!(
+        !output.contains("readonly value: number;"),
+        "Did not expect the overwritten getter type in the prototype surface: {output}"
+    );
+}
+
+#[test]
+fn test_js_prototype_union_placeholders_preserve_quoted_readonly_surface() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+export function QuotedReadonlySurface() {}
+QuotedReadonlySurface.prototype = {
+    get "two words"() { return 1; }
+};
+QuotedReadonlySurface.prototype = { other: true };
+"#,
+    );
+
+    assert!(
+        output.contains("readonly \"two words\": number;\n        other?: undefined;")
+            && output.contains("readonly \"two words\"?: undefined;\n        other: boolean;"),
+        "Expected normalized arms to preserve the emitter-ready quoted key and readonly placeholder: {output}"
+    );
+    assert!(
+        !output.contains("readonly two words") && !output.contains("two words?: undefined"),
+        "Did not expect normalized placeholders to discard required quotes: {output}"
+    );
+}
+
+#[test]
+fn test_js_prototype_members_keep_only_their_attached_jsdoc() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+export function Peer() {}
+export function DocumentedSurface() {}
+DocumentedSurface.prototype = {
+    /** First member documentation. */
+    first: 1,
+    /**
+     * Compare two values.
+     * @param {Peer} other
+     */
+    compare(other) { return 1; }
+};
+"#,
+    );
+
+    assert!(
+        output.contains("compare(other: Peer): number;"),
+        "Expected the method's targeted JSDoc parameter to drive its signature: {output}"
+    );
+    assert_eq!(
+        output.matches("First member documentation.").count(),
+        1,
+        "Expected the first member's JSDoc to be emitted only with that member: {output}"
+    );
+    assert_eq!(
+        output.matches("@param {Peer} other").count(),
+        1,
+        "Expected the method's JSDoc to be emitted once rather than cloned onto every member: {output}"
+    );
+}
+
+#[test]
+fn test_js_chained_whole_prototype_assignment_registers_every_receiver() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+export function FirstReceiver() {}
+export function SecondReceiver() {}
+FirstReceiver.prototype = SecondReceiver["prototype"] = { shared: 1 };
+"#,
+    );
+
+    for receiver in ["FirstReceiver", "SecondReceiver"] {
+        assert!(
+            output.contains(&format!(
+                "export declare namespace {receiver} {{\n    var prototype: {{\n        shared: number;\n    }};\n}}"
+            )),
+            "Expected every receiver in a chained assignment to get the terminal prototype type: {output}"
+        );
+    }
+}
+
+#[test]
+fn test_js_nonliteral_prototype_rhs_uses_inferred_expression_type() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+let chooseLeft = Math.random() > 0.5;
+function makePrototype() { return { called: 1 }; }
+
+export function ConditionalSurface() {}
+ConditionalSurface.prototype = chooseLeft ? { left: 1 } : { right: "x" };
+
+export function CallSurface() {}
+CallSurface.prototype = makePrototype();
+"#,
+    );
+
+    assert!(
+        output.contains("export declare namespace ConditionalSurface {")
+            && output.contains("left: number;")
+            && output.contains("right: string;"),
+        "Expected a conditional prototype RHS to retain its inferred object union: {output}"
+    );
+    assert!(
+        output.contains("export declare namespace CallSurface {")
+            && output.contains("called: number;"),
+        "Expected a call-expression prototype RHS to retain its inferred return shape: {output}"
+    );
+}
+
+#[test]
+fn test_js_prototype_accessor_setter_jsdoc_supplies_property_type() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+export function SetterDocumentedSurface() {}
+SetterDocumentedSurface.prototype = {
+    get amount() { return this._amount; },
+    /** @param {number} amount */
+    set amount(amount) { this._amount = amount; }
+};
+"#,
+    );
+
+    assert!(
+        output.contains("amount: number;"),
+        "Expected the paired setter's JSDoc parameter to supply the accessor property type: {output}"
+    );
+    assert!(
+        !output.contains("amount: any;"),
+        "Did not expect the accessor property to degrade to any: {output}"
     );
 }

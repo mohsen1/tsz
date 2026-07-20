@@ -8,11 +8,11 @@ foo.normal_1 = true;
 "#;
 
     let output = emit_js_dts_with_usage_analysis(source);
-    let expected = r#"export function foo(): void;
-export namespace foo {
-    let normal_2: boolean;
+    let expected = r#"export declare function foo(): void;
+export declare namespace foo {
+    var normal_2: boolean;
     export { normal_2 as normal };
-    let normal_1: boolean;
+    export var normal_1: boolean;
 }"#;
     assert!(
         output.contains(expected),
@@ -209,9 +209,6 @@ MyClass.staticProperty = 123;
 
     let expected = r#"export = MyClass;
 declare function MyClass(): void;
-declare class MyClass {
-    method(): void;
-}
 declare namespace MyClass {
     export { staticMethod, staticProperty, DoneCB };
 }
@@ -237,9 +234,10 @@ exports.K = K;
 "#,
     );
 
-    assert!(
-        output.contains("export class K"),
-        "Expected same-name CommonJS export to reuse the class declaration: {output}"
+    assert_eq!(
+        output,
+        "export { K };\ndeclare class K {\n}\n",
+        "Expected same-name CommonJS export to retain a local class"
     );
 }
 
@@ -303,7 +301,7 @@ exports.K = NS.K;
     let output = emitter.emit(root);
 
     assert!(
-        output.contains("export var K: new () => any;"),
+        output.contains("export declare var K: new () => any;"),
         "Expected property-access CommonJS export to reuse the assigned initializer type: {output}"
     );
     assert!(
@@ -323,7 +321,7 @@ exports.K = class K {
     );
 
     assert!(
-        output.contains("export class K {"),
+        output.contains("export declare class K {"),
         "Expected named CommonJS class expression to emit as an exported class: {output}"
     );
     assert!(
@@ -331,7 +329,7 @@ exports.K = class K {
         "Expected named CommonJS class expression members to be preserved: {output}"
     );
     assert!(
-        !output.contains("export var K: {"),
+        !output.contains("var K: {"),
         "Did not expect named CommonJS class expression to lower as a constructor object: {output}"
     );
 }
@@ -523,15 +521,7 @@ module.exports = new Foo();
 }
 
 #[test]
-fn test_js_module_exports_new_expression_with_expando_emits_single_let_export() {
-    // Regression: `module.exports = new Foo(); module.exports.additional = X;`
-    // previously emitted `additional` TWICE — once via the secondary-member
-    // path (during `module.exports = new Foo()` emission) and again via the
-    // deferred value-export path (when the statement visitor later reached
-    // the `module.exports.additional = X` statement). Fix removes the
-    // statement from the deferred export maps before secondary emission so
-    // the visitor skips it. Also `export const` was emitted where tsc emits
-    // `export let` for CommonJS class-instance exports.
+fn test_js_module_exports_new_expression_with_expando_retains_export_equals_root() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
 class Foo {
@@ -542,27 +532,24 @@ module.exports = new Foo();
 module.exports.additional = 20;
 "#,
     );
-    // The `additional` property must appear exactly once in the export
-    // surface. (`emit_js_dts_with_usage_analysis` may wrap output in
-    // additional preamble lines; the count of literal occurrences is the
-    // stable check.)
-    let occurrences = output.matches("additional").count();
+    let expected = r#"declare const _exports: Foo;
+export = _exports;
+declare namespace _exports {
+    export var additional: 20;
+}
+declare class Foo {
+    static stat: number;
+    member: number;
+}
+"#;
     assert_eq!(
-        occurrences, 1,
-        "Expected `additional` to appear exactly once in the .d.ts, got {occurrences}.\nOutput:\n{output}"
-    );
-    assert!(
-        output.contains("export let additional: 20;"),
-        "Expected `export let additional: 20;` (CommonJS class-instance exports use `let`): {output}"
-    );
-    assert!(
-        output.contains("export let member: number;"),
-        "Expected `export let member: number;` from class instance widening: {output}"
+        output, expected,
+        "Expected a new-expression CommonJS root with a merged expando namespace"
     );
 }
 
 #[test]
-fn test_js_module_exports_object_literal_plus_secondary_promotes_named_exports() {
+fn test_js_module_exports_object_literal_plus_secondary_retains_export_equals_root() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
 const Strings = {
@@ -580,25 +567,25 @@ module.exports.Strings = Strings;
 "#,
     );
 
-    assert!(
-        output.contains("export declare let thing: string;"),
-        "Expected anonymous CommonJS object members to become named exports when secondary module.exports members exist: {output}"
-    );
-    assert!(
-        output.contains("export declare let also: string;"),
-        "Expected sibling literal members to become named exports: {output}"
-    );
-    assert!(
-        output.contains("export namespace Strings {"),
-        "Expected secondary module.exports identifier exports to mark their source declaration as exported: {output}"
-    );
-    assert!(
-        output.contains("export declare namespace desc {"),
-        "Expected nested object members to become exported namespaces: {output}"
-    );
-    assert!(
-        !output.contains("export = _exports;"),
-        "Did not expect anonymous module.exports object roots with secondary members to stay on the synthetic export= path: {output}"
+    let expected = r#"declare const _exports: {
+    thing: string;
+    also: string;
+    desc: {
+        item: string;
+    };
+};
+export = _exports;
+declare namespace _exports {
+    export { Strings };
+}
+declare const Strings: {
+    a: string;
+    b: string;
+};
+"#;
+    assert_eq!(
+        output, expected,
+        "Expected an anonymous CommonJS object root with a merged alias namespace"
     );
 }
 
@@ -614,17 +601,17 @@ export { x };
     );
 
     assert!(
-        output.contains("export namespace x {\n    let grey: {};\n}"),
+        output.contains("export declare namespace x {\n    let grey: {};\n}"),
         "Expected named JS object exports with empty object members to emit as namespaces: {output}"
     );
     assert!(
-        !output.contains("export const x:"),
+        !output.contains("const x:"),
         "Did not expect named JS object exports with empty object members to fall back to const object types: {output}"
     );
 }
 
 #[test]
-fn test_js_commonjs_named_object_alias_empty_object_member_emits_namespace_value() {
+fn test_js_commonjs_named_object_alias_retains_local_const_object_type() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
 const chalk = {
@@ -634,13 +621,10 @@ module.exports.chalk = chalk;
 "#,
     );
 
-    assert!(
-        output.contains("export namespace chalk {\n    let grey: {};\n}"),
-        "Expected CommonJS named object aliases with empty object members to emit as namespaces: {output}"
-    );
-    assert!(
-        !output.contains("export const chalk:"),
-        "Did not expect CommonJS named object aliases with empty object members to fall back to const object types: {output}"
+    assert_eq!(
+        output,
+        "export { chalk };\ndeclare const chalk: {\n    grey: {};\n};\n",
+        "Expected a CommonJS object alias to retain its local const declaration"
     );
 }
 
@@ -703,7 +687,7 @@ module.exports.Sub = class {
         "Expected secondary anonymous class exports to emit a local class declaration: {output}"
     );
     assert!(
-        !output.contains("export class Sub"),
+        !output.contains("export declare class Sub") && !output.contains("export class Sub"),
         "Did not expect the secondary class assignment to also emit as a named export: {output}"
     );
     assert!(
@@ -727,17 +711,10 @@ module.exports.MyClass.prototype = {
 "#,
     );
 
-    assert!(
-        output.contains("export class MyClass {\n    a: () => void;\n}"),
-        "Expected CommonJS constructor functions with prototype object literals to emit as a single class surface: {output}"
-    );
-    assert!(
-        !output.contains("export function MyClass"),
-        "Did not expect the constructor function assignment to emit beside the class: {output}"
-    );
-    assert!(
-        !output.contains("constructor();") && !output.contains("x: number;"),
-        "Did not expect constructor-body properties to leak when tsc uses the prototype object surface: {output}"
+    assert_eq!(
+        output,
+        "export declare var MyClass: () => void;\n",
+        "Expected direct CommonJS function assignment semantics; qualified prototype writes are ignored"
     );
 }
 
@@ -798,16 +775,16 @@ export const h = null;
     );
 
     assert!(
-        output.contains("export const a: unknown;"),
+        output.contains("export declare const a: unknown;"),
         "Expected bare Closure unknown @type to win over const null fallback: {output}"
     );
-    assert!(output.contains("export const b: any;"));
-    assert!(output.contains("export const c: string | null;"));
-    assert!(output.contains("export const d: string | undefined;"));
-    assert!(output.contains("export const e: string;"));
-    assert!(output.contains("export const f: (arg0: string, arg1: number) => object;"));
-    assert!(output.contains("export const g: new (arg1: string, arg2: number) => object;"));
-    assert!(output.contains("export const h: {\n    [x: string]: number;\n};"));
+    assert!(output.contains("export declare const b: any;"));
+    assert!(output.contains("export declare const c: string | null;"));
+    assert!(output.contains("export declare const d: string | undefined;"));
+    assert!(output.contains("export declare const e: string;"));
+    assert!(output.contains("export declare const f: (arg0: string, arg1: number) => object;"));
+    assert!(output.contains("export declare const g: new (arg1: string, arg2: number) => object;"));
+    assert!(output.contains("export declare const h: {\n    [x: string]: number;\n};"));
 }
 
 #[test]
@@ -860,7 +837,7 @@ class ElementsArray extends Array {
 }
 
 #[test]
-fn test_js_commonjs_function_like_export_preserves_constructor_jsdoc_block() {
+fn test_js_commonjs_export_equals_function_stays_a_function() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
 /**
@@ -873,10 +850,15 @@ module.exports = Timer;
 "#,
     );
 
-    let expected = "declare class Timer {\n    /**\n     * @param {number} timeout\n     */\n    constructor(timeout: number);\n    timeout: number;\n}";
+    let expected =
+        "/**\n * @param {number} timeout\n */\ndeclare function Timer(timeout: number): void;";
     assert!(
         output.contains(expected),
-        "Expected synthetic function-like class constructor JSDoc to stay block-formatted: {output}"
+        "Expected CommonJS export-equals to keep the original function declaration: {output}"
+    );
+    assert!(
+        !output.contains("class Timer") && !output.contains("timeout: number;"),
+        "Did not expect a companion class for the function declaration: {output}"
     );
 }
 
@@ -940,7 +922,7 @@ module.exports = format;
 }
 
 #[test]
-fn test_js_exported_function_like_class_preserves_constructor_jsdoc_block() {
+fn test_js_exported_constructor_style_function_preserves_jsdoc_without_class() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
 /**
@@ -957,10 +939,14 @@ export function Point(x, y) {
 "#,
     );
 
-    let expected = "export class Point {\n    /**\n     * @param {number} x\n     * @param {number} y\n     */\n    constructor(x: number, y: number);";
+    let expected = "/**\n * @param {number} x\n * @param {number} y\n */\nexport declare function Point(x: number, y: number)";
     assert!(
         output.contains(expected),
-        "Expected exported function-like class constructor JSDoc to stay block-formatted: {output}"
+        "Expected exported constructor-style function JSDoc to stay block-formatted: {output}"
+    );
+    assert!(
+        !output.contains("class Point"),
+        "Did not expect TypeScript 7 to synthesize a companion class: {output}"
     );
 }
 
@@ -1021,30 +1007,109 @@ Point2D.prototype = {
     );
 
     assert!(
-        output
-            .contains("/**\n * @param {number} len\n */\nexport function Vec(len: number): void;"),
+        output.contains(
+            "/**\n * @param {number} len\n */\nexport declare function Vec(len: number): void;"
+        ),
         "Expected hoisted function JSDoc to stay multiline: {output}"
     );
     assert!(
-        output.contains("dot(other: Vec): number;"),
-        "Expected local accumulator return type to recover as number: {output}"
+        output.contains("export declare namespace Vec {\n    var prototype: {")
+            && output.contains("dot(other: Vec): number;"),
+        "Expected the whole prototype object to emit as a namespace value: {output}"
+    );
+    assert!(
+        !output.contains("@type {number[]}"),
+        "Did not expect function-body JSDoc to leak into the prototype namespace: {output}"
     );
     assert!(
         !output.contains("x: number | undefined;"),
         "Expected prototype accessor to suppress constructor-inferred x property: {output}"
     );
-    let set_pos = output
-        .find("set x(x: number);")
-        .expect("missing setter in output");
-    let get_pos = output
-        .find("get x(): number;")
-        .expect("missing getter in output");
     let proto_pos = output
         .find("__proto__: typeof Vec;")
         .expect("missing __proto__ surface in output");
+    let property_pos = output
+        .find("x: number;")
+        .expect("missing combined accessor property in output");
     assert!(
-        set_pos < get_pos && get_pos < proto_pos,
-        "Expected setter/getter before deferred __proto__ member: {output}"
+        proto_pos < property_pos && !output.contains("get x()") && !output.contains("set x("),
+        "Expected object-literal accessors to collapse into an ordered property: {output}"
+    );
+}
+
+#[test]
+fn test_js_prototype_object_accessor_readonly_tracks_setter_presence() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+export function ReadOnlySurface() {}
+ReadOnlySurface.prototype = {
+    get value() { return 1; }
+};
+
+export function WriteOnlySurface() {}
+WriteOnlySurface.prototype = {
+    /** @param {number} next */
+    set value(next) {}
+};
+"#,
+    );
+
+    assert!(
+        output.contains("export declare namespace ReadOnlySurface {")
+            && output.contains("readonly value: number;"),
+        "Expected a getter-only prototype property to be readonly: {output}"
+    );
+    assert!(
+        output.contains("export declare namespace WriteOnlySurface {")
+            && output.contains("value: number;"),
+        "Expected a setter-backed prototype property to remain writable: {output}"
+    );
+}
+
+#[test]
+fn test_js_prototype_object_pairs_quoted_accessor_names() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+export function QuotedSurface() {}
+QuotedSurface.prototype = {
+    get "two words"() { return 1; },
+    /** @param {number} next */
+    set 'two words'(next) {}
+};
+"#,
+    );
+
+    assert_eq!(
+        output.matches("\"two words\": number;").count(),
+        1,
+        "Expected equivalent quoted accessor names to collapse into one property: {output}"
+    );
+    assert!(
+        !output.contains("readonly \"two words\"")
+            && !output.contains("get \"two words\"()")
+            && !output.contains("set 'two words'("),
+        "Expected the paired quoted accessor to remain writable property syntax: {output}"
+    );
+}
+
+#[test]
+fn test_js_empty_prototype_object_emits_one_line_namespace_type() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+export function EmptySurface() {}
+EmptySurface.prototype = {};
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "export declare function EmptySurface(): void;\nexport declare namespace EmptySurface {\n    var prototype: {};\n}"
+        ),
+        "Expected an empty whole-object prototype assignment to stay visible as an empty namespace type: {output}"
+    );
+    assert!(
+        !output.contains("class EmptySurface"),
+        "Did not expect an empty prototype object to synthesize a companion class: {output}"
     );
 }
 
@@ -1149,11 +1214,13 @@ Object.defineProperty(E.prototype, "x", { set: setter });
     );
 
     assert!(
-        output.contains("export class D {\n    set x(_arg: number);\n    get x(): number;\n}"),
+        output.contains(
+            "export declare class D {\n    set x(_arg: number);\n    get x(): number;\n}"
+        ),
         "Expected descriptor getter/setter to fold into class D: {output}"
     );
     assert!(
-        output.contains("export class E {\n    set x(value: number);\n}"),
+        output.contains("export declare class E {\n    set x(value: number);\n}"),
         "Expected descriptor setter alias to fold into class E: {output}"
     );
     assert!(
@@ -1235,7 +1302,7 @@ export class Box {
     );
 
     assert!(
-        output.contains("export class Box<T> {"),
+        output.contains("export declare class Box<T> {"),
         "Expected JSDoc class templates to surface in declaration emit: {output}"
     );
     assert!(
@@ -1298,7 +1365,7 @@ export class Store {
     );
 
     assert!(
-        output.contains("export class Store<Item, Meta> {"),
+        output.contains("export declare class Store<Item, Meta> {"),
         "Expected class-level JSDoc templates to emit as type parameters: {output}"
     );
     assert!(
@@ -1333,7 +1400,7 @@ export class Derived extends Base {
     );
 
     assert!(
-        output.contains("export class Derived<Entry> extends Base<Entry> {"),
+        output.contains("export declare class Derived<Entry> extends Base<Entry> {"),
         "Expected JSDoc @extends type arguments to be preserved in class heritage: {output}"
     );
 }
@@ -1352,13 +1419,13 @@ export class After {}
     );
 
     let before_pos = output
-        .find("export class Before")
+        .find("export declare class Before")
         .expect("Expected exported class before local export-list classes");
     let after_pos = output
-        .find("export class After")
+        .find("export declare class After")
         .expect("Expected later exported class to stay in source order");
     let plain_pos = output
-        .find("export class Plain")
+        .find("export declare class Plain")
         .expect("Expected plain local class export to emit at final export surface");
     let hidden_pos = output
         .find("declare class Hidden")
@@ -1394,7 +1461,7 @@ export class Derived extends base {}
         "Expected any-valued JS base expression to get a synthetic class extends alias: {output}"
     );
     assert!(
-        output.contains("export class Derived extends Derived_base {"),
+        output.contains("export declare class Derived extends Derived_base {"),
         "Expected class to extend the synthetic base alias instead of raw value name: {output}"
     );
     assert!(
@@ -1431,7 +1498,7 @@ declare var Error: ErrorConstructor;
     );
 
     assert!(
-        output.contains("export class FancyError extends Error {"),
+        output.contains("export declare class FancyError extends Error {"),
         "Expected lib constructor heritage to stay nameable: {output}"
     );
     assert!(
@@ -1454,11 +1521,11 @@ export class ElementC extends LitElement2 {}
     );
 
     assert!(
-        output.contains("export class ElementB extends LitElement {"),
+        output.contains("export declare class ElementB extends LitElement {"),
         "Expected imported class heritage to stay nameable: {output}"
     );
     assert!(
-        output.contains("export class ElementC extends LitElement {"),
+        output.contains("export declare class ElementC extends LitElement {"),
         "Expected renamed imported class heritage to use the imported name: {output}"
     );
     assert!(
@@ -1664,9 +1731,9 @@ Clazz.method.prop = 5;
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
 
-    let expected = r#"export class Clazz {
+    let expected = r#"export declare class Clazz {
 }
-export namespace Clazz {
+export declare namespace Clazz {
     function method(): void;
     namespace method {
         let prop: number;

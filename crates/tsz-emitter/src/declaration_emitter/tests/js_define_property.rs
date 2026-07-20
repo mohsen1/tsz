@@ -18,7 +18,7 @@ Object.defineProperty(module.exports, "use", { value: use });
     );
 
     assert!(
-        output.contains("export function use(callback: () => void): void;"),
+        output.contains("export declare function use(callback: () => void): void;"),
         "Expected defineProperty JSDoc typeof reference to emit callable type: {output}"
     );
 }
@@ -41,7 +41,7 @@ Object.defineProperty(module.exports, "useAll", { value: useAll });
     );
 
     assert!(
-        output.contains("export function useAll(callbacks: Array<() => void>): void;"),
+        output.contains("export declare function useAll(callbacks: Array<() => void>): void;"),
         "Expected nested defineProperty JSDoc typeof reference to emit callable type: {output}"
     );
 }

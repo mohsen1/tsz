@@ -1334,7 +1334,7 @@ export class Listener extends EventEmitter {
 "#;
     let output = emit_js_dts_with_usage_analysis(source);
     assert!(
-        output.contains("export class Listener extends EventEmitter {"),
+        output.contains("export declare class Listener extends EventEmitter {"),
         "Expected imported namespace+class merge heritage to stay nameable: {output}"
     );
     assert!(
@@ -1363,7 +1363,7 @@ export class Panel extends Gadget {
 "#;
     let output = emit_js_dts_with_usage_analysis(source);
     assert!(
-        output.contains("export class Panel extends Gadget {"),
+        output.contains("export declare class Panel extends Gadget {"),
         "Expected the rule to hold for arbitrary identifier spellings: {output}"
     );
     assert!(
@@ -1390,7 +1390,7 @@ export class Outer extends Inner {
 "#;
     let output = emit_js_dts_with_usage_analysis(source);
     assert!(
-        output.contains("export class Outer extends Inner {"),
+        output.contains("export declare class Outer extends Inner {"),
         "Expected nested-namespace re-exported class heritage to stay nameable: {output}"
     );
     assert!(
@@ -1434,7 +1434,7 @@ export class ElementB extends LitElement {
     let output = emitter.emit(root);
 
     assert!(
-        output.contains("export class ElementB extends LitElement {"),
+        output.contains("export declare class ElementB extends LitElement {"),
         "Expected imported `typeof` entity heritage to stay nameable: {output}"
     );
     assert!(
@@ -1481,7 +1481,8 @@ export class C2 extends Probe {
     );
     // The class-member case stays nameable (no `_base` alias).
     assert!(
-        with_class.contains("export class C1 extends Probe {") && !with_class.contains("C1_base"),
+        with_class.contains("export declare class C1 extends Probe {")
+            && !with_class.contains("C1_base"),
         "Expected the class-member merge to keep heritage nameable: {with_class}"
     );
     // The non-class-member case must NOT be recognized by the class-constructor

@@ -169,7 +169,7 @@ impl DeclarationEmitter<'_> {
         let object_expr_idx = self.direct_returned_object_literal(body_idx)?;
         let object_node = self.arena.get(object_expr_idx)?;
         let object = self.arena.get_literal_expr(object_node)?;
-        self.single_spread_object_literal_type_text(object)
+        self.single_spread_object_literal_type_text(object, 0)
     }
 
     pub(in crate::declaration_emitter) fn function_body_source_indexed_access_return_type_text(

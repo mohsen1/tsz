@@ -686,10 +686,10 @@ export function j() {}
     let output = emit_js_dts_with_usage_analysis(source);
 
     let i_pos = output
-        .find("export function i(): void;")
+        .find("export declare function i(): void;")
         .unwrap_or_else(|| panic!("missing i declaration: {output}"));
     let j_pos = output
-        .find("export function j(): void;")
+        .find("export declare function j(): void;")
         .unwrap_or_else(|| panic!("missing j declaration: {output}"));
     let hh_pos = output
         .find("declare function hh(x: number): number;")
@@ -720,11 +720,11 @@ export enum D {}
 "#;
     let output = emit_js_dts_with_usage_analysis(source);
 
-    let expected = r#"export enum A {
+    let expected = r#"export declare enum A {
 }
-export enum D {
+export declare enum D {
 }
-export enum B {
+export declare enum B {
 }
 declare enum CC {
 }
@@ -738,7 +738,7 @@ export { CC as C };
 }
 
 #[test]
-fn test_js_cjs_export_aliases_are_grouped_in_source_order() {
+fn test_js_cjs_export_surface_events_preserve_source_order() {
     let source = r#"
 function hh() {}
 module.exports.h = hh;
@@ -749,14 +749,16 @@ module.exports.j = function j() {}
 "#;
     let output = emit_js_dts_with_usage_analysis(source);
 
-    assert!(
-        output.contains("export { hh as h, i as ii, j as jj };"),
-        "Expected CJS aliases to be grouped in source order: {output}"
-    );
+    let expected = r#"export { hh as h };
+export declare var i: () => void;
+export declare var ii: () => void;
+export declare var jj: () => void;
+export declare var j: () => void;
+declare function hh(): void;
+"#;
     assert_eq!(
-        output.matches("export {").count(),
-        1,
-        "Expected exactly one CJS export alias statement: {output}"
+        output, expected,
+        "Expected CommonJS values and aliases to retain source assignment order"
     );
 }
 
@@ -774,8 +776,8 @@ module.exports.map = function map(value) {
     );
 
     assert!(
-        output.contains("export function map(value: number): number;"),
-        "Expected CJS synthetic function export to emit at its own statement: {output}"
+        output.contains("export declare var map: (value: number) => number;"),
+        "Expected a direct CJS function assignment to emit a typed variable: {output}"
     );
     assert!(
         !output.contains("@param"),
@@ -805,13 +807,13 @@ module.exports.use = use;
         "Expected same-file typeof module.exports function references to expand callable static surface: {output}"
     );
     assert!(
-        output.contains("export function use(input: {"),
+        output.contains("export declare function use(input: {"),
         "Expected local CJS function alias to keep the exported function surface: {output}"
     );
 }
 
 #[test]
-fn test_js_commonjs_class_expando_declarations_follow_direct_named_exports() {
+fn test_js_commonjs_class_expando_declarations_precede_local_alias_declaration() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
 module.exports.foo = function foo() {}
@@ -827,22 +829,26 @@ module.exports.later = later;
 "#,
     );
 
-    let namespace_pos = output
-        .find("export namespace foo")
-        .unwrap_or_else(|| panic!("expected foo namespace in output: {output}"));
+    let foo_pos = output
+        .find("export declare var foo: () => void;")
+        .unwrap_or_else(|| panic!("expected foo value export in output: {output}"));
     let bar_pos = output
-        .find("export function bar")
+        .find("export declare var bar: () => void;")
         .unwrap_or_else(|| panic!("expected direct bar export in output: {output}"));
-    let class_pos = output
-        .find("declare class Widget")
-        .unwrap_or_else(|| panic!("expected Widget class declaration in output: {output}"));
+    let alias_pos = output
+        .find("export { later };")
+        .unwrap_or_else(|| panic!("expected later alias export in output: {output}"));
     let later_pos = output
-        .find("export function later")
-        .unwrap_or_else(|| panic!("expected deferred later export in output: {output}"));
+        .find("declare function later")
+        .unwrap_or_else(|| panic!("expected retained later declaration in output: {output}"));
 
     assert!(
-        namespace_pos < bar_pos && bar_pos < class_pos && class_pos < later_pos,
-        "Expected class expando declarations after direct named exports and before deferred CJS aliases: {output}"
+        foo_pos < bar_pos && bar_pos < alias_pos && alias_pos < later_pos,
+        "Expected CommonJS export events before the retained local function: {output}"
+    );
+    assert!(
+        !output.contains("namespace foo") && !output.contains("class Widget"),
+        "Qualified expandos on a direct CJS function assignment are not declaration exports: {output}"
     );
 }
 
@@ -864,7 +870,7 @@ exports.apply = a;
 }
 
 #[test]
-fn test_js_cjs_export_alias_with_later_values_emits_grouped_value_union() {
+fn test_js_cjs_export_alias_with_later_values_emits_value_union_without_alias() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
 exports.apply = undefined;
@@ -878,10 +884,10 @@ exports.apply = 1;
 "#,
     );
 
-    let expected = "export const apply: \"ok\" | 1 | typeof a | undefined;\nexport { a as apply };\ndeclare function a(): void;\n";
+    let expected = "export declare var apply: \"ok\" | 1 | typeof a | undefined;\ndeclare function a(): void;\n";
     assert_eq!(
         output, expected,
-        "Expected CJS alias/value export to match tsc declaration grouping"
+        "Expected the CommonJS value union to own the export surface"
     );
 }
 
@@ -1324,10 +1330,11 @@ export const x: number;
 }
 
 #[test]
-fn test_js_exported_function_and_class_do_not_emit_declare() {
+fn test_js_exported_values_emit_declare() {
     let source = r#"
 export function main() {}
 export class Z {}
+export const answer = 42;
 "#;
     let mut parser = ParserState::new("test.js".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -1336,20 +1343,22 @@ export class Z {}
     let output = emitter.emit(root);
 
     assert!(
-        output.contains("export function main(): void;"),
+        output.contains("export declare function main(): void;"),
         "Expected JS export function declaration form: {output}"
     );
     assert!(
-        output.contains("export class Z"),
+        output.contains("export declare class Z"),
         "Expected JS export class declaration form: {output}"
     );
     assert!(
-        !output.contains("export declare function main"),
-        "Did not expect declare on JS exported function: {output}"
+        output.contains("export declare const answer: 42;"),
+        "Expected JS export variable declaration form: {output}"
     );
     assert!(
-        !output.contains("export declare class Z"),
-        "Did not expect declare on JS exported class: {output}"
+        !output.contains("export function main")
+            && !output.contains("export class Z")
+            && !output.contains("export const answer"),
+        "Did not expect a duplicate non-ambient export declaration: {output}"
     );
 }
 
@@ -1363,11 +1372,11 @@ fn test_js_const_literal_uses_type_annotation() {
     let output = emitter.emit(root);
 
     assert!(
-        output.contains("export const x: 1;"),
+        output.contains("export declare const x: 1;"),
         "Expected JS const literal to emit a literal type annotation: {output}"
     );
     assert!(
-        !output.contains("export const x = 1;"),
+        !output.contains("const x = 1;"),
         "Did not expect JS const literal to stay as an initializer: {output}"
     );
 }
@@ -1408,7 +1417,7 @@ export const x = () => 1;
     let output = emitter.emit(root);
 
     assert!(
-        output.contains("export const x: Foo;"),
+        output.contains("export declare const x: Foo;"),
         "Expected JS @type alias reference to be preserved: {output}"
     );
     assert!(
@@ -1683,7 +1692,7 @@ export function doTheThing(x) {
         .find("export type SomeType =")
         .expect("Expected typedef alias to be emitted");
     let function_pos = output
-        .find("export function doTheThing(")
+        .find("export declare function doTheThing(")
         .expect("Expected exported function declaration to be emitted");
     assert!(
         alias_pos < function_pos,
@@ -1715,7 +1724,7 @@ export function transform(v) {
         .find("export type ResultKind =")
         .expect("Expected typedef alias to be emitted");
     let function_pos = output
-        .find("export function transform(")
+        .find("export declare function transform(")
         .expect("Expected exported function to be emitted");
     assert!(
         alias_pos < function_pos,
@@ -1786,11 +1795,10 @@ export class ItemStore {
         .find("export type ItemShape =")
         .expect("Expected typedef alias to be emitted");
     let class_pos = output
-        .find("export class ItemStore")
+        .find("export declare class ItemStore")
         .expect("Expected exported class to be emitted");
     assert!(
         alias_pos < class_pos,
         "Expected typedef alias before class declaration: {output}"
     );
 }
-

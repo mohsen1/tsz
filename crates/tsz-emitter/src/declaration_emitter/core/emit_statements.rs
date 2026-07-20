@@ -72,6 +72,12 @@ impl<'a> DeclarationEmitter<'a> {
         // skip their comments entirely rather than emitting them as leading JSDoc.
         let has_synthetic_js_expression_declaration = kind == syntax_kind_ext::EXPRESSION_STATEMENT
             && self.has_synthetic_js_expression_declaration(stmt_idx);
+        let has_synthetic_js_function_value_declaration = kind
+            == syntax_kind_ext::EXPRESSION_STATEMENT
+            && self
+                .js_deferred_value_export_statements
+                .get(&stmt_idx)
+                .is_some_and(|(_, initializer, _)| self.is_js_function_initializer(*initializer));
         let is_declaration_kind = kind == syntax_kind_ext::FUNCTION_DECLARATION
             || kind == syntax_kind_ext::CLASS_DECLARATION
             || kind == syntax_kind_ext::INTERFACE_DECLARATION
@@ -191,7 +197,13 @@ impl<'a> DeclarationEmitter<'a> {
             && kind == syntax_kind_ext::VARIABLE_STATEMENT
             && !self.inside_declare_namespace
             && self.emitted_leading_single_line_jsdoc_type_comment_for_pos(stmt_node.pos);
-        if has_jsdoc_overload_signatures {
+        if has_synthetic_js_function_value_declaration {
+            // Direct CommonJS function-property assignments emit as `var`
+            // declarations in TypeScript 7. Their JSDoc still supplies the
+            // callable type, but the source comment itself is consumed.
+            self.emit_leading_jsdoc_comments(stmt_node.pos);
+            self.writer.truncate(before_jsdoc_len);
+        } else if has_jsdoc_overload_signatures {
             // JSDoc overload comments are emitted once per structured signature
             // by `emit_function_declaration`.
         } else if has_jsdoc_type_function_signature || has_jsdoc_type_alias {

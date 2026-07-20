@@ -476,6 +476,13 @@ impl<'a> DeclarationEmitter<'a> {
         if !self.public_api_filter_enabled() {
             return true;
         }
+        if self.source_is_js_file
+            && self
+                .get_identifier_text(name_idx)
+                .is_some_and(|name| self.js_cjs_export_alias_local_names.contains(&name))
+        {
+            return true;
+        }
         let Some(binder) = self.binder else {
             return false;
         };

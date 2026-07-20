@@ -714,10 +714,8 @@ impl<'a> DeclarationEmitter<'a> {
         Some((root_name, member_name, rhs))
     }
 
-    pub(crate) const fn should_emit_declare_keyword(&self, is_exported: bool) -> bool {
-        !(self.inside_declare_namespace
-            || self.source_is_declaration_file
-            || (self.source_is_js_file && is_exported))
+    pub(crate) const fn should_emit_declare_keyword(&self, _is_exported: bool) -> bool {
+        !(self.inside_declare_namespace || self.source_is_declaration_file)
     }
 
     /// Whether an exported declaration should emit its `export` keyword.
@@ -1109,7 +1107,7 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         stmt_idx: NodeIndex,
         commonjs_root: Option<&str>,
-    ) -> Option<(String, String, String, bool)> {
+    ) -> Option<(String, String, String, bool, NodeIndex)> {
         let stmt_node = self.arena.get(stmt_idx)?;
         if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
             return None;
@@ -1141,6 +1139,7 @@ impl<'a> DeclarationEmitter<'a> {
             export_name,
             local_name,
             module_exports_local_name.is_some(),
+            rhs,
         ))
     }
 
@@ -1429,17 +1428,64 @@ impl<'a> DeclarationEmitter<'a> {
         local_name: String,
         use_import_alias: bool,
     ) {
+        Self::push_js_namespace_export_alias_with_metadata(
+            aliases,
+            root_name,
+            export_name,
+            local_name,
+            use_import_alias,
+            None,
+            None,
+        );
+    }
+
+    pub(in crate::declaration_emitter) fn push_js_namespace_export_alias_with_source(
+        aliases: &mut JsNamespaceExportAliases,
+        root_name: &str,
+        export_name: String,
+        local_name: String,
+        use_import_alias: bool,
+        source_pos: Option<u32>,
+        initializer: NodeIndex,
+    ) {
+        Self::push_js_namespace_export_alias_with_metadata(
+            aliases,
+            root_name,
+            export_name,
+            local_name,
+            use_import_alias,
+            source_pos,
+            Some(initializer),
+        );
+    }
+
+    fn push_js_namespace_export_alias_with_metadata(
+        aliases: &mut JsNamespaceExportAliases,
+        root_name: &str,
+        export_name: String,
+        local_name: String,
+        use_import_alias: bool,
+        source_pos: Option<u32>,
+        initializer: Option<NodeIndex>,
+    ) {
         let entry = aliases.entry(root_name.to_string()).or_default();
-        if !entry.iter().any(|existing| {
+        if let Some(existing) = entry.iter_mut().find(|existing| {
             existing.export_name == export_name
                 && existing.local_name == local_name
                 && existing.use_import_alias == use_import_alias
         }) {
-            entry.push(JsNamespaceExportAlias {
-                export_name,
-                local_name,
-                use_import_alias,
-            });
+            if source_pos.is_some() {
+                existing.source_pos = source_pos;
+                existing.initializer = initializer;
+            }
+            return;
         }
+        entry.push(JsNamespaceExportAlias {
+            export_name,
+            local_name,
+            use_import_alias,
+            source_pos,
+            initializer,
+        });
     }
 }

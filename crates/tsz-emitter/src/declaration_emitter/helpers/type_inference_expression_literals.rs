@@ -577,6 +577,7 @@ impl<'a> DeclarationEmitter<'a> {
         scratch.indent_level = self.indent_level;
         scratch.strict_null_checks = self.strict_null_checks;
         scratch.normalize_string_literal_type_quotes = true;
+        self.copy_adjacent_jsdoc_comments_to_scratch(&mut scratch, expr_idx);
 
         if let Some(ref type_params) = func.type_parameters
             && !type_params.nodes.is_empty()
@@ -593,6 +594,11 @@ impl<'a> DeclarationEmitter<'a> {
                 "void".to_string()
             } else if let Some(return_type) =
                 scratch.expression_body_parameter_return_type_text(func)
+            {
+                return_type
+            } else if func.body.is_some()
+                && let Some(return_type) =
+                    scratch.function_body_parameter_return_type_text(func, func.body)
             {
                 return_type
             } else if func.body.is_some()
@@ -626,6 +632,71 @@ impl<'a> DeclarationEmitter<'a> {
             scratch.write(&inferred_return);
         }
         Some(scratch.writer.take_output())
+    }
+
+    fn copy_adjacent_jsdoc_comments_to_scratch(
+        &self,
+        scratch: &mut DeclarationEmitter<'a>,
+        node_idx: NodeIndex,
+    ) {
+        let Some(source) = self
+            .source_is_js_file
+            .then_some(self.source_file_text.as_deref())
+            .flatten()
+        else {
+            return;
+        };
+
+        // Parameter and return tags on an assignment/member belong to its
+        // nested callable. Copy only the adjacent JSDoc chain into the scratch
+        // emitter: copying the file-wide comment table per callable is
+        // quadratic. Keep the comments available for semantic lookup while
+        // placing the emit cursor after them so they cannot leak into a
+        // parameter list.
+        let mut current = node_idx;
+        for _ in 0..5 {
+            let Some(node) = self.arena.get(current) else {
+                break;
+            };
+            let comment_end = self
+                .all_comments
+                .partition_point(|comment| comment.end <= node.pos);
+            let mut comment_start = comment_end;
+            let mut attached_start = node.pos as usize;
+            while comment_start > 0 {
+                let comment = &self.all_comments[comment_start - 1];
+                let Some(raw) = source.get(comment.pos as usize..comment.end as usize) else {
+                    break;
+                };
+                let Some(between) = source.get(comment.end as usize..attached_start) else {
+                    break;
+                };
+                if !raw.starts_with("/**")
+                    || raw == "/**/"
+                    || !between
+                        .bytes()
+                        .all(|byte| matches!(byte, b' ' | b'\t' | b'\r' | b'\n'))
+                {
+                    break;
+                }
+                comment_start -= 1;
+                attached_start = comment.pos as usize;
+            }
+            if comment_start < comment_end {
+                scratch.all_comments = self.all_comments[comment_start..comment_end].to_vec();
+                scratch.comment_emit_idx = scratch.all_comments.len();
+                break;
+            }
+            let Some(parent) = self
+                .arena
+                .get_extended(current)
+                .map(|extended| extended.parent)
+                .filter(|parent| parent.is_some())
+            else {
+                break;
+            };
+            current = parent;
+        }
     }
 
     /// Last-resort return-type text for an arrow/function-expression initializer
@@ -705,7 +776,7 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(arms) = self.object_literal_spread_with_own_members_arm_texts(object, depth) {
             return Some(arms);
         }
-        if let Some(type_text) = self.single_spread_object_literal_type_text(object) {
+        if let Some(type_text) = self.single_spread_object_literal_type_text(object, depth) {
             return Some(vec![type_text]);
         }
 
@@ -843,23 +914,32 @@ impl<'a> DeclarationEmitter<'a> {
         object: &tsz_parser::parser::node::LiteralExprData,
         depth: u32,
     ) -> Option<Vec<String>> {
-        let mut spread_expr = None;
-        for &member_idx in &object.elements.nodes {
+        let mut spread = None;
+        for (position, &member_idx) in object.elements.nodes.iter().enumerate() {
             let member_node = self.arena.get(member_idx)?;
             if member_node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT {
-                if spread_expr.is_some() {
+                if spread.is_some() {
                     return None;
                 }
-                spread_expr = Some(self.arena.get_spread(member_node)?.expression);
+                spread = Some((position, self.arena.get_spread(member_node)?.expression));
             }
         }
-        let spread_expr = spread_expr?;
+        let (spread_position, spread_expr) = spread?;
         if object.elements.nodes.len() <= 1 {
             return None;
         }
 
-        let own_members = self.object_literal_own_member_texts(object, depth)?;
-        if own_members.is_empty() {
+        let before_members = self.object_literal_own_member_texts_for_indices(
+            object,
+            &object.elements.nodes[..spread_position],
+            depth,
+        )?;
+        let after_members = self.object_literal_own_member_texts_for_indices(
+            object,
+            &object.elements.nodes[spread_position + 1..],
+            depth,
+        )?;
+        if before_members.is_empty() && after_members.is_empty() {
             return None;
         }
         // Object spread merges duplicate keys (the spread overrides earlier
@@ -870,10 +950,11 @@ impl<'a> DeclarationEmitter<'a> {
         if self.object_spread_collides_or_strips_readonly(object, spread_expr) {
             return None;
         }
-        if let Some(spread_arms) = self.object_spread_type_literal_arms(spread_expr) {
-            return Self::prepend_members_to_object_type_literal_arm_texts(
+        if let Some(spread_arms) = self.object_spread_type_literal_arms(spread_expr, depth) {
+            return Self::merge_members_into_object_type_literal_arm_texts(
                 spread_arms,
-                &own_members,
+                &before_members,
+                &after_members,
                 depth,
             );
         }
@@ -894,8 +975,13 @@ impl<'a> DeclarationEmitter<'a> {
             tsz_solver::type_queries::ObjectSpreadDtsProjection::PreserveSource => {}
         }
 
-        let spread_arms = self.object_spread_type_literal_arms(spread_expr)?;
-        Self::prepend_members_to_object_type_literal_arm_texts(spread_arms, &own_members, depth)
+        let spread_arms = self.object_spread_type_literal_arms(spread_expr, depth)?;
+        Self::merge_members_into_object_type_literal_arm_texts(
+            spread_arms,
+            &before_members,
+            &after_members,
+            depth,
+        )
     }
 
     /// Returns `true` when declaration emit of `{ ...own, ...spread }` cannot be
@@ -948,32 +1034,48 @@ impl<'a> DeclarationEmitter<'a> {
         false
     }
 
-    fn prepend_members_to_object_type_literal_arm_texts(
+    fn merge_members_into_object_type_literal_arm_texts(
         spread_arms: Vec<String>,
-        own_members: &[String],
+        before_members: &[String],
+        after_members: &[String],
         depth: u32,
     ) -> Option<Vec<String>> {
         let mut projected_arms = Vec::with_capacity(spread_arms.len());
         for arm in spread_arms {
-            projected_arms.push(Self::prepend_object_members_to_type_literal_text(
-                &arm,
-                &own_members,
+            let with_before =
+                Self::prepend_object_members_to_type_literal_text(&arm, before_members, depth)?;
+            projected_arms.push(Self::append_object_members_to_type_literal_text(
+                &with_before,
+                after_members,
                 depth,
             )?);
         }
         (!projected_arms.is_empty()).then_some(projected_arms)
     }
 
-    fn object_spread_type_literal_arms(&self, spread_expr: NodeIndex) -> Option<Vec<String>> {
+    fn object_spread_type_literal_arms(
+        &self,
+        spread_expr: NodeIndex,
+        depth: u32,
+    ) -> Option<Vec<String>> {
         self.reference_declared_object_type_literal_arm_texts(spread_expr)
             .or_else(|| {
-                self.local_variable_initializer_object_type_literal_arm_texts(spread_expr, 0)
+                self.local_variable_initializer_object_type_literal_arm_texts(spread_expr, depth)
             })
     }
 
     fn object_literal_own_member_texts(
         &self,
         object: &tsz_parser::parser::node::LiteralExprData,
+        depth: u32,
+    ) -> Option<Vec<String>> {
+        self.object_literal_own_member_texts_for_indices(object, &object.elements.nodes, depth)
+    }
+
+    fn object_literal_own_member_texts_for_indices(
+        &self,
+        object: &tsz_parser::parser::node::LiteralExprData,
+        member_indices: &[NodeIndex],
         depth: u32,
     ) -> Option<Vec<String>> {
         let mut setter_names = rustc_hash::FxHashSet::<String>::default();
@@ -997,7 +1099,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         let mut members = Vec::new();
-        for &member_idx in &object.elements.nodes {
+        for &member_idx in member_indices {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
             };
@@ -1076,9 +1178,40 @@ impl<'a> DeclarationEmitter<'a> {
         Some(lines.join("\n"))
     }
 
+    fn append_object_members_to_type_literal_text(
+        type_text: &str,
+        members: &[String],
+        depth: u32,
+    ) -> Option<String> {
+        if members.is_empty() {
+            return Some(type_text.to_string());
+        }
+        let trimmed = type_text.trim();
+        if trimmed == "{}" {
+            return Some(Self::object_type_literal_text_from_members(members, depth));
+        }
+        if !trimmed.starts_with('{') || !trimmed.ends_with('}') {
+            return None;
+        }
+
+        let member_indent = "    ".repeat((depth + 1) as usize);
+        let mut lines = trimmed.lines().map(str::to_string).collect::<Vec<_>>();
+        if lines.len() < 2 {
+            return None;
+        }
+        let insert_at = lines.len() - 1;
+        let formatted_members = members
+            .iter()
+            .map(|member| Self::format_object_member_entry(&member_indent, member))
+            .collect::<Vec<_>>();
+        lines.splice(insert_at..insert_at, formatted_members);
+        Some(lines.join("\n"))
+    }
+
     pub(in crate::declaration_emitter) fn single_spread_object_literal_type_text(
         &self,
         object: &tsz_parser::parser::node::LiteralExprData,
+        depth: u32,
     ) -> Option<String> {
         if object.elements.nodes.len() != 1 {
             return None;
@@ -1094,7 +1227,7 @@ impl<'a> DeclarationEmitter<'a> {
             .or_else(|| self.get_symbol_cached_type(spread.expression))
             .or_else(|| self.get_type_via_symbol(spread.expression))?;
         let spread_object_text = self
-            .object_spread_type_literal_arms(spread.expression)
+            .object_spread_type_literal_arms(spread.expression, depth)
             .map(|arms| arms.join(" | "));
         let interner = self.type_interner?;
         match tsz_solver::type_queries::classify_object_spread_dts_projection(interner, spread_type)
@@ -1307,7 +1440,11 @@ impl<'a> DeclarationEmitter<'a> {
                     .unwrap_or_else(|| "any".to_string());
                 Some(ObjectTypeLiteralMember::typed(
                     name.to_string(),
-                    name.to_string(),
+                    if self.jsdoc_has_readonly_for_node(member_idx) {
+                        format!("readonly {name}")
+                    } else {
+                        name.to_string()
+                    },
                     type_text,
                 ))
             }
@@ -1333,10 +1470,15 @@ impl<'a> DeclarationEmitter<'a> {
                 // When `{ y? }` is written (grammar error TS1162), tsc still infers an
                 // optional property. Mirror that by using `y?` as the prefix when the
                 // question token position was recorded during parsing.
-                let prefix = if data.question_token_pos != 0 {
-                    format!("{name}?")
+                let readonly = if self.jsdoc_has_readonly_for_node(member_idx) {
+                    "readonly "
                 } else {
-                    name.to_string()
+                    ""
+                };
+                let prefix = if data.question_token_pos != 0 {
+                    format!("{readonly}{name}?")
+                } else {
+                    format!("{readonly}{name}")
                 };
                 Some(ObjectTypeLiteralMember::typed(
                     name.to_string(),
@@ -1429,6 +1571,7 @@ impl<'a> DeclarationEmitter<'a> {
         return_type_override: Option<&str>,
     ) -> Option<String> {
         let mut scratch = self.scratch_declaration_emitter();
+        self.copy_adjacent_jsdoc_comments_to_scratch(&mut scratch, method_idx);
         scratch.indent_level = depth;
         scratch.write(name);
         if method.question_token {
@@ -1457,7 +1600,16 @@ impl<'a> DeclarationEmitter<'a> {
         scratch.write("(");
         scratch.emit_parameters_with_body(&method.parameters, method.body);
         scratch.write("): ");
-        if let Some(return_type) = return_type_override {
+        let returned_jsdoc_parameter_type = (return_type_override.is_none()
+            && !method.asterisk_token)
+            .then(|| {
+                scratch
+                    .body_returned_parameter_jsdoc_type_text(&method.parameters, method.body)
+                    .map(|type_text| scratch.wrap_async_method_return_type_text(method, type_text))
+            })
+            .flatten();
+        if let Some(return_type) = return_type_override.or(returned_jsdoc_parameter_type.as_deref())
+        {
             scratch.write(return_type);
         } else {
             scratch.emit_method_function_type_return(method_idx, method);

@@ -133,30 +133,6 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         let export_targets = self.collect_js_named_export_targets(source_file);
-        if !self.source_file_has_native_esm_syntax(source_file)
-            && self.js_export_equals_names.is_empty()
-        {
-            for &stmt_idx in &source_file.statements.nodes {
-                let Some((name_idx, initializer)) =
-                    self.js_commonjs_named_export_for_statement_with_options(stmt_idx, true)
-                else {
-                    continue;
-                };
-                if self.js_commonjs_export_name_text(name_idx).is_none() {
-                    continue;
-                }
-                let Some(local_name) = self.get_identifier_text(initializer) else {
-                    continue;
-                };
-                let Some(&target_stmt_idx) = export_targets.get(&local_name) else {
-                    continue;
-                };
-                if self.js_function_declaration_has_signature_jsdoc(target_stmt_idx) {
-                    deferred.insert(target_stmt_idx);
-                }
-            }
-        }
-
         for &stmt_idx in &source_file.statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
@@ -710,9 +686,7 @@ impl<'a> DeclarationEmitter<'a> {
         let rhs = self
             .arena
             .skip_parenthesized_and_assertions_and_comma(binary.right);
-        let local_name = self
-            .get_identifier_text(rhs)
-            .or_else(|| self.module_exports_property_reference_name(rhs))?;
+        let local_name = self.get_identifier_text(rhs)?;
         Some((export_name, local_name, stmt_idx))
     }
 
@@ -932,27 +906,41 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         let mut top_level_names = FxHashSet::default();
+        let mut top_level_function_declarations = FxHashSet::default();
         for &stmt_idx in &source_file.statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
             };
-            match stmt_node.kind {
+            // The parser wraps exported declarations in an
+            // `EXPORT_DECLARATION`. Class/static collection must inspect the
+            // wrapped declaration so an exported function with a whole-object
+            // prototype replacement owns one combined value namespace.
+            let declaration_node = if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                self.arena
+                    .get_export_decl(stmt_node)
+                    .and_then(|export| self.arena.get(export.export_clause))
+                    .unwrap_or(stmt_node)
+            } else {
+                stmt_node
+            };
+            match declaration_node.kind {
                 k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                    if let Some(func) = self.arena.get_function(stmt_node)
+                    if let Some(func) = self.arena.get_function(declaration_node)
                         && let Some(name) = self.get_identifier_text(func.name)
                     {
-                        top_level_names.insert(name);
+                        top_level_names.insert(name.clone());
+                        top_level_function_declarations.insert(name);
                     }
                 }
                 k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                    if let Some(class) = self.arena.get_class(stmt_node)
+                    if let Some(class) = self.arena.get_class(declaration_node)
                         && let Some(name) = self.get_identifier_text(class.name)
                     {
                         top_level_names.insert(name);
                     }
                 }
                 k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
-                    let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+                    let Some(var_stmt) = self.arena.get_variable(declaration_node) else {
                         continue;
                     };
                     for &decl_list_idx in &var_stmt.declarations.nodes {
@@ -984,6 +972,13 @@ impl<'a> DeclarationEmitter<'a> {
         if top_level_names.is_empty() {
             return result;
         }
+
+        let function_names_with_prototype_objects = self
+            .js_prototype_object_initializers
+            .keys()
+            .filter(|name| top_level_function_declarations.contains(*name))
+            .cloned()
+            .collect::<FxHashSet<_>>();
 
         for &stmt_idx in &source_file.statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
@@ -1032,7 +1027,9 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(root_name) = self.get_identifier_text(lhs_access.expression) else {
                 continue;
             };
-            if self.js_export_equals_names.contains(&root_name) {
+            let owns_combined_namespace =
+                function_names_with_prototype_objects.contains(&root_name);
+            if self.js_export_equals_names.contains(&root_name) && !owns_combined_namespace {
                 continue;
             }
             if !top_level_names.contains(&root_name) {
@@ -1042,7 +1039,8 @@ impl<'a> DeclarationEmitter<'a> {
                 .arena
                 .skip_parenthesized_and_assertions_and_comma(binary.right);
             if !(self.is_js_function_initializer(rhs)
-                || self.js_namespace_object_member_initializer_supported(rhs))
+                || self.js_namespace_object_member_initializer_supported(rhs)
+                || owns_combined_namespace)
             {
                 continue;
             }
@@ -1062,8 +1060,8 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         source_file: &tsz_parser::parser::node::SourceFileData,
     ) -> JsCommonjsNamedExports {
-        let mut exported_names = FxHashSet::default();
-        let mut function_statements = FxHashMap::default();
+        let exported_names = FxHashSet::default();
+        let function_statements = FxHashMap::default();
         let mut value_statements = FxHashMap::default();
         if !self.source_file_is_js(source_file) {
             return (exported_names, function_statements, value_statements);
@@ -1094,12 +1092,15 @@ impl<'a> DeclarationEmitter<'a> {
                 && local_name == export_name
                 && export_targets.contains_key(&local_name)
             {
-                exported_names.insert(local_name);
+                // A same-name CommonJS assignment remains an export alias in
+                // TypeScript's declarations (`export { F }; declare function
+                // F...`), rather than turning the local declaration itself
+                // into `export declare`.
                 continue;
             }
 
             if self.is_js_function_initializer(initializer) {
-                function_statements.insert(stmt_idx, (name_idx, initializer));
+                value_statements.insert(stmt_idx, (name_idx, initializer));
                 continue;
             }
 

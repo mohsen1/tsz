@@ -40,9 +40,20 @@ use super::{
 };
 
 pub(in crate::declaration_emitter) struct JsCjsExportAliasCollection {
-    pub aliases: Vec<(String, String)>,
-    pub value_declarations: Vec<(String, String)>,
+    pub source_exports: FxHashMap<NodeIndex, JsCjsSourceExport>,
+    pub local_names: FxHashSet<String>,
     pub skipped_statements: FxHashSet<NodeIndex>,
+}
+
+pub(in crate::declaration_emitter) enum JsCjsSourceExport {
+    Alias {
+        export_name: String,
+        local_name: String,
+    },
+    Value {
+        export_name: String,
+        type_text: String,
+    },
 }
 
 #[derive(Default)]
@@ -55,7 +66,9 @@ pub(in crate::declaration_emitter) struct JsLocalNamedExportPlan {
 }
 
 impl<'a> DeclarationEmitter<'a> {
-    fn is_js_commonjs_export_identifier_text(text: &str) -> bool {
+    pub(in crate::declaration_emitter) fn is_js_commonjs_export_identifier_text(
+        text: &str,
+    ) -> bool {
         let mut chars = text.chars();
         let Some(first) = chars.next() else {
             return false;
@@ -98,8 +111,7 @@ impl<'a> DeclarationEmitter<'a> {
                 || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
             {
                 let literal = self.arena.get_literal(name_node)?;
-                let sanitized = crate::transforms::emit_utils::sanitize_module_name(&literal.text);
-                Some(format!("_{sanitized}"))
+                Some(literal.text.clone())
             }
             _ => None,
         }
@@ -914,6 +926,13 @@ impl<'a> DeclarationEmitter<'a> {
         let source_file_node = self.arena.get(source_file_idx)?;
         let source_file = self.arena.get_source_file(source_file_node)?;
 
+        // An object-literal `module.exports` root remains an export-equals
+        // value in TypeScript 7 even when later property assignments augment
+        // it. Secondary aliases merge into the synthetic root namespace.
+        if init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+
         let has_secondary_exports = source_file
             .statements
             .nodes
@@ -928,14 +947,11 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
-        if init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-            return Some(initializer);
-        }
         if self
             .js_new_expression_class_declaration(initializer)
             .is_some()
         {
-            return Some(initializer);
+            return None;
         }
 
         let type_id = self.get_node_type_or_names(&[initializer])?;
@@ -1009,7 +1025,7 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         for &stmt_idx in &source_file.statements.nodes {
-            let Some((root_name, export_name, local_name, use_import_alias)) =
+            let Some((root_name, export_name, local_name, use_import_alias, initializer)) =
                 self.js_namespace_export_alias_for_statement(stmt_idx, commonjs_root.as_deref())
             else {
                 if let Some((root_name, member_name, _initializer)) =
@@ -1042,12 +1058,14 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             };
 
-            Self::push_js_namespace_export_alias_with_kind(
+            Self::push_js_namespace_export_alias_with_source(
                 &mut aliases,
                 &root_name,
                 export_name,
                 local_name,
                 use_import_alias,
+                self.arena.get(stmt_idx).map(|node| node.pos),
+                initializer,
             );
         }
 
@@ -1111,7 +1129,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         let mut declarations: FxHashMap<String, Vec<NodeIndex>> = FxHashMap::default();
         for &stmt_idx in &source_file.statements.nodes {
-            let Some((root_name, _export_name, local_name, _use_import_alias)) =
+            let Some((root_name, _export_name, local_name, _use_import_alias, _initializer)) =
                 self.js_namespace_export_alias_for_statement(stmt_idx, commonjs_root)
             else {
                 continue;
@@ -1144,8 +1162,9 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         let mut commonjs_exported_property_refs: FxHashSet<(String, String)> = FxHashSet::default();
+        let mut direct_commonjs_function_exports = FxHashSet::default();
         for &stmt_idx in &source_file.statements.nodes {
-            let Some((_export_name_idx, initializer)) =
+            let Some((export_name_idx, initializer)) =
                 self.js_commonjs_named_export_for_statement(stmt_idx)
             else {
                 continue;
@@ -1153,6 +1172,12 @@ impl<'a> DeclarationEmitter<'a> {
             let initializer = self
                 .arena
                 .skip_parenthesized_and_assertions_and_comma(initializer);
+            if self.is_js_function_initializer(initializer) {
+                if let Some(export_name) = self.js_commonjs_export_name_text(export_name_idx) {
+                    direct_commonjs_function_exports.insert(export_name);
+                }
+                continue;
+            }
             let Some(init_node) = self.arena.get(initializer) else {
                 continue;
             };
@@ -1179,6 +1204,9 @@ impl<'a> DeclarationEmitter<'a> {
             else {
                 continue;
             };
+            if direct_commonjs_function_exports.contains(&root_name) {
+                continue;
+            }
             if let Some(member_text) = self.get_identifier_text(member_name)
                 && commonjs_exported_property_refs.contains(&(root_name, member_text))
             {
@@ -1196,8 +1224,8 @@ impl<'a> DeclarationEmitter<'a> {
         source_file: &tsz_parser::parser::node::SourceFileData,
     ) -> JsCjsExportAliasCollection {
         let empty = JsCjsExportAliasCollection {
-            aliases: Vec::new(),
-            value_declarations: Vec::new(),
+            source_exports: FxHashMap::default(),
+            local_names: FxHashSet::default(),
             skipped_statements: FxHashSet::default(),
         };
         if !self.source_file_is_js(source_file) {
@@ -1219,16 +1247,12 @@ impl<'a> DeclarationEmitter<'a> {
                 let rhs_idx = self
                     .arena
                     .skip_parenthesized_and_assertions_and_comma(rhs_idx);
-                let local_name = self
-                    .get_identifier_text(rhs_idx)
-                    .or_else(|| self.module_exports_property_reference_name(rhs_idx));
+                let local_name = self.get_identifier_text(rhs_idx);
                 let entry = alias_map
                     .entry(export_name.clone())
                     .or_insert_with(|| (String::new(), Vec::new(), order));
                 entry.1.push(stmt_idx);
-                if let Some(ref ln) = local_name
-                    && *ln != export_name
-                {
+                if let Some(ref ln) = local_name {
                     entry.0 = ln.clone();
                 }
                 continue;
@@ -1245,10 +1269,9 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
         }
-        let mut aliases = Vec::new();
-        let mut value_declarations = Vec::new();
+        let mut source_exports = FxHashMap::default();
+        let mut local_names = FxHashSet::default();
         let mut skipped = FxHashSet::default();
-        let mut seen = FxHashSet::default();
         let mut ordered_aliases: Vec<_> = alias_map.iter().collect();
         ordered_aliases.sort_by_key(|(_, (_, _, order))| *order);
         for (export_name, (local_name, stmts, _)) in ordered_aliases {
@@ -1261,18 +1284,33 @@ impl<'a> DeclarationEmitter<'a> {
             for &s in stmts {
                 skipped.insert(s);
             }
+            local_names.insert(local_name.clone());
+            let Some(&event_stmt) = stmts.first() else {
+                continue;
+            };
             if let Some(type_text) =
                 self.js_commonjs_export_alias_value_type_text(source_file, export_name, local_name)
             {
-                value_declarations.push((export_name.clone(), type_text));
-            }
-            if seen.insert((export_name.clone(), local_name.clone())) {
-                aliases.push((export_name.clone(), local_name.clone()));
+                source_exports.insert(
+                    event_stmt,
+                    JsCjsSourceExport::Value {
+                        export_name: export_name.clone(),
+                        type_text,
+                    },
+                );
+            } else {
+                source_exports.insert(
+                    event_stmt,
+                    JsCjsSourceExport::Alias {
+                        export_name: export_name.clone(),
+                        local_name: local_name.clone(),
+                    },
+                );
             }
         }
         JsCjsExportAliasCollection {
-            aliases,
-            value_declarations,
+            source_exports,
+            local_names,
             skipped_statements: skipped,
         }
     }

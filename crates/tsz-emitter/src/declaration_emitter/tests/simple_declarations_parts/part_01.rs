@@ -30,7 +30,7 @@ export function lookup(k) {
         .find("export type Value =")
         .expect("Expected Value typedef");
     let function_pos = output
-        .find("export function lookup(")
+        .find("export declare function lookup(")
         .expect("Expected lookup function");
     assert!(
         key_pos < function_pos,
@@ -66,7 +66,7 @@ export function process(s) {}
         .find("export type OptStr =")
         .expect("Expected OptStr typedef alias");
     let function_pos = output
-        .find("export function process(")
+        .find("export declare function process(")
         .expect("Expected process function");
     assert!(
         alias_pos < function_pos,
@@ -137,11 +137,11 @@ fn test_js_exported_arrow_without_jsdoc_emits_function_declaration() {
     let output = emit_js_dts_with_usage_analysis("export const id = (value) => value;");
 
     assert!(
-        output.contains("export function id(value: any);"),
+        output.contains("export declare function id(value: any);"),
         "Expected exported JS arrow variable to emit as a function declaration: {output}"
     );
     assert!(
-        !output.contains("export const id:"),
+        !output.contains("const id:"),
         "Did not expect exported JS arrow variable to stay as a const function type: {output}"
     );
 }
@@ -237,7 +237,7 @@ export const ExampleFunctionalComponent = ({ "data-testid": dataTestId, [dynProp
     let output = emitter.emit(root);
 
     assert!(
-        output.contains("export function ExampleFunctionalComponent"),
+        output.contains("export declare function ExampleFunctionalComponent"),
         "Expected exported JS arrow component to emit as a function declaration: {output}"
     );
     assert!(
@@ -316,11 +316,11 @@ fn test_js_exported_computed_param_key_does_not_emit_synthetic_duplicate() {
     );
 
     assert!(
-        output.contains("export const key: \"x\";"),
+        output.contains("export declare const key: \"x\";"),
         "Expected exported computed key const to emit through the normal export path: {output}"
     );
     assert!(
-        output.contains("export function f({ [key]: value }"),
+        output.contains("export declare function f({ [key]: value }"),
         "Expected exported JS arrow variable to emit as a function using the exported computed key: {output}"
     );
     assert!(
@@ -667,7 +667,7 @@ export const x = 1;
     );
 
     assert!(
-        output.contains("export const x: 1;"),
+        output.contains("export declare const x: 1;"),
         "Expected sibling ES export to stay exported: {output}"
     );
     assert!(
@@ -693,7 +693,7 @@ export const x = 1;
     );
 
     assert!(
-        output.contains("export const x: 1;"),
+        output.contains("export declare const x: 1;"),
         "Expected sibling ES export to stay exported: {output}"
     );
     assert!(
@@ -738,10 +738,10 @@ module.exports = { groups, nameToGroup };
         .find("export type Group = {")
         .expect("Expected exported Group alias");
     let groups_pos = output
-        .find("export const groups: { [P in GroupIds]: {\n    id: P;\n    label: string;\n}; };")
+        .find("export declare const groups: { [P in GroupIds]: {\n    id: P;\n    label: string;\n}; };")
         .expect("Expected mapped JSDoc object type to match tsc shape");
     let map_pos = output
-        .find("export const nameToGroup: {\n    [x: string]: Group;\n};")
+        .find("export declare const nameToGroup: {\n    [x: string]: Group;\n};")
         .expect("Expected exported Object<string, Group> index signature");
 
     assert!(
@@ -755,7 +755,7 @@ module.exports = { groups, nameToGroup };
 }
 
 #[test]
-fn test_js_commonjs_property_export_emits_typedef_aliases_first() {
+fn test_js_commonjs_property_alias_precedes_typedef_and_local_declaration() {
     let output = emit_js_dts(
         r#"
 /** @typedef {string | number} Token */
@@ -764,16 +764,14 @@ exports.value = value;
 "#,
     );
 
-    let alias_pos = output
-        .find("export type Token = string | number;")
-        .expect("Expected CommonJS named export file to export the typedef alias");
-    let value_pos = output
-        .find("export const value: \"x\";")
-        .expect("Expected named CommonJS value export");
-
-    assert!(
-        alias_pos < value_pos,
-        "Expected typedef alias before direct CommonJS named export: {output}"
+    let expected = r#"export { value };
+export type Token = string | number;
+/** @typedef {string | number} Token */
+declare const value = "x";
+"#;
+    assert_eq!(
+        output, expected,
+        "Expected the CommonJS alias prelude before its typedef and retained local"
     );
 }
 
@@ -1265,7 +1263,8 @@ export function fn3(uuid) {}
     );
 
     assert!(
-        !output.contains("@satisfies {(uuid: string) => void} */\nexport function fn1"),
+        !output.contains("@satisfies {(uuid: string) => void} */\nexport declare function fn1")
+            && !output.contains("@satisfies {(uuid: string) => void} */\nexport function fn1"),
         "Expected synthetic function-variable JSDoc @satisfies comment to be stripped: {output}"
     );
     assert!(
@@ -1273,16 +1272,16 @@ export function fn3(uuid) {}
         "Expected multiline synthetic function-variable @satisfies comment to be stripped: {output}"
     );
     assert!(
-        output.contains("export function fn1(uuid: string): void;"),
+        output.contains("export declare function fn1(uuid: string): void;"),
         "Expected @satisfies parameter fallback to remain active: {output}"
     );
     assert!(
-        output.contains("export function fn2(a: string, b: never): void;"),
+        output.contains("export declare function fn2(a: string, b: never): void;"),
         "Expected @param plus @satisfies inference to remain active: {output}"
     );
     assert!(
         output.contains(
-            "/** @satisfies {(uuid: string) => void} */\nexport function fn3(uuid: any): void;"
+            "/** @satisfies {(uuid: string) => void} */\nexport declare function fn3(uuid: any): void;"
         ),
         "Expected function declarations to preserve @satisfies comments: {output}"
     );
@@ -1308,7 +1307,7 @@ export const renamed = label => {};
     );
 
     assert!(
-        output.contains("export function fn1(uuid: string): void;"),
+        output.contains("export declare function fn1(uuid: string): void;"),
         "Expected @satisfies parameter fallback to keep exported const-function signature: {output}"
     );
     assert!(
@@ -1342,7 +1341,7 @@ export function id(x) {
     );
 
     assert!(
-        output.contains("export function id<T extends string>(x: T): T;"),
+        output.contains("export declare function id<T extends string>(x: T): T;"),
         "Expected constrained JSDoc template to emit as a type parameter constraint: {output}"
     );
     assert!(
@@ -1367,7 +1366,7 @@ export function inJs(l) {
     );
 
     assert!(
-        output.contains("export function inJs<T>(m: T): T;"),
+        output.contains("export declare function inJs<T>(m: T): T;"),
         "Expected JSDoc @type function alias to emit as a function signature: {output}"
     );
     assert!(
@@ -1383,7 +1382,7 @@ export function inJs(l) {
         "Did not expect implementation-only @type comment in declaration output: {output}"
     );
     let function_pos = output
-        .find("export function inJs<T>(m: T): T;")
+        .find("export declare function inJs<T>(m: T): T;")
         .expect("Expected emitted function signature");
     let alias_pos = output
         .find("export type IFn = <T>(m: T) => T;")
@@ -1411,7 +1410,7 @@ export function inJs(l) {
 
     assert!(
         output.contains(
-            "export function inJs<T>(x: [T, number], y: { items: [T, string] }): [T, string];"
+            "export declare function inJs<T>(x: [T, number], y: { items: [T, string] }): [T, string];"
         ),
         "Expected nested tuple/object commas in JSDoc function typedef to parse as a single signature: {output}"
     );
@@ -1439,7 +1438,9 @@ export function inJs(cb, value) {
     );
 
     assert!(
-        output.contains("export function inJs(cb: (x: number) => string, value: number): void;"),
+        output.contains(
+            "export declare function inJs(cb: (x: number) => string, value: number): void;"
+        ),
         "Expected nested function parameter type to parse through closing paren matching: {output}"
     );
     assert!(
@@ -1464,7 +1465,7 @@ export function mapValue(value) {
     );
 
     assert!(
-        output.contains("export function mapValue<Value>(input: Value): Value;"),
+        output.contains("export declare function mapValue<Value>(input: Value): Value;"),
         "Expected renamed JSDoc function alias to emit as a function signature: {output}"
     );
     assert!(
@@ -1480,7 +1481,7 @@ export function mapValue(value) {
         "Did not expect renamed implementation-only @type comment in declaration output: {output}"
     );
     let function_pos = output
-        .find("export function mapValue<Value>(input: Value): Value;")
+        .find("export declare function mapValue<Value>(input: Value): Value;")
         .expect("Expected emitted function signature");
     let alias_pos = output
         .find("export type Mapper = <Value>(input: Value) => Value;")
@@ -1511,7 +1512,7 @@ export function inJs(l) {
     );
 
     assert!(
-        output.contains("export function inJs<T>(m: T): T;"),
+        output.contains("export declare function inJs<T>(m: T): T;"),
         "Expected JSDoc @type function alias to emit as a function signature: {output}"
     );
     assert!(
@@ -1538,11 +1539,11 @@ export { x, f };
     let output = emitter.emit(root);
 
     assert!(
-        output.contains("export const x: 1;"),
+        output.contains("export declare const x: 1;"),
         "Expected named-exported const to fold into an exported declaration: {output}"
     );
     assert!(
-        output.contains("export function f(): void;"),
+        output.contains("export declare function f(): void;"),
         "Expected named-exported function to fold into an exported declaration: {output}"
     );
     assert!(
@@ -1596,7 +1597,7 @@ export { G, H as HH, x };
         .find("interface H")
         .expect("expected renamed interface to keep a local declaration");
     let x_pos = output
-        .find("export const x: 1;")
+        .find("export declare const x: 1;")
         .expect("expected same-name value export to fold into declaration");
     let alias_pos = output
         .find("export { H as HH };")
@@ -1669,17 +1670,17 @@ export { g };
     );
 
     assert!(
-        output.contains("export function g(a: {\n    x: string;\n}, b: {\n    y: typeof import(\".\").b;\n}): void | \"\";"),
+        output.contains("export declare function g(a: {\n    x: string;\n}, b: {\n    y: typeof import(\".\").b;\n}): void | \"\";"),
         "Expected folded JS export function to preserve JSDoc param and return types: {output}"
     );
     assert_eq!(
-        output.matches("export function g(").count(),
+        output.matches("function g(").count(),
         1,
         "Expected folded JS export function to be emitted once: {output}"
     );
     assert!(
         output.contains(
-            "/**\n * @param {{x: string}} a\n * @param {{y: typeof b}} b\n */\nexport function g"
+            "/**\n * @param {{x: string}} a\n * @param {{y: typeof b}} b\n */\nexport declare function g"
         ),
         "Expected folded JS export function to keep its JSDoc comment: {output}"
     );
@@ -1700,10 +1701,10 @@ export { require, exports, Object };
     let mut emitter = DeclarationEmitter::new(&parser.arena);
     let output = emitter.emit(root);
 
-    let expected = r#"export const __esModule: false;
-export function require(): void;
-export const exports: {};
-export class Object {
+    let expected = r#"export declare const __esModule: false;
+export declare function require(): void;
+export declare const exports: {};
+export declare class Object {
 }"#;
     assert_eq!(
         output.trim(),
@@ -1727,7 +1728,7 @@ export namespace A {
     let output = emit_js_dts_with_usage_analysis(source);
 
     assert!(
-        output.contains("export namespace A {\n    namespace B {\n        export { thing };\n        export let thing: import(\"fs\").Something;\n    }\n}"),
+        output.contains("export declare namespace A {\n    namespace B {\n        export { thing };\n        export let thing: import(\"fs\").Something;\n    }\n}"),
         "Expected namespace named export to emit a reusable import type after its export clause: {output}"
     );
 }
@@ -1745,7 +1746,7 @@ module.exports = {
 
     assert_eq!(
         output.trim(),
-        "export const thing: Something;\nimport Something_1 = require(\"fs\");\nimport Something = Something_1.Something;"
+        "export declare const thing: Something;\nimport Something_1 = require(\"fs\");\nimport Something = Something_1.Something;"
     );
 }
 
@@ -1784,7 +1785,7 @@ module.exports = {
 
     assert_eq!(
         output.trim(),
-        "export const thing: Something;\nimport Something_1 = require(\"fs\");\nimport Something = Something_1.Something;"
+        "export declare const thing: Something;\nimport Something_1 = require(\"fs\");\nimport Something = Something_1.Something;"
     );
 }
 

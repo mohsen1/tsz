@@ -170,7 +170,7 @@ impl<'a> DeclarationEmitter<'a> {
                             decl.name,
                             decl.initializer,
                             true,
-                            false,
+                            true,
                         )
                     {
                         if let Some(dn) = self.arena.get(decl_idx) {

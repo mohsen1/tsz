@@ -1386,7 +1386,7 @@ impl<'a> DeclarationEmitter<'a> {
             .iter()
             .filter_map(|member| member.namespace_member_name.clone())
             .collect();
-        // Direct-named members get `export let`/`export var` when any sibling uses a
+        // Direct-named members get `export var` when any sibling uses a
         // reserved-word alias — so all accessible properties remain visible as `foo.prop`.
         // This applies to both JS and TS emit paths.
         let has_aliased_members = namespace_members
@@ -1440,11 +1440,7 @@ impl<'a> DeclarationEmitter<'a> {
             if has_aliased_members && export_alias.is_none() {
                 self.write("export ");
             }
-            if self.source_is_js_file {
-                self.write("let ");
-            } else {
-                self.write("var ");
-            }
+            self.write("var ");
             self.write(&namespace_member_name);
             self.write(": ");
             self.write(&member.type_text);

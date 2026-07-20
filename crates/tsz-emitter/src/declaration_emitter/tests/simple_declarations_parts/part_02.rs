@@ -11,7 +11,7 @@ module.exports.A.B = {
 
     assert_eq!(
         output.trim(),
-        "export namespace A {\n    namespace B {\n        let thing: Something;\n    }\n}\nimport Something_1 = require(\"fs\");\nimport Something = Something_1.Something;"
+        "export declare namespace A {\n    namespace B {\n        let thing: Something;\n    }\n}\nimport Something_1 = require(\"fs\");\nimport Something = Something_1.Something;"
     );
 }
 
@@ -27,7 +27,7 @@ export { ns };
     let output = emit_js_dts_with_usage_analysis(source);
 
     assert!(
-        output.contains("export namespace ns {\n    let thing: Something;\n}"),
+        output.contains("export declare namespace ns {\n    let thing: Something;\n}"),
         "Expected exported object literal to emit as a namespace with a constructor member: {output}"
     );
     assert!(
@@ -52,7 +52,7 @@ module.exports = {
     let output = emit_js_dts_with_usage_analysis(source);
 
     assert!(
-        output.contains("export const Something_1: 1;"),
+        output.contains("export declare const Something_1: 1;"),
         "Expected real exported binding to keep its name: {output}"
     );
     assert!(
@@ -78,7 +78,7 @@ module.exports.memberName = "thing";
 
     assert_eq!(
         output.trim(),
-        "declare const _exports: typeof m.default;\nexport = _exports;\nimport m = require(\"./exporter\");"
+        "declare const _exports: typeof m.default;\nexport = _exports;\ndeclare namespace _exports {\n    export var memberName: \"thing\";\n}\nimport m = require(\"./exporter\");"
     );
 }
 
@@ -114,7 +114,7 @@ export { x };
     let output = emitter.emit(root);
 
     assert!(
-        output.contains("export const x: string;"),
+        output.contains("export declare const x: string;"),
         "Expected import.meta.url to emit as string in JS declarations: {output}"
     );
 }
@@ -149,7 +149,7 @@ export { x };
     let output = emitter.emit(root);
 
     assert!(
-        output.contains("export const x: 1;"),
+        output.contains("export declare const x: 1;"),
         "Expected top-level await of a literal to preserve the literal type: {output}"
     );
 }
@@ -235,10 +235,10 @@ export const brandColors = {
 "##,
     );
 
-    let expected = r##"export namespace colors {
+    let expected = r##"export declare namespace colors {
     let royalBlue: string;
 }
-export namespace brandColors {
+export declare namespace brandColors {
     import purple = colors.royalBlue;
     export { purple };
 }"##;
@@ -261,7 +261,7 @@ export const ns = {
 "#,
     );
 
-    let expected = r#"export namespace ns {
+    let expected = r#"export declare namespace ns {
     let len: number;
 }"#;
     assert_eq!(
@@ -291,7 +291,7 @@ export class Preferences {
 }
 
 #[test]
-fn test_js_function_like_class_zero_arg_constructor_is_omitted() {
+fn test_js_function_declaration_does_not_gain_companion_class() {
     let source = r#"
 function C1() {
     this.prop = 1;
@@ -301,12 +301,12 @@ C1.prototype.method = function () {};
     let output = emit_js_dts_with_usage_analysis(source);
 
     assert!(
-        output.contains("declare class C1"),
-        "Expected JS function-like class surface: {output}"
+        output.contains("declare function C1(): void;"),
+        "Expected the JS function declaration surface: {output}"
     );
     assert!(
-        !output.contains("constructor();"),
-        "Expected zero-arg synthetic JS function-like constructors to be omitted: {output}"
+        !output.contains("class C1") && !output.contains("method()"),
+        "Did not expect TypeScript 7 declaration emit to synthesize a companion class: {output}"
     );
 }
 
@@ -582,7 +582,7 @@ function C() {
     );
 
     assert!(
-        output.contains("export const j:"),
+        output.contains("export declare const j:"),
         "Expected CommonJS named export value declaration: {output}"
     );
     assert!(
@@ -594,7 +594,7 @@ function C() {
         "Did not expect non-exported helper declarations to leak into JS module declarations: {output}"
     );
     assert!(
-        !output.contains("export const k:"),
+        !output.contains("const k:"),
         "Did not expect void exports to synthesize declarations: {output}"
     );
 }
@@ -621,11 +621,11 @@ exports.for = "loop";
         "Expected reserved export aliases to be grouped: {output}"
     );
     assert!(
-        !output.contains("export const class"),
+        !output.contains("const class"),
         "Did not expect invalid keyword binding declaration: {output}"
     );
     assert!(
-        !output.contains("export const for"),
+        !output.contains("const for"),
         "Did not expect invalid keyword binding declaration: {output}"
     );
 }
@@ -646,7 +646,7 @@ module.exports = {
     );
 
     assert!(
-        output.contains("export var x: number;"),
+        output.contains("export declare var x: number;"),
         "Expected shorthand object export to keep JS var widening: {output}"
     );
     assert!(
@@ -662,11 +662,11 @@ module.exports = {
         "Expected reserved object export alias to be grouped: {output}"
     );
     assert!(
-        !output.contains("export const x: 12;"),
+        !output.contains("const x: 12;"),
         "Did not expect the JS var export to remain const-narrowed: {output}"
     );
     assert!(
-        !output.contains("export const extends"),
+        !output.contains("const extends"),
         "Did not expect invalid keyword binding declaration: {output}"
     );
 }
@@ -790,11 +790,11 @@ module.exports["bar"] = "x";
     );
 
     assert!(
-        output.contains("export const foo: 1;"),
+        output.contains("export declare const foo: 1;"),
         "Expected bracket string exports to emit named declarations: {output}"
     );
     assert!(
-        output.contains("export const bar: \"x\";"),
+        output.contains("export declare const bar: \"x\";"),
         "Expected module.exports bracket string exports to emit named declarations: {output}"
     );
 }
@@ -810,14 +810,9 @@ exports["Does not work yet"] = D;
 "#,
     );
 
-    assert!(
-        output.contains("export function D(): void;"),
-        "Expected valid element access export to emit the local function: {output}"
-    );
-    assert!(
-        output.contains("export { D as _Does_not_work_yet };"),
-        "Expected invalid element access export name to emit a sanitized alias: {output}"
-    );
+    let expected =
+        "export { D };\nexport { D as \"Does not work yet\" };\ndeclare function D(): void;\n";
+    assert_eq!(output, expected, "Expected quoted CommonJS export names");
     assert!(
         !output.contains("alias comment should stay attached"),
         "Did not expect skipped alias statement comments to leak into output: {output}"
@@ -882,15 +877,15 @@ exports.y = 2;
     );
 
     assert!(
-        output.contains("export const x: 1;"),
+        output.contains("export declare const x: 1;"),
         "Expected x export declaration to survive past the void-zero preinit: {output}"
     );
     assert!(
-        output.contains("export const y: 2;"),
+        output.contains("export declare const y: 2;"),
         "Expected y export declaration to survive past the void-zero preinit: {output}"
     );
     assert!(
-        !output.contains("export const y: undefined;"),
+        !output.contains("const y: undefined;"),
         "Did not expect chained void-zero preinit to synthesize an undefined export: {output}"
     );
 }
@@ -906,15 +901,15 @@ Object.defineProperty(module.exports, "ro", { value: "fixed" });
     );
 
     assert!(
-        output.contains("export const named: 1;"),
+        output.contains("export declare const named: 1;"),
         "Expected assignment-shaped CommonJS export declaration: {output}"
     );
     assert!(
-        output.contains("export const myProp: number;"),
+        output.contains("export declare const myProp: number;"),
         "Expected Object.defineProperty(exports, ...) declaration: {output}"
     );
     assert!(
-        output.contains("export const ro: string;"),
+        output.contains("export declare const ro: string;"),
         "Expected Object.defineProperty(module.exports, ...) declaration: {output}"
     );
 }
@@ -929,7 +924,7 @@ var local = 123;
     );
 
     assert!(
-        output.contains("export const only: number;"),
+        output.contains("export declare const only: number;"),
         "Expected defineProperty-only CommonJS export declaration: {output}"
     );
     assert!(
@@ -951,19 +946,21 @@ Object.defineProperty(module.exports.fn, "self", { value: module.exports.fn });
     );
 
     assert!(
-        output.contains("export function fn(): void;"),
+        output.contains("export declare function fn(): void;"),
         "Expected local function defineProperty export: {output}"
     );
     assert!(
-        output.contains("export function alias(): void;"),
+        output.contains("export declare function alias(): void;"),
         "Expected defineProperty export alias to reuse the function signature: {output}"
     );
     assert!(
-        output.contains("export namespace fn {\n    function self(): void;\n}"),
+        output.contains("export declare namespace fn {\n    function self(): void;\n}"),
         "Expected defineProperty namespace member function declaration: {output}"
     );
     assert!(
-        !output.contains("declare function fn"),
+        !output
+            .lines()
+            .any(|line| line == "declare function fn(): void;"),
         "Did not expect the consumed local function to be emitted separately: {output}"
     );
 }
@@ -983,12 +980,12 @@ Object.defineProperty(module.exports, "d", { value: d });
 "#,
     );
 
-    let expected = r#"export function a(): void;
+    let expected = r#"export declare function a(): void;
 /**
  * @param {number} value
  * @return {string}
  */
-export function d(value: number): string;"#;
+export declare function d(value: number): string;"#;
     assert_eq!(
         output.trim(),
         expected,
@@ -1006,11 +1003,11 @@ module.exports.y = 0;
     );
 
     assert!(
-        output.contains("export const x: 0;"),
+        output.contains("export declare const x: 0;"),
         "Expected native ESM export to remain: {output}"
     );
     assert!(
-        !output.contains("export const y:"),
+        !output.contains("const y:"),
         "Did not expect CommonJS assignment to become a named export in an ESM JS file: {output}"
     );
 }
@@ -1024,9 +1021,10 @@ exports.foo = foo;
 "#,
     );
 
-    assert!(
-        output.contains("export function foo(): void;"),
-        "Expected same-name CommonJS export to reuse the function declaration: {output}"
+    assert_eq!(
+        output,
+        "export { foo };\ndeclare function foo(): void;\n",
+        "Expected same-name CommonJS export to retain a local function"
     );
 }
 
@@ -1046,7 +1044,7 @@ module.exports = { bar };
     );
 
     assert!(
-        output.contains("export function bar(a: string): string;"),
+        output.contains("export declare function bar(a: string): string;"),
         "Expected JSDoc parameter type to infer the CommonJS function return: {output}"
     );
 }
@@ -1074,10 +1072,10 @@ module.exports = { x, b };
     );
 
     let x_pos = output
-        .find("/**\n * const doc comment\n */\nexport function x(a: any): string;")
+        .find("/**\n * const doc comment\n */\nexport declare function x(a: any): string;")
         .unwrap_or_else(|| panic!("Expected documented exported function x: {output}"));
     let b_pos = output
-        .find("/**\n * function doc comment\n */\nexport function b(): number;")
+        .find("/**\n * function doc comment\n */\nexport declare function b(): number;")
         .unwrap_or_else(|| panic!("Expected documented exported function b: {output}"));
     assert!(
         x_pos < b_pos,
@@ -1208,7 +1206,7 @@ exports.default = function (x) {
     );
 
     assert!(
-        output.contains("declare function _default(x: any);"),
+        output.contains("declare const _default: (x: any) => any;"),
         "Expected CJS default function export to use a synthetic default alias: {output}"
     );
     assert!(
@@ -1216,7 +1214,7 @@ exports.default = function (x) {
         "Expected CJS default export to emit a default alias line: {output}"
     );
     assert!(
-        !output.contains("export function default"),
+        !output.contains("function default"),
         "Expected reserved default export name to be rewritten: {output}"
     );
 }
@@ -1231,8 +1229,8 @@ module.exports.foo.label = "ok";
     );
 
     assert!(
-        output.contains("export function foo(): void;"),
-        "Expected direct CommonJS function exports to emit a named function declaration: {output}"
+        output.contains("export declare var foo: () => void;"),
+        "Expected direct CommonJS function assignments to emit a value declaration: {output}"
     );
     assert!(
         !output.trim().eq("export {};"),
@@ -1277,7 +1275,7 @@ foo.label = "ok";
     );
 
     assert!(
-        output.contains("export namespace foo {\n    let label: string;\n}"),
+        output.contains("export declare namespace foo {\n    var label: string;\n}"),
         "Expected JS function value expandos to emit as merged namespace members: {output}"
     );
 }
@@ -1291,9 +1289,10 @@ module.exports.foo.label = "ok";
 "#,
     );
 
-    assert!(
-        output.contains("export namespace foo {\n    let label: string;\n}"),
-        "Expected CommonJS named function value expandos to emit as merged namespace members: {output}"
+    assert_eq!(
+        output,
+        "export declare var foo: () => void;\n",
+        "Expected qualified expandos on a direct CommonJS function assignment to be ignored"
     );
 }
 
@@ -1309,7 +1308,7 @@ foo.Widget = class {
     );
 
     assert!(
-        output.contains("export namespace foo {\n    export { Widget };\n}"),
+        output.contains("export declare namespace foo {\n    export { Widget };\n}"),
         "Expected JS function class expandos to emit as merged namespace aliases: {output}"
     );
     assert!(
@@ -1329,13 +1328,10 @@ module.exports.foo.Widget = class {
 "#,
     );
 
-    assert!(
-        output.contains("export namespace foo {\n    export { Widget };\n}"),
-        "Expected CommonJS named function class expandos to emit namespace aliases: {output}"
-    );
-    assert!(
-        output.contains("declare class Widget {\n    value(): void;\n}"),
-        "Expected CommonJS named function class expandos to emit a reusable class declaration: {output}"
+    assert_eq!(
+        output,
+        "export declare var foo: () => void;\n",
+        "Expected qualified class expandos on a direct CommonJS function assignment to be ignored"
     );
 }
 
@@ -1348,14 +1344,15 @@ module.exports.foo.self = module.exports.foo;
 "#,
     );
 
-    assert!(
-        output.contains("export namespace foo {\n    import self = foo;\n    export { self };\n}"),
-        "Expected CommonJS named function self aliases to use an import alias inside the namespace: {output}"
+    assert_eq!(
+        output,
+        "export declare var foo: () => void;\n",
+        "Expected qualified self aliases on a direct CommonJS function assignment to be ignored"
     );
 }
 
 #[test]
-fn test_js_function_like_class_emits_companion_class() {
+fn test_js_constructor_style_function_stays_a_function_declaration() {
     let output = emit_js_dts(
         r#"
 /**
@@ -1371,21 +1368,17 @@ export function Point(x, y) {
     );
 
     assert!(
-        output.contains("export function Point(x: number, y: number): Point;"),
-        "Expected constructor-style JS function to return its companion class: {output}"
+        output.contains("export declare function Point(x: number, y: number)"),
+        "Expected constructor-style JS source to remain a function declaration: {output}"
     );
     assert!(
-        output.contains("export class Point {"),
-        "Expected constructor-style JS function to emit a companion class: {output}"
-    );
-    assert!(
-        output.contains("x: number | undefined;") && output.contains("y: number | undefined;"),
-        "Expected this-assigned properties to be recovered on the companion class: {output}"
+        !output.contains("class Point") && !output.contains("x: number | undefined;"),
+        "Did not expect a synthetic class or instance properties: {output}"
     );
 }
 
 #[test]
-fn test_js_function_class_merge_omits_non_constructor_signature() {
+fn test_js_function_prototype_member_write_does_not_synthesize_class() {
     let output = emit_js_dts(
         r#"
 function C1() {
@@ -1411,17 +1404,14 @@ C1.prototype.method = function (x, y) {
     );
 
     assert!(
-        output.contains("declare function C1(): void;\ndeclare class C1 {"),
-        "Expected JS function plus prototype members to merge with a companion class: {output}"
+        output.contains("declare function C1(): void;"),
+        "Expected the original function declaration: {output}"
     );
     assert!(
-        !output.contains("constructor();"),
-        "Expected companion class not to duplicate the already-emitted function signature as a constructor: {output}"
-    );
-    assert!(
-        output.contains("prop: (x: number, y: number) => number;")
-            && output.contains("method(x: number, y: number): number;"),
-        "Expected constructor-assigned and prototype members to remain in the companion class: {output}"
+        !output.contains("class C1")
+            && !output.contains("prop: (x: number, y: number) => number;")
+            && !output.contains("method(x: number, y: number): number;"),
+        "Did not expect TypeScript 7 to synthesize a class from function/prototype writes: {output}"
     );
 }
 
@@ -1765,19 +1755,19 @@ baz.normal = false;
     let output = emit_js_dts_with_usage_analysis(source);
     let expected = r#"declare function foo(): void;
 declare namespace foo {
-    let _null: boolean;
+    var _null: boolean;
     export { _null as null };
 }
 declare function bar(): void;
 declare namespace bar {
-    let async: boolean;
-    let normal: boolean;
+    var async: boolean;
+    var normal: boolean;
 }
 declare function baz(): void;
 declare namespace baz {
-    let _class: boolean;
+    var _class: boolean;
     export { _class as class };
-    let normal_1: boolean;
+    var normal_1: boolean;
     export { normal_1 as normal };
 }"#;
     assert!(
@@ -1785,4 +1775,3 @@ declare namespace baz {
         "Expected JS reserved function expandos to use keyword aliases and avoid reused local names.\nOutput:\n{output}"
     );
 }
-

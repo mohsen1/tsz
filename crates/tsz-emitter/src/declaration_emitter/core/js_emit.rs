@@ -554,6 +554,12 @@ impl<'a> DeclarationEmitter<'a> {
         if self.is_js_export_equals_name(decl_name) {
             return false;
         }
+        if self
+            .get_identifier_text(decl_name)
+            .is_some_and(|name| self.js_cjs_export_alias_local_names.contains(&name))
+        {
+            return false;
+        }
         if !self.is_js_object_literal_namespace_candidate(decl_name, initializer) {
             return false;
         }
@@ -828,11 +834,64 @@ impl<'a> DeclarationEmitter<'a> {
         self.write(&export_name);
         self.write(";");
         self.write_line();
+        self.emit_js_anonymous_export_equals_secondary_namespaces(initializer, &export_name);
         if let Some((local_name, module_name)) = require_alias_import {
             self.emit_js_bare_require_alias_import(&local_name, &module_name);
         }
         self.emitted_scope_marker = true;
         self.emitted_module_indicator = true;
+    }
+
+    fn emit_js_anonymous_export_equals_secondary_namespaces(
+        &mut self,
+        root_initializer: NodeIndex,
+        export_name: &str,
+    ) {
+        let secondary_events =
+            self.js_module_exports_secondary_member_stmt_assignments(root_initializer);
+        if secondary_events.is_empty() {
+            return;
+        }
+
+        for &(stmt_idx, name_idx, initializer) in &secondary_events {
+            let Some(exported_name) = self.js_commonjs_export_name_text(name_idx) else {
+                continue;
+            };
+            self.write_indent();
+            self.write("declare namespace ");
+            self.write(export_name);
+            self.write(" {");
+            self.write_line();
+            self.increase_indent();
+            self.write_indent();
+            if let Some(local_name) = self.get_identifier_text(initializer) {
+                self.write("export { ");
+                self.write(&local_name);
+                if local_name != exported_name {
+                    self.write(" as ");
+                    self.write_js_cjs_export_name(&exported_name);
+                }
+                self.write(" };");
+            } else {
+                let type_text = self
+                    .js_synthetic_export_value_type_text(initializer)
+                    .unwrap_or_else(|| "any".to_string());
+                self.write("export var ");
+                self.write_js_cjs_export_name(&exported_name);
+                self.write(": ");
+                self.write(&type_text);
+                self.write(";");
+            }
+            self.write_line();
+            self.decrease_indent();
+            self.write_indent();
+            self.write("}");
+            self.write_line();
+
+            self.js_deferred_function_export_statements
+                .remove(&stmt_idx);
+            self.js_deferred_value_export_statements.remove(&stmt_idx);
+        }
     }
 
     pub(in crate::declaration_emitter) fn emit_js_anonymous_export_equals_function_declaration(

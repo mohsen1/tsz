@@ -32,6 +32,8 @@ pub(crate) struct JsNamespaceExportAlias {
     pub(crate) export_name: String,
     pub(crate) local_name: String,
     pub(crate) use_import_alias: bool,
+    pub(crate) source_pos: Option<u32>,
+    pub(crate) initializer: Option<NodeIndex>,
 }
 type JsNamespaceExportAliases = FxHashMap<String, Vec<JsNamespaceExportAlias>>;
 type JsCommonjsSyntheticStatements = FxHashMap<NodeIndex, (NodeIndex, NodeIndex)>;
@@ -238,6 +240,7 @@ mod generic_call_variadic_tuple;
 mod js_exports;
 mod js_exports_local;
 mod js_exports_namespace;
+pub(in crate::declaration_emitter) use js_exports::JsCjsSourceExport;
 mod jsdoc;
 mod jsdoc_function_signature;
 mod late_bound_function_analysis;

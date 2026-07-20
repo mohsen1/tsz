@@ -869,7 +869,9 @@ impl<'a> DeclarationEmitter<'a> {
     /// number[]` instead of `(string | number)[]`). The check is structural:
     /// it splits on *top-level* separators only, so nested `Box<a | b>` does
     /// not trigger spurious parens.
-    pub(super) fn parenthesize_type_text_in_array_element_position(element_text: &str) -> String {
+    pub(in crate::declaration_emitter) fn parenthesize_type_text_in_array_element_position(
+        element_text: &str,
+    ) -> String {
         let trimmed = element_text.trim();
         if trimmed.is_empty() {
             return trimmed.to_string();

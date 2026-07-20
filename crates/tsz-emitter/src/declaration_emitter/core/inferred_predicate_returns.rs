@@ -33,6 +33,7 @@ impl<'a> DeclarationEmitter<'a> {
         ) {
             self.emit_js_synthetic_prototype_class_if_needed(func.name, is_exported);
         }
+        self.emit_js_function_value_namespace(func.name, is_exported);
         self.emit_js_namespace_export_aliases_for_name(func.name, is_exported);
         if let Some(body_node) = self.arena.get(func.body) {
             self.skip_comments_in_node(body_node.pos, body_node.end);
