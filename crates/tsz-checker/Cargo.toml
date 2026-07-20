@@ -2510,3 +2510,7 @@ path = "tests/spread_rest_literal_preservation_tests.rs"
 [[test]]
 name = "js_number_string_semantics_tests"
 path = "tests/js_number_string_semantics_tests.rs"
+
+[[test]]
+name = "instanceof_promise_recursive_narrowing_tests"
+path = "tests/instanceof_promise_recursive_narrowing_tests.rs"

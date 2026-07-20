@@ -195,6 +195,7 @@ fn compound_simplification_checker(
     // member removal only acts on definitive verdicts, so the probe key must
     // carry the same not-coinductive relation mode.
     checker.assume_related_on_cycle = false;
+    checker.assume_related_on_depth = false;
     checker.max_depth = MAX_SUBTYPE_DEPTH;
     checker
 }

@@ -35,6 +35,11 @@ fn relation_policy_cache_config_unifies_equivalent_flag_and_builder_bits() {
             RelationPolicy::unflagged_compatibility().with_assume_related_on_cycle(true),
         ),
         (
+            "assume related on depth",
+            RelationPolicy::from_relation_flags(RelationFlags::ASSUME_RELATED_ON_DEPTH),
+            RelationPolicy::unflagged_compatibility().with_assume_related_on_depth(true),
+        ),
+        (
             "disable generic erasure",
             RelationPolicy::from_relation_flags(RelationFlags::NO_ERASE_GENERICS),
             RelationPolicy::unflagged_compatibility().with_erase_generics(false),
@@ -85,6 +90,12 @@ fn relation_policy_builder_overrides_remove_prior_flag_bits_from_cache_config() 
             RelationFlags::ASSUME_RELATED_ON_CYCLE,
         ),
         (
+            "assume related on depth",
+            RelationPolicy::from_relation_flags(RelationFlags::ASSUME_RELATED_ON_DEPTH)
+                .with_assume_related_on_depth(false),
+            RelationFlags::ASSUME_RELATED_ON_DEPTH,
+        ),
+        (
             "generic erasure",
             RelationPolicy::from_relation_flags(RelationFlags::NO_ERASE_GENERICS)
                 .with_erase_generics(true),
@@ -126,6 +137,10 @@ fn relation_policy_behavior_builders_partition_cache_config() {
             base.with_assume_related_on_cycle(false).cache_config(),
         ),
         (
+            "reject depth overflow instead of assuming related",
+            base.with_assume_related_on_depth(false).cache_config(),
+        ),
+        (
             "skip weak type checks",
             base.with_skip_weak_type_checks(true).cache_config(),
         ),
@@ -162,6 +177,7 @@ fn relation_policy_builder_cache_matrix_covers_current_behavior_builders() {
             "with_strict_any_propagation",
             "with_any_propagation_mode",
             "with_assume_related_on_cycle",
+            "with_assume_related_on_depth",
             "with_skip_weak_type_checks",
         ],
         "new behavior-affecting RelationPolicy builders must update the cache-config partition matrix",

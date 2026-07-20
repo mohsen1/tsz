@@ -426,7 +426,7 @@ fn assignability_cache_strict_null_checks_matches_uncached_relation_policy() {
 }
 
 #[test]
-fn assignability_cache_assume_related_on_cycle_matches_uncached_depth_policy() {
+fn assignability_cache_assume_related_on_depth_matches_uncached_depth_policy() {
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
 
@@ -437,8 +437,8 @@ fn assignability_cache_assume_related_on_cycle_matches_uncached_depth_policy() {
         target = interner.array(target);
     }
 
-    let assume_related = RelationPolicy::default().with_assume_related_on_cycle(true);
-    let reject_overflow = RelationPolicy::default().with_assume_related_on_cycle(false);
+    let assume_related = RelationPolicy::default().with_assume_related_on_depth(true);
+    let reject_overflow = RelationPolicy::default().with_assume_related_on_depth(false);
     let assume_key =
         RelationCacheKey::for_assignability(source, target, assume_related.cache_config());
     let reject_key =
@@ -446,7 +446,7 @@ fn assignability_cache_assume_related_on_cycle_matches_uncached_depth_policy() {
 
     assert_ne!(
         assume_key, reject_key,
-        "cycle/depth-overflow policies must occupy distinct assignability cache slots",
+        "depth-overflow policies must occupy distinct assignability cache slots",
     );
 
     let assume_uncached = query_relation(
@@ -490,8 +490,8 @@ fn assignability_cache_assume_related_on_cycle_matches_uncached_depth_policy() {
     );
     assert_eq!(
         db.lookup_assignability_cache(assume_key),
-        Some(assume_uncached.is_related()),
-        "assume-related result must be stored in its own assignability slot",
+        None,
+        "budget-dependent assume-related success must not become a definitive cache entry",
     );
     assert_eq!(
         db.lookup_assignability_cache(reject_key),
@@ -506,13 +506,13 @@ fn assignability_cache_assume_related_on_cycle_matches_uncached_depth_policy() {
     );
     assert_eq!(
         db.lookup_assignability_cache(reject_key),
-        Some(reject_uncached.is_related()),
-        "non-assuming result must be stored in its own assignability slot",
+        None,
+        "budget-dependent strict-depth failure must not become a definitive cache entry",
     );
     assert_eq!(
         db.lookup_assignability_cache(assume_key),
-        Some(assume_uncached.is_related()),
-        "assume-related slot must remain intact after the non-assuming lookup",
+        None,
+        "neither overflow policy may publish a definitive outer-cache entry",
     );
 }
 

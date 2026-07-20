@@ -382,9 +382,10 @@ mod relation_evaluation_result_tests {
 ///
 /// One instance per taint source
 /// ([`SubtypeChecker::unresolved_lazy_relation_events`],
-/// [`SubtypeChecker::incomplete_evaluation_relation_events`]). Scoped to one
-/// [`SubtypeChecker`]: fresh unrelated checkers keep their own counters, and a
-/// contributing subchecker's events are propagated by the `absorb_*` methods.
+/// [`SubtypeChecker::incomplete_evaluation_relation_events`], and
+/// [`SubtypeChecker::relation_limit_events`]). Scoped to one [`SubtypeChecker`]:
+/// fresh unrelated checkers keep their own counters, and contributing
+/// subchecker taint is propagated by the `absorb_*` methods.
 #[derive(Debug)]
 pub(crate) struct RelationEventCounter(Cell<u64>);
 
@@ -635,9 +636,14 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// class, and is consumed (reset) on entry to `check_function_subtype` so
     /// nested function comparisons start fresh.
     pub(crate) force_strict_construct_params: bool,
-    /// Whether recursive relation cycles and overflow should be treated as
+    /// Whether valid recursive relation cycles should be treated as
     /// assumed-related (`true`) or definitive failure (`false`).
     pub assume_related_on_cycle: bool,
+    /// Whether relation depth, iteration, or shared solver-frame exhaustion
+    /// should be treated as assumed-related (`true`) or definitive failure
+    /// (`false`). Kept separate from cycle handling so proof-oriented callers
+    /// can reject budget exhaustion while retaining coinductive recursion.
+    pub assume_related_on_depth: bool,
     /// When `true`, DefId-level cycle detection compares Application type
     /// arguments before assuming related. This prevents false identity matches
     /// for recursive generic interfaces like `IPromise<T>` vs `Promise<T>`
@@ -696,9 +702,11 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// caches and conditional branch selection, but relation cache writes are
     /// gated only by this scoped counter.
     pub(crate) unresolved_lazy_relation_events: RelationEventCounter,
-    /// Monotonic count of guard-truncated meta-type evaluations
-    /// ([`crate::evaluation::result::Termination::Incomplete`]) consumed while
-    /// computing relation answers for this checker.
+    /// Monotonic count of budget-dependent events consumed while computing
+    /// relation answers for this checker. This includes guard-truncated
+    /// meta-type evaluations
+    /// ([`crate::evaluation::result::Termination::Incomplete`]) and relation
+    /// limit hits converted to `False` by a strict depth policy.
     ///
     /// First verdict-aware consumer of the #14346 typed termination channel:
     /// a relation verdict computed from a budget-truncated evaluation is a
@@ -708,6 +716,12 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// skip the write (the pair is recomputed later), never publish the
     /// approximation.
     pub(crate) incomplete_evaluation_relation_events: RelationEventCounter,
+    /// Monotonic count of relation depth, iteration, global-fuel, or shared
+    /// solver-frame limit hits. Unlike `incomplete_evaluation_relation_events`,
+    /// this records both optimistic and strict depth policies so outer query
+    /// caches can distinguish a budget-dependent answer from a stable verdict
+    /// without disabling the subtype checker's banded `LimitTrue` protocol.
+    pub(crate) relation_limit_events: RelationEventCounter,
     /// Instance-local fallback memo for definitive relation verdicts that the
     /// cross-checker shared cache must skip (issue #13828).
     ///
@@ -814,6 +828,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             in_callable_property_check: false,
             force_strict_construct_params: false,
             assume_related_on_cycle: true,
+            assume_related_on_depth: true,
             identity_cycle_check: false,
             bypass_evaluation: false,
             max_depth: MAX_SUBTYPE_DEPTH,
@@ -825,6 +840,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             maybe_keys: Vec::new(),
             unresolved_lazy_relation_events: RelationEventCounter::new(),
             incomplete_evaluation_relation_events: RelationEventCounter::new(),
+            relation_limit_events: RelationEventCounter::new(),
             local_relation_cache: FxHashMap::default(),
             explain_budget: super::explain::EXPLAIN_EVAL_BUDGET,
             explain_eval_fuel: None,
@@ -872,6 +888,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             in_callable_property_check: false,
             force_strict_construct_params: false,
             assume_related_on_cycle: true,
+            assume_related_on_depth: true,
             identity_cycle_check: false,
             bypass_evaluation: false,
             max_depth: MAX_SUBTYPE_DEPTH,
@@ -883,6 +900,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             maybe_keys: Vec::new(),
             unresolved_lazy_relation_events: RelationEventCounter::new(),
             incomplete_evaluation_relation_events: RelationEventCounter::new(),
+            relation_limit_events: RelationEventCounter::new(),
             local_relation_cache: FxHashMap::default(),
             explain_budget: super::explain::EXPLAIN_EVAL_BUDGET,
             explain_eval_fuel: None,
@@ -955,9 +973,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
-    /// Record that a meta-type evaluation consumed by this relation checker was
-    /// cut short by an evaluation guard
-    /// ([`crate::evaluation::result::Termination::Incomplete`]).
+    /// Record that a verdict consumed by this relation checker depended on a
+    /// budget limit, either through a guard-truncated meta-type evaluation or a
+    /// strict relation-depth policy converting overflow to `False`.
     ///
     /// The checker-local counter gates definitive relation cache writes and
     /// maybe-key promotion the same way the unresolved-`Lazy` counter does: a
@@ -968,10 +986,44 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.incomplete_evaluation_relation_events.note();
     }
 
-    /// Current checker-local guard-truncated evaluation event count.
+    /// Current checker-local budget-dependent relation event count.
     #[inline]
     pub(crate) const fn incomplete_evaluation_relation_event_count(&self) -> u64 {
         self.incomplete_evaluation_relation_events.count()
+    }
+
+    /// Current checker-local relation-limit event count.
+    #[inline]
+    pub(crate) const fn relation_limit_event_count(&self) -> u64 {
+        self.relation_limit_events.count()
+    }
+
+    /// Propagate a contributing subchecker's relation-limit event after its
+    /// ternary result was consumed as a boolean. The outer checker can no
+    /// longer preserve that subchecker's `Maybe`/`LimitTrue` protocol, so the
+    /// event also taints definitive cache writes as budget-dependent.
+    #[inline]
+    pub(crate) fn absorb_relation_limit_events_from<S: TypeResolver>(
+        &self,
+        subchecker: &SubtypeChecker<'_, S>,
+        subchecker_events_at_entry: u64,
+    ) {
+        if subchecker.relation_limit_event_count() != subchecker_events_at_entry {
+            self.relation_limit_events.note();
+            self.note_incomplete_evaluation_relation_event();
+        }
+    }
+
+    /// Whether the current top-level relation answer is stable enough for an
+    /// outer boolean query cache. Diagnostic termination remains a separate
+    /// channel: global fuel and shared solver-frame limits do not necessarily
+    /// trip the local recursion guard, but still make the answer budget-bound.
+    #[inline]
+    pub(crate) const fn relation_result_cacheable(&self) -> bool {
+        !self.depth_exceeded()
+            && self.unresolved_lazy_relation_event_count() == 0
+            && self.incomplete_evaluation_relation_event_count() == 0
+            && self.relation_limit_event_count() == 0
     }
 
     /// Propagate guard-truncated evaluation events from a subchecker whose
@@ -1001,6 +1053,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self
     }
 
+    /// Configure whether relation budget exhaustion is assumed related.
+    pub const fn with_assume_related_on_depth(mut self, assume: bool) -> Self {
+        self.assume_related_on_depth = assume;
+        self
+    }
+
     /// Override the failure-explanation work budget (issue #13243).
     ///
     /// Lowering the budget bounds the elaboration the explain pass performs
@@ -1022,10 +1080,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
-    pub(crate) const fn depth_result(&self) -> SubtypeResult {
-        if self.assume_related_on_cycle {
+    pub(crate) fn depth_result(&self) -> SubtypeResult {
+        self.relation_limit_events.note();
+        if self.assume_related_on_depth {
             SubtypeResult::DepthExceeded
         } else {
+            // A limit-derived `False` is correct for this proof-oriented query,
+            // but it is not a pure function of the relation key: a fresh query
+            // with more budget may prove the relation. Taint every ancestor so
+            // no definitive shared-cache entry is published from this result.
+            self.note_incomplete_evaluation_relation_event();
             SubtypeResult::False
         }
     }
@@ -1100,6 +1164,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.maybe_keys.clear();
         self.unresolved_lazy_relation_events.reset();
         self.incomplete_evaluation_relation_events.reset();
+        self.relation_limit_events.reset();
         self.local_relation_cache.clear();
         self.explain_eval_fuel = None;
     }
@@ -1357,12 +1422,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// The shared cross-operation [`crate::recursion::with_solver_frame`] breaker
     /// bounds the combined `evaluate -> subtype -> instantiate -> evaluate` cycle
     /// that no per-instance guard can see (issue #7574). When that budget is
-    /// exhausted we bail with [`SubtypeResult::DepthExceeded`], which is treated
-    /// as `true` (tsc's `Ternary.Maybe` overflow behavior) and so cannot
-    /// introduce a spurious assignability error.
+    /// exhausted we use the caller's depth policy: ordinary relations return
+    /// [`SubtypeResult::DepthExceeded`] (tsc's `Ternary.Maybe` behavior), while
+    /// proof-oriented relations may make exhaustion a definitive failure.
     pub(crate) fn check_subtype_inner(&mut self, source: TypeId, target: TypeId) -> SubtypeResult {
         crate::recursion::with_solver_frame(|| self.check_subtype_inner_impl(source, target))
-            .unwrap_or(SubtypeResult::DepthExceeded)
+            .unwrap_or_else(|| self.depth_result())
     }
 
     pub(crate) fn readonly_application_or_display_alias_inner(

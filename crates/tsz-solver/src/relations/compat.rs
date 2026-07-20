@@ -785,6 +785,13 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
     }
 
+    pub fn set_assume_related_on_depth(&mut self, assume: bool) {
+        if self.subtype.assume_related_on_depth != assume {
+            self.subtype.assume_related_on_depth = assume;
+            self.clear_operation_caches();
+        }
+    }
+
     /// Enable generic erasure for function subtype checks.
     ///
     /// When true, non-generic functions can match generic targets by erasing
@@ -883,8 +890,16 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return cached;
         }
 
+        let unresolved_events = self.subtype.unresolved_lazy_relation_event_count();
+        let incomplete_events = self.subtype.incomplete_evaluation_relation_event_count();
+        let relation_limit_events = self.subtype.relation_limit_event_count();
         let result = self.is_assignable_impl(source, target, self.strict_function_types);
-        self.cache.insert(key, result);
+        if self.subtype.unresolved_lazy_relation_event_count() == unresolved_events
+            && self.subtype.incomplete_evaluation_relation_event_count() == incomplete_events
+            && self.subtype.relation_limit_event_count() == relation_limit_events
+        {
+            self.cache.insert(key, result);
+        }
         result
     }
 
