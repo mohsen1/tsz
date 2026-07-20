@@ -901,6 +901,7 @@ impl<'a> DeclarationEmitter<'a> {
         func_idx: NodeIndex,
         is_exported: bool,
         emit_export_keyword: bool,
+        should_emit_prototype_namespace: bool,
         signatures: &[JsdocOverloadSignature],
     ) -> bool {
         if signatures.is_empty() {
@@ -920,7 +921,9 @@ impl<'a> DeclarationEmitter<'a> {
             if emit_export_keyword {
                 self.write("export ");
             }
-            if self.should_emit_declare_keyword(is_exported) {
+            if self.should_emit_declare_keyword(is_exported)
+                || (is_exported && should_emit_prototype_namespace)
+            {
                 self.write("declare ");
             }
             self.write("function ");

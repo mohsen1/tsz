@@ -24,16 +24,26 @@ impl<'a> DeclarationEmitter<'a> {
                 late_bound_members,
             );
         }
-        if !self.emit_js_function_like_class_if_needed(
+        let emitted_prototype_namespace = self.emit_js_function_prototype_namespace(
             func.name,
-            &func.parameters,
             func.body,
             is_exported,
-            func_idx,
-        ) {
+            !late_bound_members.is_empty(),
+        );
+        if !emitted_prototype_namespace
+            && !self.emit_js_function_like_class_if_needed(
+                func.name,
+                &func.parameters,
+                func.body,
+                is_exported,
+                func_idx,
+            )
+        {
             self.emit_js_synthetic_prototype_class_if_needed(func.name, is_exported);
         }
-        self.emit_js_namespace_export_aliases_for_name(func.name, is_exported);
+        if !emitted_prototype_namespace {
+            self.emit_js_namespace_export_aliases_for_name(func.name, is_exported);
+        }
         if let Some(body_node) = self.arena.get(func.body) {
             self.skip_comments_in_node(body_node.pos, body_node.end);
         }

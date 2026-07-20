@@ -1412,6 +1412,7 @@ impl<'a> DeclarationEmitter<'a> {
         root_name: &str,
         export_name: String,
         local_name: String,
+        source_statement: Option<NodeIndex>,
     ) {
         Self::push_js_namespace_export_alias_with_kind(
             aliases,
@@ -1419,6 +1420,7 @@ impl<'a> DeclarationEmitter<'a> {
             export_name,
             local_name,
             false,
+            source_statement,
         );
     }
 
@@ -1428,18 +1430,29 @@ impl<'a> DeclarationEmitter<'a> {
         export_name: String,
         local_name: String,
         use_import_alias: bool,
+        source_statement: Option<NodeIndex>,
     ) {
         let entry = aliases.entry(root_name.to_string()).or_default();
-        if !entry.iter().any(|existing| {
+        if let Some(existing) = entry.iter_mut().find(|existing| {
             existing.export_name == export_name
                 && existing.local_name == local_name
                 && existing.use_import_alias == use_import_alias
         }) {
-            entry.push(JsNamespaceExportAlias {
-                export_name,
-                local_name,
-                use_import_alias,
-            });
+            if let Some(source_statement) = source_statement {
+                if !existing.source_statements.contains(&source_statement) {
+                    existing.source_statements.push(source_statement);
+                }
+            } else {
+                existing.has_non_statement_origin = true;
+            }
+            return;
         }
+        entry.push(JsNamespaceExportAlias {
+            export_name,
+            local_name,
+            use_import_alias,
+            source_statements: source_statement.into_iter().collect(),
+            has_non_statement_origin: source_statement.is_none(),
+        });
     }
 }
