@@ -408,6 +408,110 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         self.interner.evaluate_type(type_id)
     }
 
+    fn return_context_application_base_def_id(&self, base: TypeId) -> Option<crate::def::DefId> {
+        let resolver = self
+            .checker
+            .type_resolver()
+            .unwrap_or_else(|| self.interner.as_type_resolver());
+        match self.interner.lookup(base)? {
+            TypeData::Lazy(def_id) => Some(resolver.canonical_def_id(def_id)),
+            TypeData::TypeQuery(symbol) => resolver
+                .symbol_to_def_id(symbol)
+                .map(|def_id| resolver.canonical_def_id(def_id)),
+            _ => None,
+        }
+    }
+
+    fn return_context_application_bases_match(&self, source: TypeId, target: TypeId) -> bool {
+        if source == target {
+            return true;
+        }
+
+        let Some(source_def) = self.return_context_application_base_def_id(source) else {
+            return false;
+        };
+        let Some(target_def) = self.return_context_application_base_def_id(target) else {
+            return false;
+        };
+        let resolver = self
+            .checker
+            .type_resolver()
+            .unwrap_or_else(|| self.interner.as_type_resolver());
+        resolver.defs_are_equivalent(source_def, target_def)
+    }
+
+    /// Match direct, same-base return applications before any structural
+    /// expansion can expose foreign type parameters from nested members.
+    ///
+    /// For `G<TCall>` against the contextual `G<X>`, `X` is the whole aligned
+    /// return argument. It may legitimately contain free parameters from the
+    /// enclosing declaration, so the ordinary nested/member contamination
+    /// guard must not reject it. Other tracked call parameters remain blocked,
+    /// and nested structural matching continues through the guarded fallback.
+    fn collect_aligned_return_application_substitution(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        tracked_type_params: &FxHashSet<tsz_common::Atom>,
+        substitution: &mut TypeSubstitution,
+        visited: &mut FxHashSet<(TypeId, TypeId)>,
+    ) -> bool {
+        let Some((source_base, source_args)) =
+            crate::type_queries::get_application_info(self.interner.as_type_database(), source)
+        else {
+            return false;
+        };
+        let Some((target_base, target_args)) =
+            crate::type_queries::get_application_info(self.interner.as_type_database(), target)
+        else {
+            return false;
+        };
+        if source_args.len() != target_args.len()
+            || !self.return_context_application_bases_match(source_base, target_base)
+        {
+            return false;
+        }
+
+        let has_aligned_tracked_param = source_args.iter().any(|&source_arg| {
+            matches!(
+                self.interner.lookup(source_arg),
+                Some(TypeData::TypeParameter(tp))
+                    if substitution.domain_contains_type_parameter(&tp, tracked_type_params)
+            )
+        });
+        if !has_aligned_tracked_param {
+            return false;
+        }
+
+        for (&source_arg, &target_arg) in source_args.iter().zip(&target_args) {
+            if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(source_arg)
+                && substitution.domain_contains_type_parameter(&tp, tracked_type_params)
+            {
+                if substitution.get(tp.name).is_none()
+                    && !target_arg.is_any_unknown_or_error()
+                    && !self.type_references_other_tracked_params(
+                        target_arg,
+                        &tp,
+                        tracked_type_params,
+                        substitution,
+                    )
+                {
+                    substitution.insert(tp.name, target_arg);
+                }
+                continue;
+            }
+
+            self.collect_return_context_substitution(
+                source_arg,
+                target_arg,
+                tracked_type_params,
+                substitution,
+                visited,
+            );
+        }
+        true
+    }
+
     fn collect_return_context_substitution(
         &mut self,
         source: TypeId,
@@ -1216,13 +1320,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         let mut visited = FxHashSet::default();
-        self.collect_return_context_substitution(
+        if !self.collect_aligned_return_application_substitution(
             func.return_type,
             contextual_type,
             &tracked_type_params,
             &mut substitution,
             &mut visited,
-        );
+        ) {
+            self.collect_return_context_substitution(
+                func.return_type,
+                contextual_type,
+                &tracked_type_params,
+                &mut substitution,
+                &mut visited,
+            );
+        }
         substitution
     }
 
@@ -1246,6 +1358,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         self.resolve_with_request(GenericCallRequest::new(func, arg_types))
     }
 }
+
+#[cfg(test)]
+#[path = "return_context/aligned_application_tests.rs"]
+mod aligned_application_tests;
 
 #[cfg(test)]
 mod tests {
