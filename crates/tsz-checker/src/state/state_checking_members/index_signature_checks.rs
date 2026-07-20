@@ -1307,10 +1307,24 @@ impl<'a> CheckerState<'a> {
 
             // Skip properties already covered by a base that owns the string index sig.
             // A template-literal pattern key constrains only matching names.
+            //
+            // When the derived type declares no OWN string index signature
+            // (`string_index_sig_node` is None) the string index is itself
+            // inherited; for a class (single `extends`) the inherited property and
+            // the inherited index necessarily share the same base, which already
+            // validated the property when it was checked. Re-reporting here
+            // duplicates that diagnostic at the derived class name, so restrict the
+            // inherited-property check to derived types that own the index.
+            let derived_owns_string_index = string_index_sig_node.is_some()
+                || !matches!(
+                    self.ctx.arena.get(iface_node).map(|n| n.kind),
+                    Some(k) if k == syntax_kind_ext::CLASS_DECLARATION
+                );
             if let Some((string_key_type, string_value_type)) = index_info
                 .string_index
                 .as_ref()
                 .map(|s| (s.key_type, s.value_type))
+                && derived_owns_string_index
                 && !string_index_covered.contains(&prop_name)
                 && self.property_name_matches_index_key(&prop_name, string_key_type)
                 && !self.property_type_assignable_to_index_type(prop_type, string_value_type)
