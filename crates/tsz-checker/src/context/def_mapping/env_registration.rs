@@ -16,6 +16,9 @@ impl CheckerContext<'_> {
     /// Register a non-generic definition body in **both** type environments.
     #[track_caller]
     pub fn register_def_in_envs(&self, def_id: DefId, body: TypeId) {
+        let Some(body) = self.definition_body_for_env_registration(def_id, body) else {
+            return;
+        };
         let prev_body = self.definition_store.get_body(def_id);
         let body_changed = prev_body != Some(body);
         self.publish_definition_body(def_id, body);
@@ -74,6 +77,9 @@ impl CheckerContext<'_> {
         body: TypeId,
         params: Vec<tsz_solver::TypeParamInfo>,
     ) {
+        let Some(body) = self.definition_body_for_env_registration(def_id, body) else {
+            return;
+        };
         let prev_body = self.definition_store.get_body(def_id);
         let body_changed = prev_body != Some(body);
         let params_changed = self

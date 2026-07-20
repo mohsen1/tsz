@@ -11,7 +11,7 @@ impl CheckerState<'_> {
         sym_id: SymbolId,
         result: TypeId,
         type_params: &[TypeParamInfo],
-    ) {
+    ) -> bool {
         // For class symbols, cache BOTH the constructor type (for value position)
         // and the instance type (for type position with typeof/TypeQuery resolution).
         let class_env_entry = self.ctx.binder.get_symbol(sym_id).and_then(|symbol| {
@@ -40,14 +40,23 @@ impl CheckerState<'_> {
         self.ctx
             .register_symbol_type_in_envs(symbol_ref, result, env_params.clone());
 
-        if let Some(def_id) = def_id {
+        let definition_body_is_progress = def_id.is_none_or(|def_id| {
+            !self
+                .ctx
+                .is_non_progress_non_program_alias_body(def_id, result)
+        });
+        let definition_body = def_id.and_then(|def_id| {
+            self.ctx
+                .definition_body_for_env_registration(def_id, result)
+        });
+        if let (Some(def_id), Some(definition_body)) = (def_id, definition_body) {
             let def_params = if class_env_entry.is_some() {
                 type_params.to_vec()
             } else {
                 env_params
             };
             self.ctx
-                .register_def_auto_params_in_envs(def_id, result, def_params);
+                .register_def_auto_params_in_envs(def_id, definition_body, def_params);
 
             if let Some((instance_type, _instance_params)) = &class_env_entry {
                 self.ctx
@@ -82,5 +91,6 @@ impl CheckerState<'_> {
         {
             self.ctx.register_def_symbol_mapping_in_envs(def_id, sym_id);
         }
+        definition_body_is_progress
     }
 }

@@ -1443,6 +1443,17 @@ impl CheckerState<'_> {
 
         let symbol_ref = SymbolRef(sym_id.0);
         let def_id = current_def_id;
+        // A symbol lookup for a materialized standard-library alias can still
+        // observe its registration-window `UNKNOWN` result. The symbol cache
+        // may retain that result, but the `DefId` cache must keep the structural
+        // body already published by alias lowering. Otherwise this direct env
+        // bridge makes definition publication non-monotone and `keyof` sees an
+        // opaque alias again.
+        let definition_body = def_id.and_then(|def_id| {
+            self.ctx
+                .definition_body_for_env_registration(def_id, resolved)
+        });
+        let definition_registration = def_id.zip(definition_body);
 
         // Reuse cached params already in the environment when available.
         let mut cached_env_params: Option<Vec<tsz_solver::TypeParamInfo>> = None;
@@ -1451,8 +1462,8 @@ impl CheckerState<'_> {
         if let Ok(env) = self.ctx.type_env.try_borrow() {
             symbol_already_registered = env.contains(symbol_ref);
             cached_env_params = env.get_params(symbol_ref).map(|s| s.to_vec());
-            if let Some(def_id) = def_id {
-                def_already_registered = env.contains_def(def_id);
+            if let Some((def_id, body)) = definition_registration {
+                def_already_registered = env.get_def(def_id) == Some(body);
             }
         }
         let had_env_params = cached_env_params.is_some();
@@ -1498,8 +1509,8 @@ impl CheckerState<'_> {
             if type_params.is_empty() {
                 self.ctx
                     .insert_symbol_type_and_mirror(&mut env, symbol_ref, resolved, Vec::new());
-                if let Some(def_id) = def_id {
-                    env.insert_def(def_id, resolved);
+                if let Some((def_id, body)) = definition_registration {
+                    env.insert_def(def_id, body);
                 }
             } else {
                 self.ctx.insert_symbol_type_and_mirror(
@@ -1508,19 +1519,21 @@ impl CheckerState<'_> {
                     resolved,
                     type_params.clone(),
                 );
-                if let Some(def_id) = def_id {
-                    env.insert_def_with_params(def_id, resolved, type_params.clone());
+                if let Some((def_id, body)) = definition_registration {
+                    env.insert_def_with_params(def_id, body, type_params.clone());
                 }
             }
             drop(env);
-            self.mirror_application_def_resolution(def_id, resolved, &type_params);
-            true
+            if let Some((def_id, body)) = definition_registration {
+                self.mirror_application_def_resolution(Some(def_id), body, &type_params);
+            }
+            def_id.is_none() || definition_registration.is_some()
         } else {
             self.ctx
                 .register_symbol_type_in_envs(symbol_ref, resolved, type_params.clone());
-            if let Some(def_id) = def_id {
+            if let Some((def_id, body)) = definition_registration {
                 self.ctx
-                    .register_def_auto_params_in_envs(def_id, resolved, type_params);
+                    .register_def_auto_params_in_envs(def_id, body, type_params);
             }
             false
         }
