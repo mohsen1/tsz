@@ -20,6 +20,7 @@
 
 pub(crate) mod alias_narrowing;
 pub(crate) mod assignment;
+mod assignment_compatibility;
 mod assignment_fallback;
 mod call_condition_narrowing;
 mod comparison_types;

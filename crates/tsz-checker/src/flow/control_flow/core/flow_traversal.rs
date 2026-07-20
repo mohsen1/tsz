@@ -553,27 +553,11 @@ impl<'a> FlowAnalyzer<'a> {
                                 &mut assignment_type_is_provisional,
                                 &mut preserve_declared_assignment_flow,
                             );
-                            if assignment_type_is_provisional || preserve_declared_assignment_flow {
-                                cache_policy.mark_provisional();
-                            }
                             if let Some(assigned_type) =
                                 raw_assigned.filter(|&t| t != TypeId::ERROR)
                             {
                                 cache_policy.mark_provisional();
                                 assigned_type
-                            } else if preserve_declared_assignment_flow
-                                || assignment_type_is_provisional
-                            {
-                                symbol_id
-                                    .and_then(|sid| self.binder.get_symbol(sid))
-                                    .filter(|sym| sym.value_declaration.is_some())
-                                    .and_then(|sym| {
-                                        self.declared_type_from_value_declaration_with_stability(
-                                            sym.value_declaration,
-                                        )
-                                        .0
-                                    })
-                                    .unwrap_or(initial_type)
                             } else if let Some(&ant) = flow.antecedent.first() {
                                 if let Some(&ant_type) = results.get(&ant) {
                                     ant_type
@@ -631,9 +615,6 @@ impl<'a> FlowAnalyzer<'a> {
                                 &mut assignment_type_is_provisional,
                                 &mut preserve_declared_assignment_flow,
                             );
-                            if assignment_type_is_provisional || preserve_declared_assignment_flow {
-                                cache_policy.mark_provisional();
-                            }
                             if let Some(assigned_type) =
                                 raw_assigned.filter(|&t| t != TypeId::ERROR)
                             {
@@ -783,22 +764,9 @@ impl<'a> FlowAnalyzer<'a> {
                                 // for the RHS yet. Do not publish the declared-type result into the
                                 // shared flow cache or later reads will reuse a stale answer.
                                 cache_policy.mark_provisional();
-                                // If we can't resolve the RHS type, conservatively return declared type
-                                // The value HAS changed, so we can't continue to antecedent
-                                if preserve_declared_assignment_flow {
-                                    symbol_id
-                                        .and_then(|sid| self.binder.get_symbol(sid))
-                                        .filter(|sym| sym.value_declaration.is_some())
-                                        .and_then(|sym| {
-                                            self.declared_type_from_value_declaration_with_stability(
-                                                sym.value_declaration,
-                                            )
-                                            .0
-                                        })
-                                        .unwrap_or(initial_type)
-                                } else if self
-                                    .is_await_assignment_for_reference(flow.node, reference)
-                                {
+                                // Preserve specialized sound fallbacks; otherwise keep the
+                                // current branch type until canonical RHS typing catches up.
+                                if self.is_await_assignment_for_reference(flow.node, reference) {
                                     // `x = await expr` assigns a realized value. When RHS typing
                                     // isn't available yet, keep this sound by at least excluding
                                     // `undefined` from the assignment base.
@@ -806,10 +774,14 @@ impl<'a> FlowAnalyzer<'a> {
                                         .and_then(|sid| self.binder.get_symbol(sid))
                                         .filter(|sym| sym.value_declaration.is_some())
                                         .and_then(|sym| {
-                                            self.declared_type_from_value_declaration_with_stability(
-                                                sym.value_declaration,
-                                            )
-                                            .0
+                                            self.node_types.and_then(|types| {
+                                                self.annotation_type_from_var_decl_node(
+                                                    sym.value_declaration,
+                                                )
+                                                .or_else(|| {
+                                                    types.get(&sym.value_declaration.0).copied()
+                                                })
+                                            })
                                         })
                                         .unwrap_or(initial_type);
                                     flow_boundary::narrow_destructuring_default(
@@ -827,32 +799,26 @@ impl<'a> FlowAnalyzer<'a> {
                                     // `null`/`undefined` from the declared union so the killing
                                     // definition matches tsc's `getAssignmentReducedType`
                                     // instead of leaving a false TS18048 on a later read.
-                                    let declared_type = symbol_id
-                                        .and_then(|sid| self.binder.get_symbol(sid))
-                                        .filter(|sym| sym.value_declaration.is_some())
-                                        .and_then(|sym| {
-                                            self.declared_type_from_value_declaration_with_stability(
-                                                sym.value_declaration,
-                                            )
-                                            .0
-                                        })
-                                        .unwrap_or(initial_type);
+                                    let declared_type =
+                                        symbol_id
+                                            .and_then(|sid| self.binder.get_symbol(sid))
+                                            .filter(|sym| sym.value_declaration.is_some())
+                                            .and_then(|sym| {
+                                                self.annotation_type_from_var_decl_node(
+                                                    sym.value_declaration,
+                                                )
+                                                .or_else(|| {
+                                                    self.node_types.and_then(|types| {
+                                                        types.get(&sym.value_declaration.0).copied()
+                                                    })
+                                                })
+                                            })
+                                            .unwrap_or(initial_type);
                                     flow_boundary::narrow_destructuring_default(
                                         self.interner.as_type_database(),
                                         declared_type,
                                         true,
                                     )
-                                } else if assignment_type_is_provisional {
-                                    symbol_id
-                                        .and_then(|sid| self.binder.get_symbol(sid))
-                                        .filter(|sym| sym.value_declaration.is_some())
-                                        .and_then(|sym| {
-                                            self.declared_type_from_value_declaration_with_stability(
-                                                sym.value_declaration,
-                                            )
-                                            .0
-                                        })
-                                        .unwrap_or(initial_type)
                                 } else {
                                     current_type
                                 }

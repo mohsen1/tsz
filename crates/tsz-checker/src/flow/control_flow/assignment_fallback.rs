@@ -310,23 +310,17 @@ impl<'a> FlowAnalyzer<'a> {
                 // Without this, generic new expressions with type parameter arguments
                 // fail the fallback path, losing the type argument information.
                 if (symbol.flags & tsz_binder::symbol_flags::TYPE_PARAMETER) != 0 {
-                    return symbol
-                        .declarations
-                        .iter()
-                        .copied()
-                        .find_map(|decl| {
-                            self.node_types
-                                .and_then(|nt| nt.get(&decl.0).copied())
-                                .filter(|&ty| ty != TypeId::ERROR)
-                        })
-                        .or_else(|| self.fallback_cached_stable_symbol_type(sym_id));
+                    return symbol.declarations.iter().copied().find_map(|decl| {
+                        self.node_types
+                            .and_then(|nt| nt.get(&decl.0).copied())
+                            .filter(|&ty| ty != TypeId::ERROR)
+                    });
                 }
                 let base_type = symbol
                     .declarations
                     .iter()
                     .copied()
-                    .find_map(|decl| self.fallback_named_type_declaration_type(decl))
-                    .or_else(|| self.fallback_cached_stable_symbol_type(sym_id));
+                    .find_map(|decl| self.fallback_named_type_declaration_type(decl));
                 // For generic type references with type arguments (e.g., Box<K>),
                 // apply the type arguments to the base type.
                 if let Some(base) = base_type
@@ -788,7 +782,11 @@ impl<'a> FlowAnalyzer<'a> {
                 // concrete declared/contextual type before manufacturing a Lazy
                 // fallback, whose body is not registered during the provisional
                 // walk and cannot participate in structural argument inference.
-                self.fallback_cached_stable_symbol_type(sym_id)
+                self.arena
+                    .get(decl)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::PARAMETER)
+                    .then(|| self.fallback_cached_stable_symbol_type(sym_id))
+                    .flatten()
             })
             .or_else(|| {
                 self.resolve_symbol_to_lazy(SymbolRef(sym_id.0))

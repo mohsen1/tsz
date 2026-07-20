@@ -26,7 +26,7 @@ struct DestructuringSource {
 }
 
 impl<'a> FlowAnalyzer<'a> {
-    fn assignment_relation_outcome(
+    pub(super) fn assignment_relation_outcome(
         &self,
         source: TypeId,
         target: TypeId,
@@ -65,7 +65,7 @@ impl<'a> FlowAnalyzer<'a> {
             .is_some_and(|node| node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION)
     }
 
-    fn assigned_type_respecting_access_read_surface(
+    pub(super) fn assigned_type_respecting_access_read_surface(
         &self,
         assignment_node: NodeIndex,
         target: NodeIndex,
@@ -140,83 +140,6 @@ impl<'a> FlowAnalyzer<'a> {
         self.assignment_relation_outcome(assigned_type, target_type, false)
             .related
             .then_some(assigned_type)
-    }
-
-    /// Validate the whole RHS before flow; literal initializers are handled earlier.
-    fn compatible_simple_assignment_type(
-        &self,
-        assignment_node: NodeIndex,
-        target: NodeIndex,
-        assigned_type: TypeId,
-        compatibility_target_fallback: Option<TypeId>,
-        assignment_type_is_provisional: &mut bool,
-        preserve_declared_assignment_flow: &mut bool,
-    ) -> Option<TypeId> {
-        let Some(flow_type) = self.assigned_type_respecting_access_read_surface(
-            assignment_node,
-            target,
-            assigned_type,
-        ) else {
-            *preserve_declared_assignment_flow = true;
-            return None;
-        };
-        let node = self.arena.get(assignment_node)?;
-        let (value_declaration, compatibility_node) =
-            if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-                let bin = self.arena.get_binary_expr(node)?;
-                if bin.operator_token != SyntaxKind::EqualsToken as u16
-                    || !self.is_matching_reference(bin.left, target)
-                {
-                    return Some(flow_type);
-                }
-                (
-                    self.binder
-                        .resolve_identifier(self.arena, bin.left)
-                        .and_then(|sym| self.binder.get_symbol(sym))
-                        .map(|sym| sym.value_declaration)
-                        .filter(|decl| decl.is_some()),
-                    bin.left,
-                )
-            } else if node.kind == syntax_kind_ext::VARIABLE_DECLARATION
-                && self.is_var_decl_with_type_annotation(assignment_node)
-            {
-                (Some(assignment_node), target)
-            } else {
-                return Some(flow_type);
-            };
-        let node_types = self.node_types;
-        let declared_target_type = value_declaration
-            .and_then(|declaration| {
-                let (type_id, provisional) =
-                    self.declared_type_from_value_declaration_with_stability(declaration);
-                *assignment_type_is_provisional |= provisional;
-                type_id
-            })
-            .or_else(|| node_types.and_then(|types| types.get(&compatibility_node.0).copied()))
-            .or(compatibility_target_fallback.filter(|&type_id| type_id != TypeId::ERROR));
-        if declared_target_type.is_none() && *assignment_type_is_provisional {
-            *preserve_declared_assignment_flow = true;
-            return None;
-        }
-        let env = self.type_environment.map(std::cell::RefCell::borrow);
-        let relation_flags = self.checker_context.map_or(
-            crate::query_boundaries::assignability::RelationFlags::STRICT_NULL_CHECKS,
-            |ctx| ctx.pack_relation_flags(),
-        );
-        if let Some(lhs_type) = declared_target_type
-            && !crate::query_boundaries::flow_analysis::whole_assignment_rhs_is_compatible(
-                self.interner,
-                env.as_deref(),
-                self.concrete_this_type,
-                assigned_type,
-                lhs_type,
-                relation_flags,
-            )
-        {
-            *preserve_declared_assignment_flow = true;
-            return None;
-        }
-        Some(flow_type)
     }
 
     fn access_reference_split_read_write_type(
