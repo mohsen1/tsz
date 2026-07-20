@@ -843,6 +843,7 @@ impl<'a> CheckerState<'a> {
         let mut heritage_incomplete = false;
         let factory = self.ctx.types.factory();
         let mut symbol_has_interface = false;
+        let mut selected_lib_def_id = None;
 
         let lib_contexts = self.ctx.lib_contexts.clone();
         // Collect lowered types from the symbol's declarations.
@@ -1109,7 +1110,7 @@ impl<'a> CheckerState<'a> {
                             // If lowering succeeded (not ERROR), use the result
                             if ty != TypeId::ERROR {
                                 // Register DefId, type params, and body in one step.
-                                register_selected_lib_def_resolved(
+                                let def_id = register_selected_lib_def_resolved(
                                     &self.ctx,
                                     name,
                                     sym_id,
@@ -1117,6 +1118,7 @@ impl<'a> CheckerState<'a> {
                                     ty,
                                     params,
                                 );
+                                selected_lib_def_id.get_or_insert(def_id);
 
                                 lib_types.push(ty);
                             }
@@ -1144,6 +1146,7 @@ impl<'a> CheckerState<'a> {
                                         ty,
                                         params,
                                     );
+                                    selected_lib_def_id.get_or_insert(def_id);
 
                                     // CRITICAL: Return Lazy(DefId) instead of the structural body.
                                     // Application types only expand when the base is Lazy, not when
@@ -1252,9 +1255,26 @@ impl<'a> CheckerState<'a> {
             // display "Date" instead of expanding all members. The initial
             // registration uses the pre-merge TypeId which changes after heritage
             // merging and global augmentations add more members.
+            let selected_is_identity = selected_lib_def_id.is_some_and(|def_id| {
+                crate::query_boundaries::lib_augmentations::is_lazy_def_identity(
+                    self.ctx.types,
+                    ty,
+                    def_id,
+                )
+            });
             let name_atom = self.ctx.types.intern_string(name);
-            if let Some(defs) = self.ctx.definition_store.find_defs_by_name(name_atom)
-                && let Some(&def_id) = defs.first()
+            let canonical_def_id = self
+                .ctx
+                .definition_store
+                .find_defs_by_name(name_atom)
+                .and_then(|defs| defs.first().copied());
+            if let Some(def_id) = canonical_def_id
+                && !selected_is_identity
+                && !crate::query_boundaries::lib_augmentations::is_lazy_def_identity(
+                    self.ctx.types,
+                    ty,
+                    def_id,
+                )
             {
                 self.ctx.definition_store.register_type_to_def(ty, def_id);
             }
@@ -1371,7 +1391,7 @@ impl<'a> CheckerState<'a> {
         if let Some(ty) = lib_type_id
             && !heritage_incomplete
         {
-            self.register_finalized_lib_body(name, ty);
+            self.register_finalized_lib_body_for_def(name, ty, selected_lib_def_id);
             // Update the symbol_types cache for the INTERFACE type position.
             // compute_type_of_symbol may have cached a DIFFERENT TypeId
             // when has_local_interface_decl was a false positive (NodeIndex
