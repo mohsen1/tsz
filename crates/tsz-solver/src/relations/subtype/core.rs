@@ -626,14 +626,10 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// When `true`, the immediate construct-signature comparison about to start
     /// must compare its parameters **strictly** (contravariantly under
     /// `strict_function_types`), suppressing constructor-parameter bivariance.
-    /// `tsc` applies constructor-parameter bivariance only to class-derived
-    /// constructor functions (`typeof Class`, declaration kind `Constructor`);
-    /// standalone `new (...) => T` type literals and interface construct
-    /// signatures (declaration kind `ConstructSignature`) compare parameters
-    /// like call-signature literals. This flag is set by `check_callable_subtype`
-    /// per construct-signature comparison when the target callable is not a
-    /// class, and is consumed (reset) on entry to `check_function_subtype` so
-    /// nested function comparisons start fresh.
+    /// `tsc` grants constructor-parameter bivariance only when the target
+    /// signature has constructor-declaration provenance (`is_method`). This
+    /// flag is set per strict target construct signature and consumed (reset)
+    /// on entry to `check_function_subtype`, so nested comparisons start fresh.
     pub(crate) force_strict_construct_params: bool,
     /// Whether recursive relation cycles and overflow should be treated as
     /// assumed-related (`true`) or definitive failure (`false`).

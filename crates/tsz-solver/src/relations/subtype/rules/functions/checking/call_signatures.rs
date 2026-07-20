@@ -81,9 +81,8 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
     /// (e.g. partially constructed programs). The closure can only witness
     /// classes, so a positive fallback resolves to [`DefKind::Class`].
     ///
-    /// Shared by the relation layer's nominal-kind checks
-    /// (`callable_target_is_class_constructor`,
-    /// `requires_explicit_declared_index_signature`).
+    /// Shared by the relation layer's nominal-kind checks, including
+    /// `requires_explicit_declared_index_signature`.
     pub(crate) fn symbol_def_kind(
         &self,
         symbol_ref: crate::SymbolRef,
@@ -94,74 +93,6 @@ impl<R: TypeResolver> SubtypeChecker<'_, R> {
         self.is_class_symbol.and_then(|is_class_symbol| {
             is_class_symbol(symbol_ref).then_some(crate::def::DefKind::Class)
         })
-    }
-
-    /// Whether a callable's construct signatures originate from a class
-    /// declaration (`typeof Class`), which `tsc` compares with constructor-
-    /// parameter bivariance (declaration kind `Constructor`).
-    ///
-    /// A `new (...) => T` construct-signature **type literal** carries no
-    /// nominal symbol, and an **interface** construct signature carries an
-    /// interface symbol; both compare parameters strictly (contravariantly
-    /// under `strict_function_types`), exactly like call-signature literals
-    /// (declaration kind `ConstructSignature`). Detection is the same nominal
-    /// `symbol -> DefKind` lookup the rest of the relation layer uses, narrowed
-    /// to `DefKind::Class` so interface construct signatures stay strict.
-    pub(crate) fn callable_target_is_class_constructor(
-        &self,
-        target: &crate::types::CallableShape,
-    ) -> bool {
-        // `new (...) => T` type literal: no nominal class identity.
-        let Some(sym_id) = target.symbol else {
-            return false;
-        };
-        matches!(
-            self.symbol_def_kind(crate::SymbolRef(sym_id.0)),
-            Some(crate::def::DefKind::Class)
-        )
-    }
-
-    pub(crate) fn constructor_signatures_need_strict_params(
-        source: &FunctionShape,
-        target: &FunctionShape,
-    ) -> bool {
-        if !(source.is_constructor || target.is_constructor) {
-            return false;
-        }
-
-        let source_generic = !source.type_params.is_empty();
-        let target_generic = !target.type_params.is_empty();
-        if !source_generic && !target_generic {
-            // Non-generic constructors need strict params when there's an
-            // optionality mismatch between corresponding parameters. This
-            // matches tsc where property-typed constructor types like
-            // `new (x?: number) => number` use strict comparison, not
-            // constructor bivariance.
-            return source
-                .params
-                .iter()
-                .zip(target.params.iter())
-                .any(|(sp, tp)| sp.optional != tp.optional);
-        }
-
-        if source_generic && !target_generic {
-            let has_optionality_mismatch = source
-                .params
-                .iter()
-                .zip(target.params.iter())
-                .any(|(sp, tp)| sp.optional != tp.optional);
-            return has_optionality_mismatch
-                || source.type_params.iter().any(|tp| tp.constraint.is_some());
-        }
-
-        source.type_params.len() != target.type_params.len()
-            || source
-                .type_params
-                .iter()
-                .chain(target.type_params.iter())
-                .any(|tp| tp.constraint.is_some())
-            || source.params.len() != 1
-            || target.params.len() != 1
     }
 
     /// Check call signature subtype to function shape.

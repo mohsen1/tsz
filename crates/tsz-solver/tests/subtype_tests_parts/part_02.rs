@@ -884,7 +884,7 @@ fn test_method_bivariant_required_param() {
 }
 
 #[test]
-fn test_method_source_bivariant_against_function_property() {
+fn test_method_source_is_strict_against_function_property() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
     let name = interner.intern_string("m");
@@ -954,7 +954,7 @@ fn test_method_source_bivariant_against_function_property() {
         single_quoted_name: false, non_widening: false,
     }]);
 
-    assert!(checker.is_subtype_of(source, target));
+    assert!(!checker.is_subtype_of(source, target));
 }
 
 #[test]
@@ -1318,7 +1318,7 @@ fn test_variance_optional_rest_function_rest_with_this_contravariant() {
 }
 
 #[test]
-fn test_variance_optional_rest_constructor_optional_bivariant() {
+fn test_variance_optional_rest_construct_signature_optional_strict() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -1356,12 +1356,13 @@ fn test_variance_optional_rest_constructor_optional_bivariant() {
     });
 
     assert!(checker.is_subtype_of(wide_ctor, narrow_ctor));
-    // Constructor signatures are bivariant (like methods), not contravariant
-    assert!(checker.is_subtype_of(narrow_ctor, wide_ctor));
+    // A construct-signature type is strict. Only a class constructor declaration
+    // carries the method-like provenance that grants bivariance.
+    assert!(!checker.is_subtype_of(narrow_ctor, wide_ctor));
 }
 
 #[test]
-fn test_variance_optional_rest_constructor_rest_bivariant() {
+fn test_variance_optional_rest_construct_signature_rest_strict() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -1401,8 +1402,9 @@ fn test_variance_optional_rest_constructor_rest_bivariant() {
     });
 
     assert!(checker.is_subtype_of(wide_ctor, narrow_ctor));
-    // Constructor signatures are bivariant (like methods), not contravariant
-    assert!(checker.is_subtype_of(narrow_ctor, wide_ctor));
+    // A construct-signature type is strict. Only a class constructor declaration
+    // carries the method-like provenance that grants bivariance.
+    assert!(!checker.is_subtype_of(narrow_ctor, wide_ctor));
 }
 
 #[test]
@@ -1804,4 +1806,3 @@ fn test_this_parameter_variance() {
     assert!(checker.is_subtype_of(union_this_fn, string_this_fn));
     assert!(!checker.is_subtype_of(string_this_fn, union_this_fn));
 }
-

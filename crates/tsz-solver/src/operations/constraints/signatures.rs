@@ -3,7 +3,7 @@
 //! Contains methods for constraining object properties, function signatures,
 //! call signatures, tuple types, and index signatures during type inference.
 
-use crate::inference::infer::InferenceContext;
+use crate::inference::infer::{InferenceContext, ParameterRecoveryMode};
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::{AssignabilityChecker, CallEvaluator};
 use crate::types::{
@@ -21,6 +21,13 @@ struct SignatureSide<'a> {
     this_type: Option<TypeId>,
     return_type: TypeId,
     type_predicate: Option<&'a TypePredicate>,
+}
+
+#[derive(Clone, Copy)]
+struct SignatureConstraintMode {
+    is_constructor: bool,
+    target_is_constructor: bool,
+    target_is_bivariant: bool,
 }
 
 // Reusable scratch `FxHashSet<TypeId>` for `type_contains_placeholder` calls
@@ -100,6 +107,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             source_is_fresh,
                         );
                     } else {
+                        let was_pending_method = ctx.pending_target_method;
+                        ctx.pending_target_method |= target.is_method;
                         self.constrain_types(
                             ctx,
                             var_map,
@@ -107,6 +116,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             target.type_id,
                             priority,
                         );
+                        ctx.pending_target_method = was_pending_method;
                     }
                     // Constrain write type for mutable targets.
                     // Note: readonly source → writable target is allowed during
@@ -314,7 +324,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     /// Shared body for `constrain_{function,call_signature}_to_{call_signature,function}`.
-    /// Applies the four-step inference constraint: params → optional `this` → return →
+    /// Applies the four-step inference constraint: optional `this` → params → return →
     /// type predicates. The three public wrappers differ only in their source/target
     /// struct types; those structs expose the same inference-relevant fields.
     ///
@@ -338,17 +348,29 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         source: &SignatureSide<'_>,
         target: &SignatureSide<'_>,
         priority: crate::types::InferencePriority,
-        is_constructor: bool,
+        mode: SignatureConstraintMode,
     ) {
-        self.constrain_params_with_rest(ctx, var_map, source.params, target.params, priority);
+        let was_contra = ctx.in_contra_mode;
+        let was_variance_walk = ctx.in_variance_walk;
+        let was_bivariant = ctx.in_bivariant_mode;
+        let was_pending_method = ctx.pending_target_method;
+        ctx.pending_target_method = false;
+        ctx.in_contra_mode = !was_contra;
+        ctx.in_variance_walk = true;
+        ctx.in_bivariant_mode |=
+            mode.target_is_bivariant || (was_pending_method && !mode.target_is_constructor);
         if let (Some(s_this), Some(t_this)) = (source.this_type, target.this_type) {
             self.constrain_parameter_types(ctx, var_map, s_this, t_this, priority);
         }
+        self.constrain_params_with_rest(ctx, var_map, source.params, target.params, priority);
+        ctx.in_contra_mode = was_contra;
+        ctx.in_variance_walk = was_variance_walk;
+        ctx.in_bivariant_mode = was_bivariant;
         // Return types must never be inferred at NakedTypeVariable priority — cap
         // at ReturnType so direct-arg inferences always win. Mirrors the same
         // invariant enforced in the Function→Function path in walker.rs.
         // Skip the cap for construct signatures (see doc comment above).
-        let return_priority = if is_constructor {
+        let return_priority = if mode.is_constructor {
             priority
         } else {
             priority.max(crate::types::InferencePriority::ReturnType)
@@ -370,6 +392,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             target.type_predicate,
             return_priority,
         );
+        ctx.pending_target_method = was_pending_method;
     }
 
     pub(super) fn constrain_function_to_call_signature(
@@ -379,6 +402,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         source: &FunctionShape,
         target: &CallSignature,
         priority: crate::types::InferencePriority,
+        target_is_constructor: bool,
     ) {
         trace!(
             source_has_predicate = source.type_predicate.is_some(),
@@ -401,7 +425,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 type_predicate: target.type_predicate.as_ref(),
             },
             priority,
-            source.is_constructor,
+            SignatureConstraintMode {
+                is_constructor: source.is_constructor,
+                target_is_constructor,
+                target_is_bivariant: target.is_method,
+            },
         );
     }
 
@@ -429,7 +457,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 type_predicate: target.type_predicate.as_ref(),
             },
             priority,
-            target.is_constructor,
+            SignatureConstraintMode {
+                is_constructor: target.is_constructor,
+                target_is_constructor: target.is_constructor,
+                target_is_bivariant: target.is_method,
+            },
         );
     }
 
@@ -458,7 +490,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 type_predicate: target.type_predicate.as_ref(),
             },
             priority,
-            is_constructor,
+            SignatureConstraintMode {
+                is_constructor,
+                target_is_constructor: is_constructor,
+                target_is_bivariant: target.is_method,
+            },
         );
     }
 
@@ -500,7 +536,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return_type: sig.return_type,
             type_predicate: sig.type_predicate,
             is_constructor,
-            is_method: false,
+            is_method: sig.is_method,
         })
     }
 
@@ -981,7 +1017,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // contravariant inferences go to `contraCandidates` and are resolved
         // via intersection (not union).
         if let Some(&var) = var_map.get(&target_param) {
-            ctx.add_contra_candidate(var, source_param, priority);
+            if ctx.collects_contra_candidates() {
+                ctx.add_contra_candidate(var, source_param, priority);
+            } else {
+                ctx.add_candidate(var, source_param, priority);
+            }
             // Do not feed a bare placeholder target back into source-side type parameters.
             // For higher-order generic callbacks like `callr(sn, f16)`, that reverse edge
             // creates recursive source-placeholder candidates (`A = T`, `T = [A, B]`) and
@@ -996,35 +1036,47 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // instead of a hard upper bound. This matches the behavior
                 // of the complex-type branch below and prevents upper bounds
                 // from overriding correct covariant inference.
-                let was_contra = ctx.in_contra_mode;
-                ctx.in_contra_mode = true;
                 self.constrain_types(ctx, var_map, target_param, source_param, priority);
-                ctx.in_contra_mode = was_contra;
             }
         } else {
             // The target parameter is a complex type containing type variables
-            // (e.g., `{ kind: T }`, not just `T` directly). In tsc, callback
-            // parameter inference in this case goes to `contraCandidates` because
-            // function parameters are contravariant. We set `in_contra_mode` for
-            // BOTH directions so that:
-            // - Forward (source→target): candidates are routed to contra_candidates
-            // - Reverse (target→source): type parameters in source position add
-            //   contra-candidates instead of hard upper bounds
-            // Without contra mode on the reverse direction, decomposing a union
-            // target (e.g., {kind:T} vs {kind:'a'}|{kind:'b'}) creates separate
-            // upper bounds 'a' and 'b', causing false TS2345 when the covariant
-            // result ('a') fails to satisfy upper bound 'b'.
+            // (e.g., `{ kind: T }`, not just `T` directly). Candidate routing
+            // follows the live signature polarity: one parameter edge is
+            // contravariant, while a nested second edge toggles back to
+            // covariance. Preserve that polarity for both recovery directions.
+            // At the ordinary single-edge depth this still keeps the reverse
+            // walk contravariant, preventing union decomposition from creating
+            // hard upper bounds that override the inferred candidate.
             let target_has_placeholder = with_signatures_visited(|visited| {
                 self.type_contains_placeholder(target_param, var_map, visited)
             });
             if target_has_placeholder {
-                let was_contra = ctx.in_contra_mode;
-                ctx.in_contra_mode = true;
-                self.constrain_types(ctx, var_map, source_param, target_param, priority);
-                self.constrain_types(ctx, var_map, target_param, source_param, priority);
-                ctx.in_contra_mode = was_contra;
+                ctx.with_restored_inference_modes(|ctx| {
+                    ctx.in_variance_walk = true;
+                    ctx.parameter_recovery_mode = ParameterRecoveryMode::ComplexPlaceholder;
+                    self.constrain_types(ctx, var_map, source_param, target_param, priority);
+                    self.constrain_types(ctx, var_map, target_param, source_param, priority);
+                });
             } else {
-                self.constrain_types(ctx, var_map, target_param, source_param, priority);
+                // This helper explicitly reverses source and target for
+                // dependency recovery. A standalone reverse cancels ambient
+                // signature contravariance but keeps source-placeholder evidence;
+                // a reverse nested beneath complex-placeholder inference stays
+                // contravariant in both directions.
+                ctx.with_restored_inference_modes(|ctx| {
+                    let nested_complex =
+                        ctx.parameter_recovery_mode == ParameterRecoveryMode::ComplexPlaceholder;
+                    if !nested_complex {
+                        ctx.in_contra_mode = false;
+                    }
+                    ctx.in_variance_walk = true;
+                    ctx.parameter_recovery_mode = if nested_complex {
+                        ParameterRecoveryMode::ComplexPlaceholder
+                    } else {
+                        ParameterRecoveryMode::StandaloneReverse
+                    };
+                    self.constrain_types(ctx, var_map, target_param, source_param, priority);
+                });
             }
         }
     }

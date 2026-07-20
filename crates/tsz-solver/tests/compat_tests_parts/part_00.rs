@@ -921,6 +921,37 @@ fn test_explain_failure_parameter_mismatch_strict() {
     ));
 }
 
+#[test]
+fn strict_construct_target_explains_extra_class_constructor_parameter() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    checker.set_strict_function_types(true);
+    let mut source_shape = FunctionShape::new(
+        vec![
+            ParamInfo::unnamed(TypeId::STRING),
+            ParamInfo::unnamed(TypeId::NUMBER),
+        ],
+        TypeId::VOID,
+    );
+    source_shape.is_constructor = true;
+    source_shape.is_method = true;
+    let mut target_shape = FunctionShape::new(
+        vec![ParamInfo::unnamed(TypeId::STRING)],
+        TypeId::VOID,
+    );
+    target_shape.is_constructor = true;
+    let source = interner.function(source_shape);
+    let target = interner.function(target_shape);
+
+    assert!(matches!(
+        checker.explain_failure(source, target),
+        Some(SubtypeFailureReason::TooManyParameters {
+            source_count: 2,
+            target_count: 1,
+        })
+    ));
+}
+
 /// When the outer parameter mismatch is *itself* a callable, the
 /// `inner_reason` should describe how the inner contravariant subtype
 /// check (`target_param <: source_param`) failed. This is what lets

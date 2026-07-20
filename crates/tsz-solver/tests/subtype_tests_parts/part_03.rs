@@ -67,7 +67,7 @@ fn test_this_parameter_function_property_contravariant() {
 }
 
 #[test]
-fn test_this_parameter_method_source_bivariant_against_function_property() {
+fn test_this_parameter_method_source_is_strict_against_function_property() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
     let name = interner.intern_string("m");
@@ -127,7 +127,7 @@ fn test_this_parameter_method_source_bivariant_against_function_property() {
         single_quoted_name: false, non_widening: false,
     }]);
 
-    assert!(checker.is_subtype_of(source, target));
+    assert!(!checker.is_subtype_of(source, target));
 }
 
 #[test]
@@ -1806,4 +1806,3 @@ fn test_mapped_type_key_remap_optional_remove_subtyping() {
     assert!(checker.is_subtype_of(mapped, required_b));
     assert!(checker.is_subtype_of(mapped, optional_b));
 }
-

@@ -60,11 +60,12 @@ pub(super) enum ConstraintPairVisitState {
 }
 
 pub(super) fn constraint_pair_visit_state(
-    pairs: &mut FxHashSet<(TypeId, TypeId)>,
+    pairs: &mut FxHashSet<(TypeId, TypeId, u8)>,
     source: TypeId,
     target: TypeId,
+    inference_mode: u8,
 ) -> ConstraintPairVisitState {
-    if pairs.insert((source, target)) {
+    if pairs.insert((source, target, inference_mode)) {
         ConstraintPairVisitState::Entered
     } else {
         ConstraintPairVisitState::AlreadyVisited
@@ -108,7 +109,12 @@ impl<C: AssignabilityChecker> CallEvaluator<'_, C> {
         }
 
         if matches!(
-            constraint_pair_visit_state(&mut self.constraint_pairs.borrow_mut(), source, target),
+            constraint_pair_visit_state(
+                &mut self.constraint_pairs.borrow_mut(),
+                source,
+                target,
+                ctx.constraint_visit_mode(),
+            ),
             ConstraintPairVisitState::AlreadyVisited
         ) {
             return;
@@ -148,13 +154,32 @@ mod tests {
     fn constraint_pair_visit_state_enters_once_then_reports_revisit() {
         let mut pairs = FxHashSet::default();
         assert_eq!(
-            constraint_pair_visit_state(&mut pairs, TypeId::STRING, TypeId::NUMBER),
+            constraint_pair_visit_state(&mut pairs, TypeId::STRING, TypeId::NUMBER, 0),
             ConstraintPairVisitState::Entered
         );
         assert_eq!(
-            constraint_pair_visit_state(&mut pairs, TypeId::STRING, TypeId::NUMBER),
+            constraint_pair_visit_state(&mut pairs, TypeId::STRING, TypeId::NUMBER, 0),
             ConstraintPairVisitState::AlreadyVisited
         );
+    }
+
+    #[test]
+    fn constraint_pair_guard_distinguishes_modes_in_either_order() {
+        for modes in [[0, 0b010], [0b010, 0]] {
+            let mut pairs = FxHashSet::default();
+            assert_eq!(
+                constraint_pair_visit_state(&mut pairs, TypeId::STRING, TypeId::NUMBER, modes[0],),
+                ConstraintPairVisitState::Entered
+            );
+            assert_eq!(
+                constraint_pair_visit_state(&mut pairs, TypeId::STRING, TypeId::NUMBER, modes[1],),
+                ConstraintPairVisitState::Entered
+            );
+            assert_eq!(
+                constraint_pair_visit_state(&mut pairs, TypeId::STRING, TypeId::NUMBER, modes[1],),
+                ConstraintPairVisitState::AlreadyVisited
+            );
+        }
     }
 
     #[test]

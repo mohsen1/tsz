@@ -7,7 +7,7 @@
 use super::*;
 use crate::construction::TypeDatabase;
 use crate::def::DefId;
-use crate::inference::infer::InferenceContext;
+use crate::inference::infer::{InferenceContext, InferenceError, ParameterRecoveryMode};
 use crate::intern::TypeInterner;
 use crate::relations::subtype::TypeResolver;
 use crate::types::{
@@ -29,6 +29,77 @@ fn make_type_param(interner: &TypeInterner, name: &str) -> (tsz_common::interner
         origin: crate::types::TypeParamOrigin::User,
     }));
     (atom, ty)
+}
+
+fn unary_function(
+    interner: &TypeInterner,
+    parameter_type: TypeId,
+    is_method: bool,
+    is_constructor: bool,
+) -> TypeId {
+    interner.function(FunctionShape {
+        type_params: Vec::new(),
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("value")),
+            type_id: parameter_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor,
+        is_method,
+    })
+}
+
+fn unary_call_signature(
+    interner: &TypeInterner,
+    parameter_type: TypeId,
+    is_method: bool,
+) -> CallSignature {
+    CallSignature {
+        type_params: Vec::new(),
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("entry")),
+            type_id: parameter_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_method,
+    }
+}
+
+fn function_with_this(interner: &TypeInterner, this_type: TypeId, is_method: bool) -> TypeId {
+    interner.function(FunctionShape {
+        type_params: Vec::new(),
+        params: Vec::new(),
+        this_type: Some(this_type),
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method,
+    })
+}
+
+fn assert_candidate_partition(
+    context: &mut InferenceContext<'_>,
+    variable: crate::inference::infer::InferenceVar,
+    expected_regular: &[TypeId],
+    expected_contra: &[TypeId],
+) {
+    let regular = context
+        .get_constraints(variable)
+        .map(|constraints| constraints.lower_bounds)
+        .unwrap_or_default();
+    assert_eq!(regular, expected_regular);
+    assert_eq!(
+        context.get_contra_candidate_types(variable),
+        expected_contra
+    );
 }
 
 struct CanonicalApplicationResolver {
@@ -811,6 +882,333 @@ fn test_match_contravariant_parameter() {
     // (because infer_functions swaps target and source for params)
     let result = ctx.resolve_with_constraints(var_t).unwrap();
     assert_eq!(result, TypeId::STRING);
+}
+
+#[test]
+fn test_method_target_parameter_records_regular_candidate_with_renamed_binders() {
+    for binder in ["Payload", "RenamedItem"] {
+        let interner = TypeInterner::new();
+        let mut context = InferenceContext::new(&interner);
+        let (parameter_name, parameter_type) = make_type_param(&interner, binder);
+        let variable = context.fresh_type_param(parameter_name, false);
+
+        let source = unary_function(&interner, TypeId::STRING, false, false);
+        let target = unary_function(&interner, parameter_type, true, false);
+        context
+            .infer_from_types(source, target, InferencePriority::NakedTypeVariable)
+            .unwrap();
+
+        assert_candidate_partition(&mut context, variable, &[TypeId::STRING], &[]);
+    }
+}
+
+#[test]
+fn test_constructor_inference_uses_target_declaration_kind() {
+    for (binder, target_is_class, regular, contra) in [
+        ("ClassConstructor", true, &[TypeId::NUMBER][..], &[][..]),
+        ("ConstructType", false, &[][..], &[TypeId::NUMBER][..]),
+    ] {
+        let interner = TypeInterner::new();
+        let mut context = InferenceContext::new(&interner);
+        let (parameter_name, parameter_type) = make_type_param(&interner, binder);
+        let variable = context.fresh_type_param(parameter_name, false);
+        let source = unary_function(&interner, TypeId::NUMBER, true, true);
+        let target = unary_function(&interner, parameter_type, target_is_class, true);
+
+        context
+            .infer_from_types(source, target, InferencePriority::NakedTypeVariable)
+            .unwrap();
+
+        assert_candidate_partition(&mut context, variable, regular, contra);
+    }
+}
+
+#[test]
+fn test_method_property_hint_does_not_loosen_strict_constructor_target() {
+    let interner = TypeInterner::new();
+    let (name, target_param) = make_type_param(&interner, "Constructed");
+    let source = unary_function(&interner, TypeId::STRING, true, true);
+    let target = unary_function(&interner, target_param, false, true);
+    let mut context = InferenceContext::new(&interner);
+    let variable = context.fresh_type_param(name, false);
+    context.pending_target_method = true;
+
+    context
+        .infer_from_types(source, target, InferencePriority::NakedTypeVariable)
+        .expect("constructor inference should complete");
+
+    assert_candidate_partition(&mut context, variable, &[], &[TypeId::STRING]);
+    assert!(context.pending_target_method);
+}
+
+#[test]
+fn test_method_property_hint_does_not_reach_returned_signature() {
+    let interner = TypeInterner::new();
+    let (name, target_param) = make_type_param(&interner, "Returned");
+    let source_return = unary_function(&interner, TypeId::STRING, false, false);
+    let target_return = unary_function(&interner, target_param, false, false);
+    let source = interner.function(FunctionShape::new(Vec::new(), source_return));
+    let target = interner.function(FunctionShape::new(Vec::new(), target_return));
+    let mut context = InferenceContext::new(&interner);
+    let variable = context.fresh_type_param(name, false);
+    context.pending_target_method = true;
+
+    context
+        .infer_from_types(source, target, InferencePriority::ReturnType)
+        .expect("nested return inference should complete");
+
+    assert_candidate_partition(&mut context, variable, &[], &[TypeId::STRING]);
+    assert!(context.pending_target_method);
+}
+
+#[test]
+fn test_method_property_metadata_reaches_rebuilt_function_signature() {
+    let interner = TypeInterner::new();
+    let mut context = InferenceContext::new(&interner);
+    let (parameter_name, parameter_type) = make_type_param(&interner, "Element");
+    let variable = context.fresh_type_param(parameter_name, false);
+    let member_name = interner.intern_string("consume");
+
+    let source_member = unary_function(&interner, TypeId::BOOLEAN, false, false);
+    let target_member = unary_function(&interner, parameter_type, false, false);
+    let source = interner.object(vec![PropertyInfo::new(member_name, source_member)]);
+    let mut target_property = PropertyInfo::new(member_name, target_member);
+    target_property.is_method = true;
+    let target = interner.object(vec![target_property]);
+
+    context
+        .infer_from_types(source, target, InferencePriority::NakedTypeVariable)
+        .unwrap();
+
+    assert_candidate_partition(&mut context, variable, &[TypeId::BOOLEAN], &[]);
+}
+
+#[test]
+fn test_method_bivariant_mode_persists_through_nested_callback_signature() {
+    let interner = TypeInterner::new();
+    let mut context = InferenceContext::new(&interner);
+    let (parameter_name, parameter_type) = make_type_param(&interner, "NestedValue");
+    let variable = context.fresh_type_param(parameter_name, false);
+
+    let source_callback = unary_function(&interner, TypeId::STRING, false, false);
+    let target_callback = unary_function(&interner, parameter_type, false, false);
+    let source_method = unary_function(&interner, source_callback, false, false);
+    let target_method = unary_function(&interner, target_callback, true, false);
+
+    context
+        .infer_from_types(
+            source_method,
+            target_method,
+            InferencePriority::NakedTypeVariable,
+        )
+        .unwrap();
+
+    assert_candidate_partition(&mut context, variable, &[TypeId::STRING], &[]);
+}
+
+#[test]
+fn test_nested_strict_function_parameters_toggle_back_to_covariance() {
+    let interner = TypeInterner::new();
+    let mut context = InferenceContext::new(&interner);
+    let (parameter_name, parameter_type) = make_type_param(&interner, "DoubleContra");
+    let variable = context.fresh_type_param(parameter_name, false);
+    let source_inner = unary_function(&interner, TypeId::STRING, false, false);
+    let target_inner = unary_function(&interner, parameter_type, false, false);
+    let source = unary_function(&interner, source_inner, false, false);
+    let target = unary_function(&interner, target_inner, false, false);
+
+    context
+        .infer_from_types(source, target, InferencePriority::NakedTypeVariable)
+        .unwrap();
+
+    assert_candidate_partition(&mut context, variable, &[TypeId::STRING], &[]);
+}
+
+#[test]
+fn test_nested_variance_walk_keeps_source_placeholder_as_regular_candidate() {
+    let interner = TypeInterner::new();
+    let mut context = InferenceContext::new(&interner);
+    let (parameter_name, parameter_type) = make_type_param(&interner, "NestedSource");
+    let variable = context.fresh_type_param(parameter_name, false);
+    let source_inner = unary_function(&interner, parameter_type, false, false);
+    let target_inner = unary_function(&interner, TypeId::STRING, false, false);
+    let source = unary_function(&interner, source_inner, false, false);
+    let target = unary_function(&interner, target_inner, false, false);
+
+    context
+        .infer_from_types(source, target, InferencePriority::NakedTypeVariable)
+        .unwrap();
+
+    let constraints = context
+        .get_constraints(variable)
+        .expect("nested source placeholder should remain inference evidence");
+    assert_eq!(constraints.lower_bounds, vec![TypeId::STRING]);
+    assert!(constraints.upper_bounds.is_empty());
+    assert!(context.get_contra_candidate_types(variable).is_empty());
+}
+
+#[test]
+fn test_explicit_this_uses_target_method_variance() {
+    for (binder, is_method, regular, contra) in [
+        ("MethodThis", true, &[TypeId::STRING][..], &[][..]),
+        ("PropertyThis", false, &[][..], &[TypeId::STRING][..]),
+    ] {
+        let interner = TypeInterner::new();
+        let mut context = InferenceContext::new(&interner);
+        let (parameter_name, parameter_type) = make_type_param(&interner, binder);
+        let variable = context.fresh_type_param(parameter_name, false);
+        let source = function_with_this(&interner, TypeId::STRING, false);
+        let target = function_with_this(&interner, parameter_type, is_method);
+
+        context
+            .infer_from_types(source, target, InferencePriority::NakedTypeVariable)
+            .unwrap();
+
+        assert_candidate_partition(&mut context, variable, regular, contra);
+    }
+}
+
+#[test]
+fn test_function_valued_property_parameter_remains_contravariant() {
+    let interner = TypeInterner::new();
+    let mut context = InferenceContext::new(&interner);
+    let (parameter_name, parameter_type) = make_type_param(&interner, "OrdinaryProperty");
+    let variable = context.fresh_type_param(parameter_name, false);
+    let member_name = interner.intern_string("callback");
+
+    let source_member = unary_function(&interner, TypeId::NUMBER, false, false);
+    let target_member = unary_function(&interner, parameter_type, false, false);
+    let source = interner.object(vec![PropertyInfo::new(member_name, source_member)]);
+    let target = interner.object(vec![PropertyInfo::new(member_name, target_member)]);
+
+    context
+        .infer_from_types(source, target, InferencePriority::NakedTypeVariable)
+        .unwrap();
+
+    assert_candidate_partition(&mut context, variable, &[], &[TypeId::NUMBER]);
+}
+
+#[test]
+fn test_callable_signature_inference_uses_target_declaration_kind() {
+    for (binder, use_construct_signature, target_is_method) in [
+        ("MethodArg", false, true),
+        ("ClassCtorArg", true, true),
+        ("ConstructTypeArg", true, false),
+    ] {
+        let interner = TypeInterner::new();
+        let mut context = InferenceContext::new(&interner);
+        let (parameter_name, parameter_type) = make_type_param(&interner, binder);
+        let variable = context.fresh_type_param(parameter_name, false);
+
+        let source_signature = unary_call_signature(&interner, TypeId::STRING, false);
+        let target_signature = unary_call_signature(&interner, parameter_type, target_is_method);
+        let (source_calls, source_constructs, target_calls, target_constructs) =
+            if use_construct_signature {
+                (
+                    Vec::new(),
+                    vec![source_signature],
+                    Vec::new(),
+                    vec![target_signature],
+                )
+            } else {
+                (
+                    vec![source_signature],
+                    Vec::new(),
+                    vec![target_signature],
+                    Vec::new(),
+                )
+            };
+        let source = interner.callable(CallableShape {
+            call_signatures: source_calls,
+            construct_signatures: source_constructs,
+            ..CallableShape::default()
+        });
+        let target = interner.callable(CallableShape {
+            call_signatures: target_calls,
+            construct_signatures: target_constructs,
+            ..CallableShape::default()
+        });
+
+        context
+            .infer_from_types(source, target, InferencePriority::NakedTypeVariable)
+            .unwrap();
+
+        if target_is_method {
+            assert_candidate_partition(&mut context, variable, &[TypeId::STRING], &[]);
+        } else {
+            assert_candidate_partition(&mut context, variable, &[], &[TypeId::STRING]);
+        }
+    }
+}
+
+#[test]
+fn test_inference_modes_restore_after_error() {
+    let interner = TypeInterner::new();
+    let mut context = InferenceContext::new(&interner);
+    let failed: Result<(), InferenceError> = context.with_restored_inference_modes(|ctx| {
+        ctx.in_contra_mode = true;
+        ctx.in_variance_walk = true;
+        ctx.parameter_recovery_mode = ParameterRecoveryMode::ComplexPlaceholder;
+        ctx.in_bivariant_mode = true;
+        ctx.pending_target_method = true;
+        Err(InferenceError::Conflict(TypeId::STRING, TypeId::NUMBER))
+    });
+
+    assert!(matches!(failed, Err(InferenceError::Conflict(..))));
+    assert!(!context.in_contra_mode);
+    assert!(!context.in_variance_walk);
+    assert_eq!(context.parameter_recovery_mode, ParameterRecoveryMode::None);
+    assert!(!context.in_bivariant_mode);
+    assert!(!context.pending_target_method);
+}
+
+#[test]
+fn test_constraint_visit_mode_omits_matcher_only_variance_state() {
+    let interner = TypeInterner::new();
+    let mut context = InferenceContext::new(&interner);
+    let base_constraint_mode = context.constraint_visit_mode();
+    let base_matching_mode = context.inference_visit_mode();
+
+    context.in_variance_walk = true;
+    assert_eq!(context.constraint_visit_mode(), base_constraint_mode);
+    assert_ne!(context.inference_visit_mode(), base_matching_mode);
+
+    context.parameter_recovery_mode = ParameterRecoveryMode::StandaloneReverse;
+    assert_ne!(context.constraint_visit_mode(), base_constraint_mode);
+}
+
+#[test]
+fn test_inference_visited_distinguishes_method_property_mode() {
+    let interner = TypeInterner::new();
+    let mut context = InferenceContext::new(&interner);
+    let (parameter_name, parameter_type) = make_type_param(&interner, "VisitedMode");
+    let variable = context.fresh_type_param(parameter_name, false);
+    let ordinary_name = interner.intern_string("ordinary");
+    let method_name = interner.intern_string("method");
+
+    let source_member = unary_function(&interner, TypeId::BOOLEAN, false, false);
+    let target_member = unary_function(&interner, parameter_type, false, false);
+    let source = interner.object(vec![
+        PropertyInfo::new(ordinary_name, source_member),
+        PropertyInfo::new(method_name, source_member),
+    ]);
+    let mut method_property = PropertyInfo::new(method_name, target_member);
+    method_property.is_method = true;
+    let target = interner.object(vec![
+        PropertyInfo::new(ordinary_name, target_member),
+        method_property,
+    ]);
+
+    context
+        .infer_from_types(source, target, InferencePriority::NakedTypeVariable)
+        .unwrap();
+
+    assert_candidate_partition(
+        &mut context,
+        variable,
+        &[TypeId::BOOLEAN],
+        &[TypeId::BOOLEAN],
+    );
 }
 
 // =============================================================================

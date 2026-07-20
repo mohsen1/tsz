@@ -697,7 +697,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             self.bind_property_receiver_this(source_receiver, self.optional_property_type(source));
         let target_read =
             self.bind_property_receiver_this(target_receiver, self.optional_property_type(target));
-        let allow_bivariant = source.is_method || target.is_method;
+        let allow_bivariant = target.is_method;
 
         // Mark that we're inside a property comparison so nested weak type checks
         // apply to recursive structural comparisons of property types.
@@ -1333,7 +1333,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     let target_value =
                         self.bind_property_receiver_this(target_receiver, t_number_idx.value_type);
                     if !self
-                        .check_subtype_with_method_variance(prop_type, target_value, prop.is_method)
+                        .check_subtype_with_method_variance(prop_type, target_value, false)
                         .is_true()
                     {
                         return SubtypeResult::False;
@@ -1511,7 +1511,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     target_receiver,
                     self.optional_property_type(t_prop),
                 );
-                let allow_bivariant = sp.is_method || t_prop.is_method;
+                let allow_bivariant = t_prop.is_method;
                 if !self
                     .check_subtype_with_method_variance(source_type, target_type, allow_bivariant)
                     .is_true()
@@ -1658,7 +1658,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             } else {
                 string_prop_type
             };
-            let allow_bivariant = prop.is_method;
+            let allow_bivariant = false;
 
             if let Some(number_idx) = number_index {
                 let is_numeric = utils::is_numeric_property_name(self.interner, prop.name);

@@ -142,6 +142,57 @@ fn class_constructor_params_stay_bivariant_both_directions() {
     );
 }
 
+#[test]
+fn class_source_does_not_loosen_strict_construct_target() {
+    let source = "
+        class Animal { animal = true; }
+        class Dog extends Animal { dog = true; }
+        class DogCtor { constructor(value: Dog) {} }
+        class AnimalCtor { constructor(value: Animal) {} }
+        const strictTarget: new (value: Animal) => DogCtor = DogCtor;
+        const classTarget: typeof AnimalCtor = DogCtor;
+    ";
+    assert_eq!(
+        count(source, TS2322),
+        1,
+        "variance is selected from the target declaration kind",
+    );
+}
+
+#[test]
+fn class_extending_construct_typed_value_preserves_strict_provenance() {
+    let source = "
+        declare const Base: new (value: 1) => object;
+        class Derived extends Base {}
+        const strictTarget: new (value: number) => object = Derived;
+    ";
+    assert_eq!(
+        count(source, TS2322),
+        1,
+        "inherited construct-signature types stay strict",
+    );
+}
+
+#[test]
+fn inherited_constructor_target_retains_declaration_provenance() {
+    let source = "
+        class Animal { animal = true; }
+        class Dog extends Animal { dog = true; }
+        declare const StrictBase: new (value: Animal) => object;
+        class StrictDerived extends StrictBase {}
+        class RealBase { constructor(value: Animal) {} }
+        class RealDerived extends RealBase {}
+        class DogCtor { constructor(value: Dog) {} }
+        const strictTarget: typeof StrictDerived = DogCtor;
+        const bivariantTarget: typeof RealDerived = DogCtor;
+    ";
+    assert_eq!(
+        count(source, TS2322),
+        1,
+        "inherited constructor signatures retain their original declaration kind",
+    );
+}
+
 // ---------------------------------------------------------------------------
 // CALL-signature literals already contravariant — guards the shared path.
 // ---------------------------------------------------------------------------
