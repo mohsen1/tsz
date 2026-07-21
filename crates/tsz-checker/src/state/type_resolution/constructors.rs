@@ -217,29 +217,19 @@ impl<'a> CheckerState<'a> {
         }
 
         if matching.is_empty() {
-            // When type arguments were provided but no construct signature has
-            // type parameters, the base class is not generic.  In extends-clause
-            // context, return a callable with no construct signatures so that
-            // `super()` fails with TS2346 ("Call target does not contain any
-            // signatures.").  For regular `new` expressions, return the original
-            // type unchanged — TS2558 already reports the type-arg count mismatch
-            // and the construct signatures should remain available for argument
-            // checking and return-type inference (avoiding false TS7009).
-            if strip_on_non_generic_mismatch
-                && !type_args.is_empty()
-                && shape
-                    .construct_signatures
-                    .iter()
-                    .all(|sig| sig.type_params.is_empty())
-            {
-                let call_signatures = shape.call_signatures.clone();
-                return instantiated_callable_from_base(
-                    self.ctx.types,
-                    &shape,
-                    call_signatures,
-                    vec![],
-                );
-            }
+            // Type arguments were provided but no construct signature is
+            // generic, so the base class is not generic. This is already
+            // reported (TS2315 in an `extends` clause, TS2558 for `new`).
+            // Return the base constructor type unchanged so its construct
+            // signatures stay available and `super()`/`new` still type-check
+            // their arguments.
+            //
+            // tsc 7.0.2 does NOT additionally strip the construct signatures to
+            // force a companion TS2346 ("Call target does not contain any
+            // signatures.") — no test pairs TS2315 with TS2346. The previous
+            // extends-only stripping (`strip_on_non_generic_mismatch`) was stale
+            // pre-7.0 behavior that double-reported on `class B extends A<T>`
+            // where `A` is not generic.
             return ctor_type;
         }
 
