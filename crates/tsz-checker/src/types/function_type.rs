@@ -855,8 +855,22 @@ impl<'a> CheckerState<'a> {
                         && *cached_param_type != TypeId::UNKNOWN
                         && *cached_param_type != TypeId::ERROR
                 });
+                // A binding-pattern parameter with a default value and no type
+                // annotation takes the *initializer's* widened type, not the
+                // reconstructed pattern tuple (tsc `getTypeForVariableLikeDeclaration`:
+                // annotation -> contextual -> initializer -> pattern). Here
+                // `type_id` already holds the initializer's widened type (it was
+                // computed from `param.initializer` when no contextual type
+                // applied), so preserve it. Without this, `[a, b] = new Iter`
+                // reconstructs `[T, T]` and rejects a non-tuple iterable default
+                // via a false TS2345/TS2740.
+                let has_meaningful_initializer_type = param.initializer.is_some()
+                    && type_id != TypeId::ANY
+                    && type_id != TypeId::UNKNOWN
+                    && type_id != TypeId::ERROR;
                 let mut type_id = if let Some(pattern_type) = element_type_from_pattern {
                     if param.type_annotation.is_some()
+                        || has_meaningful_initializer_type
                         || ((has_contextual_type || has_external_binding_context)
                             && type_id != TypeId::ANY
                             && type_id != TypeId::UNKNOWN)
