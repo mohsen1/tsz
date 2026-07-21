@@ -102,6 +102,16 @@ impl<'a> CheckerContext<'a> {
             || code == 4094
         {
             (start ^ fold_u32(message), code)
+        } else if code == 2420 {
+            // TS2420 ("Class 'C' incorrectly implements interface 'I'") anchors
+            // every instance at the class name, so a class implementing several
+            // interfaces incorrectly yields multiple diagnostics at one position
+            // differing only in the interface name (the first message line). Fold
+            // just that first line so distinct interfaces stay distinct, while
+            // per-member sub-message variants of the SAME interface still collapse
+            // to a single diagnostic.
+            let first_line = message.split('\n').next().unwrap_or(message);
+            (start ^ fold_u32(first_line), code)
         } else if code == 2869 || code == 2871 {
             // The `??` operand checks classify the left operand syntactically
             // (`getSyntacticNullishnessSemantics`), recursing through nested
