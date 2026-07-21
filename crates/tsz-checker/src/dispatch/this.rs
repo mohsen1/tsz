@@ -42,8 +42,12 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 // the enum initializer. When `this` is captured through an
                 // arrow function, TS2683 is NOT emitted (the arrow's `this`
                 // captures the outer context which is the enum — still invalid
-                // via TS2332, but not flagged for implicit-any).
-                if !self.checker.has_enclosing_arrow_before_enum(idx) {
+                // via TS2332, but not flagged for implicit-any). The companion
+                // is a type diagnostic, so it also requires `noImplicitThis`
+                // (under `strict: false` tsc reports TS2332 alone).
+                if !self.checker.has_enclosing_arrow_before_enum(idx)
+                    && self.checker.ctx.no_implicit_this()
+                {
                     self.checker.error_at_node(
                         idx,
                         diagnostic_messages::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
@@ -61,14 +65,18 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     diagnostic_messages::THIS_CANNOT_BE_REFERENCED_IN_A_MODULE_OR_NAMESPACE_BODY,
                     diagnostic_codes::THIS_CANNOT_BE_REFERENCED_IN_A_MODULE_OR_NAMESPACE_BODY,
                 );
-                // TSC always emits TS2683 as a companion to TS2331 in
-                // namespace bodies — `this` is inherently untyped here,
-                // regardless of noImplicitThis.
-                self.checker.error_at_node(
-                    idx,
-                    diagnostic_messages::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
-                    diagnostic_codes::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
-                );
+                // TSC emits TS2683 as a companion to TS2331 in namespace
+                // bodies only under `noImplicitThis` — it is a type diagnostic
+                // (implicit-`any` `this`), unlike the flag-independent TS2331
+                // positional error. Under `strict: false` tsc reports TS2331
+                // alone.
+                if self.checker.ctx.no_implicit_this() {
+                    self.checker.error_at_node(
+                        idx,
+                        diagnostic_messages::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
+                        diagnostic_codes::THIS_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION,
+                    );
+                }
                 return TypeId::ANY;
             }
             // TS17009: 'super' must be called before accessing 'this'
