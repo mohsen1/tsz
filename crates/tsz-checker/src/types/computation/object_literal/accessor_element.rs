@@ -302,9 +302,16 @@ impl<'a> CheckerState<'a> {
             // Duplicate properties are an error in object literals.
             // TS1118 for duplicate get/set accessors, TS1117 for other duplicates.
             // Skip for computed property names — tsc only checks static names.
+            //
+            // A computed name whose expression type is non-literal (`[1 + 1]` ->
+            // `number`) is *not* late-bound, so tsc never resolves it to a static
+            // key and never treats two such accessors as the same property. Even
+            // though `get_property_name_resolved` constant-folds `1 + 1` to `"2"`
+            // for us, we must not raise a duplicate/clash diagnostic for it.
             if !skip_duplicate_check
                 && explicit_property_names.contains(&name_atom)
                 && !is_complementary_pair
+                && !self.is_late_bound_member_name(accessor.name)
                 && !self.ctx.has_parse_errors
                 && (!self.is_js_file() || self.ctx.js_strict_mode_diagnostics_enabled())
             {
