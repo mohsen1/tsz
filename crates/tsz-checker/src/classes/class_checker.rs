@@ -1109,6 +1109,19 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            // Accessor-pair dedup for the kind-mismatch diagnostics: a `get x` /
+            // `set x` pair is one overriding member, but the loop visits both
+            // declarations. The getter's iteration already reports the member's
+            // method/accessor KIND mismatch (TS2423/2425/2426), so skip the setter
+            // of the same pair — otherwise a getter+setter overriding a base
+            // method double-reports TS2423. (Mirrors the type-compat setter skip
+            // below.)
+            if is_setter
+                && derived_accessor_pair_types.contains_key(&(member_name.clone(), is_static))
+            {
+                continue;
+            }
+
             // TS2423/TS2425/TS2426: Check for method/property/accessor kind mismatch (INSTANCE members only)
             // Static members use TS2417 instead
             if !is_static {
