@@ -109,6 +109,15 @@ impl<'a> CheckerState<'a> {
         let Some(clause_node) = self.ctx.arena.get(export_data.export_clause) else {
             return true;
         };
+        // Type-only exported declarations (`export interface`, `export type`)
+        // are not "other exported elements" for the export-assignment conflict
+        // (TS2309): tsc counts only value-meaning exports, so `export = X`
+        // coexisting with only an exported interface/type alias is not an error.
+        if clause_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+            || clause_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+        {
+            return false;
+        }
         if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
             return true;
         }
