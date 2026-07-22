@@ -694,7 +694,27 @@ impl<'a> FlowAnalyzer<'a> {
                                 } else if is_control_flow_typed_any {
                                     // Unannotated mutable locals such as `let x;` evolve from
                                     // their writes rather than staying explicit `any`.
-                                    assigned_type
+                                    //
+                                    // A `var x = null` / `= undefined` local is control-flow-
+                                    // typed-any (unannotated, non-const, bare-nullish-literal
+                                    // initializer). In non-strict mode tsc widens the nullish
+                                    // initializer to `any` (getWidenedType), so a later read sees
+                                    // `any`. Without this, tsz keeps the raw `null`/`undefined`
+                                    // flow type and reports spurious TS2407/TS2349/TS2365/TS2403
+                                    // (#94) — e.g. `var arr = null; for (i in arr)`. Scoped to a
+                                    // bare `null`/`undefined` assigned type (the only initializer
+                                    // shape that makes a symbol control-flow-typed-any), so
+                                    // non-nullish and union writes are unchanged. Strict mode keeps
+                                    // the narrowed nullish type.
+                                    if matches!(assigned_type, TypeId::NULL | TypeId::UNDEFINED)
+                                        && self
+                                            .checker_context
+                                            .is_some_and(|c| !c.strict_null_checks())
+                                    {
+                                        TypeId::ANY
+                                    } else {
+                                        assigned_type
+                                    }
                                 } else {
                                     // Killing definition: replace type with RHS type and stop traversal.
                                     // Use the DECLARED type for narrowing (matching tsc's getAssignmentReducedType),
