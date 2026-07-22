@@ -729,7 +729,7 @@ FILE_LINE_LIMIT_CHECKS = [
     (
         "Binder boundary: nodes/binding.rs size ratchet",
         ROOT / "crates/tsz-binder/src/nodes/binding.rs",
-        2018,
+        1767,
     ),
     (
         "Solver boundary: diagnostics/format/mod.rs size ratchet",
