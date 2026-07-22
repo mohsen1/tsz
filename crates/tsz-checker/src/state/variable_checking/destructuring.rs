@@ -1078,7 +1078,20 @@ impl<'a> CheckerState<'a> {
                     } else {
                         self.resolve_lazy_type(key_type)
                     };
-                    let is_invalid = crate::query_boundaries::type_checking_utilities::get_invalid_index_type_member_strict(self.ctx.types, check_key);
+                    // A genuine `any` is a valid index type for a value-position
+                    // destructuring computed key: `{ [k]: v } = obj` desugars to
+                    // `v = obj[k]`, and element access permits an `any` index.
+                    // Only the strict type-level `isValidIndexType` (keyof/mapped/
+                    // `T[K]`) rejects `any`; that helper must not gate this
+                    // value-position check. But an ERROR key (e.g. `[foo()]` where
+                    // `foo` is not callable) is remapped to ANY above precisely so
+                    // it still reports TS2538 (tsc does too) — so exempt only when
+                    // the ORIGINAL key type is `any`, never the ERROR remap.
+                    let is_invalid = if key_type == TypeId::ANY && check_key == TypeId::ANY {
+                        None
+                    } else {
+                        crate::query_boundaries::type_checking_utilities::get_invalid_index_type_member_strict(self.ctx.types, check_key)
+                    };
                     // Symbol types pass the general validity check but can't
                     // index into objects through string/number index signatures,
                     // UNLESS the parent type (or its constraint for generics)
