@@ -1570,8 +1570,9 @@ class B {
 
     assert_eq!(
         ts2804_messages.len(),
-        2,
-        "Expected TS2804 on the later static/instance private-name conflicts only. Diagnostics: {:#?}",
+        4,
+        "Expected TS2804 on BOTH declarations of each static/instance private-name conflict \
+         (2 conflict pairs x 2 declarations). Diagnostics: {:#?}",
         file.diagnostics
     );
     assert!(
