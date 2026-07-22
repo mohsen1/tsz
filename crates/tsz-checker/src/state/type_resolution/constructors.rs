@@ -54,7 +54,7 @@ impl<'a> CheckerState<'a> {
         ctor_type: TypeId,
         type_arguments: Option<&NodeList>,
     ) -> TypeId {
-        self.apply_type_arguments_to_constructor_type_inner(ctor_type, type_arguments, false)
+        self.apply_type_arguments_to_constructor_type_inner(ctor_type, type_arguments)
     }
 
     pub(crate) fn apply_type_arguments_to_constructor_type_for_extends(
@@ -62,7 +62,7 @@ impl<'a> CheckerState<'a> {
         ctor_type: TypeId,
         type_arguments: Option<&NodeList>,
     ) -> TypeId {
-        self.apply_type_arguments_to_constructor_type_inner(ctor_type, type_arguments, true)
+        self.apply_type_arguments_to_constructor_type_inner(ctor_type, type_arguments)
     }
 
     pub(crate) fn apply_type_argument_ids_to_constructor_type_for_extends(
@@ -70,7 +70,7 @@ impl<'a> CheckerState<'a> {
         ctor_type: TypeId,
         type_args: &[TypeId],
     ) -> TypeId {
-        self.apply_type_argument_ids_to_constructor_type_inner(ctor_type, type_args, false, true)
+        self.apply_type_argument_ids_to_constructor_type_inner(ctor_type, type_args, false)
     }
 
     pub(crate) fn apply_type_argument_ids_to_constructor_type(
@@ -78,14 +78,13 @@ impl<'a> CheckerState<'a> {
         ctor_type: TypeId,
         type_args: &[TypeId],
     ) -> TypeId {
-        self.apply_type_argument_ids_to_constructor_type_inner(ctor_type, type_args, false, false)
+        self.apply_type_argument_ids_to_constructor_type_inner(ctor_type, type_args, false)
     }
 
     fn apply_type_arguments_to_constructor_type_inner(
         &mut self,
         ctor_type: TypeId,
         type_arguments: Option<&NodeList>,
-        strip_on_non_generic_mismatch: bool,
     ) -> TypeId {
         let explicit_type_arg_count = type_arguments.map_or(0, |args| args.nodes.len());
         let missing_type_args_become_any = self.is_js_file() && explicit_type_arg_count == 0;
@@ -113,7 +112,6 @@ impl<'a> CheckerState<'a> {
             ctor_type,
             &type_args,
             missing_type_args_become_any,
-            strip_on_non_generic_mismatch,
         )
     }
 
@@ -122,7 +120,6 @@ impl<'a> CheckerState<'a> {
         ctor_type: TypeId,
         type_args: &[TypeId],
         missing_type_args_become_any: bool,
-        strip_on_non_generic_mismatch: bool,
     ) -> TypeId {
         use crate::query_boundaries::construct_signatures::{
             call_signature_from_function_shape, construct_only_callable_type,
@@ -145,7 +142,6 @@ impl<'a> CheckerState<'a> {
                     *member,
                     type_args,
                     missing_type_args_become_any,
-                    strip_on_non_generic_mismatch,
                 );
                 if applied != *member {
                     any_applied = true;
