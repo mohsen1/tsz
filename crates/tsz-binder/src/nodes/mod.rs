@@ -7,4 +7,5 @@
 mod binding;
 mod binding_scope;
 mod flow_statements;
+mod hoisting;
 mod names;
