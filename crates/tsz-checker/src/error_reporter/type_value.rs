@@ -464,6 +464,19 @@ impl<'a> CheckerState<'a> {
                     | syntax_kind_ext::METHOD_SIGNATURE
                     | syntax_kind_ext::INDEX_SIGNATURE
             ) {
+                // Only a KEY-position identifier is a computed property name. When
+                // the identifier sits in the member's TYPE position — e.g.
+                // `prop: typeof string`, where `string` is the operand of a
+                // `typeof` type query — it is not a computed key and must get the
+                // plain TS2693, not the TS2690 mapped-type suggestion.
+                if self
+                    .ctx
+                    .arena
+                    .get_signature(parent)
+                    .is_some_and(|sig| sig.type_annotation == current)
+                {
+                    return false;
+                }
                 return true;
             }
             if matches!(
