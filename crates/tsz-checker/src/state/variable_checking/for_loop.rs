@@ -889,7 +889,12 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            if let Some(name) = var_name {
+            // TS7022/TS7023 are implicit-any diagnostics, gated on noImplicitAny:
+            // tsc's reportCircularityError only reports the "referenced directly or
+            // indirectly in its own initializer" error `if (noImplicitAny && ...)`
+            // (checker.ts reportCircularityError:12892). With noImplicitAny off the
+            // circular variable is silently `any`.
+            if let Some(name) = var_name.filter(|_| self.ctx.no_implicit_any()) {
                 use crate::diagnostics::diagnostic_codes;
                 self.error_at_node_msg(
                     var_decl.name,
