@@ -573,17 +573,25 @@ impl<'a> CheckerState<'a> {
                     self.get_type_of_node_with_request(element_data.initializer, &request);
                 self.ctx.preserve_literal_types = prev_preserve;
 
-                if element_type == TypeId::ANY || element_type == TypeId::UNKNOWN {
-                    element_type = init_type;
-                } else if !self
-                    .destructuring_relation_outcome(init_type, element_type)
-                    .related
-                {
-                    element_type = binding_patterns::binding_pattern_initializer_union_type(
-                        self.ctx.types,
-                        element_type,
-                        init_type,
-                    );
+                // When the destructuring SOURCE is genuinely `any`, every element is
+                // `any` and stays `any` (tsc's `isTypeAny(parentType)` short-circuit):
+                // do NOT fold the default initializer's type onto it, or a nested
+                // computed-key would then be checked against the init type and fire a
+                // spurious TS2537. The initializer is still evaluated above for its own
+                // checks; only the type override is skipped.
+                if parent_type != TypeId::ANY {
+                    if element_type == TypeId::ANY || element_type == TypeId::UNKNOWN {
+                        element_type = init_type;
+                    } else if !self
+                        .destructuring_relation_outcome(init_type, element_type)
+                        .related
+                    {
+                        element_type = binding_patterns::binding_pattern_initializer_union_type(
+                            self.ctx.types,
+                            element_type,
+                            init_type,
+                        );
+                    }
                 }
             }
 
