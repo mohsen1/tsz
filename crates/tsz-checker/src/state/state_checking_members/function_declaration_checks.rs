@@ -1255,7 +1255,17 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        if check_explicit_return_paths && requires_return && falls_through {
+        // The TS2394 (no explicit return) case is not gated on strictNullChecks,
+        // but the TS2366 (has explicit return, falls through) case is. When the
+        // function has an explicit return under non-strict mode, this branch must
+        // NOT consume the else-if chain — control falls through to the
+        // noImplicitReturns TS7030 check below, mirroring tsc's ordered chain
+        // (checker.ts checkAllCodePaths... :39575-39583).
+        if check_explicit_return_paths
+            && requires_return
+            && falls_through
+            && (!has_return || self.ctx.strict_null_checks())
+        {
             // For JSDoc-typed functions in JS files, prefer anchoring on the
             // JSDoc return-type span (e.g. underline `number` inside
             // `@type {function(): number}`) so the diagnostic matches tsc.
@@ -1289,7 +1299,11 @@ impl<'a> CheckerState<'a> {
                     );
                 }
             } else {
-                // TS2366: always emit when return type doesn't include undefined
+                // TS2366 (has explicit return, falls through). The branch gate
+                // above guarantees strictNullChecks here: in non-strict mode
+                // `undefined` is assignable to every type, so tsc's guard
+                // `strictNullChecks && !isTypeAssignableTo(undefinedType, type)`
+                // short-circuits to false (checker.ts checkAllCodePaths... :39580).
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                 if let Some((start, length)) = jsdoc_span {
                     self.error_at_position(

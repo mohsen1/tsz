@@ -1055,7 +1055,11 @@ impl<'a> CheckerState<'a> {
             let has_return = self.body_has_return_with_value(method.body);
             let falls_through = self.function_body_falls_through(method.body);
 
-            if has_type_annotation && requires_return && falls_through {
+            if has_type_annotation
+                && requires_return
+                && falls_through
+                && (!has_return || self.ctx.strict_null_checks())
+            {
                 if !has_return {
                     self.error_at_node(
                         method.type_annotation,
@@ -1063,8 +1067,13 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::A_FUNCTION_WHOSE_DECLARED_TYPE_IS_NEITHER_UNDEFINED_VOID_NOR_ANY_MUST_RETURN_A_V,
                     );
                 } else {
-                    // TS2366: always emit when return type doesn't include undefined.
-                    // tsc emits this regardless of strictNullChecks.
+                    // TS2366 (has explicit return, falls through). The branch gate
+                    // above guarantees strictNullChecks here: in non-strict mode
+                    // `undefined` is assignable to every type, so tsc's guard
+                    // `strictNullChecks && !isTypeAssignableTo(undefinedType, type)`
+                    // short-circuits to false (checker.ts checkAllCodePaths... :39580).
+                    // Excluding the has-return non-strict case from the gate lets
+                    // control fall through to the TS7030 noImplicitReturns check.
                     use crate::diagnostics::diagnostic_messages;
                     self.error_at_node(
                         method.type_annotation,
