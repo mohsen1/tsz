@@ -12,7 +12,7 @@ use crate::evaluation::evaluate::{TypeEvaluator, evaluate_index_access, evaluate
 use crate::evaluation::evaluate_rules::infer_pattern::InferPatternVisited;
 use crate::instantiation::instantiate::instantiate_type_params_to_constraints_uncached;
 use crate::relations::subtype::SubtypeChecker;
-use crate::types::{CallSignature, ConditionalType, IntrinsicKind, LiteralValue, TypeData, TypeId};
+use crate::types::{CallSignature, ConditionalType, LiteralValue, TypeData, TypeId};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use tsz_common::Atom;
@@ -372,11 +372,31 @@ pub fn conditional_check_type_substituted_constraint(
 ) -> Option<TypeId> {
     let cond_id = crate::type_queries::get_conditional_type_id(db, type_id)?;
     let cond = db.conditional_type(cond_id);
+    let constraint = get_base_constraint_of_type(db, cond.check_type);
+    conditional_check_type_substituted_with_constraint(db, type_id, constraint)
+}
+
+/// Substitute an explicitly exposed constraint for a deferred conditional's
+/// naked check parameter.
+///
+/// This is the resolver-aware companion to
+/// [`conditional_check_type_substituted_constraint`]. Callers that own a
+/// resolver can first expose an alias/reference constraint, then use this
+/// construction helper so the instantiator sees the resulting union and keeps
+/// distributive conditional semantics. The supplied constraint is used only
+/// for the check parameter owned by `type_id`; evaluation remains the caller's
+/// responsibility.
+pub fn conditional_check_type_substituted_with_constraint(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    constraint: TypeId,
+) -> Option<TypeId> {
+    let cond_id = crate::type_queries::get_conditional_type_id(db, type_id)?;
+    let cond = db.conditional_type(cond_id);
     let TypeData::TypeParameter(info) = db.lookup(cond.check_type)? else {
         return None;
     };
-    let constraint = get_base_constraint_of_type(db, cond.check_type);
-    if constraint == cond.check_type {
+    if constraint == cond.check_type || constraint == TypeId::ERROR {
         return None;
     }
     let subst = crate::instantiation::instantiate::TypeSubstitution::single(info.name, constraint);
@@ -1911,230 +1931,4 @@ fn resolve_concrete_conditional_result(
             cond.false_type
         },
     )
-}
-
-/// Find the private brand name for a type.
-///
-/// Private members in TypeScript classes use a "brand" property for nominal typing.
-/// The brand is a property named like `__private_brand_#className`.
-///
-/// Returns the full brand property name (e.g., `"__private_brand_#Foo"`) if found,
-/// or None if the type has no private brand.
-pub fn get_private_brand_name(db: &dyn TypeDatabase, type_id: TypeId) -> Option<String> {
-    // Fast path: intrinsics aren't `Object` / `ObjectWithIndex` / `Callable`.
-    if type_id.is_intrinsic() {
-        return None;
-    }
-    match db.lookup(type_id)? {
-        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
-            let shape = db.object_shape(shape_id);
-            for prop in &shape.properties {
-                let name = db.resolve_atom(prop.name);
-                if name.starts_with("__private_brand_") {
-                    return Some(name);
-                }
-            }
-            None
-        }
-        TypeData::Callable(shape_id) => {
-            let shape = db.callable_shape(shape_id);
-            for prop in &shape.properties {
-                let name = db.resolve_atom(prop.name);
-                if name.starts_with("__private_brand_") {
-                    return Some(name);
-                }
-            }
-            None
-        }
-        _ => None,
-    }
-}
-
-/// Find the private field name from a type's properties.
-///
-/// Given a type with private members, returns the name of the first private field
-/// (a property starting with `#` that is not a brand marker).
-///
-/// Returns `Some(field_name)` (e.g., `"#foo"`) if found, None otherwise.
-pub fn get_private_field_name(db: &dyn TypeDatabase, type_id: TypeId) -> Option<String> {
-    // Fast path: intrinsics aren't `Object` / `ObjectWithIndex` / `Callable`.
-    if type_id.is_intrinsic() {
-        return None;
-    }
-    match db.lookup(type_id)? {
-        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
-            let shape = db.object_shape(shape_id);
-            for prop in &shape.properties {
-                let name = db.resolve_atom(prop.name);
-                if name.starts_with('#') && !name.starts_with("__private_brand_") {
-                    return Some(name);
-                }
-            }
-            None
-        }
-        TypeData::Callable(shape_id) => {
-            let shape = db.callable_shape(shape_id);
-            for prop in &shape.properties {
-                let name = db.resolve_atom(prop.name);
-                if name.starts_with('#') && !name.starts_with("__private_brand_") {
-                    return Some(name);
-                }
-            }
-            None
-        }
-        _ => None,
-    }
-}
-
-/// Get the symbol associated with a type's shape.
-///
-/// Checks object, object-with-index, and callable shapes for their `symbol` field.
-/// Returns the first `SymbolId` found, or None if the type has no shape with a symbol.
-pub fn get_type_shape_symbol(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> Option<tsz_binder::SymbolId> {
-    // Fast path: intrinsics aren't `Object` / `ObjectWithIndex` / `Callable`.
-    if type_id.is_intrinsic() {
-        return None;
-    }
-    match db.lookup(type_id)? {
-        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
-            db.object_shape(shape_id).symbol
-        }
-        TypeData::Callable(shape_id) => db.callable_shape(shape_id).symbol,
-        _ => None,
-    }
-}
-
-/// Get the `DefId` from an Enum type.
-///
-/// Returns None if the type is not an Enum type.
-pub fn get_enum_def_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<crate::def::DefId> {
-    // Fast path: intrinsics aren't `Enum(_)`.
-    if type_id.is_intrinsic() {
-        return None;
-    }
-    match db.lookup(type_id) {
-        Some(TypeData::Enum(def_id, _)) => Some(def_id),
-        _ => None,
-    }
-}
-
-/// Get the structural member type from an Enum type.
-///
-/// Returns None if the type is not an Enum type.
-pub fn get_enum_member_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
-    // Fast path: intrinsics aren't `Enum(_)`.
-    if type_id.is_intrinsic() {
-        return None;
-    }
-    match db.lookup(type_id) {
-        Some(TypeData::Enum(_, member_type)) => Some(member_type),
-        _ => None,
-    }
-}
-
-/// Check if a type is a valid base type for a class `extends` clause.
-///
-/// In TypeScript, a valid base type must be:
-/// - An object type (with properties/signatures) that is not a generic mapped type
-/// - The `object` intrinsic (`NonPrimitive`)
-/// - `any`
-/// - An intersection where every member is a valid base type
-/// - A union where every member is a valid base type (e.g. from overloaded constructors)
-/// - A type parameter
-///
-/// Primitives, `never`, `void`, `undefined`, `null`, `unknown`, and literals
-/// are NOT valid base types. Used for TS2509 checking.
-pub fn is_valid_base_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    // Fast path: only `any` and `object` intrinsics are valid base types;
-    // all other intrinsics (including `BOOLEAN_TRUE` / `BOOLEAN_FALSE`,
-    // which lookup as `Literal(Boolean)` and don't match the `Literal` arm)
-    // fall through to `_ => false`. Skip `lookup` for these.
-    if type_id.is_intrinsic() {
-        return type_id == TypeId::ANY
-            || type_id == TypeId::OBJECT
-            || type_id == TypeId::PROMISE_BASE;
-    }
-    match db.lookup(type_id) {
-        // Object-like types, callables, arrays/tuples, type params, and
-        // lazy/application/mapped refs are all valid class base types.
-        Some(
-            TypeData::Intrinsic(IntrinsicKind::Any | IntrinsicKind::Object)
-            | TypeData::Object(_)
-            | TypeData::ObjectWithIndex(_)
-            | TypeData::Callable(_)
-            | TypeData::Function(_)
-            | TypeData::Array(_)
-            | TypeData::Tuple(_)
-            | TypeData::TypeParameter(_)
-            | TypeData::Lazy(_)
-            | TypeData::Application(_)
-            | TypeData::Mapped(_),
-        ) => true,
-        Some(TypeData::Intersection(list_id)) => {
-            let members = db.type_list(list_id);
-            members.iter().all(|&m| is_valid_base_type(db, m))
-        }
-        Some(TypeData::Union(list_id)) => {
-            // Union can arise from construct-signature return-type merging
-            // (get_construct_return_type_union). All members must be valid base types.
-            let members = db.type_list(list_id);
-            !members.is_empty() && members.iter().all(|&m| is_valid_base_type(db, m))
-        }
-        Some(TypeData::ReadonlyType(inner)) => is_valid_base_type(db, inner),
-        // Intrinsics (never, void, null, etc.), literals, None => not valid base types
-        _ => false,
-    }
-}
-
-/// Check if a type is a valid base type for an interface `extends` clause.
-///
-/// Interface heritage is narrower than class heritage: the base must be an
-/// object type or an intersection of object types with statically known
-/// members. Unions and type parameters are rejected with TS2312.
-pub fn is_valid_interface_base_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    if type_id.is_intrinsic() {
-        return type_id == TypeId::ANY || type_id == TypeId::OBJECT;
-    }
-
-    match db.lookup(type_id) {
-        Some(
-            TypeData::Intrinsic(IntrinsicKind::Any | IntrinsicKind::Object)
-            | TypeData::Object(_)
-            | TypeData::ObjectWithIndex(_)
-            | TypeData::Callable(_)
-            | TypeData::Function(_)
-            | TypeData::Array(_)
-            | TypeData::Tuple(_)
-            | TypeData::Lazy(_)
-            | TypeData::Application(_),
-        ) => true,
-        Some(TypeData::Intersection(list_id)) => {
-            let members = db.type_list(list_id);
-            !members.is_empty()
-                && members
-                    .iter()
-                    .all(|&member| is_valid_interface_base_type(db, member))
-        }
-        Some(TypeData::Mapped(mapped_id)) => {
-            let mapped = db.mapped_type(mapped_id);
-            !contains_type_parameters_db(db, mapped.constraint)
-                && !mapped
-                    .name_type
-                    .is_some_and(|name_type| contains_type_parameters_db(db, name_type))
-        }
-        Some(TypeData::ReadonlyType(inner)) => is_valid_interface_base_type(db, inner),
-        // tsc `isValidBaseType`: a type parameter is a valid interface base iff
-        // its base constraint is a valid base type. Members are inherited from
-        // the constraint's statically-known object shape (e.g.
-        // `interface I<T extends { k: string }> extends T {}` inherits `k`). An
-        // unconstrained parameter resolves to itself and is rejected (TS2312).
-        Some(TypeData::TypeParameter(_) | TypeData::Infer(_)) => {
-            let constraint = crate::type_queries::get_base_constraint_or_type(db, type_id);
-            constraint != type_id && is_valid_interface_base_type(db, constraint)
-        }
-        _ => false,
-    }
 }

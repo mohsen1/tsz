@@ -123,6 +123,74 @@ fn argument_inference_outranks_conflicting_return_context() {
 }
 
 #[test]
+fn nested_generic_extraction_uses_outer_apparent_constraint() {
+    assert_clean(
+        r#"
+interface ContextualBox<Scope, Key extends keyof Scope, Value> {
+  readonly expressionType: Value | undefined
+}
+
+type ReferenceInput<Scope, Key extends keyof Scope> =
+  | (keyof Scope & string)
+  | ContextualBox<Scope, Key, any>
+
+type ExtractReferenceValue<Scope, Key extends keyof Scope, Ref> =
+  Ref extends ContextualBox<any, any, infer Value> ? Value : unknown
+
+function wrapUnary<
+  Scope,
+  Key extends keyof Scope,
+  Ref extends ReferenceInput<Scope, Key>,
+>(expr: Ref): ContextualBox<Scope, Key, boolean> {
+  function unary<Ref extends ReferenceInput<Scope, Key>>(
+    value: Ref,
+  ): ContextualBox<Scope, Key, ExtractReferenceValue<Scope, Key, Ref>> {
+    return {} as any
+  }
+
+  return unary(expr)
+}
+"#,
+        "same-spelled nested generic extraction",
+    );
+}
+
+#[test]
+fn renamed_sibling_type_parameter_keeps_the_same_apparent_constraint() {
+    assert_clean(
+        r#"
+interface ContextualBox<Scope, Key extends keyof Scope, Value> {
+  readonly expressionType: Value | undefined
+}
+
+type ReferenceInput<Scope, Key extends keyof Scope> =
+  | (keyof Scope & string)
+  | ContextualBox<Scope, Key, any>
+
+type ExtractReferenceValue<Scope, Key extends keyof Scope, Ref> =
+  Ref extends ContextualBox<any, any, infer Value> ? Value : unknown
+
+function makeOperations<Scope, Key extends keyof Scope>() {
+  function unary<Ref extends ReferenceInput<Scope, Key>>(
+    value: Ref,
+  ): ContextualBox<Scope, Key, ExtractReferenceValue<Scope, Key, Ref>> {
+    return {} as any
+  }
+
+  function renamed<OuterRef extends ReferenceInput<Scope, Key>>(
+    expr: OuterRef,
+  ): ContextualBox<Scope, Key, boolean> {
+    return unary(expr)
+  }
+
+  return { renamed }
+}
+"#,
+        "renamed sibling binder passed to a generic helper",
+    );
+}
+
+#[test]
 fn different_base_and_ambiguous_union_do_not_pin_the_tag() {
     let source = format!(
         r#"{PRELUDE}
