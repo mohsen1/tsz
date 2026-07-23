@@ -11,6 +11,7 @@ mod conditional_distribution;
 mod construct_return_union_tests;
 mod content_predicate_guards;
 mod content_predicates;
+mod exact_property_keys;
 #[cfg(test)]
 mod free_param_cache_tests;
 mod nominal_and_base;
@@ -23,6 +24,7 @@ pub use accessors::*;
 pub use conditional_constraint::*;
 pub use conditional_distribution::*;
 pub use content_predicates::*;
+pub use exact_property_keys::*;
 pub use nominal_and_base::*;
 pub use signatures_and_advanced::*;
 pub use type_id_list::{TypeIdList, TypeIdListIter};
