@@ -43,6 +43,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: &FunctionShape,
         target: &FunctionShape,
         direct_result: SubtypeResult,
+        callback_modes: (bool, bool),
     ) -> Option<SubtypeResult> {
         if direct_result.is_true() {
             return None;
@@ -82,10 +83,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             .infer_source_type_param_substitution(&source_for_inference, &target_for_inference)
             .ok()?;
         let inferred_source = self.instantiate_function_shape(&source_for_inference, &substitution);
-        let allow_constructor_bivariance = !Self::constructor_signatures_need_strict_params(
-            &inferred_source,
-            &target_for_inference,
-        );
+        let allow_constructor_bivariance =
+            target_for_inference.is_constructor && target_for_inference.is_method;
+        self.in_callback_param_check = callback_modes.0;
+        self.in_bivariant_callback_return_check = callback_modes.1;
         let retry = self.check_function_subtype_impl(
             &inferred_source,
             &target_for_inference,

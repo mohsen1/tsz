@@ -65,7 +65,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         } else {
             target.params.len()
         };
-        let allow_bivariant_param_count = self.allows_bivariant_param_count(source.is_method);
+        // Parameter variance follows the target declaration kind. Explicit
+        // class constructors carry `is_method`; construct-signature types do not.
+        let is_method_or_ctor = target.is_method;
+        let allow_bivariant_param_count = self.allows_bivariant_param_count(is_method_or_ctor);
         // When the target has a rest parameter (e.g., ...args: number[]),
         // it can absorb unlimited arguments — skip the too-many check entirely
         // so we fall through to per-parameter type checking.
@@ -88,9 +91,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             source.params.len()
         };
         let fixed_compare_count = std::cmp::min(source_fixed_count, target_fixed_count);
-        // Constructor and method signatures are bivariant even with strictFunctionTypes
-        let is_method_or_ctor =
-            source.is_method || target.is_method || source.is_constructor || target.is_constructor;
         for i in 0..fixed_compare_count {
             let s_param = &source.params[i];
             let t_param = &target.params[i];

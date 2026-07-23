@@ -43,15 +43,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // literal or interface construct signature (`ConstructSignature`) is
         // compared strictly like a call-signature literal.
         let force_strict_construct_params = std::mem::take(&mut self.force_strict_construct_params);
-        let allow_constructor_bivariance = !force_strict_construct_params
-            && !Self::constructor_signatures_need_strict_params(source, target);
+        let allow_constructor_bivariance = target.is_constructor && target.is_method;
+        debug_assert!(
+            !force_strict_construct_params || !allow_constructor_bivariance,
+            "explicit class-constructor targets must not request strict construct variance"
+        );
+        let callback_modes = (
+            self.in_callback_param_check,
+            self.in_bivariant_callback_return_check,
+        );
         let result = self.check_function_subtype_impl(source, target, allow_constructor_bivariance);
         if result.is_true() {
             return result;
         }
-        if let Some(retry) =
-            self.retry_generic_signature_with_context_instantiation(source, target, result)
-        {
+        if let Some(retry) = self.retry_generic_signature_with_context_instantiation(
+            source,
+            target,
+            result,
+            callback_modes,
+        ) {
             return retry;
         }
         result
@@ -207,6 +217,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: &FunctionShape,
         allow_constructor_bivariance: bool,
     ) -> SubtypeResult {
+        // Capture and reset the callback-param-check flags at function entry so
+        // every terminal path consumes the one-shot mode and nested sub-checks
+        // cannot steal it before the parameter comparison below.
+        let in_callback_param_check = self.in_callback_param_check;
+        let in_bivariant_callback_return_check = self.in_bivariant_callback_return_check;
+        self.in_callback_param_check = false;
+        self.in_bivariant_callback_return_check = false;
+
         // Constructor vs non-constructor
         if source.is_constructor != target.is_constructor {
             return SubtypeResult::False;
@@ -216,20 +234,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let mut target_instantiated = target.clone();
         // Track type param equivalences scope for cleanup at end of function.
         let equiv_start = self.type_param_equivalences.len();
-
-        // Capture and reset the callback-param-check flag at function entry so
-        // it cannot be prematurely consumed by intermediate sub-checks (return
-        // type, this/type-predicate, generic constraint checks, recursive
-        // signature comparisons) that occur before the parameter comparison
-        // below. Without this early capture, a nested call into
-        // `check_function_subtype_impl` would steal the flag and the outer
-        // signature would lose method-bivariance suppression for its callback
-        // parameters. Resetting to `false` here also matches tsc, where
-        // level-3+ recursions start fresh without the Callback bit.
-        let in_callback_param_check = self.in_callback_param_check;
-        let in_bivariant_callback_return_check = self.in_bivariant_callback_return_check;
-        self.in_callback_param_check = false;
-        self.in_bivariant_callback_return_check = false;
 
         if self.erase_generics
             && source_instantiated.type_params.is_empty()
@@ -931,7 +935,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if !self.are_this_parameters_compatible(
             source_instantiated.this_type,
             target_instantiated.this_type,
-            source_instantiated.is_method || target_instantiated.is_method,
+            in_callback_param_check || target_instantiated.is_method,
         ) {
             self.type_param_equivalences.truncate(equiv_start);
             return SubtypeResult::False;
@@ -943,8 +947,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        // Method/constructor bivariance: strictFunctionTypes only applies to function
-        // type literals, not to methods or construct signatures (new (...) => T).
+        // Target methods and explicit class constructors are bivariant;
+        // function properties and construct-signature types remain strict.
         //
         // tsc's StrictCallback/BivariantCallback override: when the immediately-
         // enclosing comparison was a callback parameter check, methods do *not*
@@ -952,12 +956,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // captured and cleared at the top of this function (see above) so that
         // nested sub-checks performed before this point cannot consume it; we
         // read the captured local here.
-        let constructor_param_bivariance = allow_constructor_bivariance
-            && (source_instantiated.is_constructor || target_instantiated.is_constructor);
+        let constructor_param_bivariance =
+            allow_constructor_bivariance && target_instantiated.is_constructor;
         let is_method = !in_callback_param_check
-            && (source_instantiated.is_method
-                || target_instantiated.is_method
-                || constructor_param_bivariance);
+            && (target_instantiated.is_method || constructor_param_bivariance);
 
         // The lib iterator/generator declarations encode `next(value?)` as a single
         // rest parameter with tuple-list type `[] | [TNext]`. Compare that whole
@@ -1600,7 +1602,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         for t_sig in &target.call_signatures {
             let mut found_match = false;
             if source.call_signatures.len() > 1
-                && (t_sig.is_method || source.call_signatures.iter().any(|sig| sig.is_method))
+                && t_sig.is_method
                 && self
                     .method_overloads_cover_tuple_union_rest_target(&source.call_signatures, t_sig)
             {
@@ -1656,9 +1658,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // `compareSignaturesRelated`, so it is computed from the target callable.
         // Short-circuit on the empty case so a callable with only call
         // signatures pays no resolver lookup.
-        let force_strict = !target.construct_signatures.is_empty()
-            && !self.callable_target_is_class_constructor(target);
         for t_sig in &target.construct_signatures {
+            let force_strict = !t_sig.is_method;
             let mut found_match = false;
             for s_sig in &source.construct_signatures {
                 self.force_strict_construct_params = force_strict;

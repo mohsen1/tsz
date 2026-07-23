@@ -333,6 +333,9 @@ path = "tests/block_body_callback_literal_widening_tests.rs"
 name = "return_literal_union_widening_tests"
 path = "tests/return_literal_union_widening_tests.rs"
 [[test]]
+name = "method_inference_bivariance_tests"
+path = "tests/method_inference_bivariance_tests.rs"
+[[test]]
 name = "conditional_branch_array_literal_widening_tests"
 path = "tests/conditional_branch_array_literal_widening_tests.rs"
 [[test]]

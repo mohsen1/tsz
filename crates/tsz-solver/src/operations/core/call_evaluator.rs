@@ -219,8 +219,8 @@ pub struct CallEvaluator<'a, C: AssignabilityChecker> {
     pub(crate) constraint_recursion_depth: Cell<usize>,
     /// Total constrain-types steps for the current inference pass.
     pub(crate) constraint_step_count: Cell<usize>,
-    /// Visited (source, target) pairs during constraint collection.
-    pub(crate) constraint_pairs: RefCell<FxHashSet<(TypeId, TypeId)>>,
+    /// Visited (source, target, inference-mode) keys during constraint collection.
+    pub(crate) constraint_pairs: RefCell<FxHashSet<(TypeId, TypeId, u8)>>,
     /// Memoized fixed members for target union types during one inference pass.
     /// Keyed by the union `TypeId` used as the target in constrain-types.
     pub(crate) constraint_fixed_union_members: RefCell<FxHashMap<TypeId, FxHashSet<TypeId>>>,

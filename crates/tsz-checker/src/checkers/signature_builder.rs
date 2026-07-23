@@ -410,7 +410,7 @@ impl<'a> CheckerState<'a> {
             this_type,
             instance_type,
             None,
-            false,
+            true,
         )
     }
 

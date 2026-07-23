@@ -1321,7 +1321,7 @@ fn test_named_object_without_number_index_does_not_satisfy_number_index_target()
 }
 
 #[test]
-fn test_number_index_signature_method_bivariant_property() {
+fn test_number_index_signature_method_property_is_strict() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -1383,7 +1383,7 @@ fn test_number_index_signature_method_bivariant_property() {
     };
     let target = interner.object_with_index(target_shape);
 
-    assert!(checker.is_subtype_of(source_method, target));
+    assert!(!checker.is_subtype_of(source_method, target));
     assert!(!checker.is_subtype_of(source_prop, target));
 }
 
@@ -1476,7 +1476,7 @@ fn test_namespace_object_can_satisfy_string_index_structurally() {
 }
 
 #[test]
-fn test_string_index_signature_method_bivariant_property() {
+fn test_string_index_signature_method_property_is_strict() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -1538,7 +1538,7 @@ fn test_string_index_signature_method_bivariant_property() {
     };
     let target = interner.object_with_index(target_shape);
 
-    assert!(checker.is_subtype_of(source_method, target));
+    assert!(!checker.is_subtype_of(source_method, target));
     assert!(!checker.is_subtype_of(source_prop, target));
 }
 
@@ -1806,4 +1806,3 @@ fn test_object_with_index_properties_match_target_index() {
 
     assert!(checker.is_subtype_of(source, target));
 }
-

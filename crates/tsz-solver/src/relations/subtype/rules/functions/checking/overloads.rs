@@ -1040,27 +1040,30 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     };
                     self.check_function_subtype(&source_fn, &variant_fn)
                         .is_true()
-                        || self.method_overload_prefix_covers_variant(source_sig, &variant_params)
+                        || self.method_overload_prefix_covers_variant(&source_fn, &variant_fn)
                 })
         })
     }
 
     fn method_overload_prefix_covers_variant(
         &mut self,
-        source_sig: &CallSignature,
-        variant_params: &[ParamInfo],
+        source: &FunctionShape,
+        target: &FunctionShape,
     ) -> bool {
-        if !source_sig.is_method || variant_params.is_empty() {
+        if target.params.is_empty() {
             return false;
         }
-        if source_sig.params.len() < variant_params.len() {
+        if source.params.len() < target.params.len()
+            || !self.are_this_parameters_compatible(source.this_type, target.this_type, true)
+            || !self.are_type_predicates_compatible(source, target)
+        {
             return false;
         }
-        source_sig
+        source
             .params
             .iter()
-            .zip(variant_params.iter())
-            .take(variant_params.len())
+            .zip(target.params.iter())
+            .take(target.params.len())
             .all(|(source_param, target_param)| {
                 let (source_type, target_type) =
                     self.effective_param_type_pair(source_param, target_param);

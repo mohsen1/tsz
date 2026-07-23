@@ -73,7 +73,7 @@ impl<'a> TypeLowering<'a> {
                     return_type,
                     type_predicate: None,
                     is_constructor: true,
-                    is_method: false,
+                    is_method: true,
                 })
             }
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {

@@ -28,7 +28,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             } else {
                 prop.type_id
             };
-            let allow_bivariant = prop.is_method;
+            let allow_bivariant = false;
 
             if let Some(number_idx) = number_index {
                 let is_numeric = utils::is_numeric_property_name(self.interner, prop.name);
