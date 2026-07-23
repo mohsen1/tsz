@@ -842,6 +842,10 @@ impl TypeCompilerOptions for TypeInterner {
     fn exact_optional_property_types(&self) -> bool {
         TypeInterner::exact_optional_property_types(self)
     }
+
+    fn strict_null_checks(&self) -> bool {
+        TypeInterner::strict_null_checks(self)
+    }
 }
 
 impl TypeApplicationEvalCache for TypeInterner {
@@ -1533,6 +1537,8 @@ pub trait QueryDatabase:
 
     fn set_exact_optional_property_types(&self, _enabled: bool) {}
 
+    fn set_strict_null_checks(&self, _enabled: bool) {}
+
     fn contextual_property_type(&self, expected: TypeId, prop_name: &str) -> Option<TypeId> {
         let ctx = crate::computation::ContextualTypeContext::with_expected(
             self.as_type_database(),
@@ -1920,6 +1926,10 @@ impl QueryDatabase for TypeInterner {
 
     fn set_exact_optional_property_types(&self, enabled: bool) {
         TypeInterner::set_exact_optional_property_types(self, enabled);
+    }
+
+    fn set_strict_null_checks(&self, enabled: bool) {
+        TypeInterner::set_strict_null_checks(self, enabled);
     }
 
     fn get_type_param_variance(&self, _def_id: DefId) -> Option<Arc<[Variance]>> {

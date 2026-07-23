@@ -433,6 +433,12 @@ pub struct TypeInterner {
     pub(super) no_unchecked_indexed_access: AtomicBool,
     /// Effective value for `exactOptionalPropertyTypes` used by query-boundary helpers.
     pub(super) exact_optional_property_types: AtomicBool,
+    /// Effective value for `strictNullChecks`. Gates whether an optional
+    /// member's access/call/inference type carries `| undefined` (see
+    /// `utils::optional_property_type`). Defaults to `true` so an un-wired
+    /// interner never wrongly strips `undefined` in strict code; each
+    /// compilation wires the real value from compiler options.
+    pub(super) strict_null_checks: AtomicBool,
     /// Monotonic invalidation generation for diagnostic and semantic provenance
     /// side tables. Exact graph-rewrite sessions compare this before replaying
     /// retained source provenance, making unchanged cache hits `O(1)`.
@@ -829,6 +835,7 @@ impl TypeInterner {
             poisoned: std::sync::atomic::AtomicBool::new(false),
             no_unchecked_indexed_access: AtomicBool::new(false),
             exact_optional_property_types: AtomicBool::new(false),
+            strict_null_checks: AtomicBool::new(true),
             display_provenance_generation: AtomicU64::new(0),
             display_properties: DashMap::with_hasher(FxBuildHasher),
             display_alias: DashMap::with_hasher(FxBuildHasher),
@@ -867,6 +874,16 @@ impl TypeInterner {
     pub fn set_exact_optional_property_types(&self, enabled: bool) {
         self.exact_optional_property_types
             .store(enabled, Ordering::Relaxed);
+    }
+
+    #[inline]
+    pub fn strict_null_checks(&self) -> bool {
+        self.strict_null_checks.load(Ordering::Relaxed)
+    }
+
+    #[inline]
+    pub fn set_strict_null_checks(&self, enabled: bool) {
+        self.strict_null_checks.store(enabled, Ordering::Relaxed);
     }
 
     /// Atomically read and clear the "tuple too large" flag.
