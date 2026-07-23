@@ -1154,7 +1154,17 @@ impl<'a> CheckerState<'a> {
         self.ctx.preserve_literal_types = false;
         let r = self.infer_return_type_from_body(accessor_idx, body_idx, None);
         self.ctx.preserve_literal_types = prev;
-        r
+        // tsc applies getWidenedType to an accessor's inferred type: in non-strict
+        // mode `get x() { return null }` has type `any`, not `null`. Without this,
+        // tsz keeps `null`/`undefined` and a call/member access on the accessor
+        // value (`C.b()` where `b` is a getter returning null) reports a spurious
+        // TS2349 (#94 accessor facet). Widening null/undefined -> any is permissive
+        // and bidirectional with `any`, so it can only remove errors, never add one.
+        if !self.ctx.strict_null_checks() {
+            crate::query_boundaries::widening::widen_nullish_to_any_deep(self.ctx.types, r)
+        } else {
+            r
+        }
     }
 
     /// Check that all top-level function overload signatures have implementations.
