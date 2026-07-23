@@ -9,6 +9,7 @@
 
 use super::data::ExactLiteralPropertyKey;
 use crate::construction::TypeDatabase;
+use crate::relations::subtype::TypeResolver;
 use crate::types::{MappedModifier, PropertyInfo, TypeData, TypeId};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::Atom;
@@ -88,6 +89,18 @@ fn remap_mapped_property_key(
     let remapped =
         crate::evaluation::evaluate::evaluate_type(db, instantiate_type(db, name_type, &subst));
     simplify_remapped_template_key_for_literal_source(db, remapped, source_key)
+}
+
+/// Remap one exact finite source key without inspecting the mapped value
+/// template. Exact-key traversal uses this to keep key-space work solver-owned
+/// while preserving numeric and unique-symbol key identity.
+pub(crate) fn remap_exact_mapped_property_key(
+    db: &dyn TypeDatabase,
+    mapped: &crate::types::MappedType,
+    source_key: ExactLiteralPropertyKey,
+) -> Option<TypeId> {
+    let source_key = property_key_to_type(db, source_key)?;
+    Some(remap_mapped_property_key(db, mapped, source_key))
 }
 
 fn simplify_remapped_template_key_for_literal_source(
@@ -654,11 +667,18 @@ fn collect_mapped_property_keys_from_source_keys(
     mapped: &crate::types::MappedType,
     source_keys: FxHashSet<ExactLiteralPropertyKey>,
 ) -> Option<FxHashSet<ExactLiteralPropertyKey>> {
+    // An unremapped mapped type preserves the already-exact property-key
+    // representation directly. In particular, canonical well-known symbols
+    // cannot be reconstructed from `TypeDatabase` alone, but identity mapping
+    // does not need to reconstruct them.
+    if mapped.name_type.is_none() {
+        return Some(source_keys);
+    }
+
     let mut property_keys = FxHashSet::default();
 
     for source_key in source_keys {
-        let key_literal = property_key_to_type(db, source_key);
-        let mapped_key = remap_mapped_property_key(db, mapped, key_literal);
+        let mapped_key = remap_exact_mapped_property_key(db, mapped, source_key)?;
         let mapped_keys =
             super::data::collect_exact_literal_property_keys_with_symbol_info(db, mapped_key)?;
         property_keys.extend(mapped_keys);
@@ -705,20 +725,56 @@ pub fn get_finite_mapped_property_type_with_evaluator(
     db: &dyn TypeDatabase,
     mapped_id: crate::types::MappedTypeId,
     property_name: &str,
+    evaluate: impl FnMut(TypeId) -> TypeId,
+) -> Option<TypeId> {
+    get_finite_mapped_property_type_impl(db, mapped_id, property_name, evaluate, |key| {
+        property_key_to_type(db, key)
+    })
+}
+
+/// Resolver-aware finite-property lookup. Canonical well-known-symbol names
+/// require this boundary to recover their `SymbolRef`; resolver-less callers
+/// conservatively return `None` instead of treating such keys as strings.
+pub fn get_finite_mapped_property_type_with_resolver<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    mapped_id: crate::types::MappedTypeId,
+    property_name: &str,
+    evaluate: impl FnMut(TypeId) -> TypeId,
+) -> Option<TypeId> {
+    get_finite_mapped_property_type_impl(db, mapped_id, property_name, evaluate, |key| {
+        property_key_to_type_with_resolver(db, resolver, key)
+    })
+}
+
+fn get_finite_mapped_property_type_impl(
+    db: &dyn TypeDatabase,
+    mapped_id: crate::types::MappedTypeId,
+    property_name: &str,
     mut evaluate: impl FnMut(TypeId) -> TypeId,
+    mut key_to_type: impl FnMut(ExactLiteralPropertyKey) -> Option<TypeId>,
 ) -> Option<TypeId> {
     let mapped = db.mapped_type(mapped_id);
     let source_keys =
         super::data::collect_exact_literal_property_keys_with_symbol_info(db, mapped.constraint)?;
     let target_atom = db.intern_string(property_name);
     let mut matches = Vec::new();
+    let is_identity = mapped.name_type.is_none();
 
     for source_key in source_keys {
-        let key_literal = property_key_to_type(db, source_key);
-        let remapped = remap_mapped_property_key(db, &mapped, key_literal);
-        let remapped_keys =
-            super::data::collect_exact_literal_property_keys_with_symbol_info(db, remapped)?;
-        if !remapped_keys.iter().any(|key| key.name == target_atom) {
+        if is_identity && source_key.name != target_atom {
+            continue;
+        }
+        let key_literal = key_to_type(source_key)?;
+        let produces_target = if is_identity {
+            true
+        } else {
+            let remapped = remap_mapped_property_key(db, &mapped, key_literal);
+            super::data::collect_exact_literal_property_keys_with_symbol_info(db, remapped)?
+                .iter()
+                .any(|key| key.name == target_atom)
+        };
+        if !produces_target {
             continue;
         }
 
@@ -765,13 +821,22 @@ pub fn get_finite_mapped_property_display_type(
         super::data::collect_exact_literal_property_keys_with_symbol_info(db, mapped.constraint)?;
     let target_atom = db.intern_string(property_name);
     let mut matches = Vec::new();
+    let is_identity = mapped.name_type.is_none();
 
     for source_key in source_keys {
-        let key_literal = property_key_to_type(db, source_key);
-        let remapped = remap_mapped_property_key(db, &mapped, key_literal);
-        let remapped_keys =
-            super::data::collect_exact_literal_property_keys_with_symbol_info(db, remapped)?;
-        if !remapped_keys.iter().any(|key| key.name == target_atom) {
+        if is_identity && source_key.name != target_atom {
+            continue;
+        }
+        let key_literal = property_key_to_type(db, source_key)?;
+        let produces_target = if is_identity {
+            true
+        } else {
+            let remapped = remap_mapped_property_key(db, &mapped, key_literal);
+            super::data::collect_exact_literal_property_keys_with_symbol_info(db, remapped)?
+                .iter()
+                .any(|key| key.name == target_atom)
+        };
+        if !produces_target {
             continue;
         }
 
@@ -843,13 +908,20 @@ pub fn finite_mapped_output_property_modifiers(
     let source_props =
         super::mapped_display_order::collect_homomorphic_source_property_infos(db, source_type);
     for prop in &source_props {
+        if mapped.name_type.is_none() {
+            if prop.name == property_name {
+                return Some((prop.optional, prop.readonly));
+            }
+            continue;
+        }
         let key_literal = property_key_to_type(
             db,
             ExactLiteralPropertyKey {
                 name: prop.name,
                 is_symbol_named: prop.is_symbol_named,
+                is_string_named: prop.is_string_named,
             },
-        );
+        )?;
         let remapped = remap_mapped_property_key(db, mapped, key_literal);
         if remapped == TypeId::NEVER {
             continue;
@@ -864,15 +936,35 @@ pub fn finite_mapped_output_property_modifiers(
     None
 }
 
-fn property_key_to_type(db: &dyn TypeDatabase, key: ExactLiteralPropertyKey) -> TypeId {
+fn property_key_to_type(db: &dyn TypeDatabase, key: ExactLiteralPropertyKey) -> Option<TypeId> {
     let key_str = db.resolve_atom(key.name);
-    if key.is_symbol_named
-        && let Some(symbol_ref) = key_str.strip_prefix("__unique_")
-        && let Ok(id) = symbol_ref.parse::<u32>()
-    {
-        return db.unique_symbol(crate::types::SymbolRef(id));
+    if key.is_symbol_named {
+        let symbol_ref = key_str.strip_prefix("__unique_")?;
+        let id = symbol_ref.parse::<u32>().ok()?;
+        return Some(db.unique_symbol(crate::types::SymbolRef(id)));
     }
-    db.literal_string(key_str.as_ref())
+    Some(crate::utils::literal_key_for_property_name(
+        db,
+        key.name,
+        key.is_string_named,
+    ))
+}
+
+fn property_key_to_type_with_resolver<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    key: ExactLiteralPropertyKey,
+) -> Option<TypeId> {
+    if !key.is_symbol_named {
+        return property_key_to_type(db, key);
+    }
+    let name = db.resolve_atom(key.name);
+    let symbol = name
+        .strip_prefix("__unique_")
+        .and_then(|id| id.parse::<u32>().ok())
+        .map(crate::types::SymbolRef)
+        .or_else(|| resolver.resolve_well_known_symbol_name(&name))?;
+    Some(db.unique_symbol(symbol))
 }
 
 /// Collect exact property names for a deferred/remapped mapped type.
