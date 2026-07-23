@@ -305,6 +305,7 @@ pub struct QueryCache<'a> {
     subtype_reduction_cache_stats: CacheCounter,
     no_unchecked_indexed_access: Cell<bool>,
     exact_optional_property_types: Cell<bool>,
+    strict_null_checks: Cell<bool>,
     /// Optional shared cross-file cache for multi-file project checking.
     /// When present, local cache misses fall through to the shared `DashMap` cache,
     /// and local cache inserts are also written to the shared cache.
@@ -382,6 +383,7 @@ impl<'a> QueryCache<'a> {
             subtype_reduction_cache_stats: CacheCounter::new(),
             no_unchecked_indexed_access: Cell::new(interner.no_unchecked_indexed_access()),
             exact_optional_property_types: Cell::new(interner.exact_optional_property_types()),
+            strict_null_checks: Cell::new(interner.strict_null_checks()),
             shared,
             definition_store: None,
         }
@@ -842,6 +844,10 @@ impl TypeCompilerOptions for QueryCache<'_> {
 
     fn exact_optional_property_types(&self) -> bool {
         self.exact_optional_property_types.get()
+    }
+
+    fn strict_null_checks(&self) -> bool {
+        self.strict_null_checks.get()
     }
 }
 
@@ -1821,6 +1827,10 @@ impl QueryDatabase for QueryCache<'_> {
 
     fn set_exact_optional_property_types(&self, enabled: bool) {
         self.exact_optional_property_types.set(enabled);
+    }
+
+    fn set_strict_null_checks(&self, enabled: bool) {
+        self.strict_null_checks.set(enabled);
     }
 
     fn get_type_param_variance(&self, def_id: DefId) -> Option<Arc<[Variance]>> {
