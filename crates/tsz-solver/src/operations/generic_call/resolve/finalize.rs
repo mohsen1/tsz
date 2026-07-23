@@ -791,11 +791,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // the inferred type must stand and the error surface at the
                     // call/assignment site (#14792). The evidence check is the second
                     // `&&` operand so it only runs once the cheap override gate passes.
+                    // Callback-parameter-only bounds are contextual feedback; explicit
+                    // annotations are still validated by the final argument check.
                     if ((can_apply && should_use) || indirect_narrowing_override)
-                        && !self.contextual_substitution_contradicts_evidence(
-                            &lower_bounds,
-                            contextual_ty,
-                        )
+                        && (callback_param_only_vars.contains(&var)
+                            || !self.contextual_substitution_contradicts_evidence(
+                                &lower_bounds,
+                                contextual_ty,
+                            ))
                     {
                         contextual_ty
                     } else {
