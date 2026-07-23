@@ -130,16 +130,12 @@ fn nested_builtin_application_uses_published_alias_parameter_identity() {
             let (body, params) = state
                 .direct_source_file_type_alias_result(wrapper_sym, Some(wrapper_idx), true)
                 .expect("wrapper alias should lower directly");
-            let instantiated = crate::query_boundaries::common::instantiate_generic(
+            let values_name = state.ctx.types.intern_string("values");
+            let values = crate::query_boundaries::common::instantiated_generic_raw_property_type(
                 state.ctx.types,
                 body,
                 &params,
                 &[TypeId::STRING],
-            );
-            let values_name = state.ctx.types.intern_string("values");
-            let values = crate::query_boundaries::common::raw_property_type(
-                state.ctx.types.as_type_database(),
-                instantiated,
                 values_name,
             )
             .expect("instantiated values property");
@@ -318,17 +314,13 @@ fn owner_qualified_default_alias_bodies_survive_raw_id_readiness_collisions() {
                     leaf_body, outer_body,
                     "the colliding definitions need observably different bodies"
                 );
-                let instantiated_leaf = crate::query_boundaries::common::instantiate_generic(
-                    state.ctx.types,
-                    leaf_body,
-                    &leaf_params,
-                    &[TypeId::STRING],
-                );
                 let value_name = state.ctx.types.intern_string("value");
                 assert_eq!(
-                    crate::query_boundaries::common::raw_property_type(
-                        state.ctx.types.as_type_database(),
-                        instantiated_leaf,
+                    crate::query_boundaries::common::instantiated_generic_raw_property_type(
+                        state.ctx.types,
+                        leaf_body,
+                        &leaf_params,
+                        &[TypeId::STRING],
                         value_name,
                     ),
                     Some(TypeId::STRING),
