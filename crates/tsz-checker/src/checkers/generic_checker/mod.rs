@@ -878,6 +878,7 @@ impl<'a> CheckerState<'a> {
         }
         use tsz_binder::symbol_flags;
         let mut sym_id = sym_id;
+        let mut direct_default_type_params = None;
         let syntax_base_name = self
             .ctx
             .arena
@@ -893,15 +894,39 @@ impl<'a> CheckerState<'a> {
             sym_id = local_sym_id;
             local_base_name = Some(base_name.to_owned());
         } else if let Some(base_name) = syntax_base_name.as_deref()
-            && let Some(alias_sym_id) = self.ctx.binder.file_locals.get(base_name)
+            && let Some(alias_sym_id) =
+                crate::state_domain::type_analysis::source_file_import_binding::source_file_import_binding_symbol(
+                    self.ctx.arena,
+                    self.ctx.binder,
+                    base_name,
+                )
+                .or_else(|| self.ctx.binder.file_locals.get(base_name))
             && let Some(alias_symbol) = self.ctx.binder.get_symbol(alias_sym_id)
             && self.reference_symbol_is_import_alias(alias_symbol)
-            && let Some(target) = self.resolve_import_alias_cross_file(alias_sym_id)
         {
-            sym_id = target;
+            let is_default_import = alias_symbol.import_name() == Some("default");
+            if is_default_import {
+                // The direct alias result carries parameters lowered from the
+                // owning declaration. Do not read `DefinitionStore` params
+                // first: semantic-def registration can seed placeholder
+                // parameters without source constraints or defaults.
+                direct_default_type_params = self
+                    .try_resolve_cross_arena_named_alias_without_child(alias_sym_id)
+                    .map(|(_, params)| params);
+            }
+            // Exact default-alias parameters already carry the declaration's
+            // owner-qualified identity. Resolving the legacy raw symbol again
+            // is unnecessary for validation and can overwrite a requester-local
+            // owner when the target binder reused the same `SymbolId`.
+            if direct_default_type_params.is_some() {
+                sym_id = alias_sym_id;
+            } else if let Some(target) = self.resolve_import_alias_cross_file(alias_sym_id) {
+                sym_id = target;
+            }
             import_base_name = Some(base_name.to_owned());
         }
-        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+        if direct_default_type_params.is_none()
+            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
             && symbol.has_any_flags(symbol_flags::ALIAS)
         {
             let mut visited_aliases = AliasCycleTracker::new();
@@ -951,7 +976,9 @@ impl<'a> CheckerState<'a> {
                 .map_or_else(|| "<unknown>".to_string(), |s| s.escaped_name.clone())
         });
 
-        let type_params = self.get_reference_type_params_for_symbol(sym_id, &base_name);
+        let has_direct_default_type_params = direct_default_type_params.is_some();
+        let type_params = direct_default_type_params
+            .unwrap_or_else(|| self.get_reference_type_params_for_symbol(sym_id, &base_name));
 
         // A type alias that circularly references itself collapses to a
         // non-generic error type. Applying type arguments to it is therefore
@@ -1066,9 +1093,15 @@ impl<'a> CheckerState<'a> {
             &type_params,
             self.ctx.types,
         );
-        let min_required = self
-            .count_required_type_params_from_ast(sym_id)
-            .unwrap_or_else(|| self.count_required_reference_type_params(sym_id, &base_name));
+        let min_required = if has_direct_default_type_params {
+            type_params
+                .iter()
+                .filter(|param| param.default.is_none())
+                .count()
+        } else {
+            self.count_required_type_params_from_ast(sym_id)
+                .unwrap_or_else(|| self.count_required_reference_type_params(sym_id, &base_name))
+        };
         let diagnostics_before = self.ctx.diagnostics.len();
         let count_mismatch = self.validate_type_reference_type_arguments_against_params(
             &type_params,

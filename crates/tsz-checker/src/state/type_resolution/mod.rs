@@ -24,3 +24,4 @@ pub(crate) mod symbol_types_dynamic_alias;
 pub(crate) mod symbol_types_lazy;
 #[cfg(test)]
 mod symbol_types_tests;
+mod type_only_import_application;

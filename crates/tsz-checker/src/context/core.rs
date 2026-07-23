@@ -256,6 +256,26 @@ impl<'a> CheckerContext<'a> {
             .register(sym_id, file_idx);
     }
 
+    /// Snapshot the checker-local owner override for a symbol before a scoped
+    /// cross-file operation temporarily changes it.
+    pub(crate) fn local_symbol_file_target_override(&self, sym_id: SymbolId) -> Option<usize> {
+        self.cross_file_symbol_targets
+            .borrow()
+            .local_override(sym_id)
+    }
+
+    /// Restore the exact checker-local owner override captured by
+    /// [`Self::local_symbol_file_target_override`].
+    pub(crate) fn restore_local_symbol_file_target_override(
+        &self,
+        sym_id: SymbolId,
+        previous: Option<usize>,
+    ) {
+        self.cross_file_symbol_targets
+            .borrow_mut()
+            .restore_local_override(sym_id, previous);
+    }
+
     pub fn register_symbol_file_index(&self, sym_id: SymbolId, file_idx: usize) {
         self.register_symbol_file_target(sym_id, file_idx);
     }

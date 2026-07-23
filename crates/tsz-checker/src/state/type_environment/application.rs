@@ -211,7 +211,7 @@ impl<'a> CheckerState<'a> {
         (materialized != underlying).then_some(materialized)
     }
 
-    /// Instantiate a *cross-file* generic interface/class application from its
+    /// Instantiate a cross-file generic declaration application from its exact
     /// `DefinitionStore` body and parameters.
     ///
     /// The def is the identity authority for a cross-file base: resolving the
@@ -222,11 +222,11 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns `None` for every shape the def store does not own — same-file
     /// bases, non-program (lib/synthetic) defs, `declare`d ambient defs,
-    /// non-interface/class defs, defs without a registered body or parameters
+    /// non-generic declaration defs, defs without a registered body or parameters
     /// — so the caller keeps the existing symbol-based path. `base`/`args`
     /// are `application`'s already-extracted parts (the caller holds them;
     /// re-deriving would re-clone the args). Refs #13212 / #10663.
-    pub(crate) fn instantiate_cross_file_interface_application(
+    pub(crate) fn instantiate_cross_file_definition_application(
         &mut self,
         application: TypeId,
         base: TypeId,
@@ -243,24 +243,46 @@ impl<'a> CheckerState<'a> {
             file_id == self.ctx.current_file_idx as u32
                 || file_id == tsz_solver::def::DefinitionStore::NON_PROGRAM_FILE_SENTINEL
         }) || is_declare
-            || !matches!(
-                kind,
-                tsz_solver::def::DefKind::Interface | tsz_solver::def::DefKind::Class
-            )
         {
             return None;
         }
+        if kind == tsz_solver::def::DefKind::TypeAlias {
+            // Direct lowering has already published this owner-qualified
+            // program alias body and its source parameters. That identity is
+            // authoritative for both source and external-package `.d.ts`
+            // aliases; demoting either to a raw binder-local `SymbolId` can
+            // select an unrelated declaration with the same numeric id.
+            let body_type = self.published_program_alias_body(base_def_id)?;
+            let type_params = self.ctx.get_def_type_params(base_def_id)?;
+            if body_type == TypeId::ANY || body_type == TypeId::ERROR || type_params.is_empty() {
+                return None;
+            }
+            // The solver owns generic-alias evaluation. Feed it the original
+            // exact-`DefId` application so its per-definition recursion/growth
+            // guards, application cache, argument-preservation rules, and
+            // display-alias provenance remain active. Manually instantiating
+            // and then env-evaluating the body bypasses those guards and can
+            // build an unbounded sequence for mutually nested aliases.
+            let evaluated = self.evaluate_type_with_env(application);
+            return (evaluated != application
+                && evaluated != TypeId::ANY
+                && evaluated != TypeId::ERROR
+                && (evaluated != TypeId::UNKNOWN || body_type == TypeId::UNKNOWN))
+                .then_some(evaluated);
+        }
         // A def in a declaration (`.d.ts`) file is ambient regardless of the
-        // `declare` keyword: react.d.ts's namespace-nested component interfaces
-        // (`Component`, `StatelessComponent`, `ComponentClass`) carry
-        // `is_declare = false`, so the guard above lets them through. But a
-        // declaration-file def does not suffer the per-file binder-id collision
-        // (#14344) this def-store route works around — the symbol route resolves
-        // it correctly — and instantiating it here mis-relates those library
-        // component types (a false `TS2322` on `tsxUnionTypeComponent1` and
-        // `reactReadonlyHOCAssignabilityReal`). Keep declaration-file bases on
-        // the symbol path.
+        // `declare` keyword. React's namespace-nested component interfaces can
+        // carry `is_declare = false`; instantiating those here mis-relates the
+        // library component types. Keep declaration-file interface/class bases
+        // on the symbol path, while published aliases retain their exact-def
+        // collision recovery above.
         if file_id.is_some_and(|file_id| self.file_idx_is_declaration_file(file_id)) {
+            return None;
+        }
+        if !matches!(
+            kind,
+            tsz_solver::def::DefKind::Interface | tsz_solver::def::DefKind::Class
+        ) {
             return None;
         }
         let ApplicationBaseBody {

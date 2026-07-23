@@ -12,29 +12,6 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl CheckerState<'_> {
-    pub(crate) fn resolve_type_only_import_alias_target_symbol(
-        &mut self,
-        name: &str,
-    ) -> Option<SymbolId> {
-        let alias_sym_id = self.ctx.binder.file_locals.get(name)?;
-        let alias_symbol = self.ctx.binder.get_symbol(alias_sym_id)?;
-        if !alias_symbol.has_any_flags(symbol_flags::ALIAS) || !alias_symbol.is_type_only {
-            return None;
-        }
-        let module_name = alias_symbol.import_module().map(str::to_string)?;
-        let import_name = alias_symbol.import_name().unwrap_or(name).to_owned();
-        let target_sym_id = self.resolve_cross_file_export_from_file(
-            &module_name,
-            &import_name,
-            Some(self.ctx.current_file_idx),
-        )?;
-        if let Some(file_idx) = self.ctx.resolve_symbol_file_index_stable(target_sym_id) {
-            self.ctx
-                .register_symbol_file_target(target_sym_id, file_idx);
-        }
-        Some(target_sym_id)
-    }
-
     pub(crate) fn symbol_has_declared_type_meaning(&self, sym_id: SymbolId) -> bool {
         let lib_binders = self.get_lib_binders();
         let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {

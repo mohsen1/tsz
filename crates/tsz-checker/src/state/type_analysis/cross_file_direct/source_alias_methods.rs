@@ -2,6 +2,7 @@
 //!
 //! Split out of the parent module to satisfy the source-file line cap.
 
+use super::super::source_file_import_binding::source_file_import_binding_symbol;
 use super::*;
 
 impl<'a> CheckerState<'a> {
@@ -41,7 +42,8 @@ impl<'a> CheckerState<'a> {
             .get(type_ref.type_name)
             .and_then(|name_node| symbol_arena.get_identifier(name_node))
             .map(|ident| ident.escaped_text.as_str())?;
-        let target_sym_id = delegate_binder.file_locals.get(name)?;
+        let target_sym_id = source_file_import_binding_symbol(symbol_arena, delegate_binder, name)
+            .or_else(|| delegate_binder.file_locals.get(name))?;
         let target_symbol = delegate_binder.get_symbol(target_sym_id)?;
         if target_symbol.flags & symbol_flags::INTERFACE == 0 {
             return None;
@@ -126,6 +128,22 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        // Production import resolution can reach this fast path after following
+        // a default import to the provider's synthetic export symbol. That
+        // symbol intentionally has value-like ALIAS flags and no type body.
+        // Replace it with the structurally proven generic type alias named by
+        // the explicit default clause before applying the ordinary alias proof.
+        let sym_id = if delegate_binder.get_symbol(sym_id).is_some_and(|symbol| {
+            symbol.flags & symbol_flags::TYPE_ALIAS == 0 && symbol.flags & symbol_flags::ALIAS != 0
+        }) {
+            self.explicit_default_export_pure_type_alias_in_file(target_file_idx, true)
+                .and_then(|(default_sym_id, target)| {
+                    (default_sym_id == sym_id).then_some(target.sym_id)
+                })
+                .unwrap_or(sym_id)
+        } else {
+            sym_id
+        };
         let symbol = delegate_binder.get_symbol(sym_id)?;
         if symbol.flags & symbol_flags::TYPE_ALIAS == 0 {
             return None;
@@ -239,6 +257,7 @@ impl<'a> CheckerState<'a> {
             symbol_arena,
             delegate_binder,
             type_alias.type_node,
+            target_file_idx,
             &mut Vec::new(),
         );
 
@@ -258,7 +277,10 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let def_id = self.ctx.get_or_create_def_id(sym_id);
+        let def_id = self
+            .ctx
+            .def_id_for_declaration_in_file(sym_id, target_file_idx, &name)
+            .unwrap_or_else(|| self.ctx.get_or_create_def_id(sym_id));
         if let Some(shape) = crate::query_boundaries::state::type_environment::object_shape(
             self.ctx.types,
             alias_type,
@@ -286,36 +308,93 @@ impl<'a> CheckerState<'a> {
         symbol_arena: &NodeArena,
         delegate_binder: &BinderState,
         root: NodeIndex,
-        seen: &mut Vec<SymbolId>,
+        source_file_idx: usize,
+        seen: &mut Vec<(usize, SymbolId)>,
     ) {
         let Some(node) = symbol_arena.get(root) else {
             return;
         };
         if node.kind == syntax_kind_ext::TYPE_REFERENCE
             && let Some(type_ref) = symbol_arena.get_type_ref(node)
-            && let Some(args) = type_ref.type_arguments.as_ref()
-            && !args.nodes.is_empty()
             && let Some(name) = symbol_arena
                 .get(type_ref.type_name)
                 .and_then(|name_node| symbol_arena.get_identifier(name_node))
                 .map(|ident| ident.escaped_text.as_str())
-            && let Some(sym_id) = delegate_binder.file_locals.get(name)
-            && !seen.contains(&sym_id)
-            && let Some(symbol) = delegate_binder.get_symbol(sym_id)
+            && let Some(local_sym_id) =
+                source_file_import_binding_symbol(symbol_arena, delegate_binder, name)
+                    .or_else(|| delegate_binder.file_locals.get(name))
+            && let Some(local_symbol) = delegate_binder.get_symbol(local_sym_id)
+            && let Some((target_file_idx, target_sym_id)) =
+                if local_symbol.flags & symbol_flags::ALIAS != 0 {
+                    self.source_file_import_alias_target_for_lowering(
+                        source_file_idx,
+                        delegate_binder,
+                        local_sym_id,
+                    )
+                    .and_then(|target| target.file_idx.map(|file_idx| (file_idx, target.sym_id)))
+                } else {
+                    Some((source_file_idx, local_sym_id))
+                }
+            && !seen.contains(&(target_file_idx, target_sym_id))
+            && let Some((target_arena, target_binder)) = self
+                .ctx
+                .all_arenas
+                .as_ref()
+                .and_then(|arenas| arenas.get(target_file_idx))
+                .cloned()
+                .zip(
+                    self.ctx
+                        .all_binders
+                        .as_ref()
+                        .and_then(|binders| binders.get(target_file_idx))
+                        .cloned(),
+                )
+            && is_direct_lowering_source_file_arena(target_arena.as_ref())
+            && let Some(symbol) = target_binder.get_symbol(target_sym_id)
             && symbol.flags & symbol_flags::TYPE_ALIAS != 0
             && symbol.flags
-                & (symbol_flags::VALUE
+                & (symbol_flags::ALIAS
+                    | symbol_flags::VALUE
                     | symbol_flags::CLASS
                     | symbol_flags::VALUE_MODULE
                     | symbol_flags::NAMESPACE_MODULE)
                 == 0
             && symbol.declarations.len() == 1
             && let Some(decl_idx) = symbol.declarations.first().copied()
-            && Self::lib_type_alias_declaration_name_matches(symbol_arena, decl_idx, name)
-            && let Some(decl_node) = symbol_arena.get(decl_idx)
-            && let Some(type_alias) = symbol_arena.get_type_alias(decl_node)
+            && Self::lib_type_alias_declaration_name_matches(
+                target_arena.as_ref(),
+                decl_idx,
+                &symbol.escaped_name,
+            )
+            && let Some(decl_node) = target_arena.get(decl_idx)
+            && let Some(type_alias) = target_arena.get_type_alias(decl_node)
         {
-            let def_id = self.ctx.get_or_create_def_id(sym_id);
+            let type_param_names =
+                Self::type_alias_type_param_names(target_arena.as_ref(), type_alias);
+            let body_is_direct_lowerable =
+                self.source_file_alias_body_node_is_direct_lowerable_for_attribution(
+                    target_arena.as_ref(),
+                    target_binder.as_ref(),
+                    target_file_idx,
+                    true,
+                    &type_param_names,
+                    type_alias.type_node,
+                ) && !Self::source_file_type_node_contains_disallowed_type_query(
+                    target_arena.as_ref(),
+                    target_binder.as_ref(),
+                    type_alias.type_node,
+                ) && self.source_file_type_node_type_queries_are_direct_lowerable(
+                    target_arena.as_ref(),
+                    type_alias.type_node,
+                );
+            let def_id = self
+                .ctx
+                .def_id_for_declaration_in_file(
+                    target_sym_id,
+                    target_file_idx,
+                    &symbol.escaped_name,
+                )
+                .unwrap_or_else(|| self.ctx.get_or_create_def_id(target_sym_id));
             let params_registered = type_alias
                 .type_parameters
                 .as_ref()
@@ -323,18 +402,19 @@ impl<'a> CheckerState<'a> {
                 || self.ctx.get_def_type_params(def_id).is_some();
             let body_registered =
                 self.ctx.definition_store.get_body(def_id).is_some() && params_registered;
-            if !body_registered {
-                seen.push(sym_id);
+            if body_is_direct_lowerable && !body_registered {
+                seen.push((target_file_idx, target_sym_id));
                 self.prime_source_file_alias_application_targets(
-                    symbol_arena,
-                    delegate_binder,
+                    target_arena.as_ref(),
+                    target_binder.as_ref(),
                     type_alias.type_node,
+                    target_file_idx,
                     seen,
                 );
                 let (alias_type, params) = self.lower_cross_arena_type_alias_declaration(
-                    sym_id,
+                    target_sym_id,
                     decl_idx,
-                    symbol_arena,
+                    target_arena.as_ref(),
                     type_alias,
                 );
                 if alias_type != TypeId::UNKNOWN && alias_type != TypeId::ERROR {
@@ -353,6 +433,7 @@ impl<'a> CheckerState<'a> {
                 symbol_arena,
                 delegate_binder,
                 child,
+                source_file_idx,
                 seen,
             );
         }
