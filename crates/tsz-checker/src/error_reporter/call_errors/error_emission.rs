@@ -839,7 +839,7 @@ impl<'a> CheckerState<'a> {
                     == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
             })
             .collect();
-        let mut literal_anchor = self.overload_literal_argument_anchor(idx, failures);
+        let literal_anchor = self.overload_literal_argument_anchor(idx, failures);
         let shared_argument_anchor = self
             .shared_overload_argument_anchor_from_spans(idx, &argument_failures)
             .or_else(|| self.shared_overload_argument_anchor(idx, &argument_failures));
@@ -1018,46 +1018,6 @@ impl<'a> CheckerState<'a> {
             .and_then(|call_expr| call_expr.arguments.as_ref())
             .is_some_and(|args| args.nodes.len() == 1);
         let is_new_call = self.is_new_expression(idx);
-        let is_bind_method_call = self
-            .ctx
-            .arena
-            .get(idx)
-            .and_then(|call_node| self.ctx.arena.get_call_expr(call_node))
-            .is_some_and(|call_expr| {
-                let is_bind = self
-                    .ctx
-                    .arena
-                    .get(call_expr.expression)
-                    .and_then(|callee| {
-                        if callee.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                            self.ctx.arena.get_access_expr(callee)
-                        } else {
-                            None
-                        }
-                    })
-                    .and_then(|access| self.ctx.arena.get(access.name_or_argument))
-                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                    .is_some_and(|ident| ident.escaped_text == "bind");
-                if !is_bind {
-                    return false;
-                }
-
-                // tsc anchors callback.bind(2)-style failures at `bind`, but
-                // keeps first-argument anchoring for `bind(undefined)` mismatches.
-                let first_arg_is_undefined = call_expr
-                    .arguments
-                    .as_ref()
-                    .and_then(|args| args.nodes.first().copied())
-                    .and_then(|arg_idx| self.ctx.arena.get(arg_idx))
-                    .and_then(|arg_node| self.ctx.arena.get_identifier(arg_node))
-                    .is_some_and(|ident| ident.escaped_text == "undefined");
-                !first_arg_is_undefined
-            });
-        if is_bind_method_call {
-            // For `callback.bind(2)`-style overload failures, tsc anchors TS2769
-            // at `bind`, not at the argument literal.
-            literal_anchor = None;
-        }
         let allow_callback_argument_anchor = argument_anchor_is_callback
             && single_callback_argument
             && all_failures_are_argument_mismatches
@@ -1068,7 +1028,6 @@ impl<'a> CheckerState<'a> {
             && !self.is_weak_collection_constructor_new(idx);
         let anchor_first_argument = (!is_new_call || allow_new_argument_anchor)
             && (!argument_anchor_is_callback || allow_callback_argument_anchor)
-            && !is_bind_method_call
             && (identical_argument_failures
                 && !remaining_failures.is_empty()
                 && remaining_failures_are_count_mismatches
@@ -1123,10 +1082,9 @@ impl<'a> CheckerState<'a> {
         // so tsc anchors on the member expression, not the explicit argument);
         // leave those to the existing `OverloadPrimary` handling rather than
         // redirecting them to the positional argument.
-        let indexed_argument_anchor =
-            (matches!(anchor_kind, DiagnosticAnchorKind::OverloadPrimary) && !is_bind_method_call)
-                .then(|| self.indexed_overload_argument_anchor(idx, &argument_failures))
-                .flatten();
+        let indexed_argument_anchor = matches!(anchor_kind, DiagnosticAnchorKind::OverloadPrimary)
+            .then(|| self.indexed_overload_argument_anchor(idx, &argument_failures))
+            .flatten();
         let Some(anchor) = callback_body_failure_span
             .or(indexed_argument_anchor)
             .or_else(|| self.resolve_diagnostic_anchor(anchor_idx, anchor_kind))
