@@ -715,14 +715,17 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
 
         let mapped = self.interner.mapped_type(mapped_id);
         let mut properties = Vec::with_capacity(keys.len());
+        let mut evaluator = self.spawn_evaluator();
 
         for key in keys {
             let name = key.name;
             let name_text = self.interner.resolve_atom(name);
-            let Some(type_id) = crate::type_queries::get_finite_mapped_property_type(
+            let Some(type_id) = crate::type_queries::get_finite_mapped_property_type_with_resolver(
                 self.interner,
+                self.resolver,
                 mapped_id,
                 &name_text,
+                |type_id| evaluator.evaluate(type_id),
             ) else {
                 continue;
             };
@@ -738,7 +741,7 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                 is_class_prototype: false,
                 parent_id: None,
                 declaration_order: 0,
-                is_string_named: false,
+                is_string_named: key.is_string_named,
                 is_symbol_named: key.is_symbol_named,
                 single_quoted_name: false,
                 non_widening: false,

@@ -22,6 +22,12 @@ use super::super::evaluate::{
 };
 use super::string_index_helpers::index_signature_key_includes_symbol;
 
+const fn exact_property_key_sort_key(
+    key: &crate::type_queries::ExactLiteralPropertyKey,
+) -> (u32, bool, bool) {
+    (key.name.0, key.is_symbol_named, key.is_string_named)
+}
+
 /// Structurally resolve an index-signature key type through transparent
 /// `Lazy` alias wrappers (e.g. `PropertyKey` resolves to
 /// `string | number | symbol`) so its key kinds can be classified. Without
@@ -278,7 +284,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             return TypeId::SYMBOL;
         }
-        self.interner().literal_string_atom(key.name)
+        crate::utils::literal_key_for_property_name(self.interner(), key.name, key.is_string_named)
     }
 
     fn push_remapped_key_type(
@@ -375,7 +381,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             crate::type_queries::collect_finite_mapped_property_keys(self.interner(), mapped_id)
         {
             let mut sorted_keys: Vec<_> = keys.into_iter().collect();
-            sorted_keys.sort_by_key(|key| (key.name.0, key.is_symbol_named));
+            sorted_keys.sort_by_key(exact_property_key_sort_key);
             for key in sorted_keys {
                 key_types.push(self.synthetic_property_key_to_key_type(key));
             }
@@ -1363,5 +1369,33 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         } else {
             Some(self.interner().union(result_keys))
         }
+    }
+}
+
+#[cfg(test)]
+mod exact_property_key_order_tests {
+    use super::exact_property_key_sort_key;
+    use crate::construction::TypeInterner;
+    use crate::type_queries::ExactLiteralPropertyKey;
+
+    #[test]
+    fn numeric_and_quoted_numeric_keys_have_a_total_order() {
+        let interner = TypeInterner::new();
+        let name = interner.intern_string("1");
+        let numeric = ExactLiteralPropertyKey {
+            name,
+            is_symbol_named: false,
+            is_string_named: false,
+        };
+        let quoted = ExactLiteralPropertyKey {
+            name,
+            is_symbol_named: false,
+            is_string_named: true,
+        };
+        let mut keys = [quoted, numeric];
+
+        keys.sort_by_key(exact_property_key_sort_key);
+
+        assert_eq!(keys, [numeric, quoted]);
     }
 }

@@ -1,7 +1,7 @@
 use super::*;
 use crate::def::DefId;
 use crate::intern::TypeInterner;
-use crate::types::{ConditionalType, TypeParamInfo, TypeParamOrigin};
+use crate::types::{ConditionalType, MappedType, TypeParamInfo, TypeParamOrigin};
 use std::cell::Cell;
 
 // Mock resolver for testing
@@ -30,6 +30,10 @@ impl TypeResolver for MockResolver {
 
     fn def_to_symbol_id(&self, _def_id: DefId) -> Option<tsz_binder::SymbolId> {
         None
+    }
+
+    fn resolve_well_known_symbol_name(&self, name: &str) -> Option<SymbolRef> {
+        (name == "[Symbol.iterator]").then_some(SymbolRef(8_001))
     }
 }
 
@@ -102,6 +106,39 @@ fn test_property(interner: &TypeInterner, name: &str, type_id: TypeId) -> Proper
         single_quoted_name: false,
         non_widening: false,
     }
+}
+
+fn deferred_identity_remap(interner: &TypeInterner, binder: &str, constraint: TypeId) -> TypeId {
+    let type_param = TypeParamInfo {
+        name: interner.intern_string(binder),
+        constraint: Some(constraint),
+        default: None,
+        is_const: false,
+        origin: TypeParamOrigin::User,
+    };
+    let key = interner.type_param(type_param);
+    let fallback = interner.type_param(TypeParamInfo {
+        name: interner.intern_string(&format!("{binder}Fallback")),
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: TypeParamOrigin::User,
+    });
+    let name_type = interner.conditional(ConditionalType {
+        check_type: key,
+        extends_type: key,
+        true_type: key,
+        false_type: fallback,
+        is_distributive: false,
+    });
+    interner.mapped(MappedType {
+        type_param,
+        constraint,
+        name_type: Some(name_type),
+        template: TypeId::STRING,
+        readonly_modifier: None,
+        optional_modifier: None,
+    })
 }
 
 #[test]
@@ -586,6 +623,87 @@ fn collect_properties_reuses_union_member_within_one_outer_collection() {
         2,
         "operation-local memo must not leak across public collections"
     );
+}
+
+#[test]
+fn finite_identity_mapped_materialization_keeps_normal_and_well_known_symbol_keys() {
+    let interner = TypeInterner::new();
+    let mut iterator = test_property(&interner, "[Symbol.iterator]", TypeId::STRING);
+    iterator.is_symbol_named = true;
+    let source = interner.object(vec![
+        test_property(&interner, "size", TypeId::NUMBER),
+        iterator,
+    ]);
+    let key_param = TypeParamInfo {
+        name: interner.intern_string("Member"),
+        constraint: Some(interner.keyof(source)),
+        default: None,
+        is_const: false,
+        origin: TypeParamOrigin::User,
+    };
+    let mapped = interner.mapped(MappedType {
+        type_param: key_param,
+        constraint: interner.keyof(source),
+        name_type: None,
+        template: TypeId::BOOLEAN,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    let PropertyCollectionResult::Properties { properties, .. } =
+        collect_properties(mapped, &interner, &MockResolver)
+    else {
+        panic!("finite identity map should materialize properties");
+    };
+
+    let size = properties
+        .iter()
+        .find(|property| property.name == interner.intern_string("size"))
+        .expect("normal key must not be poisoned by the canonical symbol key");
+    assert!(!size.is_symbol_named);
+    assert_eq!(size.type_id, TypeId::BOOLEAN);
+    let iterator = properties
+        .iter()
+        .find(|property| property.name == interner.intern_string("[Symbol.iterator]"))
+        .expect("resolver-aware materialization must retain the symbol key");
+    assert!(iterator.is_symbol_named);
+    assert_eq!(iterator.type_id, TypeId::BOOLEAN);
+}
+
+#[test]
+fn nested_finite_mapped_materialization_preserves_quoted_numeric_key_identity() {
+    let interner = TypeInterner::new();
+    let quoted_zero = interner.literal_string("0");
+    let inner = deferred_identity_remap(&interner, "InnerKey", quoted_zero);
+    let outer_param = TypeParamInfo {
+        name: interner.intern_string("OuterKey"),
+        constraint: Some(interner.keyof(inner)),
+        default: None,
+        is_const: false,
+        origin: TypeParamOrigin::User,
+    };
+    let outer = interner.mapped(MappedType {
+        type_param: outer_param,
+        constraint: interner.keyof(inner),
+        name_type: None,
+        template: TypeId::NUMBER,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    let PropertyCollectionResult::Properties { properties, .. } =
+        collect_properties(outer, &interner, &MockResolver)
+    else {
+        panic!("nested finite map should materialize its quoted numeric key");
+    };
+    assert_eq!(properties.len(), 1);
+    assert_eq!(properties[0].name, interner.intern_string("0"));
+    assert!(
+        properties[0].is_string_named,
+        "quoted numeric key metadata must survive exact-key materialization"
+    );
+    assert!(!properties[0].is_symbol_named);
+    assert_eq!(properties[0].type_id, TypeId::NUMBER);
 }
 
 #[test]
