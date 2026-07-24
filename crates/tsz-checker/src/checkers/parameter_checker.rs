@@ -919,12 +919,19 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // If parameter has an initializer in an ambient function, emit TS2371
-            // TSC anchors the error at the parameter name, not the initializer.
+            // If parameter has an initializer in an ambient function, emit
+            // TS2371. tsc anchors at the PARAMETER, not the initializer and not
+            // the name: `getErrorSpanForNode` has no `SyntaxKind.Parameter`
+            // case, so the span is the parameter's own. For a plain parameter
+            // that is the name (the node starts there), but a parameter
+            // property starts at its accessibility modifier — `declare class C
+            // { constructor(public c = 10); }` anchors at `public`. Reporting
+            // on `param_idx` lets `normalized_anchor_span` narrow to the name
+            // only in the modifier-less case.
             let name = param.name;
             if param.initializer.is_some() {
                 self.error_at_node(
-                    name,
+                    param_idx,
                     "A parameter initializer is only allowed in a function or constructor implementation.",
                     2371, // TS2371
                 );
