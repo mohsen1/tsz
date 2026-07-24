@@ -95,14 +95,19 @@ fn ts2339_nested_iife_prototype_property_assignment_uses_literal_shape() {
     assert_prototype_addon_message_is_structural(&diags);
 }
 
-/// A different iteration variable name — `K`/`P`/`X` instead of the
+/// A different iteration variable name — `one`/`two`/`three` instead of the
 /// idiomatic `set`/`get` — must produce the same structural display: the
 /// rule is about the receiver shape, not about specific identifier names.
+///
+/// `C` has to be a JS *constructor* for the prototype to be closed at all;
+/// `this._m = {}` supplies the symbol members that make it one. A plain
+/// `function C() {}` owner is an open prototype and correctly reports
+/// nothing — see `ts2339_plain_function_prototype_write_is_not_reported`.
 #[test]
 fn ts2339_renamed_prototype_methods_use_literal_shape() {
     let diags = diagnostics_for_js(
         r#"
-function C() {}
+function C() { this._m = {}; }
 C.prototype = {
     one: function() {},
     two() {}
@@ -126,6 +131,95 @@ C.prototype.three = function () {};
         assert!(
             !msg.contains("type 'prototype'"),
             "TS2339 must not display as 'prototype'; got: {msg:?}",
+        );
+    }
+}
+
+// =========================================================================
+// Only a JS *constructor*'s prototype is closed by its object literal
+// =========================================================================
+//
+// tsc's `isJSConstructor`: the owner function carries a `@constructor`
+// (`@class`) JSDoc tag, or its symbol has members — which for a JS function
+// means the body performs `this.x = ...` assignments. For such an owner,
+// `X.prototype = { ... }` establishes the complete prototype and a later
+// `X.prototype.y = ...` writing an undeclared property is TS2339. For a plain
+// function the write is an ordinary prototype-property declaration that merges
+// with the literal, and reporting it is a false positive
+// (`typeFromPropertyAssignment11`/`13` expect no diagnostics at all).
+
+fn ts2339_names(source: &str) -> Vec<String> {
+    diagnostics_for_js(source)
+        .into_iter()
+        .filter(|(code, _)| *code == 2339)
+        .map(|(_, message)| message)
+        .collect()
+}
+
+#[test]
+fn ts2339_plain_function_prototype_write_is_not_reported() {
+    // Empty-bodied function owner: open prototype, the write declares `j`.
+    for owner in ["function I() {}", "var I = function() {};"] {
+        let source = format!("{owner}\nI.prototype = {{ m() {{}} }};\nI.prototype.j = 2;\n");
+        assert!(
+            ts2339_names(&source).is_empty(),
+            "owner={owner} must not report TS2339; got {:?}",
+            ts2339_names(&source)
+        );
+    }
+}
+
+#[test]
+fn ts2339_plain_function_prototype_write_is_name_independent() {
+    // Same shape under renamed binders and a nested owner.
+    for (ctor, prop) in [("I", "j"), ("Widget", "extra"), ("_a0", "_b1")] {
+        let source = format!(
+            "var {ctor} = function() {{}};\n{ctor}.prototype = {{ m() {{}} }};\n{ctor}.prototype.{prop} = 2;\n"
+        );
+        assert!(
+            ts2339_names(&source).is_empty(),
+            "ctor={ctor} prop={prop} must not report TS2339"
+        );
+    }
+    let nested = "var O = {};\nO.Inner = function() {};\nO.Inner.prototype = { m() {} };\nO.Inner.prototype.j = 2;\n";
+    assert!(
+        ts2339_names(nested).is_empty(),
+        "nested owner must not report TS2339"
+    );
+}
+
+#[test]
+fn ts2339_js_constructor_prototype_write_is_still_reported() {
+    // Both disjuncts of `isJSConstructor` keep the prototype closed.
+    let via_tag = "/** @constructor */\nvar M = function() {};\nM.prototype = { set: function() {} };\nM.prototype.addon = function () {};\n";
+    let via_members = "var M = function() { this._map = {}; };\nM.prototype = { set: function() {} };\nM.prototype.addon = function () {};\n";
+    for (label, source) in [
+        ("@constructor tag", via_tag),
+        ("this.x members", via_members),
+    ] {
+        let messages = ts2339_names(source);
+        assert!(
+            messages.iter().any(|m| m.contains("'addon'")),
+            "{label}: a JS constructor's prototype stays closed; got {messages:?}"
+        );
+    }
+}
+
+#[test]
+fn ts2339_prototype_write_is_not_reported_when_the_literal_declares_it() {
+    // Control: a write of a property the literal already declares is fine on
+    // either owner kind.
+    for owner in [
+        "var M = function() { this._map = {}; };",
+        "var M = function() {};",
+    ] {
+        let source = format!(
+            "{owner}\nM.prototype = {{ set: function() {{}} }};\nM.prototype.set = function () {{}};\n"
+        );
+        assert!(
+            ts2339_names(&source).is_empty(),
+            "owner={owner} redeclaring `set` must not report; got {:?}",
+            ts2339_names(&source)
         );
     }
 }
