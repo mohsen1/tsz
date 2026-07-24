@@ -78,19 +78,19 @@ impl<'a> CheckerState<'a> {
             checker.check_function_declaration(func_idx);
         }
 
-        // TS8030: In JS files, if a function declaration has a @type tag that doesn't
-        // resolve to a callable type, emit "The type of a function declaration must match
-        // the function's signature." TSC points the error at the type expression inside
-        // the @type tag (e.g. at "MyClass" in `@type {MyClass}`).
-        if node.kind == syntax_kind_ext::FUNCTION_DECLARATION && self.is_js_file()
+        // TS8030: in JS files, a function declaration whose `@type` tag does not
+        // resolve to a callable type. tsc points the error at the type
+        // expression inside the tag (e.g. at "MyClass" in `@type {MyClass}`).
+        if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            && self.is_js_file()
             && let Some(jsdoc) = self.get_jsdoc_for_function(func_idx)
-                && let Some(type_expr) = Self::jsdoc_extract_type_tag_expr(&jsdoc)
-                // Skip types that are syntactically callable (arrow functions, function types,
-                // or generic signatures) — these may not resolve but are valid function types.
-                && !Self::is_syntactically_callable_type(&type_expr)
-                && self
-                    .jsdoc_callable_type_annotation_for_function(func_idx)
-                    .is_none()
+            && let Some(type_expr) = Self::jsdoc_extract_type_tag_expr(&jsdoc)
+            // Skip types that are syntactically callable (arrow functions, function types,
+            // or generic signatures) — these may not resolve but are valid function types.
+            && !Self::is_syntactically_callable_type(&type_expr)
+            && self
+                .jsdoc_callable_type_annotation_for_function(func_idx)
+                .is_none()
         {
             // Find the position of the type expression inside the JSDoc comment
             if let Some(sf) = self.source_file_data_for_node(func_idx) {
@@ -112,11 +112,12 @@ impl<'a> CheckerState<'a> {
                                 .find('}')
                                 .map_or(type_expr.len() as u32, |i| i as u32);
                             self.ctx.error(
-                                    expr_start,
-                                    expr_end,
-                                    "The type of a function declaration must match the function's signature.".to_string(),
-                                    8030,
-                                );
+                                expr_start,
+                                expr_end,
+                                crate::diagnostics::diagnostic_messages::THE_TYPE_OF_A_FUNCTION_DECLARATION_MUST_MATCH_THE_FUNCTIONS_SIGNATURE
+                                    .to_string(),
+                                crate::diagnostics::diagnostic_codes::THE_TYPE_OF_A_FUNCTION_DECLARATION_MUST_MATCH_THE_FUNCTIONS_SIGNATURE,
+                            );
                         }
                     }
                 }
