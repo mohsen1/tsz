@@ -384,7 +384,10 @@ impl<'a> CheckerState<'a> {
                     k if k == SyntaxKind::BarEqualsToken as u16 => ("|=", "||"),
                     _ => ("^=", "!=="),
                 };
-                self.emit_boolean_operator_error(left_idx, op_str, suggestion);
+                // Anchor on the whole compound-assignment expression: the
+                // operator-token span is derived from it, and passing `left_idx`
+                // made that lookup fail and fall back to the operand's position.
+                self.emit_boolean_operator_error(expr_idx, op_str, suggestion);
                 emitted_operator_error = true;
             } else if left_read_type != TypeId::ERROR && right_type != TypeId::ERROR {
                 let had_per_operand_error =
