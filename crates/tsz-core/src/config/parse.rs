@@ -744,8 +744,9 @@ pub fn parse_tsconfig_with_diagnostics_deferred(
             );
         }
 
-        // TS5091: preserveConstEnums cannot be disabled when isolatedModules is enabled.
-        // tsc emits this at both key positions; we emit once per enabler.
+        // TS5091: preserveConstEnums cannot be disabled when isolatedModules is
+        // enabled. One diagnostic per enabler, anchored at whichever of the pair
+        // comes first in the config source.
         if matches!(
             compiler_opts.get("preserveConstEnums"),
             Some(serde_json::Value::Bool(false))
@@ -753,25 +754,15 @@ pub fn parse_tsconfig_with_diagnostics_deferred(
             let enablers: &[&str] = &["isolatedModules", "isolatedDeclarations"];
             for enabler in enablers {
                 if option_is_effectively_enabled(compiler_opts, &ts5024_keys, enabler) {
-                    let msg = format_message(
-                        diagnostic_messages::OPTION_PRESERVECONSTENUMS_CANNOT_BE_DISABLED_WHEN_IS_ENABLED,
-                        &[enabler],
-                    );
-                    push_key_diagnostic(
+                    push_first_key_anchored_diagnostic(
                         &mut diagnostics,
                         file_path,
                         &stripped,
-                        "preserveConstEnums",
-                        msg.clone(),
-                        diagnostic_codes::OPTION_PRESERVECONSTENUMS_CANNOT_BE_DISABLED_WHEN_IS_ENABLED,
-                    );
-                    // tsc also emits at the enabler key position
-                    push_key_diagnostic(
-                        &mut diagnostics,
-                        file_path,
-                        &stripped,
-                        enabler,
-                        msg,
+                        ["preserveConstEnums", enabler],
+                        format_message(
+                            diagnostic_messages::OPTION_PRESERVECONSTENUMS_CANNOT_BE_DISABLED_WHEN_IS_ENABLED,
+                            &[enabler],
+                        ),
                         diagnostic_codes::OPTION_PRESERVECONSTENUMS_CANNOT_BE_DISABLED_WHEN_IS_ENABLED,
                     );
                 }
@@ -908,27 +899,19 @@ pub fn parse_tsconfig_with_diagnostics_deferred(
                 };
                 let key_a = resolve(opt_a);
                 let key_b = resolve(opt_b);
-                // Emit at the resolved-key position (issue #3732 anchors at
-                // `checkJs` when allowJs is implied).
-                let msg = format_message(
-                    diagnostic_messages::OPTION_CANNOT_BE_SPECIFIED_WITH_OPTION,
-                    &[opt_a, opt_b],
-                );
-                push_key_diagnostic(
+                // One diagnostic, anchored at whichever key comes first in the
+                // config source — which is often not the option the message
+                // names first (`sourceMap`/`inlineSourceMap` anchors at
+                // `inlineSourceMap`).
+                push_first_key_anchored_diagnostic(
                     &mut diagnostics,
                     file_path,
                     &stripped,
-                    key_a,
-                    msg.clone(),
-                    diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITH_OPTION,
-                );
-                // Emit at opt_b's position (same message, different location)
-                push_key_diagnostic(
-                    &mut diagnostics,
-                    file_path,
-                    &stripped,
-                    key_b,
-                    msg,
+                    [key_a, key_b],
+                    format_message(
+                        diagnostic_messages::OPTION_CANNOT_BE_SPECIFIED_WITH_OPTION,
+                        &[opt_a, opt_b],
+                    ),
                     diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITH_OPTION,
                 );
             }

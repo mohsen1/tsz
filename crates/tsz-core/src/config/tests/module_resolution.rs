@@ -1139,11 +1139,67 @@ fn test_ts5053_sourcemap_with_inline_sourcemap() {
         codes.contains(&5053),
         "Expected TS5053 for sourceMap with inlineSourceMap, got: {codes:?}"
     );
-    // tsc emits twice (at each key position)
-    let count = codes.iter().filter(|&&c| c == 5053).count();
+    // One diagnostic, anchored at whichever key comes first in the source —
+    // here `sourceMap`, even though the harness-generated configs in the
+    // conformance corpus sort `inlineSourceMap` above it and anchor there.
+    let hits: Vec<&Diagnostic> = parsed
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 5053)
+        .collect();
     assert_eq!(
-        count, 2,
-        "Expected 2 TS5053 diagnostics (one per key), got: {count}"
+        hits.len(),
+        1,
+        "Expected exactly one TS5053 diagnostic, got: {:?}",
+        parsed.diagnostics
+    );
+    assert_eq!(
+        hits[0].start as usize,
+        source.find(r#""sourceMap""#).unwrap(),
+        "TS5053 should anchor at the earlier key, got: {:?}",
+        hits[0]
+    );
+}
+
+#[test]
+fn test_ts5053_anchors_at_second_named_option_when_it_comes_first() {
+    // The message names `sourceMap` first but `inlineSourceMap` is written
+    // first, so that is where tsc anchors. Pins the corpus oracle for
+    // compiler/optionsInlineSourceMapSourcemap.ts.
+    let source = r#"{"compilerOptions":{"inlineSourceMap":true,"sourceMap":true}}"#;
+    let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+    let hits: Vec<&Diagnostic> = parsed
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 5053)
+        .collect();
+    assert_eq!(hits.len(), 1, "got: {:?}", parsed.diagnostics);
+    assert_eq!(
+        hits[0].start as usize,
+        source.find(r#""inlineSourceMap""#).unwrap(),
+        "TS5053 should anchor at inlineSourceMap, got: {:?}",
+        hits[0]
+    );
+}
+
+#[test]
+fn test_ts5091_reports_once_anchored_at_first_key() {
+    // preserveConstEnums: false with isolatedModules on. `isolatedModules` is
+    // written first, so it takes the anchor even though the message is about
+    // `preserveConstEnums`. Pins compiler/isolatedModulesRequiresPreserveConstEnum.ts.
+    let source = r#"{"compilerOptions":{"isolatedModules":true,"preserveConstEnums":false}}"#;
+    let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+    let hits: Vec<&Diagnostic> = parsed
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 5091)
+        .collect();
+    assert_eq!(hits.len(), 1, "got: {:?}", parsed.diagnostics);
+    assert_eq!(
+        hits[0].start as usize,
+        source.find(r#""isolatedModules""#).unwrap(),
+        "TS5091 should anchor at isolatedModules, got: {:?}",
+        hits[0]
     );
 }
 
