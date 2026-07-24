@@ -1223,13 +1223,157 @@ fn test_ts5052_not_emitted_when_check_js_implies_allow_js() {
 }
 
 #[test]
-fn test_ts5052_check_js_with_allow_js_false_reports_both_sites() {
+fn test_ts5052_check_js_with_allow_js_false_anchors_at_first_key_in_source_order() {
+    // tsc reports one TS5052 and anchors it at whichever of the two named
+    // options it reaches first while walking the compilerOptions object, so
+    // `allowJs` listed above `checkJs` takes the anchor even though the rule
+    // is stated about `checkJs`. The conformance oracle for
+    // compiler/checkJsFiles6.ts pins exactly this (single diagnostic, anchored
+    // at the `allowJs` line).
     let source = r#"{"compilerOptions":{"allowJs":false,"checkJs":true}}"#;
+    let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+    let hits: Vec<&Diagnostic> = parsed
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 5052)
+        .collect();
+    assert_eq!(
+        hits.len(),
+        1,
+        "Expected exactly one TS5052 diagnostic, got: {:?}",
+        parsed.diagnostics
+    );
+    assert_eq!(
+        hits[0].start as usize,
+        source.find(r#""allowJs""#).unwrap(),
+        "TS5052 should anchor at the earlier key (allowJs), got: {:?}",
+        hits[0]
+    );
+}
+
+#[test]
+fn test_ts5052_check_js_with_invalid_allow_js_reports_once() {
+    // An invalid `allowJs` value is still a property assignment in the object
+    // literal, so it is still eligible to take the anchor — and there is still
+    // only one diagnostic.
+    let source = r#"{"compilerOptions":{"allowJs":"nope","checkJs":true}}"#;
+    let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+    let hits: Vec<&Diagnostic> = parsed
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 5052)
+        .collect();
+    assert_eq!(
+        hits.len(),
+        1,
+        "Expected exactly one TS5052 diagnostic, got: {:?}",
+        parsed.diagnostics
+    );
+}
+
+#[test]
+fn test_ts5052_strict_property_initialization_requires_strict_null_checks() {
+    // `strict: true` fans out to strictPropertyInitialization, so an explicit
+    // `strictNullChecks: false` leaves the dependent option on with its
+    // prerequisite off — tsc's verifyCompilerOptions reports TS5052.
+    let source = r#"{"compilerOptions":{"strict":true,"strictNullChecks":false,"strictPropertyInitialization":true}}"#;
+    let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+    let msgs: Vec<&str> = parsed
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 5052)
+        .map(|d| d.message_text.as_str())
+        .collect();
+    assert_eq!(
+        msgs,
+        vec![
+            "Option 'strictPropertyInitialization' cannot be specified without specifying option 'strictNullChecks'."
+        ],
+        "got: {:?}",
+        parsed.diagnostics
+    );
+}
+
+#[test]
+fn test_ts5052_exact_optional_property_types_requires_strict_null_checks() {
+    let source =
+        r#"{"compilerOptions":{"exactOptionalPropertyTypes":true,"strictNullChecks":false}}"#;
+    let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+    let msgs: Vec<&str> = parsed
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 5052)
+        .map(|d| d.message_text.as_str())
+        .collect();
+    assert_eq!(
+        msgs,
+        vec![
+            "Option 'exactOptionalPropertyTypes' cannot be specified without specifying option 'strictNullChecks'."
+        ],
+        "got: {:?}",
+        parsed.diagnostics
+    );
+}
+
+#[test]
+fn test_ts5052_strict_family_pair_silent_when_strict_umbrella_is_absent() {
+    // TypeScript 7 defaults `strict` to true, so an absent `strictNullChecks`
+    // inherits an *enabled* prerequisite and a lone strict-family member is
+    // legal. Pins compiler/optionsStrictPropertyInitializationStrictNullChecks.ts,
+    // whose oracle expects no diagnostics at all.
+    for source in [
+        r#"{"compilerOptions":{"strictPropertyInitialization":true,"target":"es2015"}}"#,
+        r#"{"compilerOptions":{"exactOptionalPropertyTypes":true}}"#,
+    ] {
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let has_5052 = parsed.diagnostics.iter().any(|d| d.code == 5052);
+        assert!(
+            !has_5052,
+            "strict defaults to true in TS7, so no TS5052 is due for {source}, got: {:?}",
+            parsed.diagnostics
+        );
+    }
+}
+
+#[test]
+fn test_ts5052_strict_family_pair_fires_when_strict_umbrella_is_explicitly_off() {
+    // The converse: an explicit `strict: false` really does leave
+    // strictNullChecks off, so the dependency is unmet.
+    let source = r#"{"compilerOptions":{"strict":false,"strictPropertyInitialization":true}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     let count = parsed.diagnostics.iter().filter(|d| d.code == 5052).count();
     assert_eq!(
-        count, 2,
-        "Expected two TS5052 diagnostics (allowJs/checkJs), got: {:?}",
+        count, 1,
+        "explicit strict: false leaves strictNullChecks off, got: {:?}",
+        parsed.diagnostics
+    );
+}
+
+#[test]
+fn test_ts5052_strict_family_pair_silent_when_prerequisite_inherited_from_strict() {
+    // strictNullChecks is absent, so it inherits `strict: true` and the
+    // prerequisite is satisfied. Nothing to report.
+    let source = r#"{"compilerOptions":{"strict":true,"strictPropertyInitialization":true,"exactOptionalPropertyTypes":true}}"#;
+    let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+    let has_5052 = parsed.diagnostics.iter().any(|d| d.code == 5052);
+    assert!(
+        !has_5052,
+        "strictNullChecks inherits strict: true, so no TS5052 is due, got: {:?}",
+        parsed.diagnostics
+    );
+}
+
+#[test]
+fn test_ts5052_strict_family_pair_silent_when_dependent_option_absent() {
+    // A bare `strict: true` never names strictPropertyInitialization, and tsc
+    // tests the raw option there rather than the strict-aware value, so an
+    // umbrella-only config with strictNullChecks off stays quiet.
+    let source = r#"{"compilerOptions":{"strict":true,"strictNullChecks":false}}"#;
+    let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+    let has_5052 = parsed.diagnostics.iter().any(|d| d.code == 5052);
+    assert!(
+        !has_5052,
+        "no dependent option is specified, so no TS5052 is due, got: {:?}",
         parsed.diagnostics
     );
 }
