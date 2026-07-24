@@ -725,6 +725,11 @@ impl<'a> CheckerState<'a> {
                         read_pos,
                     )
                     .is_some_and(|declares| !declares)
+                // Only a JS *constructor*'s prototype is closed by its object
+                // literal. On a plain function, `X.prototype.y = ...` is an
+                // ordinary prototype-property declaration that merges with the
+                // literal, and reporting it is a false positive.
+                && self.js_prototype_owner_is_js_constructor(prototype_access.expression)
             {
                 let type_display = self
                     .prior_js_prototype_object_literal_assignment_display(
