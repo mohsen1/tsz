@@ -1187,21 +1187,20 @@ fn store_union_origin_overrides_canonical_anon_object_sort() {
 fn store_union_origin_preserves_source_order_for_number_literal_union() {
     let db = TypeInterner::new();
 
-    // Force a non-source allocation order: intern `2` before `1` so the
-    // canonical sort's alloc-order fallback puts `2` ahead of `1`.
     let two = db.literal_number(2.0);
     let one = db.literal_number(1.0);
     let zero = db.literal_number(0.0);
 
-    // Build the union in source-written order: `0 | 1 | 2`.
-    let origin = vec![zero, one, two];
+    // Build the union in a source-written order that disagrees with TS7's
+    // canonical numeric order: `2 | 1 | 0`.
+    let origin = vec![two, one, zero];
     let union_id = db.union(origin.clone());
 
-    // Pre-condition: without an origin, the canonical sort produces
-    // `0 | 2 | 1` because alloc_order(2) < alloc_order(1).
+    // Pre-condition: without an origin, `compareTypes` sorts numeric literal
+    // types by value, producing `0 | 1 | 2`.
     {
         let mut fmt = TypeFormatter::new(&db);
-        assert_eq!(fmt.format(union_id), "0 | 2 | 1");
+        assert_eq!(fmt.format(union_id), "0 | 1 | 2");
     }
 
     // Store the origin. Length is unchanged (3 in / 3 out) and there are no
@@ -1210,7 +1209,7 @@ fn store_union_origin_preserves_source_order_for_number_literal_union() {
     db.store_union_origin(union_id, origin);
 
     let mut fmt = TypeFormatter::new(&db);
-    assert_eq!(fmt.format(union_id), "0 | 1 | 2");
+    assert_eq!(fmt.format(union_id), "2 | 1 | 0");
 }
 
 #[test]
@@ -1278,15 +1277,16 @@ fn formatter_can_ignore_union_origin_for_canonical_number_literal_display() {
     let two = db.literal_number(2.0);
     let one = db.literal_number(1.0);
     let zero = db.literal_number(0.0);
-    let origin = vec![zero, one, two];
+    // Source order `2 | 1 | 0` disagrees with TS7's canonical numeric order.
+    let origin = vec![two, one, zero];
     let union_id = db.union(origin.clone());
     db.store_union_origin(union_id, origin);
 
     let mut source_order = TypeFormatter::new(&db);
-    assert_eq!(source_order.format(union_id), "0 | 1 | 2");
+    assert_eq!(source_order.format(union_id), "2 | 1 | 0");
 
     let mut canonical_order = TypeFormatter::new(&db).with_ignore_union_origins();
-    assert_eq!(canonical_order.format(union_id), "0 | 2 | 1");
+    assert_eq!(canonical_order.format(union_id), "0 | 1 | 2");
 }
 
 // Negative case: a number-literal-only union whose canonical order already

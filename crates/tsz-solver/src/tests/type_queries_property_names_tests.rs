@@ -142,13 +142,15 @@ fn keyof_object_properties_excludes_non_public_members() {
 }
 
 #[test]
-fn keyof_object_properties_preserves_declaration_order() {
-    // Object shapes are stored sorted by atom for hash consistency, but
-    // `keyof T`'s union must reflect source declaration order so that the
-    // type printer matches tsc (e.g., `{ foo, bar }` -> `"foo" | "bar"`,
-    // not the alphabetical `"bar" | "foo"`). This test uses property names
-    // that sort opposite to declaration order ("xyz" before "abc" in source,
-    // but "abc" sorts before "xyz" alphabetically).
+fn keyof_object_properties_uses_string_literal_value_order() {
+    // `keyof T` builds a union of string literal types, and TypeScript 7 runs
+    // with `stableTypeOrdering`, whose `compareTypes` orders string literal
+    // types by value. So the union is alphabetical regardless of declaration
+    // order -- e.g. `Omit<this, "getter" | "method" | "setter">` in the
+    // destructuringUnspreadableIntoRest conformance oracle, whose class
+    // declares those members in a different order. This test uses property
+    // names that sort opposite to declaration order ("xyz" before "abc" in
+    // source, but "abc" sorts before "xyz" alphabetically).
     let interner = TypeInterner::new();
     // Intern atoms in declaration order so `Atom` IDs alone are not enough
     // to recover declaration order via the storage sort.
@@ -189,7 +191,7 @@ fn keyof_object_properties_preserves_declaration_order() {
             other => panic!("expected string literal member, got {other:?}"),
         })
         .collect();
-    assert_eq!(names, vec!["xyzunique1", "abcunique2"]);
+    assert_eq!(names, vec!["abcunique2", "xyzunique1"]);
 }
 
 #[test]

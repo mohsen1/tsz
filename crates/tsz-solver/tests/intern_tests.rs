@@ -1756,11 +1756,10 @@ fn test_union_application_types_same_base_sort_by_args() {
 }
 
 #[test]
-fn test_union_member_order_uses_allocation_order() {
-    // Short string literals (1-2 chars) are sorted by content to match tsc's
-    // lib.d.ts pre-allocation order. tsc pre-creates common short string
-    // literals during lib processing in roughly alphabetical order.
-    // Longer strings use allocation order (source encounter order).
+fn test_union_member_order_uses_string_literal_value_order() {
+    // TypeScript 7 runs with `stableTypeOrdering`, whose `compareTypes` orders
+    // string literal types by their value, independent of interning order and
+    // independent of string length.
     let interner = TypeInterner::new();
 
     // Create short string literals in a specific order (d, c, a)
@@ -1768,7 +1767,6 @@ fn test_union_member_order_uses_allocation_order() {
     let lit_c = interner.literal_string("c");
     let lit_a = interner.literal_string("a");
 
-    // Short strings should sort by content (alphabetical), matching tsc lib ordering
     let union_id = interner.union(vec![lit_a, lit_c, lit_d]);
 
     if let Some(TypeData::Union(list_id)) = interner.lookup(union_id) {
@@ -1791,7 +1789,7 @@ fn test_union_member_order_uses_allocation_order() {
         panic!("Expected Union type");
     }
 
-    // Longer strings should preserve allocation order (source encounter order)
+    // Longer strings sort by value too: interning order must not leak through.
     let lit_foo = interner.literal_string("foo");
     let lit_bar = interner.literal_string("bar");
 
@@ -1800,14 +1798,14 @@ fn test_union_member_order_uses_allocation_order() {
     if let Some(TypeData::Union(list_id)) = interner.lookup(union_id2) {
         let members = interner.type_list(list_id);
         assert_eq!(members.len(), 2);
-        // Allocation order: foo was interned first, then bar
+        // Value order: "bar" < "foo", even though "foo" was interned first.
         assert_eq!(
-            members[0], lit_foo,
-            "First member should be 'foo' (interned first)"
+            members[0], lit_bar,
+            "First member should be 'bar' (alphabetically first)"
         );
         assert_eq!(
-            members[1], lit_bar,
-            "Second member should be 'bar' (interned second)"
+            members[1], lit_foo,
+            "Second member should be 'foo' (alphabetically second)"
         );
     } else {
         panic!("Expected Union type");
