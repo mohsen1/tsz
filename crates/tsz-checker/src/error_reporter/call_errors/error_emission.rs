@@ -1611,8 +1611,21 @@ impl<'a> CheckerState<'a> {
         );
     }
 
-    /// TS2350 was removed in tsc 6.0 — no longer emitted.
-    pub const fn error_non_void_function_called_with_new_at(&mut self, _idx: NodeIndex) {}
+    /// Report TS2350: "Only a void function can be called with the 'new' keyword."
+    ///
+    /// `new f()` where `f`'s apparent type has call signatures but no construct
+    /// signatures resolves as a plain call returning `any`. tsc
+    /// (`resolveNewExpression`) reports this only when the resolved signature's
+    /// return type is not `void` **and `noImplicitAny` is off** — with
+    /// `noImplicitAny` on, the implicit-`any` result is reported as TS7009
+    /// instead, so the two are mutually exclusive and callers gate on that.
+    pub fn error_non_void_function_called_with_new_at(&mut self, idx: NodeIndex) {
+        self.error_at_node(
+            idx,
+            diagnostic_messages::ONLY_A_VOID_FUNCTION_CAN_BE_CALLED_WITH_THE_NEW_KEYWORD,
+            diagnostic_codes::ONLY_A_VOID_FUNCTION_CAN_BE_CALLED_WITH_THE_NEW_KEYWORD,
+        );
+    }
 
     /// Report TS2721/TS2722/TS2723: "Cannot invoke an object which is possibly 'null'/'undefined'/'null or undefined'."
     /// Emitted when strictNullChecks is on and the callee type includes null/undefined.
