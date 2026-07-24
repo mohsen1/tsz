@@ -821,54 +821,54 @@ pub fn parse_tsconfig_with_diagnostics_deferred(
         }
 
         // TS5052: Option '{0}' cannot be specified without specifying option '{1}'.
-        // `checkJs` implies `allowJs` unless `allowJs` is explicitly disabled.
+        //
+        // `strictPropertyInitialization` and `exactOptionalPropertyTypes` each
+        // require `strictNullChecks`. tsc (`verifyCompilerOptions`) tests the
+        // *raw* value of the dependent option but the *strict-aware* effective
+        // value of `strictNullChecks`, so a bare `strict: true` is fine while
+        // `strict: true` with an explicit `strictNullChecks: false` is an error.
+        for (dependent, required) in [
+            ("strictPropertyInitialization", "strictNullChecks"),
+            ("exactOptionalPropertyTypes", "strictNullChecks"),
+        ] {
+            if option_is_effectively_enabled(compiler_opts, &ts5024_keys, dependent)
+                && !strict_option_value(compiler_opts, &ts5024_keys, required)
+            {
+                push_option_dependency_diagnostic(
+                    &mut diagnostics,
+                    file_path,
+                    &stripped,
+                    dependent,
+                    required,
+                );
+            }
+        }
+
+        // TS5052: `checkJs` implies `allowJs` unless `allowJs` is explicitly
+        // disabled.
         if option_is_truthy(compiler_opts.get("checkJs"))
             && !option_is_effectively_enabled(compiler_opts, &ts5024_keys, "allowJs")
             && option_key_present_or_invalidated(compiler_opts, &ts5024_keys, "allowJs")
         {
-            let msg = format_message(
-                diagnostic_messages::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION,
-                &["checkJs", "allowJs"],
-            );
-
-            // Always emit at the checkJs key.
-            push_key_diagnostic(
+            push_option_dependency_diagnostic(
                 &mut diagnostics,
                 file_path,
                 &stripped,
                 "checkJs",
-                msg.clone(),
-                diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION,
+                "allowJs",
             );
-
-            // If allowJs is explicitly present, emit at allowJs too (tsc parity).
-            if compiler_opts.contains_key("allowJs") {
-                push_key_diagnostic(
-                    &mut diagnostics,
-                    file_path,
-                    &stripped,
-                    "allowJs",
-                    msg,
-                    diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION,
-                );
-            }
         }
 
         // TS5052: emitDecoratorMetadata requires experimentalDecorators.
         if option_is_truthy(compiler_opts.get("emitDecoratorMetadata"))
             && !option_is_effectively_enabled(compiler_opts, &ts5024_keys, "experimentalDecorators")
         {
-            let msg = format_message(
-                diagnostic_messages::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION,
-                &["emitDecoratorMetadata", "experimentalDecorators"],
-            );
-            push_key_diagnostic(
+            push_option_dependency_diagnostic(
                 &mut diagnostics,
                 file_path,
                 &stripped,
                 "emitDecoratorMetadata",
-                msg,
-                diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION,
+                "experimentalDecorators",
             );
         }
 
