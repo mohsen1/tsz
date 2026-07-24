@@ -584,4 +584,63 @@ impl<'a> CheckerState<'a> {
         self.try_jsdoc_with_ancestor_walk(idx, comments, source_text)
             .is_some_and(|content| Self::jsdoc_contains_tag(&content, "override"))
     }
+
+    /// Find the byte offset of a parameter name after `@param` in source text.
+    ///
+    /// Given the text after `@param`, skips optional `{type}` and whitespace,
+    /// then checks if the next word matches `name`. Returns the byte offset
+    /// of the name relative to the start of the input.
+    pub(super) fn find_param_name_in_source(after_param: &str, name: &str) -> Option<usize> {
+        let mut rest = after_param;
+        let mut offset = 0;
+        // Skip whitespace
+        let trimmed = rest.trim_start();
+        offset += rest.len() - trimmed.len();
+        rest = trimmed;
+        // Skip {type} if present
+        if rest.starts_with('{') {
+            let mut depth = 0usize;
+            for (i, ch) in rest.char_indices() {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            offset += i + 1;
+                            rest = &rest[i + 1..];
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            // Skip whitespace after type
+            let trimmed = rest.trim_start();
+            offset += rest.len() - trimmed.len();
+            rest = trimmed;
+        }
+        // Strip optional [ for optional params like [name] or [name=default]
+        if rest.starts_with('[') {
+            offset += 1;
+            rest = &rest[1..];
+        }
+        if name.is_empty() {
+            if let Some(after_star) = rest.strip_prefix('*') {
+                let ws_after_star = after_star.len() - after_star.trim_start().len();
+                if after_star.trim_start().starts_with('*') {
+                    return Some(offset + 1 + ws_after_star);
+                }
+            }
+            return (!rest.is_empty()).then_some(offset);
+        }
+        // Check if the next word is the name
+        if let Some(after_name) = rest.strip_prefix(name) {
+            // Verify it's a complete word (followed by non-alphanumeric or end)
+            if after_name.is_empty() || !after_name.chars().next().unwrap_or('\0').is_alphanumeric()
+            {
+                return Some(offset);
+            }
+        }
+        None
+    }
 }
