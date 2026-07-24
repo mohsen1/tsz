@@ -537,6 +537,17 @@ impl<'a> TypeFormatter<'a> {
                 TypeData::TypeParameter(param) => {
                     return Some(self.atom(param.name).to_string());
                 }
+                // tsc has no distinct array type: `T[]` is a `TypeReference` to
+                // the global `Array` interface, so `compareTypeNames`
+                // (checker.ts:53867) orders it under the name "Array". tsz
+                // models arrays as their own `TypeData`, which would otherwise
+                // have no name to compare and sort after every named member.
+                // Reporting the global's own name keeps ordering agreement --
+                // e.g. `Cb[] | Cb` and `any[] | Record<string, any>`, where
+                // "Array" precedes "Cb" and "Record".
+                TypeData::Array(_) => {
+                    return Some("Array".to_string());
+                }
                 _ => return None,
             }
         }
