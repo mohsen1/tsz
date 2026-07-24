@@ -554,9 +554,15 @@ impl CheckerState<'_> {
         }
 
         // TS2804: static and instance members cannot share the same private name.
-        // Report on the later conflicting declaration only, matching tsc.
-        let mut seen_private_name_staticness: FxHashMap<String, (bool, bool)> =
-            FxHashMap::default();
+        // tsc reports on BOTH colliding declarations (the earlier and the current),
+        // not just the later one. Track the first instance and first static
+        // declaration's name node per private name, plus whether the pair has
+        // already been reported (so a 3rd colliding declaration does not
+        // re-report the earlier one).
+        let mut seen_private_name_staticness: FxHashMap<
+            String,
+            (Option<NodeIndex>, Option<NodeIndex>, bool),
+        > = FxHashMap::default();
         for &member_idx in members {
             let Some((name, name_idx, is_static)) = self.get_class_member_name_info(member_idx)
             else {
@@ -568,24 +574,39 @@ impl CheckerState<'_> {
 
             let seen = seen_private_name_staticness
                 .entry(name.clone())
-                .or_insert((false, false));
-            let has_opposite = if is_static { seen.0 } else { seen.1 };
-            if has_opposite {
-                let message = format_message(
-                    diagnostic_messages::DUPLICATE_IDENTIFIER_STATIC_AND_INSTANCE_ELEMENTS_CANNOT_SHARE_THE_SAME_PRIVATE,
-                    &[&name],
-                );
-                self.error_at_node(
-                    name_idx,
-                    &message,
-                    diagnostic_codes::DUPLICATE_IDENTIFIER_STATIC_AND_INSTANCE_ELEMENTS_CANNOT_SHARE_THE_SAME_PRIVATE,
-                );
+                .or_insert((None, None, false));
+            // The opposite-staticness declaration seen earlier, if any.
+            let opposite_idx = if is_static { seen.0 } else { seen.1 };
+            let already_reported = seen.2;
+            // First-wins per staticness.
+            if is_static {
+                seen.1.get_or_insert(name_idx);
+            } else {
+                seen.0.get_or_insert(name_idx);
+            }
+            if opposite_idx.is_some() {
+                seen.2 = true;
             }
 
-            if is_static {
-                seen.1 = true;
-            } else {
-                seen.0 = true;
+            if let Some(earlier_idx) = opposite_idx {
+                self.error_at_node(
+                    name_idx,
+                    &format_message(
+                        diagnostic_messages::DUPLICATE_IDENTIFIER_STATIC_AND_INSTANCE_ELEMENTS_CANNOT_SHARE_THE_SAME_PRIVATE,
+                        &[&name],
+                    ),
+                    diagnostic_codes::DUPLICATE_IDENTIFIER_STATIC_AND_INSTANCE_ELEMENTS_CANNOT_SHARE_THE_SAME_PRIVATE,
+                );
+                if !already_reported {
+                    self.error_at_node(
+                        earlier_idx,
+                        &format_message(
+                            diagnostic_messages::DUPLICATE_IDENTIFIER_STATIC_AND_INSTANCE_ELEMENTS_CANNOT_SHARE_THE_SAME_PRIVATE,
+                            &[&name],
+                        ),
+                        diagnostic_codes::DUPLICATE_IDENTIFIER_STATIC_AND_INSTANCE_ELEMENTS_CANNOT_SHARE_THE_SAME_PRIVATE,
+                    );
+                }
             }
         }
 

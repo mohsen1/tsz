@@ -1654,6 +1654,7 @@ impl<'a> CheckerState<'a> {
             && requires_return
             && falls_through
             && check_return_type != TypeId::VOID
+            && (!has_return || self.ctx.strict_null_checks())
         {
             if !has_return {
                 self.error_at_node(
@@ -1662,7 +1663,13 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::A_FUNCTION_WHOSE_DECLARED_TYPE_IS_NEITHER_UNDEFINED_VOID_NOR_ANY_MUST_RETURN_A_V,
                 );
             } else {
-                // TS2366: always emit when return type doesn't include undefined
+                // TS2366 (has explicit return, falls through). The branch gate
+                // above guarantees strictNullChecks here: in non-strict mode
+                // `undefined` is assignable to every type, so tsc's guard
+                // `strictNullChecks && !isTypeAssignableTo(undefinedType, type)`
+                // short-circuits to false (checker.ts checkAllCodePaths... :39580).
+                // Excluding the has-return non-strict case from the gate lets
+                // control fall through to the TS7030 noImplicitReturns check.
                 self.error_at_node(
                     type_annotation,
                     diagnostic_messages::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,

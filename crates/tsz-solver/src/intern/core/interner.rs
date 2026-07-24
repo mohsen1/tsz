@@ -7,6 +7,7 @@
 //! - `display`: diagnostic display provenance (fresh-literal properties, alias
 //!   names, union member origin).
 //! - `cache`: the thread-local intern/lookup fast-path cache.
+//! - `union_complexity`: worker-local exceptional `TS2590` signaling.
 
 use crate::def::DefId;
 use crate::types::{
@@ -29,11 +30,6 @@ use std::sync::{
 };
 use tsz_common::interner::{Atom, ShardedInterner};
 
-/// A universe-shared variance result: the def's variance mask plus the
-/// resolution-gap fingerprint (defs whose resolution failed during the walk)
-/// that gates replaying it under a different resolver.
-pub type SharedDefVariance = (Arc<[crate::types::Variance]>, Arc<[DefId]>);
-
 /// One as-written union display order plus whether it is only the exact
 /// rewriter's pre-sort fallback. Real source provenance may atomically replace
 /// a fallback, while unrelated real origins remain first-writer-wins.
@@ -42,9 +38,25 @@ pub(super) struct DisplayUnionOrigin {
     pub(super) exact_rewrite_fallback: bool,
 }
 
+/// Per-worker state for the exceptional `TS2590` side channel.
+///
+/// The common state lives in fixed TLS slots keyed by `instance_id`; overflow
+/// lives on the owning interner only when one worker signals in more universes
+/// than those slots can hold.
+#[derive(Clone, Copy, Debug, Default)]
+struct UnionComplexityThreadState {
+    produced_epoch: u64,
+    instance_id: u32,
+    pending_count: u32,
+}
+
 mod cache;
 mod display;
 mod storage;
+mod union_complexity;
+mod variance_cache;
+
+pub use variance_cache::SharedDefVariance;
 
 pub(super) use storage::{AppComponentKey, CachedUnionMember, TypeShard};
 use storage::{ConcurrentSliceInterner, ConcurrentValueInterner, write_id_slot};
@@ -61,6 +73,13 @@ static NEXT_INTERNER_INSTANCE_ID: AtomicU32 = AtomicU32::new(1);
 /// from being returned for `TypeId` values that have been reused by a new interner.
 /// Without this, the lookup cache may return `TypeData` from a dropped interner,
 /// causing incorrect type resolution and panics.
+///
+/// This clears only the calling worker. Compilation sessions own and drop their
+/// `TypeInterner`, so fixed signal slots left on persistent Rayon workers are
+/// harmless: unique `instance_id`s prevent reuse, and a worker that eventually
+/// accumulates eight signaled universes uses the new interner's bounded-lifetime
+/// overflow map. That aging changes only an already-exceptional path, not signal
+/// ownership or cache correctness.
 pub fn clear_thread_local_cache() {
     cache::clear_thread_local_cache();
 }
@@ -414,6 +433,12 @@ pub struct TypeInterner {
     pub(super) no_unchecked_indexed_access: AtomicBool,
     /// Effective value for `exactOptionalPropertyTypes` used by query-boundary helpers.
     pub(super) exact_optional_property_types: AtomicBool,
+    /// Effective value for `strictNullChecks`. Gates whether an optional
+    /// member's access/call/inference type carries `| undefined` (see
+    /// `utils::optional_property_type`). Defaults to `true` so an un-wired
+    /// interner never wrongly strips `undefined` in strict code; each
+    /// compilation wires the real value from compiler options.
+    pub(super) strict_null_checks: AtomicBool,
     /// Monotonic invalidation generation for diagnostic and semantic provenance
     /// side tables. Exact graph-rewrite sessions compare this before replaying
     /// retained source provenance, making unchanged cache hits `O(1)`.
@@ -503,11 +528,19 @@ pub struct TypeInterner {
     /// Key: the flattened Union `TypeId` returned to the checker.
     /// Value: the unflattened input member list, in the order the user wrote.
     pub(super) display_union_origin: DashMap<TypeId, DisplayUnionOrigin, FxBuildHasher>,
-    /// Flag set when union normalization detects that a union type is too complex
-    /// to represent (would require > 1M pairwise subtype comparisons during
-    /// reduction). Mirrors tsc's `removeSubtypes` complexity heuristic that
-    /// emits TS2590. The checker reads and clears this flag to emit the diagnostic.
-    pub(super) union_too_complex: AtomicBool,
+    /// Overflow for worker-scoped signals when a thread's fixed TLS slots are
+    /// full. Normal compilation uses TLS only; this map remains interner-owned
+    /// so fallback residency ends with the type universe.
+    union_complexity_overflow_by_thread:
+        OnceLock<DashMap<std::thread::ThreadId, UnionComplexityThreadState, FxBuildHasher>>,
+    /// Number of workers whose union-complexity signal is pending. The common
+    /// no-event path checks this with one relaxed load and avoids TLS, a
+    /// thread-id lookup, and `DashMap` access entirely.
+    union_complexity_pending_threads: AtomicUsize,
+    /// Monotonic ticket assigned to every union-complexity event in this type
+    /// universe. Cache snapshots compare this cheap atomic gate first, then
+    /// consult only the current worker's state if any event occurred.
+    union_complexity_event_epoch: AtomicU64,
     /// Flag set when tuple synthesis detects that a spread would produce a tuple
     /// with more than `MAX_REPRESENTABLE_TUPLE_LENGTH` elements. The checker reads
     /// and clears this to emit TS2799 instead of TS2589.
@@ -802,6 +835,7 @@ impl TypeInterner {
             poisoned: std::sync::atomic::AtomicBool::new(false),
             no_unchecked_indexed_access: AtomicBool::new(false),
             exact_optional_property_types: AtomicBool::new(false),
+            strict_null_checks: AtomicBool::new(true),
             display_provenance_generation: AtomicU64::new(0),
             display_properties: DashMap::with_hasher(FxBuildHasher),
             display_alias: DashMap::with_hasher(FxBuildHasher),
@@ -811,42 +845,13 @@ impl TypeInterner {
             global_this_surface_display: DashMap::with_hasher(FxBuildHasher),
             literal_object_annotations: DashMap::with_hasher(FxBuildHasher),
             display_union_origin: DashMap::with_hasher(FxBuildHasher),
-            union_too_complex: AtomicBool::new(false),
+            union_complexity_overflow_by_thread: OnceLock::new(),
+            union_complexity_pending_threads: AtomicUsize::new(0),
+            union_complexity_event_epoch: AtomicU64::new(0),
             tuple_too_large: AtomicBool::new(false),
             def_variance_masks: DashMap::with_hasher(FxBuildHasher),
             instance_id: NEXT_INTERNER_INSTANCE_ID.fetch_add(1, Ordering::Relaxed),
         }
-    }
-
-    /// Read a universe-shared variance mask for a generic definition.
-    ///
-    /// Returns `(mask, gap_defs)`. Only canonical masks are stored, together
-    /// with their resolution-failure fingerprint (see `def_variance_masks`);
-    /// callers must validate the fingerprint against their resolver before
-    /// replaying the mask.
-    #[inline]
-    pub fn shared_def_variance(&self, def_id: DefId) -> Option<SharedDefVariance> {
-        self.def_variance_masks
-            .get(&def_id)
-            .map(|entry| entry.value().clone())
-    }
-
-    /// Store a universe-shared variance mask for a generic definition with
-    /// its resolution-failure fingerprint.
-    ///
-    /// Callers must only insert canonical masks whose every resolution gap is
-    /// listed in `gaps`. First write wins, keeping replays deterministic
-    /// within a session.
-    #[inline]
-    pub fn insert_shared_def_variance(
-        &self,
-        def_id: DefId,
-        mask: Arc<[crate::types::Variance]>,
-        gaps: Arc<[DefId]>,
-    ) {
-        self.def_variance_masks
-            .entry(def_id)
-            .or_insert((mask, gaps));
     }
 
     #[inline]
@@ -871,29 +876,14 @@ impl TypeInterner {
             .store(enabled, Ordering::Relaxed);
     }
 
-    /// Atomically read and clear the "union too complex" flag.
-    ///
-    /// Returns `true` if a union construction was aborted due to complexity
-    /// since the last call to this method. The flag is cleared after reading.
-    /// The checker uses this to emit TS2590.
     #[inline]
-    pub fn take_union_too_complex(&self) -> bool {
-        self.union_too_complex.swap(false, Ordering::Relaxed)
+    pub fn strict_null_checks(&self) -> bool {
+        self.strict_null_checks.load(Ordering::Relaxed)
     }
 
-    /// Mark that a union construction was aborted due to complexity.
-    /// Called from `reduce_union_subtypes` when pairwise comparisons would exceed 1M.
     #[inline]
-    pub(crate) fn set_union_too_complex(&self) {
-        self.union_too_complex.store(true, Ordering::Relaxed);
-    }
-
-    /// Peek at the union-too-complex flag without clearing it (so the checker
-    /// still observes it). The evaluator uses this to skip caching an evaluation
-    /// that tripped the `TS2590` limit.
-    #[inline]
-    pub fn is_union_too_complex(&self) -> bool {
-        self.union_too_complex.load(Ordering::Relaxed)
+    pub fn set_strict_null_checks(&self, enabled: bool) {
+        self.strict_null_checks.store(enabled, Ordering::Relaxed);
     }
 
     /// Atomically read and clear the "tuple too large" flag.

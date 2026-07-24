@@ -161,6 +161,9 @@ path = "tests/assertion_source_literal_display_tests.rs"
 name = "return_context_identity_wrapper_literal_tests"
 path = "tests/return_context_identity_wrapper_literal_tests.rs"
 [[test]]
+name = "raw_builder_return_context_inference_tests"
+path = "tests/raw_builder_return_context_inference_tests.rs"
+[[test]]
 name = "nested_generic_union_callback_return_tests"
 path = "tests/nested_generic_union_callback_return_tests.rs"
 [[test]]
@@ -220,6 +223,9 @@ path = "tests/recursive_lib_type_relation_tests.rs"
 [[test]]
 name = "assignment_branch_merge_narrowing_tests"
 path = "tests/assignment_branch_merge_narrowing_tests.rs"
+[[test]]
+name = "generic_call_assignment_flow_tests"
+path = "tests/generic_call_assignment_flow_tests.rs"
 [[test]]
 name = "mapped_remapped_excess_function_property_tests"
 path = "tests/mapped_remapped_excess_function_property_tests.rs"
@@ -326,6 +332,9 @@ path = "tests/block_body_callback_literal_widening_tests.rs"
 [[test]]
 name = "return_literal_union_widening_tests"
 path = "tests/return_literal_union_widening_tests.rs"
+[[test]]
+name = "method_inference_bivariance_tests"
+path = "tests/method_inference_bivariance_tests.rs"
 [[test]]
 name = "conditional_branch_array_literal_widening_tests"
 path = "tests/conditional_branch_array_literal_widening_tests.rs"
@@ -752,6 +761,9 @@ path = "tests/interface_call_signature_typeof_param_tests.rs"
 [[test]]
 name = "lib_conditional_alias_return_consumer_first_tests"
 path = "tests/lib_conditional_alias_return_consumer_first_tests.rs"
+[[test]]
+name = "lib_primitive_alias_materialization_tests"
+path = "tests/lib_primitive_alias_materialization_tests.rs"
 [[test]]
 name = "lib_merge_indexed_access_no_cascade_tests"
 path = "tests/lib_merge_indexed_access_no_cascade_tests.rs"

@@ -224,47 +224,6 @@ impl<'a> CheckerState<'a> {
         ))
     }
 
-    fn strict_callback_single_call_signature(
-        &mut self,
-        ty: TypeId,
-    ) -> Option<tsz_solver::CallSignature> {
-        let ty = self.callable_type_after_display_evaluation(ty)?;
-        if let Some(shape) = diagnostic_query::function_shape(self.ctx.types, ty) {
-            return Some(
-                diagnostic_query::call_signature_from_function_shape_for_display(shape.as_ref()),
-            );
-        }
-
-        let shape = diagnostic_query::callable_shape_for_type(self.ctx.types, ty)?;
-        if shape.construct_signatures.is_empty() && shape.call_signatures.len() == 1 {
-            Some(shape.call_signatures[0].clone())
-        } else {
-            None
-        }
-    }
-
-    fn strict_callback_inner_parameter_mismatch_exists(
-        &mut self,
-        source_param: TypeId,
-        target_param: TypeId,
-    ) -> bool {
-        let Some(inner_source) = self.strict_callback_single_call_signature(target_param) else {
-            return false;
-        };
-        let Some(inner_target) = self.strict_callback_single_call_signature(source_param) else {
-            return false;
-        };
-        inner_source
-            .params
-            .iter()
-            .zip(inner_target.params.iter())
-            .any(|(source_param, target_param)| {
-                !self
-                    .call_arg_relation_outcome(target_param.type_id, source_param.type_id)
-                    .related
-            })
-    }
-
     /// Emit a single `Types of parameters 'a' and 'b' are incompatible.` frame
     /// for the parameter at `param_index` of the `source_fn`/`target_fn` pair at
     /// elaboration `depth`. The argument order mirrors tsc's
@@ -1668,35 +1627,16 @@ impl<'a> CheckerState<'a> {
                 } else {
                     false
                 };
-                let inner_failed_on_return = matches!(
-                    inner_reason.as_deref(),
-                    Some(SubtypeFailureReason::ReturnTypeMismatch { .. })
-                );
-                let inner_param_mismatch_exists = inner_failed_on_return
-                    && self.strict_callback_inner_parameter_mismatch_exists(
-                        *source_param,
-                        *target_param,
-                    );
-
-                if strict_callback_case && inner_failed_on_return && !inner_param_mismatch_exists {
-                    let source_name = self
-                        .callable_param_name_at(source, *param_index)
-                        .unwrap_or_else(|| format!("arg{param_index}"));
-                    let target_name = self
-                        .callable_param_name_at(target, *param_index)
-                        .unwrap_or_else(|| format!("arg{param_index}"));
-                    let ts2328_message = format_message(
-                        diagnostic_messages::TYPES_OF_PARAMETERS_AND_ARE_INCOMPATIBLE,
-                        &[&source_name, &target_name],
-                    );
-                    Diagnostic::error(
-                        file_name,
-                        start,
-                        length,
-                        ts2328_message,
-                        diagnostic_codes::TYPES_OF_PARAMETERS_AND_ARE_INCOMPATIBLE,
-                    )
-                } else {
+                // tsc 7.0.2 always reports a top-level function-to-function
+                // assignment failure with a TS2322 head and chains the
+                // `Types of parameters ... are incompatible.` (TS2328) frame
+                // beneath it — it never promotes TS2328 to a standalone head
+                // (no test in the conformance corpus has a TS2328 head, and
+                // strictFunctionTypesErrors expects TS2322 for `fc1 = fc2`).
+                // The former strict-callback branch that emitted a bare TS2328
+                // head matched stale 6.0 `overrideNextErrorInfo` behavior and
+                // has been removed; always render the TS2322 head + chain.
+                {
                     // At depth > 0 we are rendering a nested property/element
                     // failure. The outer anchor index no longer points at the
                     // sub-expression whose type is `source`; using the

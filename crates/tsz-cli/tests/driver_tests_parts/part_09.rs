@@ -1469,12 +1469,18 @@ export const vec = new Vec(1);
 
     let dts = std::fs::read_to_string(base.join("out/source.d.ts"))
         .expect("source declaration should be emitted");
-    // tsc 7.0.2: `@param {Vec}` is a value-used-as-type (TS2749), so the
-    // self-reference types as `any` and the method returns `any` — the old
-    // `: number` came from the removed JS constructor-function class synthesis.
+    // tsc 7.0.2 keeps the JavaScript declaration as a function and represents
+    // a whole-object prototype assignment through a merged namespace. Since
+    // `@param {Vec}` is a value-used-as-type (TS2749), the method returns `any`.
     assert!(
-        dts.contains("dot(other: Vec): any;"),
-        "expected self-referential prototype method parameter to print by name: {dts}"
+        dts.contains("export declare function Vec(len: number): void;")
+            && dts.contains("export declare namespace Vec {\n    var prototype: {")
+            && dts.contains("dot(other: Vec): any;"),
+        "expected function-plus-prototype-namespace declaration surface: {dts}"
+    );
+    assert!(
+        !dts.contains("class Vec") && !dts.contains("storage: number[];"),
+        "did not expect a synthesized JavaScript companion class: {dts}"
     );
 }
 

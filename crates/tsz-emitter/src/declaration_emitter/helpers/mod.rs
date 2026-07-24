@@ -32,6 +32,8 @@ pub(crate) struct JsNamespaceExportAlias {
     pub(crate) export_name: String,
     pub(crate) local_name: String,
     pub(crate) use_import_alias: bool,
+    pub(crate) source_statements: Vec<NodeIndex>,
+    pub(crate) has_non_statement_origin: bool,
 }
 type JsNamespaceExportAliases = FxHashMap<String, Vec<JsNamespaceExportAlias>>;
 type JsCommonjsSyntheticStatements = FxHashMap<NodeIndex, (NodeIndex, NodeIndex)>;

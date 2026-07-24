@@ -1128,6 +1128,69 @@ impl CheckerState<'_> {
         self.resolve_lazy_type_inner(type_id, &mut visited)
     }
 
+    /// Read a definition body only when it represents progress beyond the
+    /// unresolved alias placeholder.
+    fn registered_alias_body(&self, def_id: tsz_solver::DefId) -> Option<TypeId> {
+        let is_usable = |body: TypeId| {
+            body != TypeId::ERROR
+                && body != TypeId::UNKNOWN
+                && lazy_def_id(self.ctx.types, body) != Some(def_id)
+        };
+
+        if let Ok(env) = self.ctx.type_env.try_borrow()
+            && let Some(body) = TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types)
+            && is_usable(body)
+        {
+            return Some(body);
+        }
+
+        self.ctx
+            .definition_store
+            .get_body(def_id)
+            .filter(|&body| is_usable(body))
+    }
+
+    /// Materialize a canonical standard-library type-alias body on demand.
+    ///
+    /// Lib alias lowering deliberately returns `Lazy(DefId)` so generic
+    /// applications retain their alias identity, while publishing the actual
+    /// body into the definition store and both type environments as a side
+    /// effect. On-demand interface forcing does not own alias lowering, so a
+    /// consumer that first reaches a member's alias-typed result must trigger
+    /// that publication through the mutable checker boundary and then re-read
+    /// the body for the same canonical `DefId`.
+    fn materialize_actual_lib_alias_body(&mut self, def_id: tsz_solver::DefId) -> Option<TypeId> {
+        if !self.ctx.has_lib_loaded()
+            // This helper runs from relation-readiness hot paths. Reject ordinary
+            // program aliases before resolving their names or scanning lib binders;
+            // the canonical actual-lib identity check below remains authoritative
+            // for non-program ambient definitions.
+            || !self.ctx.definition_store.def_is_non_program(def_id)
+            || self.ctx.definition_store.get_kind(def_id)
+                != Some(tsz_solver::def::DefKind::TypeAlias)
+        {
+            return None;
+        }
+
+        let name_atom = self.ctx.definition_store.get_name(def_id)?;
+        let name = self.ctx.types.resolve_atom(name_atom);
+        if self.ctx.actual_lib_def_id_for_bare_name(&name) != Some(def_id) {
+            return None;
+        }
+
+        if let Some(body) = self.registered_alias_body(def_id) {
+            return Some(body);
+        }
+        if self.lib_name_resolution_in_progress(&name) {
+            return None;
+        }
+
+        // The return value is intentionally the public Lazy wrapper for type
+        // aliases. The structural body is the side effect read below.
+        let _ = self.resolve_lib_type_by_name(&name);
+        self.registered_alias_body(def_id)
+    }
+
     /// For union types whose members are Lazy(DefId) references, resolve each
     /// member so that downstream consumers (e.g., the solver's `this` type
     /// checking in union call resolution) can inspect their callable shapes.
@@ -1250,7 +1313,7 @@ impl CheckerState<'_> {
                 }
             }
 
-            // Fourth fallback: resolve lib interface types by name.
+            // Fourth fallback: resolve actual-lib aliases and interfaces by name.
             //
             // When a lib interface (e.g., ProxyConstructor) is referenced in a type
             // annotation (e.g., `declare var Proxy: ProxyConstructor`), the Lazy(DefId)
@@ -1258,15 +1321,23 @@ impl CheckerState<'_> {
             // checker context didn't propagate them to the main context. The
             // DefinitionStore still has the name, so we can materialize the interface
             // type through the lib type resolution system.
+            // Keep the actual-lib forcing path completely out of no-lib and
+            // ordinary program resolution. Besides avoiding shared-store work
+            // on a hot fallback, this preserves the existing cross-file
+            // program-definition ordering when no library can contribute the
+            // requested alias.
             if self.ctx.has_lib_loaded()
-                && let Some(def_info) = self.ctx.definition_store.get(def_id)
-                && matches!(
-                    def_info.kind,
-                    tsz_solver::def::DefKind::Interface | tsz_solver::def::DefKind::TypeAlias
-                )
+                && self.ctx.definition_store.def_is_non_program(def_id)
+                && let Some(body) = self.materialize_actual_lib_alias_body(def_id)
             {
-                let name = self.ctx.types.resolve_atom(def_info.name);
-                drop(def_info);
+                return self.resolve_lazy_type_inner(body, visited);
+            }
+            if self.ctx.has_lib_loaded()
+                && self.ctx.definition_store.get_kind(def_id)
+                    == Some(tsz_solver::def::DefKind::Interface)
+                && let Some(name_atom) = self.ctx.definition_store.get_name(def_id)
+            {
+                let name = self.ctx.types.resolve_atom(name_atom);
                 if let Some(lib_type) = self.resolve_lib_type_by_name(&name)
                     && lib_type != type_id
                     && lib_type != TypeId::ERROR
@@ -1372,6 +1443,17 @@ impl CheckerState<'_> {
 
         let symbol_ref = SymbolRef(sym_id.0);
         let def_id = current_def_id;
+        // A symbol lookup for a materialized standard-library alias can still
+        // observe its registration-window `UNKNOWN` result. The symbol cache
+        // may retain that result, but the `DefId` cache must keep the structural
+        // body already published by alias lowering. Otherwise this direct env
+        // bridge makes definition publication non-monotone and `keyof` sees an
+        // opaque alias again.
+        let definition_body = def_id.and_then(|def_id| {
+            self.ctx
+                .definition_body_for_env_registration(def_id, resolved)
+        });
+        let definition_registration = def_id.zip(definition_body);
 
         // Reuse cached params already in the environment when available.
         let mut cached_env_params: Option<Vec<tsz_solver::TypeParamInfo>> = None;
@@ -1380,8 +1462,8 @@ impl CheckerState<'_> {
         if let Ok(env) = self.ctx.type_env.try_borrow() {
             symbol_already_registered = env.contains(symbol_ref);
             cached_env_params = env.get_params(symbol_ref).map(|s| s.to_vec());
-            if let Some(def_id) = def_id {
-                def_already_registered = env.contains_def(def_id);
+            if let Some((def_id, body)) = definition_registration {
+                def_already_registered = env.get_def(def_id) == Some(body);
             }
         }
         let had_env_params = cached_env_params.is_some();
@@ -1427,8 +1509,8 @@ impl CheckerState<'_> {
             if type_params.is_empty() {
                 self.ctx
                     .insert_symbol_type_and_mirror(&mut env, symbol_ref, resolved, Vec::new());
-                if let Some(def_id) = def_id {
-                    env.insert_def(def_id, resolved);
+                if let Some((def_id, body)) = definition_registration {
+                    env.insert_def(def_id, body);
                 }
             } else {
                 self.ctx.insert_symbol_type_and_mirror(
@@ -1437,19 +1519,21 @@ impl CheckerState<'_> {
                     resolved,
                     type_params.clone(),
                 );
-                if let Some(def_id) = def_id {
-                    env.insert_def_with_params(def_id, resolved, type_params.clone());
+                if let Some((def_id, body)) = definition_registration {
+                    env.insert_def_with_params(def_id, body, type_params.clone());
                 }
             }
             drop(env);
-            self.mirror_application_def_resolution(def_id, resolved, &type_params);
-            true
+            if let Some((def_id, body)) = definition_registration {
+                self.mirror_application_def_resolution(Some(def_id), body, &type_params);
+            }
+            def_id.is_none() || definition_registration.is_some()
         } else {
             self.ctx
                 .register_symbol_type_in_envs(symbol_ref, resolved, type_params.clone());
-            if let Some(def_id) = def_id {
+            if let Some((def_id, body)) = definition_registration {
                 self.ctx
-                    .register_def_auto_params_in_envs(def_id, resolved, type_params);
+                    .register_def_auto_params_in_envs(def_id, body, type_params);
             }
             false
         }
@@ -1463,6 +1547,17 @@ impl CheckerState<'_> {
         &mut self,
         def_id: tsz_solver::DefId,
     ) -> Option<TypeId> {
+        // Most relation-readiness calls resolve program definitions. Do not
+        // enter the actual-lib materializer unless both structural preconditions
+        // already hold; the helper repeats the checks as its authority guard.
+        if self.ctx.has_lib_loaded()
+            && self.ctx.definition_store.def_is_non_program(def_id)
+            && let Some(body) = self.materialize_actual_lib_alias_body(def_id)
+        {
+            self.try_insert_def_in_type_env(def_id, body);
+            return Some(body);
+        }
+
         let lib_name = self.ctx.definition_store.get(def_id).and_then(|info| {
             (info.file_id == Some(u32::MAX)).then(|| self.ctx.types.resolve_atom(info.name))
         });

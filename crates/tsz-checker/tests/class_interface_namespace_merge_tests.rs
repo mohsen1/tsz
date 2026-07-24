@@ -149,6 +149,149 @@ const b: B = new B(B.b);
 }
 
 #[test]
+fn default_export_identifier_class_namespace_interface_heritage_uses_instance_type() {
+    let diags = check_multi_file(
+        &[
+            (
+                "vessel.ts",
+                r#"
+class Vessel<Payload = unknown> {
+    value!: Payload;
+    static #hidden = 0;
+    static make<Shape extends Vessel>(): Shape {
+        return null as any;
+    }
+}
+namespace Vessel {
+    export type Core<Payload = unknown> = Vessel<Payload>;
+    export const label = "vessel";
+}
+export default Vessel;
+"#,
+            ),
+            (
+                "cargo.ts",
+                r#"
+import Vessel from "./vessel";
+
+interface Cargo extends Vessel<number> {
+    kind: "cargo";
+}
+
+const cargo: Cargo = Vessel.make<Cargo>();
+const value: number = cargo.value;
+const label: string = Vessel.label;
+"#,
+            ),
+        ],
+        "cargo.ts",
+        CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    )
+    .into_iter()
+    .map(|d| (d.code, d.message_text))
+    .collect::<Vec<_>>();
+
+    assert!(
+        diags.is_empty(),
+        "default-exported class+namespace heritage should be tsc-clean: {diags:?}"
+    );
+}
+
+#[test]
+fn default_export_identifier_class_without_namespace_interface_heritage_uses_instance_type() {
+    let diags = check_multi_file(
+        &[
+            (
+                "crate.ts",
+                r#"
+class Crate<Item = unknown> {
+    item!: Item;
+    static #token = 0;
+    static create<Shape extends Crate>(): Shape {
+        return null as any;
+    }
+}
+export default Crate;
+"#,
+            ),
+            (
+                "shipment.ts",
+                r#"
+import Crate from "./crate";
+
+interface Shipment extends Crate<string> {
+    ready: true;
+}
+
+const shipment: Shipment = Crate.create<Shipment>();
+const item: string = shipment.item;
+"#,
+            ),
+        ],
+        "shipment.ts",
+        CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    )
+    .into_iter()
+    .map(|d| (d.code, d.message_text))
+    .collect::<Vec<_>>();
+
+    assert!(
+        diags.is_empty(),
+        "default-exported class heritage should be tsc-clean without a namespace: {diags:?}"
+    );
+}
+
+#[test]
+fn named_export_class_value_side_stays_available() {
+    let diags = check_multi_file(
+        &[
+            (
+                "repository.ts",
+                r#"
+export class Repository<Entry = unknown> {
+    entry!: Entry;
+    static open<Shape extends Repository>(): Shape {
+        return null as any;
+    }
+}
+"#,
+            ),
+            (
+                "record.ts",
+                r#"
+import { Repository } from "./repository";
+
+const record: Repository<boolean> = Repository.open<Repository<boolean>>();
+const entry: boolean = record.entry;
+"#,
+            ),
+        ],
+        "record.ts",
+        CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            target: tsz_common::common::ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    )
+    .into_iter()
+    .map(|d| (d.code, d.message_text))
+    .collect::<Vec<_>>();
+
+    assert!(
+        diags.is_empty(),
+        "named-import class type/value control should remain tsc-clean: {diags:?}"
+    );
+}
+
+#[test]
 fn interface_class_namespace_declaration_order_sees_class_member() {
     // Declaration order swapped: interface first, then class, then namespace.
     // (tsc reports TS2434 for namespace-before-class — that's expected and

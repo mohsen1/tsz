@@ -683,7 +683,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 for &source_member in source_members.iter() {
                     let mut matched = false;
                     for &non_infer in &non_infer_pattern_members {
-                        if checker.is_subtype_of(source_member, non_infer)
+                        // `any` is mutually assignable with fixed members such
+                        // as `undefined`, but that compatibility is not an
+                        // exact union-member match. Keep it in the residual so
+                        // `any` against `infer V | undefined` infers `V = any`.
+                        if !source_member.is_any()
+                            && checker.is_subtype_of(source_member, non_infer)
                             && checker.is_subtype_of(non_infer, source_member)
                         {
                             matched = true;
@@ -720,7 +725,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             _ => {
                 // Source is not a union - check if source matches any non-infer pattern member
                 for &non_infer in &non_infer_pattern_members {
-                    if checker.is_subtype_of(source, non_infer)
+                    if !source.is_any()
+                        && checker.is_subtype_of(source, non_infer)
                         && checker.is_subtype_of(non_infer, source)
                     {
                         // Source is exactly a non-infer member, so infer gets never

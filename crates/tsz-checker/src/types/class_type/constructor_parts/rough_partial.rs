@@ -153,7 +153,7 @@ impl<'a> CheckerState<'a> {
                                     sig.this_type,
                                     rough_sig_return_type,
                                     sig.type_predicate,
-                                    false,
+                                    sig.is_method,
                                 )
                             })
                             .collect(),

@@ -548,10 +548,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if self
-            .default_export_identifier_value_target(member_id)
-            .is_some()
-        {
+        if self.default_export_identifier_target(member_id).is_some() {
             return self.get_validated_member_type(member_id, property_name);
         }
 
@@ -673,9 +670,7 @@ impl<'a> CheckerState<'a> {
         if self.symbol_member_is_type_only(resolved_member_id, Some(property_name)) {
             return None;
         }
-        if let Some(target_member_id) =
-            self.default_export_identifier_value_target(resolved_member_id)
-        {
+        if let Some(target_member_id) = self.default_export_identifier_target(resolved_member_id) {
             let wrapper_type = self.get_type_of_symbol(resolved_member_id);
             if !matches!(wrapper_type, TypeId::UNKNOWN | TypeId::ERROR) {
                 return Some(wrapper_type);
@@ -813,10 +808,22 @@ impl<'a> CheckerState<'a> {
         Some(self.get_type_of_symbol(resolved_member_id))
     }
 
-    fn default_export_identifier_value_target(&self, sym_id: SymbolId) -> Option<SymbolId> {
-        let symbol = self
-            .get_cross_file_symbol(sym_id)
-            .or_else(|| self.ctx.binder.get_symbol(sym_id))?;
+    /// Resolve the owner-local declaration named by a synthetic
+    /// `export default <identifier>` symbol.
+    pub(crate) fn default_export_identifier_target(&self, sym_id: SymbolId) -> Option<SymbolId> {
+        let target_file_idx = self.ctx.resolve_symbol_file_index(sym_id)?;
+        self.default_export_identifier_target_in_file(sym_id, target_file_idx)
+    }
+
+    /// Resolve the owner-local declaration named by a synthetic
+    /// `export default <identifier>` symbol with an exact owning file.
+    pub(crate) fn default_export_identifier_target_in_file(
+        &self,
+        sym_id: SymbolId,
+        target_file_idx: usize,
+    ) -> Option<SymbolId> {
+        let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
+        let symbol = target_binder.get_symbol(sym_id)?;
         if !symbol.has_any_flags(symbol_flags::ALIAS)
             || symbol.import_module().is_some()
             || !(symbol.escaped_name == "default" || symbol.import_name() == Some("default"))
@@ -824,10 +831,8 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let decl_idx = symbol.primary_declaration()?;
-        let target_file_idx = self.ctx.resolve_symbol_file_index(sym_id)?;
         let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
         let ident = target_arena.get_identifier_at(decl_idx)?;
-        let target_binder = self.ctx.get_binder_for_file(target_file_idx)?;
         let target_sym_id = target_binder.file_locals.get(&ident.escaped_text)?;
         if target_sym_id == sym_id {
             return None;

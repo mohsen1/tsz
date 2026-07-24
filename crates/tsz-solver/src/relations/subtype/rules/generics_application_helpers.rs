@@ -5,7 +5,15 @@ use crate::diagnostics::SubtypeFailureReason;
 use crate::types::{TypeApplication, TypeApplicationId, TypeData, TypeId, Variance};
 use crate::visitor::{application_id, object_shape_id, object_with_index_shape_id};
 use rustc_hash::FxHashSet;
+use smallvec::SmallVec;
 use std::sync::Arc;
+
+pub(crate) struct AnyNeverVarianceClassification {
+    pub(crate) rejects: bool,
+    pub(super) accepted_indices: SmallVec<[usize; 4]>,
+    pub(super) has_unresolved_exceptional: bool,
+    pub(super) variances: Arc<[Variance]>,
+}
 
 /// Maximum nesting depth, per generic `DefId`, for the one-sided application
 /// expansion relation paths (`App <: T` and `T <: App`).
@@ -22,6 +30,374 @@ use std::sync::Arc;
 pub(crate) const ONE_SIDED_APP_EXPANSION_MAX_DEPTH: u32 = 5;
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
+    /// Reject a same-base application when a direct `any`/`never` argument pair
+    /// is incompatible in a reliably measured variance position.
+    ///
+    /// The two orientations cannot use the generic `any` shortcut: covariance
+    /// rejects `any -> never`; contravariance rejects `never -> any`, and
+    /// invariance rejects both. The effective mask has already applied callback
+    /// bivariance for the active `strictFunctionTypes` setting and retained
+    /// explicit `in`/`out` annotations. An independent position accepts both.
+    /// Unknown or structurally unreliable variance remains undecided.
+    pub(crate) fn try_same_base_any_never_variance_result(
+        &mut self,
+        s_app_id: TypeApplicationId,
+        t_app_id: TypeApplicationId,
+    ) -> Option<SubtypeResult> {
+        let s_app = self.interner.type_application(s_app_id);
+        let t_app = self.interner.type_application(t_app_id);
+        if s_app.base != t_app.base || s_app.args.len() != t_app.args.len() {
+            return None;
+        }
+        if !s_app
+            .args
+            .iter()
+            .zip(t_app.args.iter())
+            .any(|(&source, &target)| {
+                (source.is_any() && target == TypeId::NEVER)
+                    || (source == TypeId::NEVER && target.is_any())
+            })
+        {
+            return None;
+        }
+        // Indexed-access aliases are transparent transforms. Their expanded
+        // result can normalize an apparent raw-argument mismatch away, so the
+        // established structural fallback remains authoritative.
+        if self.is_indexed_access_alias_base_inline(s_app.base) {
+            return None;
+        }
+        let def_id = self.application_base_def_id(s_app.base)?;
+        let classification =
+            self.classify_application_args_any_never_variance(def_id, &s_app.args, &t_app.args)?;
+        if classification.rejects {
+            return Some(SubtypeResult::False);
+        }
+        if !classification.has_unresolved_exceptional
+            && let Some(result) = self.try_application_variance_with_mask(
+                &classification.variances,
+                &s_app.args,
+                &t_app.args,
+            )
+        {
+            return Some(result);
+        }
+        if classification.accepted_indices.is_empty() {
+            return None;
+        }
+        let mut masked_source_args = s_app.args.to_vec();
+        for index in classification.accepted_indices {
+            masked_source_args[index] = t_app.args[index];
+        }
+        let masked_source = self.interner.application(s_app.base, masked_source_args);
+        let target = self.interner.application(t_app.base, t_app.args.to_vec());
+        Some(self.check_subtype(masked_source, target))
+    }
+
+    /// Apply a pre-resolved variance mask to every application argument.
+    ///
+    /// The exceptional `any`/`never` positions have already been classified;
+    /// this second pass is what keeps mismatches in other slots visible,
+    /// including structurally filled holes of partial variance declarations.
+    pub(super) fn try_application_variance_with_mask(
+        &mut self,
+        variances: &[Variance],
+        source_args: &[TypeId],
+        target_args: &[TypeId],
+    ) -> Option<SubtypeResult> {
+        if variances.len() != source_args.len() || source_args.len() != target_args.len() {
+            return None;
+        }
+        let needs_structural_fallback = variances.iter().any(Variance::needs_structural_fallback);
+        let rejection_unreliable = variances.iter().any(Variance::rejection_unreliable);
+        let outcome = crate::relations::variance::run_application_variance_arg_loop(
+            variances,
+            source_args,
+            target_args,
+            |source, target| self.check_subtype(source, target).is_true(),
+        );
+        if outcome.all_ok
+            && !needs_structural_fallback
+            && (outcome.any_checked || !variances.is_empty())
+        {
+            return Some(SubtypeResult::True);
+        }
+        if outcome.any_checked
+            && !outcome.all_ok
+            && !needs_structural_fallback
+            && !rejection_unreliable
+            && !args_contain_type_parameters(self.interner, source_args)
+        {
+            return Some(SubtypeResult::False);
+        }
+        None
+    }
+
+    /// Reject `any`/`never` through reliable nested application variance.
+    ///
+    /// Each level must be the same generic identity or an exact one-parameter
+    /// pass-through alias of the opposite identity. Indexed-access transforms,
+    /// unreliable variance, and unknown application shapes remain undecided so
+    /// the ordinary structural relation owns them. A cycle-safe worklist avoids
+    /// treating arbitrary nesting depth or traversal fuel as compatibility.
+    pub(crate) fn application_any_never_variance_rejects(
+        &self,
+        s_app_id: TypeApplicationId,
+        t_app_id: TypeApplicationId,
+    ) -> bool {
+        if !self.application_pair_reaches_any_never(s_app_id, t_app_id) {
+            // This query also runs for ordinary erased overload return pairs.
+            // Keep pairs without a corresponding exceptional leaf on the
+            // shape-only path with no `DefId` or variance resolution.
+            return false;
+        }
+
+        let mut pending = SmallVec::<[(TypeApplicationId, TypeApplicationId); 8]>::new();
+        let mut seen = FxHashSet::default();
+        pending.push((s_app_id, t_app_id));
+        while let Some((s_app_id, t_app_id)) = pending.pop() {
+            if !seen.insert((s_app_id, t_app_id)) {
+                continue;
+            }
+            let s_app = self.interner.type_application(s_app_id);
+            let t_app = self.interner.type_application(t_app_id);
+            if s_app.args.len() != t_app.args.len() {
+                continue;
+            }
+
+            let (Some(s_def), Some(t_def)) = (
+                self.application_base_def_id(s_app.base),
+                self.application_base_def_id(t_app.base),
+            ) else {
+                continue;
+            };
+            let def_id = if s_app.base == t_app.base {
+                if self.is_indexed_access_alias_base_inline(s_app.base) {
+                    continue;
+                }
+                s_def
+            } else if self.alias_body_forwards_positionally_to_generic(s_def, t_def) {
+                if self.is_indexed_access_alias_base_inline(t_app.base) {
+                    continue;
+                }
+                t_def
+            } else if self.alias_body_forwards_positionally_to_generic(t_def, s_def) {
+                if self.is_indexed_access_alias_base_inline(s_app.base) {
+                    continue;
+                }
+                s_def
+            } else {
+                continue;
+            };
+            let Some(def_id) = self.any_never_variance_owner_def(def_id) else {
+                // A non-pass-through type alias is a transparent transform.
+                // Its expanded result, rather than raw arguments, is authoritative.
+                continue;
+            };
+
+            let Some(variances) = self.resolve_any_never_application_variances(def_id) else {
+                continue;
+            };
+            if variances.len() != s_app.args.len() {
+                continue;
+            }
+
+            for ((&source_arg, &target_arg), variance) in s_app
+                .args
+                .iter()
+                .zip(t_app.args.iter())
+                .zip(variances.iter())
+            {
+                if variance.needs_structural_fallback() || variance.rejection_unreliable() {
+                    continue;
+                }
+                let forward = variance.is_covariant() || variance.is_invariant();
+                let reverse = variance.is_contravariant() || variance.is_invariant();
+
+                if (forward && source_arg.is_any() && target_arg == TypeId::NEVER)
+                    || (reverse && source_arg == TypeId::NEVER && target_arg.is_any())
+                {
+                    return true;
+                }
+                let (Some(source_child), Some(target_child)) = (
+                    application_id(self.interner, source_arg),
+                    application_id(self.interner, target_arg),
+                ) else {
+                    continue;
+                };
+                if forward {
+                    pending.push((source_child, target_child));
+                }
+                if reverse {
+                    pending.push((target_child, source_child));
+                }
+            }
+        }
+        false
+    }
+
+    /// Shape-only prefilter for the exceptional classifier. It follows paired
+    /// application arguments without alias, `DefId`, or variance queries and
+    /// uses application-pair identity to terminate cycles at any finite depth.
+    fn application_pair_reaches_any_never(
+        &self,
+        s_app_id: TypeApplicationId,
+        t_app_id: TypeApplicationId,
+    ) -> bool {
+        let mut pending = SmallVec::<[(TypeId, TypeId); 16]>::new();
+        let mut seen = FxHashSet::default();
+        let s_app = self.interner.type_application(s_app_id);
+        let t_app = self.interner.type_application(t_app_id);
+        if s_app.args.len() != t_app.args.len() {
+            return false;
+        }
+        pending.extend(s_app.args.iter().copied().zip(t_app.args.iter().copied()));
+        while let Some((source, target)) = pending.pop() {
+            if (source.is_any() && target == TypeId::NEVER)
+                || (source == TypeId::NEVER && target.is_any())
+            {
+                return true;
+            }
+            if source == target {
+                continue;
+            }
+            let (Some(source_app_id), Some(target_app_id)) = (
+                application_id(self.interner, source),
+                application_id(self.interner, target),
+            ) else {
+                continue;
+            };
+            if !seen.insert((source_app_id, target_app_id)) {
+                continue;
+            }
+            let source_app = self.interner.type_application(source_app_id);
+            let target_app = self.interner.type_application(target_app_id);
+            if source_app.args.len() == target_app.args.len() {
+                pending.extend(
+                    source_app
+                        .args
+                        .iter()
+                        .copied()
+                        .zip(target_app.args.iter().copied()),
+                );
+            }
+        }
+        false
+    }
+
+    /// Apply the `any`/`never` exception using the variance of `def_id`.
+    ///
+    /// Accepts argument slices separately from their application bases so a
+    /// transparent pass-through alias can be compared against the generic body
+    /// it forwards to without losing argument orientation.
+    pub(crate) fn classify_application_args_any_never_variance(
+        &self,
+        def_id: DefId,
+        source_args: &[TypeId],
+        target_args: &[TypeId],
+    ) -> Option<AnyNeverVarianceClassification> {
+        if source_args.len() != target_args.len()
+            || !source_args
+                .iter()
+                .zip(target_args.iter())
+                .any(|(&s_arg, &t_arg)| {
+                    (s_arg.is_any() && t_arg == TypeId::NEVER)
+                        || (s_arg == TypeId::NEVER && t_arg.is_any())
+                })
+        {
+            // Keep the common same-application path O(arity) with no resolver
+            // or variance-cache traffic unless the exceptional pair exists.
+            return None;
+        }
+        let def_id = self.any_never_variance_owner_def(def_id)?;
+        let variances = self.resolve_any_never_application_variances(def_id)?;
+        if variances.len() != source_args.len() {
+            return None;
+        }
+
+        let mut accepted_indices = SmallVec::<[usize; 4]>::new();
+        let mut has_unresolved_exceptional = false;
+        for (index, ((&s_arg, &t_arg), variance)) in source_args
+            .iter()
+            .zip(target_args.iter())
+            .zip(variances.iter())
+            .enumerate()
+        {
+            let source_any_to_never = s_arg.is_any() && t_arg == TypeId::NEVER;
+            let source_never_to_any = s_arg == TypeId::NEVER && t_arg.is_any();
+            if !source_any_to_never && !source_never_to_any {
+                continue;
+            }
+            if variance.is_pure_bivariant_usage() {
+                accepted_indices.push(index);
+                continue;
+            }
+            let reliable =
+                !variance.needs_structural_fallback() && !variance.rejection_unreliable();
+            if !reliable {
+                has_unresolved_exceptional = true;
+                continue;
+            }
+            let covariant = variance.is_covariant();
+            let contravariant = variance.is_contravariant();
+            let invariant = variance.is_invariant();
+            if (source_any_to_never && (covariant || invariant))
+                || (source_never_to_any && (contravariant || invariant))
+            {
+                return Some(AnyNeverVarianceClassification {
+                    rejects: true,
+                    accepted_indices,
+                    has_unresolved_exceptional,
+                    variances,
+                });
+            }
+            if (source_any_to_never && contravariant)
+                || (source_never_to_any && covariant)
+                || variance.is_independent()
+            {
+                accepted_indices.push(index);
+            } else {
+                has_unresolved_exceptional = true;
+            }
+        }
+
+        Some(AnyNeverVarianceClassification {
+            rejects: false,
+            accepted_indices,
+            has_unresolved_exceptional,
+            variances,
+        })
+    }
+
+    /// Resolve variance for the already-proven exceptional `any`/`never` path.
+    ///
+    /// The result merges partial annotations at every nested declaration and
+    /// observes the active `strictFunctionTypes` callback rule. The
+    /// generation-scoped evaluation-session cache keeps repeated exceptional
+    /// queries O(arity) without retaining stale publication generations.
+    fn resolve_any_never_application_variances(&self, def_id: DefId) -> Option<Arc<[Variance]>> {
+        let outcome =
+            crate::relations::variance::compute_effective_type_param_variances_with_resolver_cached(
+                self.interner,
+                self.resolver,
+                self.eval_session,
+                def_id,
+                self.strict_function_types,
+                self.disable_method_bivariance,
+            );
+        let Some(outcome) = outcome else {
+            // The effective query is registration-dependent. Taint the
+            // enclosing relation so a provisional structural fallback cannot
+            // be persisted before the definition finishes registration.
+            self.note_unresolved_lazy_relation_event();
+            return None;
+        };
+        if outcome.incomplete {
+            self.note_unresolved_lazy_relation_event();
+            return None;
+        }
+        Some(outcome.variances)
+    }
+
     /// Same-base all-`any`-target-args lawyer shortcut.
     pub(crate) fn try_same_base_all_any_target_args(
         &mut self,
@@ -31,6 +407,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ) -> Option<SubtypeResult> {
         let t_app = self.interner.type_application(t_app_id);
         if t_app.args.is_empty() || !t_app.args.iter().all(|arg| arg.is_any()) {
+            return None;
+        }
+        if s_app_id.is_some_and(|s_app_id| {
+            self.interner
+                .type_application(s_app_id)
+                .args
+                .contains(&TypeId::NEVER)
+        }) {
+            // `never` against target `any` depends on the generic parameter's
+            // variance. Leave that pair to the variance-aware relation.
             return None;
         }
         let allow_any = self
@@ -250,10 +636,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Generalizes [`Self::try_same_base_all_any_target_args`] to mixed
     /// argument lists: when source and target are applications of the SAME
     /// generic definition with equal arity and every argument pair is either
-    /// the identical `TypeId` or has `any` on at least one side, tsc relates
-    /// the two instantiations (`relateVariances`: an invariant-strength
-    /// per-argument check passes in both directions for `any`, regardless of
-    /// the measured variance and before any structural expansion). This is
+    /// the identical `TypeId` or has a compatible `any`, tsc relates the two
+    /// instantiations. An `any`/`never` pair in either orientation must fall
+    /// through to the ordinary variance relation because covariance and
+    /// contravariance give those two orientations opposite answers. This is
     /// the kysely `ExpressionWrapper<DB, TB, any>` vs
     /// `ExpressionWrapper<DB, TB, O[K]>` shape, whose deferred-conditional
     /// members can never relate structurally.
@@ -283,11 +669,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if !same_definition {
             return None;
         }
-        let args_identical_or_any = s_app
-            .args
-            .iter()
-            .zip(t_app.args.iter())
-            .all(|(&s_arg, &t_arg)| s_arg == t_arg || s_arg.is_any() || t_arg.is_any());
+        let args_identical_or_any =
+            s_app
+                .args
+                .iter()
+                .zip(t_app.args.iter())
+                .all(|(&s_arg, &t_arg)| {
+                    s_arg == t_arg
+                        || ((s_arg.is_any() || t_arg.is_any())
+                            && s_arg != TypeId::NEVER
+                            && t_arg != TypeId::NEVER)
+                });
         if !args_identical_or_any {
             return None;
         }
@@ -344,16 +736,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         })
     }
 
-    /// Acceptance-only unification of a single-argument pass-through type alias
+    /// Acceptance-only unification of an exact positional pass-through type alias
     /// against the body generic it forwards to, restricted to the permissive
     /// `any`-argument shortcut.
     ///
     /// Fires only when `try_variance_fast_path` is about to bail on a
     /// different-base pair whose bases neither share a raw definition nor unify
     /// through import-alias forwarding. It recognizes the
-    /// `Async<T> = Promise<T>` shape: a `DefKind::TypeAlias` whose resolved body
-    /// is a single-argument `Application` of the *other* side's base, where the
-    /// alias's sole argument is `any`. Because the alias is a pass-through, its
+    /// `Alias<X, Y> = Body<X, Y>` shape: a `DefKind::TypeAlias` whose resolved
+    /// body is an `Application` of the *other* side's base, where every differing
+    /// alias argument is `any`. Because the alias is a pass-through, each
     /// `any` argument flows unchanged into the body application, so the pair is
     /// `Body<any>` vs `Body<X>` — true under any-propagation. `tsc` never relates
     /// an alias nominally (it substitutes the body), so `Async<any>` and
@@ -363,7 +755,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// body) otherwise degrades to a structural `then`-callable comparison that
     /// can spuriously fail for a deferred-conditional type argument. Returns
     /// `None` for every other shape so the caller keeps its historical
-    /// structural path; never returns `False`.
+    /// structural path. A proven `any`/`never` variance mismatch returns
+    /// `False`; every other non-accepting shape remains undecided.
     pub(super) fn try_pass_through_alias_any_unification(
         &mut self,
         s_app: &TypeApplication,
@@ -381,55 +774,184 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return None;
         }
 
-        // Source is the alias side: `Async<any>` vs `Promise<X>`.
-        if s_app.args.len() == 1
-            && s_app.args[0].is_any()
-            && t_app.args.len() == 1
-            && self.alias_body_forwards_to_single_arg_generic(s_def, t_def)
+        // Source is the alias side: `Alias<any, X>` vs `Body<Y, X>`.
+        if s_app.args.len() == t_app.args.len()
+            && s_app.args.iter().any(|arg| arg.is_any())
+            && s_app
+                .args
+                .iter()
+                .zip(t_app.args.iter())
+                .all(|(&source, &target)| source.is_any() || source == target)
+            && self.alias_body_forwards_positionally_to_generic(s_def, t_def)
         {
+            if s_app
+                .args
+                .iter()
+                .zip(t_app.args.iter())
+                .any(|(&source, &target)| source.is_any() && target == TypeId::NEVER)
+            {
+                let classification = self.classify_application_args_any_never_variance(
+                    t_def,
+                    &s_app.args,
+                    &t_app.args,
+                )?;
+                if classification.rejects {
+                    return Some(SubtypeResult::False);
+                }
+                return (!classification.has_unresolved_exceptional).then_some(SubtypeResult::True);
+            }
             return Some(SubtypeResult::True);
         }
-        // Target is the alias side: `Promise<X>` vs `Async<any>`.
-        if t_app.args.len() == 1
-            && t_app.args[0].is_any()
-            && s_app.args.len() == 1
-            && self.alias_body_forwards_to_single_arg_generic(t_def, s_def)
+        // Target is the alias side: `Body<X, Y>` vs `Alias<any, Y>`.
+        if t_app.args.len() == s_app.args.len()
+            && t_app.args.iter().any(|arg| arg.is_any())
+            && s_app
+                .args
+                .iter()
+                .zip(t_app.args.iter())
+                .all(|(&source, &target)| target.is_any() || source == target)
+            && self.alias_body_forwards_positionally_to_generic(t_def, s_def)
         {
+            if s_app
+                .args
+                .iter()
+                .zip(t_app.args.iter())
+                .any(|(&source, &target)| source == TypeId::NEVER && target.is_any())
+            {
+                let classification = self.classify_application_args_any_never_variance(
+                    s_def,
+                    &s_app.args,
+                    &t_app.args,
+                )?;
+                if classification.rejects {
+                    return Some(SubtypeResult::False);
+                }
+                return (!classification.has_unresolved_exceptional).then_some(SubtypeResult::True);
+            }
             return Some(SubtypeResult::True);
         }
         None
     }
 
-    /// Whether `alias_def`'s body is a single-argument `Application` whose base
-    /// canonically names `target_def`. "Pass-through" means the alias has one
-    /// type parameter forwarded as the body application's sole argument
-    /// (e.g. `Async<T> = Promise<T>`), so an `any` alias argument yields an
-    /// `any` body argument. An unresolvable alias body records the
+    /// Whether `alias_def`'s body is an `Application` whose base canonically
+    /// names `target_def` and whose parameters are forwarded exactly by
+    /// position (for example `Alias<X, Y> = Pair<X, Y>`). An unresolvable alias body records the
     /// undetermined-result event so the enclosing relation does not persist a
     /// registration-window verdict.
-    fn alias_body_forwards_to_single_arg_generic(
+    fn alias_body_forwards_positionally_to_generic(
         &self,
         alias_def: DefId,
         target_def: DefId,
     ) -> bool {
+        self.positional_pass_through_alias_body_def(alias_def)
+            .is_some_and(|body_def| {
+                self.resolver.canonical_def_id(body_def)
+                    == self.resolver.canonical_def_id(target_def)
+            })
+    }
+
+    /// Find the generic definition whose variance governs an `any`/`never`
+    /// application pair.
+    ///
+    /// TypeScript measures type-alias variance only for the alias body kinds
+    /// that support variance annotations: object, function/constructor,
+    /// callable, and mapped types. Those aliases own the variance decision.
+    /// An exact positional application alias forwards to its body's owner.
+    /// Normalizing transforms (union, tuple, conditional, `keyof`, indexed
+    /// access, and similar bodies) must expand instead. Unknown registration
+    /// state and cycles conservatively remain undecided.
+    pub(super) fn any_never_variance_owner_def(&self, mut def_id: DefId) -> Option<DefId> {
+        let mut seen = FxHashSet::default();
+        loop {
+            match self.resolver.get_def_kind(def_id) {
+                Some(crate::def::DefKind::TypeAlias) => {}
+                Some(_) => return Some(def_id),
+                None => {
+                    // Definition registration can be temporarily incomplete in
+                    // cross-file/re-entrant checks. Unknown kind is not proof
+                    // that this is a nominal generic: keep the relation
+                    // undecided so no transform-alias verdict is cached.
+                    self.note_unresolved_lazy_relation_event();
+                    return None;
+                }
+            }
+            if !seen.insert(def_id) {
+                return None;
+            }
+            let body = self.alias_body_for_variance_classification(def_id)?;
+            match self.interner.lookup(body) {
+                Some(
+                    TypeData::Object(_)
+                    | TypeData::ObjectWithIndex(_)
+                    | TypeData::Function(_)
+                    | TypeData::Callable(_)
+                    | TypeData::Mapped(_),
+                ) => return Some(def_id),
+                Some(TypeData::Application(_)) => {
+                    def_id = self.positional_pass_through_alias_body_def_from_body(def_id, body)?;
+                }
+                Some(_) => return None,
+                None => {
+                    self.note_unresolved_lazy_relation_event();
+                    return None;
+                }
+            }
+        }
+    }
+
+    fn positional_pass_through_alias_body_def(&self, alias_def: DefId) -> Option<DefId> {
         if self.resolver.get_def_kind(alias_def) != Some(crate::def::DefKind::TypeAlias) {
-            return false;
+            return None;
         }
-        let Some(body) = self.resolver.resolve_lazy(alias_def, self.interner) else {
+        let body = self.alias_body_for_variance_classification(alias_def)?;
+        self.positional_pass_through_alias_body_def_from_body(alias_def, body)
+    }
+
+    fn alias_body_for_variance_classification(&self, def_id: DefId) -> Option<TypeId> {
+        if let Some(body) = self.resolver.get_def_raw_body(def_id, self.interner) {
+            return Some(body);
+        }
+        let Some(body) = self.resolver.resolve_lazy(def_id, self.interner) else {
             self.note_unresolved_lazy_relation_event();
-            return false;
+            return None;
         };
-        let Some(body_app_id) = application_id(self.interner, body) else {
-            return false;
-        };
-        let body_app = self.interner.type_application(body_app_id);
-        if body_app.args.len() != 1 {
-            return false;
+        if matches!(self.interner.lookup(body), Some(TypeData::Lazy(body_def)) if body_def == def_id)
+        {
+            // A self wrapper means the alias body is not published yet. Treat
+            // the relation as registration-dependent so it cannot be cached.
+            self.note_unresolved_lazy_relation_event();
+            return None;
         }
-        let Some(body_def) = self.application_base_def_id(body_app.base) else {
-            return false;
+        Some(body)
+    }
+
+    fn positional_pass_through_alias_body_def_from_body(
+        &self,
+        alias_def: DefId,
+        body: TypeId,
+    ) -> Option<DefId> {
+        let body_app_id = application_id(self.interner, body)?;
+        let body_app = self.interner.type_application(body_app_id);
+        if body_app.args.is_empty() {
+            return None;
+        }
+        let Some(alias_params) = self.resolver.get_lazy_type_params(alias_def) else {
+            self.note_unresolved_lazy_relation_event();
+            return None;
         };
-        self.resolver.canonical_def_id(body_def) == self.resolver.canonical_def_id(target_def)
+        if alias_params.len() != body_app.args.len()
+            || !alias_params
+                .iter()
+                .zip(body_app.args.iter())
+                .all(|(&alias_param, &body_arg)| {
+                    crate::type_param_info(self.interner, body_arg) == Some(alias_param)
+                })
+        {
+            // Reordering, duplication, constants, and transforms are not
+            // pass-through. Only the exact positional binder leaves prove it.
+            return None;
+        }
+        self.application_base_def_id(body_app.base)
     }
 
     pub(super) fn recursive_mapped_alias_base_reaches_self(&self, base: TypeId) -> bool {

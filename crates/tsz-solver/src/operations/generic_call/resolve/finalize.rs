@@ -714,22 +714,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             self.interner,
                             contextual_ty,
                         );
-                        let ty_satisfies_raw = constraint_ty_raw != constraint_ty
+                        let ty_satisfies_constraint =
+                            self.checker.is_assignable_to(ty_for_check, constraint_ty);
+                        let ty_satisfies_raw = !ty_satisfies_constraint
                             && self.satisfies_raw_instantiated_constraint(
                                 ty_for_check,
                                 constraint_ty_raw,
+                                constraint_ty,
                             );
-                        let contextual_satisfies_raw = constraint_ty_raw != constraint_ty
+                        let contextual_satisfies_constraint = self
+                            .checker
+                            .is_assignable_to(contextual_for_check, constraint_ty);
+                        let contextual_satisfies_raw = !contextual_satisfies_constraint
                             && self.satisfies_raw_instantiated_constraint(
                                 contextual_for_check,
                                 constraint_ty_raw,
+                                constraint_ty,
                             );
-                        let ty_satisfies_constraint = ty_satisfies_raw
-                            || self.checker.is_assignable_to(ty_for_check, constraint_ty);
-                        let contextual_satisfies_constraint = contextual_satisfies_raw
-                            || self
-                                .checker
-                                .is_assignable_to(contextual_for_check, constraint_ty);
+                        let ty_satisfies_constraint = ty_satisfies_constraint || ty_satisfies_raw;
+                        let contextual_satisfies_constraint =
+                            contextual_satisfies_constraint || contextual_satisfies_raw;
                         !ty_satisfies_constraint && contextual_satisfies_constraint
                     } else {
                         false
@@ -787,11 +791,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // the inferred type must stand and the error surface at the
                     // call/assignment site (#14792). The evidence check is the second
                     // `&&` operand so it only runs once the cheap override gate passes.
+                    // Callback-parameter-only bounds are contextual feedback; explicit
+                    // annotations are still validated by the final argument check.
                     if ((can_apply && should_use) || indirect_narrowing_override)
-                        && !self.contextual_substitution_contradicts_evidence(
-                            &lower_bounds,
-                            contextual_ty,
-                        )
+                        && (callback_param_only_vars.contains(&var)
+                            || !self.contextual_substitution_contradicts_evidence(
+                                &lower_bounds,
+                                contextual_ty,
+                            ))
                     {
                         contextual_ty
                     } else {
@@ -901,10 +908,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // Strip freshness before constraint check: inferred types should not
                 // trigger excess property checking against type parameter constraints.
                 let ty_for_check = crate::relations::freshness::widen_freshness(self.interner, ty);
-                let raw_constraint_satisfied = constraint_ty_raw != constraint_ty
-                    && self.satisfies_raw_instantiated_constraint(ty_for_check, constraint_ty_raw);
                 let constraint_satisfied =
                     self.arg_satisfies_type_parameter_constraint(ty_for_check, constraint_ty);
+                // Resolver-backed alias expansion is also needed when ordinary
+                // evaluation leaves a cross-file application unchanged. Keep
+                // it strictly behind the normal relation so passing calls pay
+                // none of the bounded materialization cost.
+                let raw_constraint_satisfied = !constraint_satisfied
+                    && self.satisfies_raw_instantiated_constraint(
+                        ty_for_check,
+                        constraint_ty_raw,
+                        constraint_ty,
+                    );
                 if !constraint_satisfied
                     && !raw_constraint_satisfied
                     && !self.callable_satisfies_top_rest_any_constraint(ty_for_check, constraint_ty)
@@ -970,7 +985,51 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     }
                     // Try to recover using un-widened literal candidates when widening
                     // caused the violation (e.g., "b" widened to string violates keyof O).
-                    let un_widened = infer_ctx.get_literal_candidates(var);
+                    let mut un_widened = infer_ctx.get_literal_candidates(var);
+                    // Direct array literals enter inference as tuples or arrays
+                    // with literal-union elements, then widen during
+                    // finalization. If that widening is the only reason a
+                    // dependent constraint fails, retry the original container
+                    // just as we retry scalar literal evidence.
+                    // Some direct array literals are represented as an `Array`
+                    // whose element is still the un-widened literal union, so
+                    // include changed array bounds too, but only when widening
+                    // their element literals produces the finalized element.
+                    // This keeps unrelated array lower bounds out of the
+                    // recovery tournament.
+                    let widened_container_element = crate::type_queries::get_array_element_type(
+                        self.interner.as_type_database(),
+                        ty_for_check,
+                    );
+                    if let Some(constraints) = infer_ctx.get_constraints(var) {
+                        for lower_bound in constraints.lower_bounds {
+                            let lower_bound_widens_to_candidate = widened_container_element
+                                .is_some_and(|widened_element| {
+                                    crate::type_queries::get_array_element_type(
+                                        self.interner.as_type_database(),
+                                        lower_bound,
+                                    )
+                                    .is_some_and(
+                                        |lower_element| {
+                                            lower_element != widened_element
+                                                && crate::operations::widening::widen_literal_type(
+                                                    self.interner.as_type_database(),
+                                                    lower_element,
+                                                ) == widened_element
+                                        },
+                                    )
+                                });
+                            if lower_bound_widens_to_candidate
+                                && matches!(
+                                    self.interner.lookup(lower_bound),
+                                    Some(TypeData::Array(_) | TypeData::Tuple(_))
+                                )
+                                && !un_widened.contains(&lower_bound)
+                            {
+                                un_widened.push(lower_bound);
+                            }
+                        }
+                    }
                     let candidate_type = if !un_widened.is_empty() {
                         Some(if un_widened.len() == 1 {
                             un_widened[0]
@@ -981,14 +1040,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         None
                     };
                     let recovered = if let Some(candidate_type) = candidate_type {
-                        let candidate_satisfies_raw = constraint_ty_raw != constraint_ty
+                        let candidate_satisfies_constraint =
+                            self.checker.is_assignable_to(candidate_type, constraint_ty);
+                        let candidate_satisfies_raw = !candidate_satisfies_constraint
                             && self.satisfies_raw_instantiated_constraint(
                                 candidate_type,
                                 constraint_ty_raw,
+                                constraint_ty,
                             );
-                        if self.checker.is_assignable_to(candidate_type, constraint_ty)
-                            || candidate_satisfies_raw
-                        {
+                        if candidate_satisfies_constraint || candidate_satisfies_raw {
                             Some(candidate_type)
                         } else {
                             None

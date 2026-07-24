@@ -503,6 +503,9 @@ pub(crate) fn should_report_member_type_mismatch(
     if checker.should_suppress_assignability_for_parse_recovery(node_idx, node_idx) {
         return false;
     }
+    if implementation_signature_has_incompatible_erased_overload_return(checker, source, target) {
+        return true;
+    }
     if checker
         .no_erase_generics_relation_outcome(source, target)
         .related
@@ -547,13 +550,28 @@ pub(crate) fn interface_overload_set_assignable(
     target: TypeId,
     allow_fresh_generic_retry: bool,
 ) -> bool {
-    checker
+    let strict_related = checker
         .no_erase_generics_relation_outcome(source, target)
-        .related
-        || (allow_fresh_generic_retry
-            && checker
-                .interface_heritage_generic_method_relation_outcome(source, target)
-                .related)
+        .related;
+    if strict_related {
+        tracing::trace!(?source, ?target, "interface overload set related strictly");
+        return true;
+    }
+    let has_generic_signature = checker.callable_has_own_generic_signatures(source)
+        || checker.callable_has_own_generic_signatures(target);
+    if !allow_fresh_generic_retry || !has_generic_signature {
+        return false;
+    }
+    let retry_related = checker
+        .interface_heritage_generic_method_relation_outcome(source, target)
+        .related;
+    tracing::trace!(
+        ?source,
+        ?target,
+        retry_related,
+        "interface overload set fresh-generic retry"
+    );
+    retry_related
 }
 
 fn call_signature_function_type(
@@ -633,6 +651,48 @@ fn overload_return_base_matches_and_params_cover(
     .is_related()
 }
 
+/// True when an implementation/overload pair has a determinate erased
+/// conditional return with a proven `any`/`never` variance mismatch.
+///
+/// The regular coverage helper intentionally returns only a boolean, so a false
+/// result can mean either an ordinary parameter mismatch or this stronger return
+/// rejection. Preserve that distinction before the whole-member compatibility
+/// relation structurally expands the return applications and loses their generic
+/// identity.
+pub(crate) fn implementation_signature_has_incompatible_erased_overload_return(
+    checker: &mut CheckerState<'_>,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    let source = unwrap_single_property_value_type(checker, source);
+    let target = unwrap_single_property_value_type(checker, target);
+    let source_sigs = member_call_signatures(checker.ctx.types, source);
+    let target_sigs = member_call_signatures(checker.ctx.types, target);
+    if source_sigs.len() != 1 || target_sigs.len() < 2 {
+        return false;
+    }
+
+    let source_type = call_signature_function_type(checker, &source_sigs[0]);
+    target_sigs.iter().any(|target_sig| {
+        let target_type = call_signature_function_type(checker, target_sig);
+        let policy = relation_policy::from_checker_flags_u16(checker.ctx.pack_relation_flags());
+        let context = tsz_solver::relations::relation_queries::RelationContext {
+            query_db: Some(checker.ctx.types),
+            evaluation_session: Some(checker.ctx.eval_session.as_ref()),
+            inheritance_graph: Some(&checker.ctx.inheritance_graph),
+            class_check: None,
+        };
+        tsz_solver::relations::relation_queries::query_erased_overload_return_variance_rejects(
+            checker.ctx.types.as_type_database(),
+            &checker.ctx,
+            source_type,
+            target_type,
+            policy,
+            context,
+        )
+    })
+}
+
 /// Check if a DIRECT (own) member type mismatch should be reported (TS2416).
 ///
 /// Unlike `should_report_member_type_mismatch`, this variant uses a targeted
@@ -659,6 +719,9 @@ pub(crate) fn should_report_own_member_type_mismatch(
     }
     if implementation_signature_covers_interface_overloads(checker, source, target) {
         return false;
+    }
+    if implementation_signature_has_incompatible_erased_overload_return(checker, source, target) {
+        return true;
     }
     if checker
         .no_erase_generics_relation_outcome(source, target)
@@ -1007,9 +1070,10 @@ pub(crate) fn combine_overloaded_method_callable(
 ///   - `2` builds a callable only for genuinely overloaded members
 ///     (`combine_overloaded_method_callable`).
 ///   - `1` keeps a single-signature member as a one-signature callable, which
-///     the interface-heritage overload-coverage check needs for the derived
-///     side: a derived interface may legitimately collapse a base's overload
-///     set down to a single compatible signature.
+///     the interface-heritage overload-coverage check needs whenever only one
+///     side is overloaded: a derived interface may legitimately collapse a
+///     base overload set, and a derived overload set must still be checked
+///     against a single base signature.
 pub(crate) fn build_method_overload_callable(
     db: &dyn QueryDatabase,
     member_object_types: impl IntoIterator<Item = TypeId>,

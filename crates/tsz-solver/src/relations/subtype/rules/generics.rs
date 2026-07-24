@@ -453,6 +453,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let same_application_family =
             (same_arity && s_app.base == t_app.base) || variance_def_id.is_some();
 
+        let same_base_any_never_pair = same_arity
+            && s_app.base == t_app.base
+            && s_app
+                .args
+                .iter()
+                .zip(t_app.args.iter())
+                .any(|(&source, &target)| {
+                    (source.is_any() && target == TypeId::NEVER)
+                        || (source == TypeId::NEVER && target.is_any())
+                });
+        if same_base_any_never_pair
+            && let Some(result) = self.try_same_base_any_never_variance_result(s_app_id, t_app_id)
+        {
+            return result;
+        }
+
         if !same_application_family
             && s_app.args.len() == 1
             && t_app.args.len() == 1
@@ -491,7 +507,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // concrete shapes. (Conditional-bodied alias bases keep their existing
         // variance handling, which is intentionally retained for differing args.)
         // =======================================================================
-        if same_application_family && !self.is_indexed_access_alias_base_inline(s_app.base) {
+        if same_application_family
+            && !same_base_any_never_pair
+            && !self.is_indexed_access_alias_base_inline(s_app.base)
+        {
             // Try to resolve DefId from the base to query variance
             let def_id = variance_def_id;
 
@@ -942,20 +961,45 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             (s_app.args.clone(), t_app.args.clone())
         };
 
-        let variances = self.resolver.get_type_param_variance(def_id).or_else(|| {
-            crate::relations::variance::compute_type_param_variances_with_resolver_cached(
-                self.interner,
-                self.resolver,
-                self.query_db,
-                def_id,
-            )
+        let has_any_never_pair = s_args.iter().zip(t_args.iter()).any(|(&source, &target)| {
+            (source.is_any() && target == TypeId::NEVER)
+                || (source == TypeId::NEVER && target.is_any())
         });
-        // T<X> <: T<any> and T<any> <: T<X> are always true when
-        // any-propagation is enabled; skip variance computation entirely rather
-        // than risking structural expansion. The shortcut requires `any` to be
-        // permissive on BOTH sides: under asymmetric modes (overload subtype
-        // pass) `T<any> <: T<X>` must fall through to the per-argument variance
-        // checks so an `any` source argument is rejected there.
+        if has_any_never_pair {
+            let classification =
+                self.classify_application_args_any_never_variance(def_id, &s_args, &t_args)?;
+            if classification.rejects {
+                return Some(SubtypeResult::False);
+            }
+            if !classification.has_unresolved_exceptional
+                && let Some(result) = self.try_application_variance_with_mask(
+                    &classification.variances,
+                    &s_args,
+                    &t_args,
+                )
+            {
+                return Some(result);
+            }
+            if classification.accepted_indices.is_empty() {
+                // Transform aliases, inferred nonstrict variance, unreliable
+                // masks, and registration gaps remain structural decisions.
+                return None;
+            }
+            let mut masked_source_args = s_args.to_vec();
+            for index in classification.accepted_indices {
+                masked_source_args[index] = t_args[index];
+            }
+            let masked_source = self.interner.application(s_app.base, masked_source_args);
+            let target = self.interner.application(t_app.base, t_args.to_vec());
+            return Some(self.check_subtype(masked_source, target));
+        }
+
+        // T<X> <: T<any> and T<any> <: T<X> are true when any-propagation is
+        // enabled, except for the directional `any`/`never` variance rule. Skip
+        // the general variance walk for the common case rather than risking
+        // structural expansion. The shortcut requires `any` to be permissive on
+        // BOTH sides: under asymmetric modes (overload subtype pass)
+        // `T<any> <: T<X>` must fall through to the per-argument variance checks.
         let allow_any = self
             .any_propagation
             .allows_any_source_at_depth(self.guard.depth())
@@ -966,7 +1010,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return Some(SubtypeResult::True);
         }
 
-        let variances = variances?;
+        let variances = self.resolve_application_variances(def_id)?;
 
         if variances.len() != s_args.len() {
             return None;

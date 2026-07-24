@@ -271,4 +271,14 @@ pub trait TypeCompilerOptions {
     fn exact_optional_property_types(&self) -> bool {
         false
     }
+
+    /// Whether `strictNullChecks` is enabled.
+    ///
+    /// Gates whether an optional member's access/call/inference type carries
+    /// `| undefined` (tsc's `addOptionality` is strictNullChecks-gated). The
+    /// default is `true` so a backend without wired options never wrongly
+    /// strips `undefined` in strict code.
+    fn strict_null_checks(&self) -> bool {
+        true
+    }
 }

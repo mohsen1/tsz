@@ -1711,7 +1711,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // TS2327 before this check would hide that root mismatch.
                 let source_type = self.optional_property_type(sp);
                 let target_type = self.optional_property_type(t_prop);
-                let allow_bivariant = sp.is_method || t_prop.is_method;
+                let allow_bivariant = t_prop.is_method;
                 if !self
                     .check_subtype_with_method_variance(source_type, target_type, allow_bivariant)
                     .is_true()

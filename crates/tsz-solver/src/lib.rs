@@ -252,7 +252,7 @@ pub mod observability {
 pub mod construction {
     pub use crate::caches::db::{
         QueryDatabase, TypeBuiltinAccess, TypeDatabase, TypeRawIntersectionConstruction,
-        TypeSubstitutionConstruction,
+        TypeSubstitutionConstruction, UnionComplexityCheckpoint,
     };
     pub use crate::caches::query_cache::{QueryCache, RelationCacheProbe, SharedQueryCache};
     pub use crate::caches::query_cache_statistics::{QueryCacheStatistics, RelationCacheStats};
@@ -447,6 +447,9 @@ mod computed_prop_name_tests;
 #[cfg(test)]
 #[path = "../tests/conditional_comprehensive_tests.rs"]
 mod conditional_comprehensive_tests;
+#[cfg(test)]
+#[path = "../tests/conditional_infer_apparent_constraint_tests.rs"]
+mod conditional_infer_apparent_constraint_tests;
 #[cfg(test)]
 #[path = "../tests/conditional_infer_callable_arity_tests.rs"]
 mod conditional_infer_callable_arity_tests;

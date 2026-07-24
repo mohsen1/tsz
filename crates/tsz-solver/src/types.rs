@@ -1881,13 +1881,21 @@ bitflags::bitflags! {
         /// trusted because the direct usage provides a reliable variance signal
         /// that dominates over the unreliable mapped-type contribution.
         const DIRECT_USAGE = 1 << 4;
+        /// The parameter occurs below a method/constructor parameter or a
+        /// callback parameter governed by non-strict function checking. This
+        /// is not true independence: unrelated arguments must still compare
+        /// structurally, while the directional `any`/`never` exception accepts
+        /// either orientation.
+        const BIVARIANT_USAGE = 1 << 5;
     }
 }
 
 impl Variance {
     /// Check if this is an independent type parameter (not used in variance position).
     pub const fn is_independent(&self) -> bool {
-        !self.contains(Self::COVARIANT) && !self.contains(Self::CONTRAVARIANT)
+        !self.contains(Self::COVARIANT)
+            && !self.contains(Self::CONTRAVARIANT)
+            && !self.contains(Self::BIVARIANT_USAGE)
     }
 
     /// Check if this is covariant only.
@@ -1907,7 +1915,7 @@ impl Variance {
 
     /// Check if variance requires structural fallback (unreliable due to mapped type modifiers).
     pub const fn needs_structural_fallback(&self) -> bool {
-        self.contains(Self::NEEDS_STRUCTURAL_FALLBACK)
+        self.contains(Self::NEEDS_STRUCTURAL_FALLBACK) || self.contains(Self::BIVARIANT_USAGE)
     }
 
     /// Check if variance-based rejection is unreliable. When true, a variance
@@ -1925,7 +1933,21 @@ impl Variance {
         self.contains(Self::DIRECT_USAGE)
     }
 
-    /// Compose two variances (for nested generics).
+    /// Whether the effective variance walk found a bivariant parameter edge.
+    pub const fn has_bivariant_usage(&self) -> bool {
+        self.contains(Self::BIVARIANT_USAGE)
+    }
+
+    /// Whether bivariance is the only semantic occurrence in this mask.
+    pub const fn is_pure_bivariant_usage(&self) -> bool {
+        self.contains(Self::BIVARIANT_USAGE)
+            && !self.contains(Self::COVARIANT)
+            && !self.contains(Self::CONTRAVARIANT)
+            && !self.contains(Self::NEEDS_STRUCTURAL_FALLBACK)
+            && !self.contains(Self::REJECTION_UNRELIABLE)
+    }
+
+    /// Compose an outer variance (`self`) with a nested parameter variance.
     ///
     /// Rules:
     /// - Independent × anything = Independent
@@ -1933,13 +1955,24 @@ impl Variance {
     /// - Covariant × Contravariant = Contravariant
     /// - Contravariant × Covariant = Contravariant
     /// - Contravariant × Contravariant = Covariant
-    /// - Invariant × anything = Invariant
+    /// - Outer bivariant × inner invariant = Invariant
+    /// - Outer invariant × inner bivariant = Bivariant structural fallback
+    /// - Bivariant × directional = Bivariant structural fallback
     pub fn compose(&self, other: Self) -> Self {
-        if self.is_invariant() || other.is_invariant() {
-            return Self::COVARIANT | Self::CONTRAVARIANT;
-        }
         if self.is_independent() || other.is_independent() {
             return Self::empty();
+        }
+        if other.is_invariant() {
+            return Self::COVARIANT | Self::CONTRAVARIANT;
+        }
+        if other.has_bivariant_usage() {
+            return Self::BIVARIANT_USAGE;
+        }
+        if self.has_bivariant_usage() {
+            return Self::BIVARIANT_USAGE;
+        }
+        if self.is_invariant() {
+            return Self::COVARIANT | Self::CONTRAVARIANT;
         }
 
         // XOR for covariance composition

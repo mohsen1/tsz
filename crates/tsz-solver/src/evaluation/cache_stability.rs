@@ -1,10 +1,10 @@
-use crate::construction::TypeDatabase;
+use crate::construction::{TypeDatabase, UnionComplexityCheckpoint};
 
 /// Snapshot for evaluation cache writes whose keys do not encode ambient limit
 /// state.
 #[derive(Clone, Copy)]
 pub(crate) struct EvaluationCacheLimitSnapshot {
-    union_too_complex: bool,
+    union_complexity: UnionComplexityCheckpoint,
 }
 
 /// Solver-owned verdict for cache writes gated by ambient evaluation limits.
@@ -23,12 +23,12 @@ impl EvaluationCacheLimitState {
 impl EvaluationCacheLimitSnapshot {
     pub(crate) fn capture(interner: &dyn TypeDatabase) -> Self {
         Self {
-            union_too_complex: interner.is_union_too_complex(),
+            union_complexity: interner.union_complexity_checkpoint(),
         }
     }
 
     pub(crate) fn state_after(self, interner: &dyn TypeDatabase) -> EvaluationCacheLimitState {
-        if interner.is_union_too_complex() && !self.union_too_complex {
+        if interner.union_complexity_changed_since(self.union_complexity) {
             EvaluationCacheLimitState::UnionComplexityNewlyExceeded
         } else {
             EvaluationCacheLimitState::Stable
@@ -69,5 +69,13 @@ mod tests {
             EvaluationCacheLimitState::Stable
         );
         assert!(pre_existing_snapshot.union_complexity_stayed_stable_after(&interner));
+
+        interner.set_union_too_complex();
+        assert_eq!(
+            pre_existing_snapshot.state_after(&interner),
+            EvaluationCacheLimitState::UnionComplexityNewlyExceeded,
+            "a second event must taint the cache even while the sticky signal was already pending"
+        );
+        assert!(interner.take_union_too_complex());
     }
 }

@@ -139,6 +139,19 @@ impl<'a> CheckerState<'a> {
         self.call_signature_from_method_with_this(method, None, method_idx)
     }
 
+    /// Build only a method's declared parameter surface.
+    ///
+    /// Early class-construction queries sometimes need a later method's
+    /// parameters before its body is checked. Inferring that body's return type
+    /// would recurse into work that class publication intentionally deferred.
+    pub(crate) fn call_signature_parameter_surface_from_method(
+        &mut self,
+        method: &tsz_parser::parser::node::MethodDeclData,
+        method_idx: NodeIndex,
+    ) -> tsz_solver::CallSignature {
+        self.call_signature_from_method_internal(method, None, method_idx, true)
+    }
+
     /// Build a `CallSignature` from a method declaration with an explicit `this` type.
     /// This is used for static methods where `this` refers to the constructor type.
     pub(crate) fn call_signature_from_method_with_this(
@@ -146,6 +159,16 @@ impl<'a> CheckerState<'a> {
         method: &tsz_parser::parser::node::MethodDeclData,
         explicit_this_type: Option<TypeId>,
         method_idx: NodeIndex,
+    ) -> tsz_solver::CallSignature {
+        self.call_signature_from_method_internal(method, explicit_this_type, method_idx, false)
+    }
+
+    fn call_signature_from_method_internal(
+        &mut self,
+        method: &tsz_parser::parser::node::MethodDeclData,
+        explicit_this_type: Option<TypeId>,
+        method_idx: NodeIndex,
+        parameter_surface_only: bool,
     ) -> tsz_solver::CallSignature {
         let enclosing_updates = self.push_enclosing_type_parameters(method_idx);
         self.exclude_params_for_type_param_constraints(&method.parameters);
@@ -200,30 +223,31 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
-        let (mut return_type, mut type_predicate) =
-            if method.type_annotation.is_none() && method.body.is_some() {
-                // Infer return type from body when there's no annotation
-                // Push the this type for proper resolution
-                let pushed_this = if let Some(this_ty) = explicit_this_type {
-                    self.ctx.this_type_stack.push(this_ty);
-                    true
-                } else {
-                    false
-                };
-                let inferred = self.infer_return_type_from_body(method_idx, method.body, None);
-                if pushed_this {
-                    self.ctx.this_type_stack.pop();
-                }
-                (inferred, None)
+        let (mut return_type, mut type_predicate) = if parameter_surface_only {
+            (TypeId::ANY, None)
+        } else if method.type_annotation.is_none() && method.body.is_some() {
+            // Infer return type from body when there's no annotation
+            // Push the this type for proper resolution
+            let pushed_this = if let Some(this_ty) = explicit_this_type {
+                self.ctx.this_type_stack.push(this_ty);
+                true
             } else {
-                self.return_type_and_predicate(method.type_annotation, &params)
+                false
             };
+            let inferred = self.infer_return_type_from_body(method_idx, method.body, None);
+            if pushed_this {
+                self.ctx.this_type_stack.pop();
+            }
+            (inferred, None)
+        } else {
+            self.return_type_and_predicate(method.type_annotation, &params)
+        };
 
         // Check JSDoc @returns for type predicates on class methods.
         // Mirrors the logic in get_type_of_function (function_type.rs) for standalone
         // functions. In JS files, method return type predicates like
         // `@return {this is Entry}` are specified via JSDoc instead of syntax.
-        if type_predicate.is_none() {
+        if !parameter_surface_only && type_predicate.is_none() {
             if let Some(pred) = self.extract_jsdoc_return_type_predicate(&method_jsdoc, &params) {
                 return_type = if pred.asserts {
                     TypeId::VOID
@@ -242,7 +266,8 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if type_predicate.is_none()
+        if !parameter_surface_only
+            && type_predicate.is_none()
             && method.type_annotation.is_none()
             && matches!(return_type, TypeId::BOOLEAN | TypeId::UNKNOWN)
             && method.body.is_some()
@@ -258,7 +283,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if method.type_annotation.is_none() {
+        if !parameter_surface_only && method.type_annotation.is_none() {
             return_type = self.maybe_evaluate_inferred_return_contribution(return_type, None);
         }
 
@@ -267,7 +292,7 @@ impl<'a> CheckerState<'a> {
         let is_generator = method.asterisk_token;
         let is_async = self.has_async_modifier(&method.modifiers);
 
-        if !has_annotation && is_generator {
+        if !parameter_surface_only && !has_annotation && is_generator {
             let gen_name = if is_async {
                 "AsyncGenerator"
             } else {
@@ -285,7 +310,7 @@ impl<'a> CheckerState<'a> {
                     .factory()
                     .application(base, vec![TypeId::ANY, TypeId::VOID, TypeId::UNKNOWN]);
             }
-        } else if !has_annotation && is_async {
+        } else if !parameter_surface_only && !has_annotation && is_async {
             if let Some(inner) = self.unwrap_promise_type(return_type) {
                 return_type = inner;
             }
@@ -385,7 +410,7 @@ impl<'a> CheckerState<'a> {
             this_type,
             instance_type,
             None,
-            false,
+            true,
         )
     }
 

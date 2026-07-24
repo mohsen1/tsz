@@ -1297,6 +1297,9 @@ mod mapped_intersection_excess_property_tests;
 #[path = "../tests/mapped_intersection_indexed_access_tests.rs"]
 mod mapped_intersection_indexed_access_tests;
 #[cfg(test)]
+#[path = "tests/mapped_keyof_remap_excess_property_tests.rs"]
+mod mapped_keyof_remap_excess_property_tests;
+#[cfg(test)]
 #[path = "tests/mapped_optional_target_excess_property_tests.rs"]
 mod mapped_optional_target_excess_property_tests;
 #[cfg(test)]
@@ -1538,9 +1541,6 @@ mod relation_flags_boundary_contract_tests;
 #[cfg(test)]
 #[path = "tests/remapped_missing_property_relation_routing_arch_tests.rs"]
 mod remapped_missing_property_relation_routing_arch_tests;
-#[cfg(test)]
-#[path = "tests/render_failure_relation_routing_arch_tests.rs"]
-mod render_failure_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "../tests/repro_parserreal.rs"]
 mod repro_parserreal;

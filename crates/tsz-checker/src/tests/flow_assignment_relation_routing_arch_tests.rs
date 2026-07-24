@@ -54,6 +54,17 @@ fn flow_assignment_and_predicate_exclusion_use_relation_outcome_boundary() {
         .chars()
         .filter(|c| !c.is_whitespace())
         .collect();
+    let whole_rhs_start = boundary_source
+        .find("pub(crate) fn whole_assignment_rhs_is_compatible(")
+        .expect("whole-RHS relation boundary must exist");
+    let whole_rhs_tail = &boundary_source[whole_rhs_start..];
+    let whole_rhs_end = whole_rhs_tail
+        .find("\nfn substitute_flow_this_type(")
+        .expect("whole-RHS relation boundary must end before the next helper");
+    let compact_whole_rhs: String = whole_rhs_tail[..whole_rhs_end]
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
 
     assert!(
         compact_boundary.contains("fnflow_assignability_outcome(")
@@ -100,10 +111,19 @@ fn flow_assignment_and_predicate_exclusion_use_relation_outcome_boundary() {
                 .contains("assignment_relation_outcome(assigned_type,write_type,true)")
             && compact_assignment
                 .contains("assignment_relation_outcome(assigned_type,target_type,false)")
-            && compact_assignment.contains("assignment_relation_outcome(rhs_type,lhs_type,false)")
+            && compact_assignment.contains("whole_assignment_rhs_is_compatible(")
+            && compact_assignment.contains("ctx.pack_relation_flags()")
             && compact_assignment
                 .contains("assignment_relation_outcome(nullish_type,annotation_type,true)"),
         "flow assignment guards should consume outcome-shaped relation truth"
+    );
+    assert!(
+        compact_whole_rhs.contains("fnwhole_assignment_rhs_is_compatible(")
+            && compact_whole_rhs.contains("relation_policy::from_checker_flags_u16(flags)")
+            && compact_whole_rhs.contains("query_relation_with_resolver(")
+            && compact_whole_rhs.contains("query_relation(")
+            && compact_whole_rhs.contains("members.iter().copied().all(related)"),
+        "whole-RHS assignment validity must apply the complete checker relation policy through resolver and no-resolver paths"
     );
     assert!(
         !compact_assignment.contains("self.is_assignable_to(")

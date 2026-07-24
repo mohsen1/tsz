@@ -10,6 +10,13 @@ impl<'a> DeclarationEmitter<'a> {
         name_idx: NodeIndex,
         is_exported: bool,
     ) {
+        // TypeScript keeps ordinary function declarations callable for
+        // per-member prototype writes. The synthetic companion class is only
+        // retained for an `export =` function surface, where those prototype
+        // methods form the exported constructor type.
+        if !self.is_js_export_equals_name(name_idx) {
+            return;
+        }
         let Some(name) = self.get_identifier_text(name_idx) else {
             return;
         };

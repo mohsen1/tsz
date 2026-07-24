@@ -8,14 +8,11 @@
 //! resolution — the in-crate single-context checker harness conflates per-file
 //! `SymbolId`/`DefId` namespaces and cannot host them.
 //!
-//! Scope: this guard pins the cross-file `keyof`/utility-alias behavior tsz
-//! already gets right (value-position `keyof Omit<…>`, bare `keyof I`, identity
-//! and `keyof` aliases) so future cross-arena identity work (#14344) cannot
-//! silently regress them. The one shape that does NOT yet match `tsc` — a
-//! generic-call constraint `T extends keyof Omit<ImportedIface, K>`, where the
-//! consumer never names the utility alias so its structural body is never
-//! lowered locally and collapses to `never` — is captured as an `#[ignore]`d
-//! witness (kysely `AlterColumnNode.create`, #10663) pending that work.
+//! Scope: this guard pins value-position aliases, generic-call constraints,
+//! private/exported aliases, nested utility wrappers, and both project file
+//! orders. In particular, a consumer that never names `Omit` must not replace
+//! its already-materialized standard-library body with a registration-window
+//! `unknown`/self-lazy placeholder (kysely `AlterColumnNode.create`, #10663).
 //!
 //! Binder names vary across cases so the guard follows the structural shape
 //! rather than any identifier (anti-hardcoding).
@@ -76,6 +73,10 @@ fn constraint_errors(diags: &[Diagnostic]) -> Vec<(u32, String)> {
         .filter(|d| d.code == 2322 || d.code == 2345 || d.code == 2344)
         .map(|d| (d.code, d.message_text.clone()))
         .collect()
+}
+
+fn diagnostic_codes(diags: &[Diagnostic]) -> Vec<u32> {
+    diags.iter().map(|diag| diag.code).collect()
 }
 
 // ---- Cases tsz already matches `tsc` on (parity floor) ----
@@ -501,21 +502,16 @@ export function run() { make('extra'); }
     );
 }
 
-// ---- Known gap: cross-arena utility-alias identity (#10663 / #14344) ----
+// ---- Cross-file utility-alias publication regression (#10663) ----
 
-// kysely `AlterColumnNode.create` witness: the utility alias and the generic
-// method live in the SAME module, the interface backs the alias, and the call
-// is in a DIFFERENT module that never names the alias. The consumer resolves
-// the lib `Omit` def through the shared store's `unknown` placeholder (the
-// structural body is keyed to the declaring arena, #14344), so `keyof Omit<…>`
-// collapses to `never` and a valid key is rejected. tsc is clean.
+// Kysely `AlterColumnNode.create` witness: the utility alias and generic method
+// live in the same module, while the caller never names the alias. Both root
+// orders must retain the structural `Omit` body and accept the surviving key.
 #[test]
-#[ignore = "cross-arena utility-alias identity (#10663/#14344): consumer resolves the lib Omit def to the unknown placeholder, collapsing keyof Omit<…> to never"]
 fn constraint_keyof_omit_imported_alias_inferred_arg() {
-    let diags = compile_project(&[
-        (
-            "node.ts",
-            r#"
+    let provider = (
+        "node.ts",
+        r#"
 export interface AlterColumnNode {
     readonly kind: 'AlterColumnNode'
     readonly column: string
@@ -526,18 +522,163 @@ export declare const AlterColumnNode: {
     create<T extends keyof AlterColumnNodeProps>(prop: T): void
 }
 "#,
-        ),
-        (
-            "builder.ts",
-            r#"
+    );
+    let consumer = (
+        "builder.ts",
+        r#"
 import { AlterColumnNode } from "./node";
 export function f() { AlterColumnNode.create('dropDefault'); }
+"#,
+    );
+
+    for roots in [[provider, consumer], [consumer, provider]] {
+        let diags = compile_project(&roots);
+        assert_eq!(
+            diagnostic_codes(&diags),
+            Vec::<u32>::new(),
+            "keyof Omit<AlterColumnNode, …> must include 'dropDefault' when {} is the first project root",
+            roots[0].0,
+        );
+    }
+}
+
+// Negative companion for the exact exported-alias architecture: publication
+// must preserve the reduced key set, not merely widen it enough for survivors.
+#[test]
+fn constraint_keyof_omit_imported_alias_rejects_omitted_key() {
+    let diags = compile_project(&[
+        (
+            "change.ts",
+            r#"
+export interface ChangeNode {
+    readonly kind: 'ChangeNode'
+    readonly column: string
+    readonly clearValue?: true
+}
+export type ChangeProps = Omit<ChangeNode, 'kind' | 'column'>
+export declare const Changes: {
+    create<Name extends keyof ChangeProps>(name: Name): void
+}
+"#,
+        ),
+        (
+            "consumer.ts",
+            r#"
+import { Changes } from "./change";
+Changes.create('column');
 "#,
         ),
     ]);
     assert_eq!(
-        constraint_errors(&diags),
-        Vec::<(u32, String)>::new(),
-        "keyof Omit<AlterColumnNode, …> over a cross-module alias must include 'dropDefault'"
+        diagnostic_codes(&diags),
+        vec![2345],
+        "the key removed by the imported Omit alias must still be rejected",
+    );
+}
+
+// The alias need not be exported itself. A callable's public type can be the
+// only path that carries `keyof` of the private mapped alias to the consumer.
+#[test]
+fn constraint_keyof_private_omit_alias_in_exported_callable_is_precise() {
+    let diags = compile_project(&[
+        (
+            "mutations.ts",
+            r#"
+export interface MutationShape {
+    readonly tag: 'MutationShape'
+    readonly value: string
+    readonly reset?: true
+}
+type MutableNames = Omit<MutationShape, 'tag'>
+export declare const Mutations: {
+    apply<Slot extends keyof MutableNames>(slot: Slot): void
+}
+"#,
+        ),
+        (
+            "run.ts",
+            r#"
+import { Mutations } from "./mutations";
+Mutations.apply('reset');
+Mutations.apply('tag');
+"#,
+        ),
+    ]);
+    assert_eq!(
+        diagnostic_codes(&diags),
+        vec![2345],
+        "the private alias must accept its survivor and reject its removed key",
+    );
+}
+
+// Nested standard-library aliases exercise the same publication invariant for
+// more than a direct `keyof Omit<…>` body.
+#[test]
+fn constraint_keyof_nested_utility_aliases_is_precise() {
+    let diags = compile_project(&[
+        (
+            "preferences.ts",
+            r#"
+export interface Preferences {
+    readonly discriminator: 'Preferences'
+    readonly theme: string
+    readonly retries?: number
+}
+type EditablePreferences = Required<Readonly<Omit<Preferences, 'discriminator'>>>
+export declare function edit<Field extends keyof EditablePreferences>(field: Field): void
+"#,
+        ),
+        (
+            "screen.ts",
+            r#"
+import { edit } from "./preferences";
+edit('theme');
+edit('retries');
+edit('discriminator');
+"#,
+        ),
+    ]);
+    assert_eq!(
+        diagnostic_codes(&diags),
+        vec![2345],
+        "nested aliases must accept surviving keys and reject the removed key",
+    );
+}
+
+// A renamed generic wrapper and its concrete alias must both evaluate through
+// the canonical utility body; neither may depend on binder spelling.
+#[test]
+fn constraint_keyof_generic_and_concrete_omit_wrappers_are_precise() {
+    let diags = compile_project(&[
+        (
+            "envelope.ts",
+            r#"
+interface Envelope {
+    readonly kind: 'Envelope'
+    readonly secret: string
+    readonly payload: Uint8Array
+}
+type Without<Model, Hidden extends keyof Model> = Omit<Model, Hidden>
+type EnvelopeFields = Without<Envelope, 'kind' | 'secret'>
+export declare const Lens: {
+    generic<Name extends keyof Without<Envelope, 'kind' | 'secret'>>(name: Name): void
+    concrete<Name extends keyof EnvelopeFields>(name: Name): void
+}
+"#,
+        ),
+        (
+            "reader.ts",
+            r#"
+import { Lens } from "./envelope";
+Lens.generic('payload');
+Lens.concrete('payload');
+Lens.generic('secret');
+"#,
+        ),
+    ]);
+    assert_eq!(
+        diagnostic_codes(&diags),
+        vec![2345],
+        "generic and concrete wrappers must retain the same precise key set",
     );
 }

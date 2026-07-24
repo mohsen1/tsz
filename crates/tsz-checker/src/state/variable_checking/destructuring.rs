@@ -573,17 +573,25 @@ impl<'a> CheckerState<'a> {
                     self.get_type_of_node_with_request(element_data.initializer, &request);
                 self.ctx.preserve_literal_types = prev_preserve;
 
-                if element_type == TypeId::ANY || element_type == TypeId::UNKNOWN {
-                    element_type = init_type;
-                } else if !self
-                    .destructuring_relation_outcome(init_type, element_type)
-                    .related
-                {
-                    element_type = binding_patterns::binding_pattern_initializer_union_type(
-                        self.ctx.types,
-                        element_type,
-                        init_type,
-                    );
+                // When the destructuring SOURCE is genuinely `any`, every element is
+                // `any` and stays `any` (tsc's `isTypeAny(parentType)` short-circuit):
+                // do NOT fold the default initializer's type onto it, or a nested
+                // computed-key would then be checked against the init type and fire a
+                // spurious TS2537. The initializer is still evaluated above for its own
+                // checks; only the type override is skipped.
+                if parent_type != TypeId::ANY {
+                    if element_type == TypeId::ANY || element_type == TypeId::UNKNOWN {
+                        element_type = init_type;
+                    } else if !self
+                        .destructuring_relation_outcome(init_type, element_type)
+                        .related
+                    {
+                        element_type = binding_patterns::binding_pattern_initializer_union_type(
+                            self.ctx.types,
+                            element_type,
+                            init_type,
+                        );
+                    }
                 }
             }
 
@@ -1078,7 +1086,20 @@ impl<'a> CheckerState<'a> {
                     } else {
                         self.resolve_lazy_type(key_type)
                     };
-                    let is_invalid = crate::query_boundaries::type_checking_utilities::get_invalid_index_type_member_strict(self.ctx.types, check_key);
+                    // A genuine `any` is a valid index type for a value-position
+                    // destructuring computed key: `{ [k]: v } = obj` desugars to
+                    // `v = obj[k]`, and element access permits an `any` index.
+                    // Only the strict type-level `isValidIndexType` (keyof/mapped/
+                    // `T[K]`) rejects `any`; that helper must not gate this
+                    // value-position check. But an ERROR key (e.g. `[foo()]` where
+                    // `foo` is not callable) is remapped to ANY above precisely so
+                    // it still reports TS2538 (tsc does too) — so exempt only when
+                    // the ORIGINAL key type is `any`, never the ERROR remap.
+                    let is_invalid = if key_type == TypeId::ANY && check_key == TypeId::ANY {
+                        None
+                    } else {
+                        crate::query_boundaries::type_checking_utilities::get_invalid_index_type_member_strict(self.ctx.types, check_key)
+                    };
                     // Symbol types pass the general validity check but can't
                     // index into objects through string/number index signatures,
                     // UNLESS the parent type (or its constraint for generics)

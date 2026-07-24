@@ -241,6 +241,22 @@ impl InferenceContextCacheStatistics {
     }
 }
 
+/// Algorithmic parameter-recovery mode for constraint walks that deliberately
+/// reverse source and target independently of structural variance.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum ParameterRecoveryMode {
+    #[default]
+    None,
+    /// Placeholder-free dependency recovery. A source inference placeholder is
+    /// recorded as a candidate even when the live structural polarity is covariant.
+    StandaloneReverse,
+    /// A complex target containing a call-local placeholder. Recovery walks
+    /// retain the live structural polarity so nested contravariant edges can
+    /// toggle candidate routing back to covariance.
+    ComplexPlaceholder,
+}
+
 /// Type inference context for a single function call or expression.
 pub(crate) struct InferenceContext<'a> {
     pub(crate) interner: &'a dyn TypeDatabase,
@@ -276,6 +292,27 @@ pub(crate) struct InferenceContext<'a> {
     /// contra-candidates are resolved via intersection and are only used
     /// when no covariant candidates exist.
     pub(crate) in_contra_mode: bool,
+    /// Whether inference is currently below at least one contravariant
+    /// structural edge. TSZ uses this sticky state separately from
+    /// `in_contra_mode`: nested contravariant edges toggle candidate polarity
+    /// back to covariance, but the structural matcher must still treat source-side
+    /// inference placeholders as parameter-inference evidence instead of hard bounds.
+    pub(crate) in_variance_walk: bool,
+    /// Algorithmic parameter-recovery state, separate from structural variance.
+    pub(crate) parameter_recovery_mode: ParameterRecoveryMode,
+    /// Whether the current contravariant signature walk was entered through a
+    /// target signature whose declaration origin grants parameter bivariance.
+    /// TypeScript still walks those parameters in the contravariant direction,
+    /// but records every inference reached beneath them as an ordinary
+    /// candidate. The mode is scoped to one inference request and restored
+    /// before return-type inference.
+    pub(crate) in_bivariant_mode: bool,
+    /// Method metadata carried by an object property until its top-level
+    /// function/callable signature is reached. `PropertyInfo::is_method` can
+    /// survive structural transformations even when a rebuilt function shape
+    /// has lost its declaration-kind bit, so inference consumes this one-level
+    /// hint at the signature boundary.
+    pub(crate) pending_target_method: bool,
     /// Properties accumulated during reverse mapped type inference.
     /// When a homomorphic mapped type `{ [K in keyof T]: Template<T[K]> }`
     /// is matched against a source object, we accumulate (`key_atom`, `value_type`)
@@ -294,10 +331,11 @@ pub(crate) struct InferenceContext<'a> {
     /// interface hierarchies (e.g., `ArrayIterator<T>` which has
     /// `[Symbol.iterator](): ArrayIterator<T>` returning itself).
     pub(crate) infer_depth: u32,
-    /// Visited (source, target) pairs during structural inference.
-    /// Prevents re-visiting the same pair, breaking cycles in
-    /// self-referential type hierarchies.
-    pub(crate) infer_visited: FxHashSet<(TypeId, TypeId)>,
+    /// Visited `(source, target, mode)` states during structural inference.
+    /// The request-local mode packs polarity, sticky variance-walk, bivariant,
+    /// pending-method, and one three-state parameter-recovery mode; each affects
+    /// how nested placeholders are recorded.
+    pub(crate) infer_visited: FxHashSet<(TypeId, TypeId, u8)>,
     /// Inference variables whose corresponding type parameter appears at the
     /// top level of the signature's return type and has not yet been "fixed".
     ///
@@ -366,6 +404,29 @@ impl<'a> InferenceContext<'a> {
     /// recursion during structural property inference.
     pub(crate) const MAX_INFER_DEPTH: u32 = 20;
 
+    /// Run one nested inference operation without leaking its variance/member
+    /// routing modes into the next operation on this context.
+    #[inline]
+    pub(crate) fn with_restored_inference_modes<R>(
+        &mut self,
+        operation: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let saved = (
+            self.in_contra_mode,
+            self.in_variance_walk,
+            self.parameter_recovery_mode,
+            self.in_bivariant_mode,
+            self.pending_target_method,
+        );
+        let result = operation(self);
+        self.in_contra_mode = saved.0;
+        self.in_variance_walk = saved.1;
+        self.parameter_recovery_mode = saved.2;
+        self.in_bivariant_mode = saved.3;
+        self.pending_target_method = saved.4;
+        result
+    }
+
     pub fn new(interner: &'a dyn TypeDatabase) -> Self {
         InferenceContext {
             interner,
@@ -379,6 +440,10 @@ impl<'a> InferenceContext<'a> {
             literal_preserving_declared_constraints: FxHashSet::default(),
             app_expansion_depth: 0,
             in_contra_mode: false,
+            in_variance_walk: false,
+            parameter_recovery_mode: ParameterRecoveryMode::None,
+            in_bivariant_mode: false,
+            pending_target_method: false,
             reverse_mapped_properties: FxHashMap::default(),
             source_is_type_annotation: false,
             infer_depth: 0,
@@ -406,6 +471,10 @@ impl<'a> InferenceContext<'a> {
             literal_preserving_declared_constraints: FxHashSet::default(),
             app_expansion_depth: 0,
             in_contra_mode: false,
+            in_variance_walk: false,
+            parameter_recovery_mode: ParameterRecoveryMode::None,
+            in_bivariant_mode: false,
+            pending_target_method: false,
             reverse_mapped_properties: FxHashMap::default(),
             source_is_type_annotation: false,
             infer_depth: 0,
@@ -1439,7 +1508,7 @@ impl<'a> InferenceContext<'a> {
         // otherwise the leaked bare parameter becomes a contra-candidate that
         // overrides a legitimate covariant inference. Covariant routing keeps its
         // existing behavior (handled by `discard_self_referential_candidates`).
-        if self.in_contra_mode && self.type_is_own_original_type_param(var, ty) {
+        if self.collects_contra_candidates() && self.type_is_own_original_type_param(var, ty) {
             return;
         }
         let root = self.table.find(var);
@@ -1467,7 +1536,7 @@ impl<'a> InferenceContext<'a> {
             from_array_element: self.in_array_element_context,
             from_readonly_source: self.candidate_is_from_readonly_source(ty),
         };
-        if self.in_contra_mode {
+        if self.collects_contra_candidates() {
             // In contravariant context (e.g., callback parameter structural
             // decomposition), route to contra_candidates so they are resolved
             // via intersection and only used when no covariant candidates exist.
@@ -1487,6 +1556,33 @@ impl<'a> InferenceContext<'a> {
                 },
             );
         }
+    }
+
+    /// Whether candidates at the current point use TypeScript's
+    /// contravariant candidate set. A target signature whose declaration
+    /// origin grants parameter bivariance preserves the contravariant traversal
+    /// direction while deliberately suppressing this routing.
+    pub(crate) const fn collects_contra_candidates(&self) -> bool {
+        self.in_contra_mode && !self.in_bivariant_mode
+    }
+
+    /// Compact behavior mode for the hot structural-matcher cycle key.
+    pub(crate) const fn inference_visit_mode(&self) -> u8 {
+        (self.in_contra_mode as u8)
+            | ((self.in_variance_walk as u8) << 1)
+            | ((self.in_bivariant_mode as u8) << 2)
+            | ((self.pending_target_method as u8) << 3)
+            | ((self.parameter_recovery_mode as u8) << 4)
+    }
+
+    /// Compact behavior mode for the constraint-walker cycle key. The sticky
+    /// matcher-only variance bit is deliberately omitted so it cannot duplicate
+    /// constraint work or consume the shared step budget.
+    pub(crate) const fn constraint_visit_mode(&self) -> u8 {
+        (self.in_contra_mode as u8)
+            | ((self.in_bivariant_mode as u8) << 1)
+            | ((self.pending_target_method as u8) << 2)
+            | ((self.parameter_recovery_mode as u8) << 3)
     }
 
     fn candidate_is_from_readonly_source(&self, ty: TypeId) -> bool {

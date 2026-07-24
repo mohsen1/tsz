@@ -54,7 +54,7 @@ impl<'a> CheckerState<'a> {
         ctor_type: TypeId,
         type_arguments: Option<&NodeList>,
     ) -> TypeId {
-        self.apply_type_arguments_to_constructor_type_inner(ctor_type, type_arguments, false)
+        self.apply_type_arguments_to_constructor_type_inner(ctor_type, type_arguments)
     }
 
     pub(crate) fn apply_type_arguments_to_constructor_type_for_extends(
@@ -62,7 +62,7 @@ impl<'a> CheckerState<'a> {
         ctor_type: TypeId,
         type_arguments: Option<&NodeList>,
     ) -> TypeId {
-        self.apply_type_arguments_to_constructor_type_inner(ctor_type, type_arguments, true)
+        self.apply_type_arguments_to_constructor_type_inner(ctor_type, type_arguments)
     }
 
     pub(crate) fn apply_type_argument_ids_to_constructor_type_for_extends(
@@ -70,7 +70,7 @@ impl<'a> CheckerState<'a> {
         ctor_type: TypeId,
         type_args: &[TypeId],
     ) -> TypeId {
-        self.apply_type_argument_ids_to_constructor_type_inner(ctor_type, type_args, false, true)
+        self.apply_type_argument_ids_to_constructor_type_inner(ctor_type, type_args, false)
     }
 
     pub(crate) fn apply_type_argument_ids_to_constructor_type(
@@ -78,14 +78,13 @@ impl<'a> CheckerState<'a> {
         ctor_type: TypeId,
         type_args: &[TypeId],
     ) -> TypeId {
-        self.apply_type_argument_ids_to_constructor_type_inner(ctor_type, type_args, false, false)
+        self.apply_type_argument_ids_to_constructor_type_inner(ctor_type, type_args, false)
     }
 
     fn apply_type_arguments_to_constructor_type_inner(
         &mut self,
         ctor_type: TypeId,
         type_arguments: Option<&NodeList>,
-        strip_on_non_generic_mismatch: bool,
     ) -> TypeId {
         let explicit_type_arg_count = type_arguments.map_or(0, |args| args.nodes.len());
         let missing_type_args_become_any = self.is_js_file() && explicit_type_arg_count == 0;
@@ -113,7 +112,6 @@ impl<'a> CheckerState<'a> {
             ctor_type,
             &type_args,
             missing_type_args_become_any,
-            strip_on_non_generic_mismatch,
         )
     }
 
@@ -122,7 +120,6 @@ impl<'a> CheckerState<'a> {
         ctor_type: TypeId,
         type_args: &[TypeId],
         missing_type_args_become_any: bool,
-        strip_on_non_generic_mismatch: bool,
     ) -> TypeId {
         use crate::query_boundaries::construct_signatures::{
             call_signature_from_function_shape, construct_only_callable_type,
@@ -145,7 +142,6 @@ impl<'a> CheckerState<'a> {
                     *member,
                     type_args,
                     missing_type_args_become_any,
-                    strip_on_non_generic_mismatch,
                 );
                 if applied != *member {
                     any_applied = true;
@@ -217,29 +213,19 @@ impl<'a> CheckerState<'a> {
         }
 
         if matching.is_empty() {
-            // When type arguments were provided but no construct signature has
-            // type parameters, the base class is not generic.  In extends-clause
-            // context, return a callable with no construct signatures so that
-            // `super()` fails with TS2346 ("Call target does not contain any
-            // signatures.").  For regular `new` expressions, return the original
-            // type unchanged — TS2558 already reports the type-arg count mismatch
-            // and the construct signatures should remain available for argument
-            // checking and return-type inference (avoiding false TS7009).
-            if strip_on_non_generic_mismatch
-                && !type_args.is_empty()
-                && shape
-                    .construct_signatures
-                    .iter()
-                    .all(|sig| sig.type_params.is_empty())
-            {
-                let call_signatures = shape.call_signatures.clone();
-                return instantiated_callable_from_base(
-                    self.ctx.types,
-                    &shape,
-                    call_signatures,
-                    vec![],
-                );
-            }
+            // Type arguments were provided but no construct signature is
+            // generic, so the base class is not generic. This is already
+            // reported (TS2315 in an `extends` clause, TS2558 for `new`).
+            // Return the base constructor type unchanged so its construct
+            // signatures stay available and `super()`/`new` still type-check
+            // their arguments.
+            //
+            // tsc 7.0.2 does NOT additionally strip the construct signatures to
+            // force a companion TS2346 ("Call target does not contain any
+            // signatures.") — no test pairs TS2315 with TS2346. The previous
+            // extends-only stripping (`strip_on_non_generic_mismatch`) was stale
+            // pre-7.0 behavior that double-reported on `class B extends A<T>`
+            // where `A` is not generic.
             return ctor_type;
         }
 

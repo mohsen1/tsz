@@ -11,7 +11,7 @@ use crate::caches::db::{
     IntersectionMergeCacheEntry, QueryDatabase, TypeBuiltinAccess, TypeCompilerOptions,
     TypeContainsByIdCache, TypeDatabase, TypeDisplayProvenance, TypeExtractParamsCache,
     TypePruneUnionCache, TypeRawIntersectionConstruction, TypeSubstitutionConstruction,
-    TypeTupleLimitSignal, TypeWidenCache,
+    TypeTupleLimitSignal, TypeWidenCache, UnionComplexityCheckpoint,
 };
 use crate::caches::eval_dependency_index::{self, EvalDependencyIndex, EvalDependencyIndexState};
 use crate::caches::instantiation_cache::{InstantiationCache, InstantiationCacheKey};
@@ -305,6 +305,7 @@ pub struct QueryCache<'a> {
     subtype_reduction_cache_stats: CacheCounter,
     no_unchecked_indexed_access: Cell<bool>,
     exact_optional_property_types: Cell<bool>,
+    strict_null_checks: Cell<bool>,
     /// Optional shared cross-file cache for multi-file project checking.
     /// When present, local cache misses fall through to the shared `DashMap` cache,
     /// and local cache inserts are also written to the shared cache.
@@ -382,6 +383,7 @@ impl<'a> QueryCache<'a> {
             subtype_reduction_cache_stats: CacheCounter::new(),
             no_unchecked_indexed_access: Cell::new(interner.no_unchecked_indexed_access()),
             exact_optional_property_types: Cell::new(interner.exact_optional_property_types()),
+            strict_null_checks: Cell::new(interner.strict_null_checks()),
             shared,
             definition_store: None,
         }
@@ -808,6 +810,22 @@ impl TypeDisplayProvenance for QueryCache<'_> {
         self.interner.is_union_too_complex()
     }
 
+    fn union_complexity_checkpoint(&self) -> UnionComplexityCheckpoint {
+        self.interner.union_complexity_checkpoint()
+    }
+
+    fn union_complexity_changed_since(&self, checkpoint: UnionComplexityCheckpoint) -> bool {
+        self.interner.union_complexity_changed_since(checkpoint)
+    }
+
+    fn take_union_too_complex_since(&self, checkpoint: UnionComplexityCheckpoint) -> bool {
+        self.interner.take_union_too_complex_since(checkpoint)
+    }
+
+    fn discard_union_too_complex_since(&self, checkpoint: UnionComplexityCheckpoint) {
+        self.interner.discard_union_too_complex_since(checkpoint);
+    }
+
     fn mark_union_too_complex(&self) {
         self.interner.set_union_too_complex();
     }
@@ -826,6 +844,10 @@ impl TypeCompilerOptions for QueryCache<'_> {
 
     fn exact_optional_property_types(&self) -> bool {
         self.exact_optional_property_types.get()
+    }
+
+    fn strict_null_checks(&self) -> bool {
+        self.strict_null_checks.get()
     }
 }
 
@@ -1805,6 +1827,10 @@ impl QueryDatabase for QueryCache<'_> {
 
     fn set_exact_optional_property_types(&self, enabled: bool) {
         self.exact_optional_property_types.set(enabled);
+    }
+
+    fn set_strict_null_checks(&self, enabled: bool) {
+        self.strict_null_checks.set(enabled);
     }
 
     fn get_type_param_variance(&self, def_id: DefId) -> Option<Arc<[Variance]>> {

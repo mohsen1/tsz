@@ -10,7 +10,6 @@
 //! - Type parameter instantiation for generic bases
 
 use crate::state::CheckerState;
-use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use crate::types_domain::type_node_helpers::type_node_includes_explicit_undefined;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -173,40 +172,6 @@ impl<'a> CheckerState<'a> {
             // declaring file is checked through cross-arena delegation,
             // making results depend on root-file order.
             .or_else(|| self.ctx.binder.program_global_type(normalized))
-    }
-
-    /// Resolve an interface-heritage base symbol to the underlying `class`
-    /// symbol — directly, through an import alias, or through a cross-file
-    /// re-export — or `None` when the base is not a class. Used to route a
-    /// class base through the class-instance resolver (so instance members are
-    /// inherited) instead of the symbol's constructor type.
-    fn heritage_base_class_symbol(
-        &mut self,
-        base_sym_id: tsz_binder::SymbolId,
-    ) -> Option<tsz_binder::SymbolId> {
-        use tsz_binder::symbol_flags;
-
-        let symbol_is_class = |this: &Self, sym: tsz_binder::SymbolId| {
-            this.get_cross_file_symbol(sym)
-                .or_else(|| this.ctx.binder.get_symbol(sym))
-                .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::CLASS))
-        };
-
-        if symbol_is_class(self, base_sym_id) {
-            return Some(base_sym_id);
-        }
-
-        let mut visited_aliases = AliasCycleTracker::new();
-        if let Some(target) = self
-            .resolve_alias_symbol(base_sym_id, &mut visited_aliases)
-            .filter(|&t| t != base_sym_id)
-            && symbol_is_class(self, target)
-        {
-            return Some(target);
-        }
-
-        self.resolve_import_alias_cross_file(base_sym_id)
-            .filter(|&t| t != base_sym_id && symbol_is_class(self, t))
     }
 
     /// Get the type of an interface declaration.

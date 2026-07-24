@@ -27,7 +27,7 @@ use std::sync::Arc;
 use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
 
-pub use crate::caches::display_provenance::TypeDisplayProvenance;
+pub use crate::caches::display_provenance::{TypeDisplayProvenance, UnionComplexityCheckpoint};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IntersectionMergeCacheEntry {
@@ -502,7 +502,7 @@ pub trait TypeDatabase:
     /// its resolution-failure fingerprint.
     ///
     /// Callers must only insert canonical masks whose every resolution gap is
-    /// listed in `gaps` (see [`Self::shared_def_variance`]). First write wins.
+    /// listed in `gaps` (see [`Self::shared_def_variance`]).
     /// Default is a no-op.
     fn insert_shared_def_variance(
         &self,
@@ -841,6 +841,10 @@ impl TypeCompilerOptions for TypeInterner {
 
     fn exact_optional_property_types(&self) -> bool {
         TypeInterner::exact_optional_property_types(self)
+    }
+
+    fn strict_null_checks(&self) -> bool {
+        TypeInterner::strict_null_checks(self)
     }
 }
 
@@ -1533,6 +1537,8 @@ pub trait QueryDatabase:
 
     fn set_exact_optional_property_types(&self, _enabled: bool) {}
 
+    fn set_strict_null_checks(&self, _enabled: bool) {}
+
     fn contextual_property_type(&self, expected: TypeId, prop_name: &str) -> Option<TypeId> {
         let ctx = crate::computation::ContextualTypeContext::with_expected(
             self.as_type_database(),
@@ -1920,6 +1926,10 @@ impl QueryDatabase for TypeInterner {
 
     fn set_exact_optional_property_types(&self, enabled: bool) {
         TypeInterner::set_exact_optional_property_types(self, enabled);
+    }
+
+    fn set_strict_null_checks(&self, enabled: bool) {
+        TypeInterner::set_strict_null_checks(self, enabled);
     }
 
     fn get_type_param_variance(&self, _def_id: DefId) -> Option<Arc<[Variance]>> {

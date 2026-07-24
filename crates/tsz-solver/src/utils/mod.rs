@@ -368,7 +368,12 @@ pub(crate) fn find_common_base_type(
 ///
 /// Note: `SubtypeChecker` has its own version that respects `exactOptionalPropertyTypes`.
 pub(crate) fn optional_property_type(db: &dyn TypeDatabase, prop: &PropertyInfo) -> TypeId {
-    if prop.optional {
+    // tsc's `addOptionality` only adds `| undefined` under `strictNullChecks`;
+    // in non-strict an optional member's access/call/inference type is just `T`.
+    // Without this gate, `interface I { m?(): T } i.m()` in non-strict wrongly
+    // reports TS2349 (`undefined` not callable). The SubtypeChecker keeps its own
+    // strictNullChecks/exactOptionalPropertyTypes-gated copy for the relation.
+    if prop.optional && db.strict_null_checks() {
         db.union2(prop.type_id, TypeId::UNDEFINED)
     } else {
         prop.type_id

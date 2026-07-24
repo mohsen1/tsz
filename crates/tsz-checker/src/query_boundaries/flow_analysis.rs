@@ -1041,6 +1041,54 @@ pub(crate) fn flow_assignability_outcome(
     )
 }
 
+/// Validate a whole assignment source against its target.
+///
+/// Flow reduction intentionally uses existential overlap when selecting the
+/// surviving members of a declared union. The validity gate for the write is
+/// stricter: every member of a union RHS must be assignable to the LHS before
+/// that reduction may run.
+pub(crate) fn whole_assignment_rhs_is_compatible(
+    db: &dyn QueryDatabase,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
+    concrete_this_type: Option<TypeId>,
+    source: TypeId,
+    target: TypeId,
+    flags: u16,
+) -> bool {
+    let source = substitute_flow_this_type(db, concrete_this_type, source);
+    let target = substitute_flow_this_type(db, concrete_this_type, target);
+    let db = db.as_type_database();
+    let policy = relation_policy::from_checker_flags_u16(flags);
+    let related = |source| {
+        if let Some(env) = env {
+            tsz_solver::relations::relation_queries::query_relation_with_resolver(
+                db,
+                env,
+                source,
+                target,
+                tsz_solver::relations::relation_queries::RelationKind::Assignable,
+                policy,
+                tsz_solver::relations::relation_queries::RelationContext::default(),
+            )
+            .is_related()
+        } else {
+            tsz_solver::relations::relation_queries::query_relation(
+                db,
+                source,
+                target,
+                tsz_solver::relations::relation_queries::RelationKind::Assignable,
+                policy,
+                tsz_solver::relations::relation_queries::RelationContext::default(),
+            )
+            .is_related()
+        }
+    };
+    if let Some(members) = union_members_for_type(db, source) {
+        return !members.is_empty() && members.iter().copied().all(related);
+    }
+    related(source)
+}
+
 fn substitute_flow_this_type(
     db: &dyn QueryDatabase,
     concrete_this_type: Option<TypeId>,

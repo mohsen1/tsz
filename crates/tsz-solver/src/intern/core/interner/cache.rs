@@ -8,6 +8,7 @@
 //! add to the `inline_always` ratchet, and its backing array is sized to keep
 //! the per-thread allocation under the `large_stack_arrays` threshold.
 
+use super::UnionComplexityThreadState;
 use crate::types::{TypeData, TypeId};
 use std::cell::Cell;
 use tsz_common::interner::Atom;
@@ -122,6 +123,33 @@ struct TypeInternerCache {
     lookup: [Cell<LookupCacheEntry>; LOOKUP_CACHE_SIZE],
     intern: [Cell<InternCacheEntry>; INTERN_CACHE_SIZE],
     string: [Cell<StringCacheEntry>; STRING_CACHE_SIZE],
+    /// Exceptional `TS2590` state for the small number of type universes used
+    /// by this worker. Slots are assigned only when an event is produced and
+    /// remain stable until the compilation-session cache is cleared, so a
+    /// live checkpoint cannot lose its producer epoch through eviction.
+    union_complexity: [Cell<UnionComplexityThreadState>; UNION_COMPLEXITY_SLOT_COUNT],
+}
+
+/// A CLI worker normally sees one `TypeInterner`; extra slots cover nested
+/// test/project universes without allocating or hashing on the exceptional
+/// signal path. If all slots are occupied, the owning interner provides a
+/// bounded-lifetime overflow map keyed by worker thread.
+const UNION_COMPLEXITY_SLOT_COUNT: usize = 8;
+
+pub(super) enum UnionComplexityStateLookup {
+    Found(UnionComplexityThreadState),
+    /// At least one fixed slot is still empty, proving this worker has never
+    /// overflowed for the requested interner.
+    Absent,
+    /// All fixed slots are occupied, so the interner-owned overflow map may
+    /// contain this worker's state.
+    OverflowPossible,
+}
+
+pub(super) enum UnionComplexityPendingUpdate {
+    Updated(u32),
+    Absent,
+    OverflowPossible,
 }
 
 const EMPTY_LOOKUP_ENTRY: LookupCacheEntry = LookupCacheEntry {
@@ -145,6 +173,12 @@ const EMPTY_STRING_ENTRY: StringCacheEntry = StringCacheEntry {
     result: Atom::NONE,
 };
 
+const EMPTY_UNION_COMPLEXITY_STATE: UnionComplexityThreadState = UnionComplexityThreadState {
+    instance_id: 0,
+    produced_epoch: 0,
+    pending_count: 0,
+};
+
 #[allow(dead_code)]
 impl TypeInternerCache {
     #[allow(clippy::large_stack_arrays)]
@@ -153,6 +187,8 @@ impl TypeInternerCache {
             lookup: [const { Cell::new(EMPTY_LOOKUP_ENTRY) }; LOOKUP_CACHE_SIZE],
             intern: [const { Cell::new(EMPTY_INTERN_ENTRY) }; INTERN_CACHE_SIZE],
             string: [const { Cell::new(EMPTY_STRING_ENTRY) }; STRING_CACHE_SIZE],
+            union_complexity: [const { Cell::new(EMPTY_UNION_COMPLEXITY_STATE) };
+                UNION_COMPLEXITY_SLOT_COUNT],
         }
     }
 
@@ -259,12 +295,92 @@ impl TypeInternerCache {
             result,
         });
     }
+
+    /// Record a new event in this worker's fixed signal slots.
+    ///
+    /// Returns the previous pending state, or `None` when all slots belong to
+    /// other live/checkpointed interner instances and the caller must use its
+    /// interner-owned overflow map.
+    fn mark_union_complexity(&self, instance_id: u32, produced_epoch: u64) -> Option<bool> {
+        let mut empty_slot = None;
+        for slot in &self.union_complexity {
+            let state = slot.get();
+            if state.instance_id == instance_id {
+                let previous_pending_count = state.pending_count;
+                slot.set(UnionComplexityThreadState {
+                    produced_epoch,
+                    pending_count: previous_pending_count.saturating_add(1),
+                    ..state
+                });
+                return Some(previous_pending_count != 0);
+            }
+            if state.instance_id == 0 && empty_slot.is_none() {
+                empty_slot = Some(slot);
+            }
+        }
+
+        let slot = empty_slot?;
+        slot.set(UnionComplexityThreadState {
+            instance_id,
+            produced_epoch,
+            pending_count: 1,
+        });
+        Some(false)
+    }
+
+    fn union_complexity_state(&self, instance_id: u32) -> UnionComplexityStateLookup {
+        let mut has_empty_slot = false;
+        for slot in &self.union_complexity {
+            let state = slot.get();
+            if state.instance_id == instance_id {
+                return UnionComplexityStateLookup::Found(state);
+            }
+            has_empty_slot |= state.instance_id == 0;
+        }
+        if has_empty_slot {
+            UnionComplexityStateLookup::Absent
+        } else {
+            UnionComplexityStateLookup::OverflowPossible
+        }
+    }
+
+    /// Change the pending-event count in an already assigned fixed slot,
+    /// returning its previous value while distinguishing a proven absence
+    /// from a possible overflow entry.
+    fn set_union_complexity_pending_count(
+        &self,
+        instance_id: u32,
+        pending_count: u32,
+    ) -> UnionComplexityPendingUpdate {
+        let mut has_empty_slot = false;
+        for slot in &self.union_complexity {
+            let mut state = slot.get();
+            if state.instance_id == instance_id {
+                let previous = state.pending_count;
+                state.pending_count = pending_count;
+                slot.set(state);
+                return UnionComplexityPendingUpdate::Updated(previous);
+            }
+            has_empty_slot |= state.instance_id == 0;
+        }
+        if has_empty_slot {
+            UnionComplexityPendingUpdate::Absent
+        } else {
+            UnionComplexityPendingUpdate::OverflowPossible
+        }
+    }
 }
 
 thread_local! {
     static TL_CACHE: TypeInternerCache = const { TypeInternerCache::new() };
 }
 
+/// Clear caches owned by the calling worker only.
+///
+/// Persistent Rayon workers can retain fixed union-complexity slots across
+/// compilation sessions. Those slots are instance-tagged and never reused for
+/// another universe; after all eight are occupied, a later signaled universe
+/// takes its interner-owned overflow path instead.
 pub(super) fn clear_thread_local_cache() {
     TL_CACHE.with(|cache| {
         for cell in &cache.lookup {
@@ -276,7 +392,28 @@ pub(super) fn clear_thread_local_cache() {
         for cell in &cache.string {
             cell.set(EMPTY_STRING_ENTRY);
         }
+        for cell in &cache.union_complexity {
+            cell.set(EMPTY_UNION_COMPLEXITY_STATE);
+        }
     });
+}
+
+#[inline]
+pub(super) fn mark_union_complexity(instance_id: u32, produced_epoch: u64) -> Option<bool> {
+    TL_CACHE.with(|cache| cache.mark_union_complexity(instance_id, produced_epoch))
+}
+
+#[inline]
+pub(super) fn union_complexity_state(instance_id: u32) -> UnionComplexityStateLookup {
+    TL_CACHE.with(|cache| cache.union_complexity_state(instance_id))
+}
+
+#[inline]
+pub(super) fn set_union_complexity_pending_count(
+    instance_id: u32,
+    pending_count: u32,
+) -> UnionComplexityPendingUpdate {
+    TL_CACHE.with(|cache| cache.set_union_complexity_pending_count(instance_id, pending_count))
 }
 
 #[inline(always)]

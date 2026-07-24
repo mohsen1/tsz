@@ -158,6 +158,11 @@ impl<'a> CheckerContext<'a> {
             types.set_no_unchecked_indexed_access(compiler_options.no_unchecked_indexed_access);
             types.set_exact_optional_property_types(compiler_options.exact_optional_property_types);
         }
+        // Wire strictNullChecks unconditionally: it gates whether optional-member
+        // access/call/inference types carry `| undefined` (tsc's addOptionality is
+        // strictNullChecks-gated). The interner defaults to `true`, so this must run
+        // for a non-strict compilation to actually strip the synthetic `undefined`.
+        types.set_strict_null_checks(compiler_options.strict_null_checks);
         let capabilities =
             crate::query_boundaries::capabilities::EnvironmentCapabilities::from_options(
                 &compiler_options,

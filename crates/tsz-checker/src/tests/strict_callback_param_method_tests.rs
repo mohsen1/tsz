@@ -213,14 +213,15 @@ fc2 = fc1;  // inner failure on parameter (Animal not <: Dog)
 }
 
 /// `fc1 = fc2` fails because the *callback's return* type (`Animal` vs
-/// `Dog`) is covariantly incompatible. tsc bumps `overrideNextErrorInfo`
-/// when reporting the inner-callback return mismatch (via the elided
-/// TS2202 message). That suppresses the outer "Type X is not assignable
-/// to type Y" wrapper, so the diagnostic is reported with code TS2328
-/// directly. tsz must do the same — emit TS2328 alone, not TS2322 +
-/// TS2328 as two separate diagnostics.
+/// `Dog`) is covariantly incompatible. tsc 7.0.2 reports this with a
+/// top-level TS2322 head and chains the `Types of parameters ... are
+/// incompatible.` (TS2328) frame beneath it — it does NOT promote TS2328
+/// to a standalone head (no test in the conformance corpus has a TS2328
+/// head, and `strictFunctionTypesErrors` expects TS2322 for `fc1 = fc2`).
+/// The earlier stale-6.0 `overrideNextErrorInfo` behavior that emitted a
+/// bare TS2328 head has been removed.
 #[test]
-fn callback_param_inner_return_failure_emits_ts2328_only() {
+fn callback_param_inner_return_failure_emits_ts2322_head() {
     let diags = check_source_diagnostics(
         r#"
 // @strict: true
@@ -235,14 +236,13 @@ fc1 = fc2;  // inner failure on return (Animal not <: Dog)
 
     let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&2328),
-        "Expected TS2328 for the inner-return-failure direction, got {codes:?}"
+        codes.contains(&2322),
+        "Expected a TS2322 head for the inner-return-failure direction, got {codes:?}"
     );
     assert!(
-        !codes.contains(&2322),
-        "TS2322 should NOT be emitted when the inner callback failure is \
-         on the return type; tsc suppresses the outer wrapper and reports \
-         TS2328 directly. Got {codes:?}"
+        !codes.contains(&2328),
+        "TS2328 must remain a chain elaboration, not a standalone head \
+         diagnostic; tsc 7.0.2 reports TS2322 and chains TS2328. Got {codes:?}"
     );
 }
 

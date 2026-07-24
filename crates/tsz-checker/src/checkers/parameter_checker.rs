@@ -1369,7 +1369,13 @@ impl<'a> CheckerState<'a> {
                 let should_emit = if is_callable_type {
                     true
                 } else if is_arrow_or_expr {
-                    param.type_annotation.is_none() && param.initializer.is_none()
+                    // An unannotated rest param on an arrow/function expression is
+                    // implicitly `any[]` — a valid array type — so TS2370 only fires
+                    // under noImplicitAny (tsc reports the implicit-any/rest grammar
+                    // separately otherwise). Gate to match.
+                    self.ctx.no_implicit_any()
+                        && param.type_annotation.is_none()
+                        && param.initializer.is_none()
                 } else {
                     false
                 };

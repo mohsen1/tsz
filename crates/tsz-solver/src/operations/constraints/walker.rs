@@ -1,4 +1,4 @@
-use crate::inference::infer::InferenceContext;
+use crate::inference::infer::{InferenceContext, ParameterRecoveryMode};
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::constraints::walker_guard_state::with_placeholder_visited;
 use crate::operations::{AssignabilityChecker, CallEvaluator};
@@ -31,14 +31,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return;
         }
 
-        // If source is an inference placeholder, add upper bound: var <: target.
-        // In contra_mode (function parameter inference), add as contra-candidate instead
-        // of upper bound. This matches tsc where inference from contravariant positions
-        // produces contra-candidates resolved via intersection/most-specific, not hard
-        // upper bounds that must each be individually satisfied.
+        // Source placeholders become upper bounds outside contravariant
+        // inference. Placeholder-free parameter dependency recovery can opt in
+        // to candidate routing for its explicit reverse edge.
         if let Some(&var) = var_map.get(&source) {
-            if ctx.in_contra_mode {
-                ctx.add_contra_candidate(var, target, priority);
+            if ctx.in_contra_mode
+                || ctx.parameter_recovery_mode == ParameterRecoveryMode::StandaloneReverse
+            {
+                ctx.add_candidate(var, target, priority);
             } else {
                 ctx.add_upper_bound(var, target);
             }
@@ -180,12 +180,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // infers T = { a: any } & { b: any }.
             (_, Some(TypeData::KeyOf(keyof_inner))) => {
                 if let Some(&var) = var_map.get(&keyof_inner) {
-                    // Reverse keyof inference: source <: keyof T → T has property source.
-                    // Construct an object `{ [source]: any }` and add it as a contra
-                    // candidate — contra candidates combine via intersection, matching
-                    // tsc's behavior where `bar<T>(x: keyof T, y: keyof T)` called with
-                    // `('a', 'b')` infers T = { a: any } & { b: any }.
-                    //
+                    // Reverse keyof inference synthesizes `{ [source]: any }`.
                     // Use `LiteralKeyof` priority (strictly worse than `NakedTypeVariable`)
                     // so a co-occurring naked `obj: T` argument always outranks the
                     // synthesised key shape. Mirrors tsc's `inferToKeyof` (checker.ts
@@ -198,11 +193,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     if let Some(key_atom) = key_atom {
                         let prop = PropertyInfo::new(key_atom, TypeId::ANY);
                         let obj = self.interner.object(vec![prop]);
-                        ctx.add_contra_candidate(
-                            var,
-                            obj,
-                            crate::types::InferencePriority::LiteralKeyof,
-                        );
+                        ctx.with_restored_inference_modes(|ctx| {
+                            ctx.in_contra_mode = !ctx.in_contra_mode;
+                            ctx.in_variance_walk = true;
+                            ctx.add_candidate(
+                                var,
+                                obj,
+                                crate::types::InferencePriority::LiteralKeyof,
+                            );
+                        });
                     } else if let Some(TypeData::Union(source_members)) =
                         self.interner.lookup(source)
                     {
@@ -1088,20 +1087,25 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     has_t_pred = t_fn.type_predicate.is_some(),
                     "constrain_types_impl: Function"
                 );
-
+                let was_pending_method = std::mem::take(&mut ctx.pending_target_method);
+                let pending_is_method = was_pending_method && !t_fn.is_constructor;
                 if s_fn.type_params.is_empty() {
                     // Non-generic source function - direct comparison
-                    self.constrain_params_with_rest(
-                        ctx,
-                        var_map,
-                        &s_fn.params,
-                        &t_fn.params,
-                        priority,
-                    );
-
-                    if let (Some(s_this), Some(t_this)) = (s_fn.this_type, t_fn.this_type) {
-                        self.constrain_parameter_types(ctx, var_map, s_this, t_this, priority);
-                    }
+                    ctx.with_restored_inference_modes(|ctx| {
+                        ctx.in_contra_mode = !ctx.in_contra_mode;
+                        ctx.in_variance_walk = true;
+                        ctx.in_bivariant_mode |= pending_is_method || t_fn.is_method;
+                        if let (Some(s_this), Some(t_this)) = (s_fn.this_type, t_fn.this_type) {
+                            self.constrain_parameter_types(ctx, var_map, s_this, t_this, priority);
+                        }
+                        self.constrain_params_with_rest(
+                            ctx,
+                            var_map,
+                            &s_fn.params,
+                            &t_fn.params,
+                            priority,
+                        );
+                    });
                     // Covariant return: source_return <: target_return
                     // Return types must never be inferred at NakedTypeVariable priority
                     // (which is reserved for direct value arguments). Cap at ReturnType so
@@ -1243,7 +1247,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         .chain(source_var_map.iter())
                         .map(|(k, v)| (*k, *v))
                         .collect();
-
                     // Unpack tuple rest parameters for proper generic inference.
                     // In TypeScript, `(...args: [A, B]) => R` should match `(a: X, b: Y) => R`
                     // and infer the tuple type. We unpack tuple rest params into fixed params.
@@ -1257,37 +1260,38 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         .iter()
                         .flat_map(|p| unpack_tuple_rest_parameter(self.interner, p))
                         .collect();
-
-                    // Contravariant parameters: target_param <: instantiated_source_param
-                    for (s_p, t_p) in instantiated_params_unpacked
-                        .iter()
-                        .zip(target_params_unpacked.iter())
-                    {
-                        self.constrain_parameter_types(
+                    ctx.with_restored_inference_modes(|ctx| {
+                        ctx.in_contra_mode = !ctx.in_contra_mode;
+                        ctx.in_variance_walk = true;
+                        ctx.in_bivariant_mode |= pending_is_method || t_fn.is_method;
+                        if let (Some(s_this), Some(t_this)) = (instantiated_this, t_fn.this_type) {
+                            self.constrain_parameter_types(
+                                ctx,
+                                &combined_var_map,
+                                s_this,
+                                t_this,
+                                priority,
+                            );
+                        }
+                        for (s_p, t_p) in instantiated_params_unpacked
+                            .iter()
+                            .zip(target_params_unpacked.iter())
+                        {
+                            self.constrain_parameter_types(
+                                ctx,
+                                &combined_var_map,
+                                s_p.type_id,
+                                t_p.type_id,
+                                priority,
+                            );
+                        }
+                        self.infer_rest_param_tuple_candidate(
                             ctx,
                             &combined_var_map,
-                            s_p.type_id,
-                            t_p.type_id,
-                            priority,
+                            &instantiated_params_unpacked,
+                            &target_params_unpacked,
                         );
-                    }
-
-                    self.infer_rest_param_tuple_candidate(
-                        ctx,
-                        &combined_var_map,
-                        &instantiated_params_unpacked,
-                        &target_params_unpacked,
-                    );
-
-                    if let (Some(s_this), Some(t_this)) = (instantiated_this, t_fn.this_type) {
-                        self.constrain_parameter_types(
-                            ctx,
-                            &combined_var_map,
-                            s_this,
-                            t_this,
-                            priority,
-                        );
-                    }
+                    });
                     // Covariant return: instantiated_source_return <: target_return
                     //
                     // Keep source and target placeholders distinct. `constrain_types`
@@ -1320,25 +1324,31 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         return_priority,
                     );
                 }
+                ctx.pending_target_method = was_pending_method;
             }
             (Some(TypeData::Function(s_fn_id)), Some(TypeData::Callable(t_callable_id))) => {
                 let s_fn = self.interner.function_shape(s_fn_id);
                 let t_callable = self.interner.callable_shape(t_callable_id);
                 for sig in &t_callable.call_signatures {
-                    self.constrain_function_to_call_signature(ctx, var_map, &s_fn, sig, priority);
+                    self.constrain_function_to_call_signature(
+                        ctx, var_map, &s_fn, sig, priority, false,
+                    );
                 }
+                let was_pending_method = std::mem::take(&mut ctx.pending_target_method);
                 if s_fn.is_constructor && t_callable.construct_signatures.len() == 1 {
                     let sig = &t_callable.construct_signatures[0];
                     if sig.type_params.is_empty() {
                         self.constrain_function_to_call_signature(
-                            ctx, var_map, &s_fn, sig, priority,
+                            ctx, var_map, &s_fn, sig, priority, true,
                         );
                     }
                 }
+                ctx.pending_target_method = was_pending_method;
             }
             (Some(TypeData::Callable(s_callable_id)), Some(TypeData::Callable(t_callable_id))) => {
                 let s_callable = self.interner.callable_shape(s_callable_id);
                 let t_callable = self.interner.callable_shape(t_callable_id);
+                let was_pending_method = ctx.pending_target_method;
                 self.constrain_matching_signatures(
                     ctx,
                     var_map,
@@ -1347,6 +1357,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     false,
                     priority,
                 );
+                ctx.pending_target_method = false;
                 self.constrain_matching_signatures(
                     ctx,
                     var_map,
@@ -1385,6 +1396,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         priority,
                     );
                 }
+                ctx.pending_target_method = was_pending_method;
             }
             (Some(TypeData::Callable(s_callable_id)), Some(TypeData::Function(t_fn_id))) => {
                 let s_callable = self.interner.callable_shape(s_callable_id);
@@ -1407,7 +1419,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             return_type: sig.return_type,
                             type_predicate: sig.type_predicate,
                             is_constructor: false,
-                            is_method: false,
+                            is_method: sig.is_method,
                         });
                         self.constrain_types(ctx, var_map, func_type, target, priority);
                     }

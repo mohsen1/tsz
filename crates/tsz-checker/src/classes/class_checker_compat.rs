@@ -1807,11 +1807,10 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // Method overload coverage check: the 'derived_loop above only compares
-            // each derived overload against the FIRST matching base overload. When the
-            // base has multiple overloads for the same method, we must verify that EACH
-            // base overload is matched by at least one derived overload. If any base
-            // overload is unmatched, emit TS2430.
+            // Method overload coverage check: the loop above defers a name when
+            // either side has multiple signatures. Compare both full sets so every
+            // base signature is matched, including the derived-overloads/base-single
+            // shape that a per-declaration comparison cannot represent.
             if !ts2430_emitted_for_base {
                 self.check_interface_overload_coverage(
                     super::class_checker_compat_overloads::InterfaceOverloadCoverageCtx {

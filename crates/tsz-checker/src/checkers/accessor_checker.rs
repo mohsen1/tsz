@@ -306,6 +306,18 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
+            // tsc only pairs get/set accessors when the name is late-bindable
+            // (a string/numeric-literal or unique-symbol computed name, or a
+            // plain identifier). A computed name whose expression type is
+            // non-literal (`[1 << 6]` -> `number`, `[s]` -> `string`) is *not*
+            // late-bound, so tsc never merges the pair and runs no getter/setter
+            // type-compatibility check. `is_late_bound_member_name` returns true
+            // exactly for those non-determinable computed names; skip them so we
+            // don't synthesize a spurious pair (and TS2322/TS2741).
+            if self.is_late_bound_member_name(accessor.name) {
+                continue;
+            }
+
             if node.kind == syntax_kind_ext::GET_ACCESSOR {
                 pairs.entry(name).or_default().0 =
                     Some((accessor.name, accessor.body, accessor.type_annotation));

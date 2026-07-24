@@ -1412,3 +1412,133 @@ fn cli_override_retracts_chain_effective_removed_value() {
         result.diagnostics
     );
 }
+
+#[test]
+fn compile_project_awaits_later_generic_then_through_barrel_after_static_overload() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015",
+            "module": "esnext",
+            "strict": false,
+            "noImplicitAny": true,
+            "strictNullChecks": true,
+            "strictFunctionTypes": true,
+            "lib": ["dom", "es2018"],
+            "skipLibCheck": true,
+            "noEmit": true,
+            "types": [],
+            "moduleResolution": "bundler"
+          },
+          "include": ["src/**/*.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("src/result.ts"),
+        r#"
+import { Deferred } from './';
+
+export type Outcome<T, E> = Good<T, E> | Bad<T, E>;
+
+interface OutcomeLike<T, E> {
+    isErr(): this is Bad<T, E>;
+    andThen<F>(make: (value: T) => Deferred<unknown, F>): Deferred<unknown, E | F>;
+}
+
+export class Good<T, E> implements OutcomeLike<T, E> {
+    constructor(readonly value: T) {}
+    isErr(): this is Bad<T, E> { return false; }
+    andThen<F>(make: (value: T) => Deferred<unknown, F>): Deferred<unknown, E | F> {
+        return make(this.value);
+    }
+}
+
+export class Bad<T, E> implements OutcomeLike<T, E> {
+    constructor(readonly error: E) {}
+    isErr(): this is Bad<T, E> { return true; }
+    andThen<F>(_make: (value: T) => Deferred<unknown, F>): Deferred<unknown, E | F> {
+        throw new Error();
+    }
+}
+"#,
+    );
+    write_file(
+        &base.join("src/index.ts"),
+        r#"
+export { Outcome, Good, Bad } from './result';
+export { Deferred } from './result-async';
+"#,
+    );
+    write_file(
+        &base.join("src/result-async.ts"),
+        r#"
+import { Outcome, Good, Bad } from './';
+
+export class Deferred<T, E> {
+    private promise: Promise<Outcome<T, E>>;
+
+    constructor(promise: Promise<Outcome<T, E>>) {
+        this.promise = promise;
+    }
+
+    static wrap(value: number): number;
+    static wrap(value: number): number {
+        return value;
+    }
+
+    map<A>(make: (value: T) => A | Promise<A>): Deferred<A, E> {
+        return new Deferred<A, E>(
+            this.promise.then(async (outcome: Outcome<T, E>) => {
+                if (outcome.isErr()) {
+                    return new Bad<A, E>(outcome.error);
+                }
+                return new Good<A, E>(await make(outcome.value));
+            }),
+        );
+    }
+
+    andThrough<F>(
+        make: (value: T) => Outcome<unknown, F> | Deferred<unknown, F>,
+    ): Deferred<T, E | F> {
+        return new Deferred<T, E | F>(
+            this.promise.then(async (outcome: Outcome<T, E>) => {
+                if (outcome.isErr()) {
+                    return new Bad<T, E>(outcome.error);
+                }
+
+                const result = await make(outcome.value);
+                if (result.isErr()) {
+                    return new Bad<T, F>(result.error);
+                }
+
+                return new Good<T, F>(outcome.value);
+            }),
+        );
+    }
+
+    then<A>(
+        onfulfilled?: (value: Outcome<T, E>) => A | PromiseLike<A>,
+    ): PromiseLike<A>;
+    then(
+        onfulfilled?:
+            | ((value: Outcome<T, E>) => unknown)
+            | ((value: string) => unknown),
+    ): PromiseLike<unknown> {
+        throw new Error();
+    }
+}
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    assert!(
+        result.diagnostics.is_empty(),
+        "the applied class must expose its later declared then surface: {:#?}",
+        result.diagnostics
+    );
+}

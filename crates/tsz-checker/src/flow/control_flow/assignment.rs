@@ -26,7 +26,7 @@ struct DestructuringSource {
 }
 
 impl<'a> FlowAnalyzer<'a> {
-    fn assignment_relation_outcome(
+    pub(super) fn assignment_relation_outcome(
         &self,
         source: TypeId,
         target: TypeId,
@@ -65,7 +65,7 @@ impl<'a> FlowAnalyzer<'a> {
             .is_some_and(|node| node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION)
     }
 
-    fn assigned_type_respecting_access_read_surface(
+    pub(super) fn assigned_type_respecting_access_read_surface(
         &self,
         assignment_node: NodeIndex,
         target: NodeIndex,
@@ -296,15 +296,15 @@ impl<'a> FlowAnalyzer<'a> {
         assignment_node: NodeIndex,
         target: NodeIndex,
         widen_literals_for_destructuring: bool,
+        compatibility_target_fallback: Option<TypeId>,
+        assignment_type_is_provisional: &mut bool,
+        preserve_declared_assignment_flow: &mut bool,
     ) -> Option<TypeId> {
         let node = self.arena.get(assignment_node)?;
 
-        // CRITICAL FIX: Handle compound assignments (+=, -=, *=, etc.)
-        // Compound assignments compute the result of a binary operation and assign it back.
-        // Example: x += 1 where x: string | number should narrow x to number after assignment.
+        // Compound assignments compute a binary result and assign it back.
         if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
             let bin = self.arena.get_binary_expr(node)?;
-            // Check if this is an assignment to our target reference
             if self.is_matching_reference(bin.left, target) {
                 if bin.operator_token == SyntaxKind::QuestionQuestionToken as u16
                     || bin.operator_token == SyntaxKind::BarBarToken as u16
@@ -385,7 +385,6 @@ impl<'a> FlowAnalyzer<'a> {
                         return None;
                     }
 
-                    // When node_types is not available, use heuristics for flow narrowing
                     if self.node_types.is_none() {
                         return fallback_compound_assignment_result(
                             self.interner,
@@ -431,10 +430,8 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         if let Some(rhs) = self.assignment_rhs_for_reference(assignment_node, target) {
-            // Unannotated declaration initializers `let/var/const x = []` should flow as
-            // evolving-any arrays so immediate writes like `x.push(...)` are permitted.
-            // Keep this scoped to declaration assignments to avoid changing expression-level
-            // `[]` behavior (e.g. generic inference with `id([])`).
+            // Unannotated declaration `[]` initializers create evolving arrays;
+            // expression-level empty arrays retain ordinary inference.
             let is_unannotated_decl_init = (self
                 .is_mutable_var_decl_without_annotation(assignment_node)
                 || (self.is_const_variable_declaration(assignment_node)
@@ -454,9 +451,7 @@ impl<'a> FlowAnalyzer<'a> {
                 );
             }
 
-            // Also handle `let x; x = []` — assignment of empty array to an
-            // unannotated variable declared without initializer. This should
-            // also create an evolving array (any[]) matching tsc's behavior.
+            // `let x; x = []` also creates an evolving array.
             let is_rhs_empty_array = self.arena.get(rhs).is_some_and(|rhs_node| {
                 rhs_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                     && self
@@ -475,32 +470,18 @@ impl<'a> FlowAnalyzer<'a> {
                 );
             }
 
-            // For flow narrowing, prefer literal types from AST nodes over the type checker's widened types
-            // This ensures that `x = 42` narrows to literal 42.0, not just NUMBER
-            // This matches TypeScript's behavior where control flow analysis preserves literal types
+            // Prefer AST literal types so flow preserves literal assignment values.
             if let Some(literal_type) = self.literal_type_from_node(rhs) {
-                // For destructuring contexts, return the literal type as-is.
-                // narrow_assignment (using one-way assignability) handles the
-                // correct narrowing: `[b] = [0]` with `b: 0|1|9` narrows to `0`,
-                // while `[c] = [0]` with `c: string|number` narrows to `number`.
+                // Destructuring reduction owns any required literal widening.
                 if widen_literals_for_destructuring {
                     return Some(literal_type);
                 }
-                // For mutable variable declarations (let/var) without type annotations,
-                // widen literal types to their base types to match TypeScript behavior.
-                // Example: let x = "hi" -> string (not "hi"), let x = 42 -> number (not 42)
+                // Mutable unannotated declarations widen literals to primitives.
                 if self.is_mutable_var_decl_without_annotation(assignment_node) {
                     return Some(widen_literal_to_primitive(self.interner, literal_type));
                 }
-                // For const variable declarations with type annotations, if the literal
-                // type (null or undefined) is not assignable to the declared annotation
-                // type, return None (use the declared type). This prevents TS18047 false
-                // positives like `const x: IAsyncEnumerator<number> = null` where
-                // subsequent uses of x should see IAsyncEnumerator<number>, not null.
-                // Note: annotation type is keyed by annotation node index in node_types,
-                // not by the variable declaration node index.
-                // We use strict null check mode (flags=1) because the question is whether
-                // null semantically belongs to the declared type — a strict-mode concept.
+                // An excluded annotated nullish literal keeps the declared type;
+                // its cache entry is keyed by the annotation node.
                 if (literal_type == TypeId::NULL || literal_type == TypeId::UNDEFINED)
                     && let Some(annotation_type) =
                         self.annotation_type_from_assignment_node(assignment_node, target)
@@ -514,21 +495,9 @@ impl<'a> FlowAnalyzer<'a> {
                     literal_type,
                 );
             }
-            // Narrow a variable declaration's declared type by its initializer,
-            // as tsc's `getAssignmentReducedType` does. (Primitive-literal
-            // initializers are handled by the `literal_type_from_node` branch
-            // above; this block covers object/array literals and non-literal
-            // initializers such as `new C()` or another reference.)
-            //
-            // `const` always narrows; a `let`/`var` narrows only when it is
-            // never reassigned — an effectively constant reference, mirroring
-            // tsc's `isConstantReference`. A reassigned mutable local keeps its
-            // declared type so the loop fixed-point machinery owns its
-            // evolution: narrowing a loop-reassigned initializer would evaluate
-            // the loop body's first fixed-point pass against the narrowed entry
-            // type and surface spurious diagnostics (the #8513 `Optional<r>`
-            // repro). A never-reassigned local can never sit on a loop
-            // back-edge, so narrowing it is always safe.
+            // Match tsc's `getAssignmentReducedType` for annotated initializers.
+            // `const` always narrows; mutable locals narrow only when effectively
+            // constant, leaving loop-reassigned evolution to fixed-point flow.
             if self.is_var_decl_with_type_annotation(assignment_node) {
                 if self.var_decl_redeclares_parameter_for_reference(assignment_node, target) {
                     return None;
@@ -581,8 +550,7 @@ impl<'a> FlowAnalyzer<'a> {
                 // killing-definition `narrow_assignment` reduces the declared
                 // union — identical to the `const` path.
             }
-            // `undefined` identifier (not a keyword) as initializer: if the variable
-            // has a type annotation that doesn't include undefined, use the declared type.
+            // Reject `undefined` initializers excluded by an annotation.
             if let Some(nullish_type) = self.nullish_literal_type(rhs) {
                 if let Some(annotation_type) =
                     self.annotation_type_from_assignment_node(assignment_node, target)
@@ -610,57 +578,15 @@ impl<'a> FlowAnalyzer<'a> {
                     rhs_type
                 );
                 if rhs_type == TypeId::ERROR {
-                    // Loop fixed-point often caches an ERROR placeholder for recursive calls
-                    // before the callee has been fully checked. Fall through to the AST-based
-                    // fallback instead of short-circuiting on the placeholder.
+                    // Retry an `ERROR` loop placeholder through the AST fallback.
                 } else {
-                    // Only apply assignment-based "killing definition" narrowing when
-                    // the write itself is compatible. For invalid assignments, TypeScript
-                    // reports the assignment error but keeps subsequent reads at the
-                    // variable's declared type.
-                    if node.kind == syntax_kind_ext::BINARY_EXPRESSION
-                        && let Some(bin) = self.arena.get_binary_expr(node)
-                        && bin.operator_token == SyntaxKind::EqualsToken as u16
-                        && self.is_matching_reference(bin.left, target)
-                    {
-                        // For divergent accessors, the assignment target type can be the
-                        // setter parameter type while later reads must still use the
-                        // getter surface. If the RHS isn't assignable to the read type of
-                        // a property/element access, don't narrow future reads to the RHS.
-                        self.assigned_type_respecting_access_read_surface(
-                            assignment_node,
-                            target,
-                            rhs_type,
-                        )?;
-
-                        let declared_target_type = self
-                            .binder
-                            .resolve_identifier(self.arena, bin.left)
-                            .and_then(|sym| self.binder.get_symbol(sym))
-                            .map(|sym| sym.value_declaration)
-                            .filter(|decl| decl.is_some())
-                            .and_then(|decl| {
-                                // Prefer explicit type annotations when available.
-                                // `node_types[decl]` can hold a flow-initialized value type
-                                // (e.g. `undefined`) instead of the declared annotation type,
-                                // which would incorrectly block assignment-based narrowing.
-                                self.annotation_type_from_var_decl_node(decl)
-                                    .or_else(|| node_types.get(&decl.0).copied())
-                            })
-                            .or_else(|| node_types.get(&bin.left.0).copied());
-
-                        if let Some(lhs_type) = declared_target_type
-                            && !self
-                                .assignment_relation_outcome(rhs_type, lhs_type, false)
-                                .related
-                        {
-                            return None;
-                        }
-                    }
-                    return self.assigned_type_respecting_access_read_surface(
+                    return self.compatible_simple_assignment_type(
                         assignment_node,
                         target,
                         rhs_type,
+                        compatibility_target_fallback,
+                        assignment_type_is_provisional,
+                        preserve_declared_assignment_flow,
                     );
                 }
             }
@@ -670,19 +596,26 @@ impl<'a> FlowAnalyzer<'a> {
                     "get_assigned_type: node_types MISS for rhs; trying syntactic fallback"
                 );
             }
+            *assignment_type_is_provisional = true;
             let fallback_rhs_type = self.fallback_assigned_type_from_expression(rhs);
             if let Some(rhs_type) = fallback_rhs_type {
-                return self.assigned_type_respecting_access_read_surface(
+                return self.compatible_simple_assignment_type(
                     assignment_node,
                     target,
                     rhs_type,
+                    compatibility_target_fallback,
+                    assignment_type_is_provisional,
+                    preserve_declared_assignment_flow,
                 );
             }
             if let Some(rhs_type) = cached_rhs_type {
-                return self.assigned_type_respecting_access_read_surface(
+                return self.compatible_simple_assignment_type(
                     assignment_node,
                     target,
                     rhs_type,
+                    compatibility_target_fallback,
+                    assignment_type_is_provisional,
+                    preserve_declared_assignment_flow,
                 );
             }
             return None;

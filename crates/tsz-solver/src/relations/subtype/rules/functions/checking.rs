@@ -6,8 +6,8 @@
 use crate::instantiation::instantiate::TypeSubstitution;
 use crate::type_param_info;
 use crate::types::{
-    CallSignature, CallableShape, CallableShapeId, FunctionShape, FunctionShapeId, ObjectFlags,
-    ObjectShape, ParamInfo, PropertyInfo, TypeData, TypeId, TypeParamInfo, Visibility,
+    CallableShape, CallableShapeId, FunctionShape, FunctionShapeId, ObjectFlags, ObjectShape,
+    ParamInfo, PropertyInfo, TypeData, TypeId, TypeParamInfo, Visibility,
 };
 use crate::visitor::callable_shape_id;
 
@@ -43,15 +43,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // literal or interface construct signature (`ConstructSignature`) is
         // compared strictly like a call-signature literal.
         let force_strict_construct_params = std::mem::take(&mut self.force_strict_construct_params);
-        let allow_constructor_bivariance = !force_strict_construct_params
-            && !Self::constructor_signatures_need_strict_params(source, target);
+        let allow_constructor_bivariance = target.is_constructor && target.is_method;
+        debug_assert!(
+            !force_strict_construct_params || !allow_constructor_bivariance,
+            "explicit class-constructor targets must not request strict construct variance"
+        );
+        let callback_modes = (
+            self.in_callback_param_check,
+            self.in_bivariant_callback_return_check,
+        );
         let result = self.check_function_subtype_impl(source, target, allow_constructor_bivariance);
         if result.is_true() {
             return result;
         }
-        if let Some(retry) =
-            self.retry_generic_signature_with_context_instantiation(source, target, result)
-        {
+        if let Some(retry) = self.retry_generic_signature_with_context_instantiation(
+            source,
+            target,
+            result,
+            callback_modes,
+        ) {
             return retry;
         }
         result
@@ -207,6 +217,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: &FunctionShape,
         allow_constructor_bivariance: bool,
     ) -> SubtypeResult {
+        // Capture and reset the callback-param-check flags at function entry so
+        // every terminal path consumes the one-shot mode and nested sub-checks
+        // cannot steal it before the parameter comparison below.
+        let in_callback_param_check = self.in_callback_param_check;
+        let in_bivariant_callback_return_check = self.in_bivariant_callback_return_check;
+        self.in_callback_param_check = false;
+        self.in_bivariant_callback_return_check = false;
+
         // Constructor vs non-constructor
         if source.is_constructor != target.is_constructor {
             return SubtypeResult::False;
@@ -216,20 +234,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let mut target_instantiated = target.clone();
         // Track type param equivalences scope for cleanup at end of function.
         let equiv_start = self.type_param_equivalences.len();
-
-        // Capture and reset the callback-param-check flag at function entry so
-        // it cannot be prematurely consumed by intermediate sub-checks (return
-        // type, this/type-predicate, generic constraint checks, recursive
-        // signature comparisons) that occur before the parameter comparison
-        // below. Without this early capture, a nested call into
-        // `check_function_subtype_impl` would steal the flag and the outer
-        // signature would lose method-bivariance suppression for its callback
-        // parameters. Resetting to `false` here also matches tsc, where
-        // level-3+ recursions start fresh without the Callback bit.
-        let in_callback_param_check = self.in_callback_param_check;
-        let in_bivariant_callback_return_check = self.in_bivariant_callback_return_check;
-        self.in_callback_param_check = false;
-        self.in_bivariant_callback_return_check = false;
 
         if self.erase_generics
             && source_instantiated.type_params.is_empty()
@@ -931,7 +935,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if !self.are_this_parameters_compatible(
             source_instantiated.this_type,
             target_instantiated.this_type,
-            source_instantiated.is_method || target_instantiated.is_method,
+            in_callback_param_check || target_instantiated.is_method,
         ) {
             self.type_param_equivalences.truncate(equiv_start);
             return SubtypeResult::False;
@@ -943,8 +947,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        // Method/constructor bivariance: strictFunctionTypes only applies to function
-        // type literals, not to methods or construct signatures (new (...) => T).
+        // Target methods and explicit class constructors are bivariant;
+        // function properties and construct-signature types remain strict.
         //
         // tsc's StrictCallback/BivariantCallback override: when the immediately-
         // enclosing comparison was a callback parameter check, methods do *not*
@@ -952,12 +956,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // captured and cleared at the top of this function (see above) so that
         // nested sub-checks performed before this point cannot consume it; we
         // read the captured local here.
-        let constructor_param_bivariance = allow_constructor_bivariance
-            && (source_instantiated.is_constructor || target_instantiated.is_constructor);
+        let constructor_param_bivariance =
+            allow_constructor_bivariance && target_instantiated.is_constructor;
         let is_method = !in_callback_param_check
-            && (source_instantiated.is_method
-                || target_instantiated.is_method
-                || constructor_param_bivariance);
+            && (target_instantiated.is_method || constructor_param_bivariance);
 
         // The lib iterator/generator declarations encode `next(value?)` as a single
         // rest parameter with tuple-list type `[] | [TNext]`. Compare that whole
@@ -1350,6 +1352,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if s_fn.is_constructor {
                 return SubtypeResult::False;
             }
+            if has_multiple_target_sigs
+                && self.erased_fn_to_sig_return_variance_rejects(&s_fn, t_sig)
+            {
+                return SubtypeResult::False;
+            }
             if !self.check_call_signature_subtype_fn(&s_fn, t_sig).is_true() {
                 // tsc N×M path: when the target has multiple call signatures, try
                 // erasing type params to `any` before rejecting. This matches tsc's
@@ -1595,14 +1602,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         for t_sig in &target.call_signatures {
             let mut found_match = false;
             if source.call_signatures.len() > 1
-                && (t_sig.is_method || source.call_signatures.iter().any(|sig| sig.is_method))
+                && t_sig.is_method
                 && self
                     .method_overloads_cover_tuple_union_rest_target(&source.call_signatures, t_sig)
             {
                 found_match = true;
             }
             for s_sig in &source.call_signatures {
-                if self.check_call_signature_subtype(s_sig, t_sig).is_true() {
+                if (!is_multi_sig || !self.erased_call_sig_return_variance_rejects(s_sig, t_sig))
+                    && self.check_call_signature_subtype(s_sig, t_sig).is_true()
+                {
                     found_match = true;
                     break;
                 }
@@ -1611,6 +1620,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // type params to `any` (matching tsc's `getErasedSignature` behavior).
             if !found_match && is_multi_sig {
                 for s_sig in &source.call_signatures {
+                    if self.erased_call_sig_return_variance_rejects(s_sig, t_sig) {
+                        continue;
+                    }
                     if self
                         .check_erased_call_signature_subtype(s_sig, t_sig)
                         .is_true()
@@ -1646,9 +1658,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // `compareSignaturesRelated`, so it is computed from the target callable.
         // Short-circuit on the empty case so a callable with only call
         // signatures pays no resolver lookup.
-        let force_strict = !target.construct_signatures.is_empty()
-            && !self.callable_target_is_class_constructor(target);
         for t_sig in &target.construct_signatures {
+            let force_strict = !t_sig.is_method;
             let mut found_match = false;
             for s_sig in &source.construct_signatures {
                 self.force_strict_construct_params = force_strict;
@@ -1763,79 +1774,5 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         SubtypeResult::True
-    }
-
-    fn method_overloads_cover_tuple_union_rest_target(
-        &mut self,
-        source_sigs: &[CallSignature],
-        target_sig: &CallSignature,
-    ) -> bool {
-        use crate::type_queries::data::get_union_members;
-        use crate::type_queries::unpack_tuple_rest_parameter;
-
-        let Some(last_target_param) = target_sig.params.last().filter(|param| param.rest) else {
-            return false;
-        };
-        let Some(union_members) = get_union_members(self.interner, last_target_param.type_id)
-        else {
-            return false;
-        };
-
-        let prefix_params = &target_sig.params[..target_sig.params.len().saturating_sub(1)];
-        union_members.iter().all(|member_type_id| {
-            let member_param = ParamInfo {
-                type_id: *member_type_id,
-                rest: true,
-                ..*last_target_param
-            };
-            let mut variant_params = prefix_params.to_vec();
-            variant_params.extend(unpack_tuple_rest_parameter(self.interner, &member_param));
-            source_sigs.iter().any(|source_sig| {
-                let source_fn = FunctionShape {
-                    type_params: source_sig.type_params.clone(),
-                    params: source_sig.params.clone(),
-                    this_type: source_sig.this_type,
-                    return_type: source_sig.return_type,
-                    type_predicate: source_sig.type_predicate,
-                    is_constructor: false,
-                    is_method: source_sig.is_method,
-                };
-                let variant_fn = FunctionShape {
-                    type_params: target_sig.type_params.clone(),
-                    params: variant_params.clone(),
-                    this_type: target_sig.this_type,
-                    return_type: target_sig.return_type,
-                    type_predicate: target_sig.type_predicate,
-                    is_constructor: false,
-                    is_method: target_sig.is_method,
-                };
-                self.check_function_subtype(&source_fn, &variant_fn)
-                    .is_true()
-                    || self.method_overload_prefix_covers_variant(source_sig, &variant_params)
-            })
-        })
-    }
-
-    fn method_overload_prefix_covers_variant(
-        &mut self,
-        source_sig: &CallSignature,
-        variant_params: &[ParamInfo],
-    ) -> bool {
-        if !source_sig.is_method || variant_params.is_empty() {
-            return false;
-        }
-        if source_sig.params.len() < variant_params.len() {
-            return false;
-        }
-        source_sig
-            .params
-            .iter()
-            .zip(variant_params.iter())
-            .take(variant_params.len())
-            .all(|(source_param, target_param)| {
-                let (source_type, target_type) =
-                    self.effective_param_type_pair(source_param, target_param);
-                self.are_parameters_compatible_impl(source_type, target_type, true)
-            })
     }
 }

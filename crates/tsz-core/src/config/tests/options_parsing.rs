@@ -307,6 +307,12 @@ fn test_ts5024_emitted_for_recognized_options_with_invalid_value_types() {
         ("plugins", r#""not-an-array""#, "Array"),
         ("maxNodeModuleJsDepth", r#""not-a-number""#, "number"),
         ("traceResolution", r#""yes""#, "boolean"),
+        ("jsx", "42", "enum"),
+        ("module", "42", "enum"),
+        ("moduleDetection", "42", "enum"),
+        ("moduleResolution", "42", "enum"),
+        ("newLine", "42", "enum"),
+        ("target", "42", "enum"),
     ] {
         let source = format!(
             r#"{{
@@ -334,6 +340,28 @@ fn test_ts5024_emitted_for_recognized_options_with_invalid_value_types() {
             "Expected {option} TS5024 to mention {expected_type}, got: {diagnostic:?}"
         );
     }
+}
+
+#[test]
+fn test_enum_compiler_options_accept_string_values() {
+    let source = r#"{
+  "compilerOptions": {
+    "jsx": "preserve",
+    "module": "esnext",
+    "moduleDetection": "auto",
+    "moduleResolution": "bundler",
+    "newLine": "lf",
+    "target": "esnext"
+  }
+}"#;
+    let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+    assert!(
+        !parsed.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == diagnostic_codes::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE
+        }),
+        "valid enum strings must not emit TS5024: {:?}",
+        parsed.diagnostics
+    );
 }
 
 #[test]

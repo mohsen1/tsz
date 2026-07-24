@@ -82,6 +82,9 @@ path = "tests/instanceof_class_value_rhs_tests.rs"
 name = "lib_alias_ref_def_identity_tests"
 path = "tests/lib_alias_ref_def_identity_tests.rs"
 [[test]]
+name = "lib_primitive_alias_on_demand_cli_tests"
+path = "tests/lib_primitive_alias_on_demand_cli_tests.rs"
+[[test]]
 name = "zod_cross_file_partial_omit_tests"
 path = "tests/zod_cross_file_partial_omit_tests.rs"
 [[test]]

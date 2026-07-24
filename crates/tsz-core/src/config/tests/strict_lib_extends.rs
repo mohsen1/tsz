@@ -1182,6 +1182,61 @@ fn test_extends_base_invalid_allowjs_string_emits_ts5024_anchored_at_base() {
     );
 }
 
+#[test]
+fn test_extends_child_invalid_enum_option_reports_enum_and_keeps_base_value() {
+    let temp = tempdir().expect("create temp dir");
+    let base_path = temp.path().join("base.json");
+    std::fs::write(
+        &base_path,
+        r#"{"compilerOptions":{"module":"esnext","moduleResolution":"bundler"}}"#,
+    )
+    .expect("write base");
+
+    let child_source =
+        r#"{"extends":"./base.json","files":["a.ts"],"compilerOptions":{"moduleResolution":42}}"#;
+    let child_path = temp.path().join("tsconfig.json");
+    std::fs::write(&child_path, child_source).expect("write child");
+
+    let parsed = load_tsconfig_with_diagnostics(&child_path).expect("load child");
+    let diagnostic = parsed
+        .diagnostics
+        .iter()
+        .find(|diagnostic| {
+            diagnostic.code == diagnostic_codes::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE
+                && diagnostic.message_text.contains("moduleResolution")
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "expected TS5024 for child moduleResolution, got: {:?}",
+                parsed.diagnostics
+            )
+        });
+    assert_eq!(
+        diagnostic.message_text,
+        "Compiler option 'moduleResolution' requires a value of type enum."
+    );
+    assert_eq!(
+        std::path::Path::new(&diagnostic.file)
+            .file_name()
+            .and_then(|name| name.to_str()),
+        Some("tsconfig.json"),
+        "the invalid child value must own the diagnostic"
+    );
+    assert_eq!(
+        diagnostic.start,
+        child_source.find("42").expect("invalid child value") as u32
+    );
+    assert_eq!(
+        parsed
+            .config
+            .compiler_options
+            .as_ref()
+            .and_then(|options| options.module_resolution.as_deref()),
+        Some("bundler"),
+        "the invalid child value must not erase the valid inherited option"
+    );
+}
+
 /// A valid base config must not produce spurious TS5024 just because the
 /// child loader now recurses through the diagnostic path. Regression guard
 /// for the happy path of #3589's fix.

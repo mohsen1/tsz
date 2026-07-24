@@ -21,11 +21,9 @@ use crate::types::{
 use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
 
-use super::infer::{InferenceContext, InferenceError, InferenceVar};
+use super::infer::{InferenceContext, InferenceError};
 use super::infer_matching_guard_state as guard_state;
 use super::infer_matching_helpers::constraint_is_nullable_union;
-use super::template_anchor::{find_leftmost_occurrence, find_next_anchor_alternatives};
-use super::template_segment_prefix::match_template_segment_prefix;
 
 impl<'a> InferenceContext<'a> {
     /// Perform structural type inference from a source type to a target type.
@@ -68,8 +66,10 @@ impl<'a> InferenceContext<'a> {
         target: TypeId,
         priority: InferencePriority,
     ) -> Result<(), InferenceError> {
-        let inserted_visit =
-            self.infer_depth < Self::MAX_INFER_DEPTH && self.infer_visited.insert((source, target));
+        let inserted_visit = self.infer_depth < Self::MAX_INFER_DEPTH
+            && self
+                .infer_visited
+                .insert((source, target, self.inference_visit_mode()));
         match guard_state::infer_match_entry_state(
             self.infer_depth,
             Self::MAX_INFER_DEPTH,
@@ -122,13 +122,10 @@ impl<'a> InferenceContext<'a> {
         if let Some(TypeData::TypeParameter(ref param_info)) = source_key
             && let Some(var) = self.find_type_param(param_info.name)
         {
-            // When in contra_mode (function parameter inference), add as a contra-candidate
-            // instead of an upper bound. This matches tsc's behavior where inference from
-            // function parameter types (contravariant position) produces contra-candidates
-            // that are resolved via intersection/most-specific, NOT hard upper bounds that
-            // must each individually be satisfied. Without this, decomposing a union target
-            // (e.g., matching {kind: T} against {kind:'a'} | {kind:'b'}) produces separate
-            // upper bounds 'a' and 'b', causing false TS2345 errors.
+            // Beneath a structural variance walk, route through the ordinary candidate
+            // entrypoint. Its live polarity selects regular versus contra-candidates, while
+            // method bivariance can suppress contra classification. Outside such a walk this
+            // remains a hard upper bound.
             self.add_source_type_param_candidate(var, target, priority);
             return Ok(());
         }
@@ -505,7 +502,11 @@ impl<'a> InferenceContext<'a> {
                 // Use partially inferable type to prevent implicit `any` from
                 // flowing contravariantly into inference. Matches tsc behavior.
                 let inferable_type = self.get_partially_inferable_type(source_prop.type_id);
-                self.infer_from_types(inferable_type, target_prop.type_id, priority)?;
+                let was_pending_method = self.pending_target_method;
+                self.pending_target_method |= target_prop.is_method;
+                let result = self.infer_from_types(inferable_type, target_prop.type_id, priority);
+                self.pending_target_method = was_pending_method;
+                result?;
             }
         }
 
@@ -1015,6 +1016,17 @@ impl<'a> InferenceContext<'a> {
         target_func: FunctionShapeId,
         priority: InferencePriority,
     ) -> Result<(), InferenceError> {
+        self.with_restored_inference_modes(|ctx| {
+            ctx.infer_functions_scoped(source_func, target_func, priority)
+        })
+    }
+
+    fn infer_functions_scoped(
+        &mut self,
+        source_func: FunctionShapeId,
+        target_func: FunctionShapeId,
+        priority: InferencePriority,
+    ) -> Result<(), InferenceError> {
         let source_sig = self.interner.function_shape(source_func);
         let target_sig = self.interner.function_shape(target_func);
 
@@ -1029,7 +1041,18 @@ impl<'a> InferenceContext<'a> {
         // (after direction swap) are recorded as contra-candidates rather than hard
         // upper bounds. This matches tsc's handling of function parameter inference.
         let was_contra = self.in_contra_mode;
-        self.in_contra_mode = true;
+        let was_variance_walk = self.in_variance_walk;
+        let was_bivariant = self.in_bivariant_mode;
+        let was_pending_method = self.pending_target_method;
+        self.in_contra_mode = !was_contra;
+        self.in_variance_walk = true;
+        self.in_bivariant_mode |=
+            target_sig.is_method || (was_pending_method && !target_sig.is_constructor);
+        self.pending_target_method = false;
+        if let (Some(source_this), Some(target_this)) = (source_sig.this_type, target_sig.this_type)
+        {
+            self.infer_from_types(target_this, source_this, priority)?;
+        }
         let mut source_params = source_sig.params.iter().peekable();
         let mut target_params = target_sig.params.iter().peekable();
 
@@ -1166,20 +1189,13 @@ impl<'a> InferenceContext<'a> {
             }
         }
 
-        // Restore contra mode before covariant inference (return type, type predicates).
+        // Restore variance modes before covariant inference (return type, type predicates).
         self.in_contra_mode = was_contra;
+        self.in_variance_walk = was_variance_walk;
+        self.in_bivariant_mode = was_bivariant;
 
         // Return type is covariant: normal order
         self.infer_from_types(source_sig.return_type, target_sig.return_type, priority)?;
-
-        // This type is contravariant
-        if let (Some(source_this), Some(target_this)) = (source_sig.this_type, target_sig.this_type)
-        {
-            let was_contra2 = self.in_contra_mode;
-            self.in_contra_mode = true;
-            self.infer_from_types(target_this, source_this, priority)?;
-            self.in_contra_mode = was_contra2;
-        }
 
         // Type predicates are covariant
         if let (Some(source_pred), Some(target_pred)) =
@@ -1207,6 +1223,7 @@ impl<'a> InferenceContext<'a> {
             }
         }
 
+        self.pending_target_method = was_pending_method;
         Ok(())
     }
 
@@ -1217,25 +1234,52 @@ impl<'a> InferenceContext<'a> {
         target_id: CallableShapeId,
         priority: InferencePriority,
     ) -> Result<(), InferenceError> {
+        self.with_restored_inference_modes(|ctx| {
+            ctx.infer_callables_scoped(source_id, target_id, priority)
+        })
+    }
+
+    fn infer_callables_scoped(
+        &mut self,
+        source_id: CallableShapeId,
+        target_id: CallableShapeId,
+        priority: InferencePriority,
+    ) -> Result<(), InferenceError> {
         let source = self.interner.callable_shape(source_id);
         let target = self.interner.callable_shape(target_id);
+        let was_pending_method = self.pending_target_method;
+        self.pending_target_method = false;
 
         // For each call signature in the target, try to find a compatible one in the source
         for target_sig in &target.call_signatures {
             for source_sig in &source.call_signatures {
                 if source_sig.params.len() == target_sig.params.len() {
                     let was_contra = self.in_contra_mode;
-                    self.in_contra_mode = true;
+                    let was_variance_walk = self.in_variance_walk;
+                    let was_bivariant = self.in_bivariant_mode;
+                    self.in_contra_mode = !was_contra;
+                    self.in_variance_walk = true;
+                    self.in_bivariant_mode |= was_pending_method || target_sig.is_method;
+                    if let (Some(source_this), Some(target_this)) =
+                        (source_sig.this_type, target_sig.this_type)
+                    {
+                        self.infer_from_types(target_this, source_this, priority)?;
+                    }
                     for (s_param, t_param) in source_sig.params.iter().zip(target_sig.params.iter())
                     {
                         let result =
                             self.infer_from_types(t_param.type_id, s_param.type_id, priority);
                         if result.is_err() {
                             self.in_contra_mode = was_contra;
+                            self.in_variance_walk = was_variance_walk;
+                            self.in_bivariant_mode = was_bivariant;
+                            self.pending_target_method = was_pending_method;
                             return result;
                         }
                     }
                     self.in_contra_mode = was_contra;
+                    self.in_variance_walk = was_variance_walk;
+                    self.in_bivariant_mode = was_bivariant;
                     self.infer_from_types(
                         source_sig.return_type,
                         target_sig.return_type,
@@ -1251,17 +1295,31 @@ impl<'a> InferenceContext<'a> {
             for source_sig in &source.construct_signatures {
                 if source_sig.params.len() == target_sig.params.len() {
                     let was_contra = self.in_contra_mode;
-                    self.in_contra_mode = true;
+                    let was_variance_walk = self.in_variance_walk;
+                    let was_bivariant = self.in_bivariant_mode;
+                    self.in_contra_mode = !was_contra;
+                    self.in_variance_walk = true;
+                    self.in_bivariant_mode |= target_sig.is_method;
+                    if let (Some(source_this), Some(target_this)) =
+                        (source_sig.this_type, target_sig.this_type)
+                    {
+                        self.infer_from_types(target_this, source_this, priority)?;
+                    }
                     for (s_param, t_param) in source_sig.params.iter().zip(target_sig.params.iter())
                     {
                         let result =
                             self.infer_from_types(t_param.type_id, s_param.type_id, priority);
                         if result.is_err() {
                             self.in_contra_mode = was_contra;
+                            self.in_variance_walk = was_variance_walk;
+                            self.in_bivariant_mode = was_bivariant;
+                            self.pending_target_method = was_pending_method;
                             return result;
                         }
                     }
                     self.in_contra_mode = was_contra;
+                    self.in_variance_walk = was_variance_walk;
+                    self.in_bivariant_mode = was_bivariant;
                     self.infer_from_types(
                         source_sig.return_type,
                         target_sig.return_type,
@@ -1279,7 +1337,12 @@ impl<'a> InferenceContext<'a> {
                 .iter()
                 .find(|p| p.name == target_prop.name)
             {
-                self.infer_from_types(source_prop.type_id, target_prop.type_id, priority)?;
+                let child_pending_method = self.pending_target_method;
+                self.pending_target_method |= target_prop.is_method;
+                let result =
+                    self.infer_from_types(source_prop.type_id, target_prop.type_id, priority);
+                self.pending_target_method = child_pending_method;
+                result?;
             }
         }
 
@@ -1293,31 +1356,60 @@ impl<'a> InferenceContext<'a> {
             self.infer_from_types(source_idx.value_type, target_idx.value_type, priority)?;
         }
 
+        self.pending_target_method = was_pending_method;
         Ok(())
     }
 
     /// Infer from a Function shape against a Callable's call signature.
-    /// Bridges Function ↔ Callable for cross-type inference.
+    /// Bridges Function ↔ Callable for cross-type inference. Only call
+    /// signatures reach this bridge; construct signatures are paired by
+    /// `infer_callables` above.
     fn infer_function_vs_signature(
         &mut self,
         source_func: FunctionShapeId,
         target_sig: &crate::types::CallSignature,
         priority: InferencePriority,
     ) -> Result<(), InferenceError> {
+        self.with_restored_inference_modes(|ctx| {
+            ctx.infer_function_vs_signature_scoped(source_func, target_sig, priority)
+        })
+    }
+
+    fn infer_function_vs_signature_scoped(
+        &mut self,
+        source_func: FunctionShapeId,
+        target_sig: &crate::types::CallSignature,
+        priority: InferencePriority,
+    ) -> Result<(), InferenceError> {
         let source = self.interner.function_shape(source_func);
+        let was_pending_method = self.pending_target_method;
+        let was_bivariant = self.in_bivariant_mode;
+        self.pending_target_method = false;
         // Parameters are contravariant
         let was_contra = self.in_contra_mode;
-        self.in_contra_mode = true;
+        let was_variance_walk = self.in_variance_walk;
+        self.in_contra_mode = !was_contra;
+        self.in_variance_walk = true;
+        self.in_bivariant_mode |= was_pending_method || target_sig.is_method;
+        if let (Some(source_this), Some(target_this)) = (source.this_type, target_sig.this_type) {
+            self.infer_from_types(target_this, source_this, priority)?;
+        }
         for (s_param, t_param) in source.params.iter().zip(target_sig.params.iter()) {
             let result = self.infer_from_types(t_param.type_id, s_param.type_id, priority);
             if result.is_err() {
                 self.in_contra_mode = was_contra;
+                self.in_variance_walk = was_variance_walk;
+                self.in_bivariant_mode = was_bivariant;
+                self.pending_target_method = was_pending_method;
                 return result;
             }
         }
         self.in_contra_mode = was_contra;
+        self.in_variance_walk = was_variance_walk;
+        self.in_bivariant_mode = was_bivariant;
         // Return type is covariant
         self.infer_from_types(source.return_type, target_sig.return_type, priority)?;
+        self.pending_target_method = was_pending_method;
         Ok(())
     }
 
@@ -1329,20 +1421,47 @@ impl<'a> InferenceContext<'a> {
         target_func: FunctionShapeId,
         priority: InferencePriority,
     ) -> Result<(), InferenceError> {
+        self.with_restored_inference_modes(|ctx| {
+            ctx.infer_signature_vs_function_scoped(source_sig, target_func, priority)
+        })
+    }
+
+    fn infer_signature_vs_function_scoped(
+        &mut self,
+        source_sig: &crate::types::CallSignature,
+        target_func: FunctionShapeId,
+        priority: InferencePriority,
+    ) -> Result<(), InferenceError> {
         let target = self.interner.function_shape(target_func);
+        let was_pending_method = self.pending_target_method;
+        let was_bivariant = self.in_bivariant_mode;
+        self.pending_target_method = false;
         // Parameters are contravariant
         let was_contra = self.in_contra_mode;
-        self.in_contra_mode = true;
+        let was_variance_walk = self.in_variance_walk;
+        self.in_contra_mode = !was_contra;
+        self.in_variance_walk = true;
+        self.in_bivariant_mode |=
+            target.is_method || (was_pending_method && !target.is_constructor);
+        if let (Some(source_this), Some(target_this)) = (source_sig.this_type, target.this_type) {
+            self.infer_from_types(target_this, source_this, priority)?;
+        }
         for (s_param, t_param) in source_sig.params.iter().zip(target.params.iter()) {
             let result = self.infer_from_types(t_param.type_id, s_param.type_id, priority);
             if result.is_err() {
                 self.in_contra_mode = was_contra;
+                self.in_variance_walk = was_variance_walk;
+                self.in_bivariant_mode = was_bivariant;
+                self.pending_target_method = was_pending_method;
                 return result;
             }
         }
         self.in_contra_mode = was_contra;
+        self.in_variance_walk = was_variance_walk;
+        self.in_bivariant_mode = was_bivariant;
         // Return type is covariant
         self.infer_from_types(source_sig.return_type, target.return_type, priority)?;
+        self.pending_target_method = was_pending_method;
         Ok(())
     }
 
@@ -1636,9 +1755,13 @@ impl<'a> InferenceContext<'a> {
                     // candidates are recorded as contra-candidates (via in_contra_mode)
                     // or equivalently, infer in the reverse direction.
                     let was_contra = self.in_contra_mode;
+                    let was_variance_walk = self.in_variance_walk;
                     self.in_contra_mode = !was_contra;
-                    self.infer_from_types(*source_arg, *target_arg, priority)?;
+                    self.in_variance_walk = true;
+                    let result = self.infer_from_types(*source_arg, *target_arg, priority);
                     self.in_contra_mode = was_contra;
+                    self.in_variance_walk = was_variance_walk;
+                    result?;
                 } else {
                     self.infer_from_types(*source_arg, *target_arg, priority)?;
                 }
@@ -1798,85 +1921,5 @@ impl<'a> InferenceContext<'a> {
             Some(TypeData::Literal(LiteralValue::String(s))) => Some(self.interner.resolve_atom(s)),
             _ => None,
         }
-    }
-
-    /// Match a source string against a template pattern, extracting infer variable bindings.
-    ///
-    /// # Arguments
-    ///
-    /// * `source` - The source string to match (e.g., `"user_123"`)
-    /// * `spans` - The template spans (e.g., `[Text("user_"), Type(ID), Text("_")]`)
-    ///
-    /// # Returns
-    ///
-    /// * `Some(bindings)` - Mapping from inference variables to captured strings
-    /// * `None` - The source doesn't match the pattern
-    fn match_template_pattern(
-        &self,
-        source: &str,
-        spans: &[TemplateSpan],
-    ) -> Option<Vec<(InferenceVar, String)>> {
-        let mut bindings = Vec::with_capacity(spans.len());
-        let mut pos = 0;
-
-        for (i, span) in spans.iter().enumerate() {
-            let is_last = i == spans.len() - 1;
-
-            match span {
-                TemplateSpan::Text(text_atom) => {
-                    // Match literal text at current position
-                    let text = self.interner.resolve_atom(*text_atom).to_string();
-                    if !source.get(pos..)?.starts_with(&text) {
-                        return None; // Text doesn't match
-                    }
-                    pos += text.len();
-                }
-
-                TemplateSpan::Type(type_id) => {
-                    // Match both `infer T` (conditional) and generic `T` (type parameter).
-                    // Intrinsics are never Infer or TypeParameter.
-                    if !type_id.is_intrinsic()
-                        && let Some(
-                            TypeData::Infer(param_info) | TypeData::TypeParameter(param_info),
-                        ) = self.interner.lookup(*type_id)
-                        && let Some(var) = self.find_type_param(param_info.name)
-                    {
-                        if is_last {
-                            // Last span: capture all remaining text (greedy)
-                            let captured = source[pos..].to_string();
-                            bindings.push((var, captured));
-                            pos = source.len();
-                        } else if let Some(alternatives) =
-                            find_next_anchor_alternatives(self.interner, spans, i, |type_id| {
-                                if type_id.is_intrinsic() {
-                                    return false;
-                                }
-                                matches!(
-                                    self.interner.lookup(type_id),
-                                    Some(
-                                        TypeData::Infer(param_info)
-                                            | TypeData::TypeParameter(param_info)
-                                    ) if self.find_type_param(param_info.name).is_some()
-                                )
-                            })
-                        {
-                            let capture_end = find_leftmost_occurrence(source, pos, &alternatives)?;
-                            let captured = source[pos..capture_end].to_string();
-                            bindings.push((var, captured));
-                            pos = capture_end;
-                        } else {
-                            bindings.push((var, String::new()));
-                        }
-                    } else {
-                        let next_pos =
-                            match_template_segment_prefix(self.interner, source, pos, *type_id)?;
-                        pos = next_pos;
-                    }
-                }
-            }
-        }
-
-        // Must have consumed the entire source string
-        (pos == source.len()).then_some(bindings)
     }
 }
