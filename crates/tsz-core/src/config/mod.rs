@@ -557,30 +557,29 @@ fn find_key_offset_in_source_opt(source: &str, key: &str) -> Option<u32> {
         .map(|pos| (compiler_opts_pos + pos) as u32)
 }
 
-/// Report a TS5052 "Option '{0}' cannot be specified without specifying option
-/// '{1}'" pair.
+/// Report an option-interaction diagnostic that names two compiler options.
 ///
 /// tsc walks the `compilerOptions` object literal looking for either name and
 /// anchors on the **first one it encounters in source order**, emitting a
-/// single diagnostic — so a config listing `allowJs` above `checkJs` anchors at
-/// `allowJs` even though the rule is "about" `checkJs`. The message always
-/// names the pair in dependency order regardless of which key is pointed at.
-/// If neither key is written out (both are implied), tsc falls back to the
-/// enclosing `compilerOptions` key.
-fn push_option_dependency_diagnostic(
+/// single diagnostic — regardless of which of the two the message names first.
+/// A config listing `allowJs` above `checkJs` anchors at `allowJs` even though
+/// TS5052 is "about" `checkJs`; a config listing `inlineSourceMap` above
+/// `sourceMap` anchors at `inlineSourceMap` even though TS5053's message names
+/// `sourceMap` first. If neither key is written out (both are implied), tsc
+/// falls back to the enclosing `compilerOptions` key.
+///
+/// Shared by TS5052, TS5053 and TS5091, which previously each pushed a
+/// diagnostic at *both* keys — a tsc 6.0 behavior
+/// (`forEachPropertyAssignment` visiting both) that 7.0.2 no longer has.
+fn push_first_key_anchored_diagnostic(
     diagnostics: &mut Vec<Diagnostic>,
     file_path: &str,
     stripped: &str,
-    dependent: &str,
-    required: &str,
+    keys: [&str; 2],
+    message: impl Into<String>,
+    code: u32,
 ) {
-    let message = format_message(
-        diagnostic_messages::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION,
-        &[dependent, required],
-    );
-    let code = diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION;
-
-    let anchor = [dependent, required]
+    let anchor = keys
         .into_iter()
         .filter_map(|key| find_key_offset_in_source_opt(stripped, key).map(|off| (off, key)))
         .min_by_key(|(off, _)| *off);
@@ -607,6 +606,29 @@ fn push_option_dependency_diagnostic(
             ));
         }
     }
+}
+
+/// TS5052 "Option '{0}' cannot be specified without specifying option '{1}'".
+/// The message always names the pair in dependency order; the anchor is chosen
+/// by [`push_first_key_anchored_diagnostic`].
+fn push_option_dependency_diagnostic(
+    diagnostics: &mut Vec<Diagnostic>,
+    file_path: &str,
+    stripped: &str,
+    dependent: &str,
+    required: &str,
+) {
+    push_first_key_anchored_diagnostic(
+        diagnostics,
+        file_path,
+        stripped,
+        [dependent, required],
+        format_message(
+            diagnostic_messages::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION,
+            &[dependent, required],
+        ),
+        diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION,
+    );
 }
 
 /// Push an error diagnostic anchored at a tsconfig key, spanning the key text
