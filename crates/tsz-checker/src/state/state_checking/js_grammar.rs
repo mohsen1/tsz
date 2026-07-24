@@ -17,36 +17,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// TS8022: Check for orphaned `@extends`/`@augments` tags not attached to a class.
-    pub(crate) fn check_orphaned_extends_tags(&mut self, statements: &[NodeIndex]) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-
-        let orphaned = self.find_orphaned_extends_tags_for_statements(statements);
-        for (tag_name, position) in orphaned {
-            let message = format_message(
-                diagnostic_messages::JSDOC_IS_NOT_ATTACHED_TO_A_CLASS,
-                &[tag_name],
-            );
-            match position {
-                Some((pos, len)) => {
-                    self.ctx.error(
-                        pos,
-                        len,
-                        message,
-                        diagnostic_codes::JSDOC_IS_NOT_ATTACHED_TO_A_CLASS,
-                    );
-                }
-                None => {
-                    // Fully-dangling JSDoc — tsc emits at program level.
-                    self.error_program_level(
-                        message,
-                        diagnostic_codes::JSDOC_IS_NOT_ATTACHED_TO_A_CLASS,
-                    );
-                }
-            }
-        }
-    }
-
     /// Check a single statement for TypeScript-only syntax in JS files.
     fn check_js_grammar_statement(&mut self, stmt_idx: NodeIndex) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};

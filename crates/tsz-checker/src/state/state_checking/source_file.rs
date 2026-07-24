@@ -639,9 +639,6 @@ impl CheckerState<'_> {
         if self.is_js_file() {
             self.check_js_grammar_statements(&sf.statements.nodes);
 
-            // TS8022: Check for orphaned @extends/@augments tags not attached to a class
-            self.check_orphaned_extends_tags(&sf.statements.nodes);
-
             // TS8033: Check for @typedef comments with multiple @type tags
             self.check_typedef_duplicate_type_tags();
 
@@ -668,9 +665,6 @@ impl CheckerState<'_> {
 
             // TS1110: unsupported multiline @typedef wrappers without leading `*`
             self.check_jsdoc_unwrapped_multiline_typedefs();
-
-            // TS8021: Check for @typedef without type or @property tags
-            self.check_typedef_missing_type();
 
             // TS8039: Check for @template tags after @typedef/@callback/@overload
             self.check_template_after_typedef_callback();

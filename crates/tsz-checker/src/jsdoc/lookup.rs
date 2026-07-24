@@ -12,7 +12,6 @@
 //! - Type query resolution (`resolve_type_query_type`)
 //! - Generic constraint validation (`validate_jsdoc_generic_constraints_at_node`)
 //! - Metadata queries (`jsdoc_has_readonly_tag`, `jsdoc_access_level`)
-//! - Orphaned extends/augments detection (`find_orphaned_extends_tags_for_statements`)
 //! - Scoping helpers (`is_in_different_function_scope`, `find_function_body_end`)
 
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
@@ -25,11 +24,6 @@ use tsz_parser::parser::node::SourceFileData;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
-
-/// `(tag_name, Some((pos, len)))` for orphaned `@extends`/`@augments` tags.
-/// `None` means fully-dangling (no attached statement); `Some` gives the
-/// statement's source position and length for diagnostic anchoring.
-type OrphanedExtendsTag = (&'static str, Option<(u32, u32)>);
 
 // Above this size, a cheap textual typedef pre-scan avoids constructing a
 // cross-file child checker for every file that cannot contain the requested
@@ -1455,119 +1449,6 @@ impl<'a> CheckerState<'a> {
             }
         }
         None
-    }
-
-    /// Scan statements for `@extends`/`@augments` not on class declarations (TS8022).
-    ///
-    /// Each result is `(tag, Some((pos, len)))` when the orphan is the leading
-    /// JSDoc of a non-class statement (tsc reports these at the statement's
-    /// position), or `(tag, None)` when it is a fully-dangling JSDoc comment
-    /// not attached to any statement (tsc reports these at program level with
-    /// no file/position).
-    pub(crate) fn find_orphaned_extends_tags_for_statements(
-        &self,
-        statements: &[NodeIndex],
-    ) -> Vec<OrphanedExtendsTag> {
-        use tsz_parser::parser::syntax_kind_ext;
-        let Some(sf) = self.ctx.arena.source_files.first() else {
-            return Vec::new();
-        };
-        let source_text: &str = &sf.text;
-        let comments = &sf.comments;
-        let mut results = Vec::new();
-        let mut handled_comment_positions = Vec::new();
-        // Phase 1: Check each top-level statement's leading JSDoc
-        for &stmt_idx in statements {
-            let Some(node) = self.ctx.arena.get(stmt_idx) else {
-                continue;
-            };
-            if node.kind == syntax_kind_ext::CLASS_DECLARATION
-                || node.kind == syntax_kind_ext::CLASS_EXPRESSION
-            {
-                // Always mark class declarations as handled so that any
-                // preceding `@extends`/`@augments` comment — even one
-                // separated from the class by blank lines or intermediate
-                // JSDoc comments — is not reported as orphaned.  tsc
-                // considers `@extends` on a class valid (possibly redundant)
-                // and never emits TS8022 for it.
-                handled_comment_positions.push(node.pos);
-                continue;
-            }
-            let Some(jsdoc) = self.try_leading_jsdoc(comments, node.pos, source_text) else {
-                continue;
-            };
-            let tag = if Self::jsdoc_contains_tag(&jsdoc, "augments") {
-                "augments"
-            } else if Self::jsdoc_contains_tag(&jsdoc, "extends") {
-                "extends"
-            } else {
-                continue;
-            };
-            handled_comment_positions.push(node.pos);
-            let (pos, len) = if node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
-                if let Some(func) = self.ctx.arena.get_function(node)
-                    && let Some(name_node) = self.ctx.arena.get(func.name)
-                {
-                    (name_node.pos, name_node.end - name_node.pos)
-                } else {
-                    (node.pos, node.end - node.pos)
-                }
-            } else {
-                (node.pos, node.end - node.pos)
-            };
-            results.push((tag, Some((pos, len))));
-        }
-        // Phase 2: Check for dangling JSDoc comments not attached to any statement
-        use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
-        for comment in comments {
-            if !is_jsdoc_comment(comment, source_text) {
-                continue;
-            }
-            // Note: we intentionally do NOT skip comments simply because they
-            // appear before a handled class — tsc reports `@extends`/`@augments`
-            // as orphaned when another JSDoc comment is interposed between the
-            // tag and the class declaration (see extendsTag2). The
-            // is_leading_of_any_stmt check below is the sole gate.
-            let content = get_jsdoc_content(comment, source_text);
-            let tag = if Self::jsdoc_contains_tag(&content, "augments") {
-                "augments"
-            } else if Self::jsdoc_contains_tag(&content, "extends") {
-                "extends"
-            } else {
-                continue;
-            };
-            let is_leading_of_any_stmt = statements.iter().any(|&stmt_idx| {
-                if let Some(n) = self.ctx.arena.get(stmt_idx)
-                    && let Some((_, leading_pos)) =
-                        self.try_leading_jsdoc_with_pos(comments, n.pos, source_text)
-                {
-                    return leading_pos == comment.pos;
-                }
-                false
-            });
-            if is_leading_of_any_stmt {
-                continue;
-            }
-            // Dangling JSDoc comment. tsc distinguishes two cases:
-            //   * If there is any statement after the comment (even separated
-            //     by intervening JSDoc), tsc reports at program level with no
-            //     file/position — see `extendsTag2.ts`.
-            //   * If the comment is the last meaningful thing in the file, tsc
-            //     anchors the diagnostic at the position just after the
-            //     comment's closing `*/` — see `extendsTag4.ts`.
-            let any_stmt_after = statements.iter().any(|&stmt_idx| {
-                self.ctx
-                    .arena
-                    .get(stmt_idx)
-                    .is_some_and(|n| n.pos >= comment.end)
-            });
-            if any_stmt_after {
-                results.push((tag, None));
-            } else {
-                results.push((tag, Some((comment.end, 0))));
-            }
-        }
-        results
     }
 
     /// Check if two source positions are in different function scopes.
