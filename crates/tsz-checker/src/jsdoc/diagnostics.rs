@@ -383,20 +383,6 @@ impl<'a> CheckerState<'a> {
             .collect()
     }
 
-    fn jsdoc_typedef_has_inline_type(comment_text: &str, typedef_pos: usize) -> bool {
-        let after_typedef = typedef_pos + "@typedef".len();
-        comment_text[after_typedef..].trim_start().starts_with('{')
-    }
-
-    fn jsdoc_typedef_segment_has_child_type_tag(segment_text: &str) -> bool {
-        let before_template = Self::jsdoc_tag_offset(segment_text, "template")
-            .map(|template_pos| &segment_text[..template_pos])
-            .unwrap_or(segment_text);
-        ["property", "prop", "type", "member"]
-            .iter()
-            .any(|tag| Self::jsdoc_tag_offset(before_template, tag).is_some())
-    }
-
     fn jsdoc_type_tag_duplicate_anchor(comment_text: &str, type_tag_pos: usize) -> (usize, u32) {
         let after = type_tag_pos + "@type".len();
         let tag_text = &comment_text[after..];
@@ -419,20 +405,6 @@ impl<'a> CheckerState<'a> {
             None
         };
         anchor_offset.map_or((type_tag_pos, "@type".len() as u32), |offset| (offset, 0))
-    }
-
-    fn jsdoc_typedef_missing_type_name_span(
-        comment_text: &str,
-        typedef_pos: usize,
-        segment_end: usize,
-    ) -> (usize, usize) {
-        let after_typedef = typedef_pos + "@typedef".len();
-        let rest = &comment_text[after_typedef..segment_end];
-        let name_start = after_typedef + rest.find(|c: char| !c.is_whitespace()).unwrap_or(0);
-        let name_len = comment_text[name_start..segment_end]
-            .find(|c: char| c.is_whitespace() || c == '*' || c == '/')
-            .unwrap_or(segment_end - name_start);
-        (name_start, name_len)
     }
 
     fn jsdoc_typedef_is_import_alias(info: &crate::jsdoc::types::JsdocTypedefInfo) -> bool {
@@ -520,60 +492,6 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::A_JSDOC_TYPEDEF_COMMENT_MAY_NOT_CONTAIN_MULTIPLE_TYPE_TAGS,
                     );
                 }
-            }
-        }
-    }
-
-    /// Check for `@typedef` tags that have neither a type annotation nor
-    /// `@property`/`@member` tags. Emits TS8021.
-    ///
-    /// Valid: `/** @typedef {Object} Foo */` or `/** @typedef Foo \n @property {string} name */`
-    /// Invalid: `/** @typedef T */` (no type, no properties)
-    pub(crate) fn check_typedef_missing_type(&mut self) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-        use tsz_common::comments::is_jsdoc_comment;
-
-        let Some(sf) = self.ctx.arena.source_files.first() else {
-            return;
-        };
-        let source_text: &str = &sf.text;
-        let comments = &sf.comments;
-
-        for comment in comments {
-            if !is_jsdoc_comment(comment, source_text) {
-                continue;
-            }
-
-            let comment_text = comment.get_text(source_text);
-
-            for (typedef_pos, segment_end) in Self::jsdoc_typedef_tag_spans(comment_text) {
-                let after_typedef = typedef_pos + "@typedef".len();
-                let segment_text = &comment_text[after_typedef..segment_end];
-                if Self::jsdoc_typedef_has_inline_type(comment_text, typedef_pos)
-                    || Self::jsdoc_typedef_segment_has_child_type_tag(segment_text)
-                {
-                    continue;
-                }
-
-                // Emit TS8021 at the typedef name position (TSC points at the name, not @typedef)
-                let (name_start, name_len) = Self::jsdoc_typedef_missing_type_name_span(
-                    comment_text,
-                    typedef_pos,
-                    segment_end,
-                );
-                let error_pos = comment.pos + name_start as u32;
-                let error_len = if name_len > 0 {
-                    name_len as u32
-                } else {
-                    "@typedef".len() as u32
-                };
-                self.ctx.error(
-                    error_pos,
-                    error_len,
-                    diagnostic_messages::JSDOC_TYPEDEF_TAG_SHOULD_EITHER_HAVE_A_TYPE_ANNOTATION_OR_BE_FOLLOWED_BY_PROPERT
-                        .to_string(),
-                    diagnostic_codes::JSDOC_TYPEDEF_TAG_SHOULD_EITHER_HAVE_A_TYPE_ANNOTATION_OR_BE_FOLLOWED_BY_PROPERT,
-                );
             }
         }
     }
