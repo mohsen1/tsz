@@ -688,6 +688,9 @@ mod ts7053_index_reason_chain_tests;
 #[path = "../tests/ts7057_yield_implicit_any.rs"]
 mod ts7057_yield_implicit_any;
 #[cfg(test)]
+#[path = "tests/ts8030_jsdoc_type_tag_message_tests.rs"]
+mod ts8030_jsdoc_type_tag_message_tests;
+#[cfg(test)]
 #[path = "../tests/tuple_index_access_tests.rs"]
 mod tuple_index_access_tests;
 #[cfg(test)]
