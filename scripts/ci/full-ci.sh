@@ -30,7 +30,16 @@ mkdir -p "$CARGO_HOME" "$NPM_CONFIG_CACHE" "$TSZ_CI_WASM_PACK_CACHE"
 # that deficit when available so corpus-total drift does not force blind
 # absolute-floor edits. The fallback floor still protects paths without shard
 # expected counts.
-TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR="${TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR:-11019}"
+# Snapshot refreshed 2026-07-25 at 5a1aa359: macOS measures 11342/12043.
+# This floor is deliberately BELOW that. The effective gate is
+# min(snapshot.passed, this floor), so the floor is what actually binds, and a
+# macOS-measured number pinned here would make the Linux nightly permanently
+# red — there is a recorded Linux/macOS delta of roughly 43 tests, cause not
+# yet isolated (clusters in projects/* and module-resolution). 11250 leaves
+# ~92 tests of headroom, more than twice the recorded delta, while narrowing
+# the tolerated regression from 323 tests to 92. Tighten toward the observed
+# Linux number once the first nightly heavy-lane run reports it.
+TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR="${TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR:-11250}"
 # Optional accepted-regression list for temporary conformance runways. Keep this
 # path-based, not count-based: fixing one listed test must not let a new
 # unlisted regression pass CI under the same aggregate deficit.
@@ -44,7 +53,10 @@ TSZ_CI_CONFORMANCE_ACCEPTED_REGRESSIONS="${TSZ_CI_CONFORMANCE_ACCEPTED_REGRESSIO
 # Recalibrate to 11563 when the corpus baseline is regenerated at 7.0.2 AND
 # the hof/hof2 parameter-position Corsa garbage-tail recovery lands.
 TSZ_CI_JS_ACCEPTED_FLOOR="${TSZ_CI_JS_ACCEPTED_FLOOR:-11562}"
-TSZ_CI_DTS_ACCEPTED_FLOOR="${TSZ_CI_DTS_ACCEPTED_FLOOR:-1372}"
+# DTS floor tracks the measured value exactly: declaration emit is a
+# deterministic text comparison against checked-in baselines with no platform
+# variance, so there is no headroom to reserve. 1372 -> 1375 after #15917.
+TSZ_CI_DTS_ACCEPTED_FLOOR="${TSZ_CI_DTS_ACCEPTED_FLOOR:-1375}"
 
 cap_positive_baseline() {
   local baseline="$1"
