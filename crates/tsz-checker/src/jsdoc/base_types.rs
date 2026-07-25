@@ -69,7 +69,11 @@ impl<'a> CheckerState<'a> {
                         simple_expr,
                     )
                     .is_some()
-                    || self.source_file_declares_jsdoc_template(simple_expr)
+                    || self.jsdoc_template_in_scope_for_reference(
+                        simple_expr,
+                        &content,
+                        comment.pos,
+                    )
                     || Self::parse_jsdoc_typedefs(&source_text)
                         .iter()
                         .any(|(name, _)| name == simple_expr)

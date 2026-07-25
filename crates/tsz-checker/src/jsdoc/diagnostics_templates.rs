@@ -401,62 +401,94 @@ impl<'a> CheckerState<'a> {
     /// scope contains the reference at `ref_pos`.
     pub(crate) fn source_file_declares_jsdoc_template_at(&self, name: &str, ref_pos: u32) -> bool {
         use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
-        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 
         let Some(sf) = self.ctx.arena.source_files.first() else {
             return false;
         };
         let source_text: &str = &sf.text;
 
-        for &stmt_idx in &sf.statements.nodes {
-            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+        // Locate the innermost class enclosing the reference. Scanning the arena
+        // rather than the top-level statement list is what makes `export class
+        // Foo` work: the parser wraps that class in an `EXPORT_DECLARATION`, so
+        // the class is not itself a top-level statement and a statement-list
+        // scan would miss its `@template`.
+        let mut host_pos: Option<u32> = None;
+        for raw_idx in 0..self.ctx.arena.len() {
+            let idx = NodeIndex(raw_idx as u32);
+            let Some(node) = self.ctx.arena.get(idx) else {
                 continue;
             };
-            if stmt_node.kind != syntax_kind_ext::CLASS_DECLARATION
-                && stmt_node.kind != syntax_kind_ext::CLASS_EXPRESSION
+            if node.kind != syntax_kind_ext::CLASS_DECLARATION
+                && node.kind != syntax_kind_ext::CLASS_EXPRESSION
             {
                 continue;
             }
-            if !(ref_pos >= stmt_node.pos && ref_pos < stmt_node.end) {
+            if !(ref_pos >= node.pos && ref_pos < node.end) {
                 continue;
             }
-            for comment in &sf.comments {
-                if !is_jsdoc_comment(comment, source_text) {
-                    continue;
-                }
-                if comment.end > stmt_node.pos {
-                    continue;
-                }
-                let content = get_jsdoc_content(comment, source_text);
-                if Self::jsdoc_template_type_params(&content)
-                    .into_iter()
-                    .any(|(decl_name, _, _)| decl_name == name)
-                {
-                    return true;
-                }
+            // The JSDoc sits before the `export` keyword, so anchor the comment
+            // search at the wrapping export when there is one.
+            let mut anchor = node.pos;
+            if let Some(ext) = self.ctx.arena.get_extended(idx)
+                && ext.parent.is_some()
+                && let Some(parent) = self.ctx.arena.get(ext.parent)
+                && parent.kind == syntax_kind_ext::EXPORT_DECLARATION
+            {
+                anchor = parent.pos;
+            }
+            // Innermost wins: a later, tighter class shadows an outer one.
+            if host_pos.is_none_or(|prev| anchor >= prev) {
+                host_pos = Some(anchor);
+            }
+        }
+        let Some(host_pos) = host_pos else {
+            return false;
+        };
+
+        for comment in &sf.comments {
+            if !is_jsdoc_comment(comment, source_text) {
+                continue;
+            }
+            if comment.end > host_pos {
+                continue;
+            }
+            let content = get_jsdoc_content(comment, source_text);
+            if Self::jsdoc_template_type_params(&content)
+                .into_iter()
+                .any(|(decl_name, _, _)| decl_name == name)
+            {
+                return true;
             }
         }
         false
     }
 
-    pub(crate) fn source_file_declares_jsdoc_template(&self, name: &str) -> bool {
-        use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
-        let Some(sf) = self.ctx.arena.source_files.first() else {
-            return false;
-        };
-        let source_text: &str = &sf.text;
-        for comment in &sf.comments {
-            if !is_jsdoc_comment(comment, source_text) {
-                continue;
-            }
-            let content = get_jsdoc_content(comment, source_text);
-            for (decl_name, _is_const, _default) in Self::jsdoc_template_type_params(&content) {
-                if decl_name == name {
-                    return true;
-                }
-            }
+    /// True when `name` is declared by an `@template` tag that is actually in
+    /// scope for a JSDoc type reference at `ref_pos`.
+    ///
+    /// `tsc` scopes `@template` to the declaration its comment is attached to,
+    /// plus — for a class — that class's members. A `@template` written on some
+    /// other declaration in the same file is not in scope, so a reference to it
+    /// is a genuine `TS2304`. The case that matters most in practice is a JS
+    /// constructor function: `@template K` on `function M() {}` does not reach a
+    /// separate JSDoc comment on `M.prototype.get`, and `tsc` reports
+    /// "Cannot find name 'K'" there.
+    pub(crate) fn jsdoc_template_in_scope_for_reference(
+        &self,
+        name: &str,
+        own_comment_content: &str,
+        ref_pos: u32,
+    ) -> bool {
+        // The reference's own comment: `@template T` alongside `@param {T}`.
+        if Self::jsdoc_template_type_params(own_comment_content)
+            .into_iter()
+            .any(|(decl_name, _is_const, _default)| decl_name == name)
+        {
+            return true;
         }
-        false
+        // An enclosing class declaration's `@template`, in scope for members.
+        self.source_file_declares_jsdoc_template_at(name, ref_pos)
     }
 
     /// TS1069: `@template {Constraint}` with no type-parameter name following
