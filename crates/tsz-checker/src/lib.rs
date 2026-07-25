@@ -400,6 +400,9 @@ mod jsdoc_prototype_assignment_target_display;
 #[path = "tests/jsdoc_retired_tag_diagnostics_tests.rs"]
 mod jsdoc_retired_tag_diagnostics_tests;
 #[cfg(test)]
+#[path = "tests/jsdoc_template_reference_scope_tests.rs"]
+mod jsdoc_template_reference_scope_tests;
+#[cfg(test)]
 #[path = "../tests/jsdoc_this_arrow_tests.rs"]
 mod jsdoc_this_arrow_tests;
 #[cfg(test)]
