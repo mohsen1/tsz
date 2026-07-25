@@ -374,6 +374,17 @@ impl<'a> CheckerState<'a> {
             .resolve_identifier_symbol(symbol_target_expr)
             .or_else(|| self.resolve_qualified_symbol(symbol_target_expr));
 
+        // An explicit type annotation makes the declared type authoritative, so
+        // the write is an ordinary property assignment and must report TS2339
+        // when the property is absent. `const f: () => void = () => {}` takes no
+        // expando properties even though its initializer is a function, while
+        // the inferred `const f = () => {}` still does.
+        if let Some(sym_id) = sym_id
+            && self.expando_root_symbol_has_type_annotation(sym_id)
+        {
+            return false;
+        }
+
         if let Some(sym_id) = sym_id
             && let Some(symbol) = self
                 .get_cross_file_symbol(sym_id)

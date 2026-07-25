@@ -244,6 +244,9 @@ mod enum_recursion_tests;
 #[path = "../tests/environment_capabilities_tests.rs"]
 mod environment_capabilities_tests;
 #[cfg(test)]
+#[path = "tests/expando_annotated_receiver_tests.rs"]
+mod expando_annotated_receiver_tests;
+#[cfg(test)]
 #[path = "tests/flow_assignment_relation_routing_arch_tests.rs"]
 mod flow_assignment_relation_routing_arch_tests;
 #[cfg(test)]
