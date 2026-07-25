@@ -234,11 +234,32 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            // tsc's `elaborateDidYouMeanToCallOrConstruct` applies to an
+            // object-literal property value as well: in
+            // `var b: { [x: string]: A } = { a: A }` the failure is reported at
+            // the value `A`, not at the property name, because `typeof A` has a
+            // construct signature whose return type satisfies `A`. Without this
+            // the property name keeps the anchor.
+            //
+            // The return-type half of the predicate is load-bearing: anchoring
+            // on "the value is callable" alone re-anchors values whose call
+            // would not have helped, which tsc leaves on the property name.
+            let mut anchor_idx = report_idx;
+            if let Some(value_idx) = self.object_literal_property_initializer(report_idx)
+                && crate::query_boundaries::assignability_did_you_mean::did_you_mean_call_or_construct(
+                    self.ctx.types.as_type_database(),
+                    source_prop.type_id,
+                    target_value_type,
+                )
+            {
+                anchor_idx = value_idx;
+            }
+
             let _ = self.check_assignable_or_report_at_exact_anchor_without_source_elaboration(
                 source_prop.type_id,
                 target_value_type,
-                report_idx,
-                report_idx,
+                anchor_idx,
+                anchor_idx,
             );
         }
 
