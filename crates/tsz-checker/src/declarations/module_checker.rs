@@ -1677,7 +1677,44 @@ impl<'a> CheckerState<'a> {
                 if self.get_node_span(error_node_idx).is_some() {
                     self.error_at_node(error_node_idx, &message, code);
                 } else if let Some((start, end)) = fallback_span {
-                    self.error(start, end.saturating_sub(start), message, code);
+                    self.error(start, end.saturating_sub(start), message.clone(), code);
+                }
+
+                // `export = X` does NOT create its own alias symbol: the binder
+                // records `"export="` in `file_locals` as a second KEY onto X's
+                // existing `SymbolId` (nodes/binding.rs, EXPORT_ASSIGNMENT arm),
+                // and never registers the `ExportAssignment` node as one of X's
+                // declarations. So the export side is unreachable from the
+                // symbol — neither by collecting more symbols nor by iterating
+                // `sym.declarations` — and the cycle could only ever be reported
+                // from the import side.
+                //
+                // tsc reports at EVERY alias declaration in the cycle, so when
+                // this file's `export =` targets the cyclic symbol, emit there
+                // too. Scanning only this file's statements preserves the
+                // current-file ownership the collection scan above is built on.
+                if self.ctx.binder.file_locals.get("export=") == Some(sym_id)
+                    && let Some(source_file) = self.ctx.arena.source_files.first()
+                {
+                    let export_equals_stmts: Vec<NodeIndex> = source_file
+                        .statements
+                        .nodes
+                        .iter()
+                        .copied()
+                        .filter(|&stmt_idx| {
+                            self.ctx.arena.get(stmt_idx).is_some_and(|stmt_node| {
+                                stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+                                    && self
+                                        .ctx
+                                        .arena
+                                        .get_export_assignment(stmt_node)
+                                        .is_some_and(|assign| assign.is_export_equals)
+                            })
+                        })
+                        .collect();
+                    for stmt_idx in export_equals_stmts {
+                        self.error_at_node(stmt_idx, &message, code);
+                    }
                 }
             }
         }
