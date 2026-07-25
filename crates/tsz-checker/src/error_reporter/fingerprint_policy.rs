@@ -1440,7 +1440,7 @@ impl<'a> CheckerState<'a> {
                 .node_types
                 .get(&vd.type_annotation.0)
                 .or_else(|| self.ctx.node_types.get(&vd.name.0))
-            && crate::query_boundaries::assignability::did_you_mean_call_or_construct(
+            && crate::query_boundaries::assignability_did_you_mean::did_you_mean_call_or_construct(
                 self.ctx.types.as_type_database(),
                 init_type,
                 declared_type,

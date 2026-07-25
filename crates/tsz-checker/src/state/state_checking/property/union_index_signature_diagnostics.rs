@@ -245,14 +245,14 @@ impl<'a> CheckerState<'a> {
             // on "the value is callable" alone re-anchors values whose call
             // would not have helped, which tsc leaves on the property name.
             let mut anchor_idx = report_idx;
-            if let Some(value_idx) = self.object_literal_property_initializer(report_idx) {
-                if crate::query_boundaries::assignability::did_you_mean_call_or_construct(
+            if let Some(value_idx) = self.object_literal_property_initializer(report_idx)
+                && crate::query_boundaries::assignability_did_you_mean::did_you_mean_call_or_construct(
                     self.ctx.types.as_type_database(),
                     source_prop.type_id,
                     target_value_type,
-                ) {
-                    anchor_idx = value_idx;
-                }
+                )
+            {
+                anchor_idx = value_idx;
             }
 
             let _ = self.check_assignable_or_report_at_exact_anchor_without_source_elaboration(
