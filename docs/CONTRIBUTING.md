@@ -75,8 +75,11 @@ python3 scripts/conformance/query-conformance.py --dashboard
 Every PR body must include a `Goal: <green|fast|grow|hold>` line, a
 `## Verification` section, and a `## Provenance` block with `Machine:`,
 `Assistant:`, `Model:`, and `Effort:` lines reporting your actual runtime
-values; the `pr-body-gate` CI job enforces these. Use the PR body for
-scope, invariants, findings, and verification.
+values. Use the PR body for scope, invariants, findings, and verification.
+
+These fields are a review convention, not an enforced gate: no `pr-body-gate`
+job exists in `.github/workflows/`. Write them because reviewers and future
+sessions read them, not because CI will stop you.
 
 When adding or re-adding WIP state, leave a PR comment with the reason WIP
 state changed, the current blocker or work, and the next action, signed with

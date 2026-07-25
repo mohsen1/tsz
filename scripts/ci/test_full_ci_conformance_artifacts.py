@@ -46,7 +46,11 @@ class ConformanceArtifactHandoffTests(unittest.TestCase):
         upload_block = self.workflow[
             self.workflow.index("name: conformance-shard-${{ matrix.shard }}") :
         ]
-        upload_block = upload_block[: upload_block.index("retention-days: 1")]
+        # Match the key, not a value prefix: "retention-days: 14".index(
+        # "retention-days: 1") is 0, which silently truncates the block to ""
+        # and makes the assertion below vacuous, and any value not starting
+        # with "1" would raise ValueError here instead.
+        upload_block = upload_block[: upload_block.index("retention-days:")]
         self.assertNotIn("include-hidden-files", upload_block)
 
     def test_shard_writes_failure_list_before_artifact_handoff(self):

@@ -7,6 +7,10 @@ on:
   push:
     branches:
       - main
+  schedule:
+    # Nightly heavy lane. Local runs are the per-merge source of truth for
+    # conformance/emit/fourslash/unit; this is the automated drift detector.
+    - cron: '0 4 * * *'
   workflow_dispatch:
     inputs:
       refresh_tsc_cache:
@@ -20,13 +24,15 @@ permissions:
   actions: read
 
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
+  # Event is part of the group so a long nightly cannot queue behind (or
+  # block) push-to-main runs: both resolve github.ref to refs/heads/main.
+  group: ci-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   clippy:
     name: clippy
-    if: ${{ github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.refresh_tsc_cache != true) }}
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.refresh_tsc_cache != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -57,7 +63,7 @@ jobs:
 
   unit:
     name: unit
-    if: ${{ github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.refresh_tsc_cache != true) }}
+    if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && inputs.refresh_tsc_cache != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -69,7 +75,7 @@ jobs:
 
   conformance:
     name: conformance-${{ matrix.shard }}
-    if: ${{ github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.refresh_tsc_cache != true) }}
+    if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && inputs.refresh_tsc_cache != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     strategy:
@@ -98,7 +104,7 @@ jobs:
             ci-metrics/conformance-failures-*.txt
             ci-metrics/conformance-timings-*.json
           if-no-files-found: warn
-          retention-days: 1
+          retention-days: 14
 
   conformance-aggregate:
     name: conformance-aggregate
@@ -125,7 +131,7 @@ jobs:
 
   emit:
     name: emit-${{ matrix.shard }}
-    if: ${{ github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.refresh_tsc_cache != true) }}
+    if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && inputs.refresh_tsc_cache != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
     strategy:
@@ -153,7 +159,7 @@ jobs:
             ci-metrics/emit-detail-${{ matrix.shard }}.json
             .ci-logs/emit/*.log
           if-no-files-found: warn
-          retention-days: 1
+          retention-days: 14
 
   emit-aggregate:
     name: emit-aggregate
@@ -179,7 +185,7 @@ jobs:
 
   fourslash:
     name: fourslash-${{ matrix.shard }}
-    if: ${{ github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.refresh_tsc_cache != true) }}
+    if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && inputs.refresh_tsc_cache != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
     strategy:
@@ -212,7 +218,7 @@ jobs:
             ci-metrics/fourslash-shard-${{ matrix.shard }}.json
             .ci-logs/fourslash/*.log
           if-no-files-found: warn
-          retention-days: 1
+          retention-days: 14
 
   fourslash-aggregate:
     name: fourslash-aggregate
@@ -238,7 +244,7 @@ jobs:
 
   arch-size:
     name: arch-size
-    if: ${{ github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.refresh_tsc_cache != true) }}
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.refresh_tsc_cache != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -446,17 +452,24 @@ jobs:
               "arch-size",
           }
 
-          # On pull_request the heavy jobs are intentionally skipped: the merge
-          # campaign validates PRs via local delta-verified trains, and the full
-          # suite still runs on merge_group / push-to-main / workflow_dispatch.
-          # So "skipped" counts as a pass ONLY for pull_request; a real failure or
-          # cancellation still fails, and every non-PR event stays strict.
-          allow_skipped = os.environ.get("EVENT_NAME") == "pull_request"
-          passing = {"success", "skipped"} if allow_skipped else {"success"}
+          # Two lanes. `fast` runs on every event and must always succeed.
+          # `heavy` runs only on schedule / workflow_dispatch, because local
+          # runs are the per-merge source of truth for conformance, emit,
+          # fourslash and unit; on every other event those jobs are skipped BY
+          # DESIGN and skipping must count as passing, or nothing can merge.
+          #
+          # A real failure or cancellation still fails in both lanes, and on the
+          # events where the heavy jobs actually run they are strictly required.
+          fast = {"clippy", "arch-size"}
+          heavy_lane_event = os.environ.get("EVENT_NAME") in {"schedule", "workflow_dispatch"}
 
           failures = []
           for name in sorted(required):
               result = needs.get(name, {}).get("result")
+              if name in fast or heavy_lane_event:
+                  passing = {"success"}
+              else:
+                  passing = {"success", "skipped"}
               if result not in passing:
                   failures.append(f"{name}: {result}")
 
@@ -466,8 +479,13 @@ jobs:
                   print(f"  - {failure}")
               sys.exit(1)
 
-          if allow_skipped:
-              print("PR event: heavy jobs skipped by design; core gate passes.")
+          if heavy_lane_event:
+              print("Heavy lane: clippy, unit, conformance, emit and fourslash all passed.")
           else:
-              print("Clippy, unit, conformance, emit, and fourslash checks passed.")
+              print(
+                  "Fast lane: clippy and arch-size passed. Conformance, emit, "
+                  "fourslash and unit are skipped by design on this event — they "
+                  "run nightly and on workflow_dispatch, and local runs are the "
+                  "per-merge source of truth. See docs/CONTRIBUTING.md."
+              )
           PY
