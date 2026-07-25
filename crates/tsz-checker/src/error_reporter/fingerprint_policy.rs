@@ -1112,14 +1112,26 @@ impl<'a> CheckerState<'a> {
             return self.normalized_anchor_span(prop.name, name_start, name_len);
         }
 
+        // tsc's `getErrorSpanForNode` has no `SyntaxKind.Parameter` case, so a
+        // parameter keeps its own span rather than narrowing to its name. For a
+        // plain parameter the two coincide (the node starts at the name), but a
+        // **parameter property** starts at its accessibility modifier, and tsc
+        // anchors there: `constructor(public x: string = 1)` reports TS2322 at
+        // `public`, not at `x`. Narrowing unconditionally lost that.
         if node.kind == syntax_kind_ext::PARAMETER
             && let Some(param) = self.ctx.arena.get_parameter(node)
             && param.name.is_some()
             && let Some(name_node) = self.ctx.arena.get(param.name)
         {
-            let name_start = name_node.pos;
-            let name_len = name_node.end.saturating_sub(name_start);
-            return self.normalized_anchor_span(param.name, name_start, name_len);
+            let has_modifiers = param
+                .modifiers
+                .as_ref()
+                .is_some_and(|modifiers| !modifiers.nodes.is_empty());
+            if !has_modifiers {
+                let name_start = name_node.pos;
+                let name_len = name_node.end.saturating_sub(name_start);
+                return self.normalized_anchor_span(param.name, name_start, name_len);
+            }
         }
 
         // tsc's `getErrorSpanForNode` narrows a *named* function or class
