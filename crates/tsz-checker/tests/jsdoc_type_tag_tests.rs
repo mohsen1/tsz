@@ -58,7 +58,7 @@ fn test_jsdoc_unknown_intrinsic_does_not_emit_ts2304() {
 /** @type {unknown} */
 let x;
 
-/** @type {{ value: unknown, cb: function(unknown): unknown }} */
+/** @type {{ value: unknown, cb: (u: unknown) => unknown }} */
 let y;
 
 /** @type {Record<string, unknown>} */
@@ -154,7 +154,7 @@ class A {
 #[test]
 fn test_jsdoc_function_closure_syntax_contextual_typing() {
     let source = r#"
-/** @type {function(string): void} */
+/** @type {(s: string) => void} */
 var f = function(value) {
     value = 1
 }
@@ -365,7 +365,7 @@ var obj = {
 fn test_jsdoc_type_on_object_function_property_provides_callable_context() {
     let source = r##"
 const obj = {
-    /** @type {function(number): number} */
+    /** @type {(n: number) => number} */
     method1: (n1) => {
         n1 = "42";
         return 1;

@@ -1190,10 +1190,12 @@ impl<'a> CheckerState<'a> {
         if expr.eq_ignore_ascii_case("function") || expr.eq_ignore_ascii_case("Function") {
             return false;
         }
+        // Only the TypeScript arrow form declares a callable. The Closure
+        // `function(...)` spelling does not: TypeScript 7 rejects it (TS1005),
+        // the type does not resolve, and the annotated function therefore gains
+        // no signature — so its parameters are implicitly `any` and must still
+        // report TS7006 rather than being treated as documented.
         expr.contains("=>")
-            || expr
-                .strip_prefix("function")
-                .is_some_and(|rest| rest.trim_start().starts_with('('))
     }
 
     pub(crate) fn jsdoc_type_tag_is_broad_function(jsdoc: &str) -> bool {

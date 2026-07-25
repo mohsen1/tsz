@@ -651,98 +651,17 @@ impl<'a> CheckerState<'a> {
                 {
                     return Some(result);
                 }
-                if let Some(rest) = type_expr.strip_prefix("function") {
-                    let rest = rest.trim_start();
-                    if !rest.starts_with('(') {
-                        return None;
-                    }
-                    let rest = &rest[1..];
-                    let mut depth = 1u32;
-                    let mut close_idx = None;
-                    for (i, ch) in rest.char_indices() {
-                        match ch {
-                            '(' => depth += 1,
-                            ')' => {
-                                depth -= 1;
-                                if depth == 0 {
-                                    close_idx = Some(i);
-                                    break;
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    if let Some(close) = close_idx {
-                        let params_inner = rest[..close].trim();
-                        let after_close = rest[close + 1..].trim();
-                        let return_type_str = after_close
-                            .strip_prefix(':')
-                            .map(|s| s.trim())
-                            .unwrap_or("void");
-                        let return_type = self
-                            .resolve_jsdoc_reference(return_type_str)
-                            .unwrap_or(TypeId::VOID);
-                        let mut params = Vec::new();
-                        let mut this_type = None;
-                        let mut ok = true;
-                        let mut is_constructor = false;
-                        let mut constructor_return = None;
-                        if !params_inner.is_empty() {
-                            let mut arg_index = 0u32;
-                            for p in Self::split_top_level_params(params_inner) {
-                                let p = p.trim();
-                                if let Some(new_ret) = p.strip_prefix("new:") {
-                                    is_constructor = true;
-                                    let ret_str = new_ret.trim();
-                                    constructor_return = self.resolve_jsdoc_reference(ret_str);
-                                    arg_index += 1; // TSC skips arg0 for 'new:'
-                                    continue;
-                                }
-                                if let Some(this_param) = p.strip_prefix("this:") {
-                                    this_type = self.resolve_jsdoc_reference(this_param.trim());
-                                    continue;
-                                }
-                                let is_rest = p.starts_with("...");
-                                let effective_p = if is_rest { &p[3..] } else { p };
-                                if let Some(p_type) = self.resolve_jsdoc_reference(effective_p) {
-                                    let type_id = if is_rest {
-                                        jsdoc_construct::jsdoc_array_type(self.ctx.types, p_type)
-                                    } else {
-                                        p_type
-                                    };
-                                    let name =
-                                        self.ctx.types.intern_string(&format!("arg{arg_index}"));
-                                    arg_index += 1;
-                                    params.push(jsdoc_param_info(
-                                        Some(name),
-                                        type_id,
-                                        false,
-                                        is_rest,
-                                    ));
-                                } else {
-                                    ok = false;
-                                    break;
-                                }
-                            }
-                        }
-                        if ok {
-                            let final_return = if is_constructor {
-                                constructor_return.unwrap_or(return_type)
-                            } else {
-                                return_type
-                            };
-                            return Some(jsdoc_function_type(
-                                self.ctx.types,
-                                Vec::new(),
-                                params,
-                                this_type,
-                                final_return,
-                                None,
-                                is_constructor,
-                                false,
-                            ));
-                        }
-                    }
+                // TypeScript 7 does not accept the Closure `function(...)` form.
+                // The syntax error is TS1005, reported in
+                // `jsdoc/closure_function_type.rs`; the type itself must not
+                // resolve, so the annotated symbol gains no contextual signature.
+                // Its parameters then fall to implicit `any` (TS7006) and the
+                // assignability errors a reconstructed signature used to produce
+                // disappear, which is what the oracle expects.
+                if let Some(rest) = type_expr.strip_prefix("function")
+                    && rest.trim_start().starts_with('(')
+                {
+                    return None;
                 }
                 if let Some(rest) = type_expr.strip_prefix("keyof") {
                     let rest = rest.trim_start();
