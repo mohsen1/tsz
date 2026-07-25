@@ -66,29 +66,12 @@ jobs:
     if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && inputs.refresh_tsc_cache != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    env:
-      # The checker integration batches run in their own job below, in
-      # parallel. They were the bulk of this job's ~31 minutes, which was the
-      # merge_group critical path.
-      TSZ_CI_UNIT_SKIP_CHECKER_INTEGRATION: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
       - name: Run unit tests
         run: scripts/ci/github-suite.sh unit
-
-  checker-integration:
-    name: checker-integration
-    if: ${{ github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.refresh_tsc_cache != true) }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 1
-      - name: Run checker integration tests
-        run: scripts/ci/github-suite.sh checker-integration
 
   conformance:
     name: conformance-${{ matrix.shard }}
@@ -435,7 +418,6 @@ jobs:
     needs:
       - clippy
       - unit
-      - checker-integration
       - conformance
       - conformance-aggregate
       - emit
@@ -461,7 +443,6 @@ jobs:
           required = {
               "clippy",
               "unit",
-              "checker-integration",
               "conformance",
               "conformance-aggregate",
               "emit",

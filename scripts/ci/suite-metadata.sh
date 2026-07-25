@@ -2,7 +2,6 @@
 
 _TSZ_CI_GITHUB_SUITES=(
   unit
-  checker-integration
   conformance
   conformance-aggregate
   emit-shard
