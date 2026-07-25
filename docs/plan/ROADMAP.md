@@ -134,9 +134,12 @@ These survive any goal reshuffle:
 5. **Cache/order honesty.** Cache-enabled and cache-disabled runs agree;
    reordered declarations produce stable diagnostics; `T` not assignable to
    `T` is a cache/keying bug until proven otherwise.
-6. **Local verification.** Never run full conformance/emit/fourslash locally;
-   use narrow filters and `cargo nextest run`; ready-review CI owns broad
-   suites. Wrap heavy commands in `scripts/safe-run.sh`.
+6. **Local verification.** Local runs are the source of truth. CI's per-merge
+   lane is `clippy` + `arch-size` only; conformance, emit, fourslash and unit
+   run nightly and on `workflow_dispatch`. Run the suites a change can affect
+   before pushing and record before/after in the PR body. Wrap heavy commands
+   in `scripts/safe-run.sh`, and never run two `conformance.sh` invocations
+   concurrently — it cleans the shared corpus tree on entry.
 
 ## Coordination
 
