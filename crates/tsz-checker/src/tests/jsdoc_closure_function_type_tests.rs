@@ -167,3 +167,38 @@ fn a_resolvable_callable_type_does_not_report_ts8030() {
     let codes = js_codes("/** @type {() => number} */\nfunction f() { return 1; }\n");
     assert!(!codes.contains(&8030), "got {codes:?}");
 }
+
+#[test]
+fn closure_type_on_an_object_literal_method_reports_ts8030() {
+    // tsc runs the TS8030 check from `checkFunctionOrMethodDeclaration`, which
+    // covers method declarations. `checkJsdocTypeTagOnObjectProperty1`'s oracle
+    // reports it for the method shorthand.
+    let codes = js_codes(
+        "const obj = {\n  /** @type {function(number): number} */\n  method1(n1) { return n1; }\n};\n",
+    );
+    assert!(codes.contains(&8030), "got {codes:?}");
+}
+
+#[test]
+fn closure_type_on_an_arrow_initialized_property_reports_no_ts8030() {
+    // A property with a function or arrow *initializer* is an expression, not a
+    // method declaration. The same oracle reports no TS8030 for `arrowFunc`
+    // under an identical tag — only the TS1005 for the type itself.
+    let codes = js_codes(
+        "const obj = {\n  /** @type {function(number): number} */\n  arrowFunc: (num) => num\n};\n",
+    );
+    assert!(
+        codes.contains(&1005),
+        "the type is still rejected: {codes:?}"
+    );
+    assert!(!codes.contains(&8030), "got {codes:?}");
+}
+
+#[test]
+fn class_methods_are_left_alone() {
+    // The pass is restricted to methods directly inside an object literal;
+    // there is no corpus witness for class methods, so it must not fire there.
+    let codes =
+        js_codes("class C {\n  /** @type {function(number): number} */\n  m(n) { return n; }\n}\n");
+    assert!(!codes.contains(&8030), "got {codes:?}");
+}
