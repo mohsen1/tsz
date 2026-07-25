@@ -876,6 +876,37 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// Byte offset of the `(` in a Closure-style `function(...)` JSDoc type,
+    /// which is where the pinned compiler anchors TS1005 `'}' expected.`.
+    ///
+    /// TypeScript 7 does not accept the Closure function-type form at all —
+    /// `@type {function(string): void}` is a syntax error, and the annotated
+    /// symbol gets an error type rather than a reconstructed signature. Across
+    /// the corpus, 43 of 47 JSDoc `function(` sites carry TS1005 or TS1003 in
+    /// the oracle. The exceptions are `@enum` (which the pinned compiler does
+    /// not implement, so it never parses the type) and `.ts`/`.tsx` files
+    /// (where JSDoc types are not used as types at all).
+    ///
+    /// Only a `function` that heads the type expression counts, after an
+    /// optional Closure nullability prefix. `Array<function()>` and a type
+    /// merely named `functionLike` are not this construct.
+    pub(crate) fn jsdoc_closure_function_type_offset(type_expr: &str) -> Option<usize> {
+        let trimmed = type_expr.trim_start();
+        let leading = type_expr.len() - trimmed.len();
+        let body = trimmed
+            .strip_prefix('!')
+            .or_else(|| trimmed.strip_prefix('?'))
+            .unwrap_or(trimmed);
+        let prefix = leading + (trimmed.len() - body.len());
+        let after_keyword = body.strip_prefix("function")?;
+        // `function` must be the whole head: `functionLike` is an ordinary name.
+        let paren_rel = after_keyword.len() - after_keyword.trim_start().len();
+        if !after_keyword.trim_start().starts_with('(') {
+            return None;
+        }
+        Some(prefix + "function".len() + paren_rel)
+    }
+
     pub(crate) fn jsdoc_param_type_syntax_error_offset(type_expr: &str) -> Option<usize> {
         let trimmed = type_expr.trim_start();
         let leading_ws = type_expr.len() - trimmed.len();

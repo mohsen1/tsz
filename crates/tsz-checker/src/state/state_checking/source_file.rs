@@ -648,6 +648,10 @@ impl CheckerState<'_> {
             // TS2300: Check for duplicate @import names across JSDoc comments
             self.check_jsdoc_duplicate_imports();
 
+            // TS1005: Closure `function(...)` JSDoc types, which TypeScript 7
+            // does not accept in any tag position.
+            self.check_jsdoc_closure_function_types();
+
             // TS1069: `@template {Constraint}` with no following type-parameter name
             self.check_jsdoc_template_brace_syntax();
 
