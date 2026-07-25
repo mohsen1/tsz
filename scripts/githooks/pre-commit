@@ -96,10 +96,15 @@ fi
 
 echo "Verifying:${PKG_FLAGS}"
 
+# `-D warnings` matches what CI's lint lane runs (full-ci.sh: `cargo clippy
+# --workspace --all-targets -- -D warnings`). Without it this gate passes code
+# that CI then rejects — clippy::doc_markdown in particular is warn-level by
+# default and only becomes an error under `-D warnings`.
+#
 # Redirect rather than pipe: `cmd | tail` reports tail's exit status, not the
 # compiler's, which would let a failing build through the gate entirely.
 if ! cargo clippy --profile dist-fast --target-dir .target $PKG_FLAGS --lib \
-    >/tmp/tsz-clippy.log 2>&1; then
+    -- -D warnings >/tmp/tsz-clippy.log 2>&1; then
     echo ""
     echo "ERROR: clippy failed:"
     tail -40 /tmp/tsz-clippy.log

@@ -1394,7 +1394,7 @@ impl<'a> CheckerState<'a> {
 
     /// TS8030 for one function-like node: its `@type` tag must supply a
     /// callable signature. tsc points the error at the type expression inside
-    /// the tag (e.g. at "MyClass" in `@type {MyClass}`).
+    /// the tag (e.g. at `MyClass` in `@type {MyClass}`).
     pub(crate) fn check_jsdoc_type_tag_supplies_callable(&mut self, idx: NodeIndex) {
         if !self.is_js_file() {
             return;
