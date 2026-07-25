@@ -652,6 +652,10 @@ impl CheckerState<'_> {
             // does not accept in any tag position.
             self.check_jsdoc_closure_function_types();
 
+            // TS8030 on object-literal method shorthands, which the
+            // function-declaration callback never reaches.
+            self.check_jsdoc_type_tag_callable_on_object_methods();
+
             // TS1069: `@template {Constraint}` with no following type-parameter name
             self.check_jsdoc_template_brace_syntax();
 
