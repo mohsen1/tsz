@@ -379,6 +379,9 @@ mod interface_heritage_property_index_relation_routing_arch_tests;
 #[path = "../tests/isolated_declarations_unannotated_param_tests.rs"]
 mod isolated_declarations_unannotated_param_tests;
 #[cfg(test)]
+#[path = "tests/js_open_object_property_access_tests.rs"]
+mod js_open_object_property_access_tests;
+#[cfg(test)]
 #[path = "../tests/js_property_write_self_declaration_tests.rs"]
 mod js_property_write_self_declaration_tests;
 #[cfg(test)]
