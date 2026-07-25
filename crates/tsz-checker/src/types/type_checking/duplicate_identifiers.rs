@@ -231,6 +231,10 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             let mut func_decls_for_2384 = Vec::new();
+            // The implementation is excluded from the overload list but is still
+            // needed: tsc's `getCanonicalOverload` may take the canonical flags
+            // from it. See the TS2384 report below.
+            let mut implementation_for_2384: Option<NodeIndex> = None;
             let mut has_ambient_func = false;
             let mut has_non_ambient_func = false;
             for &(decl_idx, flags, is_local, _, _) in &declarations {
@@ -239,6 +243,9 @@ impl<'a> CheckerState<'a> {
                     // Skip implementations (declarations with bodies) — a non-ambient
                     // implementation following ambient overloads is valid.
                     if self.function_has_body(decl_idx) {
+                        if implementation_for_2384.is_none() {
+                            implementation_for_2384 = Some(decl_idx);
+                        }
                         continue;
                     }
                     func_decls_for_2384.push(decl_idx);
@@ -250,7 +257,28 @@ impl<'a> CheckerState<'a> {
                 }
             }
             if has_ambient_func && has_non_ambient_func {
-                let ref_is_ambient = self.is_ambient_declaration(func_decls_for_2384[0]);
+                // tsc's `getCanonicalOverload` (checker.ts:43088) takes the
+                // canonical set of flags from the *implementation* when it
+                // shares a container with the first overload, and only
+                // otherwise from the first overload. The container check is
+                // what keeps lib.d.ts overloads from being blamed for a local
+                // implementation. Reading the flags off the first overload
+                // unconditionally blames the wrong declaration whenever the
+                // implementation is the one the majority agrees with.
+                let first_overload = func_decls_for_2384[0];
+                let first_parent = self
+                    .ctx
+                    .arena
+                    .get_extended(first_overload)
+                    .map(|ext| ext.parent);
+                let canonical = implementation_for_2384
+                    .filter(|&impl_idx| {
+                        first_parent.is_some()
+                            && self.ctx.arena.get_extended(impl_idx).map(|ext| ext.parent)
+                                == first_parent
+                    })
+                    .unwrap_or(first_overload);
+                let ref_is_ambient = self.is_ambient_declaration(canonical);
                 for &decl_idx in &func_decls_for_2384 {
                     if self.is_ambient_declaration(decl_idx) != ref_is_ambient {
                         let error_node =
