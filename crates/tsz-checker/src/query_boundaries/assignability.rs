@@ -72,6 +72,19 @@ pub(crate) fn did_you_mean_call_or_construct(
     if let Some(signatures) = super::common::call_signatures_for_type(db, source) {
         return_types.extend(signatures.iter().map(|signature| signature.return_type));
     }
+    // `call_signatures_for_type` collects call signatures carried by an object
+    // or callable shape, but a bare function type (`() => A`) has none to
+    // collect -- its signature lives on the function shape itself. The construct
+    // lookup above already has the equivalent `get_function_shape` fallback, and
+    // without the matching one here the predicate fired for
+    // `declare function getA(): A` and for `declare const Ctor: { new(): A }`
+    // yet silently missed `declare const Fn: () => A`.
+    if return_types.is_empty()
+        && let Some(shape) = tsz_solver::type_queries::get_function_shape(db, source)
+        && !shape.is_constructor
+    {
+        return_types.push(shape.return_type);
+    }
     return_types.into_iter().any(|return_type| {
         !return_type.is_any_unknown_or_error()
             && return_type != TypeId::NEVER
