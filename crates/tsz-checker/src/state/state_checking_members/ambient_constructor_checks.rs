@@ -371,12 +371,11 @@ impl<'a> CheckerState<'a> {
 
         // TS1092: Check for @template tag on constructor
         if let Some(template_offset) = Self::jsdoc_tag_offset(raw_comment, "template") {
-            let rest = &raw_comment[template_offset + "@template".len()..];
-            let trimmed = rest.trim_start();
-            // tsc points at the first type parameter name after @template
-            let ws_len = rest.len() - trimmed.len();
-            let error_offset = template_offset + "@template".len() + ws_len;
-            let abs_pos = comment_pos + error_offset as u32;
+            // tsc anchors at the `@` of the `@template` tag itself, not at what
+            // follows it. Skipping to the text after the tag also mis-landed on
+            // `{` for a typed form like `@template {string} T`, which is wrong
+            // under either rule.
+            let abs_pos = comment_pos + template_offset as u32;
             self.ctx.error(
                 abs_pos,
                 0,

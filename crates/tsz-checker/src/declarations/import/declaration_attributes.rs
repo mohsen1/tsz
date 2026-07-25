@@ -176,15 +176,20 @@ impl<'a> CheckerState<'a> {
         // Step 6: a valid `resolution-mode` override on a NON-type-only
         // declaration gets tsc's dedicated TS1454 at the attribute name
         // ("`resolution-mode` can only be set for type-only imports.").
+        // tsc anchors this at the whole attributes clause (the `with`/`assert`
+        // keyword through the closing brace), not at the attribute name.
+        //
+        // The single-element guard is load-bearing and mirrors tsc's
+        // `getResolutionModeOverride`, which bails when the clause carries more
+        // than one attribute; the resolution-mode lookup itself already
+        // resolves the element, so no per-element node is needed here.
         if !declaration_is_type_only
             && self.get_resolution_mode_override(attributes_idx).is_some()
             && attrs_data.elements.nodes.len() == 1
-            && let Some(&elem_idx) = attrs_data.elements.nodes.first()
-            && let Some(elem_node) = self.ctx.arena.get(elem_idx)
-            && let Some(attr) = self.ctx.arena.get_import_attribute_data(elem_node)
         {
-            self.error_at_node(
-                attr.name,
+            self.error_at_position(
+                node_pos,
+                node_len,
                 diagnostic_messages::RESOLUTION_MODE_CAN_ONLY_BE_SET_FOR_TYPE_ONLY_IMPORTS,
                 diagnostic_codes::RESOLUTION_MODE_CAN_ONLY_BE_SET_FOR_TYPE_ONLY_IMPORTS,
             );
