@@ -86,17 +86,16 @@ f.y = 12
 
 /// @augments on a function declaration → TS8022
 #[test]
-fn test_jsdoc_augments_on_function_emits_ts8022() {
+fn test_jsdoc_augments_on_function_reports_no_ts8022() {
     let source = r#"
 class A {}
 /** @augments A */
 function b() {}
 "#;
     let diagnostics = check_js_source_diagnostics(source);
-    let ts8022 = diagnostics.iter().filter(|d| d.code == 8022).count();
     assert!(
-        ts8022 >= 1,
-        "Expected TS8022 for @augments on function, got: {:?}",
+        diagnostics.iter().all(|d| d.code != 8022),
+        "TS8022 is retired and must not be reported, got: {:?}",
         diagnostic_codes(&diagnostics)
     );
 }
@@ -106,7 +105,7 @@ function b() {}
 /// the @extends tag's attachment, making it orphaned. Confirmed via
 /// conformance/jsdoc/extendsTag2.ts fingerprint (code 8022, file="").
 #[test]
-fn test_jsdoc_extends_interposed_jsdoc_emits_ts8022() {
+fn test_jsdoc_extends_interposed_jsdoc_reports_no_ts8022() {
     let source = r#"
 class A {
     constructor() {}
@@ -120,17 +119,16 @@ class B extends A {
 }
 "#;
     let diagnostics = check_js_source_diagnostics(source);
-    let ts8022 = diagnostics.iter().filter(|d| d.code == 8022).count();
     assert!(
-        ts8022 >= 1,
-        "Expected TS8022 for @extends separated from class by interposed JSDoc, got: {:?}",
+        diagnostics.iter().all(|d| d.code != 8022),
+        "TS8022 is retired and must not be reported, got: {:?}",
         diagnostic_codes(&diagnostics)
     );
 }
 
-/// Dangling @extends at end of file → TS8022
+/// Dangling @extends at end of file: TS8022 is retired, so nothing is reported.
 #[test]
-fn test_jsdoc_dangling_extends_at_eof_emits_ts8022() {
+fn test_jsdoc_dangling_extends_at_eof_reports_no_ts8022() {
     let source = r#"
 class A {
     constructor() {}
@@ -139,26 +137,24 @@ class A {
 /** @extends {A} */
 "#;
     let diagnostics = check_js_source_diagnostics(source);
-    let ts8022 = diagnostics.iter().filter(|d| d.code == 8022).count();
     assert!(
-        ts8022 >= 1,
-        "Expected TS8022 for dangling @extends at EOF, got: {:?}",
+        diagnostics.iter().all(|d| d.code != 8022),
+        "TS8022 is retired and must not be reported, got: {:?}",
         diagnostic_codes(&diagnostics)
     );
 }
 
-/// @typedef without type or @property → TS8021
+/// @typedef without type or @property: TS8021 is retired, so nothing is reported.
 #[test]
-fn test_jsdoc_typedef_missing_type_emits_ts8021() {
+fn test_jsdoc_typedef_missing_type_reports_no_ts8021() {
     let source = r#"
 /** @typedef T */
 const t = 0;
 "#;
     let diagnostics = check_js_source_diagnostics(source);
-    let ts8021 = diagnostics.iter().filter(|d| d.code == 8021).count();
     assert!(
-        ts8021 >= 1,
-        "Expected TS8021 for @typedef without type, got: {:?}",
+        diagnostics.iter().all(|d| d.code != 8021),
+        "TS8021 is retired and must not be reported, got: {:?}",
         diagnostic_codes(&diagnostics)
     );
 }
@@ -366,7 +362,7 @@ const person = { name: "" };
 }
 
 #[test]
-fn test_jsdoc_multiple_typedefs_missing_second_type_emits_ts8021() {
+fn test_jsdoc_multiple_typedefs_missing_second_type_reports_no_ts8021() {
     let source = r#"
 // @ts-check
 /**
@@ -375,10 +371,9 @@ fn test_jsdoc_multiple_typedefs_missing_second_type_emits_ts8021() {
  */
 "#;
     let diagnostics = check_js_source_diagnostics(source);
-    let ts8021 = diagnostics.iter().filter(|d| d.code == 8021).count();
-    assert_eq!(
-        ts8021, 1,
-        "Expected exactly one TS8021 for the second @typedef, got: {diagnostics:?}"
+    assert!(
+        diagnostics.iter().all(|d| d.code != 8021),
+        "TS8021 is retired and must not be reported, got: {diagnostics:?}"
     );
 }
 

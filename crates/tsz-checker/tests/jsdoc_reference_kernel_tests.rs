@@ -332,15 +332,15 @@ const identity = x => x;
 
 /// Bare @typedef with no type annotation and no @property tags should emit TS8021.
 #[test]
-fn bare_typedef_emits_ts8021() {
+fn bare_typedef_reports_no_ts8021() {
     let codes = check_js(
         r#"
 /** @typedef T */
 "#,
     );
     assert!(
-        codes.contains(&8021),
-        "Expected TS8021 for bare @typedef, got: {codes:?}"
+        !codes.contains(&8021),
+        "TS8021 is retired and must not be reported, got: {codes:?}"
     );
 }
 
