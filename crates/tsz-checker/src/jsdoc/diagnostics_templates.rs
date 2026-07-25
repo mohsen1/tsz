@@ -491,26 +491,6 @@ impl<'a> CheckerState<'a> {
         self.source_file_declares_jsdoc_template_at(name, ref_pos)
     }
 
-    pub(crate) fn source_file_declares_jsdoc_template(&self, name: &str) -> bool {
-        use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
-        let Some(sf) = self.ctx.arena.source_files.first() else {
-            return false;
-        };
-        let source_text: &str = &sf.text;
-        for comment in &sf.comments {
-            if !is_jsdoc_comment(comment, source_text) {
-                continue;
-            }
-            let content = get_jsdoc_content(comment, source_text);
-            for (decl_name, _is_const, _default) in Self::jsdoc_template_type_params(&content) {
-                if decl_name == name {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
     /// TS1069: `@template {Constraint}` with no type-parameter name following
     /// the constraint braces (e.g. `@template {T}`). TypeScript's JSDoc parser
     /// reports "Unexpected token. A type parameter name was expected without
