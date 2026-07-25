@@ -611,6 +611,34 @@ pub fn is_ecmascript_identifier_part(ch: char) -> bool {
     scanner_impl::is_identifier_part(ch as u32)
 }
 
+/// Returns `true` if `s` is a valid ECMAScript identifier: a non-empty string
+/// whose first character is an identifier start and whose remainder are all
+/// identifier parts.
+#[must_use]
+pub fn is_ecmascript_identifier(s: &str) -> bool {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(first) => {
+            is_ecmascript_identifier_start(first) && chars.all(is_ecmascript_identifier_part)
+        }
+        None => false,
+    }
+}
+
+/// Returns `true` if `s` is a valid entity name: one or more identifiers joined
+/// by dots (`A`, `A.B`, `A.B.C`).
+///
+/// This is tsz's equivalent of tsc's `parseIsolatedEntityName`, which returns
+/// `undefined` for anything that does not parse. Callers that consume a
+/// user-supplied entity name from compiler options — `jsxFactory`,
+/// `jsxFragmentFactory`, `reactNamespace` — must treat a `false` here the way
+/// tsc treats that `undefined`: resolve nothing and report nothing, leaving the
+/// option-validation diagnostic (TS5067) as the only complaint.
+#[must_use]
+pub fn is_ecmascript_entity_name(s: &str) -> bool {
+    !s.is_empty() && s.split('.').all(is_ecmascript_identifier)
+}
+
 // =============================================================================
 // Keyword Text Mapping
 // =============================================================================
