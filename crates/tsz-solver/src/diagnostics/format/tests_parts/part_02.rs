@@ -1424,12 +1424,27 @@ fn typeof_prefix_for_namespace_and_class_constructor_defs() {
     assert_eq!(fmt.format(class_instance_obj), "Bar");
 }
 
-/// Regression: `T[]` (modeled as `TypeData::Array(T)`) should inherit its
-/// element type's source position when sorting union members. Without this,
-/// `Cover[]` falls through to the tier-2 sentinel and a union written as
-/// `Cover | Cover[]` displays out of order.
+/// `T[]` is a `TypeReference` to the global `Array` in tsc, so under TS7's
+/// `stableTypeOrdering` it sorts under the name "Array" via `compareTypeNames`
+/// (`checker.ts:53867`) -- ahead of any named member sorting after "Array",
+/// regardless of the order the union was written in.
+///
+/// Verified against tsc 7.0.2:
+/// ```text
+/// interface Cover { color: string; }
+/// declare function f(c: Cover | Cover[]): void;
+/// f({ color: "red", couleur: "rouge" });
+/// // error TS2353: ... does not exist in type 'Cover[] | Cover'.
+/// ```
+/// Note the source is written `Cover | Cover[]` and tsc still renders
+/// `Cover[] | Cover`. The conformance oracle agrees
+/// (`compiler/objectLiteralExcessProperties.ts`).
+///
+/// The element-source-position inheritance this test originally pinned is still
+/// the tie-break for arrays whose names compare equal; it is simply no longer
+/// the deciding key when the names differ.
 #[test]
-fn union_array_inherits_element_source_position() {
+fn union_array_sorts_under_the_array_name() {
     let db = TypeInterner::new();
     let def_store = crate::def::DefinitionStore::new();
 
@@ -1450,8 +1465,8 @@ fn union_array_inherits_element_source_position() {
     let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
     assert_eq!(
         fmt.format(union_id),
-        "Cover | Cover[]",
-        "Array(T) should inherit T's position so `Cover | Cover[]` stays in source order"
+        "Cover[] | Cover",
+        "`Cover[]` sorts under the global name \"Array\", which precedes \"Cover\""
     );
 }
 
