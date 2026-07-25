@@ -344,6 +344,35 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
+        // Name equality alone is not the rule. tsc only lets the argument's
+        // literal type survive when the returned parameter is typed by one of
+        // the callee's OWN type parameters — a real identity signature
+        // `<T>(x: T) => T`. With a concrete parameter type the call's type is
+        // the signature's return type, so `function f(x: number) { return x; }`
+        // called as `f(10)` is `number`, not `10`.
+        //
+        // Only the `import x = ns.fn` resolver path reaches this heuristic, so
+        // the miss was confined to aliased callees with an INFERRED return type
+        // (an annotated one is answered by an earlier branch). Witness:
+        // compiler/internalAliasFunction.ts, whose baseline is `var bVal: number`.
+        let first_param_annotation = func
+            .parameters
+            .nodes
+            .first()
+            .copied()
+            .and_then(|param_idx| self.arena.get(param_idx))
+            .and_then(|param_node| self.arena.get_parameter(param_node))
+            .map(|param| param.type_annotation)?;
+        let annotation_name =
+            self.simple_type_node_name_from_arena(self.arena, first_param_annotation)?;
+        if !super::generic_call_literal::function_declares_type_parameter(
+            self.arena,
+            func,
+            &annotation_name,
+        ) {
+            return None;
+        }
+
         let mut text = self.const_literal_initializer_text_deep_guarded(args.nodes[0], guard)?;
         if text.starts_with('-') {
             while text.ends_with(')') {

@@ -30,7 +30,34 @@ const TS_DIR = path.join(ROOT_DIR, 'TypeScript');
 const BASELINES_DIR = path.join(TS_DIR, 'tests/baselines/reference');
 const CACHE_DIR = path.join(__dirname, '../.cache');
 const DTS_DISCOVERY_CACHE = path.join(CACHE_DIR, 'dts-baseline-index.json');
-const DTS_DISCOVERY_CACHE_VERSION = 2;
+// Bumped to 3 for the TS7 baseline overlay: the cache is keyed on the bare
+// baseline filename plus mtime/size, so a pre-overlay entry would otherwise
+// answer `hasDts` from the submodule copy of an overlaid name.
+const DTS_DISCOVERY_CACHE_VERSION = 3;
+
+// ============================================================================
+// TypeScript 7 baseline overlay
+// ============================================================================
+//
+// The baselines checked into the TypeScript submodule are TS 6.0-era, while
+// the conformance oracle (scripts/conformance/tsc-cache-full.json) is TS 7.0.2.
+// Baselines regenerated against 7.0.2 live here instead, because the submodule
+// is read-only — scripts/githooks/pre-commit rejects any commit that touches
+// it. Names are identical to the submodule's, including option suffixes like
+// "foo(target=es2015).js", and the submodule remains the fallback for every
+// baseline not yet regenerated, so the migration is incremental.
+const OVERLAY_DIR = process.env.TSZ_EMIT_BASELINES_OVERLAY
+  ?? path.join(__dirname, '../baselines-ts7');
+
+const overlayNames: Set<string> = fs.existsSync(OVERLAY_DIR)
+  ? new Set(fs.readdirSync(OVERLAY_DIR).filter(e => e.endsWith('.js')))
+  : new Set();
+
+function resolveBaselinePath(name: string): string {
+  return overlayNames.has(name)
+    ? path.join(OVERLAY_DIR, name)
+    : path.join(BASELINES_DIR, name);
+}
 
 const DEFAULT_TIMEOUT_MS = 5000;
 
@@ -529,7 +556,7 @@ async function filterToDtsBaselines(jsFiles: string[]): Promise<string[]> {
   const readLimit = pLimit(64);
 
   const checks = await Promise.all(jsFiles.map(file => statLimit(async () => {
-    const fullPath = path.join(BASELINES_DIR, file);
+    const fullPath = resolveBaselinePath(file);
     const stat = await fs.promises.stat(fullPath);
     const entry = cached[file];
     if (entry && entry.version === DTS_DISCOVERY_CACHE_VERSION && entry.mtimeMs === stat.mtimeMs && entry.size === stat.size) {
@@ -580,6 +607,12 @@ async function readBaselineFile(
   blob: BaselineBlobReader | null,
   name: string,
 ): Promise<string> {
+  // The overlay must win before the blob: the blob is baked from the submodule
+  // directory, so consulting it first would silently serve TS6 bytes for an
+  // overlaid name whenever TSZ_EMIT_BLOB is set.
+  if (overlayNames.has(name)) {
+    return await fs.promises.readFile(path.join(OVERLAY_DIR, name), 'utf-8');
+  }
   if (blob && blob.has(name)) {
     const buf = await blob.readBaseline(name);
     if (buf) return buf.toString('utf-8');
@@ -599,7 +632,21 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
     console.log(pc.dim(`  Baseline blob: ${stats.entries} entries (loaded in 1 open() call)`));
   }
 
-  const entries = fs.readdirSync(BASELINES_DIR);
+  const submoduleEntries = fs.readdirSync(BASELINES_DIR);
+  // An overlay baseline replaces a submodule one; it must never introduce a new
+  // test. A new name would grow jsTotal/dtsTotal and re-slice every emit shard
+  // (the shards are --max/--offset windows over this sorted list), which would
+  // make before/after pass counts incomparable. Fail loudly instead.
+  const submoduleNames = new Set(submoduleEntries);
+  const orphanOverlays = [...overlayNames].filter(n => !submoduleNames.has(n));
+  if (orphanOverlays.length > 0) {
+    console.error(
+      `Overlay baselines with no submodule counterpart: ${orphanOverlays.join(', ')}\n` +
+      `The overlay replaces baselines name-for-name; it must not add tests.`,
+    );
+    process.exit(1);
+  }
+  const entries = submoduleEntries;
   let jsFiles = entries.filter(e => e.endsWith('.js')).sort();
 
   // Apply filter before reading any files

@@ -1,17 +1,18 @@
 {
- "detailFingerprint": "sha256:df925b5bd4fd36c022834ed9075ab4aee814deec5c50538922163315f1a8963c",
- "detailResultCount": 11564,
- "summary": {
-  "jsTotal": 11563,
-  "jsPass": 11562,
-  "jsFail": 1,
-  "jsSkip": 1,
-  "jsTimeout": 0,
-  "jsPassRate": 100,
-  "dtsTotal": 1390,
-  "dtsPass": 1372,
-  "dtsFail": 18,
-  "dtsSkip": 10174,
-  "dtsPassRate": 98.7
- }
+  "detailFingerprint": "sha256:ca6e86f0bee18963ca2370d8923b5cd7d633d86aece5575bd662950a9e2a23a7",
+  "detailResultCount": 11564,
+  "summary": {
+    "jsTotal": 11563,
+    "jsPass": 11562,
+    "jsFail": 1,
+    "jsSkip": 1,
+    "jsTimeout": 0,
+    "jsPassRate": 100,
+    "dtsTotal": 1390,
+    "dtsPass": 1375,
+    "dtsFail": 15,
+    "dtsSkip": 10174,
+    "dtsPassRate": 98.9
+  },
+  "timestamp": "2026-07-25T03:09:28.521Z"
 }
