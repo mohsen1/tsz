@@ -1431,10 +1431,12 @@ impl<'a> CheckerState<'a> {
         if trimmed.contains("=>") {
             return true;
         }
-        // function(...): ... type
-        if trimmed.starts_with("function") {
-            return true;
-        }
+        // Deliberately NOT the Closure `function(...)` spelling. Its only
+        // caller is the TS8030 check, which skips syntactically-callable types
+        // because they may fail to resolve while still being valid function
+        // types. TypeScript 7 rejects the Closure form outright, so it is not a
+        // valid function type and must not earn that skip — the oracle for
+        // jsdocFunction_missingReturn expects TS8030 for exactly that shape.
         // Generic signature: <T>(...) => ...
         if trimmed.starts_with('<') {
             return true;

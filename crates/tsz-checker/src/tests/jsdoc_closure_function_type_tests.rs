@@ -148,3 +148,22 @@ fn ordinary_jsdoc_function_types_are_unaffected() {
         assert!(!codes.contains(&1005), "got {codes:?} for {source}");
     }
 }
+
+#[test]
+fn closure_type_on_a_function_declaration_reports_ts8030() {
+    // The Closure form yields no call signature, so a `@type` tag carrying it
+    // on a function declaration fails the "must have a signature with the
+    // correct number of arguments" check. `jsdocFunction_missingReturn`'s
+    // oracle is exactly TS1005 + TS8030 for this shape.
+    let codes = js_codes("/** @type {function(): number} */\nfunction f() {}\n");
+    assert!(codes.contains(&1005), "got {codes:?}");
+    assert!(codes.contains(&8030), "got {codes:?}");
+}
+
+#[test]
+fn a_resolvable_callable_type_does_not_report_ts8030() {
+    // Control: the arrow form still supplies a signature, so the TS8030 skip
+    // that the Closure form no longer earns must remain in place for it.
+    let codes = js_codes("/** @type {() => number} */\nfunction f() { return 1; }\n");
+    assert!(!codes.contains(&8030), "got {codes:?}");
+}
