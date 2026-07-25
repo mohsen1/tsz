@@ -545,9 +545,12 @@ impl CheckerState<'_> {
                     // Already handled above via accessor_plain_names
                     continue;
                 }
-                let start = if info.is_private { 0 } else { 1 };
+                // tsc reports TS2300 at EVERY duplicate declaration, not just
+                // the subsequent ones — `class C { get x() {...} get x() {...} }`
+                // is two diagnostics. The private-name case already reported all
+                // of them; the public case skipped the first.
                 let name_source = info.indices[0];
-                for &idx in info.indices.iter().skip(start) {
+                for &idx in &info.indices {
                     self.report_duplicate_class_member_ts2300(idx, name_source);
                 }
             }
@@ -729,10 +732,16 @@ impl CheckerState<'_> {
                         .max()
                         .unwrap_or(0);
 
-                    let public_pair_before_member =
-                        has_valid_pair && last_accessor_pos < first_member_pos;
+                    // A public get+set pair declared before a conflicting
+                    // property does NOT establish the member for tsc: it reports
+                    // every declaration. `class C { get x() {...} set x(v) {...}
+                    // x: any }` is three diagnostics, and compiler/
+                    // duplicateClassElements.ts pins that for both its `x2` and
+                    // `z2` groups. The private-name variant is untouched here —
+                    // no oracle row contradicts it.
+                    let _ = (has_valid_pair, last_accessor_pos, first_member_pos);
 
-                    if (is_private && field_strictly_after_accessor) || public_pair_before_member {
+                    if is_private && field_strictly_after_accessor {
                         // Accessor(s) established the member first — flag only
                         // the later property/method declarations.
                         for &idx in &member_info.indices {

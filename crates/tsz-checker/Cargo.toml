@@ -2519,3 +2519,6 @@ path = "tests/compound_assignment_operator_anchor_tests.rs"
 [[test]]
 name = "parameter_property_anchor_tests"
 path = "tests/parameter_property_anchor_tests.rs"
+[[test]]
+name = "duplicate_class_member_all_declarations_tests"
+path = "tests/duplicate_class_member_all_declarations_tests.rs"
