@@ -658,10 +658,10 @@ impl<'a> CheckerState<'a> {
                 // Its parameters then fall to implicit `any` (TS7006) and the
                 // assignability errors a reconstructed signature used to produce
                 // disappear, which is what the oracle expects.
-                if let Some(rest) = type_expr.strip_prefix("function") {
-                    if rest.trim_start().starts_with('(') {
-                        return None;
-                    }
+                if let Some(rest) = type_expr.strip_prefix("function")
+                    && rest.trim_start().starts_with('(')
+                {
+                    return None;
                 }
                 if let Some(rest) = type_expr.strip_prefix("keyof") {
                     let rest = rest.trim_start();

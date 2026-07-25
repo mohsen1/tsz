@@ -101,12 +101,12 @@ const app = {
 }
 
 /// Closure-compiler function type syntax with rest params:
-/// function(boolean, string, ...*):void should accept variadic arguments.
+/// (b: boolean, s: string, ...rest: *[]) => void should accept variadic arguments.
 #[test]
 fn test_jsdoc_closure_function_type_rest_param() {
     let source = r#"
 /**
- * @type {function(boolean, string, ...*):void}
+ * @type {(b: boolean, s: string, ...rest: *[]) => void}
  */
 const foo = function (a, b) { };
 foo(false, '', 1, 2, 3);

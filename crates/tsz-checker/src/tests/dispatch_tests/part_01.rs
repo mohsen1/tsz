@@ -221,7 +221,7 @@ let answer = new Zet(1).add(3, { nested: 4 });
 }
 
 #[test]
-fn jsdoc_constructor_identifier_argument_uses_typeof_source_display() {
+fn closure_constructor_param_type_yields_no_argument_diagnostic() {
     let diags = check_js_source_diagnostics(
         r#"
 /**
@@ -243,19 +243,19 @@ var E = function(n) {
 id2(E);
 "#,
     );
-    let ts2345 = diagnostics_with_code(&diags, 2345);
-    assert_eq!(ts2345.len(), 1, "Expected one TS2345, got: {diags:?}");
-    let message = &ts2345[0].message_text;
-    // TypeScript 7 dropped JS constructor-function inference, so `E` is a plain
-    // function typed from its `@param`; its argument display is the call
-    // signature `(n: number) => void`, not a `typeof E` constructor.
+    // Mirrors `conformance/jsdoc/jsdocFunctionType.ts`. This used to assert the
+    // source display of a TS2345 produced by the Closure `function(new: T, ...)`
+    // parameter type. TypeScript 7 rejects that spelling with TS1005 and gives
+    // it no type, so `id2`'s parameter is implicitly `any` and the call yields
+    // no argument diagnostic — that corpus test's oracle has TS1005s and no
+    // TS2345.
     assert!(
-        message.contains("Argument of type '(n: number) => void'"),
-        "Expected the non-constructor function source display, got: {message:?}"
+        diags.iter().any(|d| d.code == 1005),
+        "expected TS1005 for the Closure function types, got: {diags:?}"
     );
     assert!(
-        !message.contains("new (n: number)"),
-        "Expected diagnostic not to expand a constructor signature for the source, got: {message:?}"
+        diags.iter().all(|d| d.code != 2345),
+        "an untyped parameter accepts any argument, so no TS2345 follows, got: {diags:?}"
     );
 }
 

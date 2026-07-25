@@ -506,12 +506,16 @@ f("a", "b", "c");
     );
 }
 
-/// `@type {function(this: Foo): void}` should preserve the contextual `this`
-/// parameter for Closure-style callable syntax too.
+/// `@type {(this: Foo) => void}` preserves the contextual `this` parameter.
+///
+/// This used to be written with the Closure `function(this: Foo): void`
+/// spelling. TypeScript 7 rejects that form outright (TS1005) and gives it no
+/// type, so the contextual `this` it is really about now has to be expressed
+/// with the arrow form.
 #[test]
-fn jsdoc_closure_function_type_preserves_this_parameter() {
+fn jsdoc_function_type_preserves_this_parameter() {
     let diags = check_js(
-        r#"/** @type {function(this: { foo: number }): void} */
+        r#"/** @type {(this: { foo: number }) => void} */
 const f = function() {
     this.test;
 };
@@ -519,17 +523,18 @@ const f = function() {
     );
     assert!(
         diags.iter().any(|d| d.code == 2339),
-        "Expected TS2339 when Closure-style JSDoc function type provides an object `this`, got codes: {:?}",
+        "Expected TS2339 when a JSDoc function type provides an object `this`, got codes: {:?}",
         diags.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }
 
-/// Function declarations with Closure-style JSDoc callable types should also
-/// preserve the contextual `this` parameter during body checking.
+/// Function declarations with a JSDoc callable type also preserve the
+/// contextual `this` parameter during body checking. Re-spelled from the
+/// Closure form for the same reason as the test above.
 #[test]
-fn jsdoc_closure_function_declaration_preserves_this_parameter() {
+fn jsdoc_function_declaration_preserves_this_parameter() {
     let diags = check_js(
-        r#"/** @type {function(this: { foo: number }): void} */
+        r#"/** @type {(this: { foo: number }) => void} */
 function f() {
     this.test;
 }
@@ -537,7 +542,7 @@ function f() {
     );
     assert!(
         diags.iter().any(|d| d.code == 2339),
-        "Expected TS2339 when Closure-style JSDoc function declaration provides an object `this`, got codes: {:?}",
+        "Expected TS2339 when a JSDoc function declaration provides an object `this`, got codes: {:?}",
         diags.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }
