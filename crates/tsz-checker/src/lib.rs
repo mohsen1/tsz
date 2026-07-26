@@ -394,6 +394,9 @@ mod jsdoc_import_type_constraints_relation_routing_arch_tests;
 #[path = "tests/jsdoc_lookup_constraints_relation_routing_arch_tests.rs"]
 mod jsdoc_lookup_constraints_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/jsdoc_nested_type_tag_validation_tests.rs"]
+mod jsdoc_nested_type_tag_validation_tests;
+#[cfg(test)]
 #[path = "../tests/jsdoc_postfix_nullable_type_tests.rs"]
 mod jsdoc_postfix_nullable_type_tests;
 #[cfg(test)]

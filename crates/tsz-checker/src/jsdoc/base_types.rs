@@ -509,6 +509,32 @@ impl<'a> CheckerState<'a> {
         // Inline expression-body casts like `value => /** @type {T} */(...)` should not
         // be treated as file-level tags; those are validated in the normal checker flow
         // where function-scoped `@template` params are available.
+        // A `@type` on a variable statement nested in a function body is just as
+        // much a real annotation as a top-level one, and `tsc` validates it —
+        // `function f() { /** @type {Missing} */ var y }` reports TS2304, and the
+        // same shape with a value name reports TS2749. Collect those leading
+        // comments so the scan below covers them too. Inline expression casts
+        // still fall through, because they lead no statement.
+        let nested_statement_jsdoc: rustc_hash::FxHashSet<u32> = {
+            let mut positions = rustc_hash::FxHashSet::default();
+            for raw_idx in 0..self.ctx.arena.len() {
+                let idx = tsz_parser::parser::NodeIndex(raw_idx as u32);
+                let Some((kind, pos)) = self.ctx.arena.get(idx).map(|node| (node.kind, node.pos))
+                else {
+                    continue;
+                };
+                if kind != tsz_parser::parser::syntax_kind_ext::VARIABLE_STATEMENT {
+                    continue;
+                }
+                if let Some((_, comment_pos)) =
+                    self.try_leading_jsdoc_with_pos(&comments, pos, &source_text)
+                {
+                    positions.insert(comment_pos);
+                }
+            }
+            positions
+        };
+
         for comment in &comments {
             if !is_jsdoc_comment(comment, &source_text) {
                 continue;
@@ -523,7 +549,9 @@ impl<'a> CheckerState<'a> {
                     })
                     .is_some_and(|(_, comment_pos)| comment_pos == comment.pos)
             });
-            if !is_top_level_leading_jsdoc {
+            let is_nested_statement_jsdoc =
+                !is_top_level_leading_jsdoc && nested_statement_jsdoc.contains(&comment.pos);
+            if !is_top_level_leading_jsdoc && !is_nested_statement_jsdoc {
                 continue;
             }
 
@@ -635,6 +663,17 @@ impl<'a> CheckerState<'a> {
                     || expr.contains('<')
                     || expr.contains('.')
                     || !unresolved
+                    // A `@typedef` written inside a function body is in scope for
+                    // that function's own `@type` tags (witness: typedefScope1,
+                    // where `B` is declared and used within `B1`). This scan does
+                    // not carry function scopes, so for a nested tag defer to any
+                    // `@typedef` of that name rather than report a false TS2304.
+                    // The top-level path is unaffected and still reports a
+                    // top-level use of a function-scoped typedef.
+                    || (is_nested_statement_jsdoc
+                        && Self::parse_jsdoc_typedefs(&source_text)
+                            .iter()
+                            .any(|(name, _)| name == expr))
                     // In JS files, `exports`, `module`, `require`, `global`
                     // are CommonJS built-ins that always resolve at runtime
                     // even if the checker's type system doesn't create a
