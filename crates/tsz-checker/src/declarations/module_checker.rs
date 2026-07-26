@@ -618,6 +618,17 @@ impl<'a> CheckerState<'a> {
             if export_name == "default" && has_json_default_export {
                 continue;
             }
+            // A `.d.ts` module may have a runtime `default` its declarations
+            // never spell out, so `tsc` synthesizes one rather than reporting
+            // TS2305. An `__esModule` export withdraws that: the file is
+            // claiming to describe a faithful ES module, so a missing
+            // `default` really is missing.
+            if export_name == "default"
+                && !module_exports.has("__esModule")
+                && self.module_declarations_can_synthesize_default(module_name)
+            {
+                continue;
+            }
 
             // Check if this name is exported from the source module
             if export_name != "*" && !module_exports.has(&export_name) {
