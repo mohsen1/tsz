@@ -11,6 +11,67 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// Whether the current file gives `exports` / `module.exports` a value
+    /// meaning by assigning to them.
+    ///
+    /// `tsc` reports `/** @type {exports} */` as TS2749 (a value used as a
+    /// type) once such an assignment exists, and as TS2304 (cannot find name)
+    /// when it does not — the CommonJS globals only become values in a module
+    /// that actually exports.
+    pub(crate) fn current_file_has_commonjs_export_assignment(&self) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let Some(source_file) = self.ctx.arena.source_files.first() else {
+            return false;
+        };
+        let arena = &self.ctx.arena;
+        let names_exports_root = |idx: tsz_parser::parser::NodeIndex| -> bool {
+            arena.get_identifier_at(idx).is_some_and(|ident| {
+                ident.escaped_text == "exports" || ident.escaped_text == "module"
+            })
+        };
+        source_file.statements.nodes.iter().any(|&stmt_idx| {
+            let Some(stmt_node) = arena.get(stmt_idx) else {
+                return false;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                return false;
+            }
+            let Some(stmt) = arena.get_expression_statement(stmt_node) else {
+                return false;
+            };
+            let Some(expr_node) = arena.get(stmt.expression) else {
+                return false;
+            };
+            if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                return false;
+            }
+            let Some(binary) = arena.get_binary_expr(expr_node) else {
+                return false;
+            };
+            if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+                return false;
+            }
+            // `exports = …`, `module.exports = …`, `exports.X = …`,
+            // `module.exports.X = …` — walk the assignment target to its root.
+            let mut root = binary.left;
+            for _ in 0..4 {
+                let Some(node) = arena.get(root) else {
+                    return false;
+                };
+                if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                    break;
+                }
+                let Some(access) = arena.get_access_expr(node) else {
+                    return false;
+                };
+                root = access.expression;
+            }
+            names_exports_root(root)
+        })
+    }
+
     pub(crate) fn current_source_file_has_esm_syntax(&self) -> bool {
         self.source_file_idx_has_esm_syntax(self.ctx.current_file_idx)
     }

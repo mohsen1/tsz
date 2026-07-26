@@ -717,8 +717,17 @@ impl<'a> CheckerState<'a> {
                     // even if the checker's type system doesn't create a
                     // user-land binding for them.  tsc does not flag them
                     // as "Cannot find name" in JSDoc @type contexts.
+                    // `exports`, `module`, `require`, `global` are CommonJS
+                    // built-ins that resolve at runtime even without a
+                    // user-land binding, so tsc does not flag them as
+                    // "Cannot find name". It does report `exports`/`module`
+                    // as TS2749 once the file assigns to them — they are the
+                    // module object, a value — so let those reach the emitter,
+                    // which picks TS2749 for a value used as a type.
                     || (self.ctx.is_js_file()
-                        && matches!(expr, "exports" | "module" | "require" | "global"));
+                        && (matches!(expr, "require" | "global")
+                            || (matches!(expr, "exports" | "module")
+                                && !self.current_file_has_commonjs_export_assignment())));
                 if !skip_cannot_find_name {
                     self.emit_jsdoc_cannot_find_name(expr, comment.pos, comment.end, &source_text);
                 } else if !Self::is_simple_type_name(expr) && !expr.is_empty() {
@@ -900,7 +909,15 @@ impl<'a> CheckerState<'a> {
 
         // A name that resolves to a value (function, variable, …) but not a type
         // is a "value used as a type" error (TS2749), not a missing name (TS2304).
-        if self.jsdoc_name_refers_to_value_only(name) {
+        //
+        // `exports`/`module` are values in a file that assigns to them — the
+        // module object. Their symbol carries the MODULE flag, which
+        // `jsdoc_name_refers_to_value_only` deliberately excludes, so name them
+        // here rather than loosening that predicate for real namespaces.
+        let is_commonjs_module_value = self.is_js_file()
+            && matches!(name, "exports" | "module")
+            && self.current_file_has_commonjs_export_assignment();
+        if is_commonjs_module_value || self.jsdoc_name_refers_to_value_only(name) {
             let code = diagnostic_codes::REFERS_TO_A_VALUE_BUT_IS_BEING_USED_AS_A_TYPE_HERE_DID_YOU_MEAN_TYPEOF;
             let template = tsz_common::diagnostics::get_message_template(code)
                 .unwrap_or("'{0}' refers to a value, but is being used as a type here. Did you mean 'typeof {0}'?");
