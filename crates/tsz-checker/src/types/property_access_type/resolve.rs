@@ -760,7 +760,13 @@ impl<'a> CheckerState<'a> {
                         .enclosing_expression_statement(idx)
                         .and_then(|stmt_idx| self.js_statement_declared_type(stmt_idx))
                         .is_some();
-                if !suppress_for_jsdoc_type_decl {
+                // Only a function/class declaration's expando properties are
+                // ordered in tsc. On a plain object or a CommonJS `exports`
+                // object the property type comes from every assignment in the
+                // program, so a use before the assignment is not an error.
+                let receiver_is_ordered =
+                    self.expando_root_has_ordered_declarations(access.expression);
+                if !suppress_for_jsdoc_type_decl && receiver_is_ordered {
                     use crate::diagnostics::format_message;
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.error_at_node(

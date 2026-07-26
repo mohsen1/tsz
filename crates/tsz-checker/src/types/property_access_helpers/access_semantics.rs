@@ -68,6 +68,44 @@ impl<'a> CheckerState<'a> {
     /// late-attaching a JSDoc-typed prototype property is a declaration; for
     /// `class C {}` the prototype shape is the class instance type and a
     /// late attachment is genuinely "used before assigned".
+    /// Whether an expando receiver is a declaration whose property assignments
+    /// `tsc` treats as **ordered**.
+    ///
+    /// `function C() {} C.f(); C.f = a;` reports TS2565 in tsc: the expando is a
+    /// declaration on the function, so using it before the assignment is an
+    /// error. A plain object (`var o = {}`) or a CommonJS `exports` object is
+    /// not ordered — tsc types those from every assignment in the program
+    /// regardless of position and reports nothing, so a use that textually
+    /// precedes the assignment is fine.
+    pub(crate) fn expando_root_has_ordered_declarations(&mut self, access_expr: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(access_expr) else {
+            return false;
+        };
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(sym_id) = self.resolve_identifier_symbol(access_expr) else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let decl_idx = symbol.value_declaration;
+        let Some(decl) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+        match decl.kind {
+            syntax_kind_ext::FUNCTION_DECLARATION | syntax_kind_ext::CLASS_DECLARATION => true,
+            syntax_kind_ext::VARIABLE_DECLARATION => self
+                .ctx
+                .arena
+                .get_variable_declaration(decl)
+                .and_then(|var_decl| self.ctx.arena.get(var_decl.initializer))
+                .is_some_and(|init| init.is_function_expression_or_arrow()),
+            _ => false,
+        }
+    }
+
     pub(crate) fn expando_receiver_is_function_constructor(&self, access_expr: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(access_expr) else {
             return false;
