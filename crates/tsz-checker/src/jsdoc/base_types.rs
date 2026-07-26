@@ -552,7 +552,16 @@ impl<'a> CheckerState<'a> {
                 else {
                     continue;
                 };
-                if kind != tsz_parser::parser::syntax_kind_ext::VARIABLE_STATEMENT {
+                // Variable statements carry most nested annotations, but a JS
+                // class routinely declares its fields as `/** @type {T} */
+                // this.x = ...` inside the constructor — an *expression*
+                // statement. tsc validates that annotation too (witness:
+                // jsDeclarationsReferenceToClassInstanceCrossFile).
+                if !matches!(
+                    kind,
+                    tsz_parser::parser::syntax_kind_ext::VARIABLE_STATEMENT
+                        | tsz_parser::parser::syntax_kind_ext::EXPRESSION_STATEMENT
+                ) {
                     continue;
                 }
                 if let Some((_, comment_pos)) =

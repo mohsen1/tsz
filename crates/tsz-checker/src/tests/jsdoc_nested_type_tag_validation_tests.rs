@@ -121,3 +121,68 @@ fn nested_type_tag_with_known_type_is_silent() {
     let codes = js_codes(source);
     assert!(!codes.contains(&2304) && !codes.contains(&2749));
 }
+
+// --- Expression statements carry annotations too. ---
+
+/// A JS class declares its fields as `/** @type {T} */ this.x = ...` inside the
+/// constructor — an *expression* statement, not a variable statement. tsc
+/// validates that annotation (witness:
+/// `jsDeclarationsReferenceToClassInstanceCrossFile`).
+#[test]
+fn nested_type_tag_on_this_assignment_reports_missing_name() {
+    let source = concat!(
+        "class Render {\n",
+        "  constructor() {\n",
+        "    /** @type {NoSuchTypeAtAll} */\n",
+        "    this.objects = [];\n",
+        "  }\n",
+        "}\n",
+        "new Render()\n",
+    );
+    assert!(js_codes(source).contains(&2304));
+}
+
+/// The array suffix does not change the rule — the element name is still checked.
+#[test]
+fn nested_type_tag_on_this_assignment_checks_array_element() {
+    let source = concat!(
+        "class Render {\n",
+        "  constructor() {\n",
+        "    /** @type {NoSuchTypeAtAll[]} */\n",
+        "    this.objects = [];\n",
+        "  }\n",
+        "}\n",
+        "new Render()\n",
+    );
+    assert!(js_codes(source).contains(&2304));
+}
+
+/// A plain expression statement outside a class behaves the same.
+#[test]
+fn nested_type_tag_on_plain_expression_statement_reports() {
+    let source = concat!(
+        "var o = {};\n",
+        "function f() {\n",
+        "  /** @type {NoSuchTypeAtAll} */\n",
+        "  o.field = 1;\n",
+        "}\n",
+        "f\n",
+    );
+    assert!(js_codes(source).contains(&2304));
+}
+
+/// A resolvable annotation on an expression statement stays silent.
+#[test]
+fn nested_type_tag_on_this_assignment_with_known_type_is_silent() {
+    let source = concat!(
+        "class Render {\n",
+        "  constructor() {\n",
+        "    /** @type {string[]} */\n",
+        "    this.names = [];\n",
+        "  }\n",
+        "}\n",
+        "new Render()\n",
+    );
+    let codes = js_codes(source);
+    assert!(!codes.contains(&2304) && !codes.contains(&2749));
+}
