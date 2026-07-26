@@ -430,6 +430,9 @@ mod jsdoc_template_reference_scope_tests;
 #[path = "../tests/jsdoc_this_arrow_tests.rs"]
 mod jsdoc_this_arrow_tests;
 #[cfg(test)]
+#[path = "tests/jsdoc_typedef_bare_import_tests.rs"]
+mod jsdoc_typedef_bare_import_tests;
+#[cfg(test)]
 #[path = "../tests/jsx_component_attribute_tests.rs"]
 mod jsx_component_attribute_tests;
 #[cfg(test)]

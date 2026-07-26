@@ -487,6 +487,36 @@ impl<'a> CheckerState<'a> {
                     if expr == "Object" || expr == "object" || expr.is_empty() {
                         continue;
                     }
+                    // A bare `import('mod')` as a typedef base follows the same
+                    // rule as in `@param`/`@return`: it names the module's
+                    // exported type, and a module without one is TS1340.
+                    // Witness: jsdocTypeReferenceToImportOfFunctionExpression,
+                    // whose module exports a plain function.
+                    let typedef_comment_text = comment.get_text(&source_text);
+                    // Only a real `@typedef` base. An `@import` tag also carries a
+                    // module specifier but is a value import, not a type
+                    // reference, and must not be flagged (witness: importTag2/3/9/…).
+                    if Self::jsdoc_tag_offset(typedef_comment_text, "typedef").is_some()
+                        && let Some(offset_in_comment) = typedef_comment_text.find(expr)
+                        && let Some((module_specifier, None)) = Self::parse_jsdoc_import_type(expr)
+                        && !self.bare_import_type_names_a_type(
+                            &module_specifier,
+                            Self::jsdoc_import_type_resolution_mode(expr),
+                        )
+                    {
+                        let anchor = comment.pos + offset_in_comment as u32;
+                        let message = crate::diagnostics::format_message(
+                            crate::diagnostics::diagnostic_messages::MODULE_DOES_NOT_REFER_TO_A_TYPE_BUT_IS_USED_AS_A_TYPE_HERE_DID_YOU_MEAN_TYPEOF_I,
+                            &[&module_specifier],
+                        );
+                        self.error_at_position(
+                            anchor,
+                            expr.len() as u32,
+                            &message,
+                            crate::diagnostics::diagnostic_codes::MODULE_DOES_NOT_REFER_TO_A_TYPE_BUT_IS_USED_AS_A_TYPE_HERE_DID_YOU_MEAN_TYPEOF_I,
+                        );
+                        continue;
+                    }
                     // TS2344: Check constraint satisfaction for import type refs with generics.
                     // e.g., @typedef {import('./file1').Foo<T>} Bar
                     if expr.starts_with("import(")
