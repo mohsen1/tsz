@@ -1101,15 +1101,31 @@ impl<'a> CheckerState<'a> {
                 // For non-tuple spreads in array context, use element type.
                 // For tuple context, use the spread type itself. A `never` source
                 // is array-like with element type `never`.
+                // The literal's final shape is built from `tuple_elements` whenever
+                // any `force_tuple_*` flag is set, not only when `tuple_context`
+                // is present. Gating this push on `tuple_context` alone sent a
+                // spread into `element_types` while the shape was read back from
+                // an empty `tuple_elements`, so `let b: A | B = [...two]` (with
+                // `two: A | B` a union of tuples) typed as `[]`. The elided-hole
+                // path above already gates on the full flag set.
+                let force_tuple_shape = tuple_context.is_some()
+                    || force_tuple_for_union_context
+                    || force_tuple_for_mapped
+                    || force_tuple_for_constraint_hint
+                    || force_tuple_for_array_length_intersection
+                    || force_tuple_for_tuple_like;
+                // A forced-tuple shape keeps the spread source itself as the rest
+                // element (so a union of tuples stays a union), while the array
+                // path wants the iterated element type.
                 let elem_type = if spread_is_never {
                     TypeId::NEVER
-                } else if tuple_context.is_some() {
+                } else if force_tuple_shape {
                     spread_expr_type
                 } else {
                     self.for_of_element_type(spread_expr_type, false)
                 };
 
-                if tuple_context.is_some() || self.ctx.in_const_assertion {
+                if force_tuple_shape || self.ctx.in_const_assertion {
                     let rest_type = if self.ctx.in_const_assertion && tuple_context.is_none() {
                         array_surfaces::array_type(self.ctx.types, elem_type)
                     } else {

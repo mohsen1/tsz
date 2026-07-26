@@ -672,11 +672,26 @@ impl<'a> CheckerState<'a> {
                     TypeId::UNDEFINED
                 } else if base_is_actual_lib_iterator && param_index == 2 {
                     TypeId::UNKNOWN
+                } else if let Some(default) = param.default {
+                    // A default may reference an EARLIER type parameter, as in
+                    // `class ZodType<Output, Def = ZodTypeDef, Input = Output>`.
+                    // Pushing it raw binds `Input` to the *parameter* `Output`
+                    // rather than to the supplied argument, so the inherited
+                    // member keeps type `=> Output` and no concrete override can
+                    // satisfy it (zod's `ZodNativeEnum` TS2416).
+                    //
+                    // Instantiate the default under the arguments bound so far.
+                    // `from_args` does this for genuinely-unsupplied parameters,
+                    // but pre-filling here makes every argument look explicit, so
+                    // that path never runs.
+                    let partial = TypeSubstitution::from_args(
+                        self.ctx.types,
+                        &base_type_params[..param_index],
+                        &type_args,
+                    );
+                    instantiate_type(self.ctx.types, default, &partial)
                 } else {
-                    param
-                        .default
-                        .or(param.constraint)
-                        .unwrap_or(TypeId::UNKNOWN)
+                    param.constraint.unwrap_or(TypeId::UNKNOWN)
                 };
                 type_args.push(fallback);
             }
