@@ -715,6 +715,20 @@ impl<'a> CheckerState<'a> {
             && !pragma_overrides_config
         {
             let jsx_factory = self.ctx.compiler_options.jsx_factory.clone();
+            // tsc parses `jsxFactory` with `parseIsolatedEntityName`, which
+            // yields `undefined` for a value that is not an identifier or
+            // qualified name. No `_jsxFactoryEntity` then exists, so tsc
+            // resolves no factory name and reports nothing per tag — the
+            // invalid value is already reported once as TS5067 by option
+            // validation. Splitting on '.' regardless makes the whole invalid
+            // string the root identifier (`"id1 id2"` stays `"id1 id2"`),
+            // which fails resolution and yields a spurious TS2304 at every tag.
+            //
+            // Returning here rather than clearing the flag is deliberate: the
+            // fall-through path below would emit the retired TS2874 instead.
+            if !tsz_scanner::is_ecmascript_entity_name(&jsx_factory) {
+                return;
+            }
             let jsx_root = jsx_factory
                 .split('.')
                 .next()
