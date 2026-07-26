@@ -2525,3 +2525,6 @@ path = "tests/duplicate_class_member_all_declarations_tests.rs"
 [[test]]
 name = "inaccessible_constructor_instance_type_tests"
 path = "tests/inaccessible_constructor_instance_type_tests.rs"
+[[test]]
+name = "nullish_non_strict_assignability_tests"
+path = "tests/nullish_non_strict_assignability_tests.rs"

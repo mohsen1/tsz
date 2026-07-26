@@ -343,10 +343,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         if !self.strict_null_checks && source.is_nullish() {
-            let null_to_void = source == TypeId::NULL && target == TypeId::VOID;
-            if !null_to_void {
-                return None;
-            }
+            return None;
         }
 
         // Check for any/unknown/never special cases

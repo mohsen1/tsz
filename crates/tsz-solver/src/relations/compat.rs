@@ -1416,10 +1416,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // and undefined as being in the domain of every type.
         // Exception: `null` is not assignable to `void` — only `undefined` is.
         if !self.strict_null_checks && source.is_nullish() {
-            let null_to_void = source == TypeId::NULL && target == TypeId::VOID;
-            if !null_to_void {
-                return Some(true);
-            }
+            return Some(true);
         }
 
         // unknown is top
@@ -1489,13 +1486,12 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return true;
         }
         // Without strictNullChecks, null/undefined are assignable to all types
-        // including type parameters. Exception: `null` is not assignable to
-        // `void` — only `undefined` is.
+        // including type parameters. tsc's `isSimpleTypeRelatedTo` gates this
+        // purely on `!strictNullChecks`; the `null`-not-assignable-to-`void`
+        // asymmetry is a STRICT-mode rule (`t & (Undefined | Void)` for
+        // undefined vs `t & Null` for null) and must not leak in here.
         if !self.strict_null_checks && source.is_nullish() {
-            let null_to_void = source == TypeId::NULL && target == TypeId::VOID;
-            if !null_to_void {
-                return true;
-            }
+            return true;
         }
         // Without strictNullChecks, null and undefined are assignable to and from any type.
         // This check is at the top-level only (not in subtype member iteration).
@@ -1609,12 +1605,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return None;
         }
         // Without strictNullChecks, null/undefined are assignable to all types
-        // including type parameters. Exception: `null` is not assignable to `void`.
+        // including type parameters. The `null`-vs-`void` asymmetry in tsc's
+        // `isSimpleTypeRelatedTo` is a STRICT-mode rule only.
         if !self.strict_null_checks && source.is_nullish() {
-            let null_to_void = source == TypeId::NULL && target == TypeId::VOID;
-            if !null_to_void {
-                return None;
-            }
+            return None;
         }
         // Without strictNullChecks, null and undefined are assignable to and from any type.
         if !self.strict_null_checks && (target == TypeId::NULL || target == TypeId::UNDEFINED) {

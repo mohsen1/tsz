@@ -803,6 +803,32 @@ pub fn strict_checker_options() -> CheckerOptions {
     }
 }
 
+/// The `// @strict: false` corpus configuration.
+///
+/// `CheckerOptions::default()` carries `strict: true` — TypeScript 7 flipped
+/// the default — so [`check_source_diagnostics`] is a *strict* run. Any test
+/// reproducing a `// @strict: false` corpus row must use this instead, or the
+/// strict-gated diagnostics it is trying to observe will silently differ.
+#[must_use]
+pub fn non_strict_checker_options() -> CheckerOptions {
+    CheckerOptions {
+        strict: false,
+        strict_null_checks: false,
+        no_implicit_any: false,
+        ..CheckerOptions::default()
+    }
+}
+
+/// Parse, bind, and type-check `source` under [`non_strict_checker_options`].
+pub fn check_source_non_strict(source: &str) -> Vec<Diagnostic> {
+    check_with_options(source, non_strict_checker_options())
+}
+
+/// Code-only projection of [`check_source_non_strict`].
+pub fn check_source_non_strict_codes(source: &str) -> Vec<u32> {
+    diagnostic_codes(&check_source_non_strict(source))
+}
+
 /// Parse, bind, and type-check `source` under [`strict_checker_options`].
 ///
 /// Returns full [`Diagnostic`]s; tests that only need codes or
