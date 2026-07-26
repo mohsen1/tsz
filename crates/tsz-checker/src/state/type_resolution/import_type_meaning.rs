@@ -23,13 +23,12 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         use tsz_binder::symbol_flags;
 
-        const PURE_TYPE: u32 = symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS;
-        const VALUE: u32 = symbol_flags::VARIABLE
-            | symbol_flags::FUNCTION
+        /// Symbol kinds whose `export =` gives the module a type meaning.
+        /// Classes and enums qualify: they declare a type as well as a value.
+        const TYPE_PROVIDING: u32 = symbol_flags::INTERFACE
+            | symbol_flags::TYPE_ALIAS
             | symbol_flags::CLASS
-            | symbol_flags::ENUM
-            | symbol_flags::ENUM_MEMBER
-            | symbol_flags::VALUE_MODULE;
+            | symbol_flags::ENUM;
 
         let lib_binders = self.get_lib_binders();
         let ambient_export_equals_sym = self
@@ -61,14 +60,23 @@ impl<'a> CheckerState<'a> {
             .and_then(|(target_idx, binder)| {
                 let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
                 let file_name = target_arena.source_files.first()?.file_name.as_str();
-                binder
+                let sym_id = binder
                     .module_exports
                     .get(file_name)
-                    .and_then(|exports| exports.get("export="))
+                    .and_then(|exports| exports.get("export="))?;
+                Some(
+                    binder
+                        .get_symbol(sym_id)
+                        .is_some_and(|sym| sym.is_type_only || sym.has_any_flags(TYPE_PROVIDING)),
+                )
             });
-        let has_export_equals = ambient_export_equals_sym.is_some() || file_export_equals.is_some();
 
-        has_export_equals
+        // The module is usable as a bare import type only when its `export =`
+        // target actually supplies a TYPE. A class or enum does — it carries a
+        // type meaning alongside its value meaning, so `class Conn {}
+        // export = Conn` is a valid bare import type. A plain `var` or
+        // `function` export does not, and tsc reports TS1340 for it.
+        file_export_equals.unwrap_or(false)
             || self.is_module_export_equals_type_only(module_name)
             || ambient_export_equals_sym.is_some_and(|sym_id| {
                 let symbol_is_type = |checker: &Self, sym_id: tsz_binder::SymbolId| {
@@ -76,10 +84,7 @@ impl<'a> CheckerState<'a> {
                         .ctx
                         .binder
                         .get_symbol_with_libs(sym_id, &lib_binders)
-                        .is_some_and(|sym| {
-                            sym.is_type_only
-                                || (sym.has_any_flags(PURE_TYPE) && !sym.has_any_flags(VALUE))
-                        })
+                        .is_some_and(|sym| sym.is_type_only || sym.has_any_flags(TYPE_PROVIDING))
                 };
 
                 if symbol_is_type(self, sym_id) {
