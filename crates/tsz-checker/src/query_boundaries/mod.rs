@@ -49,6 +49,7 @@ pub(crate) mod interface_merge;
 pub(crate) mod intersection_display;
 pub(crate) mod js_exports;
 mod js_exports_json;
+pub(crate) mod js_exports_named_class;
 pub(crate) mod jsdoc_construction;
 pub(crate) mod key_constraints;
 pub(crate) mod lib_augmentations;
