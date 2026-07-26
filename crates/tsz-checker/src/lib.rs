@@ -397,6 +397,9 @@ mod jsdoc_bare_import_type_tests;
 #[path = "tests/jsdoc_closure_function_type_tests.rs"]
 mod jsdoc_closure_function_type_tests;
 #[cfg(test)]
+#[path = "tests/jsdoc_commonjs_globals_as_type_tests.rs"]
+mod jsdoc_commonjs_globals_as_type_tests;
+#[cfg(test)]
 #[path = "tests/jsdoc_import_type_constraints_relation_routing_arch_tests.rs"]
 mod jsdoc_import_type_constraints_relation_routing_arch_tests;
 #[cfg(test)]
