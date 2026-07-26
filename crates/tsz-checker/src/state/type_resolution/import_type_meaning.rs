@@ -76,6 +76,15 @@ impl<'a> CheckerState<'a> {
         // type meaning alongside its value meaning, so `class Conn {}
         // export = Conn` is a valid bare import type. A plain `var` or
         // `function` export does not, and tsc reports TS1340 for it.
+        // A JS module has no `export =`; `module.exports = class {}` is how it
+        // supplies a type for a bare `import('./m')`.
+        if self.commonjs_whole_module_export_assigns_a_class(
+            module_name,
+            Some(self.ctx.current_file_idx),
+        ) {
+            return true;
+        }
+
         file_export_equals.unwrap_or(false)
             || self.is_module_export_equals_type_only(module_name)
             || ambient_export_equals_sym.is_some_and(|sym_id| {

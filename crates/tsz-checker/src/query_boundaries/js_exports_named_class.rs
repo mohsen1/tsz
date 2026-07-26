@@ -102,6 +102,70 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Whether the target module assigns a **class** to `module.exports`
+    /// (or bare `exports`) as a whole-module export.
+    ///
+    /// A JS module has no TypeScript `export =`, so this is how
+    /// `module.exports = class {}` / `class C {} module.exports = C` gives the
+    /// module a type meaning for a bare `import('./m')`. A function export does
+    /// not: TS7 dropped constructor-function inference, and `tsc` reports
+    /// TS1340 for `@typedef {import('./m')}` when the module exports a plain
+    /// function.
+    pub(crate) fn commonjs_whole_module_export_assigns_a_class(
+        &self,
+        module_name: &str,
+        source_file_idx: Option<usize>,
+    ) -> bool {
+        let Some(target_file_idx) = source_file_idx
+            .and_then(|file_idx| {
+                self.ctx
+                    .resolve_import_target_from_file(file_idx, module_name)
+            })
+            .or_else(|| self.ctx.resolve_import_target(module_name))
+        else {
+            return false;
+        };
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let Some(source_file) = target_arena.source_files.first() else {
+            return false;
+        };
+
+        let mut assigns_class = false;
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = target_arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                continue;
+            }
+            let Some(stmt) = target_arena.get_expression_statement(stmt_node) else {
+                continue;
+            };
+            let Some(expr_node) = target_arena.get(stmt.expression) else {
+                continue;
+            };
+            if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                continue;
+            }
+            let Some(binary) = target_arena.get_binary_expr(expr_node) else {
+                continue;
+            };
+            if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+                continue;
+            }
+            let targets_whole_module =
+                Self::is_module_exports_target_in_arena(target_arena, binary.left)
+                    || target_arena
+                        .get_identifier_at(binary.left)
+                        .is_some_and(|ident| ident.escaped_text == "exports");
+            if !targets_whole_module {
+                continue;
+            }
+            assigns_class = Self::commonjs_export_rhs_is_class_in_arena(target_arena, binary.right);
+        }
+        assigns_class
+    }
+
     /// Whether an `exports.X = <rhs>` right-hand side is a class: a class
     /// expression, or a bare identifier naming a class declared in the same
     /// file. A property access (`NS.K`) is deliberately excluded.
