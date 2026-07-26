@@ -697,9 +697,7 @@ impl<'a> CheckerState<'a> {
             && !commonjs_named_props_disallowed
             && self.current_file_commonjs_exports_target_is_unshadowed(access.expression)
             && let Some(member_name) = static_member_name.as_deref()
-            && let Some(node) = self.ctx.arena.get(idx)
-            && let Some(prior_type) =
-                self.current_file_commonjs_prior_named_export_type(member_name, node.pos)
+            && let Some(prior_type) = self.current_file_commonjs_named_export_type(member_name)
         {
             return prior_type;
         }

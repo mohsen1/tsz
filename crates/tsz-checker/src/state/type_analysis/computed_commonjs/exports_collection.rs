@@ -430,6 +430,21 @@ impl<'a> CheckerState<'a> {
         Some(rhs_type)
     }
 
+    /// Declaration-level type of a CommonJS named export in the current file.
+    ///
+    /// `tsc` types `exports.x` from every assignment in the module, not only
+    /// those textually preceding the use. `exports.f = undefined; exports.f();
+    /// … exports.f = fn` reports nothing, because the declared type is `fn`, and
+    /// a call written before any assignment is likewise fine. Selecting with an
+    /// unbounded read position therefore takes the last assignment in the file
+    /// rather than the last one above the use.
+    pub(crate) fn current_file_commonjs_named_export_type(
+        &mut self,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        self.current_file_commonjs_prior_named_export_type(property_name, u32::MAX)
+    }
+
     pub(crate) fn current_file_commonjs_prior_named_export_type(
         &mut self,
         property_name: &str,
