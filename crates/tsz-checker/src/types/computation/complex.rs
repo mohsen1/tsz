@@ -630,6 +630,21 @@ impl<'a> CheckerState<'a> {
         // When the constructor is inaccessible, tsc only emits the accessibility
         // error and suppresses subsequent arg-count/type-mismatch diagnostics.
         if self.check_constructor_accessibility_for_new(idx, constructor_type) {
+            // tsc suppresses the *call's* subsequent arg-count/type-mismatch
+            // diagnostics, but the new-expression still has the instance type.
+            // Returning `any` here instead poisons everything downstream:
+            // `var c = new C()` on a private constructor made `c` `any`, so
+            // `var r: () => void = c.constructor` silently passed where tsc
+            // reports TS2322 (`c.constructor` is `Function`).
+            if let Some(signatures) =
+                crate::query_boundaries::construct_signatures::construct_signatures_for_type(
+                    self.ctx.types,
+                    constructor_type,
+                )
+                && let Some(first) = signatures.first()
+            {
+                return first.return_type;
+            }
             return TypeId::ANY;
         }
 
