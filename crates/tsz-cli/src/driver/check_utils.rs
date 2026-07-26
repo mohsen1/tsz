@@ -435,6 +435,7 @@ pub(super) const fn is_ts1xxx_allowed_in_js(code: u32) -> bool {
     matches!(
         code,
         1002 // Unterminated string literal
+        | 1340 // Module '{0}' does not refer to a type, but is used as a type here
         | 1003 // Identifier expected
         | 1005 // "{0}" expected (missing token)
         | 1014 // A rest parameter must be last in a parameter list

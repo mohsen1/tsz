@@ -57,6 +57,35 @@ impl<'a> CheckerState<'a> {
                 if !is_param_tag && !is_return_tag {
                     continue;
                 }
+                // A bare `import('mod')` names the module's `export =` type. The
+                // module's own namespace is not a type, so a module exporting only
+                // values — or one with named type exports and no `export =` — is
+                // TS1340 even though the specifier resolves. The TypeScript
+                // import-type resolver reports this already; JSDoc reaches the
+                // question by a separate path, so it asks the shared predicate
+                // here, where the type expression's offset is known.
+                // `import('mod').Member` is unaffected: it is not a bare import.
+                {
+                    let raw = type_expr.trim();
+                    if let Some((module_specifier, None)) = Self::parse_jsdoc_import_type(raw)
+                        && !self.bare_import_type_names_a_type(
+                            &module_specifier,
+                            Self::jsdoc_import_type_resolution_mode(raw),
+                        )
+                    {
+                        let message = crate::diagnostics::format_message(
+                            crate::diagnostics::diagnostic_messages::MODULE_DOES_NOT_REFER_TO_A_TYPE_BUT_IS_USED_AS_A_TYPE_HERE_DID_YOU_MEAN_TYPEOF_I,
+                            &[&module_specifier],
+                        );
+                        self.error_at_position(
+                            comment.pos + offset_in_comment as u32,
+                            raw.len() as u32,
+                            &message,
+                            crate::diagnostics::diagnostic_codes::MODULE_DOES_NOT_REFER_TO_A_TYPE_BUT_IS_USED_AS_A_TYPE_HERE_DID_YOU_MEAN_TYPEOF_I,
+                        );
+                        continue;
+                    }
+                }
                 let simple_expr = type_expr
                     .trim()
                     .trim_start_matches('!')
