@@ -1535,11 +1535,13 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn resolve_jsdoc_commonjs_binding_element_type(
+    /// The `(module specifier, export name)` a destructured `require` binding
+    /// reads, e.g. `const { K: Local } = require("./mod")` -> `("./mod", "K")`.
+    fn jsdoc_require_binding_export_origin(
         &mut self,
         value_decl: NodeIndex,
         local_name: &str,
-    ) -> Option<TypeId> {
+    ) -> Option<(String, String)> {
         let node = self.ctx.arena.get(value_decl)?;
         if node.kind != SyntaxKind::Identifier as u16 {
             return None;
@@ -1571,6 +1573,43 @@ impl<'a> CheckerState<'a> {
         } else {
             local_name.to_string()
         };
+        Some((module_specifier, export_name))
+    }
+
+    /// Whether a destructured `require` binding names something usable as a
+    /// bare JSDoc **type**.
+    ///
+    /// `tsc` allows it only when the module's `exports.X = …` assigns a class
+    /// directly. A plain value (`exports.v = 1`), a function, or a value reached
+    /// through another object (`var NS = {}; NS.K = class {}; exports.K = NS.K`)
+    /// carries only a value meaning, and using the imported name as a type is
+    /// TS2749. The discriminator has to be syntactic: the direct and indirect
+    /// class exports above resolve to the *same* type, yet tsc accepts only the
+    /// direct one.
+    fn jsdoc_require_binding_supplies_type(
+        &mut self,
+        value_decl: NodeIndex,
+        local_name: &str,
+    ) -> bool {
+        let Some((module_specifier, export_name)) =
+            self.jsdoc_require_binding_export_origin(value_decl, local_name)
+        else {
+            return true;
+        };
+        self.commonjs_named_export_assigns_a_class(
+            &module_specifier,
+            &export_name,
+            Some(self.ctx.current_file_idx),
+        )
+    }
+
+    fn resolve_jsdoc_commonjs_binding_element_type(
+        &mut self,
+        value_decl: NodeIndex,
+        local_name: &str,
+    ) -> Option<TypeId> {
+        let (module_specifier, export_name) =
+            self.jsdoc_require_binding_export_origin(value_decl, local_name)?;
 
         // TS7: `module.exports = { X }` object-literal members carry only value
         // meaning. A require-destructured binding of such a member is not a type
@@ -1744,14 +1783,18 @@ impl<'a> CheckerState<'a> {
                     symbol.escaped_name.as_str(),
                 )
             {
-                // TS7 dropped constructor-function inference: a binding whose
-                // resolved export is a plain function (call signatures — a
-                // class constructor type has only construct signatures) has
-                // no meaning as a bare JSDoc type; failing here routes the
-                // reference to the TS2749 value-used-as-type terminal.
+                // A `require()`-imported binding names a TYPE only when the
+                // module assigns a class directly to that export. TS7 also
+                // dropped constructor-function inference, so an expando-exported
+                // plain function is a value too. Failing here routes the
+                // reference to the TS2749 value-used-as-type terminal;
                 // `typeof` queries (ValuePosition) still get the value type.
                 if mode == JsdocNameMode::BareTypeReference
-                    && self.jsdoc_value_is_plain_callable(instance_type)
+                    && (self.jsdoc_value_is_plain_callable(instance_type)
+                        || !self.jsdoc_require_binding_supplies_type(
+                            symbol.value_declaration,
+                            symbol.escaped_name.as_str(),
+                        ))
                 {
                     return TypeId::ERROR;
                 }
