@@ -9,6 +9,7 @@ pub(crate) mod cross_file_constructors;
 pub(crate) mod cross_file_export;
 pub(crate) mod heritage_publication;
 pub(crate) mod import_type;
+pub(crate) mod import_type_meaning;
 pub(crate) mod judge;
 pub(crate) mod mixin_constraints;
 pub(crate) mod module;

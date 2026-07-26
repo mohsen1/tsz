@@ -385,6 +385,9 @@ mod js_open_object_property_access_tests;
 #[path = "../tests/js_property_write_self_declaration_tests.rs"]
 mod js_property_write_self_declaration_tests;
 #[cfg(test)]
+#[path = "tests/jsdoc_bare_import_type_tests.rs"]
+mod jsdoc_bare_import_type_tests;
+#[cfg(test)]
 #[path = "tests/jsdoc_closure_function_type_tests.rs"]
 mod jsdoc_closure_function_type_tests;
 #[cfg(test)]

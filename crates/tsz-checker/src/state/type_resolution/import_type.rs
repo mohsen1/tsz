@@ -2,7 +2,6 @@
 
 use crate::import::core::ModuleNotFoundSite;
 use crate::state::CheckerState;
-use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
@@ -748,80 +747,8 @@ impl<'a> CheckerState<'a> {
                 .any(|diag| diag.start >= call_node.pos && diag.start < call_node.end)
         });
         let suppress_bare_import_type_error = has_call_parse_diagnostic || has_import_type_options;
-        let bare_import_type_refers_to_type = if is_bare_import_type {
-            use tsz_binder::symbol_flags;
-
-            const PURE_TYPE: u32 = symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS;
-            const VALUE: u32 = symbol_flags::VARIABLE
-                | symbol_flags::FUNCTION
-                | symbol_flags::CLASS
-                | symbol_flags::ENUM
-                | symbol_flags::ENUM_MEMBER
-                | symbol_flags::VALUE_MODULE;
-
-            let lib_binders = self.get_lib_binders();
-            let ambient_export_equals_sym = self
-                .ctx
-                .binder
-                .module_exports
-                .get(&module_name)
-                .and_then(|exports| exports.get("export="))
-                .or_else(|| {
-                    self.ctx
-                        .global_module_exports_index
-                        .as_ref()
-                        .and_then(|idx| idx.get(&module_name))
-                        .and_then(|inner| inner.get("export="))
-                        .and_then(|entries| entries.first().map(|&(_file_idx, sym_id)| sym_id))
-                });
-            let file_export_equals = self
-                .ctx
-                .resolve_import_target_from_file_with_mode(
-                    self.ctx.current_file_idx,
-                    &module_name,
-                    resolution_mode_override,
-                )
-                .and_then(|target_idx| {
-                    self.ctx
-                        .get_binder_for_file(target_idx)
-                        .map(|binder| (target_idx, binder))
-                })
-                .and_then(|(target_idx, binder)| {
-                    let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
-                    let file_name = target_arena.source_files.first()?.file_name.as_str();
-                    binder
-                        .module_exports
-                        .get(file_name)
-                        .and_then(|exports| exports.get("export="))
-                });
-            let has_export_equals =
-                ambient_export_equals_sym.is_some() || file_export_equals.is_some();
-
-            has_export_equals
-                || self.is_module_export_equals_type_only(&module_name)
-                || ambient_export_equals_sym.is_some_and(|sym_id| {
-                    let symbol_is_type = |checker: &Self, sym_id: tsz_binder::SymbolId| {
-                        checker
-                            .ctx
-                            .binder
-                            .get_symbol_with_libs(sym_id, &lib_binders)
-                            .is_some_and(|sym| {
-                                sym.is_type_only
-                                    || (sym.has_any_flags(PURE_TYPE) && !sym.has_any_flags(VALUE))
-                            })
-                    };
-
-                    if symbol_is_type(self, sym_id) {
-                        return true;
-                    }
-
-                    let mut visited = AliasCycleTracker::new();
-                    self.resolve_alias_symbol(sym_id, &mut visited)
-                        .is_some_and(|resolved| symbol_is_type(self, resolved))
-                })
-        } else {
-            false
-        };
+        let bare_import_type_refers_to_type = is_bare_import_type
+            && self.bare_import_type_names_a_type(&module_name, resolution_mode_override);
         let bare_import_type_error = |checker: &mut Self| {
             let message = format_message(
                 diagnostic_messages::MODULE_DOES_NOT_REFER_TO_A_TYPE_BUT_IS_USED_AS_A_TYPE_HERE_DID_YOU_MEAN_TYPEOF_I,
