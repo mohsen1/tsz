@@ -143,3 +143,55 @@ fn unresolvable_param_type_still_reports_2304() {
     )];
     assert!(js_codes(&files).contains(&2304));
 }
+
+// --- `export =` must supply a TYPE, not merely exist. ---
+
+/// `declare var config: {...}; export = config` exports a VALUE, so the module
+/// is not usable as a bare import type (witness:
+/// `jsdocImportTypeReferenceToCommonjsModule`).
+#[test]
+fn bare_import_of_export_equals_value_reports() {
+    let files = [
+        (
+            "ex.d.ts",
+            "declare var config: { fix: boolean }\nexport = config;\n",
+        ),
+        (
+            "test.js",
+            "/** @param {import('./ex')} a */\nfunction demo(a) { return a }\ndemo\n",
+        ),
+    ];
+    assert!(js_codes(&files).contains(&1340));
+}
+
+/// A class carries a type meaning alongside its value meaning, so
+/// `class Conn {} export = Conn` IS a valid bare import type. This is the case
+/// that a naive "export = must be a pure type" rule gets wrong — it regressed
+/// `declarationImportTypeAliasInferredAndEmittable` until classes were counted.
+#[test]
+fn bare_import_of_export_equals_class_is_accepted() {
+    let files = [
+        (
+            "foo.d.ts",
+            "declare class Conn { item: number }\nexport = Conn;\n",
+        ),
+        (
+            "test.js",
+            "/** @param {import('./foo')} c */\nfunction demo(c) { return c }\ndemo\n",
+        ),
+    ];
+    assert!(!js_codes(&files).contains(&1340));
+}
+
+/// An enum likewise declares a type.
+#[test]
+fn bare_import_of_export_equals_enum_is_accepted() {
+    let files = [
+        ("e.d.ts", "declare enum E { A, B }\nexport = E;\n"),
+        (
+            "test.js",
+            "/** @param {import('./e')} e */\nfunction demo(e) { return e }\ndemo\n",
+        ),
+    ];
+    assert!(!js_codes(&files).contains(&1340));
+}
