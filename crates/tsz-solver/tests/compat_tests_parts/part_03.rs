@@ -1705,3 +1705,32 @@ fn test_analyze_weak_and_explain_matches_assignable() {
     assert_eq!(format!("{reason:?}"), format!("{expected_reason:?}"));
     assert!(reason.is_none(), "assignable pair has no reason");
 }
+#[test]
+fn reusable_compat_cache_skips_global_fuel_failure() {
+    crate::limits::reset_subtype_thread_local_state();
+    let interner = TypeInterner::new();
+    let value = interner.intern_string("value");
+    let extra = interner.intern_string("extra");
+    let source = interner.object(vec![
+        PropertyInfo::new(value, TypeId::STRING),
+        PropertyInfo::new(extra, TypeId::NUMBER),
+    ]);
+    let target = interner.object(vec![PropertyInfo::new(value, TypeId::STRING)]);
+    let mut checker = CompatChecker::new(&interner);
+    checker.set_assume_related_on_depth(false);
+
+    for _ in 0..crate::relations::subtype::cache::MAX_GLOBAL_SUBTYPE_FUEL {
+        let _ = crate::limits::enter_subtype_frame();
+    }
+    assert!(
+        !checker.is_assignable(source, target),
+        "strict proof mode rejects a request whose global relation fuel is exhausted",
+    );
+
+    crate::limits::reset_subtype_thread_local_state();
+    assert!(
+        checker.is_assignable(source, target),
+        "the reusable compat cache must recompute under a fresh budget",
+    );
+    crate::limits::reset_subtype_thread_local_state();
+}

@@ -16,6 +16,17 @@ use crate::visitor::{
 use super::super::{AnyPropagationMode, SubtypeChecker, SubtypeResult, TypeResolver};
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
+    fn conditional_identity_fallback_checker(&self) -> SubtypeChecker<'a, R> {
+        let mut fallback = SubtypeChecker::with_resolver(self.interner, self.resolver)
+            .with_any_propagation_mode(AnyPropagationMode::IdenticalOnly)
+            .with_assume_related_on_cycle(self.assume_related_on_cycle)
+            .with_assume_related_on_depth(self.assume_related_on_depth);
+        if let Some(db) = self.query_db {
+            fallback = fallback.with_query_db(db);
+        }
+        fallback
+    }
+
     /// Conditional extends-types use a stricter equivalence than ordinary
     /// assignability. Two extends-types are equivalent only when their full
     /// per-property modifier shape matches, even when individual differences
@@ -66,13 +77,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         }
 
-        let mut fallback = SubtypeChecker::with_resolver(self.interner, self.resolver)
-            .with_any_propagation_mode(AnyPropagationMode::IdenticalOnly);
-        if let Some(db) = self.query_db {
-            fallback = fallback.with_query_db(db);
-        }
+        let mut fallback = self.conditional_identity_fallback_checker();
         let fallback_events_at_entry = fallback.unresolved_lazy_relation_event_count();
         let fallback_incomplete_at_entry = fallback.incomplete_evaluation_relation_event_count();
+        let fallback_limits_at_entry = fallback.relation_limit_event_count();
         let equivalent = fallback.check_subtype(left_eval, right_eval).is_true()
             && fallback.check_subtype(right_eval, left_eval).is_true();
         self.absorb_unresolved_lazy_relation_events_from(&fallback, fallback_events_at_entry);
@@ -80,6 +88,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             &fallback,
             fallback_incomplete_at_entry,
         );
+        self.absorb_relation_limit_events_from(&fallback, fallback_limits_at_entry);
         equivalent
     }
 
@@ -760,5 +769,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         } else {
             SubtypeResult::False
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::construction::TypeInterner;
+
+    #[test]
+    fn conditional_identity_fallback_inherits_cycle_and_depth_policies() {
+        let interner = TypeInterner::new();
+        let checker = SubtypeChecker::new(&interner)
+            .with_assume_related_on_cycle(false)
+            .with_assume_related_on_depth(false);
+
+        let fallback = checker.conditional_identity_fallback_checker();
+
+        assert!(!fallback.assume_related_on_cycle);
+        assert!(!fallback.assume_related_on_depth);
     }
 }

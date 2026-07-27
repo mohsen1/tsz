@@ -429,6 +429,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if self.assume_related_on_cycle {
             flags |= RelationFlags::ASSUME_RELATED_ON_CYCLE;
         }
+        if self.assume_related_on_depth {
+            flags |= RelationFlags::ASSUME_RELATED_ON_DEPTH;
+        }
         // The class-symbol classifier is behavior-affecting (it can make a
         // no-`DefId` class-flagged symbol nominal), so discriminate verdicts
         // computed with it active from class-agnostic ones (issue #13828). The
@@ -441,6 +444,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         RelationPolicy::from_relation_flags(flags)
             .with_any_propagation_mode(self.any_propagation)
             .with_assume_related_on_cycle(self.assume_related_on_cycle)
+            .with_assume_related_on_depth(self.assume_related_on_depth)
     }
 
     /// Resolve depth-sensitive `any` propagation to the cache-key mode.

@@ -2528,3 +2528,6 @@ path = "tests/inaccessible_constructor_instance_type_tests.rs"
 [[test]]
 name = "nullish_non_strict_assignability_tests"
 path = "tests/nullish_non_strict_assignability_tests.rs"
+[[test]]
+name = "instanceof_promise_recursive_narrowing_tests"
+path = "tests/instanceof_promise_recursive_narrowing_tests.rs"

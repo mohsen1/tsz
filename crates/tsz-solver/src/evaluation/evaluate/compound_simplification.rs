@@ -149,6 +149,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // redundant. Termination is unaffected: the recursion guard still fires;
         // only the returned verdict changes from optimistic-true to not-related.
         checker.assume_related_on_cycle = false;
+        checker.assume_related_on_depth = false;
         checker.max_depth = MAX_SUBTYPE_DEPTH;
         checker.no_unchecked_indexed_access = self.no_unchecked_indexed_access;
         checker.exact_optional_property_types = self.exact_optional_property_types;
@@ -300,6 +301,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         let lazy_events_at_entry = checker.unresolved_lazy_relation_event_count();
+        let budget_events_at_entry = checker.incomplete_evaluation_relation_event_count();
         let weak_sensitivity_at_entry = crate::limits::weak_type_sensitivity_count();
         let result = checker.check_subtype(source, target);
         let related = result.is_true();
@@ -312,6 +314,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             && !checker.depth_exceeded()
             && !checker.iteration_exceeded()
             && checker.unresolved_lazy_relation_event_count() == lazy_events_at_entry
+            && checker.incomplete_evaluation_relation_event_count() == budget_events_at_entry
             && crate::limits::weak_type_sensitivity_count() == weak_sensitivity_at_entry
         {
             if let Some(session) = session {
@@ -641,6 +644,7 @@ mod tests {
     use crate::construction::TypeInterner;
     use crate::def::DefId;
     use crate::evaluation::session::EvaluationSession;
+    use crate::recursion::{MAX_SOLVER_STACK_FRAMES, try_enter_solver_frame};
     use crate::relations::subtype::{MAX_SUBTYPE_DEPTH, SubtypeChecker};
     use crate::types::{IndexSignature, ObjectShape, PropertyInfo, TupleElement, TypeId};
 
@@ -661,6 +665,7 @@ mod tests {
         // member removal only acts on definitive verdicts, so the probe key must
         // carry the same not-coinductive relation mode.
         checker.assume_related_on_cycle = false;
+        checker.assume_related_on_depth = false;
         checker.max_depth = MAX_SUBTYPE_DEPTH;
         checker.exact_optional_property_types = exact_optional_property_types;
         checker
@@ -1042,6 +1047,43 @@ mod tests {
             vec![present_undefined, optional_number],
             "a legacy-mode seeded verdict must not be read by an exact-mode compound probe",
         );
+    }
+
+    #[test]
+    fn compound_subtype_cache_skips_shared_budget_failure() {
+        crate::limits::reset_subtype_thread_local_state();
+        let interner = TypeInterner::new();
+        let value = interner.intern_string("value");
+        let extra = interner.intern_string("extra");
+        let source = interner.object(vec![
+            PropertyInfo::new(value, TypeId::STRING),
+            PropertyInfo::new(extra, TypeId::NUMBER),
+        ]);
+        let target = interner.object(vec![PropertyInfo::new(value, TypeId::STRING)]);
+        let mut checker = compound_probe_checker(&interner, false);
+        let mut evaluator = TypeEvaluator::new(&interner);
+
+        let mut held_frames = Vec::new();
+        for _ in 0..MAX_SOLVER_STACK_FRAMES {
+            held_frames.push(try_enter_solver_frame().expect("solver frame budget has headroom"));
+        }
+        assert!(!evaluator.compound_subtype_cached(&mut checker, source, target));
+        assert_eq!(
+            evaluator.cache_statistics().compound_subtype_entries,
+            0,
+            "a strict shared-budget failure must not enter the compound memo",
+        );
+
+        drop(held_frames);
+        crate::limits::reset_subtype_thread_local_state();
+        checker.reset();
+        assert!(evaluator.compound_subtype_cached(&mut checker, source, target));
+        assert_eq!(
+            evaluator.cache_statistics().compound_subtype_entries,
+            1,
+            "a fresh-budget structural proof should be memoized",
+        );
+        crate::limits::reset_subtype_thread_local_state();
     }
 
     #[test]

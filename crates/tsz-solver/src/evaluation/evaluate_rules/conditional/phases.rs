@@ -759,9 +759,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 } else {
                     let mut strict_checker = self.conditional_subtype_checker();
                     let verdict = strict_checker.is_subtype_of(check_type, extends_type);
-                    // A walk that exhausted its own depth/iteration budget returned
-                    // a conservative verdict; mark it un-publishable.
-                    if strict_checker.depth_exceeded() || strict_checker.iteration_exceeded() {
+                    // Any request-local relation answer is un-publishable. The
+                    // typed stability signal also covers global fuel, shared
+                    // solver frames, and truncated evaluation, which do not
+                    // necessarily trip this checker's local recursion guard.
+                    if !strict_checker.relation_result_cacheable() {
                         cache_stability.mark_budget_bounded();
                     }
                     verdict
