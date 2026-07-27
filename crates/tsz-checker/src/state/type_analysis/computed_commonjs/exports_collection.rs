@@ -329,7 +329,14 @@ impl<'a> CheckerState<'a> {
             // `commonjs_export_rhs_symbol_type`: for `exports = module.exports
             // = C` the latter answers with C's *instance* type, while tsc
             // reports the callable `() => void`.
-            if ty == TypeId::ERROR {
+            // The degenerate value differs by path: the chain types as an error
+            // when only the ambient declaration is in play, and as `any` once
+            // the surrounding method bodies are checked. Both mean the same
+            // thing here — the intermediate target's declaration won, not the
+            // module's real export — so rescue either.
+            if ty == TypeId::ERROR
+                || crate::query_boundaries::assignability::is_any_type(self.ctx.types, ty)
+            {
                 let inner = self.commonjs_export_rhs_through_assignment_chain(rhs_expr);
                 if inner != rhs_expr {
                     let inner_ty = self.get_type_of_node(inner);
