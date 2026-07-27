@@ -90,15 +90,44 @@ if [ "$PUSHING_TO_MAIN" = "true" ] && [ "${TSZ_SKIP_PUSH_TESTS:-}" != "1" ]; the
 
         echo "Pre-push: testing${PKG_FLAGS}"
         if cargo nextest --version >/dev/null 2>&1; then
-            TEST_OUTPUT=$("$SAFE_RUN_SCRIPT" cargo nextest run --profile precommit --no-tests=pass $PKG_FLAGS 2>&1) || {
-                echo ""
-                echo "$TEST_OUTPUT" | tail -30
-                echo ""
-                echo "ERROR: Tests failed. Fix failures before pushing to main."
-                echo "  To bypass (NOT recommended): TSZ_SKIP_PUSH_TESTS=1 git push"
-                exit 1
-            }
-            echo "$TEST_OUTPUT" | tail -5
+            # --no-fail-fast: produce the full failure inventory in one run, then
+            # adjudicate it against the sanctioned known-failures baseline
+            # (scripts/ci/known-failures.txt, the same policy the signoff lane
+            # applies via known-failures-check.mjs). Main deliberately carries a
+            # known-failing set; a fail-fast gate with no baseline awareness
+            # blocks every push once any known failure lands in a touched crate.
+            # Only NEW failures — not in the baseline — reject the push.
+            TEST_EXIT=0
+            TEST_OUTPUT=$("$SAFE_RUN_SCRIPT" cargo nextest run --profile precommit --no-tests=pass --no-fail-fast --color never $PKG_FLAGS 2>&1) || TEST_EXIT=$?
+            if [ "$TEST_EXIT" -ne 0 ]; then
+                KNOWN_FILE="scripts/ci/known-failures.txt"
+                FAILED_IDS=$(printf '%s\n' "$TEST_OUTPUT" \
+                    | grep -aE '^ *FAIL ' \
+                    | sed -E 's/^ *FAIL \[[^]]*\] \( *[0-9]+\/[0-9]+\) //; s/ /::/' \
+                    | sort -u)
+                NEW_FAILS=""
+                if [ -n "$FAILED_IDS" ] && [ -f "$KNOWN_FILE" ]; then
+                    while IFS= read -r fid; do
+                        [ -z "$fid" ] && continue
+                        grep -qxF "$fid" "$KNOWN_FILE" || NEW_FAILS="$NEW_FAILS$fid"$'\n'
+                    done <<< "$FAILED_IDS"
+                else
+                    NEW_FAILS="$FAILED_IDS"
+                fi
+                if [ -n "$NEW_FAILS" ]; then
+                    echo ""
+                    echo "$TEST_OUTPUT" | tail -15
+                    echo ""
+                    echo "ERROR: NEW test failures (not in $KNOWN_FILE):"
+                    printf '%s' "$NEW_FAILS" | sed 's/^/  - /'
+                    echo "Fix failures before pushing to main."
+                    echo "  To bypass (NOT recommended): TSZ_SKIP_PUSH_TESTS=1 git push"
+                    exit 1
+                fi
+                KNOWN_COUNT=$(printf '%s\n' "$FAILED_IDS" | grep -c . || true)
+                echo "Pre-push: $KNOWN_COUNT failing test(s), all in the known-failures baseline; not blocking."
+            fi
+            echo "$TEST_OUTPUT" | grep -aE 'Summary' | tail -2
         else
             TEST_OUTPUT=$("$SAFE_RUN_SCRIPT" cargo test $PKG_FLAGS 2>&1) || {
                 echo ""
