@@ -282,6 +282,34 @@ impl<'a> CheckerState<'a> {
         );
     }
 
+    /// Follow an assignment chain to the value actually exported.
+    ///
+    /// `exports = module.exports = C` assigns through an intermediate target.
+    /// An assignment expression takes its target's declared type, so an ambient
+    /// `declare var module: { exports: any }` — what node typings and
+    /// hand-written shims provide — makes the chain resolve to an error type
+    /// rather than to `C`. tsc collects the assigned value, keeping the real
+    /// export type, so every `exports.<name>` is still checked against it.
+    fn commonjs_export_rhs_through_assignment_chain(&self, rhs_expr: NodeIndex) -> NodeIndex {
+        let mut current = rhs_expr;
+        for _ in 0..8 {
+            let Some(node) = self.ctx.arena.get(current) else {
+                break;
+            };
+            if node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                break;
+            }
+            let Some(binary) = self.ctx.arena.get_binary_expr(node) else {
+                break;
+            };
+            if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+                break;
+            }
+            current = binary.right;
+        }
+        current
+    }
+
     pub(crate) fn infer_commonjs_export_rhs_type(
         &mut self,
         target_file_idx: usize,
@@ -293,6 +321,23 @@ impl<'a> CheckerState<'a> {
                 .literal_type_from_initializer(rhs_expr)
                 .or_else(|| self.commonjs_export_rhs_symbol_type(rhs_expr))
                 .unwrap_or_else(|| self.get_type_of_node(rhs_expr));
+            // An error type here means the chain's intermediate target carried
+            // an ambient declaration, not that the module exports nothing
+            // usable — the error renders as `any`, which then accepts every
+            // property access silently. Recover the assigned value's type.
+            // Deliberately re-typing the node rather than consulting
+            // `commonjs_export_rhs_symbol_type`: for `exports = module.exports
+            // = C` the latter answers with C's *instance* type, while tsc
+            // reports the callable `() => void`.
+            if ty == TypeId::ERROR {
+                let inner = self.commonjs_export_rhs_through_assignment_chain(rhs_expr);
+                if inner != rhs_expr {
+                    let inner_ty = self.get_type_of_node(inner);
+                    if inner_ty != TypeId::ERROR {
+                        ty = inner_ty;
+                    }
+                }
+            }
             ty = self.upgrade_commonjs_export_constructor_type(rhs_expr, ty);
             ty = self.augment_commonjs_export_type_with_expandos(target_file_idx, expando_root, ty);
             ty = self.widen_fresh_object_literal_properties_for_display(ty);
