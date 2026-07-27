@@ -193,6 +193,9 @@ mod class_property_typed_const_initializer_tests;
 #[path = "tests/comlink_row_regression_tests.rs"]
 mod comlink_row_regression_tests;
 #[cfg(test)]
+#[path = "tests/commonjs_export_assignment_chain_tests.rs"]
+mod commonjs_export_assignment_chain_tests;
+#[cfg(test)]
 #[path = "tests/commonjs_export_declaration_level_type_tests.rs"]
 mod commonjs_export_declaration_level_type_tests;
 #[cfg(test)]
