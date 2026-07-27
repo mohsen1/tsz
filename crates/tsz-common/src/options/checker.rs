@@ -47,6 +47,10 @@ pub struct CheckerOptions {
     /// Module kind (None, `CommonJS`, ES2015, ES2020, ES2022, `ESNext`, etc.)
     /// Controls which module system is being targeted (affects import/export syntax validity)
     pub module: ModuleKind,
+    /// `useDefineForClassFields`: `None` means the target-derived default
+    /// (`true` for ES2022+). `getEmitStandardClassFields` semantics:
+    /// standard emit iff this is not `Some(false)` and target >= ES2022.
+    pub use_define_for_class_fields: Option<bool>,
     /// Emit additional JavaScript to ease support for importing `CommonJS` modules.
     /// When true, synthesizes default exports for `CommonJS` modules.
     pub es_module_interop: bool,
@@ -244,6 +248,7 @@ impl Default for CheckerOptions {
             types_has_wildcard: false,
             target: ScriptTarget::default(),
             module: ModuleKind::default(),
+            use_define_for_class_fields: None,
             es_module_interop: false,
             allow_synthetic_default_imports: false,
             allow_unreachable_code: None,

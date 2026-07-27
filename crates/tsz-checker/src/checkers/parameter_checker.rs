@@ -334,7 +334,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn collect_parameter_forward_references_recursive(
+    pub(crate) fn collect_parameter_forward_references_recursive(
         &self,
         node_idx: NodeIndex,
         later_name: &str,
@@ -957,6 +957,7 @@ impl<'a> CheckerState<'a> {
     /// ## Error TS2372:
     /// "Parameter 'x' cannot reference itself."
     pub(crate) fn check_parameter_initializers(&mut self, parameters: &[NodeIndex]) {
+        self.check_parameter_downlevel_body_capture(parameters);
         for (param_pos, &param_idx) in parameters.iter().enumerate() {
             let Some(param_node) = self.ctx.arena.get(param_idx) else {
                 continue;
@@ -1063,8 +1064,9 @@ impl<'a> CheckerState<'a> {
                     let Some(later_name) = self.get_parameter_name(later_param.name) else {
                         continue;
                     };
-                    let refs =
+                    let mut refs =
                         self.collect_parameter_forward_references(param.initializer, &later_name);
+                    refs.retain(|&ref_idx| !self.is_property_access_name_position(ref_idx));
                     if refs.is_empty() {
                         continue;
                     }
@@ -1180,7 +1182,10 @@ impl<'a> CheckerState<'a> {
             .is_some()
     }
 
-    fn enclosing_function_like_for_parameter(&self, param_idx: NodeIndex) -> Option<NodeIndex> {
+    pub(crate) fn enclosing_function_like_for_parameter(
+        &self,
+        param_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
         let mut current = param_idx;
         for _ in 0..8 {
             let parent = self.ctx.arena.get_extended(current)?.parent;

@@ -792,6 +792,7 @@ pub fn resolve_compiler_options(
     if let Some(use_define_for_class_fields) = options.use_define_for_class_fields {
         resolved.printer.use_define_for_class_fields = use_define_for_class_fields;
     }
+    resolved.checker.use_define_for_class_fields = options.use_define_for_class_fields;
 
     if let Some(no_unused_locals) = options.no_unused_locals {
         resolved.checker.no_unused_locals = no_unused_locals;
