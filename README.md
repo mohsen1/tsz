@@ -73,7 +73,7 @@ test suite against it.
 
 <!-- CONFORMANCE_START -->
 ```
-Progress: [██████████████████░░] 91.5% (11,019/12,043 runnable tests)
+Progress: [███████████████████░] 94.2% (11,342/12,043 runnable tests)
 Candidates: 12,585 (12,043 runnable, 507 unsupported, 35 skipped)
 ```
 <!-- CONFORMANCE_END -->
@@ -85,7 +85,7 @@ Candidates: 12,585 (12,043 runnable, 507 unsupported, 35 skipped)
 <!-- EMIT_START -->
 ```
 JavaScript:  [████████████████████] 100.0% (11,562 / 11,563 tests)
-Declaration: [████████████████████] 98.7% (1,372 / 1,390 tests)
+Declaration: [████████████████████] 98.9% (1,375 / 1,390 tests)
 ```
 <!-- EMIT_END -->
 
