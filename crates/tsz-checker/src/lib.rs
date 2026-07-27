@@ -196,6 +196,9 @@ mod comlink_row_regression_tests;
 #[path = "tests/commonjs_export_declaration_level_type_tests.rs"]
 mod commonjs_export_declaration_level_type_tests;
 #[cfg(test)]
+#[path = "tests/commonjs_reentrant_surface_tests.rs"]
+mod commonjs_reentrant_surface_tests;
+#[cfg(test)]
 #[path = "tests/commonjs_require_binding_type_meaning_tests.rs"]
 mod commonjs_require_binding_type_meaning_tests;
 #[cfg(test)]
