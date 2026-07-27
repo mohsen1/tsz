@@ -318,10 +318,14 @@ impl<'a> CheckerState<'a> {
         // `@type {new () => T}` annotations and real classes still supply construct
         // signatures through separate paths. Prototype-method `this` typing (the
         // `X.prototype.m = function () { ... }` receiver) is preserved below.
+        // The same removal covers the prototype-method receiver: with no
+        // synthesized instance type for `M`, `this` inside
+        // `M.prototype.m = function () { ... }` is implicitly `any`, so
+        // `this.whatever` is accepted rather than checked against a synthesized
+        // instance shape. Verified against tsc 7.0.2, which reports only TS2683
+        // on the constructor body for that form.
         let js_constructor_instance_type: Option<TypeId> = None;
-        let js_prototype_owner_instance_type = prototype_owner_target.and_then(|owner_target| {
-            self.synthesize_js_constructor_instance_type(owner_target, TypeId::ANY, &[])
-        });
+        let js_prototype_owner_instance_type: Option<TypeId> = None;
 
         // Check if this closure is inside a decorator expression.
         // Decorator arrow functions like `@((t, c) => {})` should not emit TS7006

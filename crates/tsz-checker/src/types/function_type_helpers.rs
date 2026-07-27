@@ -921,9 +921,11 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let access = self.ctx.arena.get_access_expr(left_node)?;
-        if let Some(instance_type) = self.prototype_assignment_instance_type(access.expression) {
-            return Some(instance_type);
-        }
+        // No prototype special case: TypeScript 7 dropped JS constructor-function
+        // inference, so `M.prototype` does not name a synthesized instance type.
+        // `M.prototype.m = function () { ... }` takes the ordinary
+        // assignment-receiver `this` (the type of `M.prototype`) like any other
+        // `obj.m = function () { ... }`.
         let receiver = self.get_type_of_node(access.expression);
         (receiver != TypeId::ERROR).then_some(receiver)
     }
