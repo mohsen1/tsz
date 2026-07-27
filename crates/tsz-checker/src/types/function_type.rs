@@ -1836,7 +1836,18 @@ impl<'a> CheckerState<'a> {
                 // properly checked later during check_class_member with correct context.
                 // The method's return type is already computed above (from annotation
                 // or infer_return_type_from_body which snapshots/restores).
-                let skip_body_check = !self.ctx.is_checking_statements && is_method_or_constructor;
+                let is_class_member = self
+                    .ctx
+                    .arena
+                    .get_extended(idx)
+                    .map(|ext| ext.parent)
+                    .and_then(|parent| self.ctx.arena.get(parent))
+                    .is_some_and(|parent| {
+                        parent.kind == syntax_kind_ext::CLASS_DECLARATION
+                            || parent.kind == syntax_kind_ext::CLASS_EXPRESSION
+                    });
+                let skip_body_check =
+                    !self.ctx.is_checking_statements && is_method_or_constructor && is_class_member;
                 // Save outer generator's yield collection state (for nested generators)
                 let saved_yield_collection =
                     std::mem::take(&mut self.ctx.generator_yield_operand_types);
