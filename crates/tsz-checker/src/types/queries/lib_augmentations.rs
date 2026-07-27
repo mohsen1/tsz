@@ -373,8 +373,8 @@ impl<'a> CheckerState<'a> {
 mod finalized_lib_body_identity_tests {
     use super::*;
     use crate::context::CheckerOptions;
+    use crate::query_boundaries::common::TypeInterner;
     use tsz_binder::BinderState;
-    use tsz_solver::construction::TypeInterner;
     use tsz_solver::def::DefinitionInfo;
 
     #[test]

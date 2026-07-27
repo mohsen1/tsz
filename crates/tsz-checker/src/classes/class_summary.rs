@@ -30,10 +30,10 @@ pub(crate) struct ClassPropertyInitializationInfo {
 #[cfg(test)]
 mod exact_rebind_cache_tests {
     use super::ClassChainSummary;
+    use crate::query_boundaries::common::{TypeInterner, TypeParamOrigin};
     use rustc_hash::FxHashMap;
-    use tsz_solver::construction::TypeInterner;
     use tsz_solver::def::DefId;
-    use tsz_solver::{ParamInfo, TypeId, TypeParamInfo, TypeParamOrigin};
+    use tsz_solver::{ParamInfo, TypeId, TypeParamInfo};
 
     #[test]
     fn active_scope_rebind_rejects_same_named_foreign_binder() {
@@ -80,7 +80,7 @@ mod exact_rebind_cache_tests {
             constraint: Some(source_outer),
             default: None,
             is_const: false,
-            origin: tsz_solver::TypeParamOrigin::User,
+            origin: TypeParamOrigin::User,
         });
         let member = crate::query_boundaries::construct_signatures::function_type_from_parts(
             &db,
@@ -172,7 +172,7 @@ mod exact_rebind_cache_tests {
             constraint: Some(source_outer),
             default: None,
             is_const: false,
-            origin: tsz_solver::TypeParamOrigin::User,
+            origin: TypeParamOrigin::User,
         });
         let function_member =
             crate::query_boundaries::construct_signatures::function_type_from_parts(
