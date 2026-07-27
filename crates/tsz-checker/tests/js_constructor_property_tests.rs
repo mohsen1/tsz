@@ -198,16 +198,19 @@ Installer.prototype.second = function () {
         },
     );
 
-    assert!(
-        diagnostics
-            .iter()
-            .any(|(code, message)| { *code == 2531 && message == "Object is possibly 'null'." }),
-        "expected TS2531 on unchecked this.twices.push(), got: {diagnostics:#?}"
-    );
+    // Same shape as `test_js_constructor_nullable_array_method_call_reports_ts2531`,
+    // run through the es5-lib harness. TypeScript 7 dropped JS
+    // constructor-function inference, so `this` is implicitly `any` and
+    // `this.twices` carries no nullability to report on.
     assert_eq!(
         count_code(&diagnostics, 2531),
-        1,
-        "expected the null check to narrow the second this.twices.push(), got: {diagnostics:#?}"
+        0,
+        "`this` is `any` without constructor inference, so `this.twices.push()` is \
+         unchecked; expected no TS2531, got: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2683),
+        "expected TS2683 for the implicitly-`any` constructor `this`, got: {diagnostics:#?}"
     );
 }
 
@@ -343,10 +346,19 @@ Installer.prototype.second = function () {
         },
     );
 
+    // TypeScript 7 dropped JS constructor-function inference, so `this.twices`
+    // never acquires the `never[] | null` shape this test was written against —
+    // `this` is implicitly `any` and the member read is unchecked. tsc 7.0.2
+    // reports only TS2683 on the constructor body for this source.
     assert_eq!(
         count_code(&diagnostics, 2531),
-        1,
-        "Expected nullable JS constructor property method call to report TS2531 exactly once, got: {diagnostics:?}"
+        0,
+        "`this` is `any` without constructor inference, so no nullability check \
+         applies; expected no TS2531, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2683),
+        "expected TS2683 for the implicitly-`any` constructor `this`, got: {diagnostics:?}"
     );
 }
 
