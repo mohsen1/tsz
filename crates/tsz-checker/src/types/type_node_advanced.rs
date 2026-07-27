@@ -25,6 +25,89 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
+    /// Canonicalize a `typeof X` operand `SymbolId` to its cross-file import
+    /// target.
+    ///
+    /// A per-file binder mints a local `ALIAS` `SymbolId` for `import { X }`;
+    /// lowering `typeof X` under that alias bakes a per-arena identity into the
+    /// `TypeQuery` that a consuming arena's `TypeEnvironment` cannot resolve — and
+    /// that a second importing file mints as yet another colliding id, splitting
+    /// `Parameters<typeof X>[N]` into unrelated `TypeId`s. Following the alias to
+    /// its declaring value symbol gives every `typeof X` across files one identity
+    /// (the canonical value whose `SymbolRef -> type` mapping the environment
+    /// holds). Non-alias symbols and unresolved aliases pass through unchanged.
+    fn canonical_type_query_symbol(&self, sym_id: tsz_binder::SymbolId) -> tsz_binder::SymbolId {
+        let is_alias = self
+            .ctx
+            .binder
+            .get_symbol(sym_id)
+            .is_some_and(|s| s.flags & tsz_binder::symbol_flags::ALIAS != 0);
+        if !is_alias {
+            return sym_id;
+        }
+        match self.ctx.resolve_import_alias_chain_and_register(sym_id) {
+            Some(target) if target != sym_id => target,
+            _ => sym_id,
+        }
+    }
+
+    /// [#80] Make a cross-file PLAIN value's `typeof` visible in this (consuming)
+    /// session's `type_env`.
+    ///
+    /// A per-file `type_env` is reset between sessions and `typeof_value_types` is
+    /// otherwise merged-symbol-only (the #15078 self-loop path), so a deferred
+    /// `TypeQuery(canonical)` minted for `typeof X` in a cross-file type-alias body
+    /// resolves to `None` in the consuming session and every relation against it
+    /// fails. Register `X`'s already-computed value type (the checker's declared
+    /// type — narrowed literals preserved) under the canonical import target, so
+    /// the query resolves. Sibling of `register_self_referential_merged_value_typeof`
+    /// on a DISJOINT symbol class (plain `VALUE`, not `INTERFACE`/`TYPE_ALIAS`/
+    /// `CLASS`) — merged value+type-alias and classes keep their own registration
+    /// paths, so this cannot regress them. Cross-file + idempotent + valid-type
+    /// gated.
+    fn register_cross_file_value_typeof(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+        value_type: TypeId,
+    ) {
+        if value_type == TypeId::ANY || value_type == TypeId::ERROR || value_type == TypeId::UNKNOWN
+        {
+            return;
+        }
+        let canon = self.canonical_type_query_symbol(sym_id);
+        let flags = match self.ctx.binder.get_symbol(canon) {
+            Some(symbol) => symbol.flags,
+            None => return,
+        };
+        // Plain value only: merged value+type-alias (#15078) and classes (class env
+        // entry) own their consuming-session registration.
+        let is_plain_value = flags & tsz_binder::symbol_flags::VALUE != 0
+            && flags
+                & (tsz_binder::symbol_flags::INTERFACE
+                    | tsz_binder::symbol_flags::TYPE_ALIAS
+                    | tsz_binder::symbol_flags::CLASS)
+                == 0;
+        if !is_plain_value {
+            return;
+        }
+        // Cross-file only: a same-file `typeof` already resolves in this session.
+        match self.ctx.resolve_symbol_file_index(canon) {
+            Some(file_idx) if file_idx != self.ctx.current_file_idx => {}
+            _ => return,
+        }
+        let sref = tsz_solver::SymbolRef(canon.0);
+        // Idempotence: a sibling reference already registered the value.
+        if self
+            .ctx
+            .type_env
+            .try_borrow()
+            .is_ok_and(|env| env.get_typeof_value_type(sref).is_some())
+        {
+            return;
+        }
+        self.ctx
+            .register_typeof_value_type_in_envs(sref, value_type);
+    }
     // =========================================================================
     // Type Operators
     // =========================================================================
@@ -592,6 +675,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 }
 
                 if !use_flow_sensitive_query {
+                    self.register_cross_file_value_typeof(sym_id, declared_type);
                     if let Some(type_arguments) = &type_arguments {
                         return self.apply_instantiation_expression_type_arguments(
                             declared_type,
@@ -644,6 +728,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             }
 
             if let Some(value_type) = self.declared_type_for_type_query_symbol(sym_id) {
+                self.register_cross_file_value_typeof(sym_id, value_type);
                 if let Some(type_arguments) = &type_arguments {
                     return self
                         .apply_instantiation_expression_type_arguments(value_type, type_arguments);
@@ -651,8 +736,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 return value_type;
             }
 
+            let canon_sym = self.canonical_type_query_symbol(sym_id);
             let factory = self.ctx.types.factory();
-            let base = factory.type_query(tsz_solver::SymbolRef(sym_id.0));
+            let base = factory.type_query(tsz_solver::SymbolRef(canon_sym.0));
             if let Some(type_arguments) = &type_arguments {
                 return self.apply_instantiation_expression_type_arguments(base, type_arguments);
             }
@@ -742,8 +828,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     }
                     return declared_type;
                 }
+                let canon_sym = self.canonical_type_query_symbol(sym_id);
                 let factory = self.ctx.types.factory();
-                let base = factory.type_query(tsz_solver::SymbolRef(sym_id.0));
+                let base = factory.type_query(tsz_solver::SymbolRef(canon_sym.0));
                 if let Some(type_arguments) = &type_arguments {
                     return self
                         .apply_instantiation_expression_type_arguments(base, type_arguments);
@@ -1175,7 +1262,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             if symbol.flags & tsz_binder::symbol_flags::VALUE == 0 {
                 return None;
             }
-            return Some(factory.type_query(tsz_solver::SymbolRef(sym_id.0)));
+            let canon_sym = self.canonical_type_query_symbol(sym_id);
+            return Some(factory.type_query(tsz_solver::SymbolRef(canon_sym.0)));
         }
         if node.kind == syntax_kind_ext::QUALIFIED_NAME {
             let qn = self.ctx.arena.get_qualified_name(node)?;

@@ -1951,6 +1951,13 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         if (symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0 {
+            // [#80] Follow an imported value's alias to its canonical cross-file target.
+            if symbol.flags & symbol_flags::ALIAS != 0
+                && let Some(canon) = self.ctx.resolve_import_alias_chain_and_register(sym_id)
+                && canon != sym_id
+            {
+                return Some(canon.0);
+            }
             return Some(sym_id.0);
         }
 
