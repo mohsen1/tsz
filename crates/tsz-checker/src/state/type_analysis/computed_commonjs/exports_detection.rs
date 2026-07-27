@@ -527,9 +527,24 @@ impl<'a> CheckerState<'a> {
         // Use the cached JsExportSurface for typed exports instead of
         // re-scanning the AST with augment_namespace_props_with_commonjs_exports_for_file.
         let current_file_idx = self.ctx.current_file_idx;
+        // While this file's own export surface is still being computed,
+        // `resolve_js_export_surface` hands back a re-entrancy placeholder
+        // rather than the file's surface. That placeholder reports no
+        // `module.exports = X`, which makes the merge test below vacuously
+        // true and lets the deep scan synthesize a namespace containing every
+        // `module.exports.<name>` in the file. A property write typed inside
+        // that window then resolves against a namespace that *has* the member,
+        // so its missing-property diagnostic is lost — while a sibling write
+        // typed after the window resolves against the real export type and
+        // reports correctly. Suppress the merge inside the window so both
+        // resolve against the same thing.
+        let surface_is_reentrant_placeholder = self
+            .ctx
+            .js_export_surface_resolution_set
+            .contains(&current_file_idx);
         let surface = self.resolve_js_export_surface(current_file_idx);
-        let can_merge_named_exports =
-            js_exports_query::commonjs_export_surface_can_merge_named_exports(
+        let can_merge_named_exports = !surface_is_reentrant_placeholder
+            && js_exports_query::commonjs_export_surface_can_merge_named_exports(
                 self.ctx.types,
                 &surface,
             );
