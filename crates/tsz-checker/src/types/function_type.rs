@@ -815,7 +815,10 @@ impl<'a> CheckerState<'a> {
                         // The freshness boundary widens fresh literal (and
                         // enum member) initializers; non-fresh sources keep
                         // their type.
-                        self.widen_mutable_binding_initializer_type(param.initializer, init_type)
+                        let widened = self
+                            .widen_mutable_binding_initializer_type(param.initializer, init_type);
+                        let widened = self.pad_array_binding_pattern_tuple(param.name, widened);
+                        self.pad_object_binding_pattern_type(param.name, widened)
                     } else {
                         inferred_type
                     };

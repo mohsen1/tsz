@@ -56,6 +56,111 @@ impl<'a> CheckerState<'a> {
         );
     }
 
+    /// The object-literal expression that feeds a binding *element* whose own
+    /// pattern sits inside an enclosing pattern: resolve the enclosing
+    /// pattern's literal source, then pick the property value matching the
+    /// element's name. Recursive, so arbitrarily nested patterns resolve as
+    /// long as every level is fed by a written object literal.
+    fn nested_pattern_object_literal_source(
+        &self,
+        binding_element_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let element_node = self.ctx.arena.get(binding_element_idx)?;
+        let be = self.ctx.arena.get_binding_element(element_node)?;
+        let enclosing_pattern_idx = self.ctx.arena.get_extended(binding_element_idx)?.parent;
+        let enclosing_source = self.object_literal_source_for_pattern(enclosing_pattern_idx)?;
+        let name_idx = if be.property_name.is_some() {
+            be.property_name
+        } else {
+            be.name
+        };
+        let name = &self.ctx.arena.get_identifier_at(name_idx)?.escaped_text;
+        let literal_node = self.ctx.arena.get(enclosing_source)?;
+        let literal = self.ctx.arena.get_literal_expr(literal_node)?;
+        for &member_idx in &literal.elements.nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                continue;
+            }
+            let Some(prop) = self.ctx.arena.get_property_assignment(member_node) else {
+                continue;
+            };
+            if self
+                .ctx
+                .arena
+                .get_identifier_at(prop.name)
+                .is_some_and(|ident| &ident.escaped_text == name)
+            {
+                let value = self.ctx.arena.skip_parenthesized(prop.initializer);
+                if self
+                    .ctx
+                    .arena
+                    .get(value)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+                {
+                    return Some(value);
+                }
+                return None;
+            }
+        }
+        None
+    }
+
+    /// The written object-literal source of a binding pattern, if any:
+    /// a parameter default, a variable initializer (no annotation), an outer
+    /// element's own default, or — recursively — the matching property value
+    /// of the enclosing pattern's literal source.
+    fn object_literal_source_for_pattern(&self, pattern_idx: NodeIndex) -> Option<NodeIndex> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let parent_idx = self.ctx.arena.get_extended(pattern_idx)?.parent;
+        let parent_node = self.ctx.arena.get(parent_idx)?;
+        let source = match parent_node.kind {
+            syntax_kind_ext::PARAMETER => {
+                let param = self.ctx.arena.get_parameter(parent_node)?;
+                if param.name != pattern_idx
+                    || param.type_annotation.is_some()
+                    || param.initializer.is_none()
+                {
+                    return None;
+                }
+                param.initializer
+            }
+            syntax_kind_ext::VARIABLE_DECLARATION => {
+                let decl = self.ctx.arena.get_variable_declaration(parent_node)?;
+                if decl.name != pattern_idx
+                    || decl.type_annotation.is_some()
+                    || decl.initializer.is_none()
+                {
+                    return None;
+                }
+                decl.initializer
+            }
+            syntax_kind_ext::BINDING_ELEMENT => {
+                let be = self.ctx.arena.get_binding_element(parent_node)?;
+                if be.name != pattern_idx {
+                    return None;
+                }
+                if be.initializer.is_some() {
+                    be.initializer
+                } else {
+                    return self.nested_pattern_object_literal_source(parent_idx);
+                }
+            }
+            _ => return None,
+        };
+        let source = self.ctx.arena.skip_parenthesized(source);
+        self.ctx
+            .arena
+            .get(source)
+            .is_some_and(|n| n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+            .then_some(source)
+    }
+
     fn should_suppress_missing_property_for_literal_default(
         &self,
         pattern_idx: NodeIndex,
@@ -125,7 +230,22 @@ impl<'a> CheckerState<'a> {
                 if !element_has_initializer {
                     return false;
                 }
-                be.initializer
+                if be.initializer.is_some() {
+                    be.initializer
+                } else {
+                    // The outer element has no default of its own; the inner
+                    // pattern's source is the matching property value of the
+                    // enclosing pattern's object-literal source:
+                    // `{ a: { x = 0 } } = { a: {} }` reads `x` from the `{}`
+                    // written for `a`. tsc reaches the same answer through
+                    // `AccessFlags.AllowMissing` on a type still carrying
+                    // `ObjectFlags.ObjectLiteral` (widening strips it, so an
+                    // annotated or variable-typed parent stays an error).
+                    let Some(source) = self.nested_pattern_object_literal_source(parent_idx) else {
+                        return false;
+                    };
+                    source
+                }
             }
             _ => return false,
         };
