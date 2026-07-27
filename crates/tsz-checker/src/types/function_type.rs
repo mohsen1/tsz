@@ -860,6 +860,20 @@ impl<'a> CheckerState<'a> {
                         || ((has_contextual_type || has_external_binding_context)
                             && type_id != TypeId::ANY
                             && type_id != TypeId::UNKNOWN)
+                        // `getTypeForVariableLikeDeclaration` reaches
+                        // `getTypeFromBindingPattern` only when the declaration has
+                        // no initializer; with one, the parameter takes the widened
+                        // initializer type and the pattern only types the individual
+                        // bindings. `([a, b] = new FooIterator)` is therefore a
+                        // `FooIterator` parameter destructured by iteration, not a
+                        // `[Foo, Foo]` tuple — reconstructing the tuple rejected the
+                        // very value the default supplies. The pattern is still the
+                        // contextual type for the initializer above, so shapes like
+                        // `([a, z] = [undefined, null])` keep their tuple.
+                        || (param.initializer.is_some()
+                            && type_id != TypeId::ANY
+                            && type_id != TypeId::UNKNOWN
+                            && type_id != TypeId::ERROR)
                     {
                         // When a type annotation, concrete contextual type, or IIFE
                         // argument type is available, preserve it.  The binding pattern
