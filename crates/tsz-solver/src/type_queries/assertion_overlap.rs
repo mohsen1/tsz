@@ -127,7 +127,20 @@ pub(super) fn types_have_common_properties_relaxed(
         if let Some(source_entries) = source_by_name.get(target_name) {
             found_common = true;
             let any_comparable = source_entries.iter().any(|(source_ty, source_optional)| {
-                if (*source_optional || *target_optional)
+                // An optional property implicitly includes `undefined`, so an
+                // `undefined`-typed counterpart overlaps it at `undefined` —
+                // but only when BOTH effective property types contain
+                // `undefined`. A source `issues?: undefined` against a
+                // REQUIRED target `issues: [T, ...T[]]` shares no value: the
+                // source side holds only `undefined`, the target side holds
+                // none. tsc rejects that pair ("Type 'undefined' is not
+                // comparable to type '[T, ...]'"), which is what fires TS2352
+                // on valibot's `dataset as OutputDataset<...>`; this one-sided
+                // grace was the only reason tsz accepted it.
+                let source_holds_undefined = *source_ty == TypeId::UNDEFINED || *source_optional;
+                let target_holds_undefined = *target_ty == TypeId::UNDEFINED || *target_optional;
+                if source_holds_undefined
+                    && target_holds_undefined
                     && (*source_ty == TypeId::UNDEFINED || *target_ty == TypeId::UNDEFINED)
                 {
                     return true;
