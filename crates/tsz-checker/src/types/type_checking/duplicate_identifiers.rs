@@ -101,8 +101,6 @@ impl<'a> CheckerState<'a> {
                     .insert(symbol.escaped_name.clone(), declarations.clone());
                 declarations
             };
-            let jsx_runtime_conflict_declarations =
-                self.jsx_runtime_conflict_declarations_for_current_file(&symbol.escaped_name);
             let default_import_alias_conflicts = if may_have_default_import_alias_conflicts {
                 self.default_import_alias_conflict_declarations_for_current_file(
                     &symbol.escaped_name,
@@ -129,7 +127,6 @@ impl<'a> CheckerState<'a> {
                     && module_augmentation_declarations.is_empty()
                     && script_scope_declarations.is_empty()
                     && global_scope_declarations.is_empty()
-                    && jsx_runtime_conflict_declarations.is_empty()
                     && default_import_alias_conflicts.is_empty()
                     && module_block_scoped_conflicts.is_empty()
                 {
@@ -223,7 +220,6 @@ impl<'a> CheckerState<'a> {
             }
             declarations.extend(module_augmentation_declarations);
             declarations.extend(global_scope_declarations);
-            declarations.extend(jsx_runtime_conflict_declarations);
             declarations.extend(default_import_alias_conflicts);
             declarations.extend(module_block_scoped_conflicts);
 
