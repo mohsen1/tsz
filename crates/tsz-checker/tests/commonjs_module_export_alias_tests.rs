@@ -947,3 +947,66 @@ c.chunk;
         "Expected no TS2339 for import-equals of CommonJS-exported class expression, got: {ts2339:#?}\nAll diagnostics: {diagnostics:#?}"
     );
 }
+
+// --- `exports.X = value` declares; chains declare too. ---
+//
+// The type of a CommonJS export property is the union of every assignment in the
+// module, so no write is checked against a type established by a *different*
+// write. That holds inside an assignment chain exactly as it does for a
+// standalone write. Verified against the pinned tsc 7.0.2, which reports nothing
+// for these sources (`salsa/assignmentToVoidZero1`, upstream #38552).
+
+fn assignment_mismatch_codes(source: &str) -> Vec<u32> {
+    check_commonjs_file("a.js", source)
+        .into_iter()
+        .map(|(code, _)| code)
+        .filter(|code| *code == 2322)
+        .collect()
+}
+
+#[test]
+fn chained_export_write_declares_rather_than_assigning() {
+    let codes = assignment_mismatch_codes(
+        "exports.y = exports.x = void 0;\nexports.x = 1;\nexports.y = 2;\n",
+    );
+    assert!(
+        codes.is_empty(),
+        "a chained `exports.X =` write declares, so `void 0` is not checked against \
+         a literal from a later assignment; got TS2322 codes: {codes:?}"
+    );
+}
+
+/// Same shape under different property names — the rule is structural, not keyed
+/// to `x`/`y`.
+#[test]
+fn chained_export_write_declares_under_renamed_properties() {
+    let codes = assignment_mismatch_codes(
+        "exports.beta = exports.alpha = void 0;\nexports.alpha = 'str';\nexports.beta = true;\n",
+    );
+    assert!(
+        codes.is_empty(),
+        "renamed binders must behave identically; got TS2322 codes: {codes:?}"
+    );
+}
+
+/// A standalone write was already a declaration and stays one.
+#[test]
+fn standalone_export_write_declares() {
+    let codes = assignment_mismatch_codes("exports.x = void 0;\nexports.x = 1;\n");
+    assert!(
+        codes.is_empty(),
+        "a standalone `exports.X =` write declares; got TS2322 codes: {codes:?}"
+    );
+}
+
+/// Negative case: an explicit JSDoc `@type` makes the declared type
+/// authoritative, so the write IS checked and still reports.
+#[test]
+fn jsdoc_annotated_export_write_still_reports_mismatch() {
+    let codes = assignment_mismatch_codes("/** @type {number} */\nexports.x = \"hi\";\n");
+    assert!(
+        codes.contains(&2322),
+        "an explicit @type annotation keeps the assignability check; expected TS2322, \
+         got: {codes:?}"
+    );
+}
