@@ -61,24 +61,6 @@ pub(super) fn keep_checker_diagnostic_when_program_has_real_syntax_errors(code: 
         || is_reserved_type_name_declaration_diagnostic(code)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::keep_checker_diagnostic_when_program_has_real_syntax_errors;
-
-    #[test]
-    fn real_syntax_errors_suppress_semantic_ts1xxx_but_keep_parse_diagnostics() {
-        assert!(!keep_checker_diagnostic_when_program_has_real_syntax_errors(1064));
-        assert!(!keep_checker_diagnostic_when_program_has_real_syntax_errors(1315));
-        assert!(keep_checker_diagnostic_when_program_has_real_syntax_errors(
-            1005
-        ));
-        assert!(keep_checker_diagnostic_when_program_has_real_syntax_errors(
-            2427
-        ));
-        assert!(!keep_checker_diagnostic_when_program_has_real_syntax_errors(2322));
-    }
-}
-
 /// `TS1xxx` codes that tsc routes through `getSemanticDiagnostics`. They are in
 /// the parser-grammar range numerically but are emitted from the checker, so
 /// unchecked JS files (no `checkJs`, or `// @ts-nocheck`) must not see them
@@ -277,5 +259,23 @@ pub(super) fn post_process_checker_diagnostics(
                 dist <= MAX_CASCADE_DISTANCE
             })
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::keep_checker_diagnostic_when_program_has_real_syntax_errors;
+
+    #[test]
+    fn real_syntax_errors_suppress_semantic_ts1xxx_but_keep_parse_diagnostics() {
+        assert!(!keep_checker_diagnostic_when_program_has_real_syntax_errors(1064));
+        assert!(!keep_checker_diagnostic_when_program_has_real_syntax_errors(1315));
+        assert!(keep_checker_diagnostic_when_program_has_real_syntax_errors(
+            1005
+        ));
+        assert!(keep_checker_diagnostic_when_program_has_real_syntax_errors(
+            2427
+        ));
+        assert!(!keep_checker_diagnostic_when_program_has_real_syntax_errors(2322));
     }
 }
