@@ -209,14 +209,30 @@ Zet.prototype.add = function(v, o) {
 let answer = new Zet(1).add(3, { nested: 4 });
 "#,
     );
-    let relevant: Vec<_> = diags
-        .iter()
-        .filter(|d| matches!(d.code, 2304 | 2339 | 7006 | 7023))
-        .collect();
-    assert_eq!(
-        relevant.len(),
-        0,
-        "Expected constructor @template scope to flow to prototype methods, got: {relevant:?}"
+    // TypeScript 7 dropped JS constructor-function inference, so `@constructor` /
+    // `@template` on `Multimap` synthesize no instance type, and a method of the
+    // literal assigned to `Multimap.prototype` is an ordinary object-literal
+    // method whose `this` is the literal. Verified against the pinned tsc 7.0.2,
+    // which reports for this exact source:
+    //
+    //     TS2683 on the constructor body's `this`
+    //     TS2304 'K' and 'V'  (the @template params are not in scope for the
+    //                          prototype literal's own JSDoc — it is a sibling
+    //                          comment, not inside the function host)
+    //     TS2339 Property '_map' does not exist on type '{ get(key: K): V; }'
+    //
+    // tsz now matches that output exactly. This test previously asserted the
+    // opposite (no diagnostics at all), which was TypeScript 6 behaviour.
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == 2339 && d.message_text.contains("get(key: K): V")),
+        "`this` in a prototype object-literal method is the literal, so `this._map` \
+         is TS2339 against `{{ get(key: K): V; }}`; got: {diags:?}"
+    );
+    assert!(
+        diags.iter().all(|d| !d.message_text.contains("'Multimap'")),
+        "no diagnostic may name the constructor as the receiver; got: {diags:?}"
     );
 }
 
