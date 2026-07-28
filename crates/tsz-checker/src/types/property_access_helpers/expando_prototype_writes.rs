@@ -243,6 +243,27 @@ impl<'a> CheckerState<'a> {
         self.prototype_object_literal_display(rhs_idx)
     }
 
+    pub(crate) fn js_prototype_object_literal_receiver_display(
+        &mut self,
+        receiver_idx: NodeIndex,
+    ) -> Option<String> {
+        let mut current = receiver_idx;
+        for _ in 0..16 {
+            let parent = self.ctx.arena.parent_of(current)?;
+            if parent.is_none() {
+                return None;
+            }
+            let parent_node = self.ctx.arena.get(parent)?;
+            if parent_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                return self
+                    .js_prototype_owner_expression_for_node(parent)
+                    .and_then(|_| self.prototype_object_literal_display(parent));
+            }
+            current = parent;
+        }
+        None
+    }
+
     fn prototype_object_literal_display(&mut self, object_idx: NodeIndex) -> Option<String> {
         let node = self.ctx.arena.get(object_idx)?;
         if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {

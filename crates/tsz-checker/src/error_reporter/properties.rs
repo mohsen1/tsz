@@ -585,11 +585,11 @@ impl<'a> CheckerState<'a> {
         let receiver = self.access_receiver_for_diagnostic_node(idx)?;
         let receiver_node = self.ctx.arena.get(receiver)?;
         if receiver_node.kind == SyntaxKind::ThisKeyword as u16 {
-            // No prototype-owner override: TS7 dropped JS constructor-function
-            // inference, so `this` in a method of `Foo.prototype = { ... }` is
-            // the object literal and tsc names it structurally. The removed
-            // branch answered with the constructor's raw SOURCE TEXT, never a
-            // type, and preempted every type-based strategy.
+            if let Some(display) = self.js_prototype_object_literal_receiver_display(receiver) {
+                return Some(display);
+            }
+            // Outside prototype literals, retain the real enclosing
+            // class/constructor instance fallback.
             if let Some(owner) = self
                 .find_enclosing_non_arrow_function(receiver)
                 .and_then(|func_idx| self.find_assignment_lhs_for_rhs(func_idx))

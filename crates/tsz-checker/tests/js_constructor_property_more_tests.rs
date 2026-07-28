@@ -34,6 +34,10 @@ Color.prototype = {
         .iter()
         .filter(|(code, _)| *code == 2339)
         .collect();
+    let ts2683: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2683)
+        .collect();
 
     assert_eq!(
         ts7006.len(),
@@ -64,8 +68,13 @@ Color.prototype = {
     assert!(
         ts2339[0]
             .1
-            .contains("Property 'rgb' does not exist on type 'Color'."),
-        "Expected the prototype-function receiver to display as Color, got: {diagnostics:?}"
+            .contains("Property 'rgb' does not exist on type '{ negate: () => any;"),
+        "Expected the prototype-function receiver to display as the complete object literal, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts2683.len(),
+        1,
+        "TypeScript 7 reports the constructor body's implicit `this`, got: {diagnostics:?}"
     );
 }
 
@@ -341,19 +350,17 @@ var cpn = cp.m4()
         "`this.y` is not a member once constructor inference is gone; expected \
          TS2339, got: {diagnostics:?}"
     );
-    // KNOWN RESIDUAL, pinned so it stays visible: tsc 7.0.2 names the object
-    // literal as the receiver —
+    // tsc 7.0.2 names the object literal as the receiver —
     //     TS2339 Property 'y' does not exist on type '{ m4(): any; }'
-    // — while tsz still names `Cp`, because `Cp.prototype` retains a synthesized
-    // instance type from other `synthesize_js_constructor_instance_type` callers
-    // and that becomes the literal's contextual type, outranking the literal's own
-    // receiver `this`. tsc also reports TS2526 for the method's `@return {this}`,
-    // which tsz does not. Both are follow-on TS7 cleanups beyond the three
-    // prototype-`this` sites fixed here.
+    // tsz's pre-existing missing TS2526 recovery for the invalid JSDoc
+    // `@return {this}` keeps the member return as `this`; this assertion owns
+    // only the receiver provenance and must not accept `Cp` / `typeof Cp`.
     assert!(
-        ts2339.iter().all(|(_, message)| message.contains("'Cp'")),
-        "residual pin: tsz reports the receiver as `Cp`; if this now names the \
-         object literal, the residual is fixed — update this test, got: {ts2339:?}"
+        ts2339
+            .iter()
+            .all(|(_, message)| { message.contains("type '{ m4(): ") && !message.contains("Cp") }),
+        "the prototype method receiver must be the object literal, not `Cp` or \
+         `typeof Cp`; got: {ts2339:?}"
     );
     assert!(
         ts2403.is_empty(),
