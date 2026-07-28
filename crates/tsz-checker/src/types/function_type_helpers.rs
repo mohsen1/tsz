@@ -926,6 +926,29 @@ impl<'a> CheckerState<'a> {
         // `M.prototype.m = function () { ... }` takes the ordinary
         // assignment-receiver `this` (the type of `M.prototype`) like any other
         // `obj.m = function () { ... }`.
+        // A depth-1 write to the CommonJS `exports` object gives its RHS function
+        // no receiver `this`: tsc reports
+        // `TS2683 'this' implicitly has type 'any'` for
+        // `exports.A = function () { this.x = 1 }`. Reading `typeof exports`
+        // here instead pushes a `this` type, which suppresses TS2683 entirely.
+        //
+        // Deliberately keyed on the bare unshadowed `exports` identifier, NOT on
+        // an exports-rooted access: tsc *does* give `module.exports.A = ...` a
+        // receiver `this` (it reports `Property 'x' does not exist on type
+        // 'typeof import(...)'`), and depth-2 `exports.ns.A = ...` likewise keeps
+        // it. Both access kinds are covered — tsc treats `exports["A"] = ...`
+        // the same as `exports.A = ...`.
+        if self.is_js_file()
+            && !self.current_source_file_has_esm_syntax()
+            && self
+                .ctx
+                .arena
+                .get(access.expression)
+                .is_some_and(|n| n.kind == SyntaxKind::Identifier as u16)
+            && self.is_unshadowed_commonjs_exports_identifier(access.expression)
+        {
+            return None;
+        }
         let receiver = self.get_type_of_node(access.expression);
         (receiver != TypeId::ERROR).then_some(receiver)
     }
