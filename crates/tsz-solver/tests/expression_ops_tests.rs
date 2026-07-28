@@ -330,6 +330,136 @@ fn test_normalize_fresh_object_literal_union_members_preserves_source_order_for_
 }
 
 #[test]
+fn test_normalize_fresh_object_literal_union_members_inherits_last_sibling_origin() {
+    use crate::diagnostics::format::TypeFormatter;
+    use crate::operations::expression_ops::normalize_fresh_object_literal_union_members;
+
+    let interner = TypeInterner::new();
+    // Allocate names out of source order so canonical Atom sorting cannot
+    // accidentally satisfy the display assertion.
+    let later = interner.intern_string("later");
+    let shared = interner.intern_string("shared");
+    let earlier = interner.intern_string("earlier");
+
+    let mut first_shared = PropertyInfo::new(shared, TypeId::NUMBER);
+    first_shared.declaration_order = 1;
+    let mut first_earlier = PropertyInfo::new(earlier, TypeId::BOOLEAN);
+    first_earlier.declaration_order = 2;
+    let first = interner.object_with_flags(
+        vec![first_shared, first_earlier],
+        ObjectFlags::FRESH_LITERAL,
+    );
+
+    let mut second_shared = PropertyInfo::new(shared, TypeId::NUMBER);
+    second_shared.declaration_order = 1;
+    let mut second_later = PropertyInfo::new(later, TypeId::STRING);
+    second_later.declaration_order = 2;
+    let second = interner.object_with_flags(
+        vec![second_shared, second_later],
+        ObjectFlags::FRESH_LITERAL,
+    );
+
+    let opposite = normalize_fresh_object_literal_union_members(&interner, &[second, first])
+        .expect("the reversed context should normalize the same semantic shape");
+    let mut formatter = TypeFormatter::new(&interner).with_display_properties();
+    assert_eq!(
+        formatter.format(opposite[1]).as_ref(),
+        "{ later?: undefined; shared: number; earlier: boolean; }",
+        "the cold context deliberately primes the same semantic shape in the opposite order",
+    );
+
+    let normalized = normalize_fresh_object_literal_union_members(&interner, &[first, second])
+        .expect("disjoint fresh-literal properties should be normalized");
+
+    assert_ne!(
+        opposite[1], normalized[0],
+        "display-order-sensitive normalized members need context-owned identities",
+    );
+    assert_eq!(
+        formatter.format(normalized[0]).as_ref(),
+        "{ shared: number; earlier: boolean; later?: undefined; }",
+        "a missing property supplied by the later sibling follows this member's own declarations",
+    );
+    assert_eq!(
+        formatter.format(normalized[1]).as_ref(),
+        "{ earlier?: undefined; shared: number; later: string; }",
+        "a missing property inherits its earlier sibling declaration origin",
+    );
+
+    let bct = compute_best_common_type::<NoopResolver>(&interner, &[first, second], None);
+    assert_eq!(
+        formatter.format(bct).as_ref(),
+        "{ shared: number; earlier: boolean; later?: undefined; } | { earlier?: undefined; shared: number; later: string; }",
+        "the BCT union surface must retain the per-member inherited origins",
+    );
+
+    normalize_fresh_object_literal_union_members(&interner, &[normalized[1], first])
+        .expect("a partial normalized context should still complete the original member");
+    assert_eq!(
+        formatter.format(normalized[0]).as_ref(),
+        "{ shared: number; earlier: boolean; later?: undefined; }",
+        "re-entry with a completed sibling must not repaint an identical display surface",
+    );
+}
+
+#[test]
+fn test_normalize_fresh_object_literal_union_members_orders_empty_from_last_origins() {
+    use crate::diagnostics::format::TypeFormatter;
+    use crate::operations::expression_ops::normalize_fresh_object_literal_union_members;
+
+    let interner = TypeInterner::new();
+    let first_name = interner.intern_string("firstName");
+    let carried_name = interner.intern_string("carriedName");
+
+    let mut first_a = PropertyInfo::new(first_name, TypeId::NUMBER);
+    first_a.declaration_order = 1;
+    let mut first_b = PropertyInfo::new(carried_name, TypeId::NUMBER);
+    first_b.declaration_order = 2;
+    let both = interner.object_with_flags(vec![first_a, first_b], ObjectFlags::FRESH_LITERAL);
+
+    let mut later_a = PropertyInfo::new(first_name, TypeId::STRING);
+    later_a.declaration_order = 1;
+    let only_a = interner.object_with_flags(vec![later_a.clone()], ObjectFlags::FRESH_LITERAL);
+    let empty = interner.object_with_flags(Vec::new(), ObjectFlags::FRESH_LITERAL);
+
+    let normalized =
+        normalize_fresh_object_literal_union_members(&interner, &[both, only_a, empty])
+            .expect("mixed-shape fresh literals should be normalized");
+
+    let mut formatter = TypeFormatter::new(&interner).with_display_properties();
+    assert_eq!(
+        formatter.format(normalized[1]).as_ref(),
+        "{ carriedName?: undefined; firstName: string; }",
+    );
+    assert_eq!(
+        formatter.format(normalized[2]).as_ref(),
+        "{ carriedName?: undefined; firstName?: undefined; }",
+        "the empty member follows the declarations cloned from the last name suppliers",
+    );
+    let bct = compute_best_common_type::<NoopResolver>(&interner, &[both, only_a, empty], None);
+    assert_eq!(
+        formatter.format(bct).as_ref(),
+        "{ firstName: number; carriedName: number; } | { carriedName?: undefined; firstName: string; } | { carriedName?: undefined; firstName?: undefined; }",
+    );
+
+    // Equal display order re-interns, while the same semantic properties in
+    // the opposite order retain a distinct diagnostic surface.
+    later_a.declaration_order = 2;
+    let mut missing_b = PropertyInfo::opt(carried_name, TypeId::UNDEFINED);
+    missing_b.declaration_order = 1;
+    let display_flags = ObjectFlags::FRESH_LITERAL | ObjectFlags::PRESERVE_DECLARATION_ORDER;
+    let same_display_shape =
+        interner.object_with_flags(vec![later_a.clone(), missing_b.clone()], display_flags);
+    assert_eq!(normalized[1], same_display_shape);
+
+    later_a.declaration_order = 1;
+    missing_b.declaration_order = 2;
+    let opposite_display_shape =
+        interner.object_with_flags(vec![later_a, missing_b], display_flags);
+    assert_ne!(normalized[1], opposite_display_shape);
+}
+
+#[test]
 fn test_normalize_fresh_object_literal_union_members_preserves_member_order() {
     // Ensure the resulting union of normalized fresh object literal members
     // preserves source-written member order even when the canonical union
