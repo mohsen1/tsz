@@ -1,5 +1,5 @@
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::test_utils::check_source;
+use tsz_checker::test_utils::{check_multi_file, check_source};
 
 /// Structural rule: when a derived class implements abstract overload
 /// signatures from a base class with matching overload declarations plus
@@ -269,5 +269,150 @@ class Derived extends Mid {
     assert!(
         ts2416_on_derived.is_empty(),
         "Expected no TS2416 — Derived covers all of Mid's overloads, got: {diags:#?}"
+    );
+}
+
+/// Zod's `ZodNativeEnum<T>` specializes an abstract method through an indexed
+/// access and returns the same generic union alias as its instantiated base.
+/// Parameter names are irrelevant, and the identical return applications must
+/// remain related in the ordinary single-signature override path.
+#[test]
+fn non_overloaded_indexed_access_return_alias_is_related_to_itself() {
+    let source = r#"
+type Rejected = { valid: false };
+type Accepted<Value> = { valid: true; value: Value };
+type SyncMaybe<Value> = Accepted<Value> | Rejected;
+type AsyncMaybe<Value> = Promise<SyncMaybe<Value>>;
+type MaybeAsync<Value> = SyncMaybe<Value> | AsyncMaybe<Value>;
+
+type EnumShape = {
+  [key: string]: string | number;
+  [index: number]: string;
+};
+
+abstract class Parser<Output> {
+  abstract parse(
+    _context: object,
+    _data: any,
+    _kind: string
+  ): MaybeAsync<Output>;
+}
+
+class AnyParser extends Parser<any> {
+  parse(
+    context: object,
+    data: any,
+    kind: string
+  ): MaybeAsync<any> {
+    return null as any;
+  }
+}
+
+class NativeParser<Table extends EnumShape>
+  extends Parser<Table[keyof Table]> {
+  parse(
+    context: object,
+    data: any,
+    kind: string
+  ): MaybeAsync<Table[keyof Table]> {
+    return null as any;
+  }
+}
+"#;
+    let diags = check_source(source, "test.ts", CheckerOptions::default());
+    let ts2416: Vec<_> = diags.iter().filter(|d| d.code == 2416).collect();
+    assert!(
+        ts2416.is_empty(),
+        "An instantiated abstract method returning the same generic union alias must not emit TS2416: {diags:#?}"
+    );
+}
+
+#[test]
+fn non_overloaded_imported_indexed_access_return_alias_is_related_to_itself() {
+    let files = [
+        (
+            "result.ts",
+            r#"
+export type Rejected = { valid: false };
+export type Accepted<Value> = { valid: true; value: Value };
+export type SyncMaybe<Value> = Accepted<Value> | Rejected;
+export type AsyncMaybe<Value> = Promise<SyncMaybe<Value>>;
+export type MaybeAsync<Value> = SyncMaybe<Value> | AsyncMaybe<Value>;
+export type ParsedKind = "text" | "number" | "object";
+"#,
+        ),
+        (
+            "parser.ts",
+            r#"
+import { MaybeAsync, ParsedKind } from "./result";
+
+interface Definition {}
+type EnumShape = {
+  [key: string]: string | number;
+  [index: number]: string;
+};
+interface NativeDefinition<Table extends EnumShape = EnumShape>
+  extends Definition {
+  values: Table;
+}
+
+abstract class Parser<
+  Output,
+  Def extends Definition = Definition,
+  Input = Output
+> {
+  abstract parse(
+    _context: object,
+    _data: any,
+    _kind: ParsedKind
+  ): MaybeAsync<Output>;
+}
+
+class NativeParser<Table extends EnumShape>
+  extends Parser<Table[keyof Table], NativeDefinition<Table>> {
+  parse(
+    context: object,
+    data: any,
+    kind: ParsedKind
+  ): MaybeAsync<Table[keyof Table]> {
+    return null as any;
+  }
+}
+"#,
+        ),
+    ];
+    let diags = check_multi_file(&files, "parser.ts", CheckerOptions::default());
+    let ts2416: Vec<_> = diags.iter().filter(|d| d.code == 2416).collect();
+    assert!(
+        ts2416.is_empty(),
+        "Cross-file alias identity must not make an otherwise identical abstract override incompatible: {diags:#?}"
+    );
+}
+
+/// Invalid constraints retain an internal recovery sentinel on the canonical
+/// class binder. A method signature must reuse that binder, while the missing
+/// name still reports normally; reconstructing a second unconstrained binder
+/// made `Element` spuriously incompatible with itself.
+#[test]
+fn unresolved_class_constraint_preserves_override_binder_identity() {
+    let source = r#"
+abstract class Reader<Output> {
+  abstract read(): Output;
+}
+
+class Box<Element extends MissingConstraint> extends Reader<Element> {
+  read(): Element {
+    return null as any;
+  }
+}
+"#;
+    let diags = check_source(source, "test.ts", CheckerOptions::default());
+    assert!(
+        diags.iter().any(|d| d.code == 2304),
+        "the unresolved constraint must still report TS2304: {diags:#?}"
+    );
+    assert!(
+        diags.iter().all(|d| d.code != 2416),
+        "the same declared Element binder must not be incompatible with itself: {diags:#?}"
     );
 }

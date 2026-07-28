@@ -28,7 +28,7 @@
 //! #13137 hit). The identity invariant is therefore pinned directly at the
 //! scope-push unit level, plus single-file behavioral controls.
 
-use crate::context::CheckerOptions;
+use crate::context::{CheckerOptions, EnclosingClassInfo};
 use crate::diagnostics::{Diagnostic, diagnostic_codes};
 use crate::state::CheckerState;
 use crate::test_utils::{check_multi_file_with_libs, load_lib_files};
@@ -36,7 +36,7 @@ use tsz_binder::BinderState;
 use tsz_common::common::ModuleKind;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, ParserState};
-use tsz_solver::construction::TypeInterner;
+use tsz_solver::{TypeId, construction::TypeInterner};
 
 fn check(files: &[(&str, &str)], entry: &str) -> Vec<Diagnostic> {
     check_multi_file_with_libs(
@@ -166,6 +166,110 @@ class Box<Alpha, Beta extends keyof Alpha> {
         direct_first, direct_second,
         "repeated direct pushes must reuse the declaration's TypeIds"
     );
+}
+
+/// An active class owns the canonical identity and recovery state of its type
+/// parameters. Reconstructing a method signature must reuse those exact
+/// binders instead of re-resolving an invalid constraint and minting a cleaner
+/// but distinct type parameter for the same declaration.
+#[test]
+fn active_class_enclosing_push_reuses_error_constrained_binder_identity() {
+    let source = r#"
+class Box<Element extends MissingConstraint> {
+  read(): Element {
+    return null as any;
+  }
+}
+"#;
+    let mut parser = ParserState::new("box.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    let arena = parser.get_arena().clone();
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        &arena,
+        &binder,
+        &types,
+        "box.ts".to_string(),
+        CheckerOptions {
+            no_lib: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let source_file = arena.get_source_file_at(root).expect("source file data");
+    let class_idx = source_file
+        .statements
+        .nodes
+        .iter()
+        .copied()
+        .find(|&idx| {
+            arena
+                .get(idx)
+                .is_some_and(|n| n.kind == syntax_kind_ext::CLASS_DECLARATION)
+        })
+        .expect("class declaration");
+    let class_data = arena
+        .get(class_idx)
+        .and_then(|n| arena.get_class(n))
+        .expect("class data");
+    let method_idx = class_data
+        .members
+        .nodes
+        .iter()
+        .copied()
+        .find(|&idx| {
+            arena
+                .get(idx)
+                .is_some_and(|n| n.kind == syntax_kind_ext::METHOD_DECLARATION)
+        })
+        .expect("method declaration");
+
+    let (class_type_parameters, class_updates) =
+        checker.push_type_parameters(&class_data.type_parameters);
+    let class_type_parameter_ids = checker
+        .exact_type_parameter_ids_in_scope(&class_type_parameters)
+        .expect("canonical class parameter identities");
+    let direct_id = class_type_parameter_ids[0];
+    let direct_info = crate::query_boundaries::common::type_param_info(&types, direct_id)
+        .expect("class parameter info");
+    assert_eq!(
+        direct_info.constraint,
+        Some(TypeId::ERROR),
+        "the canonical class binder must retain its invalid-constraint recovery state"
+    );
+
+    checker.ctx.enclosing_class = Some(EnclosingClassInfo {
+        name: "Box".to_string(),
+        class_idx,
+        member_nodes: class_data.members.nodes.clone(),
+        in_constructor: false,
+        is_declared: false,
+        in_static_property_initializer: false,
+        in_static_member: false,
+        has_super_call_in_current_constructor: false,
+        cached_instance_this_type: None,
+        type_param_names: vec!["Element".to_string()],
+        class_type_parameters,
+        class_type_parameter_ids,
+    });
+
+    let enclosing_updates = checker.push_enclosing_type_parameters(method_idx);
+    assert_eq!(
+        checker.ctx.type_parameter_scope.get("Element").copied(),
+        Some(direct_id),
+        "a method signature must close over the active class's exact binder"
+    );
+    checker.pop_type_parameters(enclosing_updates);
+    assert_eq!(
+        checker.ctx.type_parameter_scope.get("Element").copied(),
+        Some(direct_id),
+        "popping the reconstructed scope must restore the active class binder"
+    );
+
+    checker.ctx.enclosing_class = None;
+    checker.pop_type_parameters(class_updates);
 }
 
 /// Single-file behavioral control for the kysely `whereRef` shape (tsc 5.9.3
