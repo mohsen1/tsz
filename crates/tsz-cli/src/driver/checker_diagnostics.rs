@@ -51,12 +51,32 @@ pub(super) fn keep_checker_diagnostic_when_program_has_real_syntax_errors(code: 
     // program has a real syntax error, but it still reports declaration-name
     // diagnostics such as TS2427/TS2457 alongside parse errors because the parser
     // accepts those names and defers validation to the checker.
-    if code == 1315 {
+    // TS1064 and TS1315 are semantic checker diagnostics despite occupying the
+    // parser/grammar numeric range, so they follow the semantic suppression rule.
+    if matches!(code, 1064 | 1315) {
         return false;
     }
     code < 2000
         || tsz::checker::diagnostics::is_js_grammar_diagnostic(code)
         || is_reserved_type_name_declaration_diagnostic(code)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::keep_checker_diagnostic_when_program_has_real_syntax_errors;
+
+    #[test]
+    fn real_syntax_errors_suppress_semantic_ts1xxx_but_keep_parse_diagnostics() {
+        assert!(!keep_checker_diagnostic_when_program_has_real_syntax_errors(1064));
+        assert!(!keep_checker_diagnostic_when_program_has_real_syntax_errors(1315));
+        assert!(keep_checker_diagnostic_when_program_has_real_syntax_errors(
+            1005
+        ));
+        assert!(keep_checker_diagnostic_when_program_has_real_syntax_errors(
+            2427
+        ));
+        assert!(!keep_checker_diagnostic_when_program_has_real_syntax_errors(2322));
+    }
 }
 
 /// `TS1xxx` codes that tsc routes through `getSemanticDiagnostics`. They are in
@@ -79,6 +99,18 @@ pub(super) fn post_process_checker_diagnostics(
     program_has_unsupported_js_root: bool,
     has_deprecation_diagnostics: bool,
 ) {
+    // JSDoc type parsing can surface a structural TS1005 through the checker
+    // diagnostic stream rather than `BoundFile::parse_diagnostics`. Tsc marks
+    // the malformed function-type annotation erroneous and suppresses its
+    // TS1064 follow-on. Do not promote this to a program-wide syntax error:
+    // other malformed JSDoc tags can legitimately retain semantic diagnostics
+    // such as TS2304.
+    if checker_diagnostics
+        .iter()
+        .any(|diagnostic| is_real_syntax_error(diagnostic.code))
+    {
+        checker_diagnostics.retain(|diagnostic| diagnostic.code != 1064);
+    }
     let is_js = is_js_file(Path::new(&file.file_name));
     let has_ts_check_pragma = js_file_has_ts_check_pragma(file);
     let has_ts_nocheck_pragma = js_file_has_ts_nocheck_pragma(file);

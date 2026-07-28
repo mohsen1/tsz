@@ -1629,7 +1629,7 @@ export const y = x.item;
 }
 
 #[test]
-fn checked_js_async_jsdoc_promise_prefixed_alias_reports_ts1064() {
+fn checked_js_async_malformed_jsdoc_function_types_report_only_ts1005() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
 
@@ -1671,26 +1671,22 @@ f;
     let args = default_args();
     let result = compile(&args, base).expect("compile should succeed");
 
-    let ts1064: Vec<_> = result
+    let codes = result
         .diagnostics
         .iter()
-        .filter(|d| d.code == 1064)
-        .collect();
+        .map(|diagnostic| diagnostic.code)
+        .collect::<Vec<_>>();
     assert_eq!(
-        ts1064.len(),
-        1,
-        "expected TS1064 only for PromiseButNot, got diagnostics: {:?}",
-        result.diagnostics
-    );
-    assert!(
-        ts1064[0].message_text.contains("PromiseButNot<string>"),
-        "expected TS1064 to suggest wrapping PromiseButNot<string>, got: {:?}",
-        ts1064[0]
+        codes,
+        vec![1005, 1005],
+        "each malformed JSDoc function type stops at its TS1005 parse error, \
+         matching TypeScript 7.0.2: {:?}",
+        result.diagnostics,
     );
 }
 
 #[test]
-fn checked_js_async_jsdoc_shadowed_promise_typedef_reports_ts1064() {
+fn checked_js_async_malformed_jsdoc_function_type_reports_only_ts1005() {
     let tmp = TempDir::new().unwrap();
     let base = &tmp.path;
 
@@ -1729,18 +1725,17 @@ f;
     let args = default_args();
     let result = compile(&args, base).expect("compile should succeed");
 
-    assert!(
-        result
-            .diagnostics
-            .iter()
-            .any(|d| d.code == 1064 && d.message_text.contains("Promise<Promise<string>>")),
-        "expected TS1064 for shadowed Promise typedef, got diagnostics: {:?}",
-        result.diagnostics
-    );
-    assert!(
-        result.diagnostics.iter().any(|d| d.code == 2322),
-        "expected assignment mismatch alongside TS1064, got diagnostics: {:?}",
-        result.diagnostics
+    let codes = result
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        codes,
+        vec![1005],
+        "the malformed JSDoc function type stops semantic async-return checking, \
+         matching TypeScript 7.0.2: {:?}",
+        result.diagnostics,
     );
 }
 
