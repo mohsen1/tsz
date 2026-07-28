@@ -45,7 +45,6 @@
 # clean origin/main @ 6e802914bf (0/4 pass with per-target runs) — drift from
 # #15846/#15965 via the per-merge lane; tracked in issue #15969 for fix-or-
 # remove. Also the 2026-07-27 block (24 additions) rode r6's format.
-# baseline-status: reconciled r7
 # Known-flaky cross-file/cross-arena non-determinism in the PARALLEL checker:
 # `check_files_parallel` intermittently emits a spurious TS2339/2345/2322 for a
 # zod-style cross-file IssueData spread depending on inter-file check ordering
@@ -57,6 +56,10 @@
 # arch-size only). See d6224a58d3 for the attribution method.
 # 2026-07-28: #15846 reverted (496893ec21) — its 3 symbol-keyed entries removed
 # (shrink); the js_constructor entry remains (#15965's, tracked in #15969).
+# 2026-07-28 re-reconcile (r8): eight tsz-cli ADDITIONS, each verified failing on
+# clean origin/main — pre-existing cli-lane drift first surfaced when a push
+# touched tsz-cli (earlier inventories covered checker/emitter/solver only).
+# baseline-status: reconciled r8
 
 tsz-checker::commonjs_module_export_alias_tests::test_module_exports_forward_read_reports_ts2565
 tsz-checker::conditional_application_display_tests::deferred_generic_conditional_keeps_branch_union
@@ -106,5 +109,13 @@ tsz-checker::ts2565_jsdoc_prototype_type_decl_tests::ts2565_still_fires_for_jsdo
 tsz-checker::ts2565_object_literal_nullish_spread_tests::js_expando_read_before_assign_still_reports_ts2565
 tsz-checker::zod_type_query_regression_tests::generic_promise_then_flattens_promise_return_from_callback
 tsz-cli::driver::core::check::check_tests::cross_file_class_namespace_merge_value_keeps_call_signature_in_import_cycle
+tsz-cli::driver::core::check::check_tests::default_lib_validation_normalizes_cross_arena_method_members_after_global_merge
+tsz-cli::driver::core::cross_file_keyof_utility_alias_tests::constraint_keyof_generic_and_concrete_omit_wrappers_are_precise
+tsz-cli::driver::core::tests::tests_diagnostics::jsdoc_bare_module_imports_inline_commonjs_callable_static_surface_in_declaration_emit
+tsz-cli::driver_tests::checked_js_async_jsdoc_shadowed_promise_typedef_reports_ts1064
+tsz-cli::driver_tests::compile_jsdoc_enum_initializer_values_are_checked
+tsz-cli::driver_tests::compile_project_awaits_later_generic_then_through_barrel_after_static_overload
+tsz-cli::driver_tests::declaration_emit_reports_ts7056_for_private_import_type_alias
+tsz-cli::interface_extends_generic_alias_cli_tests::imported_interface_extending_omit_genuinely_missing_property_still_errors
 tsz-core::parallel::core::tests::test_check_files_parallel_zod_issue_data_cross_file_spread
 tsz-emitter::declaration_emitter::tests::simple_declarations::test_overloaded_call_initializer_does_not_use_first_signature_return_type
