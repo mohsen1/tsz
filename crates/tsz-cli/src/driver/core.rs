@@ -1589,9 +1589,6 @@ mod cross_file_lib_utility_indexed_access_tests;
 #[path = "cross_file_merged_value_self_typealias_typeof_tests.rs"]
 mod cross_file_merged_value_self_typealias_typeof_tests;
 #[cfg(test)]
-#[path = "cross_file_plain_value_parameters_typeof_tests.rs"]
-mod cross_file_plain_value_parameters_typeof_tests;
-#[cfg(test)]
 #[path = "cross_file_typeof_class_constructor_tests.rs"]
 mod cross_file_typeof_class_constructor_tests;
 #[cfg(test)]

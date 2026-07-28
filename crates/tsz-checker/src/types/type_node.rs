@@ -16,7 +16,6 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::recursion::{DepthCounter, RecursionProfile};
-
 /// Type node checker that operates on the shared context.
 ///
 /// This is a stateless checker that borrows the context mutably.
@@ -1841,32 +1840,17 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             && symbol.escaped_name == name
             && (symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0
         {
-            return Some(self.canonicalize_inscope_value_symbol(sym_id, symbol.flags));
+            return Some(sym_id);
         }
 
         if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
-            let flags = self.ctx.binder.get_symbol(sym_id)?.flags;
-            if (flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0 {
-                return Some(self.canonicalize_inscope_value_symbol(sym_id, flags));
+            let symbol = self.ctx.binder.get_symbol(sym_id)?;
+            if (symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0 {
+                return Some(sym_id);
             }
         }
 
         None
-    }
-
-    /// [#80 first-move] Follow an imported value's alias to its canonical
-    /// cross-file target so the lowering-minted `typeof X` operand carries one
-    /// identity the `TypeEnvironment` can answer, not a per-arena alias id. This
-    /// is the resolver behind the main type-node lowering path (extended=false);
-    /// siblings are canonicalized at their own resolvers per the call-site rule.
-    fn canonicalize_inscope_value_symbol(&self, sym_id: SymbolId, flags: u32) -> SymbolId {
-        if (flags & tsz_binder::symbol_flags::ALIAS) != 0
-            && let Some(canon) = self.ctx.resolve_import_alias_chain_and_register(sym_id)
-            && canon != sym_id
-        {
-            return canon;
-        }
-        sym_id
     }
 }
 

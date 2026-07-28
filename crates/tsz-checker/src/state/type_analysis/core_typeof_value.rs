@@ -17,65 +17,6 @@ use tsz_binder::{SymbolId, symbol_flags};
 use tsz_solver::TypeId;
 
 impl CheckerState<'_> {
-    /// [#80] Register the value-space type of each NESTED cross-file PLAIN value
-    /// `typeof X` reachable from `result`.
-    ///
-    /// The merged-only [`Self::register_self_referential_merged_value_typeof`]
-    /// handles a top-level bare `typeof X` of a merged value+type-alias. It misses
-    /// a `typeof X` buried inside a derived form — `type Options =
-    /// Parameters<typeof useStore>[0]` resolves to `IndexAccess(App(Parameters,
-    /// [TypeQuery(X)]))`. Collect every `TypeQuery` in the resolved reference and,
-    /// for each cross-file PLAIN value symbol (not merged / class / lib — those own
-    /// their registration), register its value-declaration type (computed in its
-    /// own arena, so narrowed literals are preserved) under the query's symbol, so
-    /// the deferred query resolves in this consuming (reset) session's env.
-    pub(crate) fn register_nested_cross_file_value_typeofs(&mut self, result: TypeId) {
-        let syms = self.ctx.collect_type_queries_cached(result);
-        for &sref in syms.iter() {
-            let sym_id = SymbolId(sref.0);
-            let (flags, value_decl, declarations) = match self.ctx.binder.get_symbol(sym_id) {
-                Some(symbol) => (
-                    symbol.flags,
-                    symbol.value_declaration,
-                    symbol.declarations.clone(),
-                ),
-                None => continue,
-            };
-            let is_plain_value = flags & symbol_flags::VALUE != 0
-                && flags
-                    & (symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS | symbol_flags::CLASS)
-                    == 0;
-            if !is_plain_value {
-                continue;
-            }
-            let file_idx = match self.ctx.resolve_symbol_file_index(sym_id) {
-                Some(idx) if idx != self.ctx.current_file_idx => idx,
-                _ => continue,
-            };
-            // Idempotence: a sibling reference already registered it.
-            if self
-                .ctx
-                .type_env
-                .try_borrow()
-                .is_ok_and(|env| env.get_typeof_value_type(sref).is_some())
-            {
-                continue;
-            }
-            let preferred = self
-                .preferred_value_declaration(sym_id, value_decl, &declarations)
-                .unwrap_or(value_decl);
-            let value_type =
-                self.type_of_value_declaration_for_cross_file_symbol(sym_id, preferred, file_idx);
-            if value_type == TypeId::ANY
-                || value_type == TypeId::ERROR
-                || value_type == TypeId::UNKNOWN
-            {
-                continue;
-            }
-            self.register_typeof_value_type_in_envs(sym_id, value_type);
-        }
-    }
-
     /// Compute the VALUE-space type a `typeof X` query should resolve to for a
     /// symbol whose value meaning is merged with a deferred type-space
     /// declaration sharing its `SymbolRef`/`DefId`.

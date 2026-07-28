@@ -88,15 +88,6 @@ impl TypeNodeChecker<'_, '_> {
                     | symbol_flags::CONST_ENUM))
                 != 0
         {
-            // [#80] Follow an imported value's alias to its canonical cross-file
-            // target so the lowering-minted `typeof X` operand carries one identity
-            // the `TypeEnvironment` can answer, not a per-arena alias id.
-            if symbol.flags & symbol_flags::ALIAS != 0
-                && let Some(canon) = self.ctx.resolve_import_alias_chain_and_register(sym_id)
-                && canon != sym_id
-            {
-                return Some(canon.0);
-            }
             return Some(sym_id.0);
         }
 
