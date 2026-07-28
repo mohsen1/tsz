@@ -419,6 +419,49 @@ impl<'a> CheckerState<'a> {
             let Some(node) = self.ctx.arena.get(idx) else {
                 continue;
             };
+            // A function-like host scopes its own `@template` over its entire
+            // source range, so a JSDoc annotation written inside the body sees it
+            // — `function F(){ /** @type {V} */ this.p = {} }` where `V` comes
+            // from `@template V` on `F`. tsc 7.0.2 accepts that; tsz reported a
+            // false TS2304 because only class hosts were modelled here.
+            //
+            // Unlike the class arm below, this consults ONLY the host's own
+            // leading JSDoc. Falling through to the loose `comment.end <=
+            // host_pos` scan would turn the false positive into a false
+            // negative, letting a *sibling* function's `@template T` satisfy a
+            // reference that tsc correctly rejects.
+            //
+            // Every containing function is visited, not just the innermost, so an
+            // outer `@template` reaches a nested function's body.
+            if matches!(
+                node.kind,
+                syntax_kind_ext::FUNCTION_DECLARATION
+                    | syntax_kind_ext::FUNCTION_EXPRESSION
+                    | syntax_kind_ext::ARROW_FUNCTION
+                    | syntax_kind_ext::METHOD_DECLARATION
+                    | syntax_kind_ext::CONSTRUCTOR
+            ) {
+                if !(ref_pos >= node.pos && ref_pos < node.end) {
+                    continue;
+                }
+                let mut anchor = node.pos;
+                if let Some(ext) = self.ctx.arena.get_extended(idx)
+                    && ext.parent.is_some()
+                    && let Some(parent) = self.ctx.arena.get(ext.parent)
+                    && parent.kind == syntax_kind_ext::EXPORT_DECLARATION
+                {
+                    anchor = parent.pos;
+                }
+                if let Some((content, _)) =
+                    self.try_leading_jsdoc_with_pos(&sf.comments, anchor, source_text)
+                    && Self::jsdoc_template_type_params(&content)
+                        .into_iter()
+                        .any(|(decl_name, _, _)| decl_name == name)
+                {
+                    return true;
+                }
+                continue;
+            }
             if node.kind != syntax_kind_ext::CLASS_DECLARATION
                 && node.kind != syntax_kind_ext::CLASS_EXPRESSION
             {
