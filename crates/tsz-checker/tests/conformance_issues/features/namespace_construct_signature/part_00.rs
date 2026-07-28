@@ -1543,19 +1543,11 @@ exports.y = 2;
         .filter(|(code, _)| *code == 2322)
         .collect();
 
-    assert_eq!(relevant.len(), 2, "unexpected diagnostics: {relevant:#?}");
-    assert!(
-        relevant
-            .iter()
-            .any(|(_, message)| message.contains("Type 'undefined' is not assignable to type '2'.")),
-        "Expected exports.y chained assignment to use the later inferred type. Actual diagnostics: {relevant:#?}"
-    );
-    assert!(
-        relevant
-            .iter()
-            .any(|(_, message)| message.contains("Type 'undefined' is not assignable to type '1'.")),
-        "Expected exports.x chained assignment to use the later inferred type. Actual diagnostics: {relevant:#?}"
-    );
+    // tsc 7.0.2 reports nothing for this shape (verified strict and
+    // non-strict against the pinned binary): a chained CommonJS export write
+    // declares like a single one (#15970), so the `void 0` seed does not
+    // conflict with the later literal assignments.
+    assert!(relevant.is_empty(), "unexpected diagnostics: {relevant:#?}");
 }
 
 #[test]

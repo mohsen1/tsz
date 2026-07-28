@@ -187,7 +187,7 @@ foo.m()
 }
 
 #[test]
-fn compile_commonjs_export_alias_define_property_overlap_reports_ts2323() {
+fn compile_commonjs_export_alias_define_property_overlap_reports_no_ts2323() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -230,16 +230,19 @@ module.exports = B;
                 && d.message_text.contains("'NS'")
         })
         .collect();
+    // tsc 7.0.2 reports no TS2323 for this fixture (verified as a real -p
+    // project against the pinned binary); #15971 dropped the redeclaration
+    // check to match.
     assert_eq!(
         ts2323.len(),
-        2,
-        "Expected TS2323 on overlapping CommonJS alias defineProperty exports, got diagnostics: {:?}",
+        0,
+        "tsc reports no TS2323 for overlapping CommonJS alias defineProperty exports, got diagnostics: {:?}",
         result.diagnostics
     );
 }
 
 #[test]
-fn compile_commonjs_export_property_overlap_with_ambient_module_reports_ts2323() {
+fn compile_commonjs_export_property_overlap_with_ambient_module_reports_no_ts2323() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -295,10 +298,11 @@ mod1.justProperty.length
         .iter()
         .filter(|d| d.code == diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE)
         .collect();
+    // Same tsc-verified rule as the single-file variants: no TS2323.
     assert_eq!(
         ts2323.len(),
-        4,
-        "Expected TS2323 on both overlapping CommonJS export properties, got diagnostics: {:?}",
+        0,
+        "tsc reports no TS2323 for overlapping CommonJS export properties, got: {:?}",
         result.diagnostics
     );
 }
