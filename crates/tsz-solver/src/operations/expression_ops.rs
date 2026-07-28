@@ -457,6 +457,12 @@ fn fresh_literal_shape(
     Some((*shape).clone())
 }
 
+#[derive(Clone, Copy)]
+struct ContextPropertyOrigin {
+    name: Atom,
+    order: u32,
+}
+
 pub(crate) fn normalize_fresh_object_literal_union_members(
     interner: &dyn TypeDatabase,
     members: &[TypeId],
@@ -477,33 +483,61 @@ pub(crate) fn normalize_fresh_object_literal_union_members(
         return None;
     }
 
-    // Collect property names in source order. shape.properties is Atom-sorted
-    // (canonical form for hashing), so iterating it directly leaks Atom-allocation
-    // order into `names`, producing non-source-order display strings on the
-    // resulting normalized objects. Sort by `declaration_order` so the first
-    // missing-property fill-in for an empty `{}` literal stays in the order tsc
-    // reports.
-    let mut names: Vec<Atom> = Vec::new();
+    // Collect each property's stable sibling-relative declaration origin.
+    // `shape.properties` is Atom-sorted for canonical hashing, so first recover
+    // each sibling's source order from `declaration_order`. A repeated name
+    // overwrites its context prototype, matching tsc's `getPropertiesOfContext`
+    // Map: a missing optional property inherits the declaration of the *last*
+    // sibling that supplied that name.
+    //
+    // The rank is display-only. It is monotonic across the ordered sibling
+    // list, so it reproduces the source-position comparison tsc applies to the
+    // original and inherited declarations without changing property semantics.
+    let mut context_properties: Vec<ContextPropertyOrigin> = Vec::new();
+    let mut context_property_indices: FxHashMap<Atom, usize> = FxHashMap::default();
+    let mut member_property_origins: Vec<FxHashMap<Atom, u32>> =
+        Vec::with_capacity(object_members.len());
+    let mut next_origin_order = 1_u32;
+
     for (_, shape) in &object_members {
         let mut props_by_decl: Vec<&PropertyInfo> = shape.properties.iter().collect();
         props_by_decl.sort_by_key(|p| p.declaration_order);
+        let mut origins = FxHashMap::default();
         for prop in props_by_decl {
-            if !names.contains(&prop.name) {
-                names.push(prop.name);
+            let origin_order = next_origin_order;
+            next_origin_order = next_origin_order.saturating_add(1);
+            origins.insert(prop.name, origin_order);
+
+            if let Some(&index) = context_property_indices.get(&prop.name) {
+                context_properties[index].order = origin_order;
+            } else {
+                context_property_indices.insert(prop.name, context_properties.len());
+                context_properties.push(ContextPropertyOrigin {
+                    name: prop.name,
+                    order: origin_order,
+                });
             }
         }
+        member_property_origins.push(origins);
     }
 
-    if names.is_empty() {
+    if context_properties.is_empty() {
         return None;
     }
 
     let mut changed = false;
     let mut normalized = Vec::with_capacity(object_members.len());
-    for (original_type, shape) in object_members {
-        let completed = add_missing_optional_properties(&shape.properties, &names);
+    for ((original_type, shape), mut display_origins) in
+        object_members.into_iter().zip(member_property_origins)
+    {
+        let mut completed = add_missing_optional_properties(&shape.properties, &context_properties);
         if completed != shape.properties {
             changed = true;
+            for property in &context_properties {
+                display_origins
+                    .entry(property.name)
+                    .or_insert(property.order);
+            }
             // Capture source-order display properties before interning sorts the
             // canonical shape by Atom. Without this, the canonical shape may
             // dedupe to a previously-interned twin whose `declaration_order` is
@@ -512,8 +546,22 @@ pub(crate) fn normalize_fresh_object_literal_union_members(
             // source-written property order tsc preserves. Existing properties
             // keep their display-only literal types so normalized unions don't
             // repaint `{ c: true }` as `{ c: boolean }`.
+            for prop in &mut completed {
+                if let Some(&origin_order) = display_origins.get(&prop.name) {
+                    prop.declaration_order = origin_order;
+                }
+            }
+            crate::types::normalize_display_property_order(&mut completed);
+
             let display_props = normalized_display_properties(interner, original_type, &completed);
-            let new_type_id = interner.object_with_flags(completed, shape.flags);
+            // A normalized member can have the same semantic property shape in
+            // multiple BCT contexts but a different inherited source order.
+            // Give that order context-owned identity so a later partial
+            // normalization cannot repaint another context's display side
+            // table entry. Relations remain structural; the flag affects only
+            // interning identity and diagnostics.
+            let flags = shape.flags | ObjectFlags::PRESERVE_DECLARATION_ORDER;
+            let new_type_id = interner.object_with_flags(completed, flags);
             interner.store_display_properties(new_type_id, display_props);
             normalized.push(new_type_id);
         } else {
@@ -524,22 +572,18 @@ pub(crate) fn normalize_fresh_object_literal_union_members(
     changed.then_some(normalized)
 }
 
-fn add_missing_optional_properties(existing: &[PropertyInfo], names: &[Atom]) -> Vec<PropertyInfo> {
+fn add_missing_optional_properties(
+    existing: &[PropertyInfo],
+    context_properties: &[ContextPropertyOrigin],
+) -> Vec<PropertyInfo> {
     let mut out: Vec<PropertyInfo> = existing.to_vec();
-    let mut next_order = out
-        .iter()
-        .map(|p| p.declaration_order)
-        .max()
-        .unwrap_or(0)
-        .saturating_add(1);
 
-    for &name in names {
-        if out.iter().any(|p| p.name == name) {
+    for property in context_properties {
+        if out.iter().any(|p| p.name == property.name) {
             continue;
         }
-        let mut prop = PropertyInfo::opt(name, TypeId::UNDEFINED);
-        prop.declaration_order = next_order;
-        next_order = next_order.saturating_add(1);
+        let mut prop = PropertyInfo::opt(property.name, TypeId::UNDEFINED);
+        prop.declaration_order = property.order;
         out.push(prop);
     }
     out
