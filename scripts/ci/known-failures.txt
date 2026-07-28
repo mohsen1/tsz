@@ -111,6 +111,5 @@ tsz-cli::driver::core::check::check_tests::cross_file_class_namespace_merge_valu
 tsz-cli::driver::core::check::check_tests::default_lib_validation_normalizes_cross_arena_method_members_after_global_merge
 tsz-cli::driver_tests::compile_project_awaits_later_generic_then_through_barrel_after_static_overload
 tsz-cli::driver_tests::declaration_emit_reports_ts7056_for_private_import_type_alias
-tsz-cli::interface_extends_generic_alias_cli_tests::imported_interface_extending_omit_genuinely_missing_property_still_errors
 tsz-core::parallel::core::tests::test_check_files_parallel_zod_issue_data_cross_file_spread
 tsz-emitter::declaration_emitter::tests::simple_declarations::test_overloaded_call_initializer_does_not_use_first_signature_return_type
