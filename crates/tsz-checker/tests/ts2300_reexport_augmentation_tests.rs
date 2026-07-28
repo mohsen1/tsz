@@ -42,6 +42,74 @@ fn check_for_dup(files: &[(&str, &str)], entry_file: &str) -> Vec<(u32, String)>
         .collect()
 }
 
+fn check_all_for_dup(files: &[(&str, &str)]) -> Vec<(String, u32, String)> {
+    tsz_checker::test_utils::check_all_multi_file_with_global_index(
+        files,
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+    )
+    .into_iter()
+    .filter(|diag| matches!(diag.code, 2300 | 2451))
+    .map(|diag| (diag.file, diag.code, diag.message_text))
+    .collect()
+}
+
+// ─── module scope versus global scope ────────────────────────────────────────
+
+#[test]
+fn module_scoped_reexport_does_not_conflict_with_declare_global_namespace() {
+    let files = [
+        (
+            "runtime.d.ts",
+            r#"export { InnerSurface as OuterSurface } from "./source";"#,
+        ),
+        ("source.d.ts", "export namespace InnerSurface {}"),
+        (
+            "globals.d.ts",
+            "export {}; declare global { namespace OuterSurface {} }",
+        ),
+    ];
+
+    let errs = check_all_for_dup(&files);
+    assert!(
+        errs.is_empty(),
+        "A module-scoped renamed re-export is not a duplicate partner for a global namespace: {errs:#?}"
+    );
+}
+
+#[test]
+fn module_scoped_direct_export_does_not_conflict_with_declare_global_namespace() {
+    let files = [
+        ("runtime.d.ts", "export namespace ModuleOnlySurface {}"),
+        (
+            "globals.d.ts",
+            "export {}; declare global { namespace ModuleOnlySurface {} }",
+        ),
+    ];
+
+    let errs = check_all_for_dup(&files);
+    assert!(
+        errs.is_empty(),
+        "A direct export in an external module must remain separate from the global namespace: {errs:#?}"
+    );
+}
+
+#[test]
+fn remote_script_scope_class_still_conflicts_with_global_class() {
+    let files = [
+        ("first.d.ts", "declare class SharedSurface {}"),
+        ("second.d.ts", "declare class SharedSurface {}"),
+    ];
+
+    let errs = check_all_for_dup(&files);
+    assert!(
+        errs.iter().any(|(_, code, _)| *code == 2300),
+        "Two global script declarations must remain duplicate partners: {errs:#?}"
+    );
+}
+
 // ─── re-export with rename ────────────────────────────────────────────────────
 
 /// Exact issue #6052 repro: `export { User as MyUser } from "./source"` + interface augmentation.
