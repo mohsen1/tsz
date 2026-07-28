@@ -786,18 +786,6 @@ pub(crate) fn raw_property_type(
     tsz_solver::type_queries::data::get_raw_property_type(db, type_id, prop_name)
 }
 
-#[cfg(test)]
-pub(crate) fn instantiated_generic_raw_property_type(
-    db: &dyn QueryDatabase,
-    type_id: TypeId,
-    type_params: &[tsz_solver::TypeParamInfo],
-    type_args: &[TypeId],
-    prop_name: tsz_common::interner::Atom,
-) -> Option<TypeId> {
-    let instantiated = instantiate_generic(db, type_id, type_params, type_args);
-    raw_property_type(db.as_type_database(), instantiated, prop_name)
-}
-
 /// Collect all callable (function-typed) property types from an object type.
 pub(crate) fn collect_callable_property_types(
     db: &dyn TypeDatabase,
