@@ -661,28 +661,6 @@ impl<'a> CheckerState<'a> {
             left_type = jsdoc_left_type;
         }
 
-        let is_nested_assignment = self
-            .ctx
-            .arena
-            .get(expr_idx)
-            .and_then(|_| {
-                let expr_node = tsz_parser::parser::node::NodeView::new(self.ctx.arena, expr_idx)?;
-                let parent_idx = expr_node.parent();
-                (parent_idx != NodeIndex::NONE).then_some(parent_idx)
-            })
-            .and_then(|parent_idx| self.ctx.arena.get(parent_idx))
-            .filter(|parent_node| parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION)
-            .and_then(|parent_node| self.ctx.arena.get_binary_expr(parent_node))
-            .is_some_and(|parent_binary| parent_binary.right == expr_idx);
-
-        let rhs_is_assignment_expression = self
-            .ctx
-            .arena
-            .get(right_idx)
-            .filter(|node| node.kind == syntax_kind_ext::BINARY_EXPRESSION)
-            .and_then(|node| self.ctx.arena.get_binary_expr(node))
-            .is_some_and(|binary| binary.operator_token == SyntaxKind::EqualsToken as u16);
-
         self.maybe_report_commonjs_export_implicit_any_assignment(left_idx, right_idx);
 
         if is_function_assignment {
@@ -766,10 +744,19 @@ impl<'a> CheckerState<'a> {
             // The type is inferred from the union of all assigned values, so individual
             // assignments should not be checked against the inferred type.
             //
-            // However, we still need to check concrete inferred targets. For example,
-            // `assignmentToVoidZero1` expects TS2322 on `exports.x = void 0` once later
-            // writes establish that `x` is `1`. Nested assignment chains should also
-            // stay checked so each step can report the concrete mismatch.
+            // A chain declares just as much as a single write does. `exports.y =
+            // exports.x = void 0` followed by `exports.x = 1; exports.y = 2` is
+            // silent in tsc 7.0.2 (`salsa/assignmentToVoidZero1`, upstream #38552):
+            // no assignment is checked against a type derived from a *different*
+            // assignment, so the inner write is not compared to `1` nor the outer
+            // to `2`. An earlier comment here claimed that test expects those two
+            // TS2322s; measured against the pinned tsc, it expects none, so the
+            // nested-assignment and assignment-RHS carve-outs are gone.
+            //
+            // Reads are unaffected: the declared type is still the union of all
+            // assignments, and both compilers type `exports.x` as `number` here.
+            // An explicit JSDoc `@type` still makes the declared type
+            // authoritative and keeps reporting, via `has_explicit_jsdoc_left_type`.
             //
             // TS7: when a bare `module.exports = X` is mixed with sibling property
             // exports (TS2309), the siblings are not declarations — resolve them as
@@ -777,11 +764,7 @@ impl<'a> CheckerState<'a> {
             let merge_suppressed = self
                 .resolve_js_export_surface(self.ctx.current_file_idx)
                 .suppresses_expando_merge();
-            if !merge_suppressed
-                && !has_explicit_jsdoc_left_type
-                && !is_nested_assignment
-                && !rhs_is_assignment_expression
-            {
+            if !merge_suppressed && !has_explicit_jsdoc_left_type {
                 return self.get_type_of_node(right_idx);
             }
         }
