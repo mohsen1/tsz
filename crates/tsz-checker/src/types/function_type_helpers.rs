@@ -1378,7 +1378,7 @@ impl<'a> CheckerState<'a> {
     ) -> Vec<(String, Option<TypeId>, bool)> {
         use tsz_parser::parser::syntax_kind_ext;
 
-        let mut enclosing_param_indices: Vec<Vec<NodeIndex>> = Vec::new();
+        let mut enclosing_param_indices: Vec<(Vec<NodeIndex>, Option<Vec<TypeId>>)> = Vec::new();
         let mut current = func_idx;
         while let Some(ext) = self.ctx.arena.get_extended(current) {
             let parent_idx = ext.parent;
@@ -1425,7 +1425,29 @@ impl<'a> CheckerState<'a> {
             };
 
             if let Some(indices) = type_param_nodes {
-                enclosing_param_indices.push(indices);
+                // A method signature built while its class is being checked must
+                // close over the class binders already installed by
+                // `push_effective_class_type_parameters`. Re-resolving the same
+                // declarations here can observe a different transient recovery
+                // state (for example, `None` versus `Some(ERROR)` constraints)
+                // and mint a second `TypeId` for the same binder.
+                let exact_class_type_parameter_ids = if matches!(
+                    parent.kind,
+                    k if k == syntax_kind_ext::CLASS_DECLARATION
+                        || k == syntax_kind_ext::CLASS_EXPRESSION
+                ) {
+                    self.ctx
+                        .enclosing_class
+                        .as_ref()
+                        .filter(|info| {
+                            info.class_idx == parent_idx
+                                && info.class_type_parameter_ids.len() == indices.len()
+                        })
+                        .map(|info| info.class_type_parameter_ids.clone())
+                } else {
+                    None
+                };
+                enclosing_param_indices.push((indices, exact_class_type_parameter_ids));
             }
 
             current = parent_idx;
@@ -1439,8 +1461,10 @@ impl<'a> CheckerState<'a> {
         let mut added_params: Vec<(NodeIndex, bool)> = Vec::new();
 
         // Pass 1: Add all type parameters to scope WITHOUT constraints
-        for param_indices in enclosing_param_indices.into_iter().rev() {
-            for param_idx in param_indices {
+        for (param_indices, exact_class_type_parameter_ids) in
+            enclosing_param_indices.into_iter().rev()
+        {
+            for (param_position, param_idx) in param_indices.into_iter().enumerate() {
                 let Some(node) = self.ctx.arena.get(param_idx) else {
                     continue;
                 };
@@ -1457,6 +1481,17 @@ impl<'a> CheckerState<'a> {
                         || "T".to_string(),
                         |id_data| id_data.escaped_text.to_string(),
                     );
+
+                if let Some(type_id) = exact_class_type_parameter_ids
+                    .as_ref()
+                    .and_then(|ids| ids.get(param_position))
+                    .copied()
+                {
+                    let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
+                    updates.push((name, previous, false));
+                    continue;
+                }
+
                 let atom = self.ctx.types.intern_string(&name);
 
                 let is_const = self
