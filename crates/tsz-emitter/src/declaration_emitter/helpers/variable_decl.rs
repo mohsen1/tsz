@@ -89,22 +89,11 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         };
         let enum_type = self.jsdoc_type_text_for_declaration_emit(&raw_enum_type);
-        let enum_uses_bare_module_import_surface =
-            raw_enum_type != enum_type && Self::type_text_starts_with_import_type(&raw_enum_type);
+        let enum_uses_invalid_bare_module_import = Self::next_import_type_text(&raw_enum_type)
+            .is_some_and(|(start, _, tail)| start == 0 && tail.trim().is_empty());
 
         self.suppress_current_statement_jsdoc_comments = true;
-        self.write_indent();
-        if is_exported {
-            self.write("export ");
-        }
-        self.write("type ");
-        self.emit_node(decl_name);
-        self.write(" = ");
-        self.write(&enum_type);
-        self.write(";");
-        self.write_line();
-
-        if enum_uses_bare_module_import_surface {
+        if enum_uses_invalid_bare_module_import {
             if let Some(decl_node) = self.arena.get(decl_idx) {
                 let chain = self.leading_jsdoc_comment_chain_for_pos(decl_node.pos);
                 self.emit_jsdoc_comment_chain(&chain);
@@ -121,6 +110,17 @@ impl<'a> DeclarationEmitter<'a> {
             self.write_line();
             return true;
         }
+
+        self.write_indent();
+        if is_exported {
+            self.write("export ");
+        }
+        self.write("type ");
+        self.emit_node(decl_name);
+        self.write(" = ");
+        self.write(&enum_type);
+        self.write(";");
+        self.write_line();
 
         self.write_indent();
         if is_exported {

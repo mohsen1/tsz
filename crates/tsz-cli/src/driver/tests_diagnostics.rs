@@ -747,7 +747,7 @@ fn module_none_outfile_native_dynamic_import_is_rejected_before_emit() {
 }
 
 #[test]
-fn jsdoc_bare_module_imports_inline_commonjs_callable_static_surface_in_declaration_emit() {
+fn jsdoc_bare_module_imports_keep_import_types_and_report_ts1340() {
     let dir = tempfile::tempdir().expect("temp dir");
     fs::write(
         dir.path().join("base.js"),
@@ -809,64 +809,42 @@ function use() {}
     .expect("parse args");
     let result = compile(&args, dir.path()).expect("compile");
 
-    assert!(
-        result.diagnostics.is_empty(),
-        "did not expect diagnostics, got: {:?}",
-        result.diagnostics
+    let ts1340 = result
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == 1340)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ts1340.len(),
+        4,
+        "each bare import of a value-only CommonJS module is TS1340: {:?}",
+        result.diagnostics,
     );
 
     let dts = fs::read_to_string(dir.path().join("out/file.d.ts")).expect("read file.d.ts");
     assert!(
-        dts.contains(
-            r#"type BaseFactory = {
-    (): {};
-    Base: {
-        new (): {};
-    };
-};"#
-        ),
-        "expected BaseFactory to inline callable/static import surface: {dts}"
+        dts.contains("type BaseFactory = import('./base');"),
+        "expected BaseFactory to preserve the invalid bare import type: {dts}"
     );
     assert!(
-        dts.contains(
-            r#"type BaseFactoryFactory = (factory: {
-    (): {};
-    Base: {
-        new (): {};
-    };
-}) => any;"#
-        ),
-        "expected callback parameter import to inline callable/static surface: {dts}"
+        dts.contains("type BaseFactoryFactory = (factory: import('./base')) => any;"),
+        "expected callback parameter to preserve the invalid bare import type: {dts}"
     );
     assert!(
         dts.contains("declare const couldntThinkOfAny: {};"),
-        "expected JSDoc enum bare import expansion to emit const fallback: {dts}"
+        "expected the JSDoc enum declaration to retain its const fallback: {dts}"
     );
     assert!(
         !dts.contains("declare namespace couldntThinkOfAny"),
-        "did not expect enum bare import expansion to synthesize an empty namespace: {dts}"
+        "did not expect the JSDoc enum to synthesize an empty namespace: {dts}"
     );
     assert!(
-        dts.contains(
-            r#"type MakerAlias = {
-    (): {};
-    Widget: {
-        new (): {};
-    };
-};"#
-        ),
-        "expected renamed typedef import to inline callable/static surface: {dts}"
+        dts.contains("type MakerAlias = import('./maker');"),
+        "expected renamed typedef import to remain an import type: {dts}"
     );
     assert!(
-        dts.contains(
-            r#"type MakerConsumer = (renamed: {
-    (): {};
-    Widget: {
-        new (): {};
-    };
-}) => any;"#
-        ),
-        "expected renamed callback import to inline callable/static surface: {dts}"
+        dts.contains("type MakerConsumer = (renamed: import('./maker')) => any;"),
+        "expected renamed callback import to remain an import type: {dts}"
     );
 }
 

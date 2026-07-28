@@ -897,6 +897,7 @@ impl<'a> DeclarationEmitter<'a> {
         let mut emitter = DeclarationEmitter::new(&parser.arena);
         emitter.normalize_string_literal_type_quotes = true;
         let mut rendered = emitter.emit(root);
+        rendered = Self::restore_jsdoc_import_type_source_quotes(&rendered, type_text);
         rendered = Self::compact_rendered_jsdoc_type_alias(&rendered);
         if !decl.type_params.is_empty() && decl.type_text.contains('\n') {
             let type_params = decl.type_params.join(", ");
@@ -918,12 +919,46 @@ impl<'a> DeclarationEmitter<'a> {
             // Pre-formatted type text (e.g. from @property tags) already has proper
             // TypeScript syntax with semicolons. Only apply portability rewrites; skip
             // the object-type reformatter which expects comma-separated members.
-            let portable = self.rewrite_ambient_module_relative_import_type_text(&decl.type_text);
-            self.rewrite_jsdoc_bare_module_import_type_text(&portable)
+            self.rewrite_ambient_module_relative_import_type_text(&decl.type_text)
         } else {
             self.jsdoc_type_alias_text_for_declaration_emit(&decl.type_text)
         };
         Self::render_jsdoc_type_alias_decl_with_type_text(decl, exported, &type_text)
+    }
+
+    fn restore_jsdoc_import_type_source_quotes(rendered: &str, source_type: &str) -> String {
+        let mut source_quotes = Vec::new();
+        let mut source_remaining = source_type;
+        while let Some((start, _, tail)) = Self::next_import_type_text(source_remaining) {
+            let quote = source_remaining[start + "import(".len()..]
+                .trim_start()
+                .chars()
+                .next()
+                .unwrap_or('"');
+            source_quotes.push(quote);
+            source_remaining = tail;
+        }
+        if source_quotes.is_empty() {
+            return rendered.to_string();
+        }
+
+        let mut output = String::new();
+        let mut remaining = rendered;
+        for quote in source_quotes {
+            let Some((start, module_specifier, tail)) = Self::next_import_type_text(remaining)
+            else {
+                break;
+            };
+            output.push_str(&remaining[..start]);
+            output.push_str("import(");
+            output.push(quote);
+            output.push_str(&module_specifier);
+            output.push(quote);
+            output.push(')');
+            remaining = tail;
+        }
+        output.push_str(remaining);
+        output
     }
 
     fn compact_rendered_jsdoc_type_alias(rendered: &str) -> String {
