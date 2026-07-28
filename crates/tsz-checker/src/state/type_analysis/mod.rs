@@ -21,6 +21,8 @@ pub(crate) mod cross_file;
 mod cross_file_alias_cycle;
 mod cross_file_alias_shortcut;
 mod cross_file_cache;
+#[cfg(test)]
+mod cross_file_default_alias_shortcut_tests;
 mod cross_file_delegation;
 pub(crate) mod cross_file_direct;
 mod cross_file_direct_actual_lib;
@@ -48,6 +50,7 @@ mod lexical_identity_scope_tests;
 mod lexical_type_param_scope;
 mod qualified_names;
 mod source_alias_attribution;
+pub(crate) mod source_file_import_binding;
 mod symbol_env_registration;
 mod symbol_type_helpers;
 mod syntactic_defaults;

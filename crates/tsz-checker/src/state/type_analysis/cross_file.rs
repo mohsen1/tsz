@@ -233,6 +233,10 @@ impl CheckerState<'_> {
         // `resolve_symbol_file_index` + binder lookups (and the fallback O(N) binder
         // scan) several times per delegation. Byte-identical — no guard mutates state.
         let cross_file_symbol = self.get_cross_file_symbol(sym_id);
+        let requester_default_import_cache_file_idx = self
+            .local_import_alias(sym_id)
+            .filter(|symbol| symbol.import_name() == Some("default"))
+            .map(|_| self.ctx.current_file_idx);
         {
             let sym_found = cross_file_symbol;
             let has_type_alias =
@@ -499,19 +503,25 @@ impl CheckerState<'_> {
             // canonical DefinitionStore cross-file buckets (the raw id is
             // interpreted in the owner binder), independent of the stable
             // shared-cache eligibility gate below.
-            let memo_file_idx = cross_file_idx
+            let memo_file_idx = requester_default_import_cache_file_idx
+                .or(cross_file_idx)
                 .or_else(|| delegate_arena.and_then(|arena| self.ctx.get_file_idx_for_arena(arena)))
                 .map(|idx| idx as u32);
 
-            let symbol_type_cache_file_idx = self.symbol_arena_symbol_type_cache_file_idx(
-                needs_cross_file_delegation,
-                cross_file_idx,
-                delegate_arena_source,
-                delegate_arena,
-                sym_id,
-            );
-            let symbol_type_cache_from_symbol_arena =
-                symbol_type_cache_file_idx.is_some() && !needs_cross_file_delegation;
+            let symbol_type_cache_file_idx =
+                requester_default_import_cache_file_idx.or_else(|| {
+                    self.symbol_arena_symbol_type_cache_file_idx(
+                        needs_cross_file_delegation,
+                        cross_file_idx,
+                        delegate_arena_source,
+                        delegate_arena,
+                        sym_id,
+                    )
+                });
+            let symbol_type_cache_from_symbol_arena = requester_default_import_cache_file_idx
+                .is_none()
+                && symbol_type_cache_file_idx.is_some()
+                && !needs_cross_file_delegation;
             let symbol_type_cache_scope = symbol_type_cache_from_symbol_arena
                 .then(|| self.ctx.source_file_symbol_type_cache_scope());
             let source_cache_scope = symbol_type_cache_scope.unwrap_or(0);

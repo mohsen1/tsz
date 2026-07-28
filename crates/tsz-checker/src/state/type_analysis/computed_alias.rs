@@ -1,5 +1,6 @@
 //! Helpers for computing type aliases in `compute_type_of_symbol`.
 
+use super::source_file_import_binding::source_file_import_binding_symbol;
 use crate::query_boundaries::type_predicates::is_compiler_managed_type;
 use crate::state::CheckerState;
 use crate::symbols_domain::name_text::expression_name_text_in_arena;
@@ -9,6 +10,12 @@ use tsz_parser::parser::node::{NodeAccess, NodeArena, TypeAliasData};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{SymbolRef, TupleElement, TypeId};
+
+#[derive(Clone, Copy)]
+struct ResolvedLoweringSymbol {
+    sym_id: SymbolId,
+    file_idx: Option<usize>,
+}
 
 impl CheckerState<'_> {
     pub(crate) fn resolve_cross_arena_type_alias_body_with_checker(
@@ -88,10 +95,25 @@ impl CheckerState<'_> {
             .unwrap_or(self.ctx.binder);
         let namespace_prefix = self.type_alias_namespace_prefix(decl_arena, decl_idx);
         let decl_file_idx = self.ctx.get_file_idx_for_arena(decl_arena);
-        let resolve_symbol_in_decl_binder = |name: &str| -> Option<SymbolId> {
+        let temporary_alias_owners =
+            std::cell::RefCell::new(Vec::<(SymbolId, Option<usize>)>::new());
+        let resolve_symbol_in_decl_binder = |name: &str| -> Option<ResolvedLoweringSymbol> {
             let mut segments = name.split('.');
             let root_name = segments.next()?;
-            let mut current_sym = decl_binder.file_locals.get(root_name)?;
+            let mut current_sym =
+                source_file_import_binding_symbol(decl_arena, decl_binder, root_name)
+                    .or_else(|| decl_binder.file_locals.get(root_name))?;
+            // Standard-library symbols are cloned into each source binder's
+            // `file_locals`. They retain canonical lib ownership rather than
+            // acquiring the alias declaration file merely because this lookup
+            // started in that binder. Genuine imports and source declarations
+            // are not members of `lib_symbol_ids`; an import target receives
+            // its exact owner below.
+            let mut current_file_idx = if decl_binder.lib_symbol_ids.contains(&current_sym) {
+                None
+            } else {
+                decl_file_idx
+            };
 
             for segment in segments {
                 let symbol = decl_binder
@@ -127,12 +149,35 @@ impl CheckerState<'_> {
                     current_sym,
                 )
             {
+                if let Some(target_file_idx) = alias_target.file_idx {
+                    let mut owners = temporary_alias_owners.borrow_mut();
+                    if !owners
+                        .iter()
+                        .any(|(sym_id, _)| *sym_id == alias_target.sym_id)
+                    {
+                        owners.push((
+                            alias_target.sym_id,
+                            self.ctx
+                                .local_symbol_file_target_override(alias_target.sym_id),
+                        ));
+                    }
+                    self.ctx
+                        .register_symbol_file_target(alias_target.sym_id, target_file_idx);
+                }
                 current_sym = alias_target.sym_id;
+                current_file_idx = alias_target.file_idx;
             }
 
-            Some(current_sym)
+            Some(ResolvedLoweringSymbol {
+                sym_id: current_sym,
+                file_idx: current_file_idx,
+            })
         };
-        let resolve_type_name = |name: &str| -> Option<SymbolId> {
+        let unresolved_symbol = |sym_id| ResolvedLoweringSymbol {
+            sym_id,
+            file_idx: None,
+        };
+        let resolve_type_name = |name: &str| -> Option<ResolvedLoweringSymbol> {
             namespace_prefix
                 .as_ref()
                 .and_then(|prefix| {
@@ -143,59 +188,89 @@ impl CheckerState<'_> {
                     resolve_symbol_in_decl_binder(&scoped).or_else(|| {
                         self.resolve_entity_name_text_to_def_id_for_lowering(&scoped)
                             .and_then(|def_id| self.ctx.def_to_symbol_id_with_fallback(def_id))
+                            .map(unresolved_symbol)
                     })
                 })
                 .or_else(|| {
                     resolve_symbol_in_decl_binder(name).or_else(|| {
                         self.resolve_entity_name_text_to_def_id_for_lowering(name)
                             .and_then(|def_id| self.ctx.def_to_symbol_id_with_fallback(def_id))
+                            .map(unresolved_symbol)
                     })
                 })
                 .or_else(|| {
                     self.ctx
                         .binder
                         .get_global_type_with_libs(name, &lib_binders)
+                        .map(unresolved_symbol)
                 })
-                .or_else(|| lib_binders.iter().find_map(|lib| lib.file_locals.get(name)))
+                .or_else(|| {
+                    lib_binders
+                        .iter()
+                        .find_map(|lib| lib.file_locals.get(name))
+                        .map(unresolved_symbol)
+                })
+        };
+        let resolved_symbol = |resolved: ResolvedLoweringSymbol| {
+            resolved
+                .file_idx
+                .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
+                .and_then(|owner| owner.get_symbol(resolved.sym_id))
+                .or_else(|| binder.get_symbol_with_libs(resolved.sym_id, &lib_binders))
         };
         let type_resolver = |node_idx: NodeIndex| -> Option<u32> {
             let ident_name = decl_arena.get_identifier_text(node_idx)?;
             if is_compiler_managed_type(ident_name) {
                 return None;
             }
-            let referenced_sym_id = resolve_type_name(ident_name)?;
-            let symbol = binder.get_symbol_with_libs(referenced_sym_id, &lib_binders)?;
-            (symbol.has_any_flags(symbol_flags::TYPE)).then_some(referenced_sym_id.0)
+            let resolved = resolve_type_name(ident_name)?;
+            let symbol = resolved_symbol(resolved)?;
+            (symbol.has_any_flags(symbol_flags::TYPE)).then_some(resolved.sym_id.0)
         };
         let value_resolver = |node_idx: NodeIndex| -> Option<u32> {
             let ident_name = decl_arena.get_identifier_text(node_idx)?;
             if is_compiler_managed_type(ident_name) {
                 return None;
             }
-            let referenced_sym_id = resolve_type_name(ident_name)?;
-            let symbol = binder.get_symbol_with_libs(referenced_sym_id, &lib_binders)?;
+            let resolved = resolve_type_name(ident_name)?;
+            let symbol = resolved_symbol(resolved)?;
             ((symbol.flags
                 & (symbol_flags::VALUE
                     | symbol_flags::ALIAS
                     | symbol_flags::REGULAR_ENUM
                     | symbol_flags::CONST_ENUM))
                 != 0)
-                .then_some(referenced_sym_id.0)
+                .then_some(resolved.sym_id.0)
         };
-        let def_id_for_type_symbol = |referenced_sym_id: SymbolId, name: &str| {
+        let def_id_for_type_symbol = |resolved: ResolvedLoweringSymbol, name: &str| {
+            let referenced_sym_id = resolved.sym_id;
             let leaf_name = name.rsplit('.').next().unwrap_or(name);
-            let is_lib_global = self
-                .ctx
-                .binder
-                .get_global_type_with_libs(leaf_name, &lib_binders)
-                .is_some_and(|sym_id| sym_id == referenced_sym_id)
-                || lib_binders
-                    .iter()
-                    .any(|lib| lib.file_locals.get(leaf_name) == Some(referenced_sym_id));
+            let is_lib_global = resolved.file_idx.is_none()
+                && (self
+                    .ctx
+                    .binder
+                    .get_global_type_with_libs(leaf_name, &lib_binders)
+                    .is_some_and(|sym_id| sym_id == referenced_sym_id)
+                    || lib_binders
+                        .iter()
+                        .any(|lib| lib.file_locals.get(leaf_name) == Some(referenced_sym_id)));
 
             if is_lib_global {
                 self.ctx
                     .get_canonical_lib_def_id(leaf_name, referenced_sym_id)
+            } else if let Some(file_idx) = resolved.file_idx
+                && let Some(symbol) = self
+                    .ctx
+                    .get_binder_for_file(file_idx)
+                    .and_then(|owner| owner.get_symbol(referenced_sym_id))
+            {
+                self.ctx
+                    .def_id_for_declaration_in_file(
+                        referenced_sym_id,
+                        file_idx,
+                        &symbol.escaped_name,
+                    )
+                    .unwrap_or_else(|| self.ctx.get_or_create_def_id(referenced_sym_id))
             } else {
                 self.ctx.get_or_create_def_id(referenced_sym_id)
             }
@@ -205,23 +280,20 @@ impl CheckerState<'_> {
             if is_compiler_managed_type(ident_name) {
                 return None;
             }
-            let referenced_sym_id = resolve_type_name(ident_name)?;
-            let symbol = binder.get_symbol_with_libs(referenced_sym_id, &lib_binders)?;
+            let resolved = resolve_type_name(ident_name)?;
+            let symbol = resolved_symbol(resolved)?;
             (symbol.has_any_flags(symbol_flags::TYPE))
-                .then(|| def_id_for_type_symbol(referenced_sym_id, ident_name))
+                .then(|| def_id_for_type_symbol(resolved, ident_name))
         };
         let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
             let resolve_decl_type_def_id = |name: &str| -> Option<tsz_solver::def::DefId> {
-                let referenced_sym_id = resolve_type_name(name)?;
-                let symbol = self
-                    .get_cross_file_symbol(referenced_sym_id)
-                    .or_else(|| decl_binder.get_symbol(referenced_sym_id))
-                    .or_else(|| binder.get_symbol_with_libs(referenced_sym_id, &lib_binders))?;
+                let resolved = resolve_type_name(name)?;
+                let symbol = resolved_symbol(resolved)?;
                 if !symbol.has_any_flags(symbol_flags::TYPE) {
                     return None;
                 }
 
-                Some(def_id_for_type_symbol(referenced_sym_id, name))
+                Some(def_id_for_type_symbol(resolved, name))
             };
 
             namespace_prefix
@@ -234,20 +306,20 @@ impl CheckerState<'_> {
                     resolve_decl_type_def_id(&scoped)
                         .or_else(|| self.resolve_entity_name_text_to_def_id_for_lowering(&scoped))
                 })
+                .or_else(|| resolve_decl_type_def_id(type_name))
                 .or_else(|| {
                     (!self.ctx.file_local_type_shadow_for_lib_name(type_name))
                         .then(|| self.resolve_actual_lib_name_to_def_id_for_lowering(type_name))
                         .flatten()
                 })
-                .or_else(|| {
-                    resolve_decl_type_def_id(type_name)
-                        .or_else(|| self.resolve_entity_name_text_to_def_id_for_lowering(type_name))
-                })
+                .or_else(|| self.resolve_entity_name_text_to_def_id_for_lowering(type_name))
         };
+        let resolve_type_symbol_id =
+            |name: &str| resolve_type_name(name).map(|resolved| resolved.sym_id);
         let computed_names = self.precompute_cross_arena_computed_property_names(
             decl_arena,
             type_alias.type_node,
-            &resolve_type_name,
+            &resolve_type_symbol_id,
         );
         let computed_name_resolver = |expr_idx: NodeIndex| computed_names.get(&expr_idx).copied();
         let type_query_override = |expr_name_idx: NodeIndex| -> Option<TypeId> {
@@ -265,11 +337,8 @@ impl CheckerState<'_> {
 
             let expr_node = decl_arena.get(expr_name_idx)?;
             let ident = decl_arena.get_identifier(expr_node)?;
-            let referenced_sym_id = resolve_type_name(&ident.escaped_text)?;
-            let symbol = decl_binder
-                .get_symbol(referenced_sym_id)
-                .or_else(|| self.get_cross_file_symbol(referenced_sym_id))
-                .or_else(|| binder.get_symbol_with_libs(referenced_sym_id, &lib_binders))?;
+            let resolved = resolve_type_name(&ident.escaped_text)?;
+            let symbol = resolved_symbol(resolved)?;
             if !symbol.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE) {
                 return None;
             }
@@ -364,10 +433,13 @@ impl CheckerState<'_> {
         .with_name_def_id_resolver(&name_resolver)
         .with_type_query_override(&type_query_override);
         let lowering = if let Some(symbol) = decl_binder.get_symbol(sym_id) {
-            lowering.with_preferred_self_reference(
-                symbol.escaped_name.clone(),
-                self.ctx.get_or_create_def_id(sym_id),
-            )
+            let self_def_id = decl_file_idx
+                .and_then(|file_idx| {
+                    self.ctx
+                        .def_id_for_declaration_in_file(sym_id, file_idx, &symbol.escaped_name)
+                })
+                .unwrap_or_else(|| self.ctx.get_or_create_def_id(sym_id));
+            lowering.with_preferred_self_reference(symbol.escaped_name.clone(), self_def_id)
         } else {
             lowering
         };
@@ -377,7 +449,12 @@ impl CheckerState<'_> {
             lowering.prefer_name_def_id_resolution()
         };
 
-        lowering.lower_type_alias_declaration(type_alias)
+        let result = lowering.lower_type_alias_declaration(type_alias);
+        for (target_sym_id, previous) in temporary_alias_owners.into_inner().into_iter().rev() {
+            self.ctx
+                .restore_local_symbol_file_target_override(target_sym_id, previous);
+        }
+        result
     }
 
     fn precompute_cross_arena_computed_property_names<F>(
@@ -820,7 +897,6 @@ impl CheckerState<'_> {
         // and must not get — the body primed here, since priming it can perturb
         // the utility's instantiation in unrelated alias bodies.
         let mut indexed_object_names: Vec<String> = Vec::new();
-
         while let Some(node_idx) = stack.pop() {
             let Some(node) = decl_arena.get(node_idx) else {
                 continue;
@@ -860,6 +936,21 @@ impl CheckerState<'_> {
         }
 
         for name in names_to_prime {
+            // This prepass exists only to make genuine library references ready.
+            // A source import with the same spelling shadows the library global
+            // and is materialized through its owner-qualified alias path below.
+            // Priming it as a lib symbol here can attach the lib parameters to a
+            // binder-relative raw id belonging to the imported program alias.
+            let is_source_import = {
+                let decl_binder = self
+                    .ctx
+                    .get_binder_for_arena(decl_arena)
+                    .unwrap_or(self.ctx.binder);
+                source_file_import_binding_symbol(decl_arena, decl_binder, &name).is_some()
+            };
+            if is_source_import {
+                continue;
+            }
             self.prime_lib_type_params(&name);
             if indexed_object_names.iter().any(|n| n == &name) {
                 self.prime_actual_lib_type_alias_body(&name);

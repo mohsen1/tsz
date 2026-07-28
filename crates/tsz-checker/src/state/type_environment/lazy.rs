@@ -1572,6 +1572,13 @@ impl CheckerState<'_> {
             return Some(self.ctx.types.lazy(def_id));
         }
 
+        if let Some(body) = self.published_program_alias_body(def_id) {
+            if body != TypeId::ANY {
+                self.try_insert_def_in_type_env(def_id, body);
+            }
+            return Some(body);
+        }
+
         let (sym_id, owner_file_idx) = self.ctx.def_symbol_identity(def_id)?;
         if let Some(file_idx) = owner_file_idx
             && file_idx != self.ctx.current_file_idx
@@ -1854,6 +1861,12 @@ impl CheckerState<'_> {
         &mut self,
         def_id: tsz_solver::DefId,
     ) -> Option<(bool, TypeId)> {
+        if let Some(body) = self.published_program_alias_body(def_id) {
+            if body != TypeId::ANY {
+                self.try_insert_def_in_type_env(def_id, body);
+            }
+            return Some((true, body));
+        }
         if let Some((original_sym_id, owner_file_idx)) = self.ctx.def_symbol_identity(def_id) {
             if let Some(file_idx) = owner_file_idx
                 && file_idx != self.ctx.current_file_idx

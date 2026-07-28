@@ -405,7 +405,7 @@ impl CheckerState<'_> {
             }
         }
 
-        // A cross-file (non-declare) generic interface/class base must be
+        // A cross-file (non-declare) generic declaration base must be
         // instantiated from the `DefinitionStore` body and parameters — the
         // def is the identity authority. The raw-`SymbolId` route below
         // resolves the symbol against the current binder, where per-file
@@ -418,7 +418,7 @@ impl CheckerState<'_> {
         // member reads) observes the same instantiated body. Refs #13212.
         if !args.is_empty()
             && let Some(instantiated) =
-                self.instantiate_cross_file_interface_application(type_id, base, &args)
+                self.instantiate_cross_file_definition_application(type_id, base, &args)
         {
             return instantiated;
         }

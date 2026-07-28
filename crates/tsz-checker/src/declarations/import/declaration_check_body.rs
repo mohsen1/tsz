@@ -561,12 +561,6 @@ impl<'a> CheckerState<'a> {
                 )
                 .or_else(|| self.ctx.resolve_import_target(module_name))
             {
-                let has_typed_export_surface = self
-                    .resolve_effective_module_exports_with_mode(
-                        module_name,
-                        self.requested_resolution_mode(import.attributes, is_type_only_import),
-                    )
-                    .is_some();
                 // When a module was successfully resolved to a target file, do NOT
                 // emit TS2307 regardless of its export surface. TS2307 means the
                 // module file cannot be found at all. A file with no exports (e.g.,
@@ -584,9 +578,23 @@ impl<'a> CheckerState<'a> {
                             || file_name.ends_with(".jsx")
                             || file_name.ends_with(".mjs")
                             || file_name.ends_with(".cjs");
+                        // Only JavaScript source files use the absence of a typed
+                        // export surface to skip member validation. Resolving the
+                        // full surface for TypeScript targets is semantically dead
+                        // and can publish raw cross-file symbol owners that collide
+                        // with requester-local binder ids before those locals are
+                        // checked.
                         let skip_exports = is_js_like
                             && !source_file.is_declaration_file
-                            && !has_typed_export_surface;
+                            && self
+                                .resolve_effective_module_exports_with_mode(
+                                    module_name,
+                                    self.requested_resolution_mode(
+                                        import.attributes,
+                                        is_type_only_import,
+                                    ),
+                                )
+                                .is_none();
                         // Determine if target file is ESM. .mjs/.mts are always ESM.
                         // For .js/.ts targets, also check package.json "type" field via
                         // file_is_esm_map. TSC does not emit TS1479 when a .js source file

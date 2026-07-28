@@ -846,6 +846,36 @@ impl CheckerState<'_> {
                         }
                     }
                 }
+
+                // Owner-qualified generic default aliases must bypass general
+                // type-position alias resolution. That path probes namespace
+                // exports and records binder-local raw symbol owners; a target
+                // export can share its `SymbolId` with an unrelated requester
+                // local. Keep the shortcut lexical so an enclosing type
+                // parameter or nearer declaration still wins.
+                let lexical_type_only_import_alias = type_param.is_none().then(|| {
+                    self.lexically_selected_explicit_default_type_import_alias(type_name_idx)
+                });
+                if let Some(alias_sym_id) = lexical_type_only_import_alias.flatten()
+                    && let Some(target) =
+                        self.resolve_explicit_default_type_alias_application_target(alias_sym_id)
+                    && let Some(args) = &type_ref.type_arguments
+                {
+                    self.ctx
+                        .referenced_symbols
+                        .borrow_mut()
+                        .insert(alias_sym_id);
+                    let type_args =
+                        self.resolve_type_argument_nodes_once(&mut resolved_type_args_cache, args);
+                    if !self.is_inside_type_parameter_declaration(idx)
+                        && self.validate_type_reference_type_arguments(alias_sym_id, args, idx)
+                    {
+                        return TypeId::ERROR;
+                    }
+                    let base = self.ctx.types.factory().lazy(target.def_id);
+                    return self.ctx.types.factory().application(base, type_args);
+                }
+
                 let type_resolution =
                     self.resolve_identifier_symbol_in_type_position(type_name_idx);
                 let sym_id = match type_resolution {
@@ -971,20 +1001,13 @@ impl CheckerState<'_> {
                     return TypeId::ERROR;
                 }
                 if has_type_args
-                    && let Some(target_sym_id) =
-                        self.resolve_type_only_import_alias_target_symbol(name)
+                    && let Some(target) = self.resolve_type_only_import_application_target(name)
                     && let Some(args) = &type_ref.type_arguments
                 {
-                    let target_name = self
-                        .get_cross_file_symbol(target_sym_id)
-                        .or_else(|| self.ctx.binder.get_symbol(target_sym_id))
-                        .map(|symbol| symbol.escaped_name.clone())
-                        .unwrap_or_else(|| name.to_string());
-                    self.ensure_def_ready_for_lowering(target_sym_id, &target_name);
                     let type_args =
                         self.resolve_type_argument_nodes_once(&mut resolved_type_args_cache, args);
                     if !self.is_inside_type_parameter_declaration(idx)
-                        && self.validate_type_reference_type_arguments(target_sym_id, args, idx)
+                        && self.validate_type_reference_type_arguments(target.sym_id, args, idx)
                     {
                         return TypeId::ERROR;
                     }
@@ -1000,19 +1023,7 @@ impl CheckerState<'_> {
                     // canonical declaration def (whose parameters resolve on
                     // demand) substitutes correctly, matching the non-renamed
                     // re-export forms. Mirrors the entity-name / heritage paths.
-                    let def_id = self
-                        .ctx
-                        .binder
-                        .file_locals
-                        .get(name)
-                        .and_then(|local_sym| {
-                            self.reexported_declaration_def_id_for_lowering(local_sym, name)
-                        })
-                        .unwrap_or_else(|| {
-                            self.ctx
-                                .get_or_create_def_id_for_symbol_name(target_sym_id, &target_name)
-                        });
-                    let base = self.ctx.types.factory().lazy(def_id);
+                    let base = self.ctx.types.factory().lazy(target.def_id);
                     return self.ctx.types.factory().application(base, type_args);
                 }
                 // TS2318: Array<T> with noLib should emit "Cannot find global type 'Array'"

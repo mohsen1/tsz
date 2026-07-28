@@ -15,6 +15,14 @@ use tsz_binder::symbol_flags;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
+#[derive(Clone, Copy)]
+struct ResolvedIdentifierFlowInputs<'a> {
+    flags: u32,
+    value_decl: NodeIndex,
+    symbol_declarations: &'a [NodeIndex],
+    selected_by_current_binder: bool,
+}
+
 impl CheckerState<'_> {
     /// Compute the type of an identifier that the binder resolved to `sym_id`.
     ///
@@ -35,6 +43,21 @@ impl CheckerState<'_> {
             sym_id = ?sym_id,
             "get_type_of_identifier: resolved symbol"
         );
+        let selected_by_current_binder = self.current_file_owns_plain_value_variable(sym_id)
+            && self
+                .ctx
+                .resolve_symbol_file_index(sym_id)
+                .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
+            && self
+                .ctx
+                .binder
+                .get_symbol(sym_id)
+                .is_some_and(|symbol| symbol.escaped_name == name)
+            && self
+                .ctx
+                .binder
+                .resolve_identifier_with_filter(self.ctx.arena, idx, &[], |_| true)
+                == Some(sym_id);
 
         if let Some(result) = self.resolved_identifier_pre_flag_meaning(idx, request, sym_id, name)
         {
@@ -44,9 +67,15 @@ impl CheckerState<'_> {
         // Check symbol flags to detect type-only usage.
         // First try the main binder (fast path for local symbols).
         let (flags, value_decl, symbol_declarations, is_umd_export) = {
-            let local_symbol = self
-                .get_cross_file_symbol(sym_id)
-                .or_else(|| self.ctx.binder.get_symbol(sym_id));
+            let local_symbol = if selected_by_current_binder {
+                self.ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .or_else(|| self.get_cross_file_symbol(sym_id))
+            } else {
+                self.get_cross_file_symbol(sym_id)
+                    .or_else(|| self.ctx.binder.get_symbol(sym_id))
+            };
             let flags = local_symbol.map_or(0, |s| s.flags);
             let value_decl = local_symbol.map_or(NodeIndex::NONE, |s| s.value_declaration);
             let symbol_declarations = local_symbol
@@ -84,9 +113,12 @@ impl CheckerState<'_> {
             request,
             sym_id,
             name,
-            flags,
-            value_decl,
-            &symbol_declarations,
+            ResolvedIdentifierFlowInputs {
+                flags,
+                value_decl,
+                symbol_declarations: &symbol_declarations,
+                selected_by_current_binder,
+            },
         )
     }
 
@@ -1217,10 +1249,14 @@ impl CheckerState<'_> {
         request: &TypingRequest,
         sym_id: tsz_binder::SymbolId,
         name: &str,
-        flags: u32,
-        value_decl: NodeIndex,
-        symbol_declarations: &[NodeIndex],
+        inputs: ResolvedIdentifierFlowInputs<'_>,
     ) -> TypeId {
+        let ResolvedIdentifierFlowInputs {
+            flags,
+            value_decl,
+            symbol_declarations,
+            selected_by_current_binder,
+        } = inputs;
         let has_value = (flags & symbol_flags::VALUE) != 0;
         let is_type_alias = (flags & symbol_flags::TYPE_ALIAS) != 0;
         // Merged TYPE_ALIAS + VALUE symbols: when a user-defined value (e.g.,
@@ -1385,7 +1421,15 @@ impl CheckerState<'_> {
                 }
             }
         } else {
-            let base = self.get_type_of_symbol(sym_id);
+            // The binder selected this symbol for a current-file identifier.
+            // Preserve that provenance for plain variables: the program-wide
+            // raw-id owner index can point at an unrelated foreign symbol with
+            // the same numeric `SymbolId`.
+            let base = if selected_by_current_binder && value_decl.is_some() {
+                self.type_of_value_declaration(value_decl)
+            } else {
+                self.get_type_of_symbol(sym_id)
+            };
             if (flags & symbol_flags::ALIAS) != 0 {
                 // An import/re-export alias that (transitively) resolves to an
                 // enum yields the enum's *instance* type from

@@ -90,6 +90,19 @@ impl SymbolFileTargetsOverlay {
         self.delta.insert(sym_id, file_idx);
     }
 
+    #[must_use]
+    pub(super) fn local_override(&self, sym_id: SymbolId) -> Option<usize> {
+        self.delta.get(&sym_id).copied()
+    }
+
+    pub(super) fn restore_local_override(&mut self, sym_id: SymbolId, previous: Option<usize>) {
+        if let Some(file_idx) = previous {
+            self.delta.insert(sym_id, file_idx);
+        } else {
+            self.delta.remove(&sym_id);
+        }
+    }
+
     pub(super) fn register(&mut self, sym_id: SymbolId, file_idx: usize) {
         if self.get(sym_id) != Some(file_idx) {
             self.insert(sym_id, file_idx);
@@ -232,5 +245,21 @@ mod tests {
 
         assert_eq!(parent.get(sid(1)), Some(11));
         assert_eq!(parent.get(sid(2)), Some(20));
+    }
+
+    #[test]
+    fn restoring_absent_local_override_reveals_parent_owner() {
+        let mut parent = SymbolFileTargetsOverlay::default();
+        parent.insert(sid(1), 10);
+
+        let mut child = SymbolFileTargetsOverlay::default();
+        child.install_parent_snapshot(parent.snapshot_for_child());
+        let previous = child.local_override(sid(1));
+        child.insert(sid(1), 20);
+        assert_eq!(child.get(sid(1)), Some(20));
+
+        child.restore_local_override(sid(1), previous);
+        assert_eq!(child.get(sid(1)), Some(10));
+        assert_eq!(child.local_override(sid(1)), None);
     }
 }

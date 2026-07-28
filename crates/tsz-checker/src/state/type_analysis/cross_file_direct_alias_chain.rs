@@ -1,4 +1,5 @@
 use super::source_alias_attribution::record_source_alias_rejection_kinds;
+use super::source_file_import_binding::source_file_import_binding_symbol;
 use crate::state::CheckerState;
 use tsz_binder::{BinderState, Symbol, SymbolId, symbol_flags};
 use tsz_parser::NodeList;
@@ -187,7 +188,9 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
-        let Some(raw_sym_id) = binder.file_locals.get(name) else {
+        let Some(raw_sym_id) = source_file_import_binding_symbol(arena, binder, name)
+            .or_else(|| binder.file_locals.get(name))
+        else {
             return (proof.global_type_is_lowerable)(binder, name);
         };
         if Self::source_file_local_symbol_can_fall_back_to_global_type(arena, binder, raw_sym_id) {
@@ -434,7 +437,9 @@ impl<'a> CheckerState<'a> {
                 else {
                     return false;
                 };
-                let Some(raw_sym_id) = binder.file_locals.get(name) else {
+                let Some(raw_sym_id) = source_file_import_binding_symbol(arena, binder, name)
+                    .or_else(|| binder.file_locals.get(name))
+                else {
                     return (proof.global_type_is_lowerable)(binder, name)
                         && args.nodes.iter().copied().all(|arg| {
                             Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
@@ -868,7 +873,9 @@ impl<'a> CheckerState<'a> {
                 else {
                     return false;
                 };
-                let Some(raw_sym_id) = binder.file_locals.get(name) else {
+                let Some(raw_sym_id) = source_file_import_binding_symbol(arena, binder, name)
+                    .or_else(|| binder.file_locals.get(name))
+                else {
                     return (proof.global_type_is_lowerable)(binder, name)
                         && (!has_type_arguments
                             || type_ref.type_arguments.as_ref().is_some_and(|args| {
@@ -1391,6 +1398,15 @@ impl<'a> CheckerState<'a> {
         if import_name == "*" {
             return None;
         }
+        if import_name == "default"
+            && let Some(target) = self.explicit_default_export_pure_type_alias_target(
+                module_specifier,
+                source_file_idx,
+                false,
+            )
+        {
+            return Some(target);
+        }
         let target_idx = self
             .ctx
             .resolve_import_target_from_file(source_file_idx, module_specifier)?;
@@ -1405,8 +1421,6 @@ impl<'a> CheckerState<'a> {
                     .get(import_name)
                     .map(|sym_id| (sym_id, false))
             })?;
-        self.ctx
-            .register_symbol_file_target(target_sym_id, target_idx);
         Some(SourceFileAliasSymbol {
             arena: target_arena,
             binder: target_binder,
@@ -1434,6 +1448,13 @@ impl<'a> CheckerState<'a> {
         let import_name = symbol.import_name().unwrap_or(symbol.escaped_name.as_str());
         if import_name == "*" {
             return None;
+        }
+        if import_name == "default"
+            && let (Some(source_file_idx), Some(import_alias_target)) =
+                (proof.current_file_idx, proof.import_alias_target)
+            && let Some(target) = import_alias_target(source_file_idx, binder, sym_id)
+        {
+            return Some(target);
         }
         if let Some((target_sym_id, _)) =
             binder.resolve_import_with_reexports_type_only(module_specifier, import_name)

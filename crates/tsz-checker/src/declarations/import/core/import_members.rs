@@ -11,6 +11,38 @@ impl<'a> CheckerState<'a> {
     // Import Member Validation
     // =========================================================================
 
+    /// Check an already-resolved source file for an `export =` assignment
+    /// without materializing its whole namespace export table.
+    fn resolved_source_file_has_export_equals(&self, target_idx: usize, module_name: &str) -> bool {
+        let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
+        let Some(source_file) = target_arena.source_files.first() else {
+            return false;
+        };
+
+        if self
+            .ctx
+            .get_binder_for_file(target_idx)
+            .is_some_and(|target_binder| {
+                self.ctx
+                    .module_exports_for_module(target_binder, &source_file.file_name)
+                    .or_else(|| {
+                        self.ctx
+                            .module_exports_for_module(target_binder, module_name)
+                    })
+                    .is_some_and(|exports| exports.has("export="))
+            })
+        {
+            return true;
+        }
+
+        source_file.statements.nodes.iter().any(|&statement_idx| {
+            target_arena
+                .get(statement_idx)
+                .and_then(|node| target_arena.get_export_assignment(node))
+                .is_some_and(|assignment| assignment.is_export_equals)
+        })
+    }
+
     /// Check that imported members exist in the module's exports.
     ///
     /// Validates that each named import from a module actually exists in that
@@ -385,22 +417,21 @@ impl<'a> CheckerState<'a> {
             // relative to the importing file) plus the binder export tables; the
             // arena scan covers the common default-only import, whose full exports
             // table is intentionally not built for performance. The cheap
-            // interop/system guards are checked first so that scan never runs on
-            // the common esModuleInterop-on path.
+            // interop/system guards are checked first so this probe never runs on
+            // the common esModuleInterop-on path. Keep the resolved-file probe
+            // local: the general namespace resolver records raw symbol owners, and
+            // a presence-only query must not overwrite a requester-local collision.
             let export_equals_default_needs_interop = !self.ctx.allow_synthetic_default_imports()
                 && !uses_system_namespace_default
                 && (exports_table
                     .as_ref()
                     .is_some_and(|table| table.has("export="))
-                    || self.module_has_export_equals(module_name)
-                    || resolved_target.is_some_and(|target_idx| {
-                        let arena = self.ctx.get_arena_for_file(target_idx as u32);
-                        (0..arena.len()).any(|i| {
-                            arena
-                                .get(NodeIndex(i as u32))
-                                .is_some_and(|node| node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT)
-                        })
-                    }));
+                    || resolved_target.map_or_else(
+                        || self.module_has_export_equals(module_name),
+                        |target_idx| {
+                            self.resolved_source_file_has_export_equals(target_idx, module_name)
+                        },
+                    ));
             if export_equals_default_needs_interop {
                 self.emit_no_default_export_error(module_name, clause.name, is_source_file);
             } else if exports_table.is_some() {

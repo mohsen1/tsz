@@ -51,7 +51,7 @@ fn type_position_resolution_cache_disabled() -> bool {
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
-    fn resolve_enclosing_type_parameter_symbol(
+    pub(crate) fn resolve_enclosing_type_parameter_symbol(
         &self,
         idx: NodeIndex,
         name: &str,
