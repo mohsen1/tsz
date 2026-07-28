@@ -331,13 +331,33 @@ var cpn = cp.m4()
         .iter()
         .filter(|(code, _)| *code == 2403)
         .collect();
+    // TypeScript 7 dropped JS constructor-function inference, so `@class` /
+    // `@template` no longer synthesize an instance type carrying the
+    // constructor's `this.<prop>` writes. A new `this.<prop>` inside a method of
+    // the literal assigned to `Cp.prototype` is therefore a missing member, which
+    // this test previously asserted must be *allowed*.
     assert!(
-        ts2339.is_empty(),
-        "Expected generic constructor prototype methods to allow new `this` properties, got: {diagnostics:?}"
+        ts2339.iter().any(|(_, message)| message.contains("'y'")),
+        "`this.y` is not a member once constructor inference is gone; expected \
+         TS2339, got: {diagnostics:?}"
+    );
+    // KNOWN RESIDUAL, pinned so it stays visible: tsc 7.0.2 names the object
+    // literal as the receiver —
+    //     TS2339 Property 'y' does not exist on type '{ m4(): any; }'
+    // — while tsz still names `Cp`, because `Cp.prototype` retains a synthesized
+    // instance type from other `synthesize_js_constructor_instance_type` callers
+    // and that becomes the literal's contextual type, outranking the literal's own
+    // receiver `this`. tsc also reports TS2526 for the method's `@return {this}`,
+    // which tsz does not. Both are follow-on TS7 cleanups beyond the three
+    // prototype-`this` sites fixed here.
+    assert!(
+        ts2339.iter().all(|(_, message)| message.contains("'Cp'")),
+        "residual pin: tsz reports the receiver as `Cp`; if this now names the \
+         object literal, the residual is fixed — update this test, got: {ts2339:?}"
     );
     assert!(
         ts2403.is_empty(),
-        "Expected JSDoc generic constructor instance types to stay stable across prototype methods, got: {diagnostics:?}"
+        "Expected no subsequent-variable-declaration conflicts, got: {diagnostics:?}"
     );
 }
 
@@ -677,50 +697,25 @@ Installer.prototype.second = function () {
             ..CheckerOptions::default()
         },
     );
+    // TypeScript 7 dropped JS constructor-function inference. `Installer` gains
+    // no synthesized instance type, so every `this.<prop>` here is a member of an
+    // implicitly-`any` receiver: the assignment mismatches (TS2322), the
+    // nullability check (TS2531) and the implicit-member reports (TS7008) this
+    // test was written against can no longer arise. Verified against the pinned
+    // tsc 7.0.2, which reports TS2683 on each constructor-body `this` and
+    // nothing else for this source.
     let codes: Vec<u32> = diagnostics.iter().map(|(code, _)| *code).collect();
-    assert_eq!(
-        codes.iter().filter(|&&code| code == 2322).count(),
-        5,
-        "Expected closed constructor properties to report the same assignment mismatches as tsc, got: {diagnostics:?}"
-    );
-    assert_eq!(
-        codes.iter().filter(|&&code| code == 2531).count(),
-        1,
-        "Expected unchecked nullable constructor property access to report TS2531 once, got: {diagnostics:?}"
-    );
-    let ts7008_messages: Vec<_> = diagnostics
-        .iter()
-        .filter(|(code, _)| *code == 7008)
-        .map(|(_, msg)| msg.as_str())
-        .collect();
+    for stale in [2322u32, 2531, 7008] {
+        assert_eq!(
+            codes.iter().filter(|&&code| code == stale).count(),
+            0,
+            "TS{stale} depends on constructor-function inference, which TS7 removed; \
+             got: {diagnostics:?}"
+        );
+    }
     assert!(
-        ts7008_messages
-            .iter()
-            .any(|msg| msg.contains("Member 'twices' implicitly has an 'any[]' type.")),
-        "Expected a constructor-origin TS7008 for twices, got: {diagnostics:?}"
-    );
-    assert!(
-        ts7008_messages
-            .iter()
-            .all(|msg| !msg.contains("Member 'unknown' implicitly has an 'any' type.")),
-        "Expected prototype writes to suppress the stale constructor TS7008 for unknown, got: {diagnostics:?}"
-    );
-    assert!(
-        ts7008_messages
-            .iter()
-            .all(|msg| !msg.contains("Member 'twice' implicitly has an 'any' type.")),
-        "Expected no prototype-method TS7008 duplication for twice, got: {diagnostics:?}"
-    );
-    let push_errors: Vec<_> = diagnostics
-        .iter()
-        .filter(|(_, msg)| msg.contains("Property 'push' does not exist on type 'any[]'."))
-        .collect();
-    // The no-lib harness still lacks Array.prototype.push, but null narrowing
-    // suppresses the narrowed-branch access error.
-    assert_eq!(
-        push_errors.len(),
-        1,
-        "Expected only the un-narrowed push access to fail in the no-lib harness, got: {diagnostics:?}"
+        codes.contains(&2683),
+        "expected TS2683 for each implicitly-`any` constructor `this`, got: {diagnostics:?}"
     );
 }
 
@@ -1263,14 +1258,23 @@ Installer.prototype.loadArgMetadata = function(next) {
 }
 "#;
     let diagnostics = check_js(source);
+    // TypeScript 7 dropped JS constructor-function inference: `Installer` has no
+    // synthesized instance type, so `this` in a prototype method — and in an
+    // arrow nested inside it — is implicitly `any`. Assigning `"hi"` to
+    // `this.args` is therefore unchecked. tsc 7.0.2 reports only TS2683 on the
+    // constructor body and TS7006 for the untyped parameters; no TS2322.
     let ts2322: Vec<_> = diagnostics
         .iter()
-        .filter(|(code, msg)| *code == 2322 && msg.contains("string") && msg.contains("number"))
+        .filter(|(code, _)| *code == 2322)
         .collect();
-    assert_eq!(
-        ts2322.len(),
-        1,
-        "Expected prototype-method arrow to inherit instance this and report TS2322, got: {diagnostics:?}"
+    assert!(
+        ts2322.is_empty(),
+        "`this` is `any` in a prototype-method arrow, so the write is unchecked; \
+         expected no TS2322, got: {ts2322:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2683),
+        "expected TS2683 for the implicitly-`any` constructor `this`, got: {diagnostics:?}"
     );
 }
 

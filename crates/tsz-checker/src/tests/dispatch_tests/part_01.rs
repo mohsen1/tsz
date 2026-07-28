@@ -259,8 +259,17 @@ id2(E);
     );
 }
 
+/// TypeScript 7 dropped JS constructor-function inference, so `@class` /
+/// `@template` no longer synthesize an instance type, and a method of an object
+/// literal assigned to `.prototype` is an ordinary object-literal method: its
+/// `this` is the literal. Verified against the pinned tsc 7.0.2, which reports
+/// `Property 'x' does not exist on type '{ m1(): any; m2(): any; }'` — naming
+/// the literal, not `Cp`.
+///
+/// This test previously asserted the opposite (instance `this`, no TS2339/7023),
+/// which was TypeScript 6 behaviour.
 #[test]
-fn jsdoc_generic_constructor_prototype_object_literal_methods_use_instance_this() {
+fn jsdoc_generic_constructor_prototype_object_literal_methods_use_object_literal_this() {
     let diags = check_js_source_diagnostics(
         r#"
 /**
@@ -288,14 +297,18 @@ var n = cp.m1();
 var n = cp.m2();
 "#,
     );
-    let relevant: Vec<_> = diags
-        .iter()
-        .filter(|d| matches!(d.code, 2339 | 7023))
-        .collect();
-    assert_eq!(
-        relevant.len(),
-        0,
-        "Expected generic JS constructor prototype object literal methods to use instance `this`, got: {relevant:?}"
+    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    assert!(
+        !ts2339.is_empty(),
+        "`this` in a prototype object-literal method is the literal, which has no \
+         `x`/`y`/`z`, so TS2339 is expected; got: {diags:?}"
+    );
+    assert!(
+        ts2339
+            .iter()
+            .all(|d| d.message_text.contains("m1(): any") && !d.message_text.contains("Cp")),
+        "the receiver must be reported as the object literal, not the constructor \
+         `Cp`; got: {ts2339:?}"
     );
 }
 
