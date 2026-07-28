@@ -714,7 +714,7 @@ Installer.prototype.second = function () {
         );
     }
     assert!(
-        codes.iter().any(|&code| code == 2683),
+        codes.contains(&2683),
         "expected TS2683 for each implicitly-`any` constructor `this`, got: {diagnostics:?}"
     );
 }
