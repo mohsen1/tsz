@@ -913,7 +913,7 @@ fn extract_param_names_byte_offsets() {
 // =========================================================================
 
 /// Method shorthand inside an object literal whose property carries
-/// `/** @type {function(number): number} */` should have its block-body
+/// `/** @type {(n: number) => number} */` should have its block-body
 /// returns checked against the contextual return type. tsc reports TS2322
 /// at `return "42";` because the JSDoc-declared return is `number`.
 ///
@@ -925,7 +925,7 @@ fn jsdoc_type_function_on_method_shorthand_checks_block_body_return_type() {
     let diags = crate::test_utils::check_js_source_diagnostics(
         r#"// @ts-check
 const obj = {
-  /** @type {function(number): number} */
+  /** @type {(n: number) => number} */
   method1(n1) {
       return "42";
   },
@@ -960,7 +960,7 @@ const obj = {
 fn jsdoc_type_function_param_default_anchors_at_parameter_name() {
     let diags = crate::test_utils::check_js_source_diagnostics(
         r#"// @ts-check
-/** @type {function(number): number} */
+/** @type {(n: number) => number} */
 const f = (num="0") => num + 42;
 "#,
     );
@@ -979,7 +979,8 @@ const f = (num="0") => num + 42;
     // `f = (num` — the parameter name `num` follows `f = (`. The diagnostic
     // start should match the byte offset of `n` in `num`, and its length
     // should be 3 (the identifier).
-    let source = "// @ts-check\n/** @type {function(number): number} */\nconst f = (num=\"0\") => num + 42;\n";
+    let source =
+        "// @ts-check\n/** @type {(n: number) => number} */\nconst f = (num=\"0\") => num + 42;\n";
     let num_pos = source.find("(num=").expect("paren-num present") + 1; // skip '('
     let diag = ts2322[0];
     assert_eq!(

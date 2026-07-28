@@ -876,6 +876,37 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// Byte offset of the `(` in a Closure-style `function(...)` JSDoc type,
+    /// which is where the pinned compiler anchors TS1005 `'}' expected.`.
+    ///
+    /// TypeScript 7 does not accept the Closure function-type form at all —
+    /// `@type {function(string): void}` is a syntax error, and the annotated
+    /// symbol gets an error type rather than a reconstructed signature. Across
+    /// the corpus, 43 of 47 JSDoc `function(` sites carry TS1005 or TS1003 in
+    /// the oracle. The exceptions are `@enum` (which the pinned compiler does
+    /// not implement, so it never parses the type) and `.ts`/`.tsx` files
+    /// (where JSDoc types are not used as types at all).
+    ///
+    /// Only a `function` that heads the type expression counts, after an
+    /// optional Closure nullability prefix. `Array<function()>` and a type
+    /// merely named `functionLike` are not this construct.
+    pub(crate) fn jsdoc_closure_function_type_offset(type_expr: &str) -> Option<usize> {
+        let trimmed = type_expr.trim_start();
+        let leading = type_expr.len() - trimmed.len();
+        let body = trimmed
+            .strip_prefix('!')
+            .or_else(|| trimmed.strip_prefix('?'))
+            .unwrap_or(trimmed);
+        let prefix = leading + (trimmed.len() - body.len());
+        let after_keyword = body.strip_prefix("function")?;
+        // `function` must be the whole head: `functionLike` is an ordinary name.
+        let paren_rel = after_keyword.len() - after_keyword.trim_start().len();
+        if !after_keyword.trim_start().starts_with('(') {
+            return None;
+        }
+        Some(prefix + "function".len() + paren_rel)
+    }
+
     pub(crate) fn jsdoc_param_type_syntax_error_offset(type_expr: &str) -> Option<usize> {
         let trimmed = type_expr.trim_start();
         let leading_ws = type_expr.len() - trimmed.len();
@@ -1159,10 +1190,12 @@ impl<'a> CheckerState<'a> {
         if expr.eq_ignore_ascii_case("function") || expr.eq_ignore_ascii_case("Function") {
             return false;
         }
+        // Only the TypeScript arrow form declares a callable. The Closure
+        // `function(...)` spelling does not: TypeScript 7 rejects it (TS1005),
+        // the type does not resolve, and the annotated function therefore gains
+        // no signature — so its parameters are implicitly `any` and must still
+        // report TS7006 rather than being treated as documented.
         expr.contains("=>")
-            || expr
-                .strip_prefix("function")
-                .is_some_and(|rest| rest.trim_start().starts_with('('))
     }
 
     pub(crate) fn jsdoc_type_tag_is_broad_function(jsdoc: &str) -> bool {
@@ -1398,10 +1431,12 @@ impl<'a> CheckerState<'a> {
         if trimmed.contains("=>") {
             return true;
         }
-        // function(...): ... type
-        if trimmed.starts_with("function") {
-            return true;
-        }
+        // Deliberately NOT the Closure `function(...)` spelling. Its only
+        // caller is the TS8030 check, which skips syntactically-callable types
+        // because they may fail to resolve while still being valid function
+        // types. TypeScript 7 rejects the Closure form outright, so it is not a
+        // valid function type and must not earn that skip — the oracle for
+        // jsdocFunction_missingReturn expects TS8030 for exactly that shape.
         // Generic signature: <T>(...) => ...
         if trimmed.starts_with('<') {
             return true;

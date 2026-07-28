@@ -446,6 +446,12 @@ impl<'a> CheckerState<'a> {
                             );
                         }
 
+                        // This is the sole pass that gives an uncontextualized
+                        // function-expression property the literal's synthetic
+                        // `this`. Keep its property diagnostics: a later
+                        // assignment pass has no equivalent receiver context and
+                        // cannot re-report them (for example `this.rgb()` in
+                        // `Color.prototype = { toJSON: function () { ... } }`).
                         if pushed_prop_fn_this {
                             self.ctx.this_type_stack.pop();
                         }
@@ -1549,12 +1555,26 @@ impl<'a> CheckerState<'a> {
                                 *property_idx,
                             );
                         }
-                        use crate::diagnostics::diagnostic_codes;
-                        self.error_at_node_msg(
-                            method.name,
-                            diagnostic_codes::IMPLICITLY_HAS_RETURN_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_RETURN_TYPE_ANNOTATION,
-                            &[&name],
-                        );
+                        // A JSDoc `@returns` is a return type annotation, so there is
+                        // nothing implicit to report: the return type never depended
+                        // on the body, and the circularity this refinement works
+                        // around cannot arise. `jsdoc_declared_type` does not cover
+                        // this — it holds a `@type` tag on the element, not `@returns`.
+                        // The refinement itself is kept either way; it produces the
+                        // corrected `this` display used by the TS2339s just above.
+                        let has_jsdoc_return_annotation = self
+                            .get_jsdoc_for_function(elem_idx)
+                            .as_deref()
+                            .and_then(Self::jsdoc_returns_type_expression)
+                            .is_some();
+                        if jsdoc_declared_type.is_none() && !has_jsdoc_return_annotation {
+                            use crate::diagnostics::diagnostic_codes;
+                            self.error_at_node_msg(
+                                method.name,
+                                diagnostic_codes::IMPLICITLY_HAS_RETURN_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_RETURN_TYPE_ANNOTATION,
+                                &[&name],
+                            );
+                        }
                         method_type = refined_method_type;
                     }
 

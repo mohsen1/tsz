@@ -57,6 +57,35 @@ impl<'a> CheckerState<'a> {
                 if !is_param_tag && !is_return_tag {
                     continue;
                 }
+                // A bare `import('mod')` names the module's `export =` type. The
+                // module's own namespace is not a type, so a module exporting only
+                // values — or one with named type exports and no `export =` — is
+                // TS1340 even though the specifier resolves. The TypeScript
+                // import-type resolver reports this already; JSDoc reaches the
+                // question by a separate path, so it asks the shared predicate
+                // here, where the type expression's offset is known.
+                // `import('mod').Member` is unaffected: it is not a bare import.
+                {
+                    let raw = type_expr.trim();
+                    if let Some((module_specifier, None)) = Self::parse_jsdoc_import_type(raw)
+                        && !self.bare_import_type_names_a_type(
+                            &module_specifier,
+                            Self::jsdoc_import_type_resolution_mode(raw),
+                        )
+                    {
+                        let message = crate::diagnostics::format_message(
+                            crate::diagnostics::diagnostic_messages::MODULE_DOES_NOT_REFER_TO_A_TYPE_BUT_IS_USED_AS_A_TYPE_HERE_DID_YOU_MEAN_TYPEOF_I,
+                            &[&module_specifier],
+                        );
+                        self.error_at_position(
+                            comment.pos + offset_in_comment as u32,
+                            raw.len() as u32,
+                            &message,
+                            crate::diagnostics::diagnostic_codes::MODULE_DOES_NOT_REFER_TO_A_TYPE_BUT_IS_USED_AS_A_TYPE_HERE_DID_YOU_MEAN_TYPEOF_I,
+                        );
+                        continue;
+                    }
+                }
                 let simple_expr = type_expr
                     .trim()
                     .trim_start_matches('!')
@@ -69,7 +98,11 @@ impl<'a> CheckerState<'a> {
                         simple_expr,
                     )
                     .is_some()
-                    || self.source_file_declares_jsdoc_template(simple_expr)
+                    || self.jsdoc_template_in_scope_for_reference(
+                        simple_expr,
+                        &content,
+                        comment.pos,
+                    )
                     || Self::parse_jsdoc_typedefs(&source_text)
                         .iter()
                         .any(|(name, _)| name == simple_expr)
@@ -454,6 +487,36 @@ impl<'a> CheckerState<'a> {
                     if expr == "Object" || expr == "object" || expr.is_empty() {
                         continue;
                     }
+                    // A bare `import('mod')` as a typedef base follows the same
+                    // rule as in `@param`/`@return`: it names the module's
+                    // exported type, and a module without one is TS1340.
+                    // Witness: jsdocTypeReferenceToImportOfFunctionExpression,
+                    // whose module exports a plain function.
+                    let typedef_comment_text = comment.get_text(&source_text);
+                    // Only a real `@typedef` base. An `@import` tag also carries a
+                    // module specifier but is a value import, not a type
+                    // reference, and must not be flagged (witness: importTag2/3/9/…).
+                    if Self::jsdoc_tag_offset(typedef_comment_text, "typedef").is_some()
+                        && let Some(offset_in_comment) = typedef_comment_text.find(expr)
+                        && let Some((module_specifier, None)) = Self::parse_jsdoc_import_type(expr)
+                        && !self.bare_import_type_names_a_type(
+                            &module_specifier,
+                            Self::jsdoc_import_type_resolution_mode(expr),
+                        )
+                    {
+                        let anchor = comment.pos + offset_in_comment as u32;
+                        let message = crate::diagnostics::format_message(
+                            crate::diagnostics::diagnostic_messages::MODULE_DOES_NOT_REFER_TO_A_TYPE_BUT_IS_USED_AS_A_TYPE_HERE_DID_YOU_MEAN_TYPEOF_I,
+                            &[&module_specifier],
+                        );
+                        self.error_at_position(
+                            anchor,
+                            expr.len() as u32,
+                            &message,
+                            crate::diagnostics::diagnostic_codes::MODULE_DOES_NOT_REFER_TO_A_TYPE_BUT_IS_USED_AS_A_TYPE_HERE_DID_YOU_MEAN_TYPEOF_I,
+                        );
+                        continue;
+                    }
                     // TS2344: Check constraint satisfaction for import type refs with generics.
                     // e.g., @typedef {import('./file1').Foo<T>} Bar
                     if expr.starts_with("import(")
@@ -505,6 +568,41 @@ impl<'a> CheckerState<'a> {
         // Inline expression-body casts like `value => /** @type {T} */(...)` should not
         // be treated as file-level tags; those are validated in the normal checker flow
         // where function-scoped `@template` params are available.
+        // A `@type` on a variable statement nested in a function body is just as
+        // much a real annotation as a top-level one, and `tsc` validates it —
+        // `function f() { /** @type {Missing} */ var y }` reports TS2304, and the
+        // same shape with a value name reports TS2749. Collect those leading
+        // comments so the scan below covers them too. Inline expression casts
+        // still fall through, because they lead no statement.
+        let nested_statement_jsdoc: rustc_hash::FxHashSet<u32> = {
+            let mut positions = rustc_hash::FxHashSet::default();
+            for raw_idx in 0..self.ctx.arena.len() {
+                let idx = tsz_parser::parser::NodeIndex(raw_idx as u32);
+                let Some((kind, pos)) = self.ctx.arena.get(idx).map(|node| (node.kind, node.pos))
+                else {
+                    continue;
+                };
+                // Variable statements carry most nested annotations, but a JS
+                // class routinely declares its fields as `/** @type {T} */
+                // this.x = ...` inside the constructor — an *expression*
+                // statement. tsc validates that annotation too (witness:
+                // jsDeclarationsReferenceToClassInstanceCrossFile).
+                if !matches!(
+                    kind,
+                    tsz_parser::parser::syntax_kind_ext::VARIABLE_STATEMENT
+                        | tsz_parser::parser::syntax_kind_ext::EXPRESSION_STATEMENT
+                ) {
+                    continue;
+                }
+                if let Some((_, comment_pos)) =
+                    self.try_leading_jsdoc_with_pos(&comments, pos, &source_text)
+                {
+                    positions.insert(comment_pos);
+                }
+            }
+            positions
+        };
+
         for comment in &comments {
             if !is_jsdoc_comment(comment, &source_text) {
                 continue;
@@ -519,7 +617,9 @@ impl<'a> CheckerState<'a> {
                     })
                     .is_some_and(|(_, comment_pos)| comment_pos == comment.pos)
             });
-            if !is_top_level_leading_jsdoc {
+            let is_nested_statement_jsdoc =
+                !is_top_level_leading_jsdoc && nested_statement_jsdoc.contains(&comment.pos);
+            if !is_top_level_leading_jsdoc && !is_nested_statement_jsdoc {
                 continue;
             }
 
@@ -631,13 +731,33 @@ impl<'a> CheckerState<'a> {
                     || expr.contains('<')
                     || expr.contains('.')
                     || !unresolved
+                    // A `@typedef` written inside a function body is in scope for
+                    // that function's own `@type` tags (witness: typedefScope1,
+                    // where `B` is declared and used within `B1`). This scan does
+                    // not carry function scopes, so for a nested tag defer to any
+                    // `@typedef` of that name rather than report a false TS2304.
+                    // The top-level path is unaffected and still reports a
+                    // top-level use of a function-scoped typedef.
+                    || (is_nested_statement_jsdoc
+                        && Self::parse_jsdoc_typedefs(&source_text)
+                            .iter()
+                            .any(|(name, _)| name == expr))
                     // In JS files, `exports`, `module`, `require`, `global`
                     // are CommonJS built-ins that always resolve at runtime
                     // even if the checker's type system doesn't create a
                     // user-land binding for them.  tsc does not flag them
                     // as "Cannot find name" in JSDoc @type contexts.
+                    // `exports`, `module`, `require`, `global` are CommonJS
+                    // built-ins that resolve at runtime even without a
+                    // user-land binding, so tsc does not flag them as
+                    // "Cannot find name". It does report `exports`/`module`
+                    // as TS2749 once the file assigns to them — they are the
+                    // module object, a value — so let those reach the emitter,
+                    // which picks TS2749 for a value used as a type.
                     || (self.ctx.is_js_file()
-                        && matches!(expr, "exports" | "module" | "require" | "global"));
+                        && (matches!(expr, "require" | "global")
+                            || (matches!(expr, "exports" | "module")
+                                && !self.current_file_has_commonjs_export_assignment())));
                 if !skip_cannot_find_name {
                     self.emit_jsdoc_cannot_find_name(expr, comment.pos, comment.end, &source_text);
                 } else if !Self::is_simple_type_name(expr) && !expr.is_empty() {
@@ -819,7 +939,15 @@ impl<'a> CheckerState<'a> {
 
         // A name that resolves to a value (function, variable, …) but not a type
         // is a "value used as a type" error (TS2749), not a missing name (TS2304).
-        if self.jsdoc_name_refers_to_value_only(name) {
+        //
+        // `exports`/`module` are values in a file that assigns to them — the
+        // module object. Their symbol carries the MODULE flag, which
+        // `jsdoc_name_refers_to_value_only` deliberately excludes, so name them
+        // here rather than loosening that predicate for real namespaces.
+        let is_commonjs_module_value = self.is_js_file()
+            && matches!(name, "exports" | "module")
+            && self.current_file_has_commonjs_export_assignment();
+        if is_commonjs_module_value || self.jsdoc_name_refers_to_value_only(name) {
             let code = diagnostic_codes::REFERS_TO_A_VALUE_BUT_IS_BEING_USED_AS_A_TYPE_HERE_DID_YOU_MEAN_TYPEOF;
             let template = tsz_common::diagnostics::get_message_template(code)
                 .unwrap_or("'{0}' refers to a value, but is being used as a type here. Did you mean 'typeof {0}'?");

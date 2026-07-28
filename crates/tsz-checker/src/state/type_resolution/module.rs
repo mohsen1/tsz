@@ -1184,6 +1184,42 @@ impl<'a> CheckerState<'a> {
             .is_some()
     }
 
+    /// The declaration-file branch of `tsc`'s `canHaveSyntheticDefault`.
+    ///
+    /// A module whose declarations live in a `.d.ts` may still have a runtime
+    /// `default` that those declarations never spell out, so a named `default`
+    /// import or re-export is not an error: `tsc` synthesizes one instead of
+    /// reporting TS2305. Two shapes make the absence authoritative and are
+    /// handled by the caller, which owns the export table: a syntactic
+    /// `default` export (then the real member resolves and this is never
+    /// reached) and an `__esModule` export (then the file is claiming to be a
+    /// faithful ES module).
+    ///
+    /// `TypeScript` 7 removed `esModuleInterop=false` and
+    /// `allowSyntheticDefaultImports=false` (TS5108), so the flag gate that
+    /// guards this branch in older `tsc` is unconditionally satisfied and is
+    /// not re-tested here.
+    pub(crate) fn module_declarations_can_synthesize_default(
+        &mut self,
+        module_specifier: &str,
+    ) -> bool {
+        if self.module_has_explicit_esm_extension(module_specifier) {
+            return false;
+        }
+        let Some(target_idx) = self
+            .ctx
+            .resolve_import_target_from_file(self.ctx.current_file_idx, module_specifier)
+            .or_else(|| self.ctx.resolve_import_target(module_specifier))
+        else {
+            return false;
+        };
+        let arena = self.ctx.get_arena_for_file(target_idx as u32);
+        let Some(source_file) = arena.source_files.first() else {
+            return false;
+        };
+        crate::context::is_declaration_file_name(source_file.file_name.as_str())
+    }
+
     pub(crate) fn module_can_use_synthetic_default_import(
         &mut self,
         module_specifier: &str,
@@ -1720,6 +1756,19 @@ impl<'a> CheckerState<'a> {
 
         // Only emit if report_unresolved_imports is enabled
         if !self.ctx.report_unresolved_imports {
+            return;
+        }
+
+        // A `.d.ts` module may have a runtime `default` its declarations never
+        // spell out, so `tsc` synthesizes one rather than reporting TS2305. An
+        // `__esModule` export withdraws that: the file is claiming to describe
+        // a faithful ES module, so a missing `default` really is missing.
+        if member_name == "default"
+            && !self
+                .resolve_effective_module_exports(module_specifier)
+                .is_some_and(|exports| exports.has("__esModule"))
+            && self.module_declarations_can_synthesize_default(module_specifier)
+        {
             return;
         }
 

@@ -1,9 +1,16 @@
-//! Regression tests for TS2355/TS2366 anchor positions when the return type
-//! is provided through a JSDoc `@type {function(): T}` annotation in JS files.
+//! Regression tests for TS2355/TS2366 when the return type is provided through
+//! a JSDoc `@type` annotation in JS files.
 //!
-//! tsc anchors the diagnostic on the JSDoc return-type token (e.g. `number`
-//! within `@type {function(): number}`) rather than on the function name.
-//! These tests pin that anchor so we don't regress.
+//! These were written against the Closure `@type {function(): T}` spelling,
+//! which TypeScript 7 rejects outright: it reports TS1005 and gives the
+//! annotation no type, so no TS2355 follows. The oracle for the mirrored
+//! corpus test `conformance/jsdoc/jsdocFunction_missingReturn.ts` expects
+//! exactly TS1005 and TS8030 — and no TS2355. The first test now pins that.
+//!
+//! The second test is about something else that survives the change: a
+//! function must be associated with its *own* leading JSDoc comment, not an
+//! unrelated earlier one. It uses the arrow spelling so it keeps testing
+//! association rather than the retired Closure path.
 
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::test_utils::check_source;
@@ -18,31 +25,22 @@ fn options_js_strict() -> CheckerOptions {
 }
 
 #[test]
-fn ts2355_anchors_on_jsdoc_function_return_type_for_function_declaration() {
-    // Test mirrors `conformance/jsdoc/jsdocFunction_missingReturn.ts`. tsc
-    // points TS2355 at `number` within the JSDoc `function(): number` type
-    // expression. Anchor must be on that token, not on the function name.
+fn closure_jsdoc_type_reports_ts1005_and_no_ts2355() {
+    // Mirrors `conformance/jsdoc/jsdocFunction_missingReturn.ts`, whose oracle
+    // is exactly TS1005 + TS8030. TypeScript 7 does not accept the Closure
+    // `function(): T` form, so the annotation yields no return type and the
+    // missing-return diagnostic never arises.
     let source = "/** @type {function(): number} */\nfunction f() {}\n";
 
     let diagnostics = check_source(source, "a.js", options_js_strict());
 
-    let ts2355: Vec<_> = diagnostics.iter().filter(|d| d.code == 2355).collect();
-    assert_eq!(
-        ts2355.len(),
-        1,
-        "expected exactly one TS2355 for missing return value, got: {diagnostics:#?}"
+    assert!(
+        diagnostics.iter().any(|d| d.code == 1005),
+        "expected TS1005 for the Closure function type, got: {diagnostics:#?}"
     );
-
-    let number_pos = source.find("number").expect("number in JSDoc") as u32;
-    let diag = ts2355[0];
-    assert_eq!(
-        (diag.start, diag.length),
-        (number_pos, "number".len() as u32),
-        "TS2355 should anchor on the JSDoc return type 'number', got start={} length={} (expected start={} length={})",
-        diag.start,
-        diag.length,
-        number_pos,
-        "number".len()
+    assert!(
+        diagnostics.iter().all(|d| d.code != 2355),
+        "TypeScript 7 gives the Closure form no type, so no TS2355 follows, got: {diagnostics:#?}"
     );
 }
 
@@ -79,7 +77,7 @@ fn ts2355_anchors_on_owner_jsdoc_after_unrelated_function_decl_above() {
     // resolve via the function node directly, the parent walk would step
     // through the SOURCE_FILE container without the guard and find the
     // unrelated comment.
-    let source = "/** @type {function(): number} */\nvar prior = 1;\n/** @type {function(): number} */\nfunction f() {}\n";
+    let source = "/** @type {() => number} */\nvar prior = 1;\n/** @type {() => number} */\nfunction f() {}\n";
 
     let diagnostics = check_source(source, "a.js", options_js_strict());
 
@@ -90,22 +88,16 @@ fn ts2355_anchors_on_owner_jsdoc_after_unrelated_function_decl_above() {
         "expected exactly one TS2355 (for f), got: {diagnostics:#?}"
     );
 
-    // Find the *second* `number` occurrence -- f's own `@type` token.
-    let first_number_pos = source.find("number").expect("first number") as u32;
-    let second_number_pos = source[first_number_pos as usize + 1..]
-        .find("number")
-        .expect("second number") as u32
-        + first_number_pos
-        + 1;
-
+    // The point is association, not the exact anchor token: the diagnostic must
+    // belong to `f`, so it has to sit at or after f's own leading comment —
+    // never back at `prior`'s unrelated one.
+    let f_comment_pos = source.rfind("/** @type").expect("f's own leading comment") as u32;
     let diag = ts2355[0];
-    assert_eq!(
-        (diag.start, diag.length),
-        (second_number_pos, "number".len() as u32),
-        "TS2355 must anchor on f's *own* @type return token at {second_number_pos}, \
-         not at the earlier unrelated `number` at {first_number_pos}; got start={} length={}",
+    assert!(
+        diag.start >= f_comment_pos,
+        "TS2355 must be associated with f (at or after {f_comment_pos}), not with the \
+         earlier unrelated annotation; got start={}",
         diag.start,
-        diag.length,
     );
 }
 

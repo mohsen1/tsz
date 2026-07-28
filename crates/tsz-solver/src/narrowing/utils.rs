@@ -16,6 +16,16 @@ pub(crate) struct NarrowingVisitor<'a> {
     pub(crate) narrower: TypeId,
     /// PERF: Reusable `SubtypeChecker` to avoid per-call hash allocations
     pub(crate) checker: SubtypeChecker<'a>,
+    pub(crate) budget_dependent: bool,
+}
+
+impl NarrowingVisitor<'_> {
+    fn is_definite_subtype(&mut self, source: TypeId, target: TypeId) -> bool {
+        self.checker.reset();
+        let result = self.checker.is_subtype_of(source, target);
+        self.budget_dependent |= self.checker.incomplete_evaluation_relation_event_count() != 0;
+        result
+    }
 }
 
 impl<'a> TypeVisitor for NarrowingVisitor<'a> {
@@ -49,14 +59,12 @@ impl<'a> TypeVisitor for NarrowingVisitor<'a> {
                 TypeData::Object(_) => {
                     // Case 1: type_id is subtype of narrower (e.g., { a: "foo" } narrowed by { a: string })
                     // Result: type_id (keep the more specific type)
-                    self.checker.reset();
-                    if self.checker.is_subtype_of(type_id, self.narrower) {
+                    if self.is_definite_subtype(type_id, self.narrower) {
                         return type_id;
                     }
                     // Case 2: narrower is subtype of type_id (e.g., { a: string } narrowed by { a: "foo" })
                     // Result: narrower (narrow down to the more specific type)
-                    self.checker.reset();
-                    if self.checker.is_subtype_of(self.narrower, type_id) {
+                    if self.is_definite_subtype(self.narrower, type_id) {
                         return self.narrower;
                     }
                     // Case 3: Both are object types but not directly related
@@ -71,13 +79,11 @@ impl<'a> TypeVisitor for NarrowingVisitor<'a> {
                 // Function types: check subtype relationships
                 TypeData::Function(_) => {
                     // Case 1: type_id is subtype of narrower (keep specific)
-                    self.checker.reset();
-                    if self.checker.is_subtype_of(type_id, self.narrower) {
+                    if self.is_definite_subtype(type_id, self.narrower) {
                         return type_id;
                     }
                     // Case 2: narrower is subtype of type_id (narrow down)
-                    self.checker.reset();
-                    if self.checker.is_subtype_of(self.narrower, type_id) {
+                    if self.is_definite_subtype(self.narrower, type_id) {
                         return self.narrower;
                     }
                     // Case 3: Disjoint function types
@@ -113,15 +119,13 @@ impl<'a> TypeVisitor for NarrowingVisitor<'a> {
 
                 // Case 1: narrower is subtype of type_id (e.g., narrow(string, "foo"))
                 // Result: narrower
-                self.checker.reset();
-                if self.checker.is_subtype_of(self.narrower, type_id) {
+                if self.is_definite_subtype(self.narrower, type_id) {
                     self.narrower
                 }
                 // Case 2: type_id is subtype of narrower (e.g., narrow("foo", string))
                 // Result: type_id (the original)
                 else {
-                    self.checker.reset();
-                    if self.checker.is_subtype_of(type_id, self.narrower) {
+                    if self.is_definite_subtype(type_id, self.narrower) {
                         type_id
                     }
                     // Case 3: Disjoint types (e.g., narrow(string, number))

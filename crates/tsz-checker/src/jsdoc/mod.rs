@@ -32,10 +32,12 @@
 //! - Pure string parsing → `parsing.rs`
 //! - Type resolution (needs `&mut self`) → `resolution.rs`
 //! - Parameter handling / comment lookup → `params.rs`
+//! - Qualified (dotted) `@param` names and nesting → `params_qualified.rs`
 //! - Diagnostic emission → `diagnostics.rs`
 //! - New data structures → `types.rs`
 
 pub(crate) mod base_types;
+pub(crate) mod closure_function_type;
 pub(crate) mod diagnostics;
 pub(crate) mod diagnostics_import_type_constraints;
 pub(crate) mod diagnostics_imports;
@@ -45,6 +47,7 @@ pub(crate) mod lookup;
 pub(crate) mod params;
 pub(crate) mod params_comment_retrieval;
 pub(crate) mod params_generic_instantiation;
+pub(crate) mod params_qualified;
 pub(crate) mod params_type_strings;
 pub(crate) mod parsing;
 pub(crate) mod parsing_import_attributes;

@@ -1585,6 +1585,24 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
+        // A non-literal index on an `unknown` object is TS18046 ("'x' is of
+        // type 'unknown'"), not TS7053 — `should_report_no_index_signature`
+        // rightly declines the TS7053 code for `unknown`, but tsc still
+        // rejects the access. The literal-key and property-access paths
+        // already route `unknown` receivers through the shared
+        // `unknown_object_access_result` gate (TS18046 under
+        // strictNullChecks, index-signature fallthrough otherwise); without
+        // this the general-index path was the one form that silently allowed
+        // `v[key]` on `unknown` — valibot guards exactly that with
+        // `@ts-expect-error`, which tsz then reported as unused (TS2578).
+        if use_index_signature_check
+            && !is_fresh_object_literal
+            && object_type_for_access == TypeId::UNKNOWN
+            && let Some(result) = self.unknown_object_access_result(access.expression)
+        {
+            return result;
+        }
+
         if use_index_signature_check
             && !is_fresh_object_literal
             && self.should_report_no_index_signature(

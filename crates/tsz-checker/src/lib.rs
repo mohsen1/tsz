@@ -193,6 +193,18 @@ mod class_property_typed_const_initializer_tests;
 #[path = "tests/comlink_row_regression_tests.rs"]
 mod comlink_row_regression_tests;
 #[cfg(test)]
+#[path = "tests/commonjs_export_assignment_chain_tests.rs"]
+mod commonjs_export_assignment_chain_tests;
+#[cfg(test)]
+#[path = "tests/commonjs_export_declaration_level_type_tests.rs"]
+mod commonjs_export_declaration_level_type_tests;
+#[cfg(test)]
+#[path = "tests/commonjs_reentrant_surface_tests.rs"]
+mod commonjs_reentrant_surface_tests;
+#[cfg(test)]
+#[path = "tests/commonjs_require_binding_type_meaning_tests.rs"]
+mod commonjs_require_binding_type_meaning_tests;
+#[cfg(test)]
 #[path = "../tests/comparability_indexed_access_reduce_tests.rs"]
 mod comparability_indexed_access_reduce_tests;
 #[cfg(test)]
@@ -243,6 +255,9 @@ mod enum_recursion_tests;
 #[cfg(test)]
 #[path = "../tests/environment_capabilities_tests.rs"]
 mod environment_capabilities_tests;
+#[cfg(test)]
+#[path = "tests/expando_annotated_receiver_tests.rs"]
+mod expando_annotated_receiver_tests;
 #[cfg(test)]
 #[path = "tests/flow_assignment_relation_routing_arch_tests.rs"]
 mod flow_assignment_relation_routing_arch_tests;
@@ -376,14 +391,32 @@ mod interface_heritage_property_index_relation_routing_arch_tests;
 #[path = "../tests/isolated_declarations_unannotated_param_tests.rs"]
 mod isolated_declarations_unannotated_param_tests;
 #[cfg(test)]
+#[path = "tests/js_expando_order_sensitivity_tests.rs"]
+mod js_expando_order_sensitivity_tests;
+#[cfg(test)]
+#[path = "tests/js_open_object_property_access_tests.rs"]
+mod js_open_object_property_access_tests;
+#[cfg(test)]
 #[path = "../tests/js_property_write_self_declaration_tests.rs"]
 mod js_property_write_self_declaration_tests;
+#[cfg(test)]
+#[path = "tests/jsdoc_bare_import_type_tests.rs"]
+mod jsdoc_bare_import_type_tests;
+#[cfg(test)]
+#[path = "tests/jsdoc_closure_function_type_tests.rs"]
+mod jsdoc_closure_function_type_tests;
+#[cfg(test)]
+#[path = "tests/jsdoc_commonjs_globals_as_type_tests.rs"]
+mod jsdoc_commonjs_globals_as_type_tests;
 #[cfg(test)]
 #[path = "tests/jsdoc_import_type_constraints_relation_routing_arch_tests.rs"]
 mod jsdoc_import_type_constraints_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/jsdoc_lookup_constraints_relation_routing_arch_tests.rs"]
 mod jsdoc_lookup_constraints_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/jsdoc_nested_type_tag_validation_tests.rs"]
+mod jsdoc_nested_type_tag_validation_tests;
 #[cfg(test)]
 #[path = "../tests/jsdoc_postfix_nullable_type_tests.rs"]
 mod jsdoc_postfix_nullable_type_tests;
@@ -394,8 +427,17 @@ mod jsdoc_prototype_assignment_literal_display;
 #[path = "../tests/jsdoc_prototype_assignment_target_display.rs"]
 mod jsdoc_prototype_assignment_target_display;
 #[cfg(test)]
+#[path = "tests/jsdoc_retired_tag_diagnostics_tests.rs"]
+mod jsdoc_retired_tag_diagnostics_tests;
+#[cfg(test)]
+#[path = "tests/jsdoc_template_reference_scope_tests.rs"]
+mod jsdoc_template_reference_scope_tests;
+#[cfg(test)]
 #[path = "../tests/jsdoc_this_arrow_tests.rs"]
 mod jsdoc_this_arrow_tests;
+#[cfg(test)]
+#[path = "tests/jsdoc_typedef_bare_import_tests.rs"]
+mod jsdoc_typedef_bare_import_tests;
 #[cfg(test)]
 #[path = "../tests/jsx_component_attribute_tests.rs"]
 mod jsx_component_attribute_tests;
@@ -456,6 +498,9 @@ mod nuia_write_index_signature_emits_ts2322_tests;
 #[cfg(test)]
 #[path = "tests/nullish_union_indexed_access_missing_property_tests.rs"]
 mod nullish_union_indexed_access_missing_property_tests;
+#[cfg(test)]
+#[path = "tests/object_literal_method_body_check_tests.rs"]
+mod object_literal_method_body_check_tests;
 #[cfg(test)]
 #[path = "../tests/optional_param_display_tests.rs"]
 mod optional_param_display_tests;
@@ -687,6 +732,9 @@ mod ts7053_index_reason_chain_tests;
 #[cfg(test)]
 #[path = "../tests/ts7057_yield_implicit_any.rs"]
 mod ts7057_yield_implicit_any;
+#[cfg(test)]
+#[path = "tests/ts8030_jsdoc_type_tag_message_tests.rs"]
+mod ts8030_jsdoc_type_tag_message_tests;
 #[cfg(test)]
 #[path = "../tests/tuple_index_access_tests.rs"]
 mod tuple_index_access_tests;

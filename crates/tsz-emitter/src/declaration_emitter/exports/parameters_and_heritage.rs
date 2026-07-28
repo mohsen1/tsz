@@ -360,6 +360,26 @@ impl<'a> DeclarationEmitter<'a> {
                     .filter(|type_id| !type_id.is_any_unknown_or_error())
             });
 
+        // An *array* binding-pattern parameter with an initializer takes its
+        // declared type from that initializer, and it can be wider than the
+        // pattern's own arity: `[z, , ,] = [1, 3, 4, 6, 7]` declares
+        // `[number, number, number, number, number]`. Reshaping it through the
+        // pattern's slots would shorten it to three and copy the elisions'
+        // optionality onto them.
+        //
+        // Object patterns keep the reshaping path: there tsc prints the
+        // pattern's own shape, marking a member that carries a default
+        // optional — `{x = 10, y: [a,b,c,d] = [1,2,3,4]} = {x: 10, y: [2,4,6,8]}`
+        // declares `{ x?: number; y?: [number, number, number, number] }`,
+        // which is neither the initializer's type nor its member optionality.
+        if name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+            && param_initializer.is_some()
+            && let Some(source_type) = source_type
+            && !source_type.is_any_unknown_or_error()
+        {
+            return Some(self.print_type_id_for_inferred_declaration(source_type));
+        }
+
         self.binding_pattern_type_text(param_name, source_type, param_initializer)
             .or_else(|| self.synthesize_destructured_param_type(param_name))
     }

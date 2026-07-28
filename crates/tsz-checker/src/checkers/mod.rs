@@ -11,6 +11,7 @@ pub mod generic_checker;
 pub mod iterable_checker;
 pub mod jsx;
 pub mod parameter_checker;
+pub mod parameter_downlevel_capture;
 pub mod promise_checker;
 mod promise_checker_generator;
 mod promise_checker_object_normalization;

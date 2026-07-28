@@ -840,7 +840,7 @@ takesNumber(mod1.bothAfter);
 }
 
 #[test]
-fn test_commonjs_direct_export_property_overlap_reports_ts2323_in_js_file() {
+fn test_commonjs_direct_export_property_overlap_reports_no_ts2323_in_js_file() {
     let diagnostics = check_commonjs_single_file(
         "mod1.js",
         r#"
@@ -861,15 +861,19 @@ module.exports.justProperty = "string";
         .iter()
         .filter(|(code, _)| *code == 2323)
         .collect();
+    // tsc 7.0.2 does not report TS2323 for overlapping CommonJS export
+    // property declarations (it reports TS2322/TS2309 for the value and the
+    // export-assignment mix instead); #15971 dropped the redeclaration check
+    // to match. Verified directly against the pinned tsc on this source.
     assert_eq!(
         ts2323.len(),
-        4,
-        "Expected TS2323 on overlapping CommonJS exported property declarations, got: {diagnostics:#?}"
+        0,
+        "tsc reports no TS2323 for overlapping CommonJS exported property declarations, got: {diagnostics:#?}"
     );
 }
 
 #[test]
-fn test_commonjs_direct_export_property_overlap_reports_ts2323_with_prelude_file() {
+fn test_commonjs_direct_export_property_overlap_reports_no_ts2323_with_prelude_file() {
     let diagnostics = check_commonjs_file_with_prelude(
         "requires.d.ts",
         r#"
@@ -895,10 +899,11 @@ module.exports.justProperty = "string";
         .iter()
         .filter(|(code, _)| *code == 2323)
         .collect();
+    // Same tsc-verified rule as the single-file variant above: no TS2323.
     assert_eq!(
         ts2323.len(),
-        4,
-        "Expected TS2323 on overlapping CommonJS exported property declarations with a preceding declaration file, got: {diagnostics:#?}"
+        0,
+        "tsc reports no TS2323 for overlapping CommonJS exported property declarations, got: {diagnostics:#?}"
     );
 }
 

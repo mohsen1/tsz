@@ -658,33 +658,24 @@ impl TypeInterner {
                         .string_literal_text
                         .as_deref()
                         .expect("string literal union member must cache resolved text");
-                    let a_short = str_a.len() <= 2;
-                    let b_short = str_b.len() <= 2;
-                    match (a_short, b_short) {
-                        (true, true) => {
-                            let cmp = str_a.cmp(str_b);
-                            if cmp != Ordering::Equal {
-                                return cmp;
-                            }
-                        }
-                        (true, false) => return Ordering::Less,
-                        (false, true) => return Ordering::Greater,
-                        (false, false) => {}
+                    // TypeScript 7 runs with `stableTypeOrdering` enabled, so
+                    // `compareTypes` orders string literal types by their value
+                    // rather than by creation order.
+                    let cmp = str_a.cmp(str_b);
+                    if cmp != Ordering::Equal {
+                        return cmp;
                     }
                 }
                 (
                     TypeData::Literal(LiteralValue::Number(na)),
                     TypeData::Literal(LiteralValue::Number(nb)),
                 ) => {
-                    // TypeScript orders union members by type id, not numeric value.
-                    // Its checker creates the `0` literal eagerly (`zeroType`), while
-                    // other number literals keep first-use order.
-                    let a_zero = na.0 == 0.0;
-                    let b_zero = nb.0 == 0.0;
-                    match (a_zero, b_zero) {
-                        (true, false) => return Ordering::Less,
-                        (false, true) => return Ordering::Greater,
-                        _ => {}
+                    // TypeScript 7 runs with `stableTypeOrdering` enabled, so
+                    // `compareTypes` orders numeric literal types by their value
+                    // rather than by creation order.
+                    let cmp = na.0.total_cmp(&nb.0);
+                    if cmp != Ordering::Equal {
+                        return cmp;
                     }
                 }
                 (TypeData::Lazy(d1), TypeData::Lazy(d2))

@@ -1,3 +1,4 @@
+pub(crate) mod binding_pattern_padding;
 pub mod class_type;
 pub mod computation;
 pub(crate) mod computed_names;

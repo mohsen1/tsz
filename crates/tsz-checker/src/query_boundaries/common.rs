@@ -4,6 +4,8 @@ use tsz_solver::{
     operations::widening,
 };
 
+#[allow(unused_imports)]
+pub(crate) use tsz_solver::TypeParamOrigin;
 pub(crate) use tsz_solver::computation::CompatChecker;
 #[allow(unused_imports)]
 pub(crate) use tsz_solver::construction::TypeInterner;

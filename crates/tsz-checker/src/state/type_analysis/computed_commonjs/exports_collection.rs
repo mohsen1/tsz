@@ -282,6 +282,34 @@ impl<'a> CheckerState<'a> {
         );
     }
 
+    /// Follow an assignment chain to the value actually exported.
+    ///
+    /// `exports = module.exports = C` assigns through an intermediate target.
+    /// An assignment expression takes its target's declared type, so an ambient
+    /// `declare var module: { exports: any }` — what node typings and
+    /// hand-written shims provide — makes the chain resolve to an error type
+    /// rather than to `C`. tsc collects the assigned value, keeping the real
+    /// export type, so every `exports.<name>` is still checked against it.
+    fn commonjs_export_rhs_through_assignment_chain(&self, rhs_expr: NodeIndex) -> NodeIndex {
+        let mut current = rhs_expr;
+        for _ in 0..8 {
+            let Some(node) = self.ctx.arena.get(current) else {
+                break;
+            };
+            if node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                break;
+            }
+            let Some(binary) = self.ctx.arena.get_binary_expr(node) else {
+                break;
+            };
+            if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+                break;
+            }
+            current = binary.right;
+        }
+        current
+    }
+
     pub(crate) fn infer_commonjs_export_rhs_type(
         &mut self,
         target_file_idx: usize,
@@ -293,6 +321,30 @@ impl<'a> CheckerState<'a> {
                 .literal_type_from_initializer(rhs_expr)
                 .or_else(|| self.commonjs_export_rhs_symbol_type(rhs_expr))
                 .unwrap_or_else(|| self.get_type_of_node(rhs_expr));
+            // An error type here means the chain's intermediate target carried
+            // an ambient declaration, not that the module exports nothing
+            // usable — the error renders as `any`, which then accepts every
+            // property access silently. Recover the assigned value's type.
+            // Deliberately re-typing the node rather than consulting
+            // `commonjs_export_rhs_symbol_type`: for `exports = module.exports
+            // = C` the latter answers with C's *instance* type, while tsc
+            // reports the callable `() => void`.
+            // The degenerate value differs by path: the chain types as an error
+            // when only the ambient declaration is in play, and as `any` once
+            // the surrounding method bodies are checked. Both mean the same
+            // thing here — the intermediate target's declaration won, not the
+            // module's real export — so rescue either.
+            if ty == TypeId::ERROR
+                || crate::query_boundaries::assignability::is_any_type(self.ctx.types, ty)
+            {
+                let inner = self.commonjs_export_rhs_through_assignment_chain(rhs_expr);
+                if inner != rhs_expr {
+                    let inner_ty = self.get_type_of_node(inner);
+                    if inner_ty != TypeId::ERROR {
+                        ty = inner_ty;
+                    }
+                }
+            }
             ty = self.upgrade_commonjs_export_constructor_type(rhs_expr, ty);
             ty = self.augment_commonjs_export_type_with_expandos(target_file_idx, expando_root, ty);
             ty = self.widen_fresh_object_literal_properties_for_display(ty);
@@ -428,6 +480,21 @@ impl<'a> CheckerState<'a> {
         }
 
         Some(rhs_type)
+    }
+
+    /// Declaration-level type of a CommonJS named export in the current file.
+    ///
+    /// `tsc` types `exports.x` from every assignment in the module, not only
+    /// those textually preceding the use. `exports.f = undefined; exports.f();
+    /// … exports.f = fn` reports nothing, because the declared type is `fn`, and
+    /// a call written before any assignment is likewise fine. Selecting with an
+    /// unbounded read position therefore takes the last assignment in the file
+    /// rather than the last one above the use.
+    pub(crate) fn current_file_commonjs_named_export_type(
+        &mut self,
+        property_name: &str,
+    ) -> Option<TypeId> {
+        self.current_file_commonjs_prior_named_export_type(property_name, u32::MAX)
     }
 
     pub(crate) fn current_file_commonjs_prior_named_export_type(

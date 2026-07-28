@@ -318,10 +318,14 @@ impl<'a> CheckerState<'a> {
         // `@type {new () => T}` annotations and real classes still supply construct
         // signatures through separate paths. Prototype-method `this` typing (the
         // `X.prototype.m = function () { ... }` receiver) is preserved below.
+        // The same removal covers the prototype-method receiver: with no
+        // synthesized instance type for `M`, `this` inside
+        // `M.prototype.m = function () { ... }` is implicitly `any`, so
+        // `this.whatever` is accepted rather than checked against a synthesized
+        // instance shape. Verified against tsc 7.0.2, which reports only TS2683
+        // on the constructor body for that form.
         let js_constructor_instance_type: Option<TypeId> = None;
-        let js_prototype_owner_instance_type = prototype_owner_target.and_then(|owner_target| {
-            self.synthesize_js_constructor_instance_type(owner_target, TypeId::ANY, &[])
-        });
+        let js_prototype_owner_instance_type: Option<TypeId> = None;
 
         // Check if this closure is inside a decorator expression.
         // Decorator arrow functions like `@((t, c) => {})` should not emit TS7006
@@ -815,7 +819,10 @@ impl<'a> CheckerState<'a> {
                         // The freshness boundary widens fresh literal (and
                         // enum member) initializers; non-fresh sources keep
                         // their type.
-                        self.widen_mutable_binding_initializer_type(param.initializer, init_type)
+                        let widened = self
+                            .widen_mutable_binding_initializer_type(param.initializer, init_type);
+                        let widened = self.pad_array_binding_pattern_tuple(param.name, widened);
+                        self.pad_object_binding_pattern_type(param.name, widened)
                     } else {
                         inferred_type
                     };
@@ -860,6 +867,20 @@ impl<'a> CheckerState<'a> {
                         || ((has_contextual_type || has_external_binding_context)
                             && type_id != TypeId::ANY
                             && type_id != TypeId::UNKNOWN)
+                        // `getTypeForVariableLikeDeclaration` reaches
+                        // `getTypeFromBindingPattern` only when the declaration has
+                        // no initializer; with one, the parameter takes the widened
+                        // initializer type and the pattern only types the individual
+                        // bindings. `([a, b] = new FooIterator)` is therefore a
+                        // `FooIterator` parameter destructured by iteration, not a
+                        // `[Foo, Foo]` tuple — reconstructing the tuple rejected the
+                        // very value the default supplies. The pattern is still the
+                        // contextual type for the initializer above, so shapes like
+                        // `([a, z] = [undefined, null])` keep their tuple.
+                        || (param.initializer.is_some()
+                            && type_id != TypeId::ANY
+                            && type_id != TypeId::UNKNOWN
+                            && type_id != TypeId::ERROR)
                     {
                         // When a type annotation, concrete contextual type, or IIFE
                         // argument type is available, preserve it.  The binding pattern
@@ -1822,7 +1843,18 @@ impl<'a> CheckerState<'a> {
                 // properly checked later during check_class_member with correct context.
                 // The method's return type is already computed above (from annotation
                 // or infer_return_type_from_body which snapshots/restores).
-                let skip_body_check = !self.ctx.is_checking_statements && is_method_or_constructor;
+                let is_class_member = self
+                    .ctx
+                    .arena
+                    .get_extended(idx)
+                    .map(|ext| ext.parent)
+                    .and_then(|parent| self.ctx.arena.get(parent))
+                    .is_some_and(|parent| {
+                        parent.kind == syntax_kind_ext::CLASS_DECLARATION
+                            || parent.kind == syntax_kind_ext::CLASS_EXPRESSION
+                    });
+                let skip_body_check =
+                    !self.ctx.is_checking_statements && is_method_or_constructor && is_class_member;
                 // Save outer generator's yield collection state (for nested generators)
                 let saved_yield_collection =
                     std::mem::take(&mut self.ctx.generator_yield_operand_types);

@@ -69,6 +69,8 @@ pub(crate) struct MaybeRelationEntry {
 /// - the checker-local guard-truncated evaluation counter (#14346 verdict
 ///   consumption: a meta-type evaluation bailed on a depth/fuel/stack budget,
 ///   so the verdict is a budget artifact);
+/// - the checker-local relation-limit counter (a child `DepthExceeded` may be
+///   consumed through `.is_true()` and collapse into a parent `True`);
 /// - the thread-local weak-type sensitivity counter (the verdict depended on
 ///   TS2559 enforcement state the flag-agnostic key does not encode).
 ///
@@ -78,6 +80,7 @@ pub(crate) struct MaybeRelationEntry {
 pub(crate) struct RelationTaintSnapshot {
     unresolved_lazy_events: u64,
     incomplete_evaluation_events: u64,
+    relation_limit_events: u64,
     weak_sensitivity: u64,
 }
 
@@ -438,7 +441,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                                 && remaining_global_subtype_fuel() <= fuel_band =>
                         {
                             tsz_common::perf_counters::record_relation_limit_cache_hit();
-                            return SubtypeResult::DepthExceeded;
+                            return self.depth_result();
                         }
                         Some(RelationCacheValue::LimitTrue { .. }) | None => {}
                     }
@@ -523,13 +526,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         //   feeding this verdict was cut short by a depth/fuel/stack budget, so
         //   the verdict is an artifact of the ambient budget state rather than
         //   a pure function of the pair.
+        // - The relation-limit snapshot records `DepthExceeded` even under the
+        //   optimistic policy, where an ancestor may collapse it through
+        //   `.is_true()` into an otherwise-definitive success.
         // - The weak-type-sensitivity snapshot: if it changes, the result
         //   depended on weak-type enforcement state (TS2559), which the
         //   flag-agnostic `RelationCacheKey` does not encode. Caching it would
         //   let a result computed under one enforcement state be served to a
         //   sibling check under another.
         //
-        // The three counters travel as one `RelationTaintSnapshot`.
+        // The four counters travel as one `RelationTaintSnapshot`.
         let frame_entry = crate::limits::enter_subtype_frame();
         let global_depth = frame_entry.global_depth;
         let fuel = frame_entry.fuel;
@@ -1312,19 +1318,30 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         RelationTaintSnapshot {
             unresolved_lazy_events: self.unresolved_lazy_relation_event_count(),
             incomplete_evaluation_events: self.incomplete_evaluation_relation_event_count(),
+            relation_limit_events: self.relation_limit_event_count(),
             weak_sensitivity,
         }
     }
 
-    /// Whether any taint counter moved since `snapshot` was taken — i.e. the
-    /// in-flight relation verdict depended on an unresolved `Lazy` body, a
-    /// guard-truncated meta-type evaluation, or weak-type enforcement state,
-    /// and must not be published as a pure function of its cache key.
-    pub(crate) fn relation_taint_changed_since(&self, snapshot: RelationTaintSnapshot) -> bool {
+    fn relation_nonlimit_taint_changed_since(&self, snapshot: RelationTaintSnapshot) -> bool {
         self.unresolved_lazy_relation_event_count() != snapshot.unresolved_lazy_events
             || self.incomplete_evaluation_relation_event_count()
                 != snapshot.incomplete_evaluation_events
             || crate::limits::weak_type_sensitivity_count() != snapshot.weak_sensitivity
+    }
+
+    const fn relation_limit_changed_since(&self, snapshot: RelationTaintSnapshot) -> bool {
+        self.relation_limit_event_count() != snapshot.relation_limit_events
+    }
+
+    /// Whether any taint counter moved since `snapshot` was taken — i.e. the
+    /// in-flight relation verdict depended on an unresolved `Lazy` body, a
+    /// guard-truncated meta-type evaluation, a relation-limit result consumed
+    /// by an ancestor, or weak-type enforcement state, and must not be
+    /// published as a pure function of its cache key.
+    pub(crate) fn relation_taint_changed_since(&self, snapshot: RelationTaintSnapshot) -> bool {
+        self.relation_nonlimit_taint_changed_since(snapshot)
+            || self.relation_limit_changed_since(snapshot)
     }
 
     /// Record a definitive subtype verdict for later reuse.
@@ -1347,7 +1364,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// promotion path.
     ///
     /// This mirrors the discipline of the former `cache_definitive!` macro. The
-    /// unresolved-`Lazy` and guard-truncated-evaluation snapshots are
+    /// unresolved-`Lazy` and budget-dependent-relation snapshots are
     /// checker-local, so only events observed by this relation checker suppress
     /// this frame's write; fresh/nested checker probes only propagate when
     /// their verdict contributes to the outer relation. The weak-type
@@ -1414,12 +1431,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ///   (`guard.depth() == 0`), surviving entries are promoted on overall
     ///   success — cycle entries to definitive `true` (the coinductive
     ///   assumption set is self-consistent), fuel entries to band-conditional
-    ///   `LimitTrue` — or discarded on failure. Promotion is additionally
-    ///   gated on the frame's [`RelationTaintSnapshot`] (checker-local
-    ///   unresolved-`Lazy` and guard-truncated-evaluation counters plus the
-    ///   thread-local weak-type-sensitivity counter) having been stable across
-    ///   the whole outermost window, the same discipline
-    ///   `record_definitive_verdict` applies to definitive writes.
+    ///   `LimitTrue` — or discarded on failure. A moved relation-limit counter
+    ///   suppresses definitive cycle promotion while the explicitly banded
+    ///   outer `DepthExceeded` entry remains eligible for `LimitTrue`; every
+    ///   other [`RelationTaintSnapshot`] counter suppresses all promotion. This
+    ///   preserves the same cache-honesty discipline as definitive writes
+    ///   without discarding the typed limit protocol itself.
     fn finish_relation_frame(
         &mut self,
         result: SubtypeResult,
@@ -1454,13 +1471,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if self.guard.depth() == 0 && !self.maybe_keys.is_empty() {
             let entries = std::mem::take(&mut self.maybe_keys);
             if result.is_true()
-                && !self.relation_taint_changed_since(frame.taint_at_entry)
+                && !self.relation_nonlimit_taint_changed_since(frame.taint_at_entry)
                 && let Some(db) = self.query_db
             {
+                let limit_moved = self.relation_limit_changed_since(frame.taint_at_entry);
                 for entry in entries {
                     match entry.fuel_band {
-                        None => db.promote_subtype_cache_true(entry.key),
-                        Some(band) => db.insert_subtype_limit_true(entry.key, band),
+                        None if !limit_moved => db.promote_subtype_cache_true(entry.key),
+                        Some(band) if matches!(result, SubtypeResult::DepthExceeded) => {
+                            db.insert_subtype_limit_true(entry.key, band);
+                        }
+                        None | Some(_) => continue,
                     }
                     tsz_common::perf_counters::record_relation_maybe_promotion();
                 }
@@ -1799,6 +1820,19 @@ mod tests {
             },
             None,
             "a contributing subchecker truncation must keep the outer frame non-cacheable",
+        );
+    }
+
+    #[test]
+    fn relation_cache_write_skips_consumed_subchecker_limit_event() {
+        assert_definitive_write_gate(
+            |checker, subchecker| {
+                let entry = subchecker.relation_limit_event_count();
+                let _ = subchecker.depth_result();
+                checker.absorb_relation_limit_events_from(subchecker, entry);
+            },
+            None,
+            "a consumed subchecker Maybe verdict must keep the outer frame non-cacheable",
         );
     }
 

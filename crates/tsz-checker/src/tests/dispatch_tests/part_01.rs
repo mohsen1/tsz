@@ -209,19 +209,35 @@ Zet.prototype.add = function(v, o) {
 let answer = new Zet(1).add(3, { nested: 4 });
 "#,
     );
-    let relevant: Vec<_> = diags
-        .iter()
-        .filter(|d| matches!(d.code, 2304 | 2339 | 7006 | 7023))
-        .collect();
-    assert_eq!(
-        relevant.len(),
-        0,
-        "Expected constructor @template scope to flow to prototype methods, got: {relevant:?}"
+    // TypeScript 7 dropped JS constructor-function inference, so `@constructor` /
+    // `@template` on `Multimap` synthesize no instance type, and a method of the
+    // literal assigned to `Multimap.prototype` is an ordinary object-literal
+    // method whose `this` is the literal. Verified against the pinned tsc 7.0.2,
+    // which reports for this exact source:
+    //
+    //     TS2683 on the constructor body's `this`
+    //     TS2304 'K' and 'V'  (the @template params are not in scope for the
+    //                          prototype literal's own JSDoc — it is a sibling
+    //                          comment, not inside the function host)
+    //     TS2339 Property '_map' does not exist on type '{ get(key: K): V; }'
+    //
+    // tsz now matches that output exactly. This test previously asserted the
+    // opposite (no diagnostics at all), which was TypeScript 6 behaviour.
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == 2339 && d.message_text.contains("get(key: K): V")),
+        "`this` in a prototype object-literal method is the literal, so `this._map` \
+         is TS2339 against `{{ get(key: K): V; }}`; got: {diags:?}"
+    );
+    assert!(
+        diags.iter().all(|d| !d.message_text.contains("'Multimap'")),
+        "no diagnostic may name the constructor as the receiver; got: {diags:?}"
     );
 }
 
 #[test]
-fn jsdoc_constructor_identifier_argument_uses_typeof_source_display() {
+fn closure_constructor_param_type_yields_no_argument_diagnostic() {
     let diags = check_js_source_diagnostics(
         r#"
 /**
@@ -243,24 +259,33 @@ var E = function(n) {
 id2(E);
 "#,
     );
-    let ts2345 = diagnostics_with_code(&diags, 2345);
-    assert_eq!(ts2345.len(), 1, "Expected one TS2345, got: {diags:?}");
-    let message = &ts2345[0].message_text;
-    // TypeScript 7 dropped JS constructor-function inference, so `E` is a plain
-    // function typed from its `@param`; its argument display is the call
-    // signature `(n: number) => void`, not a `typeof E` constructor.
+    // Mirrors `conformance/jsdoc/jsdocFunctionType.ts`. This used to assert the
+    // source display of a TS2345 produced by the Closure `function(new: T, ...)`
+    // parameter type. TypeScript 7 rejects that spelling with TS1005 and gives
+    // it no type, so `id2`'s parameter is implicitly `any` and the call yields
+    // no argument diagnostic — that corpus test's oracle has TS1005s and no
+    // TS2345.
     assert!(
-        message.contains("Argument of type '(n: number) => void'"),
-        "Expected the non-constructor function source display, got: {message:?}"
+        diags.iter().any(|d| d.code == 1005),
+        "expected TS1005 for the Closure function types, got: {diags:?}"
     );
     assert!(
-        !message.contains("new (n: number)"),
-        "Expected diagnostic not to expand a constructor signature for the source, got: {message:?}"
+        diags.iter().all(|d| d.code != 2345),
+        "an untyped parameter accepts any argument, so no TS2345 follows, got: {diags:?}"
     );
 }
 
+/// TypeScript 7 dropped JS constructor-function inference, so `@class` /
+/// `@template` no longer synthesize an instance type, and a method of an object
+/// literal assigned to `.prototype` is an ordinary object-literal method: its
+/// `this` is the literal. Verified against the pinned tsc 7.0.2, which reports
+/// `Property 'x' does not exist on type '{ m1(): any; m2(): any; }'` — naming
+/// the literal, not `Cp`.
+///
+/// This test previously asserted the opposite (instance `this`, no TS2339/7023),
+/// which was TypeScript 6 behaviour.
 #[test]
-fn jsdoc_generic_constructor_prototype_object_literal_methods_use_instance_this() {
+fn jsdoc_generic_constructor_prototype_object_literal_methods_use_object_literal_this() {
     let diags = check_js_source_diagnostics(
         r#"
 /**
@@ -288,14 +313,18 @@ var n = cp.m1();
 var n = cp.m2();
 "#,
     );
-    let relevant: Vec<_> = diags
-        .iter()
-        .filter(|d| matches!(d.code, 2339 | 7023))
-        .collect();
-    assert_eq!(
-        relevant.len(),
-        0,
-        "Expected generic JS constructor prototype object literal methods to use instance `this`, got: {relevant:?}"
+    let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+    assert!(
+        !ts2339.is_empty(),
+        "`this` in a prototype object-literal method is the literal, which has no \
+         `x`/`y`/`z`, so TS2339 is expected; got: {diags:?}"
+    );
+    assert!(
+        ts2339
+            .iter()
+            .all(|d| d.message_text.contains("m1(): any") && !d.message_text.contains("Cp")),
+        "the receiver must be reported as the object literal, not the constructor \
+         `Cp`; got: {ts2339:?}"
     );
 }
 

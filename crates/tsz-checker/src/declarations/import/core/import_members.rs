@@ -788,7 +788,20 @@ impl<'a> CheckerState<'a> {
                         let module_uses_export_equals = exports_table.has("export=");
                         let suppress_for_export_equals =
                             exists_locally && module_uses_export_equals;
-                        if exists_locally && !suppress_for_export_equals {
+                        // `errorNoModuleMemberSymbol` consults the module's
+                        // `default` export *before* the local/renamed analysis:
+                        // a module that has one reports TS2614 ("did you mean to
+                        // use `import a from ...`") for every missing named
+                        // member and never reaches TS2459/TS2460/TS2305.
+                        // Testing `exists_locally` first made `export default a`
+                        // report TS2460 "declares 'a' locally, but it is
+                        // exported as 'default'" on top of the TS2614 that the
+                        // `has("default")` branch below already emits.
+                        let module_has_default_export = exports_table.has("default");
+                        if exists_locally
+                            && !suppress_for_export_equals
+                            && !module_has_default_export
+                        {
                             if let Some(ref renamed_as) = exported_as {
                                 // TS2460: Symbol exists locally and is exported under a different name
                                 let message = format_message(

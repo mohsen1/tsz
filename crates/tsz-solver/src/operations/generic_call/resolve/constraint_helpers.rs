@@ -135,6 +135,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         {
             return true;
         }
+        if !matches!(
+            self.interner.lookup(constraint),
+            Some(TypeData::Application(_))
+        ) {
+            // The ordinary evaluator already owns enclosing `keyof`, mapped,
+            // indexed, conditional, union, and container semantics. Rebuilding
+            // one of those roots through a second traversal can discard an
+            // exclusion/remapping decision and broaden a rejected constraint
+            // (for example, `keyof Omit<T, K>` back to `keyof T`). The recovery
+            // below exists only for the unresolved cross-file alias application
+            // that the ordinary evaluator could not open.
+            return false;
+        }
 
         // Imported aliases can remain as a chain of applications after the
         // instantiated constraint is evaluated. A single expansion is not

@@ -40,13 +40,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // Without strictNullChecks, null/undefined are assignable to all types
-        // including type parameters. Exception: `null` is not assignable to
-        // `void` — only `undefined` is.
+        // including type parameters. tsc's `isSimpleTypeRelatedTo` gates this
+        // purely on `!strictNullChecks`; the `null`-not-assignable-to-`void`
+        // asymmetry is a STRICT-mode rule (`t & (Undefined | Void)` for
+        // undefined vs `t & Null` for null) and must not leak in here.
         if !self.strict_null_checks && source.is_nullish() {
-            let null_to_void = source == TypeId::NULL && target == TypeId::VOID;
-            if !null_to_void {
-                return SubtypeResult::True;
-            }
+            return SubtypeResult::True;
         }
 
         // Note: Canonicalization-based structural identity (Task #36) was previously

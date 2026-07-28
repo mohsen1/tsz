@@ -166,6 +166,7 @@ fn policy_cache_config_preserves_typed_extended_bits() {
         | RelationFlags::STRICT_ANY_PROPAGATION
         | RelationFlags::SKIP_WEAK_TYPE_CHECKS
         | RelationFlags::ASSUME_RELATED_ON_CYCLE
+        | RelationFlags::ASSUME_RELATED_ON_DEPTH
         | RelationFlags::IN_CALLBACK_PARAM_CHECK
         | RelationFlags::STRICT_READONLY_IDENTITY;
 
@@ -182,6 +183,11 @@ fn policy_cache_config_preserves_typed_extended_bits() {
         config
             .flags
             .contains(RelationFlags::ASSUME_RELATED_ON_CYCLE)
+    );
+    assert!(
+        config
+            .flags
+            .contains(RelationFlags::ASSUME_RELATED_ON_DEPTH)
     );
     assert!(
         config

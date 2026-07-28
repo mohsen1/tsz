@@ -2516,3 +2516,24 @@ path = "tests/spread_rest_literal_preservation_tests.rs"
 [[test]]
 name = "js_number_string_semantics_tests"
 path = "tests/js_number_string_semantics_tests.rs"
+[[test]]
+name = "compound_assignment_operator_anchor_tests"
+path = "tests/compound_assignment_operator_anchor_tests.rs"
+[[test]]
+name = "parameter_property_anchor_tests"
+path = "tests/parameter_property_anchor_tests.rs"
+[[test]]
+name = "duplicate_class_member_all_declarations_tests"
+path = "tests/duplicate_class_member_all_declarations_tests.rs"
+[[test]]
+name = "inaccessible_constructor_instance_type_tests"
+path = "tests/inaccessible_constructor_instance_type_tests.rs"
+[[test]]
+name = "nullish_non_strict_assignability_tests"
+path = "tests/nullish_non_strict_assignability_tests.rs"
+[[test]]
+name = "instanceof_promise_recursive_narrowing_tests"
+path = "tests/instanceof_promise_recursive_narrowing_tests.rs"
+[[test]]
+name = "default_export_merge_diagnostics_tests"
+path = "tests/default_export_merge_diagnostics_tests.rs"

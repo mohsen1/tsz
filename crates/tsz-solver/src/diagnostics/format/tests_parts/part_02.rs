@@ -1187,21 +1187,20 @@ fn store_union_origin_overrides_canonical_anon_object_sort() {
 fn store_union_origin_preserves_source_order_for_number_literal_union() {
     let db = TypeInterner::new();
 
-    // Force a non-source allocation order: intern `2` before `1` so the
-    // canonical sort's alloc-order fallback puts `2` ahead of `1`.
     let two = db.literal_number(2.0);
     let one = db.literal_number(1.0);
     let zero = db.literal_number(0.0);
 
-    // Build the union in source-written order: `0 | 1 | 2`.
-    let origin = vec![zero, one, two];
+    // Build the union in a source-written order that disagrees with TS7's
+    // canonical numeric order: `2 | 1 | 0`.
+    let origin = vec![two, one, zero];
     let union_id = db.union(origin.clone());
 
-    // Pre-condition: without an origin, the canonical sort produces
-    // `0 | 2 | 1` because alloc_order(2) < alloc_order(1).
+    // Pre-condition: without an origin, `compareTypes` sorts numeric literal
+    // types by value, producing `0 | 1 | 2`.
     {
         let mut fmt = TypeFormatter::new(&db);
-        assert_eq!(fmt.format(union_id), "0 | 2 | 1");
+        assert_eq!(fmt.format(union_id), "0 | 1 | 2");
     }
 
     // Store the origin. Length is unchanged (3 in / 3 out) and there are no
@@ -1210,7 +1209,7 @@ fn store_union_origin_preserves_source_order_for_number_literal_union() {
     db.store_union_origin(union_id, origin);
 
     let mut fmt = TypeFormatter::new(&db);
-    assert_eq!(fmt.format(union_id), "0 | 1 | 2");
+    assert_eq!(fmt.format(union_id), "2 | 1 | 0");
 }
 
 #[test]
@@ -1278,15 +1277,16 @@ fn formatter_can_ignore_union_origin_for_canonical_number_literal_display() {
     let two = db.literal_number(2.0);
     let one = db.literal_number(1.0);
     let zero = db.literal_number(0.0);
-    let origin = vec![zero, one, two];
+    // Source order `2 | 1 | 0` disagrees with TS7's canonical numeric order.
+    let origin = vec![two, one, zero];
     let union_id = db.union(origin.clone());
     db.store_union_origin(union_id, origin);
 
     let mut source_order = TypeFormatter::new(&db);
-    assert_eq!(source_order.format(union_id), "0 | 1 | 2");
+    assert_eq!(source_order.format(union_id), "2 | 1 | 0");
 
     let mut canonical_order = TypeFormatter::new(&db).with_ignore_union_origins();
-    assert_eq!(canonical_order.format(union_id), "0 | 2 | 1");
+    assert_eq!(canonical_order.format(union_id), "0 | 1 | 2");
 }
 
 // Negative case: a number-literal-only union whose canonical order already
@@ -1424,12 +1424,27 @@ fn typeof_prefix_for_namespace_and_class_constructor_defs() {
     assert_eq!(fmt.format(class_instance_obj), "Bar");
 }
 
-/// Regression: `T[]` (modeled as `TypeData::Array(T)`) should inherit its
-/// element type's source position when sorting union members. Without this,
-/// `Cover[]` falls through to the tier-2 sentinel and a union written as
-/// `Cover | Cover[]` displays out of order.
+/// `T[]` is a `TypeReference` to the global `Array` in tsc, so under TS7's
+/// `stableTypeOrdering` it sorts under the name "Array" via `compareTypeNames`
+/// (`checker.ts:53867`) -- ahead of any named member sorting after "Array",
+/// regardless of the order the union was written in.
+///
+/// Verified against tsc 7.0.2:
+/// ```text
+/// interface Cover { color: string; }
+/// declare function f(c: Cover | Cover[]): void;
+/// f({ color: "red", couleur: "rouge" });
+/// // error TS2353: ... does not exist in type 'Cover[] | Cover'.
+/// ```
+/// Note the source is written `Cover | Cover[]` and tsc still renders
+/// `Cover[] | Cover`. The conformance oracle agrees
+/// (`compiler/objectLiteralExcessProperties.ts`).
+///
+/// The element-source-position inheritance this test originally pinned is still
+/// the tie-break for arrays whose names compare equal; it is simply no longer
+/// the deciding key when the names differ.
 #[test]
-fn union_array_inherits_element_source_position() {
+fn union_array_sorts_under_the_array_name() {
     let db = TypeInterner::new();
     let def_store = crate::def::DefinitionStore::new();
 
@@ -1450,8 +1465,8 @@ fn union_array_inherits_element_source_position() {
     let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
     assert_eq!(
         fmt.format(union_id),
-        "Cover | Cover[]",
-        "Array(T) should inherit T's position so `Cover | Cover[]` stays in source order"
+        "Cover[] | Cover",
+        "`Cover[]` sorts under the global name \"Array\", which precedes \"Cover\""
     );
 }
 

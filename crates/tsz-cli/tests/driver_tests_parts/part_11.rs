@@ -187,7 +187,7 @@ foo.m()
 }
 
 #[test]
-fn compile_commonjs_export_alias_define_property_overlap_reports_ts2323() {
+fn compile_commonjs_export_alias_define_property_overlap_reports_no_ts2323() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -230,16 +230,19 @@ module.exports = B;
                 && d.message_text.contains("'NS'")
         })
         .collect();
+    // tsc 7.0.2 reports no TS2323 for this fixture (verified as a real -p
+    // project against the pinned binary); #15971 dropped the redeclaration
+    // check to match.
     assert_eq!(
         ts2323.len(),
-        2,
-        "Expected TS2323 on overlapping CommonJS alias defineProperty exports, got diagnostics: {:?}",
+        0,
+        "tsc reports no TS2323 for overlapping CommonJS alias defineProperty exports, got diagnostics: {:?}",
         result.diagnostics
     );
 }
 
 #[test]
-fn compile_commonjs_export_property_overlap_with_ambient_module_reports_ts2323() {
+fn compile_commonjs_export_property_overlap_with_ambient_module_reports_no_ts2323() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -295,10 +298,11 @@ mod1.justProperty.length
         .iter()
         .filter(|d| d.code == diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE)
         .collect();
+    // Same tsc-verified rule as the single-file variants: no TS2323.
     assert_eq!(
         ts2323.len(),
-        4,
-        "Expected TS2323 on both overlapping CommonJS export properties, got diagnostics: {:?}",
+        0,
+        "tsc reports no TS2323 for overlapping CommonJS export properties, got: {:?}",
         result.diagnostics
     );
 }
@@ -763,7 +767,7 @@ cbThing(type => {
 }
 
 #[test]
-fn compile_jsdoc_enum_initializer_values_are_checked() {
+fn compile_jsdoc_enum_initializer_values_are_not_checked_under_ts7() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -792,27 +796,16 @@ const Frozen = Object.freeze({ A: 1 });
 
     let args = default_args();
     let result = compile(&args, base).expect("compile should succeed");
-    let ts2322: Vec<_> = result
-        .diagnostics
-        .iter()
-        .filter(|diag| diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .collect();
-
-    // tsc emits exactly one TS2322: only the direct object-literal @enum
-    // (`const E = { A: "x" }`) is checked. The `Object.freeze({ A: 1 })` form
-    // produces nothing — tsc does not check @enum member values through the
-    // Object.freeze call.
-    assert_eq!(
-        ts2322.len(),
-        1,
-        "Expected exactly one TS2322 for the direct JSDoc @enum object literal, got: {:?}",
-        result.diagnostics
-    );
+    // TypeScript 7.0.2 does not validate initializer values for either direct
+    // object-literal or `Object.freeze` JSDoc enums. The previous expectation
+    // retained pre-7 behavior and incorrectly required a TS2322 for `E.A`.
     assert!(
-        ts2322.iter().any(
-            |diag| diag.message_text.contains("string") && diag.message_text.contains("number")
-        ),
-        "Expected string-to-number enum initializer diagnostic, got: {ts2322:?}"
+        !result
+            .diagnostics
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "TypeScript 7 does not check JSDoc enum initializer values, got: {:?}",
+        result.diagnostics
     );
 }
 

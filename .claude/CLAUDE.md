@@ -56,8 +56,19 @@ Hard rules:
   2000 physical lines. Split instead of adding local allowlists or ceilings.
 
 ## Testing And Commands
-- Never run full conformance, emit, or fourslash locally. Use narrow filters;
-  ready-review CI owns broad suites.
+- Local runs are the source of truth. CI's per-merge lane is only `clippy` +
+  `arch-size`; conformance, emit, fourslash and unit run nightly and on
+  `workflow_dispatch`, so a broad suite you did not run locally did not run.
+- Before pushing a behavior change, run the suites it can affect and record
+  the before/after in the PR body:
+  - `./scripts/conformance/conformance.sh snapshot --workers 12 --force`
+    (~8 min; diff `conformance-detail.json` against a saved baseline)
+  - `./scripts/emit/run.sh --skip-build` (~25s, must hold 11562 JS / 1375 DTS)
+  - `./scripts/fourslash/run-fourslash.sh --skip-build` (~2 min, needs
+    `cargo build --release -p tsz-cli --bin tsz-server`)
+- Never run two `conformance.sh` invocations concurrently: it cleans the shared
+  `TypeScript/tests/cases` tree on entry, so parallel runs corrupt each other
+  silently and one dies producing no output.
 - Use `cargo nextest run`, not `cargo test`.
 - Wrap long or memory-heavy commands with `scripts/safe-run.sh`.
 - Prefer not to checkout the full TypeScript submodule unless the specific
@@ -86,8 +97,9 @@ Hard rules:
 - Every PR serves one of the four roadmap goals: `green` (benchmark rows
   compile like `tsc`), `fast` (green rows 2x faster than `tsgo`), `grow`
   (new corpus projects), `hold` (conformance/emit/fourslash parity floor).
-- The `pr-body-gate` CI job greps the remote body for exact field formats;
-  match them or the job fails. Required lines, each with a non-empty value:
+- PR bodies follow a review convention, not an enforced gate: no
+  `pr-body-gate` job exists in `.github/workflows/`. Write these because
+  reviewers and future sessions read them. Each line takes a non-empty value:
   - `Goal: <green|fast|grow|hold>`
   - A `## Provenance` block with `Machine: <m1|m4|studio|cloud|hostname>`,
     `Assistant: <claude-code|codex>`, `Model: <model id>`, and

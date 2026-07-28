@@ -33,6 +33,7 @@ class Foo {
             jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
             jsx_fragment_factory_from_config: false,
+            use_define_for_class_fields: None,
             strict: true,
             ..Default::default()
         },
@@ -83,6 +84,7 @@ class Foo {
             jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
             jsx_fragment_factory_from_config: false,
+            use_define_for_class_fields: None,
             strict: true,
             ..Default::default()
         },
@@ -137,6 +139,7 @@ class Foo {
             jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
             jsx_fragment_factory_from_config: false,
+            use_define_for_class_fields: None,
             strict: true,
             ..Default::default()
         },
@@ -196,6 +199,7 @@ class Foo {
             jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
             jsx_fragment_factory_from_config: false,
+            use_define_for_class_fields: None,
             strict: true,
             ..Default::default()
         },
@@ -244,6 +248,7 @@ class Foo {
             jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
             jsx_fragment_factory_from_config: false,
+            use_define_for_class_fields: None,
             strict: true,
             strict_null_checks: true,
             strict_property_initialization: false,
@@ -294,6 +299,7 @@ class Foo {
             jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
             jsx_fragment_factory_from_config: false,
+            use_define_for_class_fields: None,
             strict: true,
             strict_null_checks: false,
             strict_property_initialization: true,
@@ -340,6 +346,7 @@ fn test_tier_2_type_checker_accuracy_fixes() {
             jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
             jsx_fragment_factory_from_config: false,
+            use_define_for_class_fields: None,
             strict: true,
             no_implicit_any: true,
             no_implicit_returns: false,

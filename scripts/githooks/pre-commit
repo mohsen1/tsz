@@ -2,11 +2,18 @@
 #
 # Pre-commit hook for tsz.
 #
-# Local commits should stay cheap: format staged Rust changes and leave build,
-# lint, unit, conformance, emit, and fourslash verification to CI.
+# Commits are verified locally. CI's merge_group lane is deliberately lighter
+# than it used to be, so this gate is what keeps main green: a staged Rust
+# change must pass clippy and the architecture guard before it can be committed.
+#
+# The gate is deliberately the fast subset. Conformance, emit and fourslash take
+# minutes and stay in CI; run the ones your change touches yourself
+# (scripts/conformance/conformance.sh, scripts/emit/run.sh).
 #
 # Env vars:
-#   TSZ_SKIP_HOOKS=1  Skip the entire hook
+#   TSZ_SKIP_HOOKS=1   Skip the entire hook
+#   TSZ_SKIP_VERIFY=1  Format only; skip clippy/arch. For committing work you
+#                      already know is red; CI still gates the merge.
 
 set -e
 
@@ -66,3 +73,61 @@ for file in $CHANGED_RS; do
 done
 
 echo "Formatting complete."
+
+if [ "${TSZ_SKIP_VERIFY:-}" = "1" ]; then
+    echo "TSZ_SKIP_VERIFY=1 — skipping local verification."
+    exit 0
+fi
+
+# Verify only the crates this commit touches. A change confined to one crate
+# does not need the whole workspace rebuilt, which is what makes this gate
+# affordable on every commit.
+CHANGED_CRATES=$(echo "$CHANGED_RS" | sed -n 's|^crates/\([^/]*\)/.*|\1|p' | sort -u)
+
+PKG_FLAGS=""
+for crate in $CHANGED_CRATES; do
+    if [ -f "crates/$crate/Cargo.toml" ]; then
+        PKG_FLAGS="$PKG_FLAGS -p $crate"
+    fi
+done
+if [ -z "$PKG_FLAGS" ]; then
+    PKG_FLAGS="--workspace"
+fi
+
+echo "Verifying:${PKG_FLAGS}"
+
+# `-D warnings` matches what CI's lint lane runs (full-ci.sh: `cargo clippy
+# --workspace --all-targets -- -D warnings`). Without it this gate passes code
+# that CI then rejects — clippy::doc_markdown in particular is warn-level by
+# default and only becomes an error under `-D warnings`.
+#
+# Redirect rather than pipe: `cmd | tail` reports tail's exit status, not the
+# compiler's, which would let a failing build through the gate entirely.
+if ! cargo clippy --profile dist-fast --target-dir .target $PKG_FLAGS --lib \
+    -- -D warnings >/tmp/tsz-clippy.log 2>&1; then
+    echo ""
+    echo "ERROR: clippy failed:"
+    tail -40 /tmp/tsz-clippy.log
+    echo ""
+    echo "Fix it, or use TSZ_SKIP_VERIFY=1 if you are committing known-red work."
+    exit 1
+fi
+echo "Clippy passed."
+
+# The architecture guard owns the per-file size ratchets and the
+# checker/solver boundary rules. It is the CI job that most often fails a PR
+# for something a quick read would not catch, and it takes seconds, so it
+# belongs on the commit path.
+if [ -x scripts/arch/check-checker-boundaries.sh ]; then
+    if ! scripts/arch/check-checker-boundaries.sh >/tmp/tsz-arch-guard.log 2>&1; then
+        echo ""
+        echo "ERROR: architecture guard failed:"
+        tail -20 /tmp/tsz-arch-guard.log
+        echo ""
+        echo "Fix it, or use TSZ_SKIP_VERIFY=1 if you are committing known-red work."
+        exit 1
+    fi
+    echo "Architecture guard passed."
+fi
+
+echo "Local verification passed."

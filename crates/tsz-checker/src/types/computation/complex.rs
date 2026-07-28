@@ -630,6 +630,21 @@ impl<'a> CheckerState<'a> {
         // When the constructor is inaccessible, tsc only emits the accessibility
         // error and suppresses subsequent arg-count/type-mismatch diagnostics.
         if self.check_constructor_accessibility_for_new(idx, constructor_type) {
+            // tsc suppresses the *call's* subsequent arg-count/type-mismatch
+            // diagnostics, but the new-expression still has the instance type.
+            // Returning `any` here instead poisons everything downstream:
+            // `var c = new C()` on a private constructor made `c` `any`, so
+            // `var r: () => void = c.constructor` silently passed where tsc
+            // reports TS2322 (`c.constructor` is `Function`).
+            if let Some(signatures) =
+                crate::query_boundaries::construct_signatures::construct_signatures_for_type(
+                    self.ctx.types,
+                    constructor_type,
+                )
+                && let Some(first) = signatures.first()
+            {
+                return first.return_type;
+            }
             return TypeId::ANY;
         }
 
@@ -1636,13 +1651,17 @@ impl<'a> CheckerState<'a> {
                 // function (the old `isJSConstructor` inference was dropped), so
                 // `new f()` gains no synthesized instance type and is not exempt
                 // from the missing-construct-signature check. Under noImplicitAny
-                // the result is `any` and reported as TS7009.
+                // the result is `any` and reported as TS7009; with it off, a
+                // non-`void` return is TS2350 instead. tsc's resolveNewExpression
+                // gates both on `noImplicitAny`, so they never co-occur.
                 if self.ctx.no_implicit_any() {
                     self.error_at_node(
                         idx,
                         crate::diagnostics::diagnostic_messages::NEW_EXPRESSION_WHOSE_TARGET_LACKS_A_CONSTRUCT_SIGNATURE_IMPLICITLY_HAS_AN_ANY_TY,
                         crate::diagnostics::diagnostic_codes::NEW_EXPRESSION_WHOSE_TARGET_LACKS_A_CONSTRUCT_SIGNATURE_IMPLICITLY_HAS_AN_ANY_TY,
                     );
+                } else if matches!(result, CallResult::NonVoidFunctionCalledWithNew) {
+                    self.error_non_void_function_called_with_new_at(idx);
                 }
                 TypeId::ANY
             }

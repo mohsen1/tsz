@@ -182,7 +182,24 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // parameters like `T` must still count as usable evidence.
             let has_constraints = matches!(&constraints, Some(c) if !c.is_empty())
                 || infer_ctx.has_usable_contra_candidates(var, self.interner.as_type_database());
+            // A defaulted parameter prefers its default over bounds that were merely
+            // DECLARED on it (`<T extends A | B = B>` resolves to `B`, not to the
+            // constraint) — but only bounds the declaration actually introduced count.
+            // Requiring `tp.constraint.is_some()` is what makes the name honest: with no
+            // `extends` clause there are no declared upper bounds, so any upper bound
+            // present is real inference evidence and must not be discarded.
+            //
+            // `declare function mk<U = void>(f: (r: U) => void): Array<U>` used as
+            // `const p: Array<string> = mk((r) => ...)` seeds U from the contextual RETURN
+            // type (normalization.rs:976, `InferencePriority::ReturnType`). For a callback
+            // parameter position that candidate lands in UPPER bounds with no lower bound
+            // and no usable contra-candidate, so without this conjunct the whole candidate
+            // path was skipped and U silently became `void`. Dropping ` = void` made the
+            // same call resolve correctly, which is exactly the asymmetry this fixes.
+            // (`mk<U = void>(x?: U)` was already correct: a direct parameter position
+            // yields a LOWER bound, so the gate never fired for it.)
             let has_only_declared_upper_bounds = tp.default.is_some()
+                && tp.constraint.is_some()
                 && !infer_ctx.has_usable_contra_candidates(var, self.interner.as_type_database())
                 && constraints
                     .as_ref()

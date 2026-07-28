@@ -744,8 +744,9 @@ pub fn parse_tsconfig_with_diagnostics_deferred(
             );
         }
 
-        // TS5091: preserveConstEnums cannot be disabled when isolatedModules is enabled.
-        // tsc emits this at both key positions; we emit once per enabler.
+        // TS5091: preserveConstEnums cannot be disabled when isolatedModules is
+        // enabled. One diagnostic per enabler, anchored at whichever of the pair
+        // comes first in the config source.
         if matches!(
             compiler_opts.get("preserveConstEnums"),
             Some(serde_json::Value::Bool(false))
@@ -753,25 +754,15 @@ pub fn parse_tsconfig_with_diagnostics_deferred(
             let enablers: &[&str] = &["isolatedModules", "isolatedDeclarations"];
             for enabler in enablers {
                 if option_is_effectively_enabled(compiler_opts, &ts5024_keys, enabler) {
-                    let msg = format_message(
-                        diagnostic_messages::OPTION_PRESERVECONSTENUMS_CANNOT_BE_DISABLED_WHEN_IS_ENABLED,
-                        &[enabler],
-                    );
-                    push_key_diagnostic(
+                    push_first_key_anchored_diagnostic(
                         &mut diagnostics,
                         file_path,
                         &stripped,
-                        "preserveConstEnums",
-                        msg.clone(),
-                        diagnostic_codes::OPTION_PRESERVECONSTENUMS_CANNOT_BE_DISABLED_WHEN_IS_ENABLED,
-                    );
-                    // tsc also emits at the enabler key position
-                    push_key_diagnostic(
-                        &mut diagnostics,
-                        file_path,
-                        &stripped,
-                        enabler,
-                        msg,
+                        ["preserveConstEnums", enabler],
+                        format_message(
+                            diagnostic_messages::OPTION_PRESERVECONSTENUMS_CANNOT_BE_DISABLED_WHEN_IS_ENABLED,
+                            &[enabler],
+                        ),
                         diagnostic_codes::OPTION_PRESERVECONSTENUMS_CANNOT_BE_DISABLED_WHEN_IS_ENABLED,
                     );
                 }
@@ -821,54 +812,54 @@ pub fn parse_tsconfig_with_diagnostics_deferred(
         }
 
         // TS5052: Option '{0}' cannot be specified without specifying option '{1}'.
-        // `checkJs` implies `allowJs` unless `allowJs` is explicitly disabled.
+        //
+        // `strictPropertyInitialization` and `exactOptionalPropertyTypes` each
+        // require `strictNullChecks`. tsc (`verifyCompilerOptions`) tests the
+        // *raw* value of the dependent option but the *strict-aware* effective
+        // value of `strictNullChecks`, so a bare `strict: true` is fine while
+        // `strict: true` with an explicit `strictNullChecks: false` is an error.
+        for (dependent, required) in [
+            ("strictPropertyInitialization", "strictNullChecks"),
+            ("exactOptionalPropertyTypes", "strictNullChecks"),
+        ] {
+            if option_is_effectively_enabled(compiler_opts, &ts5024_keys, dependent)
+                && !strict_option_value(compiler_opts, &ts5024_keys, required)
+            {
+                push_option_dependency_diagnostic(
+                    &mut diagnostics,
+                    file_path,
+                    &stripped,
+                    dependent,
+                    required,
+                );
+            }
+        }
+
+        // TS5052: `checkJs` implies `allowJs` unless `allowJs` is explicitly
+        // disabled.
         if option_is_truthy(compiler_opts.get("checkJs"))
             && !option_is_effectively_enabled(compiler_opts, &ts5024_keys, "allowJs")
             && option_key_present_or_invalidated(compiler_opts, &ts5024_keys, "allowJs")
         {
-            let msg = format_message(
-                diagnostic_messages::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION,
-                &["checkJs", "allowJs"],
-            );
-
-            // Always emit at the checkJs key.
-            push_key_diagnostic(
+            push_option_dependency_diagnostic(
                 &mut diagnostics,
                 file_path,
                 &stripped,
                 "checkJs",
-                msg.clone(),
-                diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION,
+                "allowJs",
             );
-
-            // If allowJs is explicitly present, emit at allowJs too (tsc parity).
-            if compiler_opts.contains_key("allowJs") {
-                push_key_diagnostic(
-                    &mut diagnostics,
-                    file_path,
-                    &stripped,
-                    "allowJs",
-                    msg,
-                    diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION,
-                );
-            }
         }
 
         // TS5052: emitDecoratorMetadata requires experimentalDecorators.
         if option_is_truthy(compiler_opts.get("emitDecoratorMetadata"))
             && !option_is_effectively_enabled(compiler_opts, &ts5024_keys, "experimentalDecorators")
         {
-            let msg = format_message(
-                diagnostic_messages::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION,
-                &["emitDecoratorMetadata", "experimentalDecorators"],
-            );
-            push_key_diagnostic(
+            push_option_dependency_diagnostic(
                 &mut diagnostics,
                 file_path,
                 &stripped,
                 "emitDecoratorMetadata",
-                msg,
-                diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION,
+                "experimentalDecorators",
             );
         }
 
@@ -908,27 +899,19 @@ pub fn parse_tsconfig_with_diagnostics_deferred(
                 };
                 let key_a = resolve(opt_a);
                 let key_b = resolve(opt_b);
-                // Emit at the resolved-key position (issue #3732 anchors at
-                // `checkJs` when allowJs is implied).
-                let msg = format_message(
-                    diagnostic_messages::OPTION_CANNOT_BE_SPECIFIED_WITH_OPTION,
-                    &[opt_a, opt_b],
-                );
-                push_key_diagnostic(
+                // One diagnostic, anchored at whichever key comes first in the
+                // config source — which is often not the option the message
+                // names first (`sourceMap`/`inlineSourceMap` anchors at
+                // `inlineSourceMap`).
+                push_first_key_anchored_diagnostic(
                     &mut diagnostics,
                     file_path,
                     &stripped,
-                    key_a,
-                    msg.clone(),
-                    diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITH_OPTION,
-                );
-                // Emit at opt_b's position (same message, different location)
-                push_key_diagnostic(
-                    &mut diagnostics,
-                    file_path,
-                    &stripped,
-                    key_b,
-                    msg,
+                    [key_a, key_b],
+                    format_message(
+                        diagnostic_messages::OPTION_CANNOT_BE_SPECIFIED_WITH_OPTION,
+                        &[opt_a, opt_b],
+                    ),
                     diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITH_OPTION,
                 );
             }

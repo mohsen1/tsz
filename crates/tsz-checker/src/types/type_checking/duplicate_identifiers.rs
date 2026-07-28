@@ -101,8 +101,6 @@ impl<'a> CheckerState<'a> {
                     .insert(symbol.escaped_name.clone(), declarations.clone());
                 declarations
             };
-            let jsx_runtime_conflict_declarations =
-                self.jsx_runtime_conflict_declarations_for_current_file(&symbol.escaped_name);
             let default_import_alias_conflicts = if may_have_default_import_alias_conflicts {
                 self.default_import_alias_conflict_declarations_for_current_file(
                     &symbol.escaped_name,
@@ -129,7 +127,6 @@ impl<'a> CheckerState<'a> {
                     && module_augmentation_declarations.is_empty()
                     && script_scope_declarations.is_empty()
                     && global_scope_declarations.is_empty()
-                    && jsx_runtime_conflict_declarations.is_empty()
                     && default_import_alias_conflicts.is_empty()
                     && module_block_scoped_conflicts.is_empty()
                 {
@@ -223,7 +220,6 @@ impl<'a> CheckerState<'a> {
             }
             declarations.extend(module_augmentation_declarations);
             declarations.extend(global_scope_declarations);
-            declarations.extend(jsx_runtime_conflict_declarations);
             declarations.extend(default_import_alias_conflicts);
             declarations.extend(module_block_scoped_conflicts);
 
@@ -231,6 +227,10 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             let mut func_decls_for_2384 = Vec::new();
+            // The implementation is excluded from the overload list but is still
+            // needed: tsc's `getCanonicalOverload` may take the canonical flags
+            // from it. See the TS2384 report below.
+            let mut implementation_for_2384: Option<NodeIndex> = None;
             let mut has_ambient_func = false;
             let mut has_non_ambient_func = false;
             for &(decl_idx, flags, is_local, _, _) in &declarations {
@@ -239,6 +239,9 @@ impl<'a> CheckerState<'a> {
                     // Skip implementations (declarations with bodies) — a non-ambient
                     // implementation following ambient overloads is valid.
                     if self.function_has_body(decl_idx) {
+                        if implementation_for_2384.is_none() {
+                            implementation_for_2384 = Some(decl_idx);
+                        }
                         continue;
                     }
                     func_decls_for_2384.push(decl_idx);
@@ -250,7 +253,28 @@ impl<'a> CheckerState<'a> {
                 }
             }
             if has_ambient_func && has_non_ambient_func {
-                let ref_is_ambient = self.is_ambient_declaration(func_decls_for_2384[0]);
+                // tsc's `getCanonicalOverload` (checker.ts:43088) takes the
+                // canonical set of flags from the *implementation* when it
+                // shares a container with the first overload, and only
+                // otherwise from the first overload. The container check is
+                // what keeps lib.d.ts overloads from being blamed for a local
+                // implementation. Reading the flags off the first overload
+                // unconditionally blames the wrong declaration whenever the
+                // implementation is the one the majority agrees with.
+                let first_overload = func_decls_for_2384[0];
+                let first_parent = self
+                    .ctx
+                    .arena
+                    .get_extended(first_overload)
+                    .map(|ext| ext.parent);
+                let canonical = implementation_for_2384
+                    .filter(|&impl_idx| {
+                        first_parent.is_some()
+                            && self.ctx.arena.get_extended(impl_idx).map(|ext| ext.parent)
+                                == first_parent
+                    })
+                    .unwrap_or(first_overload);
+                let ref_is_ambient = self.is_ambient_declaration(canonical);
                 for &decl_idx in &func_decls_for_2384 {
                     if self.is_ambient_declaration(decl_idx) != ref_is_ambient {
                         let error_node =
@@ -446,8 +470,16 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            // TS2395
-            let mut has_ts2395 = false;
+            // TS2652 / TS2395
+            //
+            // Default exports are a third visibility class, distinct from ordinary
+            // exported declarations. A merged declaration whose default-exported
+            // type/value/namespace space intersects any non-default declaration
+            // reports TS2652. Only ordinary exported-vs-local intersections report
+            // TS2395, and a declaration claimed by TS2652 must not also report
+            // TS2395.
+            let mut ts2652_error_nodes: Vec<NodeIndex> = Vec::new();
+            let mut ts2395_error_nodes: Vec<NodeIndex> = Vec::new();
 
             // Skip TS2395 when all local declarations are in a `declare namespace`
             // (identifier-named ambient namespace). In these contexts, the
@@ -456,137 +488,154 @@ impl<'a> CheckerState<'a> {
             // However, `declare module "..."` (string-literal-named module
             // declarations) SHOULD still emit TS2395 — tsc treats these as
             // module scopes where export consistency matters.
-            let all_ambient = declarations
+            let suppress_ts2395_for_ambient = declarations
                 .iter()
                 .filter(|(_, _, is_local, _, _)| *is_local)
                 .all(|(decl_idx, _, _, _, _)| self.is_in_ambient_namespace_not_module(*decl_idx));
 
-            if !all_ambient {
-                {
-                    const SPACE_TYPE: u32 = 1;
-                    const SPACE_VALUE: u32 = 2;
-                    const SPACE_NAMESPACE: u32 = 4;
+            const SPACE_TYPE: u32 = 1;
+            const SPACE_VALUE: u32 = 2;
+            const SPACE_NAMESPACE: u32 = 4;
 
-                    let mut error_nodes: Vec<NodeIndex> = Vec::new();
-
+            let decl_info: Vec<(NodeIndex, u32, u32, bool, bool, NodeIndex)> = declarations
+                .iter()
+                .filter(|&(_, _, is_local, _, _)| *is_local)
+                .map(|&(decl_idx, flags, _, exported, _)| {
+                    let space = if (flags & symbol_flags::INTERFACE) != 0
+                        || (flags & symbol_flags::TYPE_ALIAS) != 0
                     {
-                        let decl_info: Vec<(NodeIndex, u32, u32, bool, NodeIndex)> = declarations
-                            .iter()
-                            .filter(|&(_, _, is_local, _, _)| *is_local)
-                            .map(|&(decl_idx, flags, _, exported, _)| {
-                                let space = if (flags & symbol_flags::INTERFACE) != 0
-                                    || (flags & symbol_flags::TYPE_ALIAS) != 0
-                                {
-                                    SPACE_TYPE
-                                } else if (flags
-                                    & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
-                                    != 0
-                                {
-                                    if self.is_namespace_declaration_instantiated(decl_idx) {
-                                        SPACE_NAMESPACE | SPACE_VALUE
-                                    } else {
-                                        SPACE_NAMESPACE
-                                    }
-                                } else if (flags & symbol_flags::CLASS) != 0
-                                    || (flags
-                                        & (symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM))
-                                        != 0
-                                {
-                                    SPACE_TYPE | SPACE_VALUE
-                                } else if (flags & symbol_flags::VARIABLE) != 0
-                                    || (flags & symbol_flags::FUNCTION) != 0
-                                {
-                                    SPACE_VALUE
-                                } else if (flags & symbol_flags::ALIAS) != 0 {
-                                    // Import-equals declarations (`import Foo = X`) occupy both
-                                    // type and value space, so they trigger TS2395 against an
-                                    // exported type/value alias of the same name.
-                                    //
-                                    // Other alias forms (`import * as X`, `import { X }`,
-                                    // `import X from`) collide with local declarations as TS2440
-                                    // (Import declaration conflicts with local declaration of X)
-                                    // — tsc does not double-report TS2395 for them. Skip space
-                                    // contribution for those by limiting to ImportEqualsDeclaration.
-                                    if self.ctx.arena.get(decl_idx).is_some_and(|n| {
-                                        n.kind == tsz_parser::parser::syntax_kind_ext::IMPORT_EQUALS_DECLARATION
-                                    }) {
-                                        SPACE_VALUE | SPACE_TYPE
-                                    } else {
-                                        0
-                                    }
-                                } else {
-                                    0
-                                };
-                                let scope = self.get_enclosing_namespace(decl_idx);
-                                (decl_idx, flags, space, exported, scope)
-                            })
-                            .collect();
-
-                        type ScopeGroupEntry = (NodeIndex, u32, u32, bool);
-                        // At most one distinct scope per declaration (#11617).
-                        let mut scope_groups: FxHashMap<NodeIndex, Vec<ScopeGroupEntry>> =
-                            FxHashMap::with_capacity_and_hasher(
-                                decl_info.len(),
-                                Default::default(),
-                            );
-                        for &(decl_idx, flags, space, exported, scope) in &decl_info {
-                            scope_groups
-                                .entry(scope)
-                                .or_default()
-                                .push((decl_idx, flags, space, exported));
+                        SPACE_TYPE
+                    } else if (flags
+                        & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
+                        != 0
+                    {
+                        if self.is_namespace_declaration_instantiated(decl_idx) {
+                            SPACE_NAMESPACE | SPACE_VALUE
+                        } else {
+                            SPACE_NAMESPACE
                         }
-
-                        for group in scope_groups.values() {
-                            if group.len() <= 1 {
-                                continue;
-                            }
-                            let all_functions = group
-                                .iter()
-                                .all(|&(_, flags, _, _)| (flags & symbol_flags::FUNCTION) != 0);
-                            if all_functions {
-                                continue;
-                            }
-                            let mut exported_spaces: u32 = 0;
-                            let mut non_exported_spaces: u32 = 0;
-                            for &(_, _, space, exported) in group {
-                                if exported {
-                                    exported_spaces |= space;
-                                } else {
-                                    non_exported_spaces |= space;
-                                }
-                            }
-                            let common_spaces = exported_spaces & non_exported_spaces;
-                            let _ = (exported_spaces, non_exported_spaces, common_spaces);
-                            if common_spaces != 0 {
-                                has_ts2395 = true;
-                                for &(decl_idx, _, space, _) in group {
-                                    if (space & common_spaces) != 0 {
-                                        let error_node = self
-                                            .get_declaration_name_node(decl_idx)
-                                            .unwrap_or(decl_idx);
-                                        error_nodes.push(error_node);
-                                    }
-                                }
-                            }
+                    } else if (flags & symbol_flags::CLASS) != 0
+                        || (flags & (symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM)) != 0
+                    {
+                        SPACE_TYPE | SPACE_VALUE
+                    } else if (flags & symbol_flags::VARIABLE) != 0
+                        || (flags & symbol_flags::FUNCTION) != 0
+                    {
+                        SPACE_VALUE
+                    } else if (flags & symbol_flags::ALIAS) != 0 {
+                        // Import-equals declarations (`import Foo = X`) occupy both
+                        // type and value space, so they trigger TS2395 against an
+                        // exported type/value alias of the same name.
+                        //
+                        // Other alias forms (`import * as X`, `import { X }`,
+                        // `import X from`) collide with local declarations as TS2440
+                        // (Import declaration conflicts with local declaration of X)
+                        // — tsc does not double-report TS2395 for them. Skip space
+                        // contribution for those by limiting to ImportEqualsDeclaration.
+                        if self.ctx.arena.get(decl_idx).is_some_and(|n| {
+                            n.kind == tsz_parser::parser::syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                        }) {
+                            SPACE_VALUE | SPACE_TYPE
+                        } else {
+                            0
                         }
-                    }
+                    } else {
+                        0
+                    };
+                    let default_exported = exported
+                        && self.declaration_participates_in_default_export_conflict(decl_idx);
+                    let scope = self.get_enclosing_namespace(decl_idx);
+                    (decl_idx, flags, space, exported, default_exported, scope)
+                })
+                .collect();
 
-                    if has_ts2395 {
-                        let name = symbol.escaped_name.clone();
-                        let message = format_message(
-                        diagnostic_messages::INDIVIDUAL_DECLARATIONS_IN_MERGED_DECLARATION_MUST_BE_ALL_EXPORTED_OR_ALL_LOCAL,
-                        &[&name],
-                    );
-                        for error_node in error_nodes {
-                            self.error_at_node(
-                            error_node,
-                            &message,
-                            diagnostic_codes::INDIVIDUAL_DECLARATIONS_IN_MERGED_DECLARATION_MUST_BE_ALL_EXPORTED_OR_ALL_LOCAL,
-                        );
-                        }
+            type ScopeGroupEntry = (NodeIndex, u32, u32, bool, bool);
+            // At most one distinct scope per declaration (#11617).
+            let mut scope_groups: FxHashMap<NodeIndex, Vec<ScopeGroupEntry>> =
+                FxHashMap::with_capacity_and_hasher(decl_info.len(), Default::default());
+            for &(decl_idx, flags, space, exported, default_exported, scope) in &decl_info {
+                scope_groups.entry(scope).or_default().push((
+                    decl_idx,
+                    flags,
+                    space,
+                    exported,
+                    default_exported,
+                ));
+            }
+
+            for group in scope_groups.values() {
+                if group.len() <= 1 {
+                    continue;
+                }
+                let all_functions = group
+                    .iter()
+                    .all(|&(_, flags, _, _, _)| (flags & symbol_flags::FUNCTION) != 0);
+                let mut default_exported_spaces: u32 = 0;
+                let mut exported_spaces: u32 = 0;
+                let mut non_exported_spaces: u32 = 0;
+                for &(_, _, space, exported, default_exported) in group {
+                    if default_exported {
+                        default_exported_spaces |= space;
+                    } else if exported {
+                        exported_spaces |= space;
+                    } else {
+                        non_exported_spaces |= space;
                     }
                 }
-            } // end if !all_ambient
+                let non_default_spaces = exported_spaces | non_exported_spaces;
+                let default_conflict_spaces = default_exported_spaces & non_default_spaces;
+                let export_local_conflict_spaces = if all_functions || suppress_ts2395_for_ambient {
+                    0
+                } else {
+                    exported_spaces & non_exported_spaces
+                };
+
+                if default_conflict_spaces == 0 && export_local_conflict_spaces == 0 {
+                    continue;
+                }
+
+                for &(decl_idx, _, space, _, _) in group {
+                    let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                    if (space & default_conflict_spaces) != 0 {
+                        ts2652_error_nodes.push(error_node);
+                    } else if (space & export_local_conflict_spaces) != 0 {
+                        ts2395_error_nodes.push(error_node);
+                    }
+                }
+            }
+
+            let has_merge_visibility_diagnostic =
+                !ts2652_error_nodes.is_empty() || !ts2395_error_nodes.is_empty();
+
+            if !ts2652_error_nodes.is_empty() {
+                let name = symbol.escaped_name.clone();
+                let message = format_message(
+                    diagnostic_messages::MERGED_DECLARATION_CANNOT_INCLUDE_A_DEFAULT_EXPORT_DECLARATION_CONSIDER_ADDING_A,
+                    &[&name],
+                );
+                for error_node in ts2652_error_nodes {
+                    self.error_at_node(
+                        error_node,
+                        &message,
+                        diagnostic_codes::MERGED_DECLARATION_CANNOT_INCLUDE_A_DEFAULT_EXPORT_DECLARATION_CONSIDER_ADDING_A,
+                    );
+                }
+            }
+
+            if !ts2395_error_nodes.is_empty() {
+                let name = symbol.escaped_name.clone();
+                let message = format_message(
+                    diagnostic_messages::INDIVIDUAL_DECLARATIONS_IN_MERGED_DECLARATION_MUST_BE_ALL_EXPORTED_OR_ALL_LOCAL,
+                    &[&name],
+                );
+                for error_node in ts2395_error_nodes {
+                    self.error_at_node(
+                        error_node,
+                        &message,
+                        diagnostic_codes::INDIVIDUAL_DECLARATIONS_IN_MERGED_DECLARATION_MUST_BE_ALL_EXPORTED_OR_ALL_LOCAL,
+                    );
+                }
+            }
 
             // TS2428 only applies to merged interface declarations. Mixed
             // class+interface merges are handled separately by
@@ -1602,7 +1651,7 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS,
                 )
             } else {
-                if has_ts2395 {
+                if has_merge_visibility_diagnostic {
                     continue;
                 }
 

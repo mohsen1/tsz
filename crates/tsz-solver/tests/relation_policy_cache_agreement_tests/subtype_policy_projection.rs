@@ -32,7 +32,8 @@ fn subtype_cache_key_matches_equivalent_relation_policy_projection() {
     let target = TypeId::NUMBER;
     let mut checker = SubtypeChecker::new(&interner)
         .with_any_propagation_mode(AnyPropagationMode::TopLevelOnly)
-        .with_assume_related_on_cycle(false);
+        .with_assume_related_on_cycle(false)
+        .with_assume_related_on_depth(false);
     checker.strict_null_checks = true;
     checker.strict_function_types = true;
     checker.exact_optional_property_types = true;
@@ -60,7 +61,8 @@ fn subtype_cache_key_matches_equivalent_relation_policy_projection() {
         | RelationFlags::STRICT_READONLY_IDENTITY;
     let expected_policy = RelationPolicy::from_relation_flags(expected_flags)
         .with_any_propagation_mode(AnyPropagationMode::TopLevelOnly)
-        .with_assume_related_on_cycle(false);
+        .with_assume_related_on_cycle(false)
+        .with_assume_related_on_depth(false);
 
     let key = checker.debug_cache_key_for(source, target);
 

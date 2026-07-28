@@ -1660,7 +1660,13 @@ impl CheckerState<'_> {
             self,
             tsz_common::perf_counters::CheckerCreationReason::DelegateCrossArenaInterface,
         );
-        checker.ctx.current_file_idx = delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
+        // `symbol_arenas` can identify the owner arena before the symbol has an
+        // explicit file target. In that case `delegate_file_idx` is `None`, but
+        // `query_file_idx` still records the arena's declaring file. Keep the
+        // child checker aligned with that owner: retaining the requester's file
+        // index makes names local to the delegated declaration look cross-file
+        // while resolving its heritage (for example `Omit<LocalBase, K>`).
+        checker.ctx.current_file_idx = query_file_idx.unwrap_or(self.ctx.current_file_idx);
         // Parent caches are cloned into the child for performance, but raw SymbolIds
         // can collide across binders. Clear the delegated symbol's entries so the
         // child recomputes the interface in its home binder instead of reusing a

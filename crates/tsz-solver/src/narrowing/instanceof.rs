@@ -198,12 +198,18 @@ impl<'a> NarrowingContext<'a> {
                 let members = self.db.type_list(members_id);
                 // PERF: Reuse a single SubtypeChecker across all member checks
                 // instead of allocating 4 hash sets per is_subtype_of call.
-                let mut checker = SubtypeChecker::new(self.db.as_type_database());
+                let mut checker = SubtypeChecker::new(self.db.as_type_database())
+                    .with_query_db(self.db)
+                    .with_assume_related_on_depth(false);
                 let mut filtered_members: SmallVec<[TypeId; 4]> = SmallVec::new();
                 for &member in &*members {
                     // Check if member is assignable to instance type
                     checker.reset();
-                    if checker.is_subtype_of(member, instance_type) {
+                    let member_is_subtype = checker.is_subtype_of(member, instance_type);
+                    if checker.incomplete_evaluation_relation_event_count() != 0 {
+                        self.cache.note_relation_budget_event();
+                    }
+                    if member_is_subtype {
                         trace!(
                             "Union member {} is assignable to instance type {}, keeping",
                             member.0, instance_type.0
@@ -215,7 +221,11 @@ impl<'a> NarrowingContext<'a> {
                     // Check if instance type is assignable to member (subclass case)
                     // If we have a Dog and instanceof Animal, Dog is an instance of Animal
                     checker.reset();
-                    if checker.is_subtype_of(instance_type, member) {
+                    let instance_is_subtype = checker.is_subtype_of(instance_type, member);
+                    if checker.incomplete_evaluation_relation_event_count() != 0 {
+                        self.cache.note_relation_budget_event();
+                    }
+                    if instance_is_subtype {
                         trace!(
                             "Instance type {} is assignable to union member {} (subclass), narrowing to instance type",
                             instance_type.0, member.0
@@ -353,12 +363,18 @@ impl<'a> NarrowingContext<'a> {
             if let Some(members_id) = union_list_id(self.db, resolved_source) {
                 let members = self.db.type_list(members_id);
                 // PERF: Reuse a single SubtypeChecker across all member checks
-                let mut checker = SubtypeChecker::new(self.db.as_type_database());
+                let mut checker = SubtypeChecker::new(self.db.as_type_database())
+                    .with_query_db(self.db)
+                    .with_assume_related_on_depth(false);
                 let mut filtered_members: SmallVec<[TypeId; 4]> = SmallVec::new();
                 for &member in &*members {
                     // Exclude members that are definitely subtypes of the instance type
                     checker.reset();
-                    if !checker.is_subtype_of(member, instance_type) {
+                    let member_is_subtype = checker.is_subtype_of(member, instance_type);
+                    if checker.incomplete_evaluation_relation_event_count() != 0 {
+                        self.cache.note_relation_budget_event();
+                    }
+                    if !member_is_subtype {
                         filtered_members.push(member);
                     }
                 }
@@ -464,17 +480,9 @@ impl<'a> NarrowingContext<'a> {
                         );
                         continue;
                     }
-                    if crate::relations::subtype::is_subtype_of_with_db(
-                        self.db,
-                        member,
-                        instance_type,
-                    ) {
+                    if self.is_subtype_for_narrowing(member, instance_type) {
                         result.push(member);
-                    } else if crate::relations::subtype::is_subtype_of_with_db(
-                        self.db,
-                        instance_type,
-                        member,
-                    ) {
+                    } else if self.is_subtype_for_narrowing(instance_type, member) {
                         result.push(instance_type);
                     }
                 }
@@ -980,6 +988,8 @@ impl<'a> NarrowingContext<'a> {
         let resolved_source = self.resolve_type(source);
         let resolved_instance = self.resolve_type(instance_type);
 
+        // Overlap is intentionally conservative: budget uncertainty must keep
+        // the possible intersection instead of proving it uninhabitable.
         let mut checker = SubtypeChecker::new(self.db.as_type_database()).with_query_db(self.db);
         checker.are_types_overlapping(resolved_source, resolved_instance)
     }
@@ -1116,11 +1126,7 @@ impl<'a> NarrowingContext<'a> {
         // and primitives) have no private constructor identity. `tsc` keeps the
         // source iff it is a subtype of the constructor's instance type.
         let resolved_member = self.resolve_type(member);
-        crate::relations::subtype::is_subtype_of_with_db(
-            self.db,
-            resolved_member,
-            resolved_instance,
-        )
+        self.is_subtype_for_narrowing(resolved_member, resolved_instance)
     }
 
     /// Narrow by `x.constructor !== SomeClass` (false branch).

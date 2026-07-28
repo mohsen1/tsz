@@ -56,8 +56,11 @@ fn test_exact_optional_property_types_toggle_behavior() {
 
 #[test]
 fn test_strict_null_checks_off_null_assignable_to_anything() {
-    // With strictNullChecks=false, null is assignable to most types.
-    // Exception: null is NOT assignable to void (only undefined is).
+    // With strictNullChecks=false, null is assignable to non-union targets,
+    // including void: `s & Null && (!strictNullChecks && !(t & UnionOrIntersection)
+    // || t & Null)` — the null-excluding void rule is the *strict* disjunct.
+    // Verified against tsc 7.0.2 (`nullAssignableToEveryType.ts`, no error for
+    // `var v: void = null` under strict: false).
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
 
@@ -67,8 +70,9 @@ fn test_strict_null_checks_off_null_assignable_to_anything() {
     assert!(checker.is_assignable(TypeId::NULL, TypeId::STRING));
     assert!(checker.is_assignable(TypeId::NULL, TypeId::NUMBER));
     assert!(checker.is_assignable(TypeId::NULL, TypeId::BOOLEAN));
-    // null is NOT assignable to void — only undefined is (tsc intrinsic rule)
-    assert!(!checker.is_assignable(TypeId::NULL, TypeId::VOID));
+    // null reaches void when strictNullChecks is off (strict mode reserves
+    // void for undefined; non-strict does not)
+    assert!(checker.is_assignable(TypeId::NULL, TypeId::VOID));
 
     // undefined is also assignable to everything
     assert!(checker.is_assignable(TypeId::UNDEFINED, TypeId::STRING));

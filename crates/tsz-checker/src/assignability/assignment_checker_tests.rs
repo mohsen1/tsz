@@ -656,7 +656,7 @@ const directTarget: AxisType = undefined;
     );
     assert!(
         ts2322.iter().any(|diag| diag.message_text.contains(
-            "Type 'undefined' is not assignable to type '\"linear\" | \"categorical\"'."
+            "Type 'undefined' is not assignable to type '\"categorical\" | \"linear\"'."
         )),
         "object literal property diagnostic should expand the contextual literal-union alias, got: {diagnostics:?}"
     );

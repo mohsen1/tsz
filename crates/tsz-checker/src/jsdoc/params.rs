@@ -138,6 +138,8 @@ impl<'a> CheckerState<'a> {
             actual_params.push((name, is_binding_pattern));
         }
 
+        self.check_jsdoc_qualified_param_tags(jsdoc, &actual_params, func_idx);
+
         // Extract @param tag names from JSDoc (only top-level, non-dotted names)
         let jsdoc_params = Self::extract_jsdoc_param_names(jsdoc);
         let has_implicit_arguments_candidate =
@@ -276,6 +278,15 @@ impl<'a> CheckerState<'a> {
         for chunk in comment_text.split_inclusive('\n') {
             let raw_line = chunk.trim_end_matches('\n').trim_end_matches('\r');
             let Some((at_param, param_tag)) = Self::jsdoc_param_tag_offset(raw_line) else {
+                // A Closure `function(...)` type is rejected wherever it is
+                // written, not only after `@param`. `@return`/`@returns` carry
+                // a braced type on the same line shape, so scan them here too;
+                // they contribute no parameter tag, hence the early continue.
+                self.check_closure_function_type_on_tag_line(
+                    raw_line,
+                    line_start,
+                    &["return", "returns"],
+                );
                 line_start += chunk.len();
                 continue;
             };
@@ -296,7 +307,24 @@ impl<'a> CheckerState<'a> {
             if let Some((type_expr, _after_type)) =
                 Self::parse_jsdoc_curly_type_expr(raw_line.get(type_open..).unwrap_or_default())
             {
-                if let Some(error_offset) = Self::jsdoc_param_type_syntax_error_offset(type_expr) {
+                if let Some(paren_offset) = Self::jsdoc_closure_function_type_offset(type_expr) {
+                    // Closure-style `function(...)` is not a type the pinned
+                    // compiler accepts: it reports TS1005 at the `(` and nothing
+                    // else. In particular it does NOT also report the empty-name
+                    // TS8024 that the malformed-type branch below emits, so this
+                    // case gets its own branch rather than joining that one.
+                    let error_pos = (line_start + type_source_start + paren_offset) as u32;
+                    let close_brace_expected =
+                        format_message(diagnostic_messages::EXPECTED, &["}"]);
+                    self.emit_jsdoc_param_syntax_diagnostic_once(
+                        error_pos,
+                        1,
+                        &close_brace_expected,
+                        diagnostic_codes::EXPECTED,
+                    );
+                } else if let Some(error_offset) =
+                    Self::jsdoc_param_type_syntax_error_offset(type_expr)
+                {
                     let error_pos = (line_start + type_source_start + error_offset) as u32;
                     let close_brace_expected =
                         format_message(diagnostic_messages::EXPECTED, &["}"]);
@@ -342,7 +370,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn emit_jsdoc_param_syntax_diagnostic_once(
+    pub(super) fn emit_jsdoc_param_syntax_diagnostic_once(
         &mut self,
         start: u32,
         length: u32,
@@ -393,7 +421,7 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    fn function_uses_implicit_arguments_object(&self, func_idx: NodeIndex) -> bool {
+    pub(super) fn function_uses_implicit_arguments_object(&self, func_idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(func_idx) else {
             return false;
         };
@@ -510,65 +538,6 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
         }
-    }
-
-    /// Find the byte offset of a parameter name after `@param` in source text.
-    ///
-    /// Given the text after `@param`, skips optional `{type}` and whitespace,
-    /// then checks if the next word matches `name`. Returns the byte offset
-    /// of the name relative to the start of the input.
-    fn find_param_name_in_source(after_param: &str, name: &str) -> Option<usize> {
-        let mut rest = after_param;
-        let mut offset = 0;
-        // Skip whitespace
-        let trimmed = rest.trim_start();
-        offset += rest.len() - trimmed.len();
-        rest = trimmed;
-        // Skip {type} if present
-        if rest.starts_with('{') {
-            let mut depth = 0usize;
-            for (i, ch) in rest.char_indices() {
-                match ch {
-                    '{' => depth += 1,
-                    '}' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            offset += i + 1;
-                            rest = &rest[i + 1..];
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            // Skip whitespace after type
-            let trimmed = rest.trim_start();
-            offset += rest.len() - trimmed.len();
-            rest = trimmed;
-        }
-        // Strip optional [ for optional params like [name] or [name=default]
-        if rest.starts_with('[') {
-            offset += 1;
-            rest = &rest[1..];
-        }
-        if name.is_empty() {
-            if let Some(after_star) = rest.strip_prefix('*') {
-                let ws_after_star = after_star.len() - after_star.trim_start().len();
-                if after_star.trim_start().starts_with('*') {
-                    return Some(offset + 1 + ws_after_star);
-                }
-            }
-            return (!rest.is_empty()).then_some(offset);
-        }
-        // Check if the next word is the name
-        if let Some(after_name) = rest.strip_prefix(name) {
-            // Verify it's a complete word (followed by non-alphanumeric or end)
-            if after_name.is_empty() || !after_name.chars().next().unwrap_or('\0').is_alphanumeric()
-            {
-                return Some(offset);
-            }
-        }
-        None
     }
 }
 

@@ -165,18 +165,16 @@ impl<'a> CheckerState<'a> {
             }
             self.ctx.this_type_stack.push(this_type);
         }
-        let prototype_owner_this_type = if self.is_js_file() {
-            self.js_prototype_owner_expression_for_node(idx)
-                .and_then(|owner_expr| self.js_prototype_owner_function_target(owner_expr))
-                .and_then(|owner_target| {
-                    self.synthesize_js_constructor_instance_type(owner_target, TypeId::ANY, &[])
-                })
-        } else {
-            None
-        };
-        let contextual_receiver_this_type = prototype_owner_this_type.or_else(|| {
-            self.contextual_object_receiver_this_type(contextual_type, marker_this_type)
-        });
+        // TypeScript 7 dropped JS constructor-function inference, so an object
+        // literal assigned to `M.prototype` no longer borrows `M`'s synthesized
+        // instance type as the `this` of its methods. Such a method is an
+        // ordinary object-literal method: its `this` is the literal itself, the
+        // same as `var o = { m() { ... } }`. tsc 7.0.2 reports
+        // `Property '_map' does not exist on type '{ get(key: any): any; }'`
+        // for `M.prototype = { get(key) { return this._map[key] } }`, naming the
+        // literal rather than `M`.
+        let contextual_receiver_this_type =
+            self.contextual_object_receiver_this_type(contextual_type, marker_this_type);
         let base_request = request.contextual_opt(contextual_type);
         let partial_initializer_stack_index = self
             .object_literal_variable_initializer_symbol(idx)

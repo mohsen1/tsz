@@ -487,6 +487,34 @@ fn option_key_present_or_invalidated(
     compiler_opts.contains_key(key) || invalidated_options.iter().any(|k| k == key)
 }
 
+/// tsc's `getStrictOptionValue`: a strict-family member's effective value is
+/// its own explicit value when it has one, and the `strict` umbrella's value
+/// otherwise. An invalidated (TS5024) member is treated like an absent one, so
+/// it still inherits `strict` — matching tsc, where a rejected option value
+/// simply leaves the field `undefined`.
+///
+/// `strict` itself defaults to **true** in TypeScript 7 (it was false in 6.x),
+/// which is what makes a lone `strictPropertyInitialization: true` legal:
+/// `strictNullChecks` is absent, so it inherits an enabled `strict`, and the
+/// TS5052 dependency is satisfied. `CheckerOptions`'s own defaults carry the
+/// same `strict: true`.
+///
+/// This differs from [`option_is_effectively_enabled`], which reports the raw
+/// per-key value and never consults `strict`. Option-consistency checks need
+/// both: tsc tests the raw value of the *dependent* option and the strict-aware
+/// value of the option it *depends on*.
+fn strict_option_value(
+    compiler_opts: &serde_json::Map<String, serde_json::Value>,
+    invalidated_options: &[String],
+    key: &str,
+) -> bool {
+    let explicit = |k: &str| {
+        (compiler_opts.contains_key(k) && !invalidated_options.iter().any(|i| i == k))
+            .then(|| option_is_truthy(compiler_opts.get(k)))
+    };
+    explicit(key).or_else(|| explicit("strict")).unwrap_or(true)
+}
+
 /// Check if a string is a valid TypeScript identifier or qualified name.
 /// A qualified name is one or more identifiers separated by dots: `A.B.C`.
 /// Used to validate `jsxFactory` option values (TS5067).
@@ -514,15 +542,93 @@ fn is_valid_identifier(s: &str) -> bool {
 /// Find the byte offset of a JSON key within the source text.
 /// Searches for `"key"` after `compilerOptions`.
 fn find_key_offset_in_source(source: &str, key: &str) -> u32 {
+    find_key_offset_in_source_opt(source, key).unwrap_or(0)
+}
+
+/// Like [`find_key_offset_in_source`], but distinguishes "key absent" from
+/// "key at offset 0" so callers can choose between several candidate keys.
+fn find_key_offset_in_source_opt(source: &str, key: &str) -> Option<u32> {
     let search = format!("\"{key}\"");
     // Look for the key after "compilerOptions" to avoid matching in other sections
     let compiler_opts_pos = source.find("compilerOptions").unwrap_or(0);
-    if let Some(pos) = source[compiler_opts_pos..].find(&search) {
+    source[compiler_opts_pos..]
+        .find(&search)
         // Point at the opening quote of the key, matching tsc behavior
-        (compiler_opts_pos + pos) as u32
-    } else {
-        0
+        .map(|pos| (compiler_opts_pos + pos) as u32)
+}
+
+/// Report an option-interaction diagnostic that names two compiler options.
+///
+/// tsc walks the `compilerOptions` object literal looking for either name and
+/// anchors on the **first one it encounters in source order**, emitting a
+/// single diagnostic — regardless of which of the two the message names first.
+/// A config listing `allowJs` above `checkJs` anchors at `allowJs` even though
+/// TS5052 is "about" `checkJs`; a config listing `inlineSourceMap` above
+/// `sourceMap` anchors at `inlineSourceMap` even though TS5053's message names
+/// `sourceMap` first. If neither key is written out (both are implied), tsc
+/// falls back to the enclosing `compilerOptions` key.
+///
+/// Shared by TS5052, TS5053 and TS5091, which previously each pushed a
+/// diagnostic at *both* keys — a tsc 6.0 behavior
+/// (`forEachPropertyAssignment` visiting both) that 7.0.2 no longer has.
+fn push_first_key_anchored_diagnostic(
+    diagnostics: &mut Vec<Diagnostic>,
+    file_path: &str,
+    stripped: &str,
+    keys: [&str; 2],
+    message: impl Into<String>,
+    code: u32,
+) {
+    let anchor = keys
+        .into_iter()
+        .filter_map(|key| find_key_offset_in_source_opt(stripped, key).map(|off| (off, key)))
+        .min_by_key(|(off, _)| *off);
+
+    match anchor {
+        Some((start, key)) => {
+            diagnostics.push(Diagnostic::error(
+                file_path,
+                start,
+                key.len() as u32 + 2, // include surrounding quotes
+                message,
+                code,
+            ));
+        }
+        None => {
+            let search = "\"compilerOptions\"";
+            let start = stripped.find(search).map(|p| p as u32).unwrap_or(0);
+            diagnostics.push(Diagnostic::error(
+                file_path,
+                start,
+                search.len() as u32,
+                message,
+                code,
+            ));
+        }
     }
+}
+
+/// TS5052 "Option '{0}' cannot be specified without specifying option '{1}'".
+/// The message always names the pair in dependency order; the anchor is chosen
+/// by [`push_first_key_anchored_diagnostic`].
+fn push_option_dependency_diagnostic(
+    diagnostics: &mut Vec<Diagnostic>,
+    file_path: &str,
+    stripped: &str,
+    dependent: &str,
+    required: &str,
+) {
+    push_first_key_anchored_diagnostic(
+        diagnostics,
+        file_path,
+        stripped,
+        [dependent, required],
+        format_message(
+            diagnostic_messages::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION,
+            &[dependent, required],
+        ),
+        diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITHOUT_SPECIFYING_OPTION,
+    );
 }
 
 /// Push an error diagnostic anchored at a tsconfig key, spanning the key text

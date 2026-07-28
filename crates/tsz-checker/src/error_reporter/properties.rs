@@ -585,19 +585,11 @@ impl<'a> CheckerState<'a> {
         let receiver = self.access_receiver_for_diagnostic_node(idx)?;
         let receiver_node = self.ctx.arena.get(receiver)?;
         if receiver_node.kind == SyntaxKind::ThisKeyword as u16 {
-            // Prefer the prototype-owner expression when `this` lives inside a
-            // method assigned to a `Foo.prototype.x = function() { ... }` chain.
-            if let Some(owner) = self
-                .find_enclosing_non_arrow_function(receiver)
-                .and_then(|func_idx| self.js_prototype_owner_expression_for_node(func_idx))
-                .and_then(|owner_expr| {
-                    self.js_prototype_owner_function_target(owner_expr)
-                        .map(|_| owner_expr)
-                })
-                .and_then(|owner_expr| self.expression_text(owner_expr))
-            {
-                return Some(owner);
+            if let Some(display) = self.js_prototype_object_literal_receiver_display(receiver) {
+                return Some(display);
             }
+            // Outside prototype literals, retain the real enclosing
+            // class/constructor instance fallback.
             if let Some(owner) = self
                 .find_enclosing_non_arrow_function(receiver)
                 .and_then(|func_idx| self.find_assignment_lhs_for_rhs(func_idx))
@@ -609,6 +601,16 @@ impl<'a> CheckerState<'a> {
                         return None;
                     }
                     let access = self.ctx.arena.get_access_expr(lhs_node)?;
+                    // `X.prototype = { ... }`: naming the LHS owner prints
+                    // `typeof X` where tsc names the literal.
+                    if self
+                        .ctx
+                        .arena
+                        .get_identifier_at(access.name_or_argument)
+                        .is_some_and(|ident| ident.escaped_text == "prototype")
+                    {
+                        return None;
+                    }
                     let receiver_node = self.ctx.arena.get(access.expression)?;
                     if receiver_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                         || receiver_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
@@ -1176,6 +1178,10 @@ impl<'a> CheckerState<'a> {
         }
 
         if self.actual_lib_namespace_merged_type_has_property(type_id, prop_name) {
+            return;
+        }
+
+        if self.js_open_object_receiver_under_implicit_any(type_id) {
             return;
         }
 

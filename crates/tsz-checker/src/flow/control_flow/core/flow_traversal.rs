@@ -114,6 +114,18 @@ impl<'a> FlowAnalyzer<'a> {
             initial_has_type_params,
             skip_cache_for_control_flow_typed_any,
         );
+        // A walk that runs while a loop's fixed point is still iterating reads
+        // the provisional assumption `analyze_loop_fixed_point` injects to break
+        // its own recursion. Those results are incomplete in `tsc`'s sense —
+        // later iterations widen the loop type — so they must not be committed
+        // to the shared cache. Committing them pinned the first iteration's
+        // guess: in `while (cond) { if (typeof x === "string") { x = x.slice(); } }`
+        // with `x: string | number = 0`, the entry guess `number` narrowed to
+        // `never`, and that `never` was still cached once the loop type had
+        // widened to `string | number`.
+        if self.loop_fixed_point_depth.get() > 0 {
+            cache_policy.mark_provisional();
+        }
 
         // Initialize worklist with the entry point
         worklist.push_back((flow_id, initial_type));

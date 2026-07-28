@@ -1112,14 +1112,26 @@ impl<'a> CheckerState<'a> {
             return self.normalized_anchor_span(prop.name, name_start, name_len);
         }
 
+        // tsc's `getErrorSpanForNode` has no `SyntaxKind.Parameter` case, so a
+        // parameter keeps its own span rather than narrowing to its name. For a
+        // plain parameter the two coincide (the node starts at the name), but a
+        // **parameter property** starts at its accessibility modifier, and tsc
+        // anchors there: `constructor(public x: string = 1)` reports TS2322 at
+        // `public`, not at `x`. Narrowing unconditionally lost that.
         if node.kind == syntax_kind_ext::PARAMETER
             && let Some(param) = self.ctx.arena.get_parameter(node)
             && param.name.is_some()
             && let Some(name_node) = self.ctx.arena.get(param.name)
         {
-            let name_start = name_node.pos;
-            let name_len = name_node.end.saturating_sub(name_start);
-            return self.normalized_anchor_span(param.name, name_start, name_len);
+            let has_modifiers = param
+                .modifiers
+                .as_ref()
+                .is_some_and(|modifiers| !modifiers.nodes.is_empty());
+            if !has_modifiers {
+                let name_start = name_node.pos;
+                let name_len = name_node.end.saturating_sub(name_start);
+                return self.normalized_anchor_span(param.name, name_start, name_len);
+            }
         }
 
         // tsc's `getErrorSpanForNode` narrows a *named* function or class
@@ -1354,7 +1366,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(vd_idx) = var_decl
                     && let Some(vd) = self.ctx.arena.get_variable_declaration_at(vd_idx)
                 {
-                    return self.variable_declaration_anchor(vd, parent);
+                    return self.variable_declaration_anchor(vd);
                 }
                 return parent;
             }
@@ -1368,8 +1380,7 @@ impl<'a> CheckerState<'a> {
 
         if let Some(vd_idx) = var_decl {
             if let Some(vd) = self.ctx.arena.get_variable_declaration_at(vd_idx) {
-                let var_stmt = self.find_variable_statement_parent(vd_idx);
-                return self.variable_declaration_anchor(vd, var_stmt.unwrap_or(NodeIndex::NONE));
+                return self.variable_declaration_anchor(vd);
             }
             return vd_idx;
         }
@@ -1405,37 +1416,37 @@ impl<'a> CheckerState<'a> {
     fn variable_declaration_anchor(
         &self,
         vd: &tsz_parser::parser::node::VariableDeclarationData,
-        var_stmt: NodeIndex,
     ) -> NodeIndex {
-        // Check if this is a `let` or `const` declaration (not `var`)
-        let is_let_or_const = if let Some(stmt_node) = self.ctx.arena.get(var_stmt)
-            && let Some(var_data) = self.ctx.arena.get_variable(stmt_node)
-            && let Some(&list_idx) = var_data.declarations.nodes.first()
+        // tsc's `elaborateDidYouMeanToCallOrConstruct` re-reports on the
+        // *initializer expression* when calling (or `new`-ing) it would have
+        // produced something assignable to the declared type, and only
+        // otherwise anchors at the declaration name.
+        //
+        // Neither the declaration keyword nor the initializer's syntactic form
+        // is part of that rule, so the previous `var` + property-access gates
+        // made `export let x: Dog = getRover` anchor at `x` where tsc anchors at
+        // `getRover`. The return-type check is the load-bearing half: gating on
+        // "is callable" alone re-anchors every callable initializer and
+        // regresses 23 tests (assignmentCompatability44, classSideInheritance3,
+        // constructorAsType, ...), because tsc stays on the declaration name
+        // when calling the source would not have helped.
+        //
+        // The declared type is read from the variable's own cached type, which
+        // keeps this on the `&self` anchor path.
+        if vd.initializer.is_some()
+            && let Some(&init_type) = self.ctx.node_types.get(&vd.initializer.0)
+            && let Some(&declared_type) = self
+                .ctx
+                .node_types
+                .get(&vd.type_annotation.0)
+                .or_else(|| self.ctx.node_types.get(&vd.name.0))
+            && crate::query_boundaries::assignability_did_you_mean::did_you_mean_call_or_construct(
+                self.ctx.types.as_type_database(),
+                init_type,
+                declared_type,
+            )
         {
-            let flags = self.ctx.arena.get_variable_declaration_flags(list_idx);
-            use tsz_parser::parser::flags::node_flags;
-            node_flags::is_let_or_const(flags)
-        } else {
-            false
-        };
-
-        // For `var` (not let/const) with property access initializers where the
-        // initializer type is callable, tsc points at the property access.
-        // For `let`/`const` or non-callable initializers, point at the variable name.
-        if !is_let_or_const
-            && vd.initializer.is_some()
-            && let Some(init_node) = self.ctx.arena.get(vd.initializer)
-            && init_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-        {
-            // Check if the initializer type is callable (function-like).
-            // tsc points at the initializer for callable types but at the
-            // variable name for non-callable types.
-            // Use the cached type directly to avoid &mut self requirement.
-            if let Some(&init_type) = self.ctx.node_types.get(&vd.initializer.0)
-                && self.is_callable_type(init_type)
-            {
-                return vd.initializer;
-            }
+            return vd.initializer;
         }
         if vd.name.is_some() {
             return vd.name;

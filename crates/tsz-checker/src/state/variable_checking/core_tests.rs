@@ -1486,7 +1486,7 @@ mod async_jsdoc_return_type_tests {
     #[test]
     fn async_block_body_jsdoc_return_mismatch_reports_at_return_statement() {
         let source = r#"
-/** @type {function(): string} */
+/** @type {() => string} */
 const c = async () => {
     return 0
 }
@@ -1507,7 +1507,7 @@ const c = async () => {
     #[test]
     fn async_block_body_jsdoc_matching_return_no_ts2322() {
         let source = r#"
-/** @type {function(): string} */
+/** @type {() => string} */
 const d = async () => {
     return ""
 }
@@ -1526,7 +1526,7 @@ const d = async () => {
     #[test]
     fn async_expression_body_jsdoc_return_mismatch() {
         let source = r#"
-/** @type {function(): string} */
+/** @type {() => string} */
 const b = async () => 0
 "#;
         let ts2322 = check_js_source_diagnostics(source)

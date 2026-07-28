@@ -697,9 +697,7 @@ impl<'a> CheckerState<'a> {
             && !commonjs_named_props_disallowed
             && self.current_file_commonjs_exports_target_is_unshadowed(access.expression)
             && let Some(member_name) = static_member_name.as_deref()
-            && let Some(node) = self.ctx.arena.get(idx)
-            && let Some(prior_type) =
-                self.current_file_commonjs_prior_named_export_type(member_name, node.pos)
+            && let Some(prior_type) = self.current_file_commonjs_named_export_type(member_name)
         {
             return prior_type;
         }
@@ -725,6 +723,11 @@ impl<'a> CheckerState<'a> {
                         read_pos,
                     )
                     .is_some_and(|declares| !declares)
+                // Only a JS *constructor*'s prototype is closed by its object
+                // literal. On a plain function, `X.prototype.y = ...` is an
+                // ordinary prototype-property declaration that merges with the
+                // literal, and reporting it is a false positive.
+                && self.js_prototype_owner_is_js_constructor(prototype_access.expression)
             {
                 let type_display = self
                     .prior_js_prototype_object_literal_assignment_display(
@@ -755,7 +758,13 @@ impl<'a> CheckerState<'a> {
                         .enclosing_expression_statement(idx)
                         .and_then(|stmt_idx| self.js_statement_declared_type(stmt_idx))
                         .is_some();
-                if !suppress_for_jsdoc_type_decl {
+                // Only a function/class declaration's expando properties are
+                // ordered in tsc. On a plain object or a CommonJS `exports`
+                // object the property type comes from every assignment in the
+                // program, so a use before the assignment is not an error.
+                let receiver_is_ordered =
+                    self.expando_root_has_ordered_declarations(access.expression);
+                if !suppress_for_jsdoc_type_decl && receiver_is_ordered {
                     use crate::diagnostics::format_message;
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.error_at_node(

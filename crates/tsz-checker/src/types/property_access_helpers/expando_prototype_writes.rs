@@ -243,6 +243,27 @@ impl<'a> CheckerState<'a> {
         self.prototype_object_literal_display(rhs_idx)
     }
 
+    pub(crate) fn js_prototype_object_literal_receiver_display(
+        &mut self,
+        receiver_idx: NodeIndex,
+    ) -> Option<String> {
+        let mut current = receiver_idx;
+        for _ in 0..16 {
+            let parent = self.ctx.arena.parent_of(current)?;
+            if parent.is_none() {
+                return None;
+            }
+            let parent_node = self.ctx.arena.get(parent)?;
+            if parent_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                return self
+                    .js_prototype_owner_expression_for_node(parent)
+                    .and_then(|_| self.prototype_object_literal_display(parent));
+            }
+            current = parent;
+        }
+        None
+    }
+
     fn prototype_object_literal_display(&mut self, object_idx: NodeIndex) -> Option<String> {
         let node = self.ctx.arena.get(object_idx)?;
         if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
@@ -407,5 +428,35 @@ impl<'a> CheckerState<'a> {
             };
             elem_prop_name.is_some_and(|name| name == property_name)
         }))
+    }
+
+    /// Whether the owner of a `X.prototype` expression is a JS *constructor*,
+    /// in tsc's `isJSConstructor` sense: the function carries a `@constructor`
+    /// (`@class`) JSDoc tag, or its symbol has members — which for a JS
+    /// function means the body performs `this.x = ...` assignments.
+    ///
+    /// This is what separates a closed prototype from an open one. For a JS
+    /// constructor, `X.prototype = { ... }` establishes the complete prototype
+    /// and a later `X.prototype.y = ...` writing an undeclared property is
+    /// TS2339. For a plain function it is an ordinary prototype-property
+    /// declaration that merges with the literal, and reporting it is a false
+    /// positive.
+    pub(in crate::types_domain) fn js_prototype_owner_is_js_constructor(
+        &mut self,
+        prototype_root_expr: NodeIndex,
+    ) -> bool {
+        let Some(owner_target) = self.js_prototype_owner_function_target(prototype_root_expr)
+        else {
+            return false;
+        };
+        if self
+            .get_jsdoc_for_function(owner_target)
+            .is_some_and(|jsdoc| Self::jsdoc_contains_tag(&jsdoc, "constructor"))
+        {
+            return true;
+        }
+        self.resolve_identifier_symbol(prototype_root_expr)
+            .or_else(|| self.resolve_qualified_symbol(prototype_root_expr))
+            .is_some_and(|sym_id| self.symbol_has_js_constructor_evidence(sym_id))
     }
 }

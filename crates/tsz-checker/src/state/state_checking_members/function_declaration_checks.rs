@@ -78,49 +78,12 @@ impl<'a> CheckerState<'a> {
             checker.check_function_declaration(func_idx);
         }
 
-        // TS8030: In JS files, if a function declaration has a @type tag that doesn't
-        // resolve to a callable type, emit "The type of a function declaration must match
-        // the function's signature." TSC points the error at the type expression inside
-        // the @type tag (e.g. at "MyClass" in `@type {MyClass}`).
-        if node.kind == syntax_kind_ext::FUNCTION_DECLARATION && self.is_js_file()
-            && let Some(jsdoc) = self.get_jsdoc_for_function(func_idx)
-                && let Some(type_expr) = Self::jsdoc_extract_type_tag_expr(&jsdoc)
-                // Skip types that are syntactically callable (arrow functions, function types,
-                // or generic signatures) — these may not resolve but are valid function types.
-                && !Self::is_syntactically_callable_type(&type_expr)
-                && self
-                    .jsdoc_callable_type_annotation_for_function(func_idx)
-                    .is_none()
-        {
-            // Find the position of the type expression inside the JSDoc comment
-            if let Some(sf) = self.source_file_data_for_node(func_idx) {
-                let source_text = sf.text.to_string();
-                let comments = sf.comments.clone();
-                if let Some((_, jsdoc_start)) =
-                    self.try_jsdoc_with_ancestor_walk_and_pos(func_idx, &comments, &source_text)
-                {
-                    // Find "@type {expr}" in the source text starting from jsdoc_start
-                    let jsdoc_text = &source_text[jsdoc_start as usize..];
-                    if let Some(type_tag_off) = jsdoc_text.find("@type") {
-                        let after_type = &jsdoc_text[type_tag_off + 5..];
-                        if let Some(brace_off) = after_type.find('{') {
-                            let expr_start =
-                                jsdoc_start + type_tag_off as u32 + 5 + brace_off as u32 + 1;
-                            // Find matching close brace
-                            let after_brace = &after_type[brace_off + 1..];
-                            let expr_end = after_brace
-                                .find('}')
-                                .map_or(type_expr.len() as u32, |i| i as u32);
-                            self.ctx.error(
-                                    expr_start,
-                                    expr_end,
-                                    "The type of a function declaration must match the function's signature.".to_string(),
-                                    8030,
-                                );
-                        }
-                    }
-                }
-            }
+        // TS8030: in JS files, a `@type` tag on a function whose type supplies
+        // no callable signature. Object-literal methods are checked by
+        // `check_jsdoc_type_tag_callable_on_object_methods`, which this path
+        // does not reach.
+        if node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+            self.check_jsdoc_type_tag_supplies_callable(func_idx);
         }
 
         // Re-get node after DeclarationChecker borrows ctx
@@ -1426,6 +1389,107 @@ impl<'a> CheckerState<'a> {
             }
             syntax_kind_ext::THROW_STATEMENT => Some((false, false)),
             _ => None,
+        }
+    }
+
+    /// TS8030 for one function-like node: its `@type` tag must supply a
+    /// callable signature. tsc points the error at the type expression inside
+    /// the tag (e.g. at `MyClass` in `@type {MyClass}`).
+    pub(crate) fn check_jsdoc_type_tag_supplies_callable(&mut self, idx: NodeIndex) {
+        if !self.is_js_file() {
+            return;
+        }
+        let Some(jsdoc) = self.get_jsdoc_for_function(idx) else {
+            return;
+        };
+        let Some(type_expr) = Self::jsdoc_extract_type_tag_expr(&jsdoc) else {
+            return;
+        };
+        // Skip types that are syntactically callable (arrow functions or
+        // generic signatures) — these may not resolve but are valid function
+        // types. The Closure `function(...)` spelling is deliberately not among
+        // them; TypeScript 7 rejects it, so it earns no skip.
+        if Self::is_syntactically_callable_type(&type_expr) {
+            return;
+        }
+        if self
+            .jsdoc_callable_type_annotation_for_function(idx)
+            .is_some()
+        {
+            return;
+        }
+        let Some(sf) = self.source_file_data_for_node(idx) else {
+            return;
+        };
+        let source_text = sf.text.to_string();
+        let comments = sf.comments.clone();
+        let Some((_, jsdoc_start)) =
+            self.try_jsdoc_with_ancestor_walk_and_pos(idx, &comments, &source_text)
+        else {
+            return;
+        };
+        let jsdoc_text = &source_text[jsdoc_start as usize..];
+        let Some(type_tag_off) = jsdoc_text.find("@type") else {
+            return;
+        };
+        let after_type = &jsdoc_text[type_tag_off + 5..];
+        let Some(brace_off) = after_type.find('{') else {
+            return;
+        };
+        let expr_start = jsdoc_start + type_tag_off as u32 + 5 + brace_off as u32 + 1;
+        let after_brace = &after_type[brace_off + 1..];
+        let expr_end = after_brace
+            .find('}')
+            .map_or(type_expr.len() as u32, |i| i as u32);
+        self.ctx.error(
+            expr_start,
+            expr_end,
+            crate::diagnostics::diagnostic_messages::THE_TYPE_OF_A_FUNCTION_DECLARATION_MUST_MATCH_THE_FUNCTIONS_SIGNATURE
+                .to_string(),
+            crate::diagnostics::diagnostic_codes::THE_TYPE_OF_A_FUNCTION_DECLARATION_MUST_MATCH_THE_FUNCTIONS_SIGNATURE,
+        );
+    }
+
+    /// TS8030 for object-literal method shorthands.
+    ///
+    /// tsc runs this check from `checkFunctionOrMethodDeclaration`, which covers
+    /// method declarations; tsz's function-declaration callback is only reached
+    /// from the statement bridge, so object-literal methods never see it. The
+    /// witness is `conformance/jsdoc/checkJsdocTypeTagOnObjectProperty1.ts`,
+    /// whose oracle reports TS8030 for `method1(n1) {}` under a
+    /// `@type {function(number): number}` tag.
+    ///
+    /// Restricted to methods directly inside an object literal. A property with
+    /// a function or arrow *initializer* is an expression, not a method
+    /// declaration, and the same oracle reports nothing for `arrowFunc: (num)
+    /// => ...` under an identical tag.
+    pub(crate) fn check_jsdoc_type_tag_callable_on_object_methods(&mut self) {
+        if !self.is_js_file() {
+            return;
+        }
+        let mut methods = Vec::new();
+        for raw in 0..self.ctx.arena.len() {
+            let idx = NodeIndex(raw as u32);
+            let Some(node) = self.ctx.arena.get(idx) else {
+                continue;
+            };
+            if node.kind != syntax_kind_ext::METHOD_DECLARATION {
+                continue;
+            }
+            let Some(ext) = self.ctx.arena.get_extended(idx) else {
+                continue;
+            };
+            if self
+                .ctx
+                .arena
+                .get(ext.parent)
+                .is_some_and(|p| p.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+            {
+                methods.push(idx);
+            }
+        }
+        for idx in methods {
+            self.check_jsdoc_type_tag_supplies_callable(idx);
         }
     }
 }

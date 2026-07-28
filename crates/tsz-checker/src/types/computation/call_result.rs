@@ -899,10 +899,15 @@ impl<'a> CheckerState<'a> {
                     is_optional_chain,
                 )
             }
-            CallResult::NonVoidFunctionCalledWithNew | CallResult::VoidFunctionCalledWithNew => {
-                self.error_non_void_function_called_with_new_at(callee_expr);
+            CallResult::NonVoidFunctionCalledWithNew => {
+                // TS2350 only fires when `noImplicitAny` is off; with it on the
+                // implicit-`any` result is reported as TS7009 instead.
+                if !self.ctx.no_implicit_any() {
+                    self.error_non_void_function_called_with_new_at(callee_expr);
+                }
                 TypeId::ANY
             }
+            CallResult::VoidFunctionCalledWithNew => TypeId::ANY,
             CallResult::NotCallable { .. } => {
                 if is_super_call {
                     // Emit TS2346 when the super() call target has no signatures

@@ -609,7 +609,6 @@ impl CheckerState<'_> {
         // Check for duplicate identifiers (2300)
         self.check_duplicate_identifiers();
         self.check_lib_merged_interface_duplicate_index_signatures();
-        self.check_commonjs_export_property_redeclarations(&sf.statements.nodes);
 
         // Check for constructor parameter property vs explicit property conflicts (2300/2687)
         self.check_constructor_parameter_property_conflicts();
@@ -639,9 +638,6 @@ impl CheckerState<'_> {
         if self.is_js_file() {
             self.check_js_grammar_statements(&sf.statements.nodes);
 
-            // TS8022: Check for orphaned @extends/@augments tags not attached to a class
-            self.check_orphaned_extends_tags(&sf.statements.nodes);
-
             // TS8033: Check for @typedef comments with multiple @type tags
             self.check_typedef_duplicate_type_tags();
 
@@ -650,6 +646,14 @@ impl CheckerState<'_> {
 
             // TS2300: Check for duplicate @import names across JSDoc comments
             self.check_jsdoc_duplicate_imports();
+
+            // TS1005: Closure `function(...)` JSDoc types, which TypeScript 7
+            // does not accept in any tag position.
+            self.check_jsdoc_closure_function_types();
+
+            // TS8030 on object-literal method shorthands, which the
+            // function-declaration callback never reaches.
+            self.check_jsdoc_type_tag_callable_on_object_methods();
 
             // TS1069: `@template {Constraint}` with no following type-parameter name
             self.check_jsdoc_template_brace_syntax();
@@ -668,9 +672,6 @@ impl CheckerState<'_> {
 
             // TS1110: unsupported multiline @typedef wrappers without leading `*`
             self.check_jsdoc_unwrapped_multiline_typedefs();
-
-            // TS8021: Check for @typedef without type or @property tags
-            self.check_typedef_missing_type();
 
             // TS8039: Check for @template tags after @typedef/@callback/@overload
             self.check_template_after_typedef_callback();

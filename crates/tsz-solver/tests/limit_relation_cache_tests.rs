@@ -19,10 +19,15 @@ use crate::construction::RelationCacheProbe;
 use crate::def::DefId;
 use crate::evaluation::evaluate::TypeEvaluator;
 use crate::intern::TypeInterner;
+use crate::recursion::RecursionGuard;
+use crate::relations::relation_queries::{
+    RelationContext, RelationKind, RelationPolicy, query_relation,
+};
 use crate::relations::subtype::cache::MAX_GLOBAL_SUBTYPE_FUEL;
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{
-    MappedType, PropertyInfo, RelationCacheValue, SymbolRef, TypeId, TypeParamInfo,
+    MappedType, PropertyInfo, RelationCacheKey, RelationCacheValue, SymbolRef, TypeId,
+    TypeParamInfo,
 };
 
 /// Maps a fixed set of `DefId`s to recursive bodies.
@@ -86,6 +91,133 @@ fn recursive_pair(
         defs: vec![(s_def, body_s), (t_def, body_t)],
     };
     (resolver, lazy_s, lazy_t, arr_s, arr_t)
+}
+
+#[test]
+fn strict_depth_overflow_does_not_poison_fresh_cycle_query() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let (resolver, source, target, _, _) = recursive_pair(
+        &interner,
+        "next",
+        "tag",
+        TypeId::STRING,
+        TypeId::STRING,
+        DefId(90),
+        DefId(91),
+    );
+
+    let mut low_budget = SubtypeChecker::with_resolver(&interner, &resolver)
+        .with_query_db(&db)
+        .with_assume_related_on_depth(false);
+    low_budget.guard = RecursionGuard::new(1, 100_000);
+    let key = low_budget.debug_cache_key_for(source, target);
+    assert!(!low_budget.is_subtype_of(source, target));
+    assert!(low_budget.guard.is_exceeded());
+    assert_eq!(
+        db.lookup_subtype_cache(key),
+        None,
+        "strict limit-derived failure must not be published as definitive",
+    );
+
+    let mut fresh = SubtypeChecker::with_resolver(&interner, &resolver)
+        .with_query_db(&db)
+        .with_assume_related_on_depth(false);
+    assert!(
+        fresh.is_subtype_of(source, target),
+        "a fresh-budget query must retain valid coinductive recursion",
+    );
+    assert_eq!(db.lookup_subtype_cache(key), Some(true));
+}
+
+#[test]
+fn outer_query_cache_skips_global_relation_fuel_failure() {
+    crate::limits::reset_subtype_thread_local_state();
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let value = interner.intern_string("value");
+    let extra = interner.intern_string("extra");
+    let source = interner.object(vec![
+        PropertyInfo::new(value, TypeId::STRING),
+        PropertyInfo::new(extra, TypeId::NUMBER),
+    ]);
+    let target = interner.object(vec![PropertyInfo::new(value, TypeId::STRING)]);
+    let policy = RelationPolicy::default().with_assume_related_on_depth(false);
+    let key = RelationCacheKey::for_subtype(source, target, policy.cache_config());
+
+    for _ in 0..MAX_GLOBAL_SUBTYPE_FUEL {
+        let _ = crate::limits::enter_subtype_frame();
+    }
+
+    let limited = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Subtype,
+        policy,
+        RelationContext::default(),
+    );
+    assert!(!limited.is_related());
+    assert!(
+        !limited.depth_exceeded(),
+        "global relation fuel is separate from diagnostic depth termination",
+    );
+    assert!(
+        !limited.is_cacheable(),
+        "the typed stability channel must expose non-local relation fuel",
+    );
+    assert!(!db.is_subtype_of_with_policy(source, target, policy));
+    assert_eq!(
+        db.lookup_subtype_cache(key),
+        None,
+        "the outer boolean cache must not publish a global-fuel failure",
+    );
+
+    crate::limits::reset_subtype_thread_local_state();
+    assert!(
+        db.is_subtype_of_with_policy(source, target, policy),
+        "a fresh-budget query must prove the structural subtype",
+    );
+    assert_eq!(db.lookup_subtype_cache(key), Some(true));
+    crate::limits::reset_subtype_thread_local_state();
+}
+
+#[test]
+fn parent_relation_cache_skips_optimistic_child_fuel_limit() {
+    crate::limits::reset_subtype_thread_local_state();
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let property = interner.intern_string("property");
+    let nested = interner.intern_string("nested");
+    let source_inner = interner.object(vec![PropertyInfo::new(nested, TypeId::NUMBER)]);
+    let target_inner = interner.object(vec![PropertyInfo::new(nested, TypeId::STRING)]);
+    let source = interner.object(vec![PropertyInfo::new(property, source_inner)]);
+    let target = interner.object(vec![PropertyInfo::new(property, target_inner)]);
+
+    for _ in 0..MAX_GLOBAL_SUBTYPE_FUEL - 1 {
+        let _ = crate::limits::enter_subtype_frame();
+    }
+
+    let mut limited = SubtypeChecker::new(&interner).with_query_db(&db);
+    let key = limited.debug_cache_key_for(source, target);
+    assert!(
+        limited.is_subtype_of(source, target),
+        "the default relation policy conservatively accepts a child fuel limit",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(key),
+        None,
+        "a parent True that consumed child DepthExceeded must not be definitive",
+    );
+
+    crate::limits::reset_subtype_thread_local_state();
+    let mut fresh = SubtypeChecker::new(&interner).with_query_db(&db);
+    assert!(
+        !fresh.is_subtype_of(source, target),
+        "fresh fuel must reveal the incompatible nested property",
+    );
+    assert_eq!(db.lookup_subtype_cache(key), Some(false));
+    crate::limits::reset_subtype_thread_local_state();
 }
 
 // =============================================================================

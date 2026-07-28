@@ -412,7 +412,7 @@ fn format_number_literal_uses_scientific_notation_above_1e21() {
 }
 
 #[test]
-fn number_literal_union_uses_tsc_allocation_order() {
+fn number_literal_union_uses_tsc_numeric_order() {
     let db = TypeInterner::new();
     let one = db.literal_number(1.0);
     let minus_one = db.literal_number(-1.0);
@@ -421,20 +421,24 @@ fn number_literal_union_uses_tsc_allocation_order() {
 
     let union = db.union(vec![minus_one, zero, one, two]);
 
+    // TypeScript 7 runs with `stableTypeOrdering`, whose `compareTypes` orders
+    // numeric literal types by value, so allocation order does not leak into
+    // the rendered union. Negative values sort ahead of zero.
     let mut fmt = TypeFormatter::new(&db);
-    assert_eq!(fmt.format(union), "0 | 1 | -1 | 2");
+    assert_eq!(fmt.format(union), "-1 | 0 | 1 | 2");
 }
 
 #[test]
-fn number_literal_union_is_not_numeric_sorted() {
+fn number_literal_union_is_numeric_sorted_regardless_of_allocation_order() {
     let db = TypeInterner::new();
+    // Intern `2` first so allocation order disagrees with numeric order.
     let two = db.literal_number(2.0);
     let one = db.literal_number(1.0);
 
     let union = db.union(vec![one, two]);
 
     let mut fmt = TypeFormatter::new(&db);
-    assert_eq!(fmt.format(union), "2 | 1");
+    assert_eq!(fmt.format(union), "1 | 2");
 }
 
 #[test]
