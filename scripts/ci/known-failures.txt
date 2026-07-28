@@ -54,8 +54,8 @@
 # 24 entries adjudicated 2026-07-27: verified failing on clean origin/main
 # (b49ac71eb8) with per-target runs; accumulated via per-merge CI (clippy +
 # arch-size only). See d6224a58d3 for the attribution method.
-# 2026-07-28: #15846 reverted (496893ec21) — its 3 symbol-keyed entries removed
-# (shrink); the js_constructor entry remains (#15965's, tracked in #15969).
+# 2026-07-28: #15846 reverted (496893ec21) — its 3 symbol-keyed entries removed;
+# #15967's TS7 oracle migration fixed #15965's js_constructor row (shrink).
 # 2026-07-28 re-reconcile (r8): eight tsz-cli ADDITIONS, each verified failing on
 # clean origin/main — pre-existing cli-lane drift first surfaced when a push
 # touched tsz-cli (earlier inventories covered checker/emitter/solver only).
@@ -85,7 +85,6 @@ tsz-checker::import_type_utility_identity_tests::import_type_extends_structural_
 tsz-checker::import_type_utility_identity_tests::import_type_member_feeds_conditional_type
 tsz-checker::import_type_utility_identity_tests::nested_import_type_argument_feeds_conditional_type
 tsz-checker::issue_14123_repro_tests::issue_14123_alias_array_infer_reports_mismatch
-tsz-checker::js_constructor_property_more_tests::test_generic_constructor_prototype_object_methods_keep_existing_member_checks
 tsz-checker::js_constructor_property_tests::test_js_prototype_read_before_assignment_reports_ts2565
 tsz-checker::js_export_surface_tests::part_01::test_current_file_exports_reads_use_prior_assignment_types
 tsz-checker::js_export_surface_tests::part_01::test_current_file_module_exports_reads_use_prior_assignment_types
