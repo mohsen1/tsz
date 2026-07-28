@@ -767,7 +767,7 @@ cbThing(type => {
 }
 
 #[test]
-fn compile_jsdoc_enum_initializer_values_are_checked() {
+fn compile_jsdoc_enum_initializer_values_are_not_checked_under_ts7() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -796,27 +796,16 @@ const Frozen = Object.freeze({ A: 1 });
 
     let args = default_args();
     let result = compile(&args, base).expect("compile should succeed");
-    let ts2322: Vec<_> = result
-        .diagnostics
-        .iter()
-        .filter(|diag| diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
-        .collect();
-
-    // tsc emits exactly one TS2322: only the direct object-literal @enum
-    // (`const E = { A: "x" }`) is checked. The `Object.freeze({ A: 1 })` form
-    // produces nothing — tsc does not check @enum member values through the
-    // Object.freeze call.
-    assert_eq!(
-        ts2322.len(),
-        1,
-        "Expected exactly one TS2322 for the direct JSDoc @enum object literal, got: {:?}",
-        result.diagnostics
-    );
+    // TypeScript 7.0.2 does not validate initializer values for either direct
+    // object-literal or `Object.freeze` JSDoc enums. The previous expectation
+    // retained pre-7 behavior and incorrectly required a TS2322 for `E.A`.
     assert!(
-        ts2322.iter().any(
-            |diag| diag.message_text.contains("string") && diag.message_text.contains("number")
-        ),
-        "Expected string-to-number enum initializer diagnostic, got: {ts2322:?}"
+        !result
+            .diagnostics
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "TypeScript 7 does not check JSDoc enum initializer values, got: {:?}",
+        result.diagnostics
     );
 }
 
