@@ -380,6 +380,8 @@ impl<'a> CheckerState<'a> {
                         // `this` to its declared type (tsc `getThisTypeOfSignature`, #14843),
                         // so neither gets the synthetic push.
                         let mut pushed_prop_fn_this = false;
+                        // Set only for the SYNTHETIC placeholder `this` below.
+                        let mut pushed_synthetic_placeholder_this = false;
                         // Gated like tsc's getContextualThisParameterType:
                         // object-literal `this` typing needs noImplicitThis
                         // (or a JS file); otherwise `this` is plain `any`.
@@ -411,10 +413,19 @@ impl<'a> CheckerState<'a> {
                                     );
                                 self.ctx.this_type_stack.push(synthetic_this_type);
                                 pushed_prop_fn_this = true;
+                                pushed_synthetic_placeholder_this = true;
                             }
                         }
 
                         let pre_refresh_snap = self.ctx.snapshot_diagnostics();
+                        // Speculative boundary for placeholder-`this` property
+                        // misses; see the rollback below.
+                        let placeholder_speculation =
+                            pushed_synthetic_placeholder_this.then(|| {
+                                crate::context::speculation::DiagnosticSpeculationSnapshot::new(
+                                    &self.ctx,
+                                )
+                            });
                         let value_type =
                             self.get_type_of_node_with_request(prop.initializer, &property_request);
                         if initializer_is_function_like
@@ -444,6 +455,32 @@ impl<'a> CheckerState<'a> {
                                 &spans,
                                 &pre_refresh_snap,
                             );
+                        }
+
+                        // The synthetic placeholder `this` stands in for a
+                        // literal still being built, so property misses reported
+                        // against it render with placeholder spellings
+                        // (`set(..._: any): any`) and duplicate the real report.
+                        //
+                        // Drop them ONLY when this literal is an assignment RHS
+                        // (`X.prototype = { ... }`), because there the
+                        // authoritative `check_assignment_expression` pass
+                        // re-reports every access against the finished type. For
+                        // a variable initializer (`var o = { ... }`) the
+                        // placeholder pass is the ONLY reporter, and rolling it
+                        // back loses the diagnostic entirely.
+                        if let Some(speculation) = placeholder_speculation {
+                            if self.find_assignment_lhs_for_rhs(idx).is_some() {
+                                speculation.rollback_filtered(
+                                    &mut self.ctx.diagnostic_state(),
+                                    |diag| {
+                                        diag.code
+                                            != crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
+                                    },
+                                );
+                            } else {
+                                speculation.commit(&mut self.ctx.diagnostic_state());
+                            }
                         }
 
                         if pushed_prop_fn_this {
