@@ -8,7 +8,7 @@
 //! spans files used to be silently dropped. These tests pin the cross-file
 //! behavior and guard against false positives.
 
-use tsz_checker::context::CheckerOptions;
+use crate::context::CheckerOptions;
 
 fn opts() -> CheckerOptions {
     CheckerOptions {
@@ -21,14 +21,14 @@ fn opts() -> CheckerOptions {
 /// type universe and the global symbol index wired, like the driver) and report
 /// whether `file` reports `code`.
 fn file_has_code(files: &[(&str, &str)], file: &str, code: u32) -> bool {
-    tsz_checker::test_utils::check_all_multi_file_with_global_index(files, opts())
+    crate::test_utils::check_all_multi_file_with_global_index(files, opts())
         .into_iter()
         .any(|d| d.file == file && d.code == code)
 }
 
 /// Whether `code` is reported anywhere in the program.
 fn program_has_code(files: &[(&str, &str)], code: u32) -> bool {
-    tsz_checker::test_utils::check_all_multi_file_with_global_index(files, opts())
+    crate::test_utils::check_all_multi_file_with_global_index(files, opts())
         .into_iter()
         .any(|d| d.code == code)
 }
