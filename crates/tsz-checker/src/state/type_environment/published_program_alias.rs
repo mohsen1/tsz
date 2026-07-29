@@ -20,6 +20,24 @@ impl CheckerState<'_> {
         {
             return None;
         }
+        // `DefKind::TypeAlias` is also the placeholder kind minted for symbols
+        // whose flags match no known declaration form (import aliases, type
+        // parameters — see `get_or_create_def_id`'s default arm). A defaulted
+        // placeholder's published body can be a value-side type (e.g. a class
+        // constructor), and returning it skips the class-instance resolution
+        // the demoted path performs. Refuse only on positive evidence: when
+        // the def's symbol resolves and provably lacks `TYPE_ALIAS` flags.
+        // Owner-qualified defs whose symbol identity is unavailable keep the
+        // fast path — that exactness is what this publication exists for.
+        if let Some((sym_id, owner_file_idx)) = self.ctx.def_symbol_identity(def_id)
+            && let Some(symbol) = owner_file_idx
+                .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
+                .and_then(|binder| binder.get_symbol(sym_id))
+                .or_else(|| self.ctx.binder.get_symbol(sym_id))
+            && !symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS)
+        {
+            return None;
+        }
         let body = self.ctx.definition_store.get_body(def_id)?;
         (body != TypeId::ERROR && lazy_def_id(self.ctx.types, body) != Some(def_id)).then_some(body)
     }

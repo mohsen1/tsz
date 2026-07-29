@@ -43,7 +43,15 @@ impl CheckerState<'_> {
             sym_id = ?sym_id,
             "get_type_of_identifier: resolved symbol"
         );
-        let selected_by_current_binder = self.current_file_owns_plain_value_variable(sym_id)
+        // Scoped to external modules: a script's top-level variables live in
+        // the shared global scope, where a same-named declaration in another
+        // script is a genuine redeclaration of ONE merged symbol (TS2451) —
+        // and tsc types every use from that merged symbol's first value
+        // declaration, which the program-wide owner index points at. Only
+        // module-local variables can collide with a foreign symbol purely by
+        // raw-`SymbolId` reuse.
+        let selected_by_current_binder = self.ctx.binder.is_external_module()
+            && self.current_file_owns_plain_value_variable(sym_id)
             && self
                 .ctx
                 .resolve_symbol_file_index(sym_id)
