@@ -119,6 +119,7 @@ pub(super) fn collect_parse_only_no_check_diagnostics(
     #[cfg(not(target_arch = "wasm32"))]
     {
         use rayon::prelude::*;
+        tsz::parallel::ensure_rayon_global_pool();
         parse_results
             .par_iter()
             .flat_map(|result| {

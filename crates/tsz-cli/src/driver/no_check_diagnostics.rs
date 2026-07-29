@@ -22,6 +22,7 @@ pub(super) fn collect_no_check_diagnostics_for_files(
     #[cfg(not(target_arch = "wasm32"))]
     {
         use rayon::prelude::*;
+        tsz::parallel::ensure_rayon_global_pool();
         input
             .file_indices
             .par_iter()

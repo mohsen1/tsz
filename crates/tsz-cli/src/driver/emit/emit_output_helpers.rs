@@ -276,6 +276,8 @@ pub(super) const fn new_line_str(kind: NewLineKind) -> &'static str {
 }
 
 pub(super) fn write_outputs_impl(outputs: &[OutputFile], emit_bom: bool) -> Result<Vec<PathBuf>> {
+    // Keep this IO fan-out from being the first (small-stack) global-pool builder.
+    tsz::parallel::ensure_rayon_global_pool();
     outputs.par_iter().try_for_each(|output| -> Result<()> {
         if let Some(parent) = output.path.parent() {
             std::fs::create_dir_all::<&Path>(parent)

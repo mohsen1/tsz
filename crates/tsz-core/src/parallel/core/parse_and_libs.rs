@@ -347,17 +347,25 @@ const SMALL_WORKLOAD_RAYON_THREADS: usize = 4;
 ///
 /// We initialize lazily to avoid paying global pool startup cost for single-file sequential paths.
 ///
-/// Worker threads get the same 64 MB stack as the main CLI thread. Type-level
-/// libraries (ts-toolbelt, ts-essentials) can produce deeply nested conditional/
-/// mapped type evaluation chains that easily exceed 8 MB even with logical
-/// recursion guards, because every `evaluate -> evaluate_application ->
+/// Worker threads get the same large stack as the main CLI thread
+/// (`THREAD_STACK_SIZE_BYTES`). Type-level libraries (ts-toolbelt,
+/// ts-essentials) can produce deeply nested conditional/mapped type evaluation
+/// chains that easily exceed the platform-default worker stack even with
+/// logical recursion guards, because every `evaluate -> evaluate_application ->
 /// instantiate -> evaluate` cycle still consumes real stack frames.
+///
+/// Every global-pool `par_iter` site must call this first: the first rayon use
+/// in the process builds the global pool, and a use that skips this call builds
+/// it with the platform-default (small) worker stacks. `build_global` failing
+/// after that is silent — the small-stack pool stays — so the invariant lives
+/// at the call sites, not here.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn ensure_rayon_global_pool() {
     RAYON_POOL_INIT.call_once(|| {
         // If the pool was already initialized through another rayon call, keep going.
-        let builder =
-            rayon::ThreadPoolBuilder::new().stack_size(tsz_common::limits::THREAD_STACK_SIZE_BYTES);
+        let builder = rayon::ThreadPoolBuilder::new()
+            .stack_size(tsz_common::limits::THREAD_STACK_SIZE_BYTES)
+            .thread_name(|i| format!("tsz-rayon-{i}"));
         let _ = builder.build_global();
     });
 }

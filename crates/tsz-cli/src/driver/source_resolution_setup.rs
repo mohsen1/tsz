@@ -70,6 +70,10 @@ pub(super) fn prepare_source_resolution_setup(
                 .collect()
         } else {
             use rayon::prelude::*;
+            // First global-pool use on large projects: without this, rayon
+            // builds the pool with platform-default worker stacks and deep
+            // checker recursion later overflows in a worker (#15962).
+            tsz::parallel::ensure_rayon_global_pool();
             program
                 .files
                 .par_iter()
@@ -471,6 +475,7 @@ pub(super) fn prepare_source_resolution_setup(
         if !has_cjs_require_specifier {
             vec![Vec::new(); program.files.len()]
         } else {
+            tsz::parallel::ensure_rayon_global_pool();
             program
                 .files
                 .par_iter()

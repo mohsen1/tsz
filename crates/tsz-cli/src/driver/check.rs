@@ -427,6 +427,7 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
             )
         } else {
             use rayon::prelude::*;
+            tsz::parallel::ensure_rayon_global_pool();
             Arc::new(
                 program
                     .files

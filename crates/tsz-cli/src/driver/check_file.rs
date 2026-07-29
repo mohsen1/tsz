@@ -722,6 +722,7 @@ where
     use rayon::slice::ParallelSlice;
 
     debug_assert!(!flags.extract_type_cache);
+    tsz::parallel::ensure_rayon_global_pool();
     let chunk_size = chunk_size.max(1);
     work_items
         .par_chunks(chunk_size)
@@ -847,6 +848,7 @@ where
     // Each partition runs on its own long-lived checker, in parallel. Bounding
     // to `pool_size` partitions bounds the number of live `CheckerState`s (and
     // their O(program) `apply_to` setups) to `pool_size`.
+    tsz::parallel::ensure_rayon_global_pool();
     let partition_results: Vec<Vec<(usize, CheckFileResult)>> = partitions
         .into_par_iter()
         .map(|partition| {
