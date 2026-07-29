@@ -980,6 +980,17 @@ impl DefinitionStore {
         params: Option<Vec<TypeParamInfo>>,
         finalize: bool,
     ) {
+        // A `ClassConstructor` companion is the value-space identity for
+        // `typeof C`; class declaration parameters live on its construct
+        // signatures, not on `Application(Lazy(companion), args)`. The
+        // companion shares the class's raw binder symbol, so generic
+        // cross-file registration can otherwise attach instance-side
+        // parameters here and route static access through class instantiation.
+        let params = if self.get_kind(id) == Some(DefKind::ClassConstructor) {
+            None
+        } else {
+            params
+        };
         if let Some(params) = params.as_deref() {
             self.retain_augmentation_type_param_identity(id, params);
         }
@@ -1376,6 +1387,13 @@ impl DefinitionStore {
     /// the `TypeFormatter` can display generic types with their type
     /// parameter names (e.g., `MyClass<T>` instead of just `MyClass`).
     pub fn set_type_params(&self, id: DefId, params: Vec<TypeParamInfo>) {
+        // `typeof C` is not a generic application surface. Generic class
+        // parameters belong to construct signatures; the stable
+        // `ClassConstructor` companion always has an empty declaration-level
+        // parameter list.
+        if self.get_kind(id) == Some(DefKind::ClassConstructor) {
+            return;
+        }
         self.retain_augmentation_type_param_identity(id, &params);
         self.ensure_augmentation_definition(id);
         self.record_augmentation_publication_with(|| {

@@ -118,6 +118,16 @@ impl<'a> CheckerState<'a> {
                 return None;
             };
         let def_id = query::lazy_def_id(self.ctx.types, base)?;
+        // `ClassConstructor` is the value-space `typeof C` identity. Class
+        // declaration parameters belong to its construct signatures; wrapping
+        // the companion as `Application(Lazy(companion), defaults)` sends it
+        // through type-position class instantiation and replaces statics with
+        // the instance shape.
+        if self.ctx.definition_store.get_kind(def_id)
+            == Some(tsz_solver::def::DefKind::ClassConstructor)
+        {
+            return None;
+        }
         let mut type_params = self.ctx.get_def_type_params(def_id);
         if type_params.as_ref().is_none_or(|params| {
             params

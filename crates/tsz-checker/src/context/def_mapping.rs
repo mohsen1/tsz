@@ -1028,10 +1028,19 @@ impl CheckerContext<'_> {
             let sym_id = SymbolId(raw_sym_id);
             // Populate local cache for future fast-path hits
             self.def_to_symbol.borrow_mut().insert(def_id, sym_id);
-            self.symbol_to_def
-                .borrow_mut()
-                .entry(sym_id)
-                .or_insert(def_id);
+            // A class-constructor companion deliberately shares the class's raw
+            // binder symbol id, but it is not that symbol's canonical type-space
+            // definition. Installing the reverse lookup as `symbol -> companion`
+            // lets a cross-arena import-id collision redirect later class-instance
+            // publication into the value-space companion.
+            if self.definition_store.get_kind(def_id)
+                != Some(tsz_solver::def::DefKind::ClassConstructor)
+            {
+                self.symbol_to_def
+                    .borrow_mut()
+                    .entry(sym_id)
+                    .or_insert(def_id);
+            }
             return Some(sym_id);
         }
 
@@ -1199,7 +1208,10 @@ impl CheckerContext<'_> {
         def_id: DefId,
         mut params: Vec<tsz_solver::TypeParamInfo>,
     ) {
-        if params.is_empty() {
+        if params.is_empty()
+            || self.definition_store.get_kind(def_id)
+                == Some(tsz_solver::def::DefKind::ClassConstructor)
+        {
             return;
         }
 
@@ -1233,11 +1245,20 @@ impl CheckerContext<'_> {
 
     /// Get type parameters for a `DefId`.
     ///
-    /// Returns None if the `DefId` has no type parameters or hasn't been registered yet.
+    /// Returns `None` if the `DefId` has no known type parameters or has not
+    /// been registered yet. A `ClassConstructor` companion returns
+    /// `Some(Vec::new())`: its empty application-parameter list is structural
+    /// knowledge and must not fall through to the generic class symbol.
     /// Falls back to the shared `DefinitionStore` when the same interface has multiple
     /// `DefIds` (e.g., lib types like `PromiseLike` that get different `DefIds` in
     /// different contexts).
     pub fn get_def_type_params(&self, def_id: DefId) -> Option<Vec<tsz_solver::TypeParamInfo>> {
+        if self.definition_store.get_kind(def_id)
+            == Some(tsz_solver::def::DefKind::ClassConstructor)
+        {
+            return Some(Vec::new());
+        }
+
         // ---- Step 1: local cache fast path ----
         let params = self.def_type_params.borrow();
         if let Some(result) = params.get(&def_id) {

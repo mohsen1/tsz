@@ -1539,17 +1539,24 @@ impl CheckerState<'_> {
         }
     }
 
-    /// Resolve a `DefId` to a concrete type and insert a `DefId` mapping into the type environment.
-    ///
-    /// Returns the resolved type when a symbol bridge exists; returns `None` when the `DefId`
-    /// is unknown to the checker. For `ANY`/`ERROR`, we intentionally skip env insertion.
+    /// Resolve a `DefId` and insert its concrete body into the type environment.
+    /// Returns `None` when unknown; `ANY` and `ERROR` are not inserted.
     pub(crate) fn resolve_and_insert_def_type(
         &mut self,
         def_id: tsz_solver::DefId,
     ) -> Option<TypeId> {
-        // Most relation-readiness calls resolve program definitions. Do not
-        // enter the actual-lib materializer unless both structural preconditions
-        // already hold; the helper repeats the checks as its authority guard.
+        if self.ctx.definition_store.get_kind(def_id)
+            == Some(tsz_solver::def::DefKind::ClassConstructor)
+        {
+            let body = self.ctx.get_semantic_def_body(def_id)?;
+            if body != TypeId::ANY && body != TypeId::ERROR {
+                self.try_insert_def_in_type_env(def_id, body);
+            }
+            return Some(body);
+        }
+
+        // Enter the actual-lib materializer only when both structural
+        // preconditions hold; the helper repeats its authority checks.
         if self.ctx.has_lib_loaded()
             && self.ctx.definition_store.def_is_non_program(def_id)
             && let Some(body) = self.materialize_actual_lib_alias_body(def_id)

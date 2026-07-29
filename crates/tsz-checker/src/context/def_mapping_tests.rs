@@ -172,6 +172,57 @@ fn checker_context_resolver_generation_tracks_env_and_symbol_cache_state() {
     );
 }
 
+#[test]
+fn class_constructor_companion_does_not_inherit_or_publish_class_params() {
+    use tsz_binder::SymbolId;
+    use tsz_common::interner::Atom;
+    use tsz_solver::{TypeId, TypeParamInfo, TypeParamOrigin};
+
+    let (arena, binder, types) = minimal_checker_ctx();
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "fixture.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let symbol = SymbolId(3);
+    let name = Atom::default();
+    let param = TypeParamInfo {
+        name,
+        constraint: None,
+        default: Some(TypeId::ANY),
+        is_const: false,
+        origin: TypeParamOrigin::User,
+    };
+
+    let mut class = DefinitionInfo::class(name, vec![param], vec![], vec![]);
+    class.symbol_id = Some(symbol.0);
+    let class_def = ctx.definition_store.register(class);
+    ctx.definition_store.set_type_params(class_def, vec![param]);
+
+    let companion = ctx
+        .definition_store
+        .register(DefinitionInfo::class_constructor_companion(
+            name,
+            Some(symbol.0),
+        ));
+    ctx.def_to_symbol.borrow_mut().insert(companion, symbol);
+
+    assert_eq!(
+        ctx.get_def_type_params(companion),
+        Some(Vec::new()),
+        "the shared class symbol must not donate instance parameters"
+    );
+
+    ctx.insert_def_type_params(companion, vec![param]);
+    assert_eq!(
+        ctx.definition_store.get_type_params(companion),
+        Some(Vec::new()),
+        "checker publication must preserve the companion's empty parameter list"
+    );
+}
+
 /// Regression for #8269: a dual-env registration whose flow-analyzer-env
 /// mirror loses the `RefCell` borrow race must be *deferred and replayed*,
 /// never silently dropped. Uses `register_class_extends` because the

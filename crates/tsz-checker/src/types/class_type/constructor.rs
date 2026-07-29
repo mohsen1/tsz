@@ -212,7 +212,13 @@ impl<'a> CheckerState<'a> {
         // set its body to the computed type rather than creating a new DefId.
         // This moves constructor identity from checker on-demand creation to
         // binder-owned stable identity.
-        if result != TypeId::ERROR {
+        // Only the canonical, augmentation-applied constructor result may own
+        // the stable companion body. Declaration-only augmentation probes,
+        // specialized requests, and nested provisional builds intentionally
+        // skip the local constructor cache above; publishing any of them here
+        // would still overwrite the program-wide companion with a thinner
+        // body and make later `Lazy(ClassConstructor)` reads order-dependent.
+        if can_use_cache && result != TypeId::ERROR {
             let class_def_id = current_sym
                 .and_then(|sym_id| self.ctx.symbol_to_def.borrow().get(&sym_id).copied());
 

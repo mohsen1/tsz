@@ -1,5 +1,7 @@
 use super::*;
+use crate::PropertyInfo;
 use crate::def::DefinitionInfo;
+use crate::operations::property::PropertyAccessEvaluator;
 use crate::types::IntrinsicKind;
 use std::sync::Arc;
 
@@ -256,6 +258,150 @@ fn resolve_lazy_raw_symbol_fallback_preserves_class_instance_type() {
         env.resolve_lazy(DefId(raw_symbol.0), &interner),
         Some(instance_type)
     );
+}
+
+#[test]
+fn class_constructor_lazy_reads_completed_store_body_before_local_caches() {
+    let interner = crate::construction::TypeInterner::new();
+    let store = Arc::new(DefinitionStore::new());
+    let companion = store.register(DefinitionInfo::class_constructor_companion(
+        interner.intern_string("Schema"),
+        Some(3),
+    ));
+    let stale_instance = TypeId(167);
+    let complete_constructor = TypeId(203);
+
+    let mut env = TypeEnvironment::new();
+    env.set_definition_store(Arc::clone(&store));
+    env.def_types.insert(companion.0, stale_instance);
+    env.class_instance_types.insert(companion.0, stale_instance);
+    store.set_body(companion, complete_constructor);
+
+    assert_eq!(
+        env.resolve_lazy(companion, &interner),
+        Some(complete_constructor),
+        "the canonical value-space body must outrank stale type-position caches"
+    );
+}
+
+#[test]
+fn bodyless_class_constructor_lazy_does_not_fall_back_to_local_class_shape() {
+    let interner = crate::construction::TypeInterner::new();
+    let store = Arc::new(DefinitionStore::new());
+    let companion = store.register(DefinitionInfo::class_constructor_companion(
+        interner.intern_string("Schema"),
+        Some(3),
+    ));
+    let stale_instance = TypeId(167);
+
+    let mut env = TypeEnvironment::new();
+    env.set_definition_store(Arc::clone(&store));
+    env.def_types.insert(companion.0, stale_instance);
+    env.class_instance_types.insert(companion.0, stale_instance);
+
+    assert_eq!(
+        env.resolve_lazy(companion, &interner),
+        None,
+        "a companion must stay unresolved until its canonical body is published"
+    );
+}
+
+#[test]
+fn class_constructor_companion_rejects_application_type_params() {
+    let interner = crate::construction::TypeInterner::new();
+    let store = Arc::new(DefinitionStore::new());
+    let companion = store.register(DefinitionInfo::class_constructor_companion(
+        interner.intern_string("Schema"),
+        Some(3),
+    ));
+    let param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: Some(TypeId::ANY),
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    };
+
+    let mut env = TypeEnvironment::new();
+    env.set_definition_store(Arc::clone(&store));
+    env.insert_def_with_params(companion, TypeId(203), vec![param]);
+    store.set_type_params(companion, vec![param]);
+    store.set_body_with_params(companion, TypeId(203), store.get_type_params(companion));
+
+    assert_eq!(
+        env.get_def_params_owned(companion),
+        Some(Vec::new()),
+        "constructor companions must not become generic application bases"
+    );
+    assert_eq!(store.get_type_params(companion), Some(Vec::new()));
+
+    let local_companion = DefId(301);
+    let local_symbol = SymbolId(302);
+    let mut local_env = TypeEnvironment::new();
+    local_env.insert_def_kind(local_companion, crate::def::DefKind::ClassConstructor);
+    local_env.register_def_symbol_mapping(local_companion, local_symbol);
+    local_env.insert_class_instance_type(local_companion, TypeId::STRING);
+    local_env.insert_def_with_params(
+        local_companion,
+        TypeId::NUMBER,
+        vec![TypeParamInfo {
+            name: interner.intern_string("Renamed"),
+            constraint: None,
+            default: None,
+            is_const: false,
+            origin: crate::types::TypeParamOrigin::User,
+        }],
+    );
+
+    assert_eq!(
+        local_env.def_to_symbol_id(local_companion),
+        Some(local_symbol),
+        "the companion still needs its forward symbol bridge"
+    );
+    assert_eq!(
+        local_env.symbol_to_def_id(SymbolRef(local_symbol.0)),
+        None,
+        "the companion must not replace the class's canonical reverse bridge"
+    );
+    assert_eq!(local_env.get_class_instance_type(local_companion), None);
+    assert_eq!(
+        local_env.get_def_params_owned(local_companion),
+        Some(Vec::new()),
+        "local kind metadata must enforce the same empty parameter invariant"
+    );
+}
+
+#[test]
+fn class_constructor_lazy_application_property_uses_exact_static_body() {
+    let interner = crate::construction::TypeInterner::new();
+    let store = Arc::new(DefinitionStore::new());
+    let name = interner.intern_string("Schema");
+    let symbol = SymbolId(3);
+    let make = interner.intern_string("make");
+    let mark = interner.intern_string("mark");
+    let instance = interner.object(vec![PropertyInfo::new(mark, TypeId::STRING)]);
+    let constructor = interner.object(vec![PropertyInfo::new(make, TypeId::NUMBER)]);
+
+    let mut class = DefinitionInfo::class(name, vec![], vec![], vec![]);
+    class.symbol_id = Some(symbol.0);
+    let class_def = store.register(class);
+    store.set_body(class_def, instance);
+    let companion = store.register(DefinitionInfo::class_constructor_companion(
+        name,
+        Some(symbol.0),
+    ));
+    store.set_body(companion, constructor);
+
+    let mut env = TypeEnvironment::new();
+    env.set_definition_store(Arc::clone(&store));
+    env.def_to_symbol.insert(companion.0, symbol);
+    env.symbol_to_def.insert(symbol.0, class_def);
+    env.def_types.insert(class_def.0, instance);
+
+    let application = interner.application(interner.lazy(companion), vec![TypeId::ANY]);
+    let result = PropertyAccessEvaluator::with_resolver(&interner, &env)
+        .resolve_property_access(application, "make");
+    assert_eq!(result.success_type(), Some(TypeId::NUMBER));
 }
 
 #[test]

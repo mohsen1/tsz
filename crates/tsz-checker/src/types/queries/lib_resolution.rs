@@ -833,6 +833,15 @@ impl<'a> CheckerState<'a> {
                 return cached;
             }
         }
+        // A cross-arena child has a distinct checker-local cache, so it cannot
+        // see the parent's `None` sentinel for this name. The thread-local mark
+        // spans both contexts: honor it before installing another owner. If the
+        // child started a second resolution, its successful cleanup would clear
+        // the parent's live mark and make the parent's sentinel look like a
+        // stable miss, allowing derived interfaces to drop this base.
+        if self.lib_name_resolution_in_progress(name) {
+            return None;
+        }
         let bailout_epoch_before = Self::cross_arena_bailout_epoch();
 
         tracing::trace!(name, "resolve_lib_type_by_name: called");
@@ -1737,6 +1746,36 @@ mod tests {
         assert_eq!(super::no_value_resolver(NodeIndex(0)), None);
         assert_eq!(super::no_value_resolver(NodeIndex(42)), None);
         assert_eq!(super::no_value_resolver(NodeIndex(u32::MAX)), None);
+    }
+
+    #[test]
+    fn nested_checker_does_not_clear_outer_same_name_resolution_owner() {
+        reset_lib_resolution_state();
+        let name = "RenamedCycleBase";
+        set_lib_resolution_mark(name, LibResolutionMark::InProgress);
+
+        let arena = NodeArena::default();
+        let binder = BinderState::new();
+        let types = TypeInterner::new();
+        let mut nested_checker = CheckerState::new(
+            &arena,
+            &binder,
+            &types,
+            "nested.ts".to_string(),
+            CheckerOptions::default(),
+        );
+
+        assert_eq!(nested_checker.resolve_lib_type_by_name(name), None);
+        assert!(
+            matches!(
+                lib_resolution_mark(name),
+                Some(LibResolutionMark::InProgress)
+            ),
+            "a checker with a different local cache must not steal and clear the outer owner's mark"
+        );
+
+        clear_lib_resolution_mark(name);
+        reset_lib_resolution_state();
     }
 
     #[test]

@@ -864,6 +864,16 @@ impl<'a> TypeResolver for CheckerContext<'a> {
             return Some(TypeId::ERROR);
         }
 
+        // A class-constructor companion deliberately shares the class's binder
+        // symbol id, but its `Lazy(DefId)` is a value-space `typeof C`
+        // identity. Read only the completed shared body before consulting
+        // binder-relative symbol and local environment caches; a body-less
+        // companion stays unresolved until its canonical constructor query
+        // publishes the complete static shape.
+        if self.definition_store.get_kind(def_id) == Some(DefKind::ClassConstructor) {
+            return self.get_semantic_def_body(def_id);
+        }
+
         // Convert DefId to SymbolId using the reverse mapping.
         // Fallback: if the DefId was created by `interner.reference(SymbolRef(N))`,
         // the raw DefId value equals the SymbolId. In that case, use the SymbolId

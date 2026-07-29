@@ -903,38 +903,46 @@ impl<'a> PropertyAccessEvaluator<'a> {
         // to resolve_lazy directly (needed for built-in type aliases like
         // Readonly, Partial, Required, etc. whose DefId may not have a
         // SymbolId mapping in the solver database).
-        let (body_type, type_params) = match self.resolver().def_to_symbol_id(def_id) {
-            Some(sym_id) => {
-                let symbol_ref = crate::SymbolRef(sym_id.0);
-                let body = if let Some(inner_def_id) = self.resolver().symbol_to_def_id(symbol_ref)
-                {
-                    self.resolver().resolve_lazy(inner_def_id, self.interner())
-                } else {
-                    self.resolver()
-                        .resolve_symbol_ref(symbol_ref, self.interner())
-                };
-                let symbol_params = self.resolver().get_type_params(symbol_ref);
-                let lazy_params = self.resolver().get_lazy_type_params(def_id);
-                let params = match (symbol_params, lazy_params) {
-                    (Some(symbol), Some(lazy))
-                        if !symbol.is_empty() && lazy.len() > symbol.len() =>
-                    {
-                        Some(lazy)
-                    }
-                    (Some(symbol), _) if !symbol.is_empty() => Some(symbol),
-                    (_, Some(lazy)) if !lazy.is_empty() => Some(lazy),
-                    _ => None,
-                };
-                (body, params)
-            }
-            None => {
-                // Direct DefId resolution path for built-in mapped type aliases
-                let body = self.resolver().resolve_lazy(def_id, self.interner());
-                let params = self
-                    .resolver()
-                    .get_lazy_type_params(def_id)
-                    .filter(|p| !p.is_empty());
-                (body, params)
+        let (body_type, type_params) = if self.resolver().get_def_kind(def_id)
+            == Some(crate::def::DefKind::ClassConstructor)
+        {
+            // The companion shares the class symbol, so a symbol round-trip can
+            // redirect this value-space lookup to the instance-side definition.
+            (self.resolver().resolve_lazy(def_id, self.interner()), None)
+        } else {
+            match self.resolver().def_to_symbol_id(def_id) {
+                Some(sym_id) => {
+                    let symbol_ref = crate::SymbolRef(sym_id.0);
+                    let body =
+                        if let Some(inner_def_id) = self.resolver().symbol_to_def_id(symbol_ref) {
+                            self.resolver().resolve_lazy(inner_def_id, self.interner())
+                        } else {
+                            self.resolver()
+                                .resolve_symbol_ref(symbol_ref, self.interner())
+                        };
+                    let symbol_params = self.resolver().get_type_params(symbol_ref);
+                    let lazy_params = self.resolver().get_lazy_type_params(def_id);
+                    let params = match (symbol_params, lazy_params) {
+                        (Some(symbol), Some(lazy))
+                            if !symbol.is_empty() && lazy.len() > symbol.len() =>
+                        {
+                            Some(lazy)
+                        }
+                        (Some(symbol), _) if !symbol.is_empty() => Some(symbol),
+                        (_, Some(lazy)) if !lazy.is_empty() => Some(lazy),
+                        _ => None,
+                    };
+                    (body, params)
+                }
+                None => {
+                    // Direct DefId resolution path for built-in mapped type aliases
+                    let body = self.resolver().resolve_lazy(def_id, self.interner());
+                    let params = self
+                        .resolver()
+                        .get_lazy_type_params(def_id)
+                        .filter(|p| !p.is_empty());
+                    (body, params)
+                }
             }
         };
 

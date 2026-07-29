@@ -1086,6 +1086,13 @@ impl TypeEnvironment {
     /// resolve `Lazy(class_def_id)` in type position without their own
     /// `class_instance_types` cache being warm.
     pub fn insert_class_instance_type(&mut self, def_id: DefId, instance_type: TypeId) {
+        // A `ClassConstructor` companion shares its class's binder symbol id,
+        // but it is a distinct value-space definition. A cross-arena raw-id
+        // collision must never install an instance-side override for that
+        // companion: `Lazy(constructor_def)` is the deferred `typeof C` identity.
+        if self.get_def_kind(def_id) == Some(crate::def::DefKind::ClassConstructor) {
+            return;
+        }
         self.record_augmentation_undo_with(|environment| {
             TypeEnvironmentUndo::ClassInstanceTypes(
                 def_id.0,
@@ -1122,6 +1129,15 @@ impl TypeEnvironment {
         type_id: TypeId,
         params: Vec<TypeParamInfo>,
     ) {
+        // A class-constructor companion's genericity is carried by construct
+        // signatures in its callable body, never by applying type arguments to
+        // the companion `DefId`. Drop params inherited through the class's
+        // shared raw symbol before they reach local or shared def metadata.
+        let params = if self.get_def_kind(def_id) == Some(crate::def::DefKind::ClassConstructor) {
+            Vec::new()
+        } else {
+            params
+        };
         // Identical re-registration is a no-op (see `Self::insert`); checked
         // against both the local map and the shared store so the write-through
         // below is never skipped while either view is stale.
@@ -1263,6 +1279,9 @@ impl TypeEnvironment {
     /// type bodies. This ensures lib types like `Readonly<T>` whose params were
     /// registered in the `DefinitionStore` (but not in the local cache) are found.
     pub fn get_def_params_owned(&self, def_id: DefId) -> Option<Vec<TypeParamInfo>> {
+        if self.get_def_kind(def_id) == Some(crate::def::DefKind::ClassConstructor) {
+            return Some(Vec::new());
+        }
         if let Some(local) = self.def_type_params.get(&def_id.0) {
             return Some(local.clone());
         }
@@ -1536,10 +1555,13 @@ impl TypeEnvironment {
 
     /// Register a mapping from `DefId` to `SymbolId` for `InheritanceGraph` lookups.
     ///
-    /// Also registers the reverse mapping (`SymbolId` -> `DefId`).
+    /// Also registers the reverse mapping (`SymbolId` -> `DefId`) unless the
+    /// definition is the value-space companion for a class.
     pub fn register_def_symbol_mapping(&mut self, def_id: DefId, sym_id: SymbolId) {
         self.def_to_symbol.insert(def_id.0, sym_id);
-        self.symbol_to_def.insert(sym_id.0, def_id);
+        if self.get_def_kind(def_id) != Some(crate::def::DefKind::ClassConstructor) {
+            self.symbol_to_def.insert(sym_id.0, def_id);
+        }
         self.bump_retained_augmentation_generation();
     }
 
@@ -1720,6 +1742,21 @@ impl TypeResolver for TypeEnvironment {
                 store.module_augmented_body_or_current(def_id, ty, interner)
             })
         };
+        // A `ClassConstructor` companion is an explicitly value-space
+        // identity. Its completed shared-store body is the authoritative
+        // `typeof C` shape; local `def_types` and `class_instance_types`
+        // entries may have been populated through the class's shared raw
+        // binder symbol while a cross-file constructor cycle was still open.
+        // Do not let either local cache mask the completed companion, and do
+        // not reinterpret a body-less companion through the raw-symbol
+        // fallback: it must remain unresolved until canonical publication.
+        if let Some(store) = self.definition_store.as_ref()
+            && store.get_kind(def_id) == Some(crate::def::DefKind::ClassConstructor)
+        {
+            return store
+                .get_body(def_id)
+                .map(|body| store.module_augmented_body_or_current(def_id, body, interner));
+        }
         // For classes, return the instance type (type position) instead of the constructor type
         if let Some(&instance_type) = self.class_instance_types.get(&def_id.0) {
             return Some(instance_type);
@@ -1738,6 +1775,13 @@ impl TypeResolver for TypeEnvironment {
             redirected_def_id = real_def.0,
             "resolved lazy type through raw SymbolRef fallback"
         );
+        if let Some(store) = self.definition_store.as_ref()
+            && store.get_kind(real_def) == Some(crate::def::DefKind::ClassConstructor)
+        {
+            return store
+                .get_body(real_def)
+                .map(|body| store.module_augmented_body_or_current(real_def, body, interner));
+        }
         if let Some(&instance_type) = self.class_instance_types.get(&real_def.0) {
             return Some(instance_type);
         }
