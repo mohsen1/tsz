@@ -1122,6 +1122,8 @@ impl TypeLowering<'_> {
             this_type,
             return_type,
             type_predicate,
+            has_literal_types: self.parameter_list_has_literal_type_annotations(&data.parameters),
+            construct_origin: None,
             is_method: false,
         };
 

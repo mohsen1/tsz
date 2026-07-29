@@ -1644,6 +1644,8 @@ fn test_callable_with_properties() {
             type_params: Vec::new(),
             this_type: None,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         construct_signatures: vec![],

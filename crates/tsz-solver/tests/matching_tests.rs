@@ -69,6 +69,8 @@ fn unary_call_signature(
         this_type: None,
         return_type: TypeId::VOID,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method,
     }
 }
@@ -1701,6 +1703,8 @@ fn test_match_callable_signatures() {
             this_type: None,
             return_type: TypeId::STRING,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         construct_signatures: Vec::new(),
@@ -1722,6 +1726,8 @@ fn test_match_callable_signatures() {
             this_type: None,
             return_type: t_type,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         construct_signatures: Vec::new(),

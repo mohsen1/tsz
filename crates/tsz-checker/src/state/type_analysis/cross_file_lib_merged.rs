@@ -83,10 +83,13 @@ impl<'a> CheckerState<'a> {
             return Some((cached_type, cached_params));
         }
 
-        let cross_arena_guard = Self::enter_cross_arena_delegation()?;
+        let Some(cross_arena_guard) = Self::enter_cross_arena_delegation() else {
+            return Some((TypeId::ANY, Vec::new()));
+        };
         if !self.ctx.enter_recursion() {
+            Self::mark_cross_arena_bailout();
             drop(cross_arena_guard);
-            return None;
+            return Some((TypeId::ANY, Vec::new()));
         }
 
         let delegate_file_name = lib_arena
@@ -112,12 +115,26 @@ impl<'a> CheckerState<'a> {
         checker.ctx.symbol_instance_types.remove(&local_id);
         self.prepare_lib_merged_delegation_child(&mut checker, &lib_binder, local_id);
 
+        let bailout_epoch_before = Self::cross_arena_bailout_epoch();
         let result_type = checker.get_type_of_symbol(local_id);
-        let result_params = checker.get_type_params_for_symbol(local_id);
+        let mut result_params = if Self::cross_arena_bailout_epoch() == bailout_epoch_before {
+            checker.get_type_params_for_symbol(local_id)
+        } else {
+            Vec::new()
+        };
+        let resolved_under_bailout = Self::cross_arena_bailout_epoch() != bailout_epoch_before;
 
+        drop(checker);
         self.ctx.leave_recursion();
         drop(cross_arena_guard);
 
+        if resolved_under_bailout {
+            for param in &mut result_params {
+                param.constraint = param.constraint.map(|_| TypeId::ANY);
+                param.default = param.default.map(|_| TypeId::ANY);
+            }
+            return Some((TypeId::ANY, result_params));
+        }
         if matches!(result_type, TypeId::ERROR | TypeId::UNKNOWN) {
             return None;
         }

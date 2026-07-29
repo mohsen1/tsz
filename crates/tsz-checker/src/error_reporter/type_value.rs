@@ -310,6 +310,21 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        if let Some(provenance) = self.named_import_augmentation_runtime_provenance(idx, name)
+            && !provenance.binding_is_type_only
+        {
+            let replayed_through_export_type = provenance.origin
+                == crate::types_domain::module_augmentation_value::
+                    ModuleAugmentationRuntimeOrigin::ReplayFallback
+                && self.is_export_type_only_syntax_across_binders(
+                    &provenance.module_specifier,
+                    &provenance.import_name,
+                );
+            if !replayed_through_export_type {
+                return;
+            }
+        }
+
         if self.is_declaration_name_for_type_only_value_diagnostic(idx) {
             return;
         }

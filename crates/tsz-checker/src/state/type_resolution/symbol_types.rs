@@ -20,17 +20,7 @@ impl<'a> CheckerState<'a> {
             .binder
             .get_symbol(sym_id)
             .filter(|symbol| symbol.has_any_flags(symbol_flags::ALIAS));
-        let local_alias_symbol = self
-            .ctx
-            .resolve_dynamic_symbol_file_index(sym_id)
-            .is_none()
-            .then(|| {
-                self.ctx
-                    .binder
-                    .get_symbol(sym_id)
-                    .filter(|symbol| symbol.has_any_flags(symbol_flags::ALIAS))
-            })
-            .flatten();
+        let local_symbol = self.local_type_reference_symbol(sym_id);
         let current_non_import_symbol = self
             .ctx
             .binder
@@ -39,7 +29,7 @@ impl<'a> CheckerState<'a> {
         let registered_non_import_symbol = self
             .get_symbol_from_registered_file_target(sym_id)
             .filter(|symbol| !self.reference_symbol_is_import_alias(symbol));
-        let symbol_meta = local_alias_symbol
+        let symbol_meta = local_symbol
             .or(registered_non_import_symbol)
             .or(current_non_import_symbol)
             .or_else(|| self.get_cross_file_symbol(sym_id))
@@ -63,7 +53,7 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
-        if local_alias_symbol.is_none()
+        if local_symbol.is_none()
             && let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
             && self.should_delegate_dynamic_type_alias_owner(sym_id, file_idx)
         {
@@ -199,7 +189,7 @@ impl<'a> CheckerState<'a> {
                         let aug_name = local_sym
                             .import_name()
                             .unwrap_or(local_sym.escaped_name.as_str());
-                        structural_type = self.apply_module_augmentations(
+                        structural_type = self.apply_module_type_augmentations(
                             module_specifier,
                             aug_name,
                             structural_type,
@@ -533,8 +523,11 @@ impl<'a> CheckerState<'a> {
                         && result != TypeId::UNKNOWN
                         && let Some((module_specifier, aug_name)) = alias_augmentation_target
                     {
-                        result =
-                            self.apply_module_augmentations(&module_specifier, &aug_name, result);
+                        result = self.apply_module_type_augmentations(
+                            &module_specifier,
+                            &aug_name,
+                            result,
+                        );
                     }
                     return result;
                 }
@@ -1176,8 +1169,11 @@ impl<'a> CheckerState<'a> {
             .binder
             .get_symbol(sym_id)
             .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::ALIAS));
+        let has_local_module_augmentation_symbol =
+            self.local_module_augmentation_symbol(sym_id).is_some();
 
         if !has_local_alias_symbol
+            && !has_local_module_augmentation_symbol
             && let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
             && self.should_delegate_dynamic_type_alias_owner(sym_id, file_idx)
         {
@@ -1192,15 +1188,11 @@ impl<'a> CheckerState<'a> {
         }
 
         let symbol_for_type_reference = {
-            let local_alias_symbol = self
-                .ctx
-                .binder
-                .get_symbol(sym_id)
-                .filter(|symbol| symbol.has_any_flags(symbol_flags::ALIAS));
+            let local_symbol = self.local_type_reference_with_params_symbol(sym_id);
             let registered_non_import_symbol = self
                 .get_symbol_from_registered_file_target(sym_id)
                 .filter(|symbol| !self.reference_symbol_is_import_alias(symbol));
-            local_alias_symbol
+            local_symbol
                 .or(registered_non_import_symbol)
                 .or_else(|| self.ctx.binder.get_symbol(sym_id))
                 .or_else(|| self.get_cross_file_symbol(sym_id))

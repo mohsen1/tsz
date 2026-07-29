@@ -56,6 +56,32 @@ pub(crate) fn merged_callable_type(
     })
 }
 
+/// Construct a callable that has independent `string` and `symbol` index
+/// signatures.
+///
+/// `CallableShape` retains the legacy single index slot, so when both key
+/// spaces are present the symbol surface is represented by a structural object
+/// intersection. Keeping the surfaces separate preserves their distinct value
+/// types through property/index queries.
+pub(crate) fn callable_type_with_indices(
+    db: &dyn TypeDatabase,
+    mut shape: CallableShape,
+    string_index: Option<IndexSignature>,
+    symbol_index: Option<IndexSignature>,
+) -> TypeId {
+    shape.string_index = string_index.or(symbol_index);
+    let callable = db.callable(shape);
+    if string_index.is_none() || symbol_index.is_none() {
+        return callable;
+    }
+
+    let symbol_surface = db.object_with_index(ObjectShape {
+        symbol_index,
+        ..ObjectShape::default()
+    });
+    db.intersect_types_raw2(callable, symbol_surface)
+}
+
 pub(crate) struct MergedObjectSurface {
     pub(crate) properties: Vec<PropertyInfo>,
     pub(crate) string_index: Option<IndexSignature>,

@@ -59,7 +59,7 @@ impl<'a> CheckerState<'a> {
         };
         if target_symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE == 0
             && let Some((value_sym_id, _, file_idx)) =
-                self.same_file_value_symbol_for_type_symbol(target_sym_id)
+                self.same_file_value_symbol_for_type_symbol(target_sym_id, None)
         {
             target_sym_id = value_sym_id;
             target_file_idx = Some(file_idx);

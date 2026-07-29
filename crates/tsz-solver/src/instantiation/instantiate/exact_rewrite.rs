@@ -801,6 +801,8 @@ impl ExactTypeRewriter<'_> {
                 this_type,
                 return_type,
                 type_predicate: type_predicate.or(signature.type_predicate),
+                has_literal_types: signature.has_literal_types,
+                construct_origin: signature.construct_origin,
                 is_method: signature.is_method,
             })
         }
@@ -1218,6 +1220,8 @@ mod tests {
             this_type: Some(outer),
             return_type: outer,
             type_predicate: Some(predicate),
+            has_literal_types: false,
+            construct_origin: None,
             is_method: true,
         };
         let callable = db.callable(CallableShape {
@@ -1411,6 +1415,8 @@ mod tests {
                 this_type: None,
                 return_type: TypeId::VOID,
                 type_predicate: None,
+                has_literal_types: false,
+                construct_origin: None,
                 is_method: false,
             }],
             construct_signatures: Vec::new(),

@@ -1922,6 +1922,8 @@ fn test_evaluated_callable_assignable_to_all_any_application_via_display_alias()
         return_type: TypeId::UNKNOWN,
         this_type: None,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
     let evaluated_callable = interner.callable(CallableShape {

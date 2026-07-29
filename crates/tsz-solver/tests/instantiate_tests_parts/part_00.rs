@@ -1853,6 +1853,8 @@ fn test_callable_shadowed_type_param_no_cache_leak() {
         this_type: None,
         return_type: TypeId::VOID,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: true,
     };
 
@@ -1876,6 +1878,8 @@ fn test_callable_shadowed_type_param_no_cache_leak() {
         this_type: None,
         return_type: TypeId::VOID,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: true,
     };
 

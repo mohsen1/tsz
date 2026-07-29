@@ -9,9 +9,9 @@ use crate::caches::application_eval_index::{
 };
 use crate::caches::db::{
     IntersectionMergeCacheEntry, QueryDatabase, TypeBuiltinAccess, TypeCompilerOptions,
-    TypeContainsByIdCache, TypeDatabase, TypeDisplayProvenance, TypeExtractParamsCache,
-    TypePruneUnionCache, TypeRawIntersectionConstruction, TypeSubstitutionConstruction,
-    TypeTupleLimitSignal, TypeWidenCache, UnionComplexityCheckpoint,
+    TypeConstructSignaturesCache, TypeContainsByIdCache, TypeDatabase, TypeDisplayProvenance,
+    TypeExtractParamsCache, TypePruneUnionCache, TypeRawIntersectionConstruction,
+    TypeSubstitutionConstruction, TypeTupleLimitSignal, TypeWidenCache, UnionComplexityCheckpoint,
 };
 use crate::caches::eval_dependency_index::{self, EvalDependencyIndex, EvalDependencyIndexState};
 use crate::caches::instantiation_cache::{InstantiationCache, InstantiationCacheKey};
@@ -32,11 +32,12 @@ use crate::relations::relation_queries::{
 };
 use crate::relations::subtype::TypeResolver;
 use crate::types::{
-    CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId, FunctionShape,
-    FunctionShapeId, IndexInfo, IntrinsicKind, MappedType, MappedTypeId, ObjectFlags, ObjectShape,
-    ObjectShapeId, PropertyInfo, PropertyLookup, RelationCacheKey, RelationCacheValue,
-    StringIntrinsicKind, SymbolRef, TemplateLiteralId, TemplateSpan, TupleElement, TupleListId,
-    TypeApplication, TypeApplicationId, TypeData, TypeId, TypeListId, TypeParamInfo, Variance,
+    CallSignature, CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId,
+    FunctionShape, FunctionShapeId, IndexInfo, IntrinsicKind, MappedType, MappedTypeId,
+    ObjectFlags, ObjectShape, ObjectShapeId, PropertyInfo, PropertyLookup, RelationCacheKey,
+    RelationCacheValue, StringIntrinsicKind, SymbolRef, TemplateLiteralId, TemplateSpan,
+    TupleElement, TupleListId, TypeApplication, TypeApplicationId, TypeData, TypeId, TypeListId,
+    TypeParamInfo, Variance,
 };
 use crate::visitor::is_error_type;
 use dashmap::DashMap;
@@ -865,6 +866,17 @@ impl TypeWidenCache for QueryCache<'_> {
 
     fn set_widen_type_memo(&self, type_id: TypeId, result: TypeId) {
         self.interner.set_widen_type_memo(type_id, result);
+    }
+}
+
+impl TypeConstructSignaturesCache for QueryCache<'_> {
+    fn construct_signatures_memo(&self, type_id: TypeId) -> Option<Arc<[CallSignature]>> {
+        self.interner.construct_signatures_memo(type_id)
+    }
+
+    fn set_construct_signatures_memo(&self, type_id: TypeId, signatures: Arc<[CallSignature]>) {
+        self.interner
+            .set_construct_signatures_memo(type_id, signatures);
     }
 }
 

@@ -79,12 +79,12 @@ pub mod type_handles {
     };
     pub use crate::types::{
         CallSignature, CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId,
-        FunctionShape, FunctionShapeId, IndexSignature, IntrinsicKind, LiteralValue,
-        MappedModifier, MappedType, MappedTypeId, ObjectFlags, ObjectShape, ObjectShapeId,
-        OrderedFloat, ParamInfo, PropertyInfo, PropertyLookup, SymbolRef, TemplateSpan,
-        TupleElement, TupleListId, TypeApplication, TypeApplicationId, TypeData, TypeId,
-        TypeListId, TypeParamInfo, TypeParamOrigin, TypePredicate, TypePredicateTarget, Variance,
-        Visibility, is_compiler_managed_type,
+        ConstructSignatureOrigin, FunctionShape, FunctionShapeId, IndexSignature, IntrinsicKind,
+        LiteralValue, MappedModifier, MappedType, MappedTypeId, ObjectFlags, ObjectShape,
+        ObjectShapeId, OrderedFloat, ParamInfo, PropertyInfo, PropertyLookup, SymbolRef,
+        TemplateSpan, TupleElement, TupleListId, TypeApplication, TypeApplicationId, TypeData,
+        TypeId, TypeListId, TypeParamInfo, TypeParamOrigin, TypePredicate, TypePredicateTarget,
+        Variance, Visibility, is_compiler_managed_type,
     };
 }
 
@@ -251,8 +251,8 @@ pub mod observability {
 /// `query_boundaries` in the checker crate.
 pub mod construction {
     pub use crate::caches::db::{
-        QueryDatabase, TypeBuiltinAccess, TypeDatabase, TypeRawIntersectionConstruction,
-        TypeSubstitutionConstruction, UnionComplexityCheckpoint,
+        QueryDatabase, TypeBuiltinAccess, TypeConstructSignaturesCache, TypeDatabase,
+        TypeRawIntersectionConstruction, TypeSubstitutionConstruction, UnionComplexityCheckpoint,
     };
     pub use crate::caches::query_cache::{QueryCache, RelationCacheProbe, SharedQueryCache};
     pub use crate::caches::query_cache_statistics::{QueryCacheStatistics, RelationCacheStats};
@@ -340,9 +340,10 @@ pub use types::{
     TupleListId, TypeParamInfo, TypeParamOrigin, TypePredicate, TypePredicateTarget,
 };
 pub use types::{
-    CallSignature, CallableShapeId, IntrinsicKind, LiteralValue, MappedModifier, ObjectShapeId,
-    PropertyInfo, PropertyLookup, SymbolRef, TypeApplication, TypeApplicationId, TypeData, TypeId,
-    TypeListId, Visibility, is_compiler_managed_type, normalize_display_property_order,
+    CallSignature, CallableShapeId, ConstructSignatureOrigin, IntrinsicKind, LiteralValue,
+    MappedModifier, ObjectShapeId, PropertyInfo, PropertyLookup, SymbolRef, TypeApplication,
+    TypeApplicationId, TypeData, TypeId, TypeListId, Visibility, is_compiler_managed_type,
+    normalize_display_property_order,
 };
 // unsoundness_audit: accessed via tsz_solver::unsoundness_audit module path
 

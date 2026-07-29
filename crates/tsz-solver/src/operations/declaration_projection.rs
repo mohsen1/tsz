@@ -381,6 +381,8 @@ impl Projector<'_> {
             this_type,
             return_type,
             type_predicate: sig.type_predicate,
+            has_literal_types: sig.has_literal_types,
+            construct_origin: sig.construct_origin,
             is_method: sig.is_method,
         })
     }

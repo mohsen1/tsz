@@ -618,7 +618,7 @@ impl<'a> CheckerState<'a> {
         self.type_of_value_declaration_with_mode(decl_idx, false)
     }
 
-    fn type_of_value_declaration_with_mode(
+    pub(super) fn type_of_value_declaration_with_mode(
         &mut self,
         decl_idx: NodeIndex,
         apply_module_augmentations: bool,
@@ -753,109 +753,6 @@ impl<'a> CheckerState<'a> {
         self.type_of_value_declaration_for_symbol_with_mode(sym_id, decl_idx, true)
     }
 
-    /// Resolve a value declaration type for a `(sym_id, decl_idx)` pair that the
-    /// caller already knows lives in a *different* file's binder/arena.
-    /// Bypasses `current_arena_value_declaration_belongs_to_symbol` — that check
-    /// would mis-claim ownership when the local file happens to have a symbol
-    /// with the same numeric `SymbolId` or a node at the same `NodeIndex`
-    /// (cross-binder collision). Always delegates through a child checker on
-    /// `target_file_idx`'s arena.
-    ///
-    /// Skips the `cached_cross_file_symbol_type` fast path: that bucket stores
-    /// the canonical "type for the symbol", which for merged INTERFACE+VALUE
-    /// symbols is the INTERFACE-side type. The whole point of this delegation
-    /// is to surface the VALUE-side declaration type, so consulting that
-    /// cache would short-circuit to the wrong result.
-    pub(crate) fn type_of_value_declaration_for_cross_file_symbol(
-        &mut self,
-        sym_id: SymbolId,
-        decl_idx: NodeIndex,
-        target_file_idx: usize,
-    ) -> TypeId {
-        if decl_idx.is_none() {
-            return TypeId::ERROR;
-        }
-
-        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
-        if let Some(cached) =
-            self.ctx
-                .lib_delegation_cache
-                .declaration_node_type(target_arena, decl_idx, 1)
-        {
-            return cached;
-        }
-
-        let Some(_cross_arena_guard) = Self::enter_cross_arena_delegation() else {
-            return TypeId::ERROR;
-        };
-
-        let delegate_file_name = target_arena
-            .source_files
-            .first()
-            .map(|sf| sf.file_name.clone())
-            .unwrap_or_else(|| self.ctx.file_name.clone());
-        let delegate_binder = self
-            .ctx
-            .get_binder_for_arena(target_arena)
-            .unwrap_or(self.ctx.binder);
-
-        // No cache fast-path on this delegate; every entry is a miss.
-        tsz_common::perf_counters::record_delegate_cross_arena_miss();
-        let _delegate_depth_guard = tsz_common::perf_counters::enter_delegate();
-
-        let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
-            target_arena,
-            delegate_binder,
-            self.ctx.types,
-            delegate_file_name,
-            self.ctx.compiler_options.clone(),
-            self,
-            tsz_common::perf_counters::CheckerCreationReason::CallHelpers,
-        ));
-        checker.ctx.copy_cross_file_state_from(&self.ctx);
-        checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
-        checker.ctx.current_file_idx = target_file_idx;
-        checker.ctx.symbol_resolution_set = self.ctx.symbol_resolution_set.clone();
-        checker.ctx.symbol_resolution_stack = self.ctx.symbol_resolution_stack.clone();
-        checker
-            .ctx
-            .symbol_resolution_depth
-            .set(self.ctx.symbol_resolution_depth.get());
-        // The child checker inherits the parent's caches for performance, but
-        // raw SymbolIds are local to each file binder. Clear entries for symbols
-        // owned by the delegate binder so a parent cache entry for an unrelated
-        // same-numbered symbol (for example lib `Readonly`) cannot poison a
-        // target-file annotation like `type FooFactory = Readonly<...>`.
-        checker.ctx.symbol_types.remove(&sym_id);
-        checker.ctx.symbol_instance_types.remove(&sym_id);
-        for &owned_sym_id in delegate_binder.node_symbols.values() {
-            checker.ctx.symbol_types.remove(&owned_sym_id);
-            checker.ctx.symbol_instance_types.remove(&owned_sym_id);
-        }
-        for (_, &owned_sym_id) in delegate_binder.file_locals.iter() {
-            checker.ctx.symbol_types.remove(&owned_sym_id);
-            checker.ctx.symbol_instance_types.remove(&owned_sym_id);
-        }
-        let mut result = checker.type_of_value_declaration_with_mode(decl_idx, true);
-        if result.is_unknown_or_error()
-            && let Some(node) = target_arena.get(decl_idx)
-            && let Some(var_decl) = target_arena.get_variable_declaration(node)
-            && var_decl.initializer.is_some()
-        {
-            result = checker.get_type_of_node(var_decl.initializer);
-        }
-        let _ = sym_id;
-        if !matches!(result, TypeId::ERROR | TypeId::UNKNOWN) {
-            self.ctx.lib_delegation_cache.insert_declaration_node_type(
-                target_arena,
-                decl_idx,
-                1,
-                result,
-            );
-        }
-        result
-    }
-
     pub(crate) fn type_of_value_declaration_for_symbol_without_module_augmentations(
         &mut self,
         sym_id: SymbolId,
@@ -987,6 +884,7 @@ impl<'a> CheckerState<'a> {
         let Some(_cross_arena_guard) = Self::enter_cross_arena_delegation() else {
             return TypeId::ERROR;
         };
+        let bailout_epoch_before = Self::cross_arena_bailout_epoch();
 
         let delegate_file_name = decl_arena
             .source_files
@@ -1024,8 +922,10 @@ impl<'a> CheckerState<'a> {
             .set(self.ctx.symbol_resolution_depth.get());
         let result =
             checker.type_of_value_declaration_with_mode(decl_idx, apply_module_augmentations);
+        let result_is_bailout_artifact = Self::cross_arena_bailout_epoch() != bailout_epoch_before;
 
-        if let Some(node) = decl_arena.get(decl_idx)
+        if !result_is_bailout_artifact
+            && let Some(node) = decl_arena.get(decl_idx)
             && decl_arena.get_class(node).is_some()
         {
             let def_id = self.ctx.get_or_create_def_id(sym_id);
@@ -1049,7 +949,8 @@ impl<'a> CheckerState<'a> {
         // DO NOT merge child's symbol_types back. See delegate_cross_arena_symbol_resolution
         // for the full explanation: node_symbols collisions across arenas cause cache poisoning.
 
-        let cacheable_result = result != TypeId::ERROR
+        let cacheable_result = !result_is_bailout_artifact
+            && result != TypeId::ERROR
             && (result != TypeId::UNKNOWN
                 || decl_arena
                     .source_files
@@ -1137,6 +1038,7 @@ impl<'a> CheckerState<'a> {
                     let Some(_cross_arena_guard) = Self::enter_cross_arena_delegation() else {
                         continue;
                     };
+                    let bailout_epoch_before = Self::cross_arena_bailout_epoch();
 
                     let delegate_file_name = decl_arena
                         .source_files
@@ -1168,7 +1070,11 @@ impl<'a> CheckerState<'a> {
                         .symbol_resolution_depth
                         .set(self.ctx.symbol_resolution_depth.get());
                     let result = checker.get_type_of_node(decl_idx);
-                    if !matches!(result, TypeId::ERROR | TypeId::UNKNOWN) {
+                    let result_is_bailout_artifact =
+                        Self::cross_arena_bailout_epoch() != bailout_epoch_before;
+                    if !result_is_bailout_artifact
+                        && !matches!(result, TypeId::ERROR | TypeId::UNKNOWN)
+                    {
                         self.ctx
                             .lib_delegation_cache
                             .insert_declaration_node_type(decl_arena, decl_idx, 0, result);

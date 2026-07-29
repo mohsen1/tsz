@@ -1581,6 +1581,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             this_type: s_sig.this_type,
             return_type: instantiated_return,
             type_predicate: s_sig.type_predicate,
+            has_literal_types: s_sig.has_literal_types,
+            construct_origin: s_sig.construct_origin,
             is_method: s_sig.is_method,
         };
 

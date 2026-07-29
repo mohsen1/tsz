@@ -66,6 +66,11 @@ pub struct Canonicalizer<'a, R: TypeResolver> {
     interner: &'a dyn TypeDatabase,
     /// Type resolver for looking up definitions
     resolver: &'a R,
+    /// Treat `NoInfer<T>` as `T` for `compareTypesIdentical`-style semantic
+    /// identity. The default canonical form preserves the wrapper; only
+    /// signature identity opts into this mode after effective rest shape has
+    /// already been computed from the raw outer source surface.
+    no_infer_is_transparent: bool,
     /// Stack of `DefIds` currently being expanded (for Recursive(n))
     def_stack: Vec<DefId>,
     /// Stack of type parameter scopes (for BoundParameter(n))
@@ -134,6 +139,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
         Canonicalizer {
             interner,
             resolver,
+            no_infer_is_transparent: false,
             def_stack: Vec::new(),
             param_stack: Vec::new(),
             cache: FxHashMap::default(),
@@ -144,6 +150,20 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             param_hit_floor: usize::MAX,
             def_hit_floor: usize::MAX,
         }
+    }
+
+    /// Create a canonicalizer for semantic signature-type identity.
+    ///
+    /// TypeScript's identity relation treats `NoInfer<T>` as `T`, including
+    /// when nested inside another structural type. Constructor effective-rest
+    /// shape must be inspected before calling this canonicalizer because
+    /// `NoInfer<Tuple>` is intentionally not an actual tuple for arity. This
+    /// mode is operation-local and must not attach the shared TypeId-keyed
+    /// caches used by the default, wrapper-preserving mode.
+    pub(crate) fn for_signature_identity(interner: &'a dyn TypeDatabase, resolver: &'a R) -> Self {
+        let mut canonicalizer = Self::new(interner, resolver);
+        canonicalizer.no_infer_is_transparent = true;
+        canonicalizer
     }
 
     /// Share stable interior canonicalization results through a caller-owned
@@ -578,7 +598,11 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                 // — the #13609 identity-fragmentation family on the `NoInfer` axis.
                 TypeData::NoInfer(inner) => {
                     let c_inner = self.canonicalize(inner);
-                    self.interner.no_infer(c_inner)
+                    if self.no_infer_is_transparent {
+                        c_inner
+                    } else {
+                        self.interner.no_infer(c_inner)
+                    }
                 }
 
                 // Substitution type: canonicalize the base variable and the
@@ -1044,6 +1068,8 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             this_type: c_this_type,
             return_type: c_return_type,
             type_predicate: c_type_predicate,
+            has_literal_types: sig.has_literal_types,
+            construct_origin: sig.construct_origin,
             is_method: sig.is_method,
         }
     }

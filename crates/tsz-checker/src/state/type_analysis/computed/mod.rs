@@ -1,16 +1,13 @@
-//! Computed symbol type analysis: `compute_type_of_symbol`, contextual literal types,
-//! and private property access checking.
-
+//! Computed symbol types, contextual literals, and private property access.
 mod builtin_iterator_return_alias;
 mod jsx_runtime_bridge;
+mod namespace_property;
 mod simple_local_interface;
 mod type_alias_merged_value;
 mod type_alias_variable_alias;
-
 use crate::query_boundaries::common::{contains_infer_types, contains_type_parameters};
 use crate::query_boundaries::construct_signatures::call_only_callable_type;
 use crate::query_boundaries::state::type_analysis as type_analysis_boundary;
-
 struct SymbolAliasCtx<'a> {
     sym_id: SymbolId,
     flags: u32,
@@ -26,10 +23,9 @@ use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_common::ModuleKind;
-use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeArena, NodeIndex};
 use tsz_solver::{PropertyInfo, TypeId};
-
 impl<'a> CheckerState<'a> {
     pub(crate) fn normalize_namespace_export_declaration_order(props: &mut [PropertyInfo]) {
         props.sort_by(
@@ -47,7 +43,6 @@ impl<'a> CheckerState<'a> {
                     .then_with(|| a.type_id.0.cmp(&b.type_id.0)),
             },
         );
-
         for (idx, prop) in props.iter_mut().enumerate() {
             prop.declaration_order = idx as u32 + 1;
         }
@@ -164,10 +159,22 @@ impl<'a> CheckerState<'a> {
             let ordered_exports = self.ordered_namespace_export_entries(&exports_table);
             let mut props = Vec::new();
             for &(name, export_sym_id) in &ordered_exports {
-                if self.should_skip_namespace_export_name(&exports_table, name, export_sym_id) {
+                if self.should_skip_namespace_export_name(&exports_table, name, export_sym_id)
+                    || self.is_type_only_export_symbol(export_sym_id)
+                    || self.is_export_from_type_only_wildcard(module_name, name)
+                    || self.is_export_type_only_from_file(
+                        module_name,
+                        name,
+                        Some(self.ctx.current_file_idx),
+                    )
+                {
                     continue;
                 }
-                let prop_type = self.get_type_of_symbol(export_sym_id);
+                let Some(prop_type) =
+                    self.namespace_import_export_property_type(module_name, export_sym_id, name)
+                else {
+                    continue;
+                };
                 props.push(type_analysis_boundary::namespace_export_property(
                     self.ctx.types.intern_string(name),
                     prop_type,
@@ -178,6 +185,7 @@ impl<'a> CheckerState<'a> {
                     },
                 ));
             }
+            self.append_module_augmentation_runtime_export_properties(module_name, &mut props);
             Self::normalize_namespace_export_declaration_order(&mut props);
             let module_type = type_analysis_boundary::namespace_object_type(self.ctx.types, props);
             self.ctx.namespace_module_names.insert(
@@ -269,64 +277,6 @@ impl<'a> CheckerState<'a> {
                 .any(|decl| default_symbol.declarations.contains(decl))
     }
 
-    pub(crate) fn namespace_import_export_property_type(
-        &mut self,
-        module_name: &str,
-        export_sym_id: SymbolId,
-        export_name: &str,
-    ) -> TypeId {
-        let symbol_flags_opt = self
-            .get_cross_file_symbol(export_sym_id)
-            .or_else(|| self.get_symbol_globally(export_sym_id))
-            .map(|symbol| symbol.flags);
-        let is_pure_namespace = symbol_flags_opt.is_some_and(|flags| {
-            (flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) != 0
-                && (flags & (symbol_flags::CLASS | symbol_flags::FUNCTION)) == 0
-        });
-        if is_pure_namespace {
-            let prop_type = self.build_namespace_object_type(export_sym_id);
-            self.ctx.namespace_module_names.insert(
-                prop_type,
-                self.imported_namespace_display_module_name(module_name),
-            );
-            return prop_type;
-        }
-
-        if let Some(alias_prop_type) =
-            self.named_import_alias_namespace_property_type(export_sym_id, export_name)
-        {
-            return alias_prop_type;
-        }
-
-        if let Some(value_type) = self.get_validated_member_type(export_sym_id, export_name) {
-            return value_type;
-        }
-
-        let should_delegate = self
-            .ctx
-            .resolve_symbol_file_index(export_sym_id)
-            .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
-            || self
-                .get_cross_file_symbol(export_sym_id)
-                .is_some_and(|symbol| {
-                    symbol.decl_file_idx != u32::MAX
-                        && symbol.decl_file_idx as usize != self.ctx.current_file_idx
-                });
-        let mut prop_type = if should_delegate {
-            self.delegate_cross_arena_symbol_resolution(export_sym_id)
-                .map(|(type_id, _)| type_id)
-                .unwrap_or_else(|| self.get_type_of_symbol(export_sym_id))
-        } else {
-            self.get_type_of_symbol(export_sym_id)
-        };
-        if symbol_flags_opt.is_some_and(|flags| {
-            (flags & symbol_flags::ENUM) != 0 && (flags & symbol_flags::ENUM_MEMBER) == 0
-        }) {
-            prop_type = self.get_enum_namespace_type_for_value(prop_type);
-        }
-        prop_type
-    }
-
     pub(crate) fn named_import_alias_namespace_property_type(
         &mut self,
         export_sym_id: SymbolId,
@@ -416,14 +366,16 @@ impl<'a> CheckerState<'a> {
             if self.should_skip_namespace_export_name(&exports_table, name, export_sym_id)
                 || self.is_type_only_export_symbol(export_sym_id)
                 || self.is_export_from_type_only_wildcard(module_name, name)
-                || self.export_symbol_has_no_value(export_sym_id)
                 || self.is_export_type_only_from_file(module_name, name, Some(source_file_idx))
             {
                 continue;
             }
 
-            let mut prop_type = self.get_type_of_symbol(export_sym_id);
-            prop_type = self.apply_module_augmentations(module_name, name, prop_type);
+            let Some(prop_type) =
+                self.namespace_import_export_property_type(module_name, export_sym_id, name)
+            else {
+                continue;
+            };
             let name_atom = self.ctx.types.intern_string(name);
             props.push(type_analysis_boundary::namespace_export_property(
                 name_atom,
@@ -435,6 +387,7 @@ impl<'a> CheckerState<'a> {
                 },
             ));
         }
+        self.append_module_augmentation_runtime_export_properties(module_name, &mut props);
 
         if has_export_equals && let Some(export_equals_sym_id) = exports_table.get("export=") {
             let export_equals_type = self.get_type_of_symbol(export_equals_sym_id);
@@ -509,7 +462,6 @@ impl<'a> CheckerState<'a> {
             if self.should_skip_namespace_export_name(&exports_table, name, export_sym_id)
                 || self.is_type_only_export_symbol(export_sym_id)
                 || self.is_export_from_type_only_wildcard(module_name, name)
-                || self.export_symbol_has_no_value(export_sym_id)
                 || self.is_export_type_only_from_file(module_name, name, Some(from_file_idx))
             {
                 continue;
@@ -528,10 +480,15 @@ impl<'a> CheckerState<'a> {
             } else {
                 None
             };
-            let mut prop_type = default_reexport_type.unwrap_or_else(|| {
+            let prop_type = if let Some(prop_type) = default_reexport_type {
+                self.apply_module_value_augmentations(module_name, name, prop_type)
+            } else if let Some(prop_type) =
                 self.namespace_import_export_property_type(module_name, export_sym_id, name)
-            });
-            prop_type = self.apply_module_augmentations(module_name, name, prop_type);
+            {
+                prop_type
+            } else {
+                continue;
+            };
             props.push(type_analysis_boundary::namespace_export_property(
                 self.ctx.types.intern_string(name),
                 prop_type,
@@ -542,6 +499,7 @@ impl<'a> CheckerState<'a> {
                 },
             ));
         }
+        self.append_module_augmentation_runtime_export_properties(module_name, &mut props);
 
         if props.is_empty() {
             return None;
@@ -675,27 +633,19 @@ impl<'a> CheckerState<'a> {
             {
                 continue;
             }
-            let export_is_namespace_module = self
-                .get_symbol_globally(export_sym_id)
-                .or_else(|| self.get_cross_file_symbol(export_sym_id))
-                .is_some_and(|symbol| {
-                    (symbol.flags
-                        & (tsz_binder::symbol_flags::NAMESPACE_MODULE
-                            | tsz_binder::symbol_flags::VALUE_MODULE))
-                        != 0
-                });
             if self.is_type_only_export_symbol(export_sym_id)
                 || self.is_export_from_type_only_wildcard(module_name, name)
-                || (self.export_symbol_has_no_value(export_sym_id) && !export_is_namespace_module)
                 || self.is_export_type_only_from_file(module_name, name, declaring_file_idx)
             {
                 continue;
             }
 
             self.record_cross_file_symbol_if_needed(export_sym_id, name, module_name);
-            let mut prop_type =
-                self.namespace_import_export_property_type(module_name, export_sym_id, name);
-            prop_type = self.apply_module_augmentations(module_name, name, prop_type);
+            let Some(prop_type) =
+                self.namespace_import_export_property_type(module_name, export_sym_id, name)
+            else {
+                continue;
+            };
             let declaration_order = if name == "default" {
                 1
             } else {
@@ -1499,7 +1449,6 @@ impl<'a> CheckerState<'a> {
                     interface_callsite_outcome,
                 );
             }
-
             // Merged lib symbols can live in the main binder but still carry
             // declaration nodes from other arenas. Lowering those declarations
             // against the current arena produces incomplete interface shapes
@@ -1539,7 +1488,7 @@ impl<'a> CheckerState<'a> {
                         arenas.len() > 1
                             && arenas
                                 .iter()
-                                .any(|a| !std::ptr::eq(a.as_ref(), self.ctx.arena))
+                                .any(|arena| !std::ptr::eq(arena.as_ref(), self.ctx.arena))
                     })
             });
             // Declarations owned by the current arena, per binder provenance.
@@ -1851,48 +1800,109 @@ impl<'a> CheckerState<'a> {
                 .with_lazy_type_params_resolver(&lazy_type_params_resolver)
                 .with_name_def_id_resolver(&name_resolver)
                 .with_type_query_override(&type_query_override);
-                let mut interface_type =
-                    lowering.lower_interface_declarations_with_symbol(local_declarations, sym_id);
-
-                // Cross-file interface declaration merging: when declarations from
-                // other arenas exist, lower each with a TypeLowering bound to its
-                // source arena and merge the members structurally.
-                // Handles both cases:
-                //  - Different NodeIndex (has_out_of_arena_decl): decl not in local arena
-                //  - Same NodeIndex collision (has_cross_file_same_index): decl IS in
-                //    local arena, but declaration_arenas has additional non-local arenas
-                if has_out_of_arena_decl || has_cross_file_same_index {
+                let has_cross_file_declarations =
+                    has_out_of_arena_decl || has_cross_file_same_index;
+                let mut interface_type = if has_cross_file_declarations {
+                    TypeId::ERROR
+                } else {
+                    lowering.lower_interface_declarations_with_symbol(local_declarations, sym_id)
+                };
+                if has_cross_file_declarations {
+                    let mut ordered_arenas: Vec<Option<std::sync::Arc<NodeArena>>> = Vec::new();
                     for &decl_idx in declarations.iter() {
-                        let Some(arenas) =
+                        if let Some(arenas) =
                             self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx))
-                        else {
-                            continue;
-                        };
-                        for arena in arenas.iter() {
-                            // Skip the local arena — already lowered above
-                            if std::ptr::eq(arena.as_ref(), self.ctx.arena) {
-                                continue;
-                            }
-                            if let Some(node) = arena.get(decl_idx)
-                                && arena.get_interface(node).is_some()
-                            {
-                                let cross_type =
-                                    self.lower_cross_file_interface_decl(arena, decl_idx, sym_id);
-                                if cross_type != TypeId::ERROR {
-                                    // With no local declarations the local
-                                    // lowering above is ERROR; the first
-                                    // cross-file lowering becomes the base.
-                                    interface_type = if interface_type == TypeId::ERROR {
-                                        cross_type
-                                    } else {
-                                        self.merge_interface_types(interface_type, cross_type)
-                                    };
+                        {
+                            for arena in arenas {
+                                if !arena
+                                    .get(decl_idx)
+                                    .is_some_and(|node| arena.get_interface(node).is_some())
+                                {
+                                    continue;
+                                }
+                                let is_current =
+                                    arena.as_ref().shares_node_storage_with(self.ctx.arena);
+                                let already_present =
+                                    ordered_arenas.iter().any(|existing| {
+                                        match (existing, is_current) {
+                                            (None, true) => true,
+                                            (Some(existing), false) => existing
+                                                .as_ref()
+                                                .shares_node_storage_with(arena.as_ref()),
+                                            _ => false,
+                                        }
+                                    });
+                                if !already_present {
+                                    ordered_arenas.push((!is_current).then(|| arena.clone()));
                                 }
                             }
                         }
+                        if self
+                            .ctx
+                            .declaration_is_local_to_current_arena(sym_id, decl_idx)
+                            && self
+                                .ctx
+                                .arena
+                                .get(decl_idx)
+                                .is_some_and(|node| self.ctx.arena.get_interface(node).is_some())
+                            && !ordered_arenas.iter().any(Option::is_none)
+                        {
+                            ordered_arenas.push(None);
+                        }
+                    }
+                    let mut declaration_types = Vec::with_capacity(ordered_arenas.len());
+                    for arena in ordered_arenas {
+                        let arena_ref = arena.as_deref().unwrap_or(self.ctx.arena);
+                        let arena_declarations: Vec<_> = declarations
+                            .iter()
+                            .copied()
+                            .filter(|decl_idx| {
+                                let belongs_to_arena = if arena.is_none() {
+                                    self.ctx
+                                        .declaration_is_local_to_current_arena(sym_id, *decl_idx)
+                                } else {
+                                    self.ctx
+                                        .binder
+                                        .declaration_arenas
+                                        .get(&(sym_id, *decl_idx))
+                                        .is_some_and(|arenas| {
+                                            arenas.iter().any(|candidate| {
+                                                candidate
+                                                    .as_ref()
+                                                    .shares_node_storage_with(arena_ref)
+                                            })
+                                        })
+                                };
+                                belongs_to_arena
+                                    && arena_ref
+                                        .get(*decl_idx)
+                                        .is_some_and(|node| arena_ref.get_interface(node).is_some())
+                            })
+                            .collect();
+                        let declaration_type = if let Some(arena) = arena.as_ref() {
+                            self.lower_cross_file_interface_declarations(
+                                arena,
+                                &arena_declarations,
+                                sym_id,
+                            )
+                        } else {
+                            lowering.lower_interface_declarations_with_symbol(
+                                &arena_declarations,
+                                sym_id,
+                            )
+                        };
+                        if declaration_type != TypeId::ERROR {
+                            declaration_types.push(declaration_type);
+                        }
+                    }
+                    for declaration_type in declaration_types {
+                        interface_type = if interface_type == TypeId::ERROR {
+                            declaration_type
+                        } else {
+                            self.merge_interface_types(interface_type, declaration_type)
+                        }
                     }
                 }
-
                 let mut interface_type = if needs_local_heritage_merge {
                     self.merge_interface_heritage_types(local_declarations, interface_type)
                 } else {

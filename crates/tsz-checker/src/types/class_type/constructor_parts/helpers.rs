@@ -368,6 +368,8 @@ impl<'a> CheckerState<'a> {
                         this_type,
                         return_type,
                         sig.type_predicate,
+                        sig.has_literal_types,
+                        sig.construct_origin,
                         sig.is_method,
                     )
                 })
@@ -423,6 +425,8 @@ impl<'a> CheckerState<'a> {
                         this_type,
                         instance_type,
                         type_predicate,
+                        sig.has_literal_types,
+                        sig.construct_origin,
                         sig.is_method,
                     )
                 })

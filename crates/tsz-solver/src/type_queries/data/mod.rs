@@ -8,7 +8,10 @@ mod accessors;
 mod conditional_constraint;
 mod conditional_distribution;
 #[cfg(test)]
+mod construct_overload_order_tests;
+#[cfg(test)]
 mod construct_return_union_tests;
+mod construct_signature_identity;
 mod content_predicate_guards;
 mod content_predicates;
 mod exact_property_keys;
@@ -18,6 +21,7 @@ mod nominal_and_base;
 mod signatures_and_advanced;
 #[cfg(test)]
 mod tests;
+mod transparent_alias;
 mod type_id_list;
 
 pub use accessors::*;
@@ -27,4 +31,5 @@ pub use content_predicates::*;
 pub use exact_property_keys::*;
 pub use nominal_and_base::*;
 pub use signatures_and_advanced::*;
+pub(crate) use transparent_alias::*;
 pub use type_id_list::{TypeIdList, TypeIdListIter};

@@ -1,3 +1,4 @@
+pub(crate) mod augmentation_publication;
 pub(crate) mod cache_invalidation;
 pub(crate) mod delegation;
 pub(crate) mod request_cache;

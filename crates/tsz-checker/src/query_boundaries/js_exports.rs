@@ -282,6 +282,8 @@ pub(crate) fn commonjs_export_constructor_type_with_instance(
             this_type: func.this_type,
             return_type: func.return_type,
             type_predicate: func.type_predicate,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: func.is_method,
         };
         let construct_sig = CallSignature {
@@ -404,6 +406,8 @@ fn commonjs_export_callable_type_with_expando_members(
             this_type: function_shape.this_type,
             return_type: function_shape.return_type,
             type_predicate: function_shape.type_predicate,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: function_shape.is_method,
         };
         (
@@ -485,6 +489,9 @@ pub(crate) fn current_file_commonjs_namespace_type(
     late_export_names: impl IntoIterator<Item = String>,
     display_name: String,
 ) -> TypeId {
+    if surface.is_provisional {
+        return TypeId::ANY;
+    }
     let can_merge_named_exports =
         commonjs_export_surface_can_merge_named_exports(checker.ctx.types, &surface);
 
@@ -516,6 +523,7 @@ pub(crate) fn current_file_commonjs_namespace_type(
         has_commonjs_exports: surface.has_commonjs_exports || has_named_props,
         has_augmented_named_exports: surface.has_augmented_named_exports || has_named_props,
         direct_export_reads_exports: surface.direct_export_reads_exports,
+        is_provisional: false,
     }
     .to_type_id_with_display_name(checker, Some(display_name.clone()))
     .unwrap_or_else(|| {
@@ -618,6 +626,11 @@ pub struct JsExportSurface {
     /// `any` (TS7022) and emits no member errors, so TS7 merge suppression must
     /// not apply.
     pub direct_export_reads_exports: bool,
+
+    /// A cross-arena depth refusal occurred while computing this surface.
+    /// Provisional surfaces are never cached and behave as dynamic `any` for
+    /// the current caller, including arbitrary named-export queries.
+    pub(crate) is_provisional: bool,
 }
 
 impl JsExportSurface {
@@ -757,6 +770,19 @@ impl JsExportSurface {
             has_commonjs_exports: false,
             has_augmented_named_exports: false,
             direct_export_reads_exports: false,
+            is_provisional: false,
+        }
+    }
+
+    const fn provisional_any() -> Self {
+        Self {
+            direct_export_type: Some(TypeId::ANY),
+            named_exports: Vec::new(),
+            prototype_members: Vec::new(),
+            has_commonjs_exports: true,
+            has_augmented_named_exports: false,
+            direct_export_reads_exports: false,
+            is_provisional: true,
         }
     }
 
@@ -771,6 +797,9 @@ impl JsExportSurface {
         name: &str,
         types: &dyn tsz_solver::construction::TypeDatabase,
     ) -> Option<TypeId> {
+        if self.is_provisional {
+            return Some(TypeId::ANY);
+        }
         let name_atom = types.intern_string(name);
         if let Some(prop) = self.named_exports.iter().find(|p| p.name == name_atom) {
             return Some(prop.type_id);
@@ -827,6 +856,9 @@ impl JsExportSurface {
     /// Build the final TypeId for this export surface.
     /// Merges direct export type with named exports into a single type.
     pub fn to_type_id(&self, checker: &mut CheckerState<'_>) -> Option<TypeId> {
+        if self.is_provisional {
+            return Some(TypeId::ANY);
+        }
         if !self.has_commonjs_exports {
             return None;
         }
@@ -1156,12 +1188,29 @@ impl<'a> CheckerState<'a> {
             return JsExportSurface::empty();
         }
 
+        let bailout_epoch_before = Self::cross_arena_bailout_epoch();
         let surface = self.compute_js_export_surface(target_file_idx);
         self.ctx
             .js_export_surface_resolution_set
             .remove(&target_file_idx);
 
-        // Cache the result
+        self.cache_js_export_surface_if_authoritative(
+            target_file_idx,
+            surface,
+            bailout_epoch_before,
+        )
+    }
+
+    fn cache_js_export_surface_if_authoritative(
+        &mut self,
+        target_file_idx: usize,
+        surface: JsExportSurface,
+        bailout_epoch_before: u64,
+    ) -> JsExportSurface {
+        if Self::cross_arena_bailout_epoch() != bailout_epoch_before {
+            return JsExportSurface::provisional_any();
+        }
+
         self.ctx
             .js_export_surface_cache
             .insert(target_file_idx, surface.clone());
@@ -1839,126 +1888,5 @@ impl<'a> CheckerState<'a> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::query_boundaries::js_exports_json::{
-        json_module_array_type, json_module_missing_property, json_module_object_property,
-        json_module_object_type, json_module_union,
-    };
-    use tsz_solver::construction::TypeInterner;
-    use tsz_solver::{PropertyInfo, TypeId, Visibility};
-
-    fn prop(db: &TypeInterner, name: &str, declaration_order: u32) -> PropertyInfo {
-        PropertyInfo {
-            name: db.intern_string(name),
-            type_id: TypeId::ANY,
-            write_type: TypeId::ANY,
-            optional: false,
-            readonly: false,
-            is_method: false,
-            is_class_prototype: false,
-            visibility: Visibility::Public,
-            parent_id: None,
-            declaration_order,
-            is_string_named: false,
-            is_symbol_named: false,
-            single_quoted_name: false,
-            non_widening: false,
-        }
-    }
-
-    #[test]
-    fn normalize_property_declaration_order_preserves_existing_source_order() {
-        let db = TypeInterner::new();
-        let mut props = vec![prop(&db, "configs", 3), prop(&db, "default", 1)];
-
-        JsExportSurface::normalize_property_declaration_order(&mut props);
-
-        assert_eq!(db.resolve_atom_ref(props[0].name).as_ref(), "default");
-        assert_eq!(props[0].declaration_order, 1);
-        assert_eq!(db.resolve_atom_ref(props[1].name).as_ref(), "configs");
-        assert_eq!(props[1].declaration_order, 2);
-    }
-
-    #[test]
-    fn normalize_property_declaration_order_prioritizes_explicit_members_before_unset_members() {
-        let db = TypeInterner::new();
-        let mut props = vec![prop(&db, "configs", 0), prop(&db, "default", 1)];
-
-        JsExportSurface::normalize_property_declaration_order(&mut props);
-
-        assert_eq!(db.resolve_atom_ref(props[0].name).as_ref(), "default");
-        assert_eq!(props[0].declaration_order, 1);
-        assert_eq!(db.resolve_atom_ref(props[1].name).as_ref(), "configs");
-        assert_eq!(props[1].declaration_order, 2);
-    }
-
-    #[test]
-    fn constructs_commonjs_json_export_surfaces() {
-        let db = TypeInterner::new();
-        let present = json_module_object_property(&db, "present", TypeId::STRING, 1);
-        assert_eq!(db.resolve_atom_ref(present.name).as_ref(), "present");
-        assert_eq!(present.type_id, TypeId::STRING);
-        assert!(!present.optional);
-        assert_eq!(present.declaration_order, 1);
-
-        let missing = json_module_missing_property(&db, "missing", 2);
-        assert_eq!(db.resolve_atom_ref(missing.name).as_ref(), "missing");
-        assert_eq!(missing.type_id, TypeId::UNDEFINED);
-        assert_eq!(missing.write_type, TypeId::UNDEFINED);
-        assert!(missing.optional);
-
-        let object = json_module_object_type(&db, vec![present.clone(), missing]);
-        assert_eq!(
-            object,
-            db.object(vec![
-                present,
-                json_module_missing_property(&db, "missing", 2)
-            ])
-        );
-        assert_eq!(
-            json_module_union(&db, vec![TypeId::STRING, TypeId::NUMBER]),
-            db.union(vec![TypeId::STRING, TypeId::NUMBER])
-        );
-        assert_eq!(
-            json_module_array_type(&db, TypeId::STRING),
-            db.array(TypeId::STRING)
-        );
-
-        let esm_namespace = json_esm_namespace_type(&db, TypeId::BOOLEAN);
-        let esm_shape = tsz_solver::type_queries::get_object_shape(&db, esm_namespace)
-            .expect("ESM JSON namespace should be an object");
-        assert_eq!(esm_shape.properties.len(), 1);
-        let default_prop = &esm_shape.properties[0];
-        assert_eq!(db.resolve_atom_ref(default_prop.name).as_ref(), "default");
-        assert_eq!(default_prop.type_id, TypeId::BOOLEAN);
-        assert!(!default_prop.optional);
-
-        assert_eq!(commonjs_json_namespace_type(&db, object), object);
-
-        let object_with_default = json_module_object_type(
-            &db,
-            vec![json_module_object_property(
-                &db,
-                "default",
-                TypeId::STRING,
-                1,
-            )],
-        );
-        let cjs_namespace = commonjs_json_namespace_type(&db, object_with_default);
-        let cjs_shape = tsz_solver::type_queries::get_object_shape(&db, cjs_namespace)
-            .expect("CJS JSON namespace should be an object");
-        assert_eq!(cjs_shape.properties.len(), 1);
-        assert_eq!(cjs_shape.properties[0].type_id, object_with_default);
-        assert_eq!(cjs_shape.properties[0].write_type, object_with_default);
-        assert!(!cjs_shape.properties[0].optional);
-        assert!(!cjs_shape.properties[0].readonly);
-
-        let late = commonjs_namespace_any_property(&db, "late", 3);
-        assert_eq!(db.resolve_atom_ref(late.name).as_ref(), "late");
-        assert_eq!(late.type_id, TypeId::ANY);
-        assert_eq!(late.write_type, TypeId::ANY);
-        assert!(!late.optional);
-        assert_eq!(commonjs_empty_namespace_type(&db), db.object(Vec::new()));
-    }
-}
+#[path = "js_exports_tests.rs"]
+mod tests;

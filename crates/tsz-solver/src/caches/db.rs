@@ -17,11 +17,11 @@ use crate::relations::relation_queries::{
 };
 use crate::relations::subtype::TypeResolver;
 use crate::types::{
-    CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId, FunctionShape,
-    FunctionShapeId, IndexInfo, IntrinsicKind, MappedType, MappedTypeId, ObjectFlags, ObjectShape,
-    ObjectShapeId, PropertyInfo, PropertyLookup, RelationCacheKey, StringIntrinsicKind, SymbolRef,
-    TemplateLiteralId, TemplateSpan, TupleElement, TupleListId, TypeApplication, TypeApplicationId,
-    TypeData, TypeId, TypeListId, TypeParamInfo, Variance,
+    CallSignature, CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId,
+    FunctionShape, FunctionShapeId, IndexInfo, IntrinsicKind, MappedType, MappedTypeId,
+    ObjectFlags, ObjectShape, ObjectShapeId, PropertyInfo, PropertyLookup, RelationCacheKey,
+    StringIntrinsicKind, SymbolRef, TemplateLiteralId, TemplateSpan, TupleElement, TupleListId,
+    TypeApplication, TypeApplicationId, TypeData, TypeId, TypeListId, TypeParamInfo, Variance,
 };
 use std::sync::Arc;
 use tsz_binder::SymbolId;
@@ -289,6 +289,24 @@ pub trait TypeWidenCache {
     fn set_widen_type_memo(&self, _type_id: TypeId, _result: TypeId) {}
 }
 
+/// Cache for construct-signature projection keyed by intersection `TypeId`.
+///
+/// The shared memo stores only projections that are independent of a
+/// [`TypeResolver`]; callers must bypass it when a signature or its containing
+/// `Lazy`/`Application` shape needs resolver context. An empty slice caches a
+/// resolver-independent negative result. Kept separate from [`TypeDatabase`]
+/// so the broad query trait stays under its method cap (#8205). Backends without
+/// a project-lifetime cache may use the default no-op implementation.
+pub trait TypeConstructSignaturesCache {
+    /// Look up the cached construct-signature projection for `type_id`.
+    fn construct_signatures_memo(&self, _type_id: TypeId) -> Option<Arc<[CallSignature]>> {
+        None
+    }
+
+    /// Store the construct-signature projection for `type_id`.
+    fn set_construct_signatures_memo(&self, _type_id: TypeId, _signatures: Arc<[CallSignature]>) {}
+}
+
 /// Construction hook for conditional-flow substitution wrapper types.
 ///
 /// Kept separate from [`TypeDatabase`] so the broad storage/query trait stays
@@ -438,6 +456,7 @@ pub trait TypeDatabase:
     + TypeCompilerOptions
     + TypeApplicationEvalCache
     + TypeWidenCache
+    + TypeConstructSignaturesCache
     + TypeSubstitutionConstruction
     + TypeExtractParamsCache
     + TypeContainsByIdCache
@@ -873,6 +892,16 @@ impl TypeWidenCache for TypeInterner {
 
     fn set_widen_type_memo(&self, type_id: TypeId, result: TypeId) {
         Self::set_widen_type_memo(self, type_id, result);
+    }
+}
+
+impl TypeConstructSignaturesCache for TypeInterner {
+    fn construct_signatures_memo(&self, type_id: TypeId) -> Option<Arc<[CallSignature]>> {
+        Self::construct_signatures_memo(self, type_id)
+    }
+
+    fn set_construct_signatures_memo(&self, type_id: TypeId, signatures: Arc<[CallSignature]>) {
+        Self::set_construct_signatures_memo(self, type_id, signatures);
     }
 }
 

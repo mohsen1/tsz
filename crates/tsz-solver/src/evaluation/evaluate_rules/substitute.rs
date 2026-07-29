@@ -108,6 +108,8 @@ fn substitute_call_signature_db(
         this_type,
         return_type,
         type_predicate,
+        has_literal_types: sig.has_literal_types,
+        construct_origin: sig.construct_origin,
         is_method: sig.is_method,
     };
     (rebuilt, changed)
@@ -683,6 +685,8 @@ mod tests {
                 this_type: None,
                 return_type: t_param,
                 type_predicate: None,
+                has_literal_types: false,
+                construct_origin: None,
                 is_method: false,
             }],
             construct_signatures: vec![],
@@ -706,6 +710,8 @@ mod tests {
                 this_type: None,
                 return_type: TypeId::STRING,
                 type_predicate: None,
+                has_literal_types: false,
+                construct_origin: None,
                 is_method: false,
             }],
             construct_signatures: vec![],

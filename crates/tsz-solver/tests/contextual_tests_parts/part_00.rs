@@ -118,6 +118,8 @@ fn test_contextual_callable_signature() {
         this_type: Some(TypeId::BOOLEAN),
         return_type: TypeId::NUMBER,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
 
@@ -152,6 +154,8 @@ fn test_contextual_callable_overload_union() {
         this_type: Some(TypeId::STRING),
         return_type: TypeId::NUMBER,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
 
@@ -174,6 +178,8 @@ fn test_contextual_callable_overload_union() {
         this_type: Some(TypeId::BOOLEAN),
         return_type: TypeId::STRING,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
 
@@ -218,6 +224,8 @@ fn test_contextual_callable_overload_by_arity() {
         this_type: None,
         return_type: TypeId::VOID,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
 
@@ -240,6 +248,8 @@ fn test_contextual_callable_overload_by_arity() {
         this_type: None,
         return_type: TypeId::VOID,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
 
@@ -1239,6 +1249,8 @@ fn test_contextual_callable_overload_no_implicit_any_false() {
         this_type: None,
         return_type: TypeId::NUMBER,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
 
@@ -1253,6 +1265,8 @@ fn test_contextual_callable_overload_no_implicit_any_false() {
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
 

@@ -88,21 +88,30 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .find_map(|candidate_id| {
                         let symbol = binder.get_symbol(*candidate_id)?;
-                        if !symbol.is_exported {
+                        if symbol.escaped_name != name || !symbol.is_exported {
                             return None;
                         }
                         symbol
                             .declarations
                             .iter()
-                            .any(|decl_idx| {
-                                if let Some(arenas) =
+                            .enumerate()
+                            .any(|(declaration_index, decl_idx)| {
+                                if let Some(stable) =
+                                    symbol.stable_declarations.get(declaration_index)
+                                    && stable.is_known()
+                                    && stable.has_file_idx()
+                                {
+                                    stable.file_idx as usize == file_idx
+                                } else if symbol.decl_file_idx != u32::MAX {
+                                    symbol.decl_file_idx as usize == file_idx
+                                } else if let Some(arenas) =
                                     binder.declaration_arenas.get(&(*candidate_id, *decl_idx))
                                 {
-                                    arenas
-                                        .iter()
-                                        .any(|decl_arena| std::ptr::eq(decl_arena.as_ref(), arena))
+                                    arenas.iter().any(|decl_arena| {
+                                        decl_arena.as_ref().shares_node_storage_with(arena)
+                                    })
                                 } else {
-                                    true
+                                    false
                                 }
                             })
                             .then_some(*candidate_id)

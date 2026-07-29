@@ -395,7 +395,7 @@ impl UnsoundnessAudit {
             implementation_files: vec!["crates/tsz-binder/src/state/mod.rs", "crates/tsz-checker/src/types/interface_type.rs", "crates/tsz-checker/src/state/state.rs"],
             test_coverage: 85.0,
             dependencies: vec![],
-            notes: "FULLY IMPLEMENTED. Binder tracks module augmentations via module_augmentations field. Checker merges augmented interface/type declarations with target module symbols using get_module_augmentation_members() and apply_module_augmentations(). Augmentations are applied during import resolution for both named imports and namespace imports.",
+            notes: "FULLY IMPLEMENTED. Binder tracks module augmentations via module_augmentations field. Checker merges augmented declarations with target module symbols using get_module_augmentation_members() and the declaration-space-specific apply_module_type_augmentations()/apply_module_value_augmentations() boundaries. Augmentations are applied during import resolution for both named imports and namespace imports.",
         });
 
         // JSX

@@ -41,14 +41,15 @@ thread_local! {
     /// by the `CROSS_ARENA_DEPTH` cap (a registration-window bailout). A
     /// resolution that delegates captures this value before delegating and
     /// compares it afterwards; if it advanced, a depth-cap bailout occurred
-    /// somewhere in its subtree, so the resolution's result is a transiently
-    /// incomplete artifact that must NOT be persisted as authoritative (a later
-    /// shallower pass recomputes it). This mirrors the solver's
+    /// somewhere in its subtree. The epoch gives an `any` result bailout
+    /// provenance so that provisional sentinel is not persisted and a later
+    /// shallower pass can recompute it; an independently completed concrete
+    /// enclosing result remains authoritative. This mirrors the solver's
     /// `unresolved_def_seen` / `commit_closed_eval_writes` refusal to persist
-    /// results computed against an unresolved def. Without it, a provisional
-    /// `any`/`error` minted under the cap is merged back and promoted
-    /// first-writer-wins, then mis-routes identical patterns in other files
-    /// (the immer `[WRITABLE]` computed-key poison, #13846).
+    /// unresolved sentinel-derived results. Without it, a provisional `any`
+    /// minted under the cap is merged back and promoted first-writer-wins, then
+    /// mis-routes identical patterns in other files (the immer `[WRITABLE]`
+    /// computed-key poison, #13846).
     static CROSS_ARENA_BAILOUT_EPOCH: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 
     /// Depth counter for resolving a class's directly-named heritage (`extends`)
@@ -318,9 +319,8 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn enter_cross_arena_delegation() -> Option<CrossArenaDelegationGuard> {
         let d = CROSS_ARENA_DEPTH.with(std::cell::Cell::get);
         if d >= 5 {
-            // Refused by the depth cap: record the bailout so any enclosing
-            // delegation that captured the epoch refuses to persist its
-            // (now transiently-incomplete) result.
+            // Refused by the depth cap: record provenance for the provisional
+            // `any` returned by the caller's bailout path.
             Self::mark_cross_arena_bailout();
             return None;
         }
@@ -333,11 +333,24 @@ impl<'a> CheckerState<'a> {
         CROSS_ARENA_BAILOUT_EPOCH.with(|c| c.set(c.get().wrapping_add(1)));
     }
 
-    /// Current cross-arena bailout epoch. Capture before delegating and compare
-    /// after; an advance means a depth-cap bailout occurred in the subtree and
-    /// the result must not be persisted as authoritative.
+    /// Current cross-arena bailout epoch. Capture it before delegating to
+    /// distinguish a provisional depth-cap `any` from a genuine `any`.
     pub(crate) fn cross_arena_bailout_epoch() -> u64 {
         CROSS_ARENA_BAILOUT_EPOCH.with(std::cell::Cell::get)
+    }
+
+    /// Whether `result` is the provisional sentinel produced by a refused
+    /// cross-arena delegation in the captured resolution subtree.
+    ///
+    /// An epoch advance alone is not enough: an enclosing owner can still
+    /// complete a concrete node, symbol, or class result after one nested
+    /// query bails out. `ERROR` and `UNKNOWN` are deliberate cycle outcomes;
+    /// only `ANY` is substituted by the depth-cap bailout paths.
+    pub(crate) fn is_cross_arena_bailout_artifact(
+        bailout_epoch_before: u64,
+        result: TypeId,
+    ) -> bool {
+        Self::cross_arena_bailout_epoch() != bailout_epoch_before && result == TypeId::ANY
     }
 
     pub(crate) fn is_require_call_bound_identifier(&self, idx: NodeIndex) -> bool {
@@ -1483,10 +1496,26 @@ impl<'a> CheckerState<'a> {
             self.cache_request_type(idx, key, TypeId::ERROR);
         }
 
+        // A refused owner-arena delegation can mint a provisional `any` below
+        // this node computation. Capture its provenance so that sentinel is
+        // neither returned as authoritative nor frozen in either node cache.
+        // A concrete completed node result remains valid even if one nested
+        // query bailed out while it was being assembled.
+        let bailout_epoch_before = Self::cross_arena_bailout_epoch();
         let result = self.compute_type_of_node_with_request(idx, request);
+        let result_is_bailout_artifact =
+            Self::is_cross_arena_bailout_artifact(bailout_epoch_before, result);
 
         // Pop from resolution stack
         self.ctx.node_resolution_stack.pop();
+
+        if result_is_bailout_artifact {
+            self.ctx.node_types.remove(&idx.0);
+            if let Some(key) = request_cache_key {
+                self.ctx.request_node_types.remove(&(idx.0, key));
+            }
+            return TypeId::ANY;
+        }
 
         // Cache result - identifiers cache their DECLARED type,
         // but get_type_of_node applies flow narrowing when returning cached identifier types.

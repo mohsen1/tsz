@@ -27,13 +27,6 @@ pub(crate) const fn namespace_export_property(
     }
 }
 
-pub(crate) const fn namespace_any_export_property(
-    name: Atom,
-    declaration_order: u32,
-) -> PropertyInfo {
-    namespace_export_property(name, TypeId::ANY, declaration_order)
-}
-
 pub(crate) fn namespace_object_type(
     db: &dyn TypeDatabase,
     properties: Vec<PropertyInfo>,

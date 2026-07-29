@@ -204,13 +204,67 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn same_file_value_symbol_for_type_symbol(
         &self,
         type_sym_id: tsz_binder::SymbolId,
+        lexical_use_idx: Option<NodeIndex>,
     ) -> Option<(tsz_binder::SymbolId, NodeIndex, usize)> {
-        let type_symbol = self.get_symbol_globally(type_sym_id)?;
+        // `SymbolId` is binder-local. A cross-file owner overlay can therefore
+        // contain the same raw id as a lexical type in the current binder. When
+        // this lookup comes from an identifier use, prove current-scope
+        // selection before consulting that overlay; otherwise a module
+        // augmentation's same-named value can become a false companion of the
+        // lexical type.
+        let selected_by_current_binder = lexical_use_idx.is_some_and(|idx| {
+            self.ctx
+                .binder
+                .get_symbol(type_sym_id)
+                .is_some_and(|symbol| {
+                    (symbol.decl_file_idx == u32::MAX
+                        || symbol.decl_file_idx == self.ctx.current_file_idx as u32)
+                        && self.ctx.binder.resolve_identifier_with_filter(
+                            self.ctx.arena,
+                            idx,
+                            &[],
+                            |candidate| candidate == type_sym_id,
+                        ) == Some(type_sym_id)
+                })
+        });
+        let file_idx = if selected_by_current_binder {
+            self.ctx.current_file_idx
+        } else {
+            self.ctx.resolve_symbol_file_index(type_sym_id)?
+        };
+        let binder = if file_idx == self.ctx.current_file_idx {
+            self.ctx.binder
+        } else {
+            self.ctx.get_binder_for_file(file_idx)?
+        };
+        let arena = if file_idx == self.ctx.current_file_idx {
+            self.ctx.arena
+        } else {
+            self.ctx.get_arena_for_file(file_idx as u32)
+        };
+        let type_symbol = binder.get_symbol(type_sym_id)?;
+        if type_symbol.decl_file_idx != u32::MAX && type_symbol.decl_file_idx as usize != file_idx {
+            return None;
+        }
         if (type_symbol.flags & tsz_binder::symbol_flags::VALUE) != 0 {
             return None;
         }
-        let file_idx = self.ctx.resolve_symbol_file_index(type_sym_id)?;
-        let binder = self.ctx.get_binder_for_file(file_idx)?;
+        let type_scope = type_symbol
+            .declarations
+            .iter()
+            .copied()
+            .filter(|declaration| declaration.is_some())
+            .find_map(|declaration| {
+                let parent = arena.get_extended(declaration)?.parent;
+                binder.find_enclosing_scope(
+                    arena,
+                    if parent.is_some() {
+                        parent
+                    } else {
+                        declaration
+                    },
+                )
+            })?;
         for &candidate_id in binder
             .get_symbols()
             .find_all_by_name(&type_symbol.escaped_name)
@@ -226,10 +280,46 @@ impl<'a> CheckerState<'a> {
                 || (candidate.flags & tsz_binder::symbol_flags::ALIAS) != 0
                 || candidate.import_module().is_some()
                 || !candidate.value_declaration.is_some()
+                || candidate.parent != type_symbol.parent
+                || (candidate.decl_file_idx != u32::MAX
+                    && candidate.decl_file_idx as usize != file_idx)
             {
                 continue;
             }
-            self.ctx.register_symbol_file_target(candidate_id, file_idx);
+            let Some(candidate_scope) = arena
+                .get_extended(candidate.value_declaration)
+                .map(|extended| extended.parent)
+                .and_then(|parent| {
+                    binder.find_enclosing_scope(
+                        arena,
+                        if parent.is_some() {
+                            parent
+                        } else {
+                            candidate.value_declaration
+                        },
+                    )
+                })
+            else {
+                continue;
+            };
+            let shares_scope = candidate_scope == type_scope || {
+                let type_container_symbol = binder
+                    .scopes
+                    .get(type_scope.0 as usize)
+                    .and_then(|scope| binder.get_node_symbol(scope.container_node));
+                let candidate_container_symbol = binder
+                    .scopes
+                    .get(candidate_scope.0 as usize)
+                    .and_then(|scope| binder.get_node_symbol(scope.container_node));
+                type_container_symbol.is_some()
+                    && type_container_symbol == candidate_container_symbol
+            };
+            if !shares_scope {
+                continue;
+            }
+            if file_idx != self.ctx.current_file_idx {
+                self.ctx.register_symbol_file_target(candidate_id, file_idx);
+            }
             return Some((candidate_id, candidate.value_declaration, file_idx));
         }
         None

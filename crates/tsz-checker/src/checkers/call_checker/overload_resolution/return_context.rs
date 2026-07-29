@@ -313,6 +313,8 @@ impl<'a> CheckerState<'a> {
                         .map(|ty| instantiate_type(self.ctx.types, ty, &substitution)),
                     parameter_index: predicate.parameter_index,
                 }),
+            has_literal_types: sig.has_literal_types,
+            construct_origin: sig.construct_origin,
             is_method: sig.is_method,
         }
     }

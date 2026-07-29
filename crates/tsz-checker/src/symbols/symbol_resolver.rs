@@ -338,16 +338,6 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn module_augmentation_symbol_matches_spec(
-        candidate_spec: &str,
-        augmentation_spec: &str,
-    ) -> bool {
-        candidate_spec == augmentation_spec
-            || crate::module_resolution::module_specifier_candidates(augmentation_spec)
-                .iter()
-                .any(|candidate| candidate == candidate_spec)
-    }
-
     fn classify_type_position_symbol(&self, sym_id: SymbolId) -> TypeSymbolResolution {
         let lib_binders = self.get_lib_binders();
         let Some(symbol) = self
@@ -357,17 +347,7 @@ impl<'a> CheckerState<'a> {
             return TypeSymbolResolution::NotFound;
         };
 
-        let is_namespace_or_module = symbol.has_any_flags(
-            symbol_flags::MODULE | symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE,
-        );
-        let has_type = symbol.has_any_flags(symbol_flags::TYPE | symbol_flags::TYPE_ALIAS);
-        let has_value = symbol.has_any_flags(symbol_flags::VALUE);
-
-        if has_value && !has_type && !is_namespace_or_module {
-            TypeSymbolResolution::ValueOnly(sym_id)
-        } else {
-            TypeSymbolResolution::Type(sym_id)
-        }
+        Self::classify_known_type_position_symbol(sym_id, symbol)
     }
 
     fn resolve_module_augmentation_unqualified_type_symbol(
@@ -377,17 +357,14 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeSymbolResolution> {
         let module_spec = self.enclosing_string_literal_module_augmentation_spec(idx)?;
 
-        for (&sym_id, candidate_spec) in self.ctx.binder.augmentation_target_modules.iter() {
-            if !Self::module_augmentation_symbol_matches_spec(candidate_spec, &module_spec) {
-                continue;
-            }
-            let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-                continue;
-            };
-            if symbol.escaped_name != name {
-                continue;
-            }
-            let result = self.classify_type_position_symbol(sym_id);
+        if let Some(sym_id) = self.current_module_augmentation_type_position_symbol(idx)
+            && let Some(symbol) = self
+                .ctx
+                .get_binder_for_file(self.ctx.current_file_idx)
+                .and_then(|binder| binder.get_symbol(sym_id))
+                .or_else(|| self.ctx.binder.get_symbol(sym_id))
+        {
+            let result = Self::classify_known_type_position_symbol(sym_id, symbol);
             if !matches!(result, TypeSymbolResolution::NotFound) {
                 return Some(result);
             }
@@ -400,6 +377,15 @@ impl<'a> CheckerState<'a> {
         )
         .map(|sym_id| self.classify_type_position_symbol(sym_id))
         .filter(|result| !matches!(result, TypeSymbolResolution::NotFound))
+    }
+
+    pub(crate) fn current_module_augmentation_type_position_symbol(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<SymbolId> {
+        let name = self.ctx.arena.get_identifier_at(idx)?.escaped_text.as_str();
+        let module_spec = self.enclosing_string_literal_module_augmentation_spec(idx)?;
+        self.current_module_augmentation_target_symbol(&module_spec, name)
     }
 
     /// Resolve an identifier node to its symbol ID.

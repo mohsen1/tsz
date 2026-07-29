@@ -19,6 +19,7 @@
 
 use tsz_binder::SymbolId;
 use tsz_solver::construction::TypeDatabase;
+use tsz_solver::relations::subtype::TypeResolver;
 use tsz_solver::{
     CallSignature, CallableShape, CallableShapeId, FunctionShape, IndexSignature, ParamInfo,
     PropertyInfo, TypeId, TypeParamInfo, TypePredicate,
@@ -41,8 +42,77 @@ pub(crate) fn construct_signatures_for_type(
         this_type: shape.this_type,
         return_type: shape.return_type,
         type_predicate: shape.type_predicate,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: shape.is_method,
     }])
+}
+
+/// Resolver-aware companion for semantic construct resolution.
+///
+/// Constructor-intersection mixin classification may need to expose a rest
+/// parameter alias (`type Args<T> = T[]`). Callers that own checker resolver
+/// context use this boundary so the structural decision remains solver-owned.
+pub(crate) fn construct_signatures_for_type_with_resolver<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    type_id: TypeId,
+) -> Option<Vec<CallSignature>> {
+    tsz_solver::type_queries::get_construct_signatures_with_resolver(db, resolver, type_id)
+}
+
+/// Apply the solver's declaration-derived specialized-first ordering to
+/// construct overload candidates.
+pub(crate) fn reorder_construct_overload_candidates(
+    signatures: &[CallSignature],
+) -> Vec<CallSignature> {
+    tsz_solver::type_queries::reorder_construct_overload_candidates(signatures)
+}
+
+/// Deduplicate declaration-merged construct signatures using the solver's
+/// complete `compareSignaturesIdentical`-style identity, keeping the last
+/// occurrence for diamond-heritage ordering.
+pub(crate) fn deduplicate_construct_signatures_keep_last(
+    db: &dyn TypeDatabase,
+    signatures: &mut Vec<CallSignature>,
+    include_literal_provenance: bool,
+) {
+    tsz_solver::type_queries::deduplicate_construct_signatures_keep_last(
+        db,
+        signatures,
+        include_literal_provenance,
+    );
+}
+
+/// Resolver-aware declaration-merge deduplication for signatures whose
+/// identity-bearing types contain aliases.
+pub(crate) fn deduplicate_construct_signatures_keep_last_with_resolver<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    signatures: &mut Vec<CallSignature>,
+    include_literal_provenance: bool,
+) {
+    tsz_solver::type_queries::deduplicate_construct_signatures_keep_last_with_resolver(
+        db,
+        resolver,
+        signatures,
+        include_literal_provenance,
+    );
+}
+
+/// Build declaration provenance for a construct-signature group.
+pub(crate) const fn construct_signature_origin(
+    owner: Option<tsz_solver::DefId>,
+    declaration_file: tsz_common::Atom,
+    declaration_pos: u32,
+    declaration_end: u32,
+) -> tsz_solver::ConstructSignatureOrigin {
+    tsz_solver::ConstructSignatureOrigin {
+        owner,
+        declaration_file,
+        declaration_pos,
+        declaration_end,
+    }
 }
 
 pub(crate) fn has_construct_overloads(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
@@ -104,6 +174,8 @@ pub(crate) fn function_shape_from_call_signature_preserving_method(
 pub(crate) fn call_signature_from_function_shape(
     shape: FunctionShape,
     is_method: bool,
+    has_literal_types: bool,
+    construct_origin: Option<tsz_solver::ConstructSignatureOrigin>,
 ) -> CallSignature {
     CallSignature {
         type_params: shape.type_params,
@@ -111,6 +183,8 @@ pub(crate) fn call_signature_from_function_shape(
         this_type: shape.this_type,
         return_type: shape.return_type,
         type_predicate: shape.type_predicate,
+        has_literal_types,
+        construct_origin,
         is_method,
     }
 }

@@ -2,6 +2,7 @@
 //! test option parsing, and access class resolution.
 
 use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
+use crate::symbol_resolver::TypeSymbolResolution;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tracing::trace;
 use tsz_binder::symbol_flags::CLASS;
@@ -63,6 +64,22 @@ pub(crate) fn symbol_is_string_literal_module_only(
 }
 
 impl<'a> CheckerState<'a> {
+    pub(crate) const fn classify_known_type_position_symbol(
+        sym_id: SymbolId,
+        symbol: &tsz_binder::Symbol,
+    ) -> TypeSymbolResolution {
+        let is_namespace_or_module = symbol.has_any_flags(
+            symbol_flags::MODULE | symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE,
+        );
+        let has_type = symbol.has_any_flags(symbol_flags::TYPE | symbol_flags::TYPE_ALIAS);
+        let has_value = symbol.has_any_flags(symbol_flags::VALUE);
+        if has_value && !has_type && !is_namespace_or_module {
+            TypeSymbolResolution::ValueOnly(sym_id)
+        } else {
+            TypeSymbolResolution::Type(sym_id)
+        }
+    }
+
     /// Find a VALUE symbol for a name across all lib binders.
     ///
     /// This handles declaration merging across lib files: `interface Promise<T>` may be
@@ -1609,6 +1626,20 @@ impl<'a> CheckerState<'a> {
                 if let Some(node) = self.ctx.arena.get(node_idx)
                     && let Some(ident) = self.ctx.arena.get_identifier(node)
                 {
+                    let local_module_augmentation_symbol = self
+                        .ctx
+                        .binder
+                        .augmentation_target_modules
+                        .contains_key(&sym_id)
+                        && !self
+                            .ctx
+                            .resolve_dynamic_symbol_file_index(sym_id)
+                            .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
+                        && self
+                            .ctx
+                            .binder
+                            .get_symbol(sym_id)
+                            .is_some_and(|symbol| symbol.escaped_name == ident.escaped_text);
                     let authoritative_symbol_exists = self
                         .ctx
                         .resolve_symbol_file_index(sym_id)
@@ -1622,6 +1653,7 @@ impl<'a> CheckerState<'a> {
                     if !self
                         .ctx
                         .file_local_type_shadow_for_lib_name(&ident.escaped_text)
+                        && !local_module_augmentation_symbol
                         && !authoritative_symbol_exists
                         && (self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
                             || self.ctx.symbol_is_from_lib(sym_id))

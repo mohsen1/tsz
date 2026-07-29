@@ -1519,10 +1519,6 @@ impl<'a> CheckerState<'a> {
                             && !cross_file_entries.is_empty()
                         {
                             let current_file_idx = self.ctx.current_file_idx;
-                            let types = self.ctx.types;
-                            let compiler_options = self.ctx.compiler_options.clone();
-                            let definition_store = self.ctx.definition_store.clone();
-                            let lib_contexts = self.ctx.lib_contexts.clone();
                             let mut found_cross_file_type = false;
                             for &(file_idx, other_sym_id) in &cross_file_entries {
                                 if found_cross_file_type {
@@ -1627,15 +1623,14 @@ impl<'a> CheckerState<'a> {
                                     else {
                                         continue;
                                     };
-                                    let mut cross_checker = CheckerState::new_with_shared_def_store(
+                                    let mut cross_checker = CheckerState::delegate_for_arena(
                                         other_arena,
                                         other_binder,
-                                        types,
                                         other_file_name.clone(),
-                                        compiler_options.clone(),
-                                        definition_store.clone(),
+                                        self,
+                                        tsz_common::perf_counters::CheckerCreationReason::DelegateCrossArenaOther,
                                     );
-                                    cross_checker.ctx.lib_contexts = lib_contexts.clone();
+                                    cross_checker.ctx.current_file_idx = file_idx;
                                     let other_type = cross_checker.get_type_of_node(other_decl);
                                     drop(cross_arena_guard);
                                     if other_type != TypeId::ERROR

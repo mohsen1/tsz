@@ -26,6 +26,8 @@ fn exposes_property_access_boundary_queries() {
             this_type: None,
             return_type: TypeId::STRING,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         construct_signatures: vec![],

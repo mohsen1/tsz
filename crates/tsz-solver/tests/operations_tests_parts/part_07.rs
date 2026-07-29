@@ -222,6 +222,8 @@ fn test_union_call_mixed_overloads_intersects_this_types_callable() {
                 this_type: Some(type_c),
                 return_type: TypeId::VOID,
                 type_predicate: None,
+                has_literal_types: false,
+                construct_origin: None,
                 is_method: false,
             },
             CallSignature {
@@ -230,6 +232,8 @@ fn test_union_call_mixed_overloads_intersects_this_types_callable() {
                 this_type: Some(type_d),
                 return_type: TypeId::VOID,
                 type_predicate: None,
+                has_literal_types: false,
+                construct_origin: None,
                 is_method: false,
             },
         ],
@@ -297,6 +301,8 @@ fn test_union_call_mixed_overloads_compatible_this_callable() {
                 this_type: Some(type_a), // Same TypeId as F1's this
                 return_type: TypeId::VOID,
                 type_predicate: None,
+                has_literal_types: false,
+                construct_origin: None,
                 is_method: false,
             },
             CallSignature {
@@ -305,6 +311,8 @@ fn test_union_call_mixed_overloads_compatible_this_callable() {
                 this_type: Some(type_b),
                 return_type: TypeId::VOID,
                 type_predicate: None,
+                has_literal_types: false,
+                construct_origin: None,
                 is_method: false,
             },
         ],
@@ -369,6 +377,8 @@ fn test_union_call_multi_overloads_structurally_identical_this_callable() {
                 this_type: Some(type_a_shadow),
                 return_type: TypeId::VOID,
                 type_predicate: None,
+                has_literal_types: false,
+                construct_origin: None,
                 is_method: false,
             },
             CallSignature {
@@ -377,6 +387,8 @@ fn test_union_call_multi_overloads_structurally_identical_this_callable() {
                 this_type: Some(type_b),
                 return_type: TypeId::VOID,
                 type_predicate: None,
+                has_literal_types: false,
+                construct_origin: None,
                 is_method: false,
             },
         ],
@@ -391,6 +403,8 @@ fn test_union_call_multi_overloads_structurally_identical_this_callable() {
                 this_type: Some(type_c),
                 return_type: TypeId::VOID,
                 type_predicate: None,
+                has_literal_types: false,
+                construct_origin: None,
                 is_method: false,
             },
             CallSignature {
@@ -399,6 +413,8 @@ fn test_union_call_multi_overloads_structurally_identical_this_callable() {
                 this_type: Some(type_a),
                 return_type: TypeId::VOID,
                 type_predicate: None,
+                has_literal_types: false,
+                construct_origin: None,
                 is_method: false,
             },
         ],
@@ -437,10 +453,148 @@ fn make_construct_callable(
             this_type: None,
             return_type,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         ..Default::default()
     })
+}
+
+fn make_construct_overload(
+    interner: &TypeInterner,
+    signatures: impl IntoIterator<Item = (TypeId, TypeId, bool)>,
+) -> TypeId {
+    let parameter_name = interner.intern_string("value");
+    interner.callable(CallableShape {
+        construct_signatures: signatures
+            .into_iter()
+            .map(
+                |(parameter_type, return_type, has_literal_types)| CallSignature {
+                type_params: vec![],
+                params: vec![ParamInfo::required(parameter_name, parameter_type)],
+                this_type: None,
+                    return_type,
+                    type_predicate: None,
+                    has_literal_types,
+                    construct_origin: None,
+                    is_method: false,
+                },
+            )
+            .collect(),
+        ..Default::default()
+    })
+}
+
+#[test]
+fn construct_overload_prefers_specialized_candidate_after_broad_declaration() {
+    let interner = TypeInterner::new();
+    let specialized_parameter = interner.literal_string("specialized");
+    let constructable = make_construct_overload(
+        &interner,
+        [
+            (TypeId::STRING, TypeId::NUMBER, false),
+            (specialized_parameter, TypeId::STRING, true),
+        ],
+    );
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+    let result = evaluator.resolve_new(constructable, &[specialized_parameter]);
+
+    assert!(matches!(
+        result,
+        CallResult::Success(return_type) if return_type == TypeId::STRING
+    ));
+}
+
+#[test]
+fn construct_overload_preserves_specialized_candidate_declared_first() {
+    let interner = TypeInterner::new();
+    let specialized_parameter = interner.literal_string("specialized");
+    let constructable = make_construct_overload(
+        &interner,
+        [
+            (specialized_parameter, TypeId::STRING, true),
+            (TypeId::STRING, TypeId::NUMBER, false),
+        ],
+    );
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+    let result = evaluator.resolve_new(constructable, &[specialized_parameter]);
+
+    assert!(matches!(
+        result,
+        CallResult::Success(return_type) if return_type == TypeId::STRING
+    ));
+}
+
+#[test]
+fn construct_overload_preserves_order_within_specialized_group() {
+    let interner = TypeInterner::new();
+    let specialized_parameter = interner.literal_string("specialized");
+    let constructable = make_construct_overload(
+        &interner,
+        [
+            (TypeId::STRING, TypeId::NUMBER, false),
+            (specialized_parameter, TypeId::STRING, true),
+            (specialized_parameter, TypeId::BOOLEAN, true),
+        ],
+    );
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+    let result = evaluator.resolve_new(constructable, &[specialized_parameter]);
+
+    assert!(matches!(
+        result,
+        CallResult::Success(return_type) if return_type == TypeId::STRING
+    ));
+}
+
+#[test]
+fn construct_overload_falls_back_to_broad_candidate() {
+    let interner = TypeInterner::new();
+    let specialized_parameter = interner.literal_string("specialized");
+    let other_parameter = interner.literal_string("other");
+    let constructable = make_construct_overload(
+        &interner,
+        [
+            (TypeId::STRING, TypeId::NUMBER, false),
+            (specialized_parameter, TypeId::STRING, true),
+        ],
+    );
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+    let result = evaluator.resolve_new(constructable, &[other_parameter]);
+
+    assert!(matches!(
+        result,
+        CallResult::Success(return_type) if return_type == TypeId::NUMBER
+    ));
+}
+
+#[test]
+fn construct_overload_preserves_preinstantiated_candidate_order() {
+    let interner = TypeInterner::new();
+    let instantiated_parameter = interner.literal_string("instantiated");
+    let constructable = make_construct_overload(
+        &interner,
+        [
+            (TypeId::STRING, TypeId::NUMBER, false),
+            (instantiated_parameter, TypeId::STRING, false),
+        ],
+    );
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+    let result = evaluator.resolve_new(constructable, &[instantiated_parameter]);
+
+    assert!(matches!(
+        result,
+        CallResult::Success(return_type) if return_type == TypeId::NUMBER
+    ));
 }
 
 #[test]
@@ -617,6 +771,8 @@ fn test_union_new_all_fail_requires_all_member_success() {
                 this_type: None,
                 return_type: TypeId::NUMBER,
                 type_predicate: None,
+                has_literal_types: false,
+                construct_origin: None,
                 is_method: false,
             },
             CallSignature {
@@ -625,6 +781,8 @@ fn test_union_new_all_fail_requires_all_member_success() {
                 this_type: None,
                 return_type: TypeId::BOOLEAN,
                 type_predicate: None,
+                has_literal_types: false,
+                construct_origin: None,
                 is_method: false,
             },
         ],

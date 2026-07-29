@@ -423,6 +423,8 @@ fn evaluate_application_class_uses_construct_signature_return_type() {
         this_type: None,
         return_type: instance_shape,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
     let class_body = interner.callable(CallableShape {

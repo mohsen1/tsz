@@ -1,6 +1,3 @@
-use std::sync::Arc;
-
-use rustc_hash::FxHashMap;
 use tsz_parser::parser::{NodeArena, NodeIndex};
 use tsz_solver::TypeId;
 
@@ -30,6 +27,8 @@ impl<'a> CheckerState<'a> {
         arena_ref: &NodeArena,
         decls: &[NodeIndex],
         lib_contexts: &[crate::context::LibContext],
+        owner_name: &str,
+        owner_def_id: Option<tsz_solver::DefId>,
     ) -> TypeId {
         let binder_ref = self.ctx.binder;
         let decl_binder = self
@@ -71,6 +70,11 @@ impl<'a> CheckerState<'a> {
             &no_value_resolver,
         )
         .with_name_def_id_resolver(&name_resolver);
+        let lowering = if let Some(owner_def_id) = owner_def_id {
+            lowering.with_preferred_self_reference(owner_name.to_owned(), owner_def_id)
+        } else {
+            lowering
+        };
         // Sibling-lib declarations reach this path when a user global
         // augmentation forces re-merging a lib interface (e.g. `interface
         // Error { ... }` re-merges `Array`, whose es2019 `flat()` references
@@ -116,32 +120,49 @@ impl<'a> CheckerState<'a> {
         }
 
         let current_arena: &NodeArena = self.ctx.arena;
+        let owner_def_id = self
+            .ctx
+            .actual_lib_def_id_for_bare_name(name)
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .program_global_type(name)
+                    .map(|symbol_id| self.ctx.get_or_create_def_id(symbol_id))
+            })
+            .or_else(|| {
+                // An augmentation-only user global has no lib or program-global
+                // symbol in the consuming file. Its per-file `declare global`
+                // symbols are nevertheless one merged declaration owner in
+                // TypeScript, so select the first declaration's symbol in
+                // deterministic program order and stamp every lowered group
+                // with that owner. Declaration file/span provenance stays
+                // distinct, preserving group order without conflating inherited
+                // construct signatures.
+                augmentation_decls.iter().find_map(|augmentation| {
+                    let arena = augmentation.arena.as_deref().unwrap_or(current_arena);
+                    let binder = if arena.shares_node_storage_with(current_arena) {
+                        self.ctx.binder
+                    } else {
+                        self.ctx.get_binder_for_arena(arena)?
+                    };
+                    let symbol_id = binder.get_node_symbol(augmentation.node)?;
+                    let symbol = binder.get_symbol(symbol_id)?;
+                    (symbol.escaped_name == name).then(|| {
+                        self.ctx
+                            .get_or_create_def_id_for_symbol_name(symbol_id, name)
+                    })
+                })
+            });
         let mut result = lib_type_id;
-        let mut current_file_decls: Vec<NodeIndex> = Vec::new();
-        let mut cross_file_groups: FxHashMap<usize, (Arc<NodeArena>, Vec<NodeIndex>)> =
-            FxHashMap::default();
-
         for aug in augmentation_decls {
-            if let Some(ref arena) = aug.arena {
-                let key = Arc::as_ptr(arena) as usize;
-                cross_file_groups
-                    .entry(key)
-                    .or_insert_with(|| (Arc::clone(arena), Vec::new()))
-                    .1
-                    .push(aug.node);
-            } else {
-                current_file_decls.push(aug.node);
-            }
-        }
-
-        if !current_file_decls.is_empty() {
-            let aug_type =
-                self.lower_augmentation_for_arena(current_arena, &current_file_decls, lib_contexts);
-            result = Some(self.combine_augmentation_with_lib(result, aug_type));
-        }
-
-        for (arena, decls) in cross_file_groups.values() {
-            let aug_type = self.lower_augmentation_for_arena(arena.as_ref(), decls, lib_contexts);
+            let arena = aug.arena.as_deref().unwrap_or(current_arena);
+            let aug_type = self.lower_augmentation_for_arena(
+                arena,
+                std::slice::from_ref(&aug.node),
+                lib_contexts,
+                name,
+                owner_def_id,
+            );
             result = Some(self.combine_augmentation_with_lib(result, aug_type));
         }
 
@@ -166,7 +187,7 @@ impl<'a> CheckerState<'a> {
         // unchanged-`derived` catch-all, since `merge_interface_types_impl`
         // constructs a fresh shape in every other branch) and preserve the
         // lib members via intersection.
-        let merged = self.merge_interface_types(aug_type, lib);
+        let merged = self.merge_interface_types_augmentation(aug_type, lib);
         if merged == aug_type && merged != lib {
             return self.ctx.types.factory().intersection2(lib, aug_type);
         }

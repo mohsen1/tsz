@@ -23,6 +23,14 @@ impl<'a> CheckerState<'a> {
         self.ctx.get_binder_for_file(file_idx)?.get_symbol(sym_id)
     }
 
+    pub(crate) fn symbol_has_class_declaration(&self, sym_id: SymbolId) -> bool {
+        self.ctx.get_existing_def_id(sym_id).is_some_and(|def_id| {
+            self.ctx.definition_store.get_kind(def_id) == Some(tsz_solver::def::DefKind::Class)
+        }) || self
+            .resolved_import_target_symbol(sym_id)
+            .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::CLASS))
+    }
+
     /// Resolve a lib-merged symbol back to its originating lib context.
     ///
     /// `merge_lib_contexts_into_binder` clones lib symbols into the program

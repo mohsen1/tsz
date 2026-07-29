@@ -49,6 +49,8 @@ impl<'a> TypeInstantiator<'a> {
             this_type,
             return_type,
             type_predicate: type_predicate.or(sig.type_predicate),
+            has_literal_types: sig.has_literal_types,
+            construct_origin: sig.construct_origin,
             is_method: sig.is_method,
         })
     }

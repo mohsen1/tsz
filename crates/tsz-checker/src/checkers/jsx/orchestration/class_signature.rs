@@ -131,12 +131,16 @@ impl CheckerState<'_> {
         _element_idx: NodeIndex,
         component_type: TypeId,
     ) -> Option<tsz_solver::FunctionShape> {
-        let call_sig = crate::query_boundaries::common::construct_signatures_for_type(
+        let construct_signatures = crate::query_boundaries::common::construct_signatures_for_type(
             self.ctx.types,
             component_type,
-        )?
-        .first()?
-        .clone();
+        )?;
+        let call_sig =
+            crate::query_boundaries::construct_signatures::reorder_construct_overload_candidates(
+                &construct_signatures,
+            )
+            .into_iter()
+            .next()?;
         let mut function_shape =
             crate::query_boundaries::checkers::jsx::construct_signature_function_shape(call_sig);
         if function_shape.type_params.is_empty() {

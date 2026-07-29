@@ -68,6 +68,10 @@ impl<'a> CheckerState<'a> {
                 component_type,
             )
             .filter(|s| s.len() >= 2)
+            .map(|signatures| {
+                crate::query_boundaries::construct_signatures::
+                    reorder_construct_overload_candidates(&signatures)
+            })
         };
         let Some((sigs, exempt_synthesized_children_from_excess)) = call_sigs
             .map(|sigs| (sigs, false))

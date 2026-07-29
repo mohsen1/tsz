@@ -396,6 +396,12 @@ impl<'a> CheckerState<'a> {
         {
             return Some(jsdoc_typedef_type);
         }
+        if segments.len() == 1
+            && let Some(augmentation_type) =
+                self.exact_augmentation_only_interface_type(module_name, &segments[0])
+        {
+            return Some(augmentation_type);
+        }
 
         let mut current_sym = self.resolve_ts_import_type_member_symbol(
             module_name,

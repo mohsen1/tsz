@@ -1598,8 +1598,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             && let Some(sym_id) = self.resolve_type_symbol(node_idx)
         {
             let sym_id = tsz_binder::SymbolId(sym_id);
-            let def_id = if self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
-                || self.ctx.symbol_is_from_lib(sym_id)
+            let is_current_module_augmentation_symbol =
+                self.is_current_module_augmentation_symbol(sym_id, name.as_str());
+            let def_id = if !is_current_module_augmentation_symbol
+                && (self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                    || self.ctx.symbol_is_from_lib(sym_id))
             {
                 self.ctx.get_canonical_lib_def_id(name.as_str(), sym_id)
             } else {
@@ -1615,8 +1618,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             && let Some(sym_id) = self.resolve_entity_name_text_symbol(&name)
         {
             let expected_name = name.rsplit('.').next().unwrap_or(name.as_str());
-            let def_id = if self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
-                || self.ctx.symbol_is_from_lib(sym_id)
+            let is_current_module_augmentation_symbol =
+                self.is_current_module_augmentation_symbol(sym_id, expected_name);
+            let def_id = if !is_current_module_augmentation_symbol
+                && (self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                    || self.ctx.symbol_is_from_lib(sym_id))
             {
                 self.ctx.get_canonical_lib_def_id(expected_name, sym_id)
             } else {
@@ -1632,8 +1638,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             let sym_id = tsz_binder::SymbolId(sym_id);
             let def_id = if let Some(name) = self.entity_name_text(node_idx) {
                 let expected_name = name.rsplit('.').next().unwrap_or(name.as_str());
-                if self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
-                    || self.ctx.symbol_is_from_lib(sym_id)
+                let is_current_module_augmentation_symbol =
+                    self.is_current_module_augmentation_symbol(sym_id, expected_name);
+                if !is_current_module_augmentation_symbol
+                    && (self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                        || self.ctx.symbol_is_from_lib(sym_id))
                 {
                     self.ctx.get_canonical_lib_def_id(expected_name, sym_id)
                 } else {

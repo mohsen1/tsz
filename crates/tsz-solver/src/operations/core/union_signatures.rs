@@ -125,7 +125,7 @@ impl<C: AssignabilityChecker> CallEvaluator<'_, C> {
                 if let Some(union_signatures) =
                     self.find_matching_signatures_for_union(signature_lists, signature, i)
                 {
-                    let combined = if union_signatures.len() > 1 {
+                    let mut combined = if union_signatures.len() > 1 {
                         // Union the matched signatures (intersect params, union returns).
                         let mut acc = union_signatures[0].clone();
                         for next in &union_signatures[1..] {
@@ -135,6 +135,13 @@ impl<C: AssignabilityChecker> CallEvaluator<'_, C> {
                     } else {
                         signature.clone()
                     };
+                    // tsc's first pass creates a union signature by cloning
+                    // the anchor declaration. Propagating flags therefore
+                    // come from that anchor, even though parameters/returns
+                    // are folded across all matching members. The fallback
+                    // pass below deliberately keeps the combiner's OR rule.
+                    combined.has_literal_types = signature.has_literal_types;
+                    combined.construct_origin = signature.construct_origin;
                     result.get_or_insert_with(Vec::new).push(combined);
                 }
             }
@@ -369,6 +376,8 @@ impl<C: AssignabilityChecker> CallEvaluator<'_, C> {
             this_type,
             return_type: self.interner.union2(left.return_type, right.return_type),
             type_predicate: None,
+            has_literal_types: left.has_literal_types || right.has_literal_types,
+            construct_origin: left.construct_origin,
             is_method: left.is_method || right.is_method,
         }
     }

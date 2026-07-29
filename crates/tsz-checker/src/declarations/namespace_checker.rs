@@ -178,10 +178,9 @@ impl<'a> CheckerState<'a> {
                 // The only VALUE flag is VALUE_MODULE — this is a pure namespace export.
                 // Check if any of its declarations are instantiated.
                 if let Some(sym) = member_symbol {
-                    let any_instantiated = sym
-                        .declarations
-                        .iter()
-                        .any(|&d| d.is_some() && self.ctx.arena.is_namespace_instantiated(d));
+                    let any_instantiated = sym.declarations.iter().any(|&d| {
+                        d.is_some() && self.is_namespace_declaration_value_instantiated(d)
+                    });
                     if !any_instantiated {
                         continue;
                     }
@@ -339,9 +338,9 @@ impl<'a> CheckerState<'a> {
                     tsz_binder::symbol_flags::VALUE & !tsz_binder::symbol_flags::VALUE_MODULE;
                 if (member_flags & value_flags_except_module) == 0 {
                     let is_instantiated = member_symbol.is_some_and(|ms| {
-                        ms.declarations
-                            .iter()
-                            .any(|&decl_idx| self.is_namespace_declaration_instantiated(decl_idx))
+                        ms.declarations.iter().any(|&decl_idx| {
+                            self.is_namespace_declaration_value_instantiated(decl_idx)
+                        })
                     });
                     if !is_instantiated {
                         continue;
@@ -380,6 +379,28 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .symbol_instance_types
             .insert(sym_id, namespace_type);
+        namespace_type
+    }
+
+    /// Build only the namespace declaration's exported value surface.
+    ///
+    /// A class/enum merged with a namespace shares one binder symbol. Its
+    /// `symbol_instance_types` entry can therefore hold the class instance
+    /// while module-augmentation value merging needs the disjoint namespace
+    /// object. Temporarily remove and then restore that cache entry so the
+    /// established structural namespace builder still owns export aliases,
+    /// visibility, nested namespaces, and recursion placeholders without
+    /// leaking instance members onto the constructor/runtime object.
+    pub(crate) fn build_namespace_object_type_without_symbol_instance_cache(
+        &mut self,
+        sym_id: SymbolId,
+    ) -> TypeId {
+        let previous = self.ctx.symbol_instance_types.remove(&sym_id);
+        let namespace_type = self.build_namespace_object_type(sym_id);
+        self.ctx.symbol_instance_types.remove(&sym_id);
+        if let Some(previous) = previous {
+            self.ctx.symbol_instance_types.insert(sym_id, previous);
+        }
         namespace_type
     }
 
@@ -747,6 +768,7 @@ impl<'a> CheckerState<'a> {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return _enum_type;
         };
+        let is_const_enum = symbol.has_any_flags(tsz_binder::symbol_flags::CONST_ENUM);
         let Some(exports) = symbol.exports.as_ref() else {
             return _enum_type;
         };
@@ -781,7 +803,7 @@ impl<'a> CheckerState<'a> {
                 if !member_symbol.has_any_flags(value_flags_except_module) {
                     let mut is_instantiated = false;
                     for &decl_idx in &member_symbol.declarations {
-                        if self.is_namespace_declaration_instantiated(decl_idx) {
+                        if self.is_namespace_declaration_value_instantiated(decl_idx) {
                             is_instantiated = true;
                             break;
                         }
@@ -856,14 +878,14 @@ impl<'a> CheckerState<'a> {
                 Some(sym_id),
                 Some(index_name),
                 false,
-                false,
+                is_const_enum,
             )
         } else {
             type_construction::enum_namespace_object(
                 self.ctx.types,
                 properties,
                 Some(sym_id),
-                false,
+                is_const_enum,
             )
         }
     }

@@ -435,6 +435,7 @@ impl<'a> CheckerContext<'a> {
             def_to_symbol: RefCell::new(FxHashMap::default()),
             def_type_params: RefCell::new(FxHashMap::default()),
             def_no_type_params: RefCell::new(FxHashSet::default()),
+            augmentation_local_journals: RefCell::new(Vec::new()),
             def_fallback_count: Cell::new(0),
             local_caches_warmed: Cell::new(false),
             abstract_constructor_types: FxHashSet::default(),

@@ -1259,6 +1259,8 @@ fn callable_with_overloads() {
         this_type: None,
         return_type: TypeId::VOID,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
     let sig2 = CallSignature {
@@ -1267,6 +1269,8 @@ fn callable_with_overloads() {
         this_type: None,
         return_type: TypeId::VOID,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
     let c = i.callable(CallableShape {

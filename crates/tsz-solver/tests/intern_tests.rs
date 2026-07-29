@@ -3,11 +3,9 @@ use crate::caches::db::QueryDatabase;
 use crate::intern::PROPERTY_MAP_THRESHOLD;
 use crate::relations::freshness::{is_fresh_object_type, widen_freshness};
 use tsz_binder::SymbolId;
-
 #[test]
 fn test_interner_intrinsics() {
     let interner = TypeInterner::new();
-
     // Intrinsics should be pre-registered
     assert!(interner.lookup(TypeId::STRING).is_some());
     assert!(interner.lookup(TypeId::NUMBER).is_some());
@@ -459,13 +457,14 @@ fn test_interner_intersection_callable_vs_object_disjoint_property() {
             this_type: None,
             return_type: TypeId::NUMBER,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         construct_signatures: vec![],
         properties: vec![PropertyInfo::new(a_name, interner.literal_string(""))],
         ..Default::default()
     });
-
     let obj = interner.object(vec![PropertyInfo::new(a_name, TypeId::NUMBER)]);
 
     let result = interner.intersection(vec![callable, obj]);
@@ -495,13 +494,14 @@ fn test_interner_intersection_callable_vs_object_compatible_property() {
             this_type: None,
             return_type: TypeId::NUMBER,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         construct_signatures: vec![],
         properties: vec![PropertyInfo::new(a_name, TypeId::STRING)],
         ..Default::default()
     });
-
     let obj = interner.object(vec![PropertyInfo::new(a_name, TypeId::STRING)]);
 
     let result = interner.intersection(vec![callable, obj]);

@@ -200,7 +200,7 @@ impl<'a> CheckerState<'a> {
             self.ctx.import_type_alias_types.insert(alias_sym_id, ta);
         }
 
-        Some(self.apply_module_augmentations(module_name, export_name, value_type))
+        Some(self.apply_module_value_augmentations(module_name, export_name, value_type))
     }
 
     pub(crate) fn merged_alias_value_decl_refs_type_alias(&self, sym_id: SymbolId) -> bool {

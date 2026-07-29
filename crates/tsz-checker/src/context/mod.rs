@@ -5,6 +5,7 @@
 //! to borrow the context mutably.
 mod aliases;
 mod analysis_state_types;
+mod augmentation_transaction;
 mod cache_statistics;
 mod caches;
 mod canonical_app_key;
@@ -1528,6 +1529,9 @@ pub struct CheckerContext<'a> {
     /// This avoids repeated cross-arena lookups for non-generic symbols.
     pub def_no_type_params: RefCell<FxHashSet<DefId>>,
 
+    /// Nested sparse rollback journals for augmentation-local type parameters.
+    augmentation_local_journals: RefCell<Vec<augmentation_transaction::CheckerAugmentationJournal>>,
+
     /// Counter for DefId fallback firings (Step 4 of `get_or_create_def_id`).
     ///
     /// Tracks how many times the checker had to create a DefId on demand
@@ -1709,7 +1713,7 @@ pub struct CheckerContext<'a> {
     /// Recursion guard for module augmentation application.
     /// Prevents infinite re-entry when applying the same augmentation to the
     /// same base type through callable/prototype or lazy-evaluation loops.
-    pub module_augmentation_application_set: RefCell<FxHashSet<(String, String, TypeId)>>,
+    pub module_augmentation_application_set: RefCell<FxHashSet<(String, String, TypeId, bool)>>,
 
     /// Per-file cache of `is_external_module` values to preserve state across files.
     /// Maps file path -> whether that file is an external module (has imports/exports).

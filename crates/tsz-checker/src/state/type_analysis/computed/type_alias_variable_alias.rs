@@ -818,6 +818,7 @@ impl<'a> CheckerState<'a> {
                         return (module_type, Vec::new());
                     }
 
+                    let namespace_bailout_epoch_before = Self::cross_arena_bailout_epoch();
                     let exports_table = self.resolve_effective_module_exports(&module_specifier);
 
                     if let Some(exports_table) = exports_table {
@@ -856,20 +857,6 @@ impl<'a> CheckerState<'a> {
                                     Some(self.ctx.current_file_idx),
                                 )
                             });
-                        if let Some(surface) = surface.as_ref()
-                            && surface.has_commonjs_exports
-                            && surface.has_augmented_named_exports
-                            && surface.direct_export_type.is_some()
-                            && !surface.named_exports.is_empty()
-                        {
-                            let display_name =
-                                self.imported_namespace_display_module_name(&module_specifier);
-                            if let Some(type_id) =
-                                surface.to_type_id_with_display_name(self, Some(display_name))
-                            {
-                                return (type_id, Vec::new());
-                            }
-                        }
                         let mut props: Vec<PropertyInfo> = if surface
                             .as_ref()
                             .is_some_and(|s| s.has_commonjs_exports)
@@ -895,13 +882,14 @@ impl<'a> CheckerState<'a> {
                                 ) {
                                     continue;
                                 }
-                                // Skip type-only, wildcard-type-only, value-less, and
-                                // transitively type-only exports (e.g., re-exported from
-                                // a module that uses `export type { X }`).
+                                // Explicitly type-only exports stay absent from the
+                                // namespace value. A native type-only declaration may
+                                // still gain a disjoint runtime value through a module
+                                // augmentation, which is resolved below without exposing
+                                // its instance/type surface.
                                 if self.is_type_only_export_symbol(sym_id)
                                     || self
                                         .is_export_from_type_only_wildcard(&module_specifier, name)
-                                    || self.export_symbol_has_no_value(sym_id)
                                     || self.is_export_type_only_from_file(
                                         &module_specifier,
                                         name,
@@ -910,12 +898,13 @@ impl<'a> CheckerState<'a> {
                                 {
                                     continue;
                                 }
-                                let mut prop_type = self.get_type_of_symbol(sym_id);
-                                prop_type = self.apply_module_augmentations(
+                                let Some(prop_type) = self.namespace_import_export_property_type(
                                     &module_specifier,
+                                    sym_id,
                                     name,
-                                    prop_type,
-                                );
+                                ) else {
+                                    continue;
+                                };
                                 let declaration_order = if name == "default" {
                                     1
                                 } else {
@@ -932,17 +921,10 @@ impl<'a> CheckerState<'a> {
                         };
 
                         if !module_is_non_module_entity {
-                            for aug_name in
-                                self.collect_module_augmentation_names(&module_specifier)
-                            {
-                                let name_atom = self.ctx.types.intern_string(&aug_name);
-                                if props.iter().any(|p| p.name == name_atom) {
-                                    continue;
-                                }
-                                props.push(type_analysis_boundary::namespace_any_export_property(
-                                    name_atom, 0,
-                                ));
-                            }
+                            self.append_module_augmentation_runtime_export_properties(
+                                &module_specifier,
+                                &mut props,
+                            );
                         }
                         Self::normalize_namespace_export_declaration_order(&mut props);
                         let namespace_has_no_runtime_props = props.is_empty();
@@ -954,9 +936,11 @@ impl<'a> CheckerState<'a> {
                             &exports_table,
                             &module_specifier,
                         );
-                        self.ctx
-                            .namespace_module_names
-                            .insert(namespace_type, display_module_name);
+                        if Self::cross_arena_bailout_epoch() == namespace_bailout_epoch_before {
+                            self.ctx
+                                .namespace_module_names
+                                .insert(namespace_type, display_module_name);
+                        }
                         if let Some(export_equals_type) = export_equals_type {
                             if module_is_non_module_entity || namespace_has_no_runtime_props {
                                 return (export_equals_type, Vec::new());
@@ -1150,6 +1134,7 @@ impl<'a> CheckerState<'a> {
                     // another file), the module_name is relative to the declaring file,
                     // not the current file. Use the symbol's declaring file for resolution.
                     let declaring_file_idx = self.ctx.resolve_symbol_file_index(sym_id);
+                    let namespace_bailout_epoch_before = Self::cross_arena_bailout_epoch();
                     let exports_table = self.resolve_effective_module_exports_from_file(
                         module_name,
                         declaring_file_idx,
@@ -1223,30 +1208,37 @@ impl<'a> CheckerState<'a> {
                                 {
                                     continue;
                                 }
-                                let validated_prop_type = self
-                                    .namespace_default_reexport_property_type(
+                                let target_lacks_native_value = self
+                                    .module_augmentation_target_native_spaces(module_name, name)
+                                    .is_some_and(|(_, has_value)| !has_value);
+                                let target_has_native_value = !target_lacks_native_value
+                                    && !self.export_symbol_has_no_value(export_sym_id);
+                                let default_reexport_type = if target_has_native_value {
+                                    self.namespace_default_reexport_property_type(
                                         module_name,
                                         declaring_file_idx,
                                         name,
                                     )
-                                    .or_else(|| {
-                                        self.named_import_alias_namespace_property_type(
-                                            export_sym_id,
-                                            name,
-                                        )
-                                    })
-                                    .or_else(|| {
-                                        self.get_validated_member_type(export_sym_id, name)
-                                    });
-                                if validated_prop_type.is_none()
-                                    && self.export_symbol_has_no_value(export_sym_id)
+                                } else {
+                                    None
+                                };
+                                let prop_type = if let Some(prop_type) = default_reexport_type {
+                                    self.apply_module_value_augmentations(
+                                        module_name,
+                                        name,
+                                        prop_type,
+                                    )
+                                } else if let Some(prop_type) = self
+                                    .namespace_import_export_property_type(
+                                        module_name,
+                                        export_sym_id,
+                                        name,
+                                    )
                                 {
+                                    prop_type
+                                } else {
                                     continue;
-                                }
-                                let mut prop_type = validated_prop_type
-                                    .unwrap_or_else(|| self.get_type_of_symbol(export_sym_id));
-                                prop_type =
-                                    self.apply_module_augmentations(module_name, name, prop_type);
+                                };
                                 let declaration_order = if name == "default" {
                                     1
                                 } else {
@@ -1274,17 +1266,10 @@ impl<'a> CheckerState<'a> {
                         // If the target resolves to a non-module export= value, these names
                         // are invalid and should not be surfaced on the namespace.
                         if !module_is_non_module_entity {
-                            for aug_name in self.collect_module_augmentation_names(module_name) {
-                                let name_atom = self.ctx.types.intern_string(&aug_name);
-                                if props.iter().any(|p| p.name == name_atom) {
-                                    continue;
-                                }
-                                // Cross-file augmentation declarations may live in a different
-                                // arena; use `any` here to preserve namespace member visibility.
-                                props.push(type_analysis_boundary::namespace_any_export_property(
-                                    name_atom, 0,
-                                ));
-                            }
+                            self.append_module_augmentation_runtime_export_properties(
+                                module_name,
+                                &mut props,
+                            );
                         }
 
                         if let Some(source_idx) = declaring_file_idx.or(import_source_file_idx)
@@ -1407,7 +1392,9 @@ impl<'a> CheckerState<'a> {
                         // types as `typeof import("module")` in diagnostics.
                         let preserve_namespace_display =
                             !(module_is_non_module_entity && allow_namespace_default);
-                        if preserve_namespace_display {
+                        if preserve_namespace_display
+                            && Self::cross_arena_bailout_epoch() == namespace_bailout_epoch_before
+                        {
                             let display_module_name = export_equals_import_type_module
                                 .as_deref()
                                 .unwrap_or(module_name);
@@ -1598,6 +1585,15 @@ impl<'a> CheckerState<'a> {
                     });
 
                 if let Some(export_sym_id) = export_sym_id {
+                    if self
+                        .module_augmentation_target_native_spaces(module_name, export_name)
+                        .is_some_and(|(_, has_value)| !has_value)
+                        && let Some(value_type) =
+                            self.module_augmentation_runtime_export_type(module_name, export_name)
+                    {
+                        return (value_type, Vec::new());
+                    }
+
                     // A re-exported binding (`export { X } from "./other"`) whose
                     // ultimate target is a name-merged value+type symbol must, in
                     // value position, resolve to the const's VALUE side rather than
@@ -1637,7 +1633,8 @@ impl<'a> CheckerState<'a> {
                         self.ctx.import_type_alias_types.insert(sym_id, ta_type);
                         self.record_cross_file_symbol_if_needed(alias_id, export_name, module_name);
                         let mut result = self.get_type_of_symbol(alias_id);
-                        result = self.apply_module_augmentations(module_name, export_name, result);
+                        result =
+                            self.apply_module_value_augmentations(module_name, export_name, result);
                         if export_name == "default" {
                             result = self.widen_type_for_display(result);
                         }
@@ -1710,7 +1707,8 @@ impl<'a> CheckerState<'a> {
                     } else {
                         self.get_type_of_symbol(export_sym_id)
                     };
-                    result = self.apply_module_augmentations(module_name, export_name, result);
+                    result =
+                        self.apply_module_value_augmentations(module_name, export_name, result);
                     if export_name == "default" {
                         result = crate::query_boundaries::common::widen_literal_type(
                             self.ctx.types,
@@ -1729,28 +1727,14 @@ impl<'a> CheckerState<'a> {
                     return (result, Vec::new());
                 }
 
-                // Module augmentations can introduce named exports that don't appear
-                // in the base module export table. Resolve the augmentation export's
-                // declared value type against its own arena/binder (#14853). A new
-                // `const`/`function`/`class`/`enum` export added by an augmentation
-                // (including a cross-file one) otherwise collapsed to `any`, dropping
-                // every assignability error against it. Type-only augmentation exports
-                // (interface/type alias) keep the `any` + member-merge fallback below.
+                // Module augmentations can introduce runtime exports that don't
+                // appear in the base module table. Resolve only their exact VALUE
+                // surface; an interface/type-alias-only name is not a runtime
+                // export and must not become `any`.
                 if let Some(aug_value_type) =
-                    self.module_augmentation_value_type(module_name, export_name)
+                    self.module_augmentation_runtime_export_type(module_name, export_name)
                 {
                     return (aug_value_type, Vec::new());
-                }
-                if self
-                    .ctx
-                    .binder
-                    .module_augmentations
-                    .get(module_name)
-                    .is_some_and(|augs| augs.iter().any(|aug| aug.name == *export_name))
-                {
-                    let mut result = TypeId::ANY;
-                    result = self.apply_module_augmentations(module_name, export_name, result);
-                    return (result, Vec::new());
                 }
 
                 // If the module resolved externally but isn't part of the program,
@@ -1822,15 +1806,30 @@ impl<'a> CheckerState<'a> {
                                         &exports_table,
                                         name,
                                         export_sym_id,
-                                    ) {
+                                    ) || self.is_type_only_export_symbol(export_sym_id)
+                                        || self.is_export_from_type_only_wildcard(module_name, name)
+                                        || self.is_export_type_only_from_file(
+                                            module_name,
+                                            name,
+                                            Some(self.ctx.current_file_idx),
+                                        )
+                                    {
                                         continue;
                                     }
+                                    let Some(prop_type) = self
+                                        .namespace_import_export_property_type(
+                                            module_name,
+                                            export_sym_id,
+                                            name,
+                                        )
+                                    else {
+                                        continue;
+                                    };
                                     let declaration_order = if name == "default" {
                                         1
                                     } else {
                                         props.len() as u32 + 2
                                     };
-                                    let prop_type = self.get_type_of_symbol(export_sym_id);
                                     let name_atom = self.ctx.types.intern_string(name);
                                     props.push(type_analysis_boundary::namespace_export_property(
                                         name_atom,
@@ -1838,6 +1837,10 @@ impl<'a> CheckerState<'a> {
                                         declaration_order,
                                     ));
                                 }
+                                self.append_module_augmentation_runtime_export_properties(
+                                    module_name,
+                                    &mut props,
+                                );
                                 Self::normalize_namespace_export_declaration_order(&mut props);
                                 let module_type = type_analysis_boundary::namespace_object_type(
                                     self.ctx.types,

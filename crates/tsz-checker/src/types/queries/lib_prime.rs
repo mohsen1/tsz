@@ -25,7 +25,7 @@ impl<'a> CheckerState<'a> {
             if !cached_is_placeholder {
                 return;
             }
-            self.ctx.def_type_params.borrow_mut().remove(&def_id);
+            self.ctx.remove_def_type_params(def_id);
         }
 
         let lib_contexts = &self.ctx.lib_contexts;

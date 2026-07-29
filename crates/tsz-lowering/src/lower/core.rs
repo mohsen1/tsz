@@ -662,8 +662,18 @@ impl<'a> TypeLowering<'a> {
                 }
             }
 
-            // Collect members using the arena-specific lowerer
+            // Collect members using the arena-specific lowerer.
+            let construct_group_start = parts.construct_signatures.len();
             lowerer.collect_object_type_members(&interface.members, &mut parts);
+            let construct_origin = tsz_solver::ConstructSignatureOrigin {
+                owner: lowerer.resolve_declaration_def_id(interface.name),
+                declaration_file: lowerer.source_file_atom_for(*decl_idx),
+                declaration_pos: node.pos,
+                declaration_end: node.end,
+            };
+            for signature in &mut parts.construct_signatures[construct_group_start..] {
+                signature.construct_origin = Some(construct_origin);
+            }
         }
 
         // No declaration actually lowered as an interface: every pair either
@@ -1025,6 +1035,33 @@ impl<'a> TypeLowering<'a> {
     /// `DefIds` are Solver-owned identifiers that don't require Binder context.
     pub(super) fn resolve_def_id(&self, node_idx: NodeIndex) -> Option<DefId> {
         self.host.resolve_def_id(node_idx)
+    }
+
+    /// Resolve a declaration name through the same precedence as a simple type
+    /// reference, including preferred-self and cross-arena name-first modes.
+    pub(super) fn resolve_declaration_def_id(&self, node_idx: NodeIndex) -> Option<DefId> {
+        let name = self.type_name_text(node_idx)?;
+        if self.preferred_self_name.as_deref() == Some(name.as_str())
+            && let Some(def_id) = self.preferred_self_def_id
+        {
+            return Some(def_id);
+        }
+        if let Some(def_id) = self.resolve_local_shadow_def_id(node_idx) {
+            return Some(def_id);
+        }
+
+        let scoped = || {
+            self.scoped_identifier_name_text(node_idx)
+                .and_then(|scoped_name| self.resolve_def_id_by_name(&scoped_name))
+        };
+        let named = || self.resolve_def_id_by_name(&name);
+        if self.prefer_name_def_id_resolution {
+            scoped()
+                .or_else(named)
+                .or_else(|| self.resolve_def_id(node_idx))
+        } else {
+            self.resolve_def_id(node_idx).or_else(scoped).or_else(named)
+        }
     }
 
     /// Resolve a node to the `DefId` of a function- or block-local declaration
@@ -1878,6 +1915,7 @@ impl<'a> TypeLowering<'a> {
             let Some(interface) = self.arena.get_interface(node) else {
                 continue;
             };
+            let construct_group_start = parts.construct_signatures.len();
             if let Some(params) = &interface.type_parameters
                 && !params.nodes.is_empty()
             {
@@ -1887,6 +1925,15 @@ impl<'a> TypeLowering<'a> {
                 self.pop_type_param_scope();
             } else {
                 self.collect_object_type_members(&interface.members, &mut parts);
+            }
+            let construct_origin = tsz_solver::ConstructSignatureOrigin {
+                owner: self.resolve_declaration_def_id(interface.name),
+                declaration_file: self.source_file_atom_for(decl_idx),
+                declaration_pos: node.pos,
+                declaration_end: node.end,
+            };
+            for signature in &mut parts.construct_signatures[construct_group_start..] {
+                signature.construct_origin = Some(construct_origin);
             }
         }
 

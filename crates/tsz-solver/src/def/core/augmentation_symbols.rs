@@ -33,6 +33,16 @@ fn plain_object_property_count(db: &dyn TypeDatabase, ty: TypeId) -> Option<usiz
 }
 
 impl DefinitionStore {
+    pub(super) fn module_augmented_body_entry(&self, def_id: DefId) -> Option<(TypeId, Vec<u32>)> {
+        self.module_augmented_bodies
+            .get(&def_id)
+            .map(|entry| entry.value().clone())
+            .or_else(|| {
+                self.augmentation_parent()
+                    .and_then(|parent| parent.module_augmented_body_entry(def_id))
+            })
+    }
+
     /// Whether merged body publication/consumption for empty module-augmented
     /// registries is active.
     pub fn module_augmented_body_publication_enabled(&self) -> bool {
@@ -44,6 +54,12 @@ impl DefinitionStore {
         if self.find_def_by_symbol(symbol_id).is_some() {
             return;
         }
+        self.record_augmentation_publication(
+            super::augmentation_transaction::AugmentationPublication::RegisterModuleAugmentationSymbolDef {
+                symbol_id,
+                def_id,
+            },
+        );
         self.insert_symbol_only_mapping(symbol_id, def_id);
         self.bump_generation();
     }
@@ -66,6 +82,20 @@ impl DefinitionStore {
         body: TypeId,
         source_files: &[u32],
     ) -> bool {
+        if !self.module_augmented_bodies.contains_key(&def_id)
+            && let Some(existing) = self
+                .augmentation_parent()
+                .and_then(|parent| parent.module_augmented_body_entry(def_id))
+        {
+            self.module_augmented_bodies.insert(def_id, existing);
+        }
+        self.record_augmentation_publication_with(|| {
+            super::augmentation_transaction::AugmentationPublication::RegisterModuleAugmentedBody {
+                def_id,
+                body,
+                source_files: source_files.to_vec(),
+            }
+        });
         match self.module_augmented_bodies.entry(def_id) {
             Entry::Vacant(entry) => {
                 entry.insert((body, source_files.to_vec()));
@@ -111,7 +141,7 @@ impl DefinitionStore {
         if plain_object_property_count(db, current_body) != Some(0) {
             return None;
         }
-        let body = self.module_augmented_bodies.get(&def_id)?.0;
+        let body = self.module_augmented_body_entry(def_id)?.0;
         plain_object_property_count(db, body)
             .is_some_and(|count| count > 0)
             .then_some(body)
@@ -141,6 +171,10 @@ impl DefinitionStore {
     }
 
     pub(crate) fn invalidate_module_augmented_bodies_for_file(&self, file_id: u32) {
+        if let Some(parent) = self.augmentation_parent() {
+            parent.invalidate_module_augmented_bodies_for_file(file_id);
+            return;
+        }
         let affected: Vec<_> = self
             .module_augmented_bodies
             .iter()

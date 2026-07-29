@@ -704,6 +704,8 @@ fn test_function_intrinsic_accepts_callable() {
             this_type: None,
             return_type: TypeId::NUMBER,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         construct_signatures: Vec::new(),

@@ -448,15 +448,9 @@ impl<'a> CheckerState<'a> {
                 None
             }
         } else {
-            // When the left side is a QualifiedName (e.g., `ns.Root` in `ns.Root.Foo`),
-            // extract the module specifier from the root identifier of the chain so that
-            // module augmentation merging can be applied to nested members.
-            if left_module_specifier.is_none()
-                && let Some(left_node) = self.ctx.arena.get(qn.left)
-                && left_node.kind == syntax_kind_ext::QUALIFIED_NAME
-            {
-                left_module_specifier = self.extract_root_module_specifier(qn.left, &lib_binders);
-            }
+            // Nested members are owned by the resolved namespace export surface.
+            // Reusing the root import's module specifier here would apply unrelated
+            // top-level augmentations solely because the terminal names match.
             None
         };
 
@@ -480,8 +474,11 @@ impl<'a> CheckerState<'a> {
             }
             let mut member_type = self.type_reference_symbol_type(member_sym_id);
             if let Some(module_specifier) = left_module_specifier.as_deref() {
-                member_type =
-                    self.apply_module_augmentations(module_specifier, &right_name, member_type);
+                member_type = self.apply_module_type_augmentations(
+                    module_specifier,
+                    &right_name,
+                    member_type,
+                );
             }
             return member_type;
         }
@@ -610,8 +607,11 @@ impl<'a> CheckerState<'a> {
                 }
                 let mut member_type = self.type_reference_symbol_type(member_sym_id);
                 if let Some(module_specifier) = left_module_specifier.as_deref() {
-                    member_type =
-                        self.apply_module_augmentations(module_specifier, &right_name, member_type);
+                    member_type = self.apply_module_type_augmentations(
+                        module_specifier,
+                        &right_name,
+                        member_type,
+                    );
                 }
                 return member_type;
             }

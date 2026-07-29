@@ -1823,6 +1823,8 @@ fn test_property_access_callable_members() {
         this_type: None,
         return_type: TypeId::VOID,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
     let callable = interner.callable(CallableShape {

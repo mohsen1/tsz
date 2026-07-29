@@ -3,9 +3,7 @@
 //! This module provides classification helpers for control flow analysis
 //! (narrowing, type predicates, constructor instances) and advanced type queries
 //! (promise detection, comparability, contextual type parameter extraction).
-
 mod comparability;
-
 #[cfg(test)]
 use comparability::is_primitive_comparable;
 pub(super) use comparability::types_are_comparable_for_assertion_inner;
@@ -1733,7 +1731,6 @@ mod tests {
         let box_base = db.lazy(DefId(4242));
         let box_t = db.application(box_base, vec![t_type]);
         let box_any = db.application(box_base, vec![TypeId::ANY]);
-
         let constructor = db.callable(CallableShape {
             call_signatures: vec![],
             construct_signatures: vec![CallSignature {
@@ -1742,6 +1739,8 @@ mod tests {
                 this_type: None,
                 return_type: box_t,
                 type_predicate: None,
+                has_literal_types: false,
+                construct_origin: None,
                 is_method: false,
             }],
             properties: vec![],
@@ -1750,7 +1749,6 @@ mod tests {
             symbol: None,
             is_abstract: false,
         });
-
         assert_eq!(
             super::instance_type_from_constructor(&db, constructor),
             Some(box_any),
@@ -1886,6 +1884,8 @@ mod tests {
                 this_type: None,
                 return_type: box_t,
                 type_predicate: None,
+                has_literal_types: false,
+                construct_origin: None,
                 is_method: false,
             }],
             properties: vec![PropertyInfo {

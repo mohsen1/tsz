@@ -299,7 +299,27 @@ impl<'a> CheckerState<'a> {
         {
             return None;
         }
+        self.function_declaration_only_symbol_type_with_mode(sym_id, true)
+    }
 
+    /// Build the runtime callable contributed by a symbol's function
+    /// declarations, excluding any same-name interface declaration space.
+    pub(crate) fn function_declaration_only_symbol_type(
+        &mut self,
+        sym_id: SymbolId,
+    ) -> Option<TypeId> {
+        self.function_declaration_only_symbol_type_with_mode(sym_id, false)
+    }
+
+    fn function_declaration_only_symbol_type_with_mode(
+        &mut self,
+        sym_id: SymbolId,
+        declaration_file_provisional: bool,
+    ) -> Option<TypeId> {
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if !symbol.has_any_flags(symbol_flags::FUNCTION) {
+            return None;
+        }
         let declarations = symbol.declarations.clone();
         let mut overloads = Vec::new();
         let mut implementation_sig = None;
@@ -312,7 +332,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            let sig = if self.ctx.is_declaration_file() {
+            let sig = if declaration_file_provisional && self.ctx.is_declaration_file() {
                 self.provisional_declaration_file_call_signature(func)
             } else {
                 self.call_signature_from_function(func, decl_idx)
@@ -477,6 +497,8 @@ impl<'a> CheckerState<'a> {
             this_type: None,
             return_type: TypeId::ANY,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }
     }

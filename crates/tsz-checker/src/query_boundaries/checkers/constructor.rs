@@ -69,6 +69,14 @@ pub(crate) fn mixin_returned_class_instance_type(
     db.intersection2(returned_instance, base_instance)
 }
 
+pub(crate) fn mixin_instance_returns_with_base_last(
+    db: &dyn TypeDatabase,
+    returns: Vec<TypeId>,
+    base_instance: TypeId,
+) -> TypeId {
+    tsz_solver::type_queries::mixin_instance_returns_with_base_last(db, returns, base_instance)
+}
+
 pub(crate) fn mixin_return_type_with_base_constructor(
     db: &dyn TypeDatabase,
     return_type: TypeId,

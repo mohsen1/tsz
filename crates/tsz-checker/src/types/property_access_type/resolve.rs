@@ -57,6 +57,22 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
+        if let Some(property_name) = self
+            .ctx
+            .arena
+            .get_identifier_at(access.name_or_argument)
+            .map(|identifier| identifier.escaped_text.as_str())
+            && self.namespace_import_property_is_const_enum(access.expression, property_name)
+            && !self.const_enum_value_usage_is_valid(idx)
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.error_at_node(
+                idx,
+                diagnostic_messages::CONST_ENUMS_CAN_ONLY_BE_USED_IN_PROPERTY_OR_INDEX_ACCESS_EXPRESSIONS_OR_THE_RIGH,
+                diagnostic_codes::CONST_ENUMS_CAN_ONLY_BE_USED_IN_PROPERTY_OR_INDEX_ACCESS_EXPRESSIONS_OR_THE_RIGH,
+            );
+        }
+
         if self.optional_chain_invalid_assignment_target_context(idx) {
             let read_request = request.read().normal_origin().contextual_opt(None);
             let _ = self.get_type_of_node_with_request(access.expression, &read_request);
@@ -120,27 +136,18 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
+        let base_runtime = self.classify_type_only_property_access_base(access.expression);
+
         // Property access is a value context. If the base identifier resolves to a
         // type-only import/export chain, stop before member lookup so we don't emit
         // a follow-on TS2339 after the primary TS1361/TS1362 wrong-meaning error.
-        if let Some(base_node) = self.ctx.arena.get(access.expression)
-            && base_node.kind == SyntaxKind::Identifier as u16
-            && let Some(base_ident) = self.ctx.arena.get_identifier(base_node)
-            && let Some(base_sym_id) =
-                self.resolve_identifier_symbol(access.expression)
-                    .or_else(|| {
-                        self.ctx
-                            .binder
-                            .resolve_identifier(self.ctx.arena, access.expression)
-                    })
-            && self.alias_resolves_to_type_only(base_sym_id)
-            && !self.source_file_has_value_import_binding_named(
-                access.expression,
-                &base_ident.escaped_text,
-            )
-            && self
-                .local_current_file_value_symbol_named(&base_ident.escaped_text)
-                .is_none()
+        if base_runtime.type_only_alias_without_local_value
+            && !base_runtime.has_exact_augmentation_runtime
+            && let Some(base_identifier_name) = self
+                .ctx
+                .arena
+                .get_identifier_at(access.expression)
+                .map(|base_identifier| base_identifier.escaped_text.clone())
         {
             if self.is_heritage_type_only_context(access.expression)
                 || self.is_in_ambient_computed_property_context()
@@ -149,7 +156,7 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ERROR;
             }
             self.report_wrong_meaning_diagnostic(
-                &base_ident.escaped_text,
+                &base_identifier_name,
                 access.expression,
                 crate::query_boundaries::name_resolution::NameLookupKind::Type,
             );
@@ -200,20 +207,16 @@ impl<'a> CheckerState<'a> {
         // property access is not a valid value operation. Preserve the TS1361/TS1362
         // diagnostic on the base identifier and stop before member lookup adds a
         // spurious downstream TS2339.
-        if let Some(local_sym_id) = self.resolve_identifier_symbol(access.expression)
-            && self.alias_resolves_to_type_only(local_sym_id)
-            && let Some(base_node) = self.ctx.arena.get(access.expression)
-            && let Some(base_ident) = self.ctx.arena.get_identifier(base_node)
-            && !self.source_file_has_value_import_binding_named(
-                access.expression,
-                &base_ident.escaped_text,
-            )
-            && self
-                .local_current_file_value_symbol_named(&base_ident.escaped_text)
-                .is_none()
+        if base_runtime.type_only_alias_without_local_value
+            && !base_runtime.has_exact_augmentation_runtime
+            && let Some(base_identifier_name) = self
+                .ctx
+                .arena
+                .get_identifier_at(access.expression)
+                .map(|base_identifier| base_identifier.escaped_text.clone())
         {
             self.report_wrong_meaning_diagnostic(
-                &base_ident.escaped_text,
+                &base_identifier_name,
                 access.expression,
                 crate::query_boundaries::name_resolution::NameLookupKind::Type,
             );
@@ -295,7 +298,7 @@ impl<'a> CheckerState<'a> {
         let skip_result_flow = skip_result_flow_for_result;
         let skip_optional_base_flow = access.question_dot_token && skip_result_flow_for_result;
 
-        let (original_object_type, write_presence_only) = if skip_flow_narrowing {
+        let (mut original_object_type, write_presence_only) = if skip_flow_narrowing {
             let object_type_no_flow =
                 self.get_type_of_write_target_base_expression(access.expression);
 
@@ -372,6 +375,21 @@ impl<'a> CheckerState<'a> {
                 false,
             )
         };
+        if base_runtime.has_exact_augmentation_runtime
+            && let Some(base_identifier_name) = self
+                .ctx
+                .arena
+                .get_identifier_at(access.expression)
+                .map(|base_identifier| base_identifier.escaped_text.clone())
+            && let Some(binding) = self
+                .named_import_augmentation_runtime_binding(access.expression, &base_identifier_name)
+        {
+            // Evaluating the identifier above is still required to emit
+            // TS1361/TS1362. For subsequent member lookup, however, an exact
+            // augmentation-owned runtime declaration outranks the native
+            // type-only target reached through the alias chain.
+            original_object_type = binding.type_id;
+        }
         // Evaluate Application types to resolve generic type aliases/interfaces,
         // preserving the original for error messages (nominal identity, e.g.
         // `D<string>`). A non-lib generic *interface* application receiver —

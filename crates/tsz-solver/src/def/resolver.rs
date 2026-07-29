@@ -4,12 +4,15 @@
 //! (both legacy `SymbolRef` and modern `DefId`), and `TypeEnvironment` — the
 //! standard implementation that maps identifiers to their resolved types.
 
+mod augmentation_transaction;
+
 use std::sync::Arc;
 
 use crate::construction::TypeDatabase;
 use crate::def::DefId;
 use crate::def::core::DefinitionStore;
 use crate::types::{IntrinsicKind, SymbolRef, TypeId, TypeParamInfo, Variance};
+use augmentation_transaction::TypeEnvironmentUndo;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::SymbolId;
 
@@ -753,6 +756,9 @@ pub struct TypeEnvironment {
     /// `resolve_type_query`, leaving `resolve_lazy`/`resolve_ref`
     /// (type-position) on the instance type.
     typeof_value_types: FxHashMap<u32, TypeId>,
+
+    /// Nested sparse rollback journals for module-augmentation resolution.
+    augmentation_journals: augmentation_transaction::TypeEnvironmentAugmentationJournals,
 }
 
 impl TypeEnvironment {
@@ -784,6 +790,8 @@ impl TypeEnvironment {
             unresolved_name_resolutions: FxHashMap::default(),
             well_known_symbol_name_to_ref: FxHashMap::default(),
             typeof_value_types: FxHashMap::default(),
+            augmentation_journals:
+                augmentation_transaction::TypeEnvironmentAugmentationJournals::default(),
         }
     }
 
@@ -805,7 +813,7 @@ impl TypeEnvironment {
     /// pass can reduce `Application(UnresolvedTypeName(name), args)`.
     pub fn insert_unresolved_resolution(&mut self, name: String, def_id: DefId) {
         self.unresolved_name_resolutions.insert(name, def_id);
-        self.bump_generation();
+        self.bump_retained_augmentation_generation();
     }
 
     /// Look up a previously-recorded resolution for an `UnresolvedTypeName`
@@ -818,7 +826,7 @@ impl TypeEnvironment {
     /// (e.g. `"[Symbol.iterator]"`).
     pub fn register_well_known_symbol_name(&mut self, name: String, symbol_ref: SymbolRef) {
         self.well_known_symbol_name_to_ref.insert(name, symbol_ref);
-        self.bump_generation();
+        self.bump_retained_augmentation_generation();
     }
 
     /// Look up a registered well-known symbol key name.
@@ -846,6 +854,9 @@ impl TypeEnvironment {
         if self.this_type == this_type {
             return;
         }
+        self.record_augmentation_undo_with(|environment| {
+            TypeEnvironmentUndo::ThisType(environment.this_type)
+        });
         self.this_type = this_type;
         self.bump_generation();
     }
@@ -859,6 +870,9 @@ impl TypeEnvironment {
         {
             return;
         }
+        self.record_augmentation_undo_with(|environment| {
+            TypeEnvironmentUndo::DefinitionStore(environment.definition_store.clone())
+        });
         self.definition_store = Some(store);
         self.bump_generation();
     }
@@ -872,12 +886,18 @@ impl TypeEnvironment {
         if self.types.get(&symbol.0) == Some(&type_id) {
             return;
         }
+        self.record_augmentation_undo_with(|environment| {
+            TypeEnvironmentUndo::Types(symbol.0, environment.types.get(&symbol.0).copied())
+        });
         self.types.insert(symbol.0, type_id);
         self.bump_generation();
     }
 
     /// Register a boxed type for a primitive (Rule #33).
     pub fn set_boxed_type(&mut self, kind: IntrinsicKind, type_id: TypeId) {
+        self.record_augmentation_undo_with(|environment| {
+            TypeEnvironmentUndo::BoxedTypes(kind, environment.boxed_types.get(&kind).copied())
+        });
         self.boxed_types.insert(kind, type_id);
         self.bump_generation();
     }
@@ -892,7 +912,7 @@ impl TypeEnvironment {
         let def_ids = self.boxed_def_ids.entry(kind).or_default();
         if !def_ids.contains(&def_id) {
             def_ids.push(def_id);
-            self.bump_generation();
+            self.bump_retained_augmentation_generation();
         }
     }
 
@@ -932,6 +952,12 @@ impl TypeEnvironment {
 
     /// Register the Array<T> interface type from lib.d.ts.
     pub fn set_array_base_type(&mut self, type_id: TypeId, type_params: Vec<TypeParamInfo>) {
+        self.record_augmentation_undo_with(|environment| {
+            TypeEnvironmentUndo::ArrayBase(
+                environment.array_base_type,
+                environment.array_base_type_params.clone(),
+            )
+        });
         self.array_base_type = Some(type_id);
         self.array_base_type_params = type_params;
         self.bump_generation();
@@ -948,7 +974,10 @@ impl TypeEnvironment {
     }
 
     /// Register the `ReadonlyArray<T>` interface type from lib.d.ts.
-    pub const fn set_readonly_array_base_type(&mut self, type_id: TypeId) {
+    pub fn set_readonly_array_base_type(&mut self, type_id: TypeId) {
+        self.record_augmentation_undo_with(|environment| {
+            TypeEnvironmentUndo::ReadonlyArrayBase(environment.readonly_array_base_type)
+        });
         self.readonly_array_base_type = Some(type_id);
         self.bump_generation();
     }
@@ -973,6 +1002,17 @@ impl TypeEnvironment {
         {
             return;
         }
+        self.record_augmentation_undo_with(|environment| {
+            TypeEnvironmentUndo::Types(symbol.0, environment.types.get(&symbol.0).copied())
+        });
+        if !params.is_empty() {
+            self.record_augmentation_undo_with(|environment| {
+                TypeEnvironmentUndo::TypeParams(
+                    symbol.0,
+                    environment.type_params.get(&symbol.0).cloned(),
+                )
+            });
+        }
         self.types.insert(symbol.0, type_id);
         if !params.is_empty() {
             self.type_params.insert(symbol.0, params);
@@ -994,6 +1034,12 @@ impl TypeEnvironment {
         if self.typeof_value_types.get(&symbol.0) == Some(&type_id) {
             return;
         }
+        self.record_augmentation_undo_with(|environment| {
+            TypeEnvironmentUndo::TypeofValueTypes(
+                symbol.0,
+                environment.typeof_value_types.get(&symbol.0).copied(),
+            )
+        });
         self.typeof_value_types.insert(symbol.0, type_id);
         self.bump_generation();
     }
@@ -1040,6 +1086,21 @@ impl TypeEnvironment {
     /// resolve `Lazy(class_def_id)` in type position without their own
     /// `class_instance_types` cache being warm.
     pub fn insert_class_instance_type(&mut self, def_id: DefId, instance_type: TypeId) {
+        self.record_augmentation_undo_with(|environment| {
+            TypeEnvironmentUndo::ClassInstanceTypes(
+                def_id.0,
+                environment.class_instance_types.get(&def_id.0).copied(),
+            )
+        });
+        self.record_augmentation_undo_with(|environment| {
+            TypeEnvironmentUndo::InstanceTypeToClass(
+                instance_type.0,
+                environment
+                    .instance_type_to_class
+                    .get(&instance_type.0)
+                    .copied(),
+            )
+        });
         self.class_instance_types.insert(def_id.0, instance_type);
         // Reverse map: allow looking up which class a resolved instance type came from.
         // This is critical for instanceof narrowing to identify class types after
@@ -1076,6 +1137,17 @@ impl TypeEnvironment {
         {
             return;
         }
+        self.record_augmentation_undo_with(|environment| {
+            TypeEnvironmentUndo::DefTypes(def_id.0, environment.def_types.get(&def_id.0).copied())
+        });
+        if !params.is_empty() {
+            self.record_augmentation_undo_with(|environment| {
+                TypeEnvironmentUndo::DefTypeParams(
+                    def_id.0,
+                    environment.def_type_params.get(&def_id.0).cloned(),
+                )
+            });
+        }
         self.def_types.insert(def_id.0, type_id);
         if !params.is_empty() {
             self.def_type_params.insert(def_id.0, params.clone());
@@ -1094,9 +1166,21 @@ impl TypeEnvironment {
 
     pub fn insert_declared_variances(&mut self, def_id: DefId, variances: Arc<[Variance]>) {
         if let Some(symbol) = self.def_to_symbol.get(&def_id.0).copied() {
+            self.record_augmentation_undo_with(|environment| {
+                TypeEnvironmentUndo::DeclaredVariances(
+                    symbol.0,
+                    environment.declared_variances.get(&symbol.0).cloned(),
+                )
+            });
             self.declared_variances
                 .insert(symbol.0, Arc::clone(&variances));
         }
+        self.record_augmentation_undo_with(|environment| {
+            TypeEnvironmentUndo::DeclaredVariances(
+                def_id.0,
+                environment.declared_variances.get(&def_id.0).cloned(),
+            )
+        });
         self.declared_variances.insert(def_id.0, variances);
         self.bump_generation();
     }
@@ -1378,6 +1462,12 @@ impl TypeEnvironment {
         if self.def_types.get(&raw_def_key) == Some(&type_id) {
             return;
         }
+        self.record_augmentation_undo_with(|environment| {
+            TypeEnvironmentUndo::DefTypes(
+                raw_def_key,
+                environment.def_types.get(&raw_def_key).copied(),
+            )
+        });
         self.def_types.insert(raw_def_key, type_id);
         self.bump_generation();
     }
@@ -1424,7 +1514,7 @@ impl TypeEnvironment {
     /// Register a `DefId`'s `DefKind`.
     pub fn insert_def_kind(&mut self, def_id: DefId, kind: crate::def::DefKind) {
         self.def_kinds.insert(def_id.0, kind);
-        self.bump_generation();
+        self.bump_retained_augmentation_generation();
     }
 
     /// Get a `DefId`'s `DefKind`.
@@ -1450,13 +1540,13 @@ impl TypeEnvironment {
     pub fn register_def_symbol_mapping(&mut self, def_id: DefId, sym_id: SymbolId) {
         self.def_to_symbol.insert(def_id.0, sym_id);
         self.symbol_to_def.insert(sym_id.0, def_id);
-        self.bump_generation();
+        self.bump_retained_augmentation_generation();
     }
 
     /// Register a `DefId` as a numeric enum.
     pub fn register_numeric_enum(&mut self, def_id: DefId) {
         self.numeric_enums.insert(def_id.0);
-        self.bump_generation();
+        self.bump_retained_augmentation_generation();
     }
 
     /// Check if a `DefId` is a numeric enum.
@@ -1466,6 +1556,12 @@ impl TypeEnvironment {
 
     /// Register an enum's namespace object type (for `typeof Enum`).
     pub fn register_enum_namespace_type(&mut self, def_id: DefId, ns_type: TypeId) {
+        self.record_augmentation_undo_with(|environment| {
+            TypeEnvironmentUndo::EnumNamespaceTypes(
+                def_id.0,
+                environment.enum_namespace_types.get(&def_id.0).copied(),
+            )
+        });
         self.enum_namespace_types.insert(def_id.0, ns_type);
         self.bump_generation();
     }
@@ -1502,7 +1598,7 @@ impl TypeEnvironment {
         if let Some(store) = self.definition_store.as_ref() {
             store.register_enum_parent(member_def_id, parent_def_id);
         }
-        self.bump_generation();
+        self.bump_retained_augmentation_generation();
     }
 
     /// Get the parent enum `DefId` for an enum member `DefId`.
@@ -1540,7 +1636,7 @@ impl TypeEnvironment {
     /// Register a class's parent class `DefId`.
     pub fn register_class_extends(&mut self, child_def_id: DefId, parent_def_id: DefId) {
         self.class_extends.insert(child_def_id.0, parent_def_id);
-        self.bump_generation();
+        self.bump_retained_augmentation_generation();
     }
 
     /// Get the parent class `DefId` for a class.

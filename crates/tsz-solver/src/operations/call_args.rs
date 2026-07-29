@@ -561,7 +561,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ) -> Option<Option<CallResult>> {
         let rest_param = params.last().filter(|param| param.rest)?;
         let rest_start = params.len().saturating_sub(1);
-        let rest_type = self.unwrap_readonly(rest_param.type_id);
+        let rest_type = self.unwrap_readonly_preserving_no_infer(rest_param.type_id);
         let rest_type = self.evaluate_rest_param_type(rest_type);
         if !self.rest_type_needs_aggregate_argument_check(rest_type) {
             return None;
@@ -732,7 +732,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return false;
         }
 
-        let rest_type = self.unwrap_readonly(rest_param.type_id);
+        let rest_type = self.unwrap_readonly_preserving_no_infer(rest_param.type_id);
         let rest_type = self.evaluate_rest_param_type(rest_type);
         self.rest_type_needs_aggregate_argument_check(rest_type)
     }
@@ -745,7 +745,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return false;
         }
         match self.interner.lookup(type_id) {
-            Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
+            Some(TypeData::ReadonlyType(inner)) => {
                 self.rest_type_needs_aggregate_argument_check(inner)
             }
             Some(TypeData::Union(members)) => {
@@ -765,8 +765,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     .iter()
                     .any(|element| !element.rest)
             }
+            // `NoInfer<T>` is transparent to assignability but deliberately
+            // opaque to tsc's effective-rest shape. Remaining arguments are
+            // packed into one tuple and related to the wrapper as a whole.
             Some(
-                TypeData::TypeParameter(_)
+                TypeData::NoInfer(_)
+                | TypeData::TypeParameter(_)
                 | TypeData::Application(_)
                 | TypeData::Conditional(_)
                 | TypeData::Intersection(_)
@@ -945,7 +949,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return (required, Some(params.len()));
         };
 
-        let rest_param_type = self.unwrap_readonly(rest_param.type_id);
+        let rest_param_type = self.unwrap_readonly_preserving_no_infer(rest_param.type_id);
         // Erase the signature's own type parameters to `any` before evaluating
         // the rest-parameter type, matching tsc's erased-signature arity
         // precheck so a generic conditional/mapped rest tuple does not collapse
@@ -1408,6 +1412,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// Uses the checker's `evaluate_type` which has access to the full `TypeResolver`,
     /// unlike `QueryDatabase::evaluate_type` which uses a `NoopResolver`.
     pub(crate) fn evaluate_rest_param_type(&mut self, type_id: TypeId) -> TypeId {
+        let type_id = self.checker.type_resolver().map_or(type_id, |resolver| {
+            crate::type_queries::data::expose_rest_alias_shape_preserving_no_infer(
+                self.interner,
+                resolver,
+                type_id,
+            )
+        });
         if type_id.is_intrinsic() {
             return type_id;
         }
@@ -1449,6 +1460,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
                     type_id = inner;
                 }
+                _ => return type_id,
+            }
+        }
+    }
+
+    /// Strip only `readonly` while retaining `NoInfer`.
+    ///
+    /// `NoInfer` is transparent once two types are compared, but tsc does not
+    /// look through it for tuple-rest arity or effective-rest classification.
+    /// Rest arguments therefore remain one aggregate tuple until relation
+    /// checking reaches the wrapper.
+    fn unwrap_readonly_preserving_no_infer(&self, mut type_id: TypeId) -> TypeId {
+        let mut iterations = 0;
+        loop {
+            iterations += 1;
+            if iterations > Self::MAX_UNWRAP_ITERATIONS || type_id.is_intrinsic() {
+                return type_id;
+            }
+            match self.interner.lookup(type_id) {
+                Some(TypeData::ReadonlyType(inner)) => type_id = inner,
                 _ => return type_id,
             }
         }

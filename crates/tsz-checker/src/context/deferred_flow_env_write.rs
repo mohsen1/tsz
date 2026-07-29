@@ -123,6 +123,57 @@ pub enum DeferredFlowEnvWrite {
 }
 
 impl DeferredFlowEnvWrite {
+    /// Replay only declaration-identity state that is valid independently of
+    /// a speculative augmentation result. Returns `true` when the write (or
+    /// its stable identity portion) was applied.
+    pub(crate) fn apply_stable_identity(&self, env: &mut TypeEnvironment) -> bool {
+        match self {
+            Self::RegisterClassExtends {
+                def_id,
+                parent_def_id,
+            } => env.register_class_extends(*def_id, *parent_def_id),
+            Self::RegisterClassExtendsIfMissing {
+                def_id,
+                parent_def_id,
+            } => {
+                if env.get_class_extends_def(*def_id).is_none() {
+                    env.register_class_extends(*def_id, *parent_def_id);
+                }
+            }
+            Self::RegisterDefSymbolMapping { def_id, sym_id } => {
+                env.register_def_symbol_mapping(*def_id, *sym_id);
+            }
+            Self::InsertDefKind { def_id, kind } => env.insert_def_kind(*def_id, *kind),
+            Self::InsertUnresolvedResolution { name, def_id } => {
+                env.insert_unresolved_resolution(name.clone(), *def_id);
+            }
+            Self::RegisterBoxedDef { kind, def_id, .. } => {
+                env.register_boxed_def_id(*kind, *def_id);
+            }
+            Self::RegisterWellKnownSymbolName { name, symbol_ref } => {
+                env.register_well_known_symbol_name(name.clone(), *symbol_ref);
+            }
+            Self::RegisterNumericEnum { def_id } => env.register_numeric_enum(*def_id),
+            Self::RegisterEnumParent {
+                member_def_id,
+                parent_def_id,
+            } => env.register_enum_parent(*member_def_id, *parent_def_id),
+            Self::SetDefinitionStore(_)
+            | Self::InsertDef { .. }
+            | Self::InsertDefIfMissing { .. }
+            | Self::InsertDefWithParams { .. }
+            | Self::InsertClassInstance { .. }
+            | Self::InsertClassInstanceIfMissing { .. }
+            | Self::RegisterAugmentedDef { .. }
+            | Self::InsertTypeofValueType { .. }
+            | Self::RegisterBoxedType { .. }
+            | Self::RegisterArrayBaseType { .. }
+            | Self::RegisterEnumNamespaceType { .. }
+            | Self::InsertSymbolType { .. } => return false,
+        }
+        true
+    }
+
     /// Build the body-registration variant for a definition, selecting
     /// [`Self::InsertDef`] when `params` is empty and
     /// [`Self::InsertDefWithParams`] otherwise.

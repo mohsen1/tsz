@@ -190,6 +190,7 @@ symbol_to_def = { lifetime = "FileLocalReset", capability = "RelationSessionStat
 def_to_symbol = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 def_type_params = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 def_no_type_params = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+augmentation_local_journals = { lifetime = "SpeculationScoped", capability = "SpeculationState", reason = "nested augmentation-publication undo journals; pushed per transactional semantic overlay and committed or rolled back in LIFO order so no journal state escapes the active speculative publication scope" }
 def_fallback_count = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 local_caches_warmed = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 abstract_constructor_types = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }

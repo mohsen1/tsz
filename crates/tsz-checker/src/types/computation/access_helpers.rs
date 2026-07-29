@@ -514,34 +514,39 @@ impl<'a> CheckerState<'a> {
         if index_type != TypeId::SYMBOL {
             return None;
         }
+        let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
         if !crate::query_boundaries::common::is_type_parameter(
             self.ctx.types,
             pre_resolution_object_type,
         ) && let Some(property_name) =
             self.symbol_valued_binding_property_name(index_node, index_type)
-        {
-            let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
-            if let Some(prop) = crate::query_boundaries::common::find_property_by_str(
+            && let Some(prop) = crate::query_boundaries::common::find_property_by_str(
                 self.ctx.types,
                 resolved_type,
                 &property_name,
-            ) {
-                return Some(if skip_flow_narrowing {
-                    if write_presence_only {
-                        TypeId::ANY
-                    } else {
-                        prop.write_type
-                    }
+            )
+        {
+            return Some(if skip_flow_narrowing {
+                if write_presence_only {
+                    TypeId::ANY
                 } else {
-                    prop.type_id
-                });
-            }
+                    prop.write_type
+                }
+            } else {
+                prop.type_id
+            });
         }
         if index_type_for_access == index_type {
             return None;
         }
-        let result = self.get_element_access_type(object_type_for_access, TypeId::SYMBOL, None);
-        (result != TypeId::UNDEFINED && result != TypeId::ERROR).then_some(result)
+        let mut result = crate::query_boundaries::index_signature::resolve_symbol_index(
+            self.ctx.types,
+            resolved_type,
+        )?;
+        if self.ctx.no_unchecked_indexed_access() {
+            result = self.ctx.types.factory().union2(result, TypeId::UNDEFINED);
+        }
+        Some(result)
     }
 
     /// Resolve a tuple's spread (`rest`) element types and rebuild it so the

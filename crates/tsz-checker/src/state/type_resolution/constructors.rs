@@ -161,6 +161,8 @@ impl<'a> CheckerState<'a> {
             let sig = call_signature_from_function_shape(
                 function_shape.as_ref().clone(),
                 function_shape.is_method,
+                false,
+                None,
             );
             if sig.type_params.is_empty() {
                 return ctor_type;

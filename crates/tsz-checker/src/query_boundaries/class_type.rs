@@ -29,6 +29,32 @@ pub(crate) fn callable_requires_explicit_receiver(
     tsz_solver::type_queries::callable_requires_explicit_receiver(db, callee_type)
 }
 
+pub(crate) fn symbol_owned_class_prototype_property_index(
+    db: &dyn TypeDatabase,
+    shape: &CallableShape,
+    owner: SymbolId,
+) -> Option<usize> {
+    if shape.construct_signatures.is_empty() {
+        return None;
+    }
+    let prototype_name = db.intern_string("prototype");
+    shape
+        .properties
+        .iter()
+        .position(|prop| prop.name == prototype_name && prop.parent_id == Some(owner))
+}
+
+pub(crate) fn constructable_class_instance_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    class_symbol: SymbolId,
+) -> bool {
+    callable_shape_for_type(db, type_id).is_some_and(|shape| {
+        !shape.construct_signatures.is_empty()
+            && symbol_owned_class_prototype_property_index(db, &shape, class_symbol).is_none()
+    })
+}
+
 pub(crate) fn type_includes_undefined(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::type_includes_undefined(db, type_id)
 }
@@ -286,6 +312,7 @@ pub(crate) const fn class_method_call_signature(
     this_type: Option<TypeId>,
     return_type: TypeId,
     type_predicate: Option<TypePredicate>,
+    has_literal_types: bool,
 ) -> CallSignature {
     class_construct_signature(
         type_params,
@@ -293,6 +320,8 @@ pub(crate) const fn class_method_call_signature(
         this_type,
         return_type,
         type_predicate,
+        has_literal_types,
+        None,
         true,
     )
 }
@@ -571,6 +600,8 @@ pub(crate) const fn class_construct_signature(
     this_type: Option<TypeId>,
     return_type: TypeId,
     type_predicate: Option<TypePredicate>,
+    has_literal_types: bool,
+    construct_origin: Option<tsz_solver::ConstructSignatureOrigin>,
     is_method: bool,
 ) -> CallSignature {
     CallSignature {
@@ -579,6 +610,8 @@ pub(crate) const fn class_construct_signature(
         this_type,
         return_type,
         type_predicate,
+        has_literal_types,
+        construct_origin,
         is_method,
     }
 }

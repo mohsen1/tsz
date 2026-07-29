@@ -10,8 +10,8 @@ Implements `T2.1.A` from `docs/plan/PERFORMANCE_PLAN.md`:
 What this script does:
 
 1. Parse `crates/tsz-checker/src/context/mod.rs` for the `CheckerContext<'a>`
-   struct definition and extract every `pub <field>: <type>` or
-   `pub(crate) <field>: <type>` line.
+   struct definition and extract every `<field>: <type>` line, regardless of
+   field visibility.
 2. Load the manifest at
    `crates/tsz-checker/src/context/checker_context_lifetimes.toml` which maps
    each field to one of the lifetime classes described in PERFORMANCE_PLAN.md
@@ -145,17 +145,17 @@ SIMPLE_INLINE_ENTRY_RE = re.compile(
 
 @dataclass(frozen=True)
 class Field:
-    """One `pub <name>: <type>` line in `CheckerContext<'a>`."""
+    """One `<name>: <type>` line in `CheckerContext<'a>`."""
 
     name: str
     rust_type: str
 
 
 def parse_checker_context_fields(rs_path: pathlib.Path) -> list[Field]:
-    """Extract public-visible field lines from `pub struct CheckerContext<'a>`.
+    """Extract every field line from `pub struct CheckerContext<'a>`.
 
-    Whitespace-tolerant. Strips trailing commas. Skips inner `// ---` section
-    headers and fully private fields.
+    Whitespace-tolerant. Strips trailing commas and accepts public,
+    crate-visible, and private fields.
     """
     text = rs_path.read_text(encoding="utf-8")
 
@@ -186,7 +186,8 @@ def parse_checker_context_fields(rs_path: pathlib.Path) -> list[Field]:
 
     fields: list[Field] = []
     field_start_pattern = re.compile(
-        r"^\s*pub(?:\(\s*crate\s*\))?\s+([a-z_][a-z_0-9]*)\s*:\s*(.*)$",
+        r"^\s*(?:pub(?:\(\s*crate\s*\))?\s+)?"
+        r"([a-z_][a-z_0-9]*)\s*:\s*(.*)$",
     )
     lines = body.splitlines()
     line_idx = 0

@@ -151,6 +151,121 @@ pub enum PropertyCollectionResult {
     },
 }
 
+/// Normalize a property sequence to one entry per name using intersection
+/// semantics while preserving the first declaration position of each name.
+///
+/// This is the safe construction boundary for callers that have collected
+/// properties from multiple heritage branches: it never interns an
+/// `ObjectShape` containing duplicate names.
+pub fn normalize_property_infos(
+    interner: &dyn TypeDatabase,
+    properties: Vec<PropertyInfo>,
+) -> Vec<PropertyInfo> {
+    if properties.len() <= 1 {
+        return properties;
+    }
+
+    let mut normalized = Vec::with_capacity(properties.len());
+    let mut indices = FxHashMap::default();
+    for property in properties {
+        if let Some(&index) = indices.get(&property.name) {
+            merge_property_info(interner, &mut normalized[index], &property);
+        } else {
+            indices.insert(property.name, normalized.len());
+            normalized.push(property);
+        }
+    }
+    normalized
+}
+
+pub fn merge_index_signature_infos(
+    interner: &dyn TypeDatabase,
+    current: Option<IndexSignature>,
+    incoming: Option<IndexSignature>,
+) -> Option<IndexSignature> {
+    match (current, incoming) {
+        (Some(mut current), Some(incoming)) => {
+            current.value_type =
+                interner.intersect_types_raw2(current.value_type, incoming.value_type);
+            current.readonly = current.readonly && incoming.readonly;
+            Some(current)
+        }
+        (current @ Some(_), None) => current,
+        (None, incoming) => incoming,
+    }
+}
+
+fn tuple_length_type(interner: &dyn TypeDatabase, tuple_type: TypeId) -> TypeId {
+    let Some((minimum, Some(maximum))) = tuple_length_bounds(interner, tuple_type, 0) else {
+        return TypeId::NUMBER;
+    };
+    if minimum == maximum {
+        return interner.literal_number(maximum as f64);
+    }
+    if maximum.saturating_sub(minimum) > 1_000 {
+        return TypeId::NUMBER;
+    }
+    interner.union(
+        (minimum..=maximum)
+            .map(|length| interner.literal_number(length as f64))
+            .collect(),
+    )
+}
+
+fn tuple_length_bounds(
+    interner: &dyn TypeDatabase,
+    mut tuple_type: TypeId,
+    depth: usize,
+) -> Option<(usize, Option<usize>)> {
+    if depth > 64 || tuple_type.is_intrinsic() {
+        return None;
+    }
+    while let Some(TypeData::ReadonlyType(inner)) = interner.lookup(tuple_type) {
+        tuple_type = inner;
+    }
+    let Some(TypeData::Tuple(tuple_id)) = interner.lookup(tuple_type) else {
+        return Some((0, None));
+    };
+
+    let elements = interner.tuple_list(tuple_id);
+    let mut minimum = 0usize;
+    let mut maximum = Some(0usize);
+    for element in elements.iter() {
+        if element.rest {
+            let (rest_minimum, rest_maximum) =
+                tuple_length_bounds(interner, element.type_id, depth + 1)?;
+            minimum = minimum.checked_add(rest_minimum)?;
+            maximum = match (maximum, rest_maximum) {
+                (Some(current), Some(rest)) => current.checked_add(rest),
+                _ => None,
+            };
+        } else {
+            if !element.optional {
+                minimum = minimum.checked_add(1)?;
+            }
+            maximum = maximum.and_then(|current| current.checked_add(1));
+        }
+    }
+    Some((minimum, maximum))
+}
+
+fn merge_property_info(
+    interner: &dyn TypeDatabase,
+    existing: &mut PropertyInfo,
+    incoming: &PropertyInfo,
+) {
+    existing.type_id = interner.intersect_types_raw2(existing.type_id, incoming.type_id);
+    existing.optional = existing.optional && incoming.optional;
+    existing.readonly = existing.readonly && incoming.readonly;
+    existing.write_type = if existing.readonly {
+        interner.intersect_types_raw2(existing.write_type, incoming.write_type)
+    } else {
+        existing.type_id
+    };
+    existing.visibility = merge_visibility(existing.visibility, incoming.visibility);
+    existing.is_method = existing.is_method && incoming.is_method;
+}
+
 /// Whether a finished property collection may be published to the cross-call
 /// result cache.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -287,6 +402,24 @@ where
     collect_properties_cached(type_id, interner, resolver, None)
 }
 
+/// Collect properties while preserving semantic declaration order.
+///
+/// Interned object shapes are name-sorted for identity, so this mode restores
+/// each shape's `declaration_order` before merging and leaves the final
+/// first-occurrence order intact. It deliberately bypasses the canonical
+/// cross-call cache, whose results are name-sorted.
+pub fn collect_properties_in_declaration_order<R>(
+    type_id: TypeId,
+    interner: &dyn TypeDatabase,
+    resolver: &R,
+) -> PropertyCollectionResult
+where
+    R: TypeResolver,
+{
+    let mut operation_memo = PropertyCollectionOperationMemo::default();
+    collect_properties_cached_inner(type_id, interner, resolver, None, &mut operation_memo, true)
+}
+
 /// Whether a named property is *declared optional* on the apparent type,
 /// resolving through heritage, intersection, application, union, mapped,
 /// conditional, and type-parameter constraints.
@@ -344,7 +477,14 @@ where
     R: TypeResolver,
 {
     let mut operation_memo = PropertyCollectionOperationMemo::default();
-    collect_properties_cached_inner(type_id, interner, resolver, query_db, &mut operation_memo)
+    collect_properties_cached_inner(
+        type_id,
+        interner,
+        resolver,
+        query_db,
+        &mut operation_memo,
+        false,
+    )
 }
 
 fn collect_properties_cached_inner<'a, R>(
@@ -353,6 +493,7 @@ fn collect_properties_cached_inner<'a, R>(
     resolver: &'a R,
     query_db: Option<&'a dyn QueryDatabase>,
     operation_memo: &'a mut PropertyCollectionOperationMemo,
+    preserve_declaration_order: bool,
 ) -> PropertyCollectionResult
 where
     R: TypeResolver,
@@ -436,6 +577,7 @@ where
         interner,
         resolver,
         query_db,
+        preserve_declaration_order,
         properties: Vec::new(),
         prop_index: FxHashMap::default(),
         string_index: None,
@@ -473,8 +615,10 @@ where
         // If no properties were collected, return NonObject
         PropertyCollectionResult::NonObject
     } else {
-        // Sort properties by name to maintain interner invariants
-        collector.properties.sort_by_key(|p| p.name.0);
+        if !preserve_declaration_order {
+            // Canonical mode feeds interned shapes and cache consumers.
+            collector.properties.sort_by_key(|p| p.name.0);
+        }
         PropertyCollectionResult::Properties {
             properties: collector.properties,
             string_index: collector.string_index,
@@ -524,6 +668,7 @@ struct PropertyCollector<'a, R> {
     /// for `Application` members reuse memoized application/instantiation
     /// results instead of recomputing them per collection.
     query_db: Option<&'a dyn QueryDatabase>,
+    preserve_declaration_order: bool,
     properties: Vec<PropertyInfo>,
     /// Maps property name (Atom) to index in `properties` for O(1) lookup during merge
     prop_index: FxHashMap<Atom, usize>,
@@ -573,6 +718,64 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                 Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                     let shape = self.interner.object_shape(shape_id);
                     self.merge_shape(&shape);
+                }
+                Some(TypeData::Callable(shape_id)) => {
+                    // Call signatures are intentionally not part of property
+                    // collection, but callable values may still carry named
+                    // properties that participate in an intersection/interface
+                    // surface.
+                    let callable = self.interner.callable_shape(shape_id);
+                    let symbol_index = callable
+                        .string_index
+                        .filter(|index| index.key_type == TypeId::SYMBOL);
+                    let string_index = callable
+                        .string_index
+                        .filter(|index| index.key_type != TypeId::SYMBOL);
+                    self.merge_shape(&ObjectShape {
+                        properties: callable.properties.clone(),
+                        string_index,
+                        number_index: callable.number_index,
+                        symbol_index,
+                        symbol: callable.symbol,
+                        ..ObjectShape::default()
+                    });
+                }
+                Some(TypeData::Array(element)) => {
+                    self.merge_shape(&ObjectShape {
+                        number_index: Some(IndexSignature {
+                            key_type: TypeId::NUMBER,
+                            value_type: element,
+                            readonly: false,
+                            param_name: None,
+                        }),
+                        ..ObjectShape::default()
+                    });
+                    if let Some(surface) = self.array_surface(element, false) {
+                        stack.push(surface);
+                    }
+                }
+                Some(TypeData::Tuple(tuple_id)) => {
+                    self.collect_tuple_surface(resolved, tuple_id, false, &mut stack);
+                }
+                Some(TypeData::ReadonlyType(inner)) => {
+                    if let Some(TypeData::Tuple(tuple_id)) = self.interner.lookup(inner) {
+                        self.collect_tuple_surface(inner, tuple_id, true, &mut stack);
+                    } else if let Some(element) =
+                        crate::type_queries::get_array_element_type(self.interner, inner)
+                    {
+                        self.merge_shape(&ObjectShape {
+                            number_index: Some(IndexSignature {
+                                key_type: TypeId::NUMBER,
+                                value_type: element,
+                                readonly: true,
+                                param_name: None,
+                            }),
+                            ..ObjectShape::default()
+                        });
+                        if let Some(surface) = self.array_surface(element, true) {
+                            stack.push(surface);
+                        }
+                    }
                 }
                 Some(TypeData::Mapped(mapped_id)) => {
                     // A deferred mapped type whose key constraint references
@@ -666,6 +869,75 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
             evaluator = evaluator.with_query_db(db);
         }
         evaluator
+    }
+
+    fn array_surface(&self, element: TypeId, readonly: bool) -> Option<TypeId> {
+        let base = if readonly {
+            self.resolver
+                .get_readonly_array_base_type()
+                .or_else(|| self.resolver.get_array_base_type())
+        } else {
+            self.resolver.get_array_base_type()
+        }?;
+        Some(self.interner.application(base, vec![element]))
+    }
+
+    fn collect_tuple_surface(
+        &mut self,
+        tuple_type: TypeId,
+        tuple_id: crate::types::TupleListId,
+        readonly: bool,
+        stack: &mut Vec<TypeId>,
+    ) {
+        let elements = self.interner.tuple_list(tuple_id);
+        let element_type =
+            crate::type_queries::get_tuple_element_type_union(self.interner, tuple_type)
+                .unwrap_or(TypeId::NEVER);
+        let fixed_length = crate::operations::sequence_property::compute_tuple_fixed_length(
+            self.interner,
+            tuple_type,
+        );
+        let fixed_prefix_length = elements.iter().take_while(|element| !element.rest).count();
+        let property_count = fixed_length.unwrap_or(fixed_prefix_length);
+        let mut properties = Vec::with_capacity(property_count.saturating_add(1));
+
+        for index in 0..property_count {
+            let Some((type_id, optional)) = crate::operations::sequence_property::tuple_fixed_slot(
+                self.interner,
+                &elements,
+                index,
+            ) else {
+                continue;
+            };
+            let mut property =
+                PropertyInfo::new(self.interner.intern_string(&index.to_string()), type_id);
+            property.optional = optional;
+            property.readonly = readonly;
+            property.declaration_order = properties.len() as u32 + 1;
+            properties.push(property);
+        }
+
+        let mut length = PropertyInfo::new(
+            self.interner.intern_string("length"),
+            tuple_length_type(self.interner, tuple_type),
+        );
+        length.readonly = readonly;
+        length.declaration_order = properties.len() as u32 + 1;
+        properties.push(length);
+
+        self.merge_shape(&ObjectShape {
+            properties,
+            number_index: Some(IndexSignature {
+                key_type: TypeId::NUMBER,
+                value_type: element_type,
+                readonly,
+                param_name: None,
+            }),
+            ..ObjectShape::default()
+        });
+        if let Some(surface) = self.array_surface(element_type, readonly) {
+            stack.push(surface);
+        }
     }
 
     fn expand_application_with_resolver(&self, type_id: TypeId) -> Option<TypeId> {
@@ -805,6 +1077,7 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                 self.resolver,
                 self.query_db,
                 operation_memo,
+                self.preserve_declaration_order,
             );
             member_props.push(result);
         }
@@ -905,54 +1178,40 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
     }
 
     fn merge_shape(&mut self, shape: &ObjectShape) {
-        // Merge properties using HashMap index for O(1) lookup
-        for prop in &shape.properties {
-            if let Some(&idx) = self.prop_index.get(&prop.name) {
-                let existing = &mut self.properties[idx];
-                // TS Rule: Intersect types (using raw to avoid recursion)
-                existing.type_id = self
-                    .interner
-                    .intersect_types_raw2(existing.type_id, prop.type_id);
-                // TS Rule: Optional if ALL are optional (required wins)
-                existing.optional = existing.optional && prop.optional;
-                // TS Rule: Readonly only if ALL are readonly (writable wins)
-                // { readonly a: number } & { a: number } = { a: number }
-                existing.readonly = existing.readonly && prop.readonly;
-                // Write type tracks read type for writable properties; readonly
-                // members intersect their setter types (see issue #11323).
-                existing.write_type = if existing.readonly {
-                    self.interner
-                        .intersect_types_raw2(existing.write_type, prop.write_type)
-                } else {
-                    existing.type_id
-                };
-                // Merge visibility: use the more restrictive one (private > protected > public)
-                existing.visibility = merge_visibility(existing.visibility, prop.visibility);
-                // is_method: if one is a method, treat as property (more general)
-                existing.is_method = existing.is_method && prop.is_method;
-            } else {
-                let new_idx = self.properties.len();
-                self.prop_index.insert(prop.name, new_idx);
-                self.properties.push(prop.clone());
+        if self.preserve_declaration_order {
+            let mut properties: Vec<_> = shape.properties.iter().collect();
+            properties.sort_by_key(|property| property.declaration_order);
+            for property in properties {
+                self.merge_property(property);
+            }
+        } else {
+            for property in &shape.properties {
+                self.merge_property(property);
             }
         }
 
         // Merge each index signature slot (intersection semantics).
-        let interner = self.interner;
-        let merge = |slot: &mut Option<IndexSignature>, incoming: Option<&IndexSignature>| {
-            let Some(idx) = incoming else { return };
-            if let Some(existing) = slot {
-                // Intersect value types; readonly only if ALL are readonly.
-                existing.value_type =
-                    interner.intersect_types_raw2(existing.value_type, idx.value_type);
-                existing.readonly = existing.readonly && idx.readonly;
-            } else {
-                *slot = Some(*idx);
-            }
-        };
-        merge(&mut self.string_index, shape.string_index.as_ref());
-        merge(&mut self.number_index, shape.number_index.as_ref());
-        merge(&mut self.symbol_index, shape.symbol_index.as_ref());
+        self.string_index = merge_index_signature_infos(
+            self.interner,
+            self.string_index,
+            shape.string_index_signature().copied(),
+        );
+        self.number_index =
+            merge_index_signature_infos(self.interner, self.number_index, shape.number_index);
+        self.symbol_index = merge_index_signature_infos(
+            self.interner,
+            self.symbol_index,
+            shape.symbol_index_signature().copied(),
+        );
+    }
+
+    fn merge_property(&mut self, property: &PropertyInfo) {
+        if let Some(&index) = self.prop_index.get(&property.name) {
+            merge_property_info(self.interner, &mut self.properties[index], property);
+        } else {
+            self.prop_index.insert(property.name, self.properties.len());
+            self.properties.push(property.clone());
+        }
     }
 }
 

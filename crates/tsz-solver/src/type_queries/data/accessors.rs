@@ -402,6 +402,8 @@ pub fn get_callable_shape_for_type(
                 this_type: func.this_type,
                 return_type: func.return_type,
                 type_predicate: func.type_predicate,
+                has_literal_types: false,
+                construct_origin: None,
                 is_method: func.is_method,
             }],
             construct_signatures: Vec::new(),
@@ -426,20 +428,18 @@ pub fn get_overload_call_signatures(
     if let Some(shape_id) = crate::visitor::callable_shape_id(db, type_id) {
         let shape = db.callable_shape(shape_id);
         if shape.call_signatures.len() > 1 {
-            return Some(reorder_overload_candidates(db, &shape.call_signatures));
+            return Some(reorder_call_overload_candidates(db, &shape.call_signatures));
         }
     }
     None
 }
 
-/// Reorder overload candidates so that specialized signatures (those with literal
-/// type parameters) come before non-specialized signatures.
+/// Reorder call candidates using their current semantic parameter types.
 ///
-/// This matches tsc's `reorderCandidates` behavior (TypeScript GH#1133). Without
-/// this reordering, catch-all `string`/`number` parameter overloads inherited from
-/// base types can shadow more specific literal overloads from derived types in
-/// diamond inheritance scenarios.
-fn reorder_overload_candidates(
+/// This preserves the existing call-resolution behavior. Construct signatures
+/// use declaration-derived syntax metadata instead; see
+/// [`reorder_construct_overload_candidates`].
+fn reorder_call_overload_candidates(
     db: &dyn TypeDatabase,
     signatures: &[crate::types::CallSignature],
 ) -> Vec<crate::types::CallSignature> {
@@ -472,12 +472,73 @@ fn reorder_overload_candidates(
     specialized
 }
 
-/// Check if a call signature has any parameters with literal types.
-/// This matches tsc's `signatureHasLiteralTypes` flag.
+/// Stable-partition construct candidates by declaration-derived literal syntax.
+///
+/// Unlike calls, constructor ordering must retain whether the original
+/// parameter annotation itself was a `LiteralType` node: aliases and unions
+/// must not become specialized merely because they resolve to literal
+/// `TypeId`s, while instantiation must not erase a direct literal marker.
+pub fn reorder_construct_overload_candidates(
+    signatures: &[crate::types::CallSignature],
+) -> Vec<crate::types::CallSignature> {
+    let mut result = Vec::with_capacity(signatures.len());
+    let mut last_owner: Option<crate::def::DefId> = None;
+    let mut last_group: Option<(crate::def::DefId, tsz_common::Atom, u32, u32)> = None;
+    let mut cutoff_index = 0usize;
+    let mut group_index = 0usize;
+    let mut specialized_count = 0usize;
+
+    for signature in signatures {
+        if let Some(origin) = signature.construct_origin
+            && let Some(owner) = origin.owner
+        {
+            let same_owner = last_owner.is_none_or(|last| last == owner);
+            let group = (
+                owner,
+                origin.declaration_file,
+                origin.declaration_pos,
+                origin.declaration_end,
+            );
+            if same_owner {
+                if last_group == Some(group) {
+                    group_index += 1;
+                } else {
+                    last_group = Some(group);
+                    group_index = cutoff_index;
+                }
+            } else {
+                cutoff_index = result.len();
+                group_index = cutoff_index;
+                last_group = Some(group);
+            }
+            last_owner = Some(owner);
+        } else {
+            // Synthetic or otherwise untracked signatures reset the regular
+            // declaration-group reversal boundary. Literal-specialized
+            // signatures still participate in tsc's one global specialized
+            // partition, regardless of symbol or provenance boundaries.
+            group_index = result.len();
+            cutoff_index = result.len() + usize::from(!signature.has_literal_types);
+            last_owner = None;
+            last_group = None;
+        }
+
+        if signature.has_literal_types {
+            result.insert(specialized_count, signature.clone());
+            specialized_count += 1;
+            cutoff_index += 1;
+        } else {
+            result.insert(group_index, signature.clone());
+        }
+    }
+    result
+}
+
+/// Check if a call signature currently has any literal parameter types.
 fn signature_has_literal_types(db: &dyn TypeDatabase, sig: &crate::types::CallSignature) -> bool {
-    sig.params.iter().any(|p| {
+    sig.params.iter().any(|param| {
         matches!(
-            db.lookup(p.type_id),
+            db.lookup(param.type_id),
             Some(crate::types::TypeData::Literal(_))
         )
     })

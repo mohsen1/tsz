@@ -1765,11 +1765,14 @@ impl<'a> CheckerState<'a> {
     /// (conservative) so we never silently downgrade a namespace from
     /// instantiated to non-instantiated when symbol resolution is incomplete.
     fn specifier_target_has_value_meaning(&self, name_idx: NodeIndex) -> bool {
-        let Some(sym_id) = self.ctx.binder.resolve_identifier(self.ctx.arena, name_idx) else {
+        let Some(sym_id) = Self::local_named_export_target_symbol_in_owner(
+            self.ctx.arena,
+            self.ctx.binder,
+            name_idx,
+        ) else {
             return true;
         };
-        let lib_binders = self.get_lib_binders();
-        let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return true;
         };
         let value_mask = tsz_binder::symbol_flags::VALUE & !tsz_binder::symbol_flags::VALUE_MODULE;

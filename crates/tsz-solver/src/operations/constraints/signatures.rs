@@ -570,6 +570,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 .map(|t| instantiate_type(self.interner, t, &sub)),
             return_type: instantiate_type(self.interner, sig.return_type, &sub),
             type_predicate: sig.type_predicate,
+            has_literal_types: sig.has_literal_types,
+            construct_origin: sig.construct_origin,
             is_method: sig.is_method,
         }
     }

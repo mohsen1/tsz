@@ -2,19 +2,19 @@
 //!
 //! Types are represented as lightweight `TypeId` handles that point into
 //! an interning table. The actual structure is stored in `TypeData`.
-
 use crate::def::DefId;
 use serde::Serialize;
 use tsz_binder::SymbolId;
 use tsz_common::define_id;
 use tsz_common::interner::Atom;
 
+mod construct_signature_origin;
 /// Hand-maintained `PartialEq`/`Eq`/`Hash` impls for the interned shape types
 /// (`PropertyInfo`, `IndexSignature`, `ObjectShape`, `CallableShape`), with
 /// per-field identity decisions made explicit via exhaustive destructuring.
 mod relation_cache;
 mod shape_identity;
-
+pub use construct_signature_origin::ConstructSignatureOrigin;
 pub use relation_cache::{
     CachedAnyMode, RelationCacheConfig, RelationCacheKey, RelationCacheKind, RelationCacheValue,
     RelationFlags,
@@ -1249,8 +1249,7 @@ impl FunctionShape {
     }
 }
 
-/// Call signature for overloaded functions
-/// Represents a single call signature in an overloaded type
+/// A single call signature in an overloaded type.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CallSignature {
     pub type_params: Vec<TypeParamInfo>,
@@ -1258,6 +1257,10 @@ pub struct CallSignature {
     pub this_type: Option<TypeId>,
     pub return_type: TypeId,
     pub type_predicate: Option<TypePredicate>,
+    /// Declaration-derived direct literal syntax, preserved by instantiation.
+    pub has_literal_types: bool,
+    /// Source group for true construct-overload candidate ordering.
+    pub construct_origin: Option<ConstructSignatureOrigin>,
     /// Whether this call signature is from a method (uses bivariant parameter checking).
     /// Methods in TypeScript are intentionally bivariant for compatibility reasons.
     pub is_method: bool,
@@ -1272,6 +1275,8 @@ impl CallSignature {
             this_type: None,
             return_type,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }
     }

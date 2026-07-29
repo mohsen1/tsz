@@ -492,6 +492,7 @@ impl<'a> CheckerState<'a> {
                                 this_type,
                                 return_type,
                                 type_predicate,
+                                false,
                             )],
                         );
                         inst_props.push(class_type::class_member_property(
@@ -1824,6 +1825,8 @@ impl<'a> CheckerState<'a> {
                         instance_type,
                         None,
                         false,
+                        None,
+                        false,
                     ));
                 }
             } else {
@@ -1833,6 +1836,8 @@ impl<'a> CheckerState<'a> {
                     Vec::new(),
                     None,
                     instance_type,
+                    None,
+                    false,
                     None,
                     false,
                 ));

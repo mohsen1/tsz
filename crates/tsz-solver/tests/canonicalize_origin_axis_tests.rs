@@ -200,6 +200,8 @@ fn bound_type_param_origin_alpha_equivalent_call_signature() {
             this_type: None,
             return_type: pref,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         };
         interner.callable(CallableShape {

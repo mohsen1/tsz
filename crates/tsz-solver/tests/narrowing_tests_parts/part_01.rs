@@ -194,6 +194,8 @@ fn test_narrow_by_instanceof_collapsed_any_predicate_falls_back_to_generic_const
             this_type: None,
             return_type: box_t,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         properties: vec![PropertyInfo::method(has_instance_atom, has_instance_fn)],

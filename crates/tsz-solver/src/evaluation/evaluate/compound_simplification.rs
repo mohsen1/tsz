@@ -101,6 +101,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// - `{ readonly a: string } & { a: string }` -> `{ readonly a: string }`
     /// - `number & 1` -> `1` (literal is more specific)
     pub(super) fn simplify_intersection_members(&mut self, members: &mut Vec<TypeId>) {
+        // Constructor constituents form an ordered overload set. Assignability
+        // can treat distinct effective signatures as equivalent (notably
+        // `NoInfer<[A, B]>` and positional `(A, B)`), so subtype pruning must
+        // leave their exact deduplication to construct-signature projection.
+        if crate::type_queries::has_multiple_construct_signature_sources(self.interner, members) {
+            return;
+        }
         // In an intersection, A <: B means B is redundant (A is more specific).
         // We check if other members are subtypes of the candidate to remove the supertype.
         self.remove_redundant_members(members, SubtypeDirection::OtherSubsumedBySource);

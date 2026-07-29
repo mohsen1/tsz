@@ -1671,6 +1671,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return_type,
                 this_type,
                 type_predicate,
+                has_literal_types: sig.has_literal_types,
+                construct_origin: sig.construct_origin,
                 is_method: sig.is_method,
             })
         }

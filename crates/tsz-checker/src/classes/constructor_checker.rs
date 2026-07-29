@@ -201,7 +201,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let base_instance = self.instance_type_from_constructor_type(base_arg_type);
-        let mut returns = Vec::with_capacity(signatures.len() + 1);
+        let mut returns = Vec::with_capacity(signatures.len());
         for sig in signatures {
             if !matches!(sig.return_type, TypeId::ANY | TypeId::ERROR)
                 && Some(sig.return_type) != base_instance
@@ -214,9 +214,14 @@ impl<'a> CheckerState<'a> {
         }
         if let Some(base_instance) = base_instance
             && !matches!(base_instance, TypeId::ANY | TypeId::ERROR)
-            && !returns.contains(&base_instance)
         {
-            returns.push(base_instance);
+            return Some(
+                crate::query_boundaries::checkers::constructor::mixin_instance_returns_with_base_last(
+                    self.ctx.types,
+                    returns,
+                    base_instance,
+                ),
+            );
         }
 
         Some(
@@ -766,8 +771,19 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn instance_type_from_named_import_type_reference(
         &mut self,
         alias_type: TypeId,
+        alias_target: Option<(SymbolId, u32)>,
     ) -> Option<TypeId> {
         if self.imported_alias_union_contains_plain_type(alias_type) {
+            return None;
+        }
+        if alias_target.is_some_and(|(target_sym_id, flags)| {
+            flags & symbol_flags::CLASS != 0
+                && crate::query_boundaries::class_type::constructable_class_instance_type(
+                    self.ctx.types,
+                    alias_type,
+                    target_sym_id,
+                )
+        }) {
             return None;
         }
         self.instance_type_from_constructor_type(alias_type)

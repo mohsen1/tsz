@@ -4,7 +4,6 @@ use crate::def::{DefId, DefKind};
 use crate::intern::TypeInterner;
 use crate::relations::subtype::{TypeEnvironment, TypeResolver};
 use crate::types::{PropertyInfo, SymbolRef, TypeData, TypeParamInfo};
-
 // ===================================================================
 // Helper resolvers for testing
 // ===================================================================
@@ -607,6 +606,8 @@ fn canonicalize_call_signature_alpha_equivalent_across_names() {
             this_type: None,
             return_type: pref,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         };
         interner.callable(CallableShape {
@@ -619,7 +620,6 @@ fn canonicalize_call_signature_alpha_equivalent_across_names() {
             is_abstract: false,
         })
     };
-
     let call_t = make("T");
     let call_u = make("U");
 

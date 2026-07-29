@@ -61,6 +61,8 @@ pub(crate) fn member_call_signatures(
             this_type: fs.this_type,
             return_type: fs.return_type,
             type_predicate: fs.type_predicate,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: fs.is_method,
         }];
     }
@@ -1094,6 +1096,8 @@ pub(crate) fn build_method_overload_callable(
                 this_type: shape.this_type,
                 return_type: shape.return_type,
                 type_predicate: shape.type_predicate,
+                has_literal_types: false,
+                construct_origin: None,
                 is_method: shape.is_method,
             });
         } else {

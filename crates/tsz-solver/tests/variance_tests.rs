@@ -544,6 +544,8 @@ fn test_variance_indexed_access_skips_callable_method_signature_param() {
             this_type: None,
             return_type: TypeId::VOID,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: true,
         }],
         construct_signatures: Vec::new(),
@@ -1071,6 +1073,8 @@ fn test_variance_callable_call_signatures() {
             this_type: None,
             return_type: TypeId::STRING,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         construct_signatures: Vec::new(),
@@ -1103,6 +1107,8 @@ fn test_variance_callable_return_type() {
             this_type: None,
             return_type: t_param,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         construct_signatures: Vec::new(),
@@ -1136,6 +1142,8 @@ fn test_variance_callable_with_properties() {
             this_type: None,
             return_type: TypeId::VOID,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         construct_signatures: Vec::new(),
@@ -1674,6 +1682,8 @@ fn test_variance_merged_promise_like_overloads_is_covariant() {
         this_type: None,
         return_type: TypeId::ANY,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: true,
     };
     let user_then_sig = CallSignature {
@@ -1687,6 +1697,8 @@ fn test_variance_merged_promise_like_overloads_is_covariant() {
         this_type: None,
         return_type: TypeId::ANY,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: true,
     };
 

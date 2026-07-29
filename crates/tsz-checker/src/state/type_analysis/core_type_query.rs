@@ -193,6 +193,22 @@ impl<'a> CheckerState<'a> {
             return param_type;
         }
 
+        // `typeof` queries need the value meaning even when the local binding
+        // uses `import type` syntax or reaches the value through an
+        // `export type` replay. Recover an augmentation-owned runtime
+        // declaration before the generic type-symbol fallback below creates a
+        // `TypeQuery` over the native type-only declaration. The identity-aware
+        // named-import lookup rejects a nearer value shadow while deliberately
+        // skipping a nearer pure-type declaration.
+        if is_identifier
+            && let Some(name) = name_text.as_deref()
+            && let Some(binding) =
+                self.named_import_augmentation_runtime_binding(type_query.expr_name, name)
+        {
+            return self
+                .apply_type_query_instantiation_arguments(binding.type_id, &type_argument_nodes);
+        }
+
         if let Some(object_type) = self.const_array_to_enum_object_type_query(type_query.expr_name)
         {
             return object_type;
@@ -1376,61 +1392,24 @@ impl<'a> CheckerState<'a> {
         module_name: &str,
         resolution_mode_override: Option<crate::context::ResolutionModeOverride>,
     ) -> Option<TypeId> {
-        use tsz_common::Visibility;
-        fn binder_symbol_has_no_runtime_value(
-            binder: &tsz_binder::BinderState,
-            sym_id: tsz_binder::SymbolId,
-            visited: &mut rustc_hash::FxHashSet<tsz_binder::SymbolId>,
-        ) -> bool {
-            if !visited.insert(sym_id) {
-                return true;
-            }
-            let Some(symbol) = binder.get_symbol(sym_id) else {
-                return false;
-            };
-            let flags = symbol.flags;
-
-            if (flags & tsz_binder::symbol_flags::VALUE) != 0 {
-                let non_module_value = flags
-                    & (tsz_binder::symbol_flags::VALUE & !tsz_binder::symbol_flags::VALUE_MODULE);
-                if non_module_value != 0 {
-                    return false;
-                }
-                if let Some(exports) = symbol.exports.as_ref() {
-                    for (_, &member_sym_id) in exports.iter() {
-                        if !binder_symbol_has_no_runtime_value(binder, member_sym_id, visited) {
-                            return false;
-                        }
-                    }
-                }
-                return true;
-            }
-
-            if (flags & tsz_binder::symbol_flags::NAMESPACE_MODULE) != 0 {
-                if let Some(exports) = symbol.exports.as_ref() {
-                    for (_, &member_sym_id) in exports.iter() {
-                        if !binder_symbol_has_no_runtime_value(binder, member_sym_id, visited) {
-                            return false;
-                        }
-                    }
-                }
-                if let Some(members) = symbol.members.as_ref() {
-                    for (_, &member_sym_id) in members.iter() {
-                        if !binder_symbol_has_no_runtime_value(binder, member_sym_id, visited) {
-                            return false;
-                        }
-                    }
-                }
-                return true;
-            }
-            if (flags & tsz_binder::symbol_flags::TYPE) != 0 {
-                return true;
-            }
-            if (flags & tsz_binder::symbol_flags::ALIAS) != 0 {
-                return symbol.is_type_only;
-            }
-            false
+        let bailout_epoch_before = Self::cross_arena_bailout_epoch();
+        let namespace_module_names_before = self.ctx.namespace_module_names.clone();
+        let result = self
+            .build_typeof_import_namespace_type_unchecked(module_name, resolution_mode_override);
+        if Self::cross_arena_bailout_epoch() != bailout_epoch_before {
+            self.ctx.namespace_module_names = namespace_module_names_before;
+            Some(TypeId::ANY)
+        } else {
+            result
         }
+    }
+
+    fn build_typeof_import_namespace_type_unchecked(
+        &mut self,
+        module_name: &str,
+        resolution_mode_override: Option<crate::context::ResolutionModeOverride>,
+    ) -> Option<TypeId> {
+        use tsz_common::Visibility;
 
         if let Some(json_namespace_type) =
             self.json_module_namespace_type_for_module(module_name, Some(self.ctx.current_file_idx))
@@ -1494,56 +1473,10 @@ impl<'a> CheckerState<'a> {
                             .map(|(_, is_type_only)| is_type_only)
                     })
                     .unwrap_or(false);
-                let target_export_has_no_value = target_export_context
-                    .as_ref()
-                    .and_then(|(target_idx, _)| {
-                        let binder = self.ctx.get_binder_for_file(*target_idx)?;
-                        binder.get_symbol(export_sym_id).map(|_| {
-                            let mut visited = rustc_hash::FxHashSet::default();
-                            binder_symbol_has_no_runtime_value(binder, export_sym_id, &mut visited)
-                        })
-                    })
-                    .unwrap_or_else(|| self.export_symbol_has_no_value(export_sym_id));
-                // A namespace symbol counts as providing runtime value only if
-                // it's actually instantiated (contains value declarations) or has
-                // the VALUE_MODULE-only marker without NAMESPACE_MODULE. The
-                // binder sets BOTH NAMESPACE_MODULE | VALUE_MODULE on every
-                // namespace declaration, so we must inspect declarations to
-                // distinguish a value-bearing namespace (`namespace X { class C{} }`)
-                // from a type-only one (`namespace X { interface I {} }`).
-                let export_symbol = self
-                    .get_symbol_globally(export_sym_id)
-                    .or_else(|| self.get_cross_file_symbol(export_sym_id));
-                let export_is_namespace_module = export_symbol.is_some_and(|symbol| {
-                    let has_ns = (symbol.flags
-                        & (tsz_binder::symbol_flags::NAMESPACE_MODULE
-                            | tsz_binder::symbol_flags::VALUE_MODULE))
-                        != 0;
-                    if !has_ns {
-                        return false;
-                    }
-                    // Other VALUE bits (CLASS, FUNCTION, ENUM, etc. — not
-                    // VALUE_MODULE itself) imply a merged value declaration that
-                    // does provide runtime value.
-                    let has_concrete_value = symbol.flags
-                        & (tsz_binder::symbol_flags::VALUE
-                            & !tsz_binder::symbol_flags::VALUE_MODULE)
-                        != 0;
-                    if has_concrete_value {
-                        return true;
-                    }
-                    // Pure namespace: only counts as a value if at least one
-                    // declaration has runtime members.
-                    symbol
-                        .declarations
-                        .iter()
-                        .any(|&decl_idx| self.is_namespace_declaration_instantiated(decl_idx))
-                });
                 if name == "export="
                     || self.is_type_only_export_symbol(export_sym_id)
                     || target_export_is_type_only
                     || self.is_export_from_type_only_wildcard(module_name, name)
-                    || (target_export_has_no_value && !export_is_namespace_module)
                     || exports_table_target.is_some_and(|target_idx| {
                         self.file_has_jsdoc_typedef_named(target_idx, name)
                     })
@@ -1562,8 +1495,11 @@ impl<'a> CheckerState<'a> {
                 {
                     continue;
                 }
-                let prop_type =
-                    self.namespace_import_export_property_type(module_name, export_sym_id, name);
+                let Some(prop_type) =
+                    self.namespace_import_export_property_type(module_name, export_sym_id, name)
+                else {
+                    continue;
+                };
                 let declaration_order = if name == "default" {
                     1
                 } else {
@@ -1586,6 +1522,7 @@ impl<'a> CheckerState<'a> {
                     non_widening: false,
                 });
             }
+            self.append_module_augmentation_runtime_export_properties(module_name, &mut props);
             let export_equals_import_type_module = self
                 .append_export_equals_import_type_namespace_props(
                     module_name,
@@ -1615,9 +1552,13 @@ impl<'a> CheckerState<'a> {
                 self.imported_namespace_display_module_name(display_module_name),
             );
             Some(namespace_type)
-        } else if let Some(surface) =
+        } else if let Some(mut surface) =
             self.resolve_js_export_surface_for_module(module_name, Some(self.ctx.current_file_idx))
         {
+            self.append_module_augmentation_runtime_export_properties(
+                module_name,
+                &mut surface.named_exports,
+            );
             let namespace_type = self.ctx.types.factory().object(surface.named_exports);
             self.ctx.namespace_module_names.insert(
                 namespace_type,
@@ -1638,6 +1579,11 @@ impl<'a> CheckerState<'a> {
         let (call_idx, segments) = self.decompose_typeof_import_query(expr_name)?;
         let (module_name, specifier_node) = self.get_import_type_module_specifier(call_idx)?;
         let resolution_mode_override = self.get_import_type_resolution_mode_override(call_idx);
+        // `build_type_environment` resolves local type aliases before the
+        // source-file statement walk. Keep that setup pass semantic-only:
+        // the TYPE_QUERY node is resolved again during declaration checking,
+        // which owns source-ordered missing-member diagnostics.
+        let report_query_diagnostics = self.ctx.is_checking_statements;
         self.maybe_emit_import_type_cjs_esm_resolution_mode_missing(
             &module_name,
             specifier_node,
@@ -1740,11 +1686,13 @@ impl<'a> CheckerState<'a> {
                         {
                             let base = namespace_name.trim_end_matches(".export=");
                             namespace_name = format!("{base}.{segment}.export=");
-                            self.error_namespace_no_export(
-                                &namespace_name,
-                                &next_segment,
-                                next_idx,
-                            );
+                            if report_query_diagnostics {
+                                self.error_namespace_no_export(
+                                    &namespace_name,
+                                    &next_segment,
+                                    next_idx,
+                                );
+                            }
                             return Some(TypeId::ERROR);
                         }
                         if namespace_name.ends_with(".export=") && !resolved_segments.is_empty() {
@@ -1752,8 +1700,10 @@ impl<'a> CheckerState<'a> {
                             namespace_name =
                                 format!("{base}.{}.export=", resolved_segments.join("."));
                         }
-                        self.error_namespace_no_export(&namespace_name, &segment, segment_idx);
-                    } else {
+                        if report_query_diagnostics {
+                            self.error_namespace_no_export(&namespace_name, &segment, segment_idx);
+                        }
+                    } else if report_query_diagnostics {
                         self.error_property_not_exist_at(&segment, current, segment_idx);
                     }
                     return Some(TypeId::ERROR);

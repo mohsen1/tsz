@@ -3,8 +3,8 @@
 use crate::query_boundaries::signature_building as signature_query;
 use crate::state::{CheckerState, ParamTypeResolutionMode};
 use tsz_common::interner::Atom;
-use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{CallSignature, TypeId};
 
@@ -13,6 +13,33 @@ use tsz_solver::{CallSignature, TypeId};
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    /// Whether any parameter annotation is directly a `LiteralType` syntax
+    /// node. TypeScript records this on the declaration signature; aliases,
+    /// unions, and later generic substitutions must not manufacture it.
+    pub(crate) fn parameter_list_has_literal_type_annotations(
+        &self,
+        parameters: &NodeList,
+    ) -> bool {
+        parameters.nodes.iter().copied().any(|parameter_idx| {
+            self.ctx
+                .arena
+                .get(parameter_idx)
+                .and_then(|node| self.ctx.arena.get_parameter(node))
+                .and_then(|parameter| self.ctx.arena.get(parameter.type_annotation))
+                .is_some_and(|type_node| type_node.kind == syntax_kind_ext::LITERAL_TYPE)
+        })
+    }
+
+    pub(crate) fn signature_has_literal_type_annotations(
+        &self,
+        signature: &tsz_parser::parser::node::SignatureData,
+    ) -> bool {
+        signature
+            .parameters
+            .as_ref()
+            .is_some_and(|parameters| self.parameter_list_has_literal_type_annotations(parameters))
+    }
+
     // =========================================================================
     // Call Signature Building
     // =========================================================================
@@ -88,11 +115,13 @@ impl<'a> CheckerState<'a> {
                 signature.params.truncate(jsdoc_params.len());
 
                 for (i, (param_name, _)) in jsdoc_params.iter().enumerate() {
+                    let jsdoc_type_expr = Self::extract_jsdoc_param_type_string(&jsdoc, param_name);
                     let Some(param) = signature.params.get_mut(i) else {
                         break;
                     };
 
-                    let jsdoc_optional = Self::extract_jsdoc_param_type_string(&jsdoc, param_name)
+                    let jsdoc_optional = jsdoc_type_expr
+                        .as_deref()
                         .is_some_and(|type_expr| type_expr.trim().ends_with('='))
                         || Self::is_jsdoc_param_optional_by_brackets(&jsdoc, param_name);
 
@@ -211,7 +240,9 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
                 let pname = self.effective_jsdoc_param_name(param.name, &jsdoc_param_names, i);
-                let jsdoc_optional = Self::extract_jsdoc_param_type_string(jsdoc, &pname)
+                let jsdoc_type_expr = Self::extract_jsdoc_param_type_string(jsdoc, &pname);
+                let jsdoc_optional = jsdoc_type_expr
+                    .as_deref()
                     .is_some_and(|type_expr| type_expr.trim().ends_with('='))
                     || Self::is_jsdoc_param_optional_by_brackets(jsdoc, &pname);
                 if let Some(jsdoc_type) =
@@ -371,7 +402,9 @@ impl<'a> CheckerState<'a> {
                     && param.type_annotation.is_none()
                 {
                     let pname = self.parameter_name_for_error(param.name);
-                    let jsdoc_optional = Self::extract_jsdoc_param_type_string(&jsdoc, &pname)
+                    let jsdoc_type_expr = Self::extract_jsdoc_param_type_string(&jsdoc, &pname);
+                    let jsdoc_optional = jsdoc_type_expr
+                        .as_deref()
                         .is_some_and(|type_expr| type_expr.trim().ends_with('='))
                         || Self::is_jsdoc_param_optional_by_brackets(&jsdoc, &pname);
                     if let Some(comment_start) = self.get_jsdoc_comment_pos_for_function(ctor_idx)
@@ -404,14 +437,17 @@ impl<'a> CheckerState<'a> {
         all_type_params.extend_from_slice(class_type_params);
         all_type_params.extend(type_params);
 
-        signature_query::call_signature(
+        let mut signature = signature_query::call_signature(
             all_type_params,
             params,
             this_type,
             instance_type,
             None,
             true,
-        )
+        );
+        signature.has_literal_types =
+            self.parameter_list_has_literal_type_annotations(&ctor.parameters);
+        signature
     }
 
     // =========================================================================

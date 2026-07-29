@@ -15,9 +15,13 @@ use crate::query_boundaries::class_type::{
     callable_shape_for_type, final_class_instance_type, object_shape_for_type,
 };
 use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
+use crate::query_boundaries::construct_signatures::construct_signatures_for_type;
 use crate::state::CheckerState;
+use std::sync::Arc;
+use tsz_binder::BinderState;
 use tsz_lowering::TypeLowering;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeArena;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{PropertyInfo, TypeId};
 
@@ -495,6 +499,7 @@ impl CheckerState<'_> {
         {
             let mut merged_symbol_flags = symbol_flags;
             let mut merged_symbol_declarations = symbol_declarations;
+            let mut merged_symbol_ids = vec![sym_id];
             let owner_file_idx = self.ctx.resolve_symbol_file_index(sym_id);
 
             for &candidate_id in self.ctx.binder.get_symbols().find_all_by_name(&symbol_name) {
@@ -511,6 +516,7 @@ impl CheckerState<'_> {
                 }
 
                 merged_symbol_flags |= candidate_symbol.flags;
+                merged_symbol_ids.push(candidate_id);
                 for &decl_idx in &candidate_symbol.declarations {
                     if !merged_symbol_declarations.contains(&decl_idx) {
                         merged_symbol_declarations.push(decl_idx);
@@ -518,39 +524,201 @@ impl CheckerState<'_> {
                 }
             }
 
-            let interface_decls: Vec<NodeIndex> = merged_symbol_declarations
-                .iter()
-                .copied()
-                .filter(|&decl_idx| {
-                    if !apply_module_augmentations
-                        && declaration_is_module_augmentation(self.ctx.arena, decl_idx)
-                    {
-                        return false;
-                    }
-                    self.ctx
-                        .arena
-                        .get(decl_idx)
-                        .and_then(|node| self.ctx.arena.get_interface(node))
-                        .is_some()
-                })
-                .collect();
+            // Ordinary classes have no interface declaration group to merge.
+            // Avoid the program-files × declarations provenance scan below for
+            // that dominant path; cross-file-only interface declarations have
+            // already contributed their flags through the same-name scan above.
+            if (merged_symbol_flags & tsz_binder::symbol_flags::INTERFACE) == 0 {
+                return;
+            }
 
-            if !interface_decls.is_empty() {
+            // Reconstruct first-seen declaration groups from the per-file
+            // binders. Cross-file lookup binders deliberately retain their
+            // file-local ownership maps; consulting every `(binder, arena)`
+            // pair recovers the merged declaration order without exposing
+            // program-global provenance to unrelated delegated type queries.
+            type ForeignDeclarationOwner = (Arc<BinderState>, Arc<NodeArena>);
+            let mut declaration_groups: Vec<(Option<ForeignDeclarationOwner>, Vec<NodeIndex>)> =
+                Vec::new();
+            if let (Some(all_binders), Some(all_arenas)) =
+                (self.ctx.all_binders.clone(), self.ctx.all_arenas.clone())
+            {
+                for (binder, arena) in all_binders.iter().zip(all_arenas.iter()) {
+                    let declarations: Vec<_> = merged_symbol_declarations
+                        .iter()
+                        .copied()
+                        .filter(|decl_idx| {
+                            binder
+                                .get_node_symbol(*decl_idx)
+                                .is_some_and(|id| merged_symbol_ids.contains(&id))
+                                && arena
+                                    .get(*decl_idx)
+                                    .is_some_and(|node| arena.get_interface(node).is_some())
+                                && (apply_module_augmentations
+                                    || !declaration_is_module_augmentation(arena, *decl_idx))
+                        })
+                        .collect();
+                    if declarations.is_empty()
+                        || declaration_groups.iter().any(|(existing, _)| {
+                            existing
+                                .as_ref()
+                                .map(|(_, arena)| arena.as_ref())
+                                .unwrap_or(self.ctx.arena)
+                                .shares_node_storage_with(arena)
+                        })
+                    {
+                        continue;
+                    }
+                    let is_current = arena.shares_node_storage_with(self.ctx.arena);
+                    let owner = (!is_current).then(|| (Arc::clone(binder), Arc::clone(arena)));
+                    declaration_groups.push((owner, declarations));
+                }
+            }
+
+            // Standalone and isolated-lib checkers may not have the program
+            // binder list. Preserve their local declaration group.
+            if !declaration_groups.iter().any(|(owner, _)| owner.is_none()) {
+                let declarations: Vec<_> = merged_symbol_declarations
+                    .iter()
+                    .copied()
+                    .filter(|decl_idx| {
+                        self.ctx
+                            .binder
+                            .get_node_symbol(*decl_idx)
+                            .is_some_and(|id| merged_symbol_ids.contains(&id))
+                            && self
+                                .ctx
+                                .arena
+                                .get(*decl_idx)
+                                .is_some_and(|node| self.ctx.arena.get_interface(node).is_some())
+                            && (apply_module_augmentations
+                                || !declaration_is_module_augmentation(self.ctx.arena, *decl_idx))
+                    })
+                    .collect();
+                if !declarations.is_empty() {
+                    declaration_groups.push((None, declarations));
+                }
+            }
+
+            let (local_interface_decls, declaration_types) = {
                 let type_param_bindings = self.get_type_param_bindings();
                 let type_resolver =
                     |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
                 let value_resolver =
                     |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
-                let lowering = TypeLowering::with_resolvers(
+                let name_resolver = |type_name: &str| {
+                    self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+                };
+                let local_lowering = TypeLowering::with_resolvers(
                     self.ctx.arena,
                     self.ctx.types,
                     &type_resolver,
                     &value_resolver,
                 )
-                .with_type_param_bindings(type_param_bindings);
-                let interface_type = lowering.lower_interface_declarations(&interface_decls);
-                let interface_type =
-                    self.merge_interface_heritage_types(&interface_decls, interface_type);
+                .with_type_param_bindings(type_param_bindings)
+                .with_name_def_id_resolver(&name_resolver)
+                .with_preferred_self_reference(
+                    symbol_name.clone(),
+                    self.ctx.get_or_create_def_id(sym_id),
+                );
+                let mut local_interface_decls = Vec::new();
+                let mut declaration_types = Vec::new();
+                for (group_index, (owner, arena_declarations)) in
+                    declaration_groups.iter().enumerate()
+                {
+                    let declaration_type = if let Some((binder, arena)) = owner.as_ref() {
+                        self.lower_cross_file_interface_declarations_with_binder(
+                            binder,
+                            arena,
+                            arena_declarations,
+                            sym_id,
+                        )
+                    } else {
+                        local_interface_decls.extend_from_slice(arena_declarations);
+                        local_lowering
+                            .lower_interface_declarations_with_symbol(arena_declarations, sym_id)
+                    };
+                    if declaration_type != TypeId::ERROR {
+                        declaration_types.push((group_index, owner.is_none(), declaration_type));
+                    }
+                }
+                (local_interface_decls, declaration_types)
+            };
+            let mut has_foreign_construct_group =
+                declaration_types
+                    .iter()
+                    .any(|(_, is_local, declaration_type)| {
+                        !is_local
+                            && construct_signatures_for_type(self.ctx.types, *declaration_type)
+                                .is_some_and(|signatures| !signatures.is_empty())
+                    });
+            if !has_foreign_construct_group {
+                // A foreign declaration can contribute construction only
+                // through `extends`. Probe that exact owning binder/arena group
+                // before deciding whether the narrow cross-file merge applies.
+                for (group_index, is_local, declaration_type) in &declaration_types {
+                    if *is_local {
+                        continue;
+                    }
+                    let Some((Some((binder, arena)), declarations)) =
+                        declaration_groups.get(*group_index)
+                    else {
+                        continue;
+                    };
+                    let declaration_with_heritage = self
+                        .merge_cross_file_heritage_for_declaration_group(
+                            binder,
+                            arena,
+                            declarations,
+                            *declaration_type,
+                        );
+                    if construct_signatures_for_type(self.ctx.types, declaration_with_heritage)
+                        .is_some_and(|signatures| !signatures.is_empty())
+                    {
+                        has_foreign_construct_group = true;
+                        break;
+                    }
+                }
+            }
+            let mut interface_type = None;
+            for (_, is_local, declaration_type) in declaration_types {
+                if !is_local && !has_foreign_construct_group {
+                    continue;
+                }
+                interface_type = Some(if let Some(existing) = interface_type {
+                    self.merge_interface_types(existing, declaration_type)
+                } else {
+                    declaration_type
+                });
+            }
+
+            // A lib-only merged interface can lack explicit declaration
+            // provenance. Retain the name-resolution fallback for that case.
+            if interface_type.is_none()
+                && (merged_symbol_flags & tsz_binder::symbol_flags::INTERFACE) != 0
+                && !self.ctx.lib_contexts.is_empty()
+            {
+                interface_type = self.resolve_lib_type_by_name(&symbol_name);
+            }
+
+            if let Some(mut interface_type) = interface_type {
+                if !local_interface_decls.is_empty() {
+                    interface_type =
+                        self.merge_interface_heritage_types(&local_interface_decls, interface_type);
+                }
+                if has_foreign_construct_group {
+                    for (owner, declarations) in &declaration_groups {
+                        let Some((binder, arena)) = owner else {
+                            continue;
+                        };
+                        interface_type = self.merge_cross_file_heritage_for_declaration_group(
+                            binder,
+                            arena,
+                            declarations,
+                            interface_type,
+                        );
+                    }
+                }
                 b.merged_interface_type_for_class = Some(interface_type);
 
                 if let Some(shape) = object_shape_for_type(self.ctx.types, interface_type) {
@@ -574,86 +742,6 @@ impl CheckerState<'_> {
                         b.properties
                             .entry(prop.name)
                             .or_insert_with(|| prop.clone());
-                    }
-                }
-            }
-
-            // When the symbol has INTERFACE flags (class merged with interface) but no
-            // local interface declarations were found, the interface declarations live
-            // in a lib arena (e.g., user `class TemplateStringsArray {}` merged with
-            // built-in `interface TemplateStringsArray extends ReadonlyArray<string>`).
-            // Check cross-arena declarations and resolve the lib interface type.
-            if interface_decls.is_empty()
-                && (merged_symbol_flags & tsz_binder::symbol_flags::INTERFACE) != 0
-                && !self.ctx.lib_contexts.is_empty()
-            {
-                // Check for cross-arena interface declarations
-                let mut cross_arena_interface_type: Option<TypeId> = None;
-                for &decl_idx in &merged_symbol_declarations {
-                    if let Some(arenas) =
-                        self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx))
-                    {
-                        for arena in arenas.iter() {
-                            if std::ptr::eq(arena.as_ref(), self.ctx.arena) {
-                                continue;
-                            }
-                            let is_module_augmentation_decl =
-                                declaration_is_module_augmentation(arena.as_ref(), decl_idx);
-                            if let Some(node) = arena.get(decl_idx)
-                                && arena.get_interface(node).is_some()
-                                && (apply_module_augmentations || !is_module_augmentation_decl)
-                            {
-                                let cross_type =
-                                    self.lower_cross_file_interface_decl(arena, decl_idx, sym_id);
-                                if cross_type != TypeId::ERROR {
-                                    cross_arena_interface_type =
-                                        Some(if let Some(existing) = cross_arena_interface_type {
-                                            self.merge_interface_types(existing, cross_type)
-                                        } else {
-                                            cross_type
-                                        });
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Fall back to resolve_lib_type_by_name if no cross-arena decls found
-                let lib_interface_type = cross_arena_interface_type
-                    .or_else(|| self.resolve_lib_type_by_name(&symbol_name));
-
-                if let Some(interface_type) = lib_interface_type {
-                    // Merge heritage types for the lib interface
-                    let interface_type = self.merge_cross_file_heritage(
-                        &merged_symbol_declarations,
-                        sym_id,
-                        interface_type,
-                    );
-                    b.merged_interface_type_for_class = Some(interface_type);
-
-                    if let Some(shape) = object_shape_for_type(self.ctx.types, interface_type) {
-                        for prop in &shape.properties {
-                            b.properties
-                                .entry(prop.name)
-                                .or_insert_with(|| prop.clone());
-                        }
-                        if let Some(idx) = shape.string_index_signature().copied() {
-                            Self::merge_index_signature(&mut b.string_index, idx);
-                        }
-                        if let Some(ref idx) = shape.number_index {
-                            Self::merge_index_signature(&mut b.number_index, *idx);
-                        }
-                        if let Some(idx) = shape.symbol_index_signature().copied() {
-                            Self::merge_index_signature(&mut b.symbol_index, idx);
-                        }
-                    } else if let Some(shape) =
-                        callable_shape_for_type(self.ctx.types, interface_type)
-                    {
-                        for prop in &shape.properties {
-                            b.properties
-                                .entry(prop.name)
-                                .or_insert_with(|| prop.clone());
-                        }
                     }
                 }
             }
@@ -722,8 +810,11 @@ impl CheckerState<'_> {
                 let class_name = symbol.escaped_name.clone();
                 if let Some(sf) = self.ctx.arena.source_files.first() {
                     let file_name = sf.file_name.clone();
-                    instance_type =
-                        self.apply_module_augmentations(&file_name, &class_name, instance_type);
+                    instance_type = self.apply_module_type_augmentations(
+                        &file_name,
+                        &class_name,
+                        instance_type,
+                    );
                 }
             }
 

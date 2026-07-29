@@ -35,6 +35,12 @@ mod build_tests;
 #[path = "../tests/config_tests.rs"]
 mod config_tests;
 #[cfg(test)]
+#[path = "../tests/constructor_global_augmentation_order_cli_tests.rs"]
+mod constructor_global_augmentation_order_cli_tests;
+#[cfg(test)]
+#[path = "../tests/constructor_intersection_overload_order_cli_tests.rs"]
+mod constructor_intersection_overload_order_cli_tests;
+#[cfg(test)]
 #[path = "../tests/cross_file_imported_const_computed_key_identity_tests.rs"]
 mod cross_file_imported_const_computed_key_identity_tests;
 #[cfg(test)]
@@ -82,6 +88,9 @@ mod lib_interface_merge_flatarray_cli_tests;
 #[cfg(test)]
 #[path = "../tests/lib_shadow_cli_tests.rs"]
 mod lib_shadow_cli_tests;
+#[cfg(test)]
+#[path = "../tests/namespace_augmentation_path_cli_tests.rs"]
+mod namespace_augmentation_path_cli_tests;
 #[cfg(test)]
 #[path = "../tests/prettify_empty_object_intersection_cli_tests.rs"]
 mod prettify_empty_object_intersection_cli_tests;

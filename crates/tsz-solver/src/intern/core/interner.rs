@@ -11,11 +11,11 @@
 
 use crate::def::DefId;
 use crate::types::{
-    CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId, FunctionShape,
-    FunctionShapeId, IntrinsicKind, LiteralValue, MappedType, MappedTypeId, ObjectFlags,
-    ObjectShape, ObjectShapeId, PropertyInfo, PropertyLookup, TemplateLiteralId, TemplateSpan,
-    TupleElement, TupleListId, TypeApplication, TypeApplicationId, TypeData, TypeId, TypeListId,
-    TypeParamInfo,
+    CallSignature, CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId,
+    FunctionShape, FunctionShapeId, IntrinsicKind, LiteralValue, MappedType, MappedTypeId,
+    ObjectFlags, ObjectShape, ObjectShapeId, PropertyInfo, PropertyLookup, TemplateLiteralId,
+    TemplateSpan, TupleElement, TupleListId, TypeApplication, TypeApplicationId, TypeData, TypeId,
+    TypeListId, TypeParamInfo,
 };
 use crate::utils::RwLockExt;
 use crate::visitor::is_identity_comparable_type;
@@ -273,6 +273,10 @@ pub struct TypeInterner {
     pub(super) object_property_maps: ObjectPropertyMap,
     pub(super) function_shapes: ConcurrentValueInterner<FunctionShape>,
     pub(super) callable_shapes: ConcurrentValueInterner<CallableShape>,
+    /// Pure structural projection of constructor intersections into their
+    /// overload candidates (including the mixin return transform). Empty
+    /// slices cache non-constructable intersections.
+    pub(super) construct_signatures_cache: DashMap<TypeId, Arc<[CallSignature]>, FxBuildHasher>,
     pub(super) conditional_types: ConcurrentValueInterner<ConditionalType>,
     pub(super) mapped_types: ConcurrentValueInterner<MappedType>,
     pub(super) applications: ConcurrentValueInterner<TypeApplication>,
@@ -617,6 +621,8 @@ pub struct TypePredicateCacheStatistics {
     pub contains_type_by_id_cache_entries: usize,
     /// Number of memoized `prune_impossible_object_union_members(type_id)` results.
     pub prune_union_members_cache_entries: usize,
+    /// Number of memoized constructor-intersection signature projections.
+    pub construct_signatures_cache_entries: usize,
 }
 
 impl std::fmt::Debug for TypeInterner {
@@ -689,7 +695,29 @@ impl TypeInterner {
                 .predicate_cache_entries_for(PredicateCacheKind::ContainsFileRelative),
             contains_type_by_id_cache_entries: self.contains_type_by_id_cache.len(),
             prune_union_members_cache_entries: self.prune_union_members_cache.len(),
+            construct_signatures_cache_entries: self.construct_signatures_cache.len(),
         }
+    }
+
+    #[inline]
+    pub(crate) fn construct_signatures_memo(
+        &self,
+        type_id: TypeId,
+    ) -> Option<Arc<[CallSignature]>> {
+        self.construct_signatures_cache
+            .get(&type_id)
+            .map(|entry| Arc::clone(entry.value()))
+    }
+
+    #[inline]
+    pub(crate) fn set_construct_signatures_memo(
+        &self,
+        type_id: TypeId,
+        signatures: Arc<[CallSignature]>,
+    ) {
+        self.construct_signatures_cache
+            .entry(type_id)
+            .or_insert(signatures);
     }
 
     #[inline]
@@ -810,6 +838,7 @@ impl TypeInterner {
             object_property_maps: OnceLock::new(),
             function_shapes: ConcurrentValueInterner::new(),
             callable_shapes: ConcurrentValueInterner::new(),
+            construct_signatures_cache: DashMap::with_hasher(FxBuildHasher),
             conditional_types: ConcurrentValueInterner::new(),
             mapped_types: ConcurrentValueInterner::new(),
             applications: ConcurrentValueInterner::new(),

@@ -4,7 +4,6 @@ use crate::def::{DefinitionInfo, DefinitionStore};
 use crate::types::{
     CallSignature, CallableShape, MappedType, ParamInfo, PropertyInfo, TypeId, TypeParamInfo,
 };
-
 fn make_callable_with_construct_sig(
     interner: &TypeInterner,
     return_type: TypeId,
@@ -23,6 +22,8 @@ fn make_callable_with_construct_sig(
             this_type: None,
             return_type,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         properties: vec![],
@@ -33,7 +34,6 @@ fn make_callable_with_construct_sig(
     };
     interner.callable(shape)
 }
-
 fn make_callable_with_call_sig(interner: &TypeInterner, return_type: TypeId) -> TypeId {
     let shape = CallableShape {
         call_signatures: vec![CallSignature {
@@ -47,6 +47,8 @@ fn make_callable_with_call_sig(interner: &TypeInterner, return_type: TypeId) -> 
             this_type: None,
             return_type,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         construct_signatures: vec![],
@@ -58,7 +60,6 @@ fn make_callable_with_call_sig(interner: &TypeInterner, return_type: TypeId) -> 
     };
     interner.callable(shape)
 }
-
 #[test]
 fn get_construct_signatures_direct_callable() {
     let interner = TypeInterner::new();
@@ -67,7 +68,6 @@ fn get_construct_signatures_direct_callable() {
     assert!(sigs.is_some());
     assert_eq!(sigs.unwrap().len(), 1);
 }
-
 #[test]
 fn get_construct_signatures_intersection_collects_from_members() {
     let interner = TypeInterner::new();
@@ -85,7 +85,6 @@ fn get_construct_signatures_intersection_collects_from_members() {
         "Should collect construct sigs from both members"
     );
 }
-
 #[test]
 fn get_construct_signatures_intersection_with_non_callable_member() {
     let interner = TypeInterner::new();
@@ -101,7 +100,6 @@ fn get_construct_signatures_intersection_with_non_callable_member() {
         "Should find construct sig from callable member"
     );
 }
-
 #[test]
 fn get_construct_signatures_intersection_no_construct_sigs() {
     let interner = TypeInterner::new();
@@ -110,7 +108,6 @@ fn get_construct_signatures_intersection_no_construct_sigs() {
     let sigs = get_construct_signatures(&interner, intersection);
     assert!(sigs.is_none());
 }
-
 #[test]
 fn get_call_signatures_intersection_collects_from_members() {
     let interner = TypeInterner::new();
@@ -335,7 +332,6 @@ fn test_construct_return_type_for_type() {
         is_method: false,
     });
     assert_eq!(construct_return_type_for_type(&interner, fn_regular), None);
-
     // Callable with construct signature
     let callable = interner.callable(CallableShape {
         call_signatures: vec![],
@@ -345,6 +341,8 @@ fn test_construct_return_type_for_type() {
             this_type: None,
             return_type: TypeId::BOOLEAN,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         properties: vec![],
@@ -357,7 +355,6 @@ fn test_construct_return_type_for_type() {
         construct_return_type_for_type(&interner, callable),
         Some(TypeId::BOOLEAN)
     );
-
     // Non-constructable type → None
     assert_eq!(
         construct_return_type_for_type(&interner, TypeId::STRING),
@@ -398,7 +395,6 @@ fn test_is_constructor_like_type() {
         is_method: false,
     });
     assert!(is_constructor_like_type(&interner, fn_ctor));
-
     // Regular function — not constructor-like
     let fn_regular = interner.function(FunctionShape {
         type_params: vec![],
@@ -410,7 +406,6 @@ fn test_is_constructor_like_type() {
         is_method: false,
     });
     assert!(!is_constructor_like_type(&interner, fn_regular));
-
     // Callable with construct signature
     let callable_ctor = interner.callable(CallableShape {
         call_signatures: vec![],
@@ -420,6 +415,8 @@ fn test_is_constructor_like_type() {
             this_type: None,
             return_type: TypeId::OBJECT,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         properties: vec![],
@@ -429,11 +426,9 @@ fn test_is_constructor_like_type() {
         is_abstract: false,
     });
     assert!(is_constructor_like_type(&interner, callable_ctor));
-
     // Union containing a constructor — should be constructor-like
     let union_with_ctor = interner.union2(TypeId::STRING, fn_ctor);
     assert!(is_constructor_like_type(&interner, union_with_ctor));
-
     // Plain type — not constructor-like
     assert!(!is_constructor_like_type(&interner, TypeId::STRING));
 }
@@ -498,7 +493,6 @@ fn test_get_callable_shape_for_type() {
 fn test_get_overload_call_signatures() {
     let interner = crate::intern::TypeInterner::new();
     use crate::types::{CallSignature, CallableShape};
-
     // Callable with 2 overloads → Some
     let overloaded = interner.callable(CallableShape {
         call_signatures: vec![
@@ -508,6 +502,8 @@ fn test_get_overload_call_signatures() {
                 this_type: None,
                 return_type: TypeId::STRING,
                 type_predicate: None,
+                has_literal_types: false,
+                construct_origin: None,
                 is_method: false,
             },
             CallSignature {
@@ -516,6 +512,8 @@ fn test_get_overload_call_signatures() {
                 this_type: None,
                 return_type: TypeId::NUMBER,
                 type_predicate: None,
+                has_literal_types: false,
+                construct_origin: None,
                 is_method: false,
             },
         ],
@@ -538,6 +536,8 @@ fn test_get_overload_call_signatures() {
             this_type: None,
             return_type: TypeId::VOID,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         construct_signatures: vec![],

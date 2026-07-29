@@ -326,6 +326,89 @@ impl<'a> CheckerState<'a> {
         Some(params)
     }
 
+    /// Preserve syntax-level generic shape after delegated semantic extraction
+    /// hit the cross-arena depth cap.
+    ///
+    /// Names, arity, `const` modifiers, and the presence of source-written
+    /// constraints/defaults remain authoritative. Their resolved types do not,
+    /// so present bounds become permissive `any` placeholders and the result is
+    /// returned only to the current request, never published as reusable.
+    fn provisional_type_params_from_decl_in_arena(
+        &self,
+        arena: &tsz_parser::parser::node::NodeArena,
+        flags: u32,
+        decl_idx: NodeIndex,
+        sym_escaped_name: &str,
+    ) -> Option<Vec<tsz_solver::TypeParamInfo>> {
+        let node = arena.get(decl_idx)?;
+        let mixed_class_interface =
+            (flags & symbol_flags::CLASS) != 0 && (flags & symbol_flags::INTERFACE) != 0;
+
+        let type_parameters = if flags & symbol_flags::TYPE_ALIAS != 0 {
+            let type_alias = arena.get_type_alias(node)?;
+            if !Self::decl_name_matches_in_arena(arena, type_alias.name, sym_escaped_name) {
+                return None;
+            }
+            type_alias.type_parameters.as_ref()
+        } else if !mixed_class_interface && flags & symbol_flags::CLASS != 0 {
+            let class = arena.get_class(node)?;
+            if !Self::decl_name_matches_in_arena(arena, class.name, sym_escaped_name) {
+                return None;
+            }
+            if class.type_parameters.is_none() {
+                let mut params = self
+                    .jsdoc_template_params_in_arena(arena, decl_idx)
+                    .unwrap_or_default();
+                Self::make_type_params_permissive(&mut params);
+                return Some(params);
+            }
+            class.type_parameters.as_ref()
+        } else if flags & symbol_flags::INTERFACE != 0 {
+            let iface = arena.get_interface(node)?;
+            if !Self::decl_name_matches_in_arena(arena, iface.name, sym_escaped_name) {
+                return None;
+            }
+            iface.type_parameters.as_ref()
+        } else {
+            return None;
+        };
+
+        let Some(type_parameters) = type_parameters else {
+            return Some(Vec::new());
+        };
+        type_parameters
+            .nodes
+            .iter()
+            .map(|&param_idx| {
+                let node = arena.get(param_idx)?;
+                let data = arena.get_type_parameter(node)?;
+                let name = arena
+                    .get(data.name)
+                    .and_then(|name_node| arena.get_identifier(name_node))?
+                    .escaped_text
+                    .clone();
+                Some(tsz_solver::TypeParamInfo {
+                    name: self.ctx.types.intern_string(&name),
+                    constraint: data.constraint.is_some().then_some(tsz_solver::TypeId::ANY),
+                    default: data.default.is_some().then_some(tsz_solver::TypeId::ANY),
+                    is_const: arena.has_modifier(&data.modifiers, SyntaxKind::ConstKeyword),
+                    origin: tsz_solver::TypeParamOrigin::User,
+                })
+            })
+            .collect()
+    }
+
+    fn make_type_params_permissive(params: &mut [tsz_solver::TypeParamInfo]) {
+        for param in params {
+            if param.constraint.is_some() {
+                param.constraint = Some(tsz_solver::TypeId::ANY);
+            }
+            if param.default.is_some() {
+                param.default = Some(tsz_solver::TypeId::ANY);
+            }
+        }
+    }
+
     fn jsdoc_template_type_params_for_decl(
         checker: &mut CheckerState,
         decl_idx: NodeIndex,
@@ -496,7 +579,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.leave_recursion();
                 return cached;
             }
-            self.ctx.def_type_params.borrow_mut().remove(&def_id);
+            self.ctx.remove_def_type_params(def_id);
         }
         if !prefers_type_only_decls && self.ctx.def_no_type_params.borrow().contains(&def_id) {
             self.ctx.leave_recursion();
@@ -505,7 +588,7 @@ impl<'a> CheckerState<'a> {
 
         // Fast path: only class/interface/type alias symbols can declare type parameters.
         if flags & (symbol_flags::TYPE_ALIAS | symbol_flags::CLASS | symbol_flags::INTERFACE) == 0 {
-            self.ctx.def_no_type_params.borrow_mut().insert(def_id);
+            self.ctx.insert_def_no_type_params(def_id);
             self.ctx.leave_recursion();
             return Vec::new();
         }
@@ -522,6 +605,7 @@ impl<'a> CheckerState<'a> {
 
         let mut merged_params: Option<Vec<tsz_solver::TypeParamInfo>> = None;
         let mut fallback_params = None;
+        let mut saw_cross_arena_bailout = false;
 
         for decl_idx in decl_candidates {
             let mut checked_local = false;
@@ -610,50 +694,81 @@ impl<'a> CheckerState<'a> {
                         let params = if let Some(memo) = cached {
                             tsz_common::perf_counters::record_cross_file_type_params_cache_hit();
                             Some(memo)
-                        } else if let Some(_cross_arena_guard) =
-                            Self::enter_cross_arena_delegation()
-                        {
-                            tsz_common::perf_counters::record_cross_file_type_params_cache_miss();
-                            let decl_binder = self
-                                .ctx
-                                .get_binder_for_arena(arena.as_ref())
-                                .unwrap_or(self.ctx.binder);
-                            let decl_file_name = arena
-                                .source_files
-                                .first()
-                                .map(|sf| sf.file_name.clone())
-                                .unwrap_or_else(|| self.ctx.file_name.clone());
-                            let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
-                                arena.as_ref(),
-                                decl_binder,
-                                self.ctx.types,
-                                decl_file_name,
-                                self.ctx.compiler_options.clone(),
-                                self,
-                                tsz_common::perf_counters::CheckerCreationReason::TypeEnvironmentCore,
-                            ));
-                            if let Some(file_idx) = cache_file_idx {
-                                checker.ctx.current_file_idx = file_idx as usize;
-                            }
-                            let result = Self::extract_type_params_from_decl(
-                                &mut checker,
-                                flags,
-                                decl_idx,
-                                &sym_escaped_name,
-                            );
-                            if let Some(ref params) = result
-                                && let (Some(file_idx), Some(cache)) = (
-                                    cache_file_idx,
-                                    self.ctx.cross_file_type_params_cache.as_ref(),
-                                )
-                            {
-                                cache
-                                    .entry((file_idx, decl_idx))
-                                    .or_insert_with(|| params.clone());
-                            }
-                            result
                         } else {
-                            None
+                            let bailout_epoch_before = Self::cross_arena_bailout_epoch();
+                            let (result, result_is_bailout_artifact) = if let Some(
+                                _cross_arena_guard,
+                            ) =
+                                Self::enter_cross_arena_delegation()
+                            {
+                                tsz_common::perf_counters::record_cross_file_type_params_cache_miss(
+                                );
+                                let decl_binder = self
+                                    .ctx
+                                    .get_binder_for_arena(arena.as_ref())
+                                    .unwrap_or(self.ctx.binder);
+                                let decl_file_name = arena
+                                    .source_files
+                                    .first()
+                                    .map(|sf| sf.file_name.clone())
+                                    .unwrap_or_else(|| self.ctx.file_name.clone());
+                                let mut checker =
+                                        Box::new(CheckerState::with_parent_cache_attributed(
+                                            arena.as_ref(),
+                                            decl_binder,
+                                            self.ctx.types,
+                                            decl_file_name,
+                                            self.ctx.compiler_options.clone(),
+                                            self,
+                                            tsz_common::perf_counters::CheckerCreationReason::TypeEnvironmentCore,
+                                        ));
+                                if let Some(file_idx) = cache_file_idx {
+                                    checker.ctx.current_file_idx = file_idx as usize;
+                                }
+                                let result = Self::extract_type_params_from_decl(
+                                    &mut checker,
+                                    flags,
+                                    decl_idx,
+                                    &sym_escaped_name,
+                                );
+                                drop(checker);
+                                let result_is_bailout_artifact =
+                                    Self::cross_arena_bailout_epoch() != bailout_epoch_before;
+                                if !result_is_bailout_artifact
+                                    && let Some(ref params) = result
+                                    && let (Some(file_idx), Some(cache)) = (
+                                        cache_file_idx,
+                                        self.ctx.cross_file_type_params_cache.as_ref(),
+                                    )
+                                {
+                                    cache
+                                        .entry((file_idx, decl_idx))
+                                        .or_insert_with(|| params.clone());
+                                }
+                                (result, result_is_bailout_artifact)
+                            } else {
+                                (
+                                    None,
+                                    Self::cross_arena_bailout_epoch() != bailout_epoch_before,
+                                )
+                            };
+                            if result_is_bailout_artifact {
+                                saw_cross_arena_bailout = true;
+                                self.provisional_type_params_from_decl_in_arena(
+                                    arena.as_ref(),
+                                    flags,
+                                    decl_idx,
+                                    &sym_escaped_name,
+                                )
+                                .or_else(|| {
+                                    result.map(|mut params| {
+                                        Self::make_type_params_permissive(&mut params);
+                                        params
+                                    })
+                                })
+                            } else {
+                                result
+                            }
                         };
                         if let Some(params) = params {
                             if !params.is_empty() {
@@ -741,43 +856,73 @@ impl<'a> CheckerState<'a> {
                     let params = if let Some(memo) = cached {
                         tsz_common::perf_counters::record_cross_file_type_params_cache_hit();
                         Some(memo)
-                    } else if let Some(_cross_arena_guard) = Self::enter_cross_arena_delegation() {
-                        tsz_common::perf_counters::record_cross_file_type_params_cache_miss();
-                        let decl_binder = self
-                            .ctx
-                            .get_binder_for_file(file_idx)
-                            .unwrap_or(self.ctx.binder);
-                        let decl_file_name = arena
-                            .source_files
-                            .first()
-                            .map(|sf| sf.file_name.clone())
-                            .unwrap_or_else(|| self.ctx.file_name.clone());
-                        let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
-                            arena,
-                            decl_binder,
-                            self.ctx.types,
-                            decl_file_name,
-                            self.ctx.compiler_options.clone(),
-                            self,
-                            tsz_common::perf_counters::CheckerCreationReason::TypeEnvironmentCore,
-                        ));
-                        checker.ctx.current_file_idx = file_idx;
-                        let result = Self::extract_type_params_from_decl(
-                            &mut checker,
-                            flags,
-                            decl_idx,
-                            &sym_escaped_name,
-                        );
-                        if let Some(ref params) = result
-                            && let Some(ref cache) = self.ctx.cross_file_type_params_cache
-                        {
-                            cache
-                                .entry((file_idx as u32, decl_idx))
-                                .or_insert_with(|| params.clone());
-                        }
-                        result
                     } else {
-                        None
+                        let bailout_epoch_before = Self::cross_arena_bailout_epoch();
+                        let (result, result_is_bailout_artifact) = if let Some(_cross_arena_guard) =
+                            Self::enter_cross_arena_delegation()
+                        {
+                            tsz_common::perf_counters::record_cross_file_type_params_cache_miss();
+                            let decl_binder = self
+                                .ctx
+                                .get_binder_for_file(file_idx)
+                                .unwrap_or(self.ctx.binder);
+                            let decl_file_name = arena
+                                .source_files
+                                .first()
+                                .map(|sf| sf.file_name.clone())
+                                .unwrap_or_else(|| self.ctx.file_name.clone());
+                            let mut checker =
+                                    Box::new(CheckerState::with_parent_cache_attributed(
+                                        arena,
+                                        decl_binder,
+                                        self.ctx.types,
+                                        decl_file_name,
+                                        self.ctx.compiler_options.clone(),
+                                        self,
+                                        tsz_common::perf_counters::CheckerCreationReason::TypeEnvironmentCore,
+                                    ));
+                            checker.ctx.current_file_idx = file_idx;
+                            let result = Self::extract_type_params_from_decl(
+                                &mut checker,
+                                flags,
+                                decl_idx,
+                                &sym_escaped_name,
+                            );
+                            drop(checker);
+                            let result_is_bailout_artifact =
+                                Self::cross_arena_bailout_epoch() != bailout_epoch_before;
+                            if !result_is_bailout_artifact
+                                && let Some(ref params) = result
+                                && let Some(ref cache) = self.ctx.cross_file_type_params_cache
+                            {
+                                cache
+                                    .entry((file_idx as u32, decl_idx))
+                                    .or_insert_with(|| params.clone());
+                            }
+                            (result, result_is_bailout_artifact)
+                        } else {
+                            (
+                                None,
+                                Self::cross_arena_bailout_epoch() != bailout_epoch_before,
+                            )
+                        };
+                        if result_is_bailout_artifact {
+                            saw_cross_arena_bailout = true;
+                            self.provisional_type_params_from_decl_in_arena(
+                                arena,
+                                flags,
+                                decl_idx,
+                                &sym_escaped_name,
+                            )
+                            .or_else(|| {
+                                result.map(|mut params| {
+                                    Self::make_type_params_permissive(&mut params);
+                                    params
+                                })
+                            })
+                        } else {
+                            result
+                        }
                     };
                     if let Some(params) = params {
                         if !params.is_empty() {
@@ -836,19 +981,25 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(params) = merged_params {
-            self.ctx.insert_def_type_params(def_id, params.clone());
-            self.ctx.def_no_type_params.borrow_mut().remove(&def_id);
+            if !saw_cross_arena_bailout {
+                self.ctx.insert_def_type_params(def_id, params.clone());
+                self.ctx.remove_def_no_type_params(def_id);
+            }
             self.ctx.leave_recursion();
             return params;
         }
 
         if let Some(params) = fallback_params {
-            self.ctx.def_no_type_params.borrow_mut().insert(def_id);
+            if !saw_cross_arena_bailout {
+                self.ctx.insert_def_no_type_params(def_id);
+            }
             self.ctx.leave_recursion();
             return params;
         }
 
-        self.ctx.def_no_type_params.borrow_mut().insert(def_id);
+        if !saw_cross_arena_bailout {
+            self.ctx.insert_def_no_type_params(def_id);
+        }
         self.ctx.leave_recursion();
         Vec::new()
     }

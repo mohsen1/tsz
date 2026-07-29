@@ -863,14 +863,21 @@ impl<'a> CheckerState<'a> {
         // construct signatures — those are skipped by contextual extraction but needed
         // for two-pass inference where we infer the type params ourselves.
         let constructor_shape_type = self.resolve_ref_type(constructor_type);
+        let overload_contextual_resolution = self.contextual_construct_overload_arg_types(
+            constructor_shape_type,
+            args,
+            contextual_type,
+        );
         let constructor_shape = call_checker::get_construct_signature(
             self.ctx.types,
+            &self.ctx,
             constructor_shape_type,
             args.len(),
         );
-        let is_generic_new = constructor_shape
-            .as_ref()
-            .is_some_and(|s| !s.type_params.is_empty())
+        let is_generic_new = overload_contextual_resolution.is_none()
+            && constructor_shape
+                .as_ref()
+                .is_some_and(|s| !s.type_params.is_empty())
             && new_expr.type_arguments.is_none();
         let has_const_type_params = constructor_shape
             .as_ref()
@@ -939,7 +946,9 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut inferred_new_type_args: Option<Vec<TypeId>> = None;
-        let mut arg_types = if is_generic_new {
+        let mut arg_types = if let Some(resolution) = overload_contextual_resolution.as_ref() {
+            resolution.arg_types.clone()
+        } else if is_generic_new {
             if let Some(ref shape) = constructor_shape {
                 // Pre-compute which parameter positions should skip excess property
                 // checking because the original parameter type contains a type parameter.
@@ -1538,12 +1547,16 @@ impl<'a> CheckerState<'a> {
         // Delegate to Solver for constructor resolution, passing contextual type
         // so generic constructors like `new Promise(...)` can infer type parameters
         // from the expected type (e.g., `const x: Obj = new Promise(...)` infers T=Obj).
-        let result = self.resolve_new_with_checker_adapter(
-            constructor_type,
-            &arg_types_for_resolution,
-            false,
-            contextual_type,
-        );
+        let result = if let Some(resolution) = overload_contextual_resolution {
+            resolution.result
+        } else {
+            self.resolve_new_with_checker_adapter(
+                constructor_type,
+                &arg_types_for_resolution,
+                false,
+                contextual_type,
+            )
+        };
         match result {
             CallResult::Success(mut return_type) => {
                 if is_generic_new {

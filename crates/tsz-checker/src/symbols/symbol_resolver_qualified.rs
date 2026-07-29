@@ -475,7 +475,12 @@ impl<'a> CheckerState<'a> {
                 return TypeSymbolResolution::Type(reexported_sym);
             }
 
-            if let Some(module_specifier) = module_specifier.as_deref()
+            if self
+                .ctx
+                .arena
+                .get(access.expression)
+                .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16)
+                && let Some(module_specifier) = module_specifier.as_deref()
                 && let Some(augmented_sym) = self.resolve_module_augmentation_member_symbol(
                     module_specifier,
                     right_name,
@@ -761,6 +766,11 @@ impl<'a> CheckerState<'a> {
                     .and_then(|symbol| symbol.import_module().map(str::to_string))
             });
         if !left_has_local_namespace_conflict
+            && self
+                .ctx
+                .arena
+                .get(qn.left)
+                .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16)
             && let Some(ref module_specifier) = augmentation_module_specifier
             && let Some(augmented_sym) = self.resolve_module_augmentation_member_symbol(
                 module_specifier,
@@ -1707,24 +1717,25 @@ impl<'a> CheckerState<'a> {
         member_name: &str,
         visited_aliases: &mut AliasCycleTracker,
     ) -> Option<SymbolId> {
-        if let Some(augmentation) = self
-            .get_module_augmentation_declarations(module_specifier, member_name)
-            .into_iter()
-            .next()
+        if let Some((augmentation, owner_file_idx)) =
+            self.exact_module_augmentation_declaration_owner(module_specifier, member_name)
         {
-            let binder = augmentation
-                .arena
-                .as_deref()
-                .and_then(|arena| self.ctx.get_binder_for_arena(arena))
+            let binder = self
+                .ctx
+                .get_binder_for_file(owner_file_idx)
                 .unwrap_or(self.ctx.binder);
             let sym_id = binder.get_node_symbol(augmentation.node)?;
-            if std::ptr::eq(binder, self.ctx.binder) {
-                return Some(
-                    self.resolve_alias_symbol(sym_id, visited_aliases)
-                        .unwrap_or(sym_id),
-                );
+            if owner_file_idx != self.ctx.current_file_idx {
+                // `get_type_from_type_reference` scopes this owner around the
+                // complete type-reference query. Do not publish a persistent
+                // raw-id mapping here: another binder may use the same numeric
+                // id for an unrelated symbol.
+                return Some(sym_id);
             }
-            return Some(sym_id);
+            return Some(
+                self.resolve_alias_symbol(sym_id, visited_aliases)
+                    .unwrap_or(sym_id),
+            );
         }
 
         None

@@ -74,6 +74,8 @@ fn overloaded_member_rebinds_dependent_local_constraint_after_outer_instantiatio
         this_type: None,
         return_type: TypeId::UNKNOWN,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: true,
     };
     let fallback = CallSignature {
@@ -85,6 +87,8 @@ fn overloaded_member_rebinds_dependent_local_constraint_after_outer_instantiatio
         this_type: None,
         return_type: TypeId::UNKNOWN,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: true,
     };
     let callable = interner.callable(CallableShape {

@@ -9,12 +9,14 @@
 //! - Index signature handling
 //! - Type parameter instantiation for generic bases
 
+use crate::query_boundaries::construct_signatures as construct_signature_query;
 use crate::state::CheckerState;
+use crate::types_domain::interface_signature_merge::dedup_call_signatures_keep_last;
 use crate::types_domain::type_node_helpers::type_node_includes_explicit_undefined;
 use rustc_hash::{FxHashMap, FxHashSet};
-use smallvec::SmallVec;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::IndexSignature;
@@ -61,41 +63,6 @@ fn xarena_heritage_typearg_enabled() -> bool {
     *ON.get_or_init(|| std::env::var("TSZ_XARENA_HERITAGE_TYPEARG").is_ok_and(|v| v == "1"))
 }
 
-/// Deduplicate call signatures keeping the LAST occurrence of each unique
-/// signature. Two signatures are considered duplicates when they have identical
-/// parameter type lists and return types. This handles diamond inheritance:
-/// when `C extends C1, C2` and both C1/C2 inherit from B, shared signatures
-/// from B appear twice. By keeping the last occurrence, shared base signatures
-/// (like a catch-all `(x: string): void`) sort after all derived-specific
-/// overloads, ensuring correct overload resolution order.
-fn dedup_call_signatures_keep_last(sigs: &mut Vec<tsz_solver::CallSignature>) {
-    if sigs.len() <= 1 {
-        return;
-    }
-    // Build a signature key from param types + return type for identity.
-    // Walk from the end and record the last index for each unique key.
-    // Then retain only those positions.
-    type SignatureKey = (SmallVec<[TypeId; 4]>, TypeId);
-
-    let key_of = |sig: &tsz_solver::CallSignature| -> SignatureKey {
-        let param_types = sig.params.iter().map(|p| p.type_id).collect();
-        (param_types, sig.return_type)
-    };
-
-    let mut seen: FxHashMap<SignatureKey, usize> = FxHashMap::default();
-    // Record the LAST index for each key
-    for (i, sig) in sigs.iter().enumerate() {
-        seen.insert(key_of(sig), i);
-    }
-    // Retain only signatures whose index matches their last occurrence
-    let mut i = 0;
-    sigs.retain(|sig| {
-        let idx = i;
-        i += 1;
-        seen.get(&key_of(sig)).copied() == Some(idx)
-    });
-}
-
 /// How `merge_interface_types` combines a named member that exists on both
 /// the "derived" and "base" side of a structural merge.
 ///
@@ -118,6 +85,8 @@ pub(crate) enum InterfaceMergeMode {
     Heritage,
     /// Declaration/augmentation merge — same-named methods accumulate overloads.
     Declaration,
+    /// Augmentation merge with base-first raw construct-signature storage.
+    Augmentation,
 }
 
 /// Merges an additional string-keyed index signature into an existing one by
@@ -215,6 +184,21 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR; // Missing interface data - propagate error
         };
         let interface_symbol = self.ctx.binder.get_node_symbol(idx);
+        let interface_name = self.ctx.arena.get_identifier_text(interface.name);
+        let interface_file_idx = self
+            .ctx
+            .get_file_idx_for_arena(self.ctx.arena)
+            .unwrap_or(self.ctx.current_file_idx);
+        let interface_definition = interface_symbol.and_then(|symbol_id| {
+            self.ctx
+                .def_id_for_declaration_in_file(symbol_id, interface_file_idx, interface_name?)
+        });
+        let construct_origin = Some(construct_signature_query::construct_signature_origin(
+            interface_definition,
+            self.ctx.types.intern_string(&self.ctx.file_name),
+            node.pos,
+            node.end,
+        ));
 
         let own_type_param_names: FxHashSet<String> = interface
             .type_parameters
@@ -331,6 +315,8 @@ impl<'a> CheckerState<'a> {
                         this_type,
                         return_type,
                         type_predicate,
+                        has_literal_types: false,
+                        construct_origin: None,
                         is_method: false,
                     });
                     self.pop_type_parameters(type_param_updates);
@@ -373,6 +359,8 @@ impl<'a> CheckerState<'a> {
                         this_type,
                         return_type,
                         type_predicate,
+                        has_literal_types: self.signature_has_literal_type_annotations(sig),
+                        construct_origin,
                         is_method: false,
                     });
                     self.pop_type_parameters(type_param_updates);
@@ -470,6 +458,8 @@ impl<'a> CheckerState<'a> {
                             this_type,
                             return_type,
                             type_predicate,
+                            has_literal_types: false,
+                            construct_origin: None,
                             is_method: true,
                         };
 
@@ -710,18 +700,21 @@ impl<'a> CheckerState<'a> {
         }
 
         let result = if !call_signatures.is_empty() || !construct_signatures.is_empty() {
-            // `CallableShape` keeps the single-slot index convention: a `symbol`
-            // index rides in `string_index` (its `key_type` discriminates it).
             let shape = CallableShape {
                 call_signatures,
                 construct_signatures,
                 properties,
-                string_index: string_index.or(symbol_index),
+                string_index: None,
                 number_index,
                 symbol: interface_symbol,
                 is_abstract: false,
             };
-            factory.callable(shape)
+            crate::query_boundaries::interface_merge::callable_type_with_indices(
+                self.ctx.types,
+                shape,
+                string_index,
+                symbol_index,
+            )
         } else if string_index.is_some() || number_index.is_some() || symbol_index.is_some() {
             factory.object_with_index(ObjectShape {
                 properties,
@@ -862,11 +855,22 @@ impl<'a> CheckerState<'a> {
                     let base_name = self
                         .entity_name_text(expr_idx)
                         .or_else(|| self.expression_text(expr_idx));
-                    let Some(base_sym_id) = self.resolve_heritage_symbol(expr_idx).or_else(|| {
-                        base_name
-                            .as_deref()
-                            .and_then(|name| self.resolve_interface_heritage_symbol_by_name(name))
-                    }) else {
+                    let Some(base_sym_id) = self
+                        .resolve_heritage_symbol(expr_idx)
+                        .or_else(|| {
+                            match self.resolve_qualified_symbol_in_type_position(expr_idx) {
+                                crate::symbol_resolver::TypeSymbolResolution::Type(symbol) => {
+                                    Some(symbol)
+                                }
+                                _ => None,
+                            }
+                        })
+                        .or_else(|| {
+                            base_name.as_deref().and_then(|name| {
+                                self.resolve_interface_heritage_symbol_by_name(name)
+                            })
+                        })
+                    else {
                         continue;
                     };
                     // When the base is named through a chain of named re-exports
@@ -888,22 +892,30 @@ impl<'a> CheckerState<'a> {
                     let base_sym_id = self
                         .resolve_heritage_alias_to_declaration_symbol(base_sym_id, expr_idx)
                         .unwrap_or(base_sym_id);
+                    let base_is_exact_local_module_augmentation = self
+                        .current_module_augmentation_type_position_symbol(expr_idx)
+                        .is_some_and(|symbol| symbol == base_sym_id);
+                    let base_is_local_module_augmentation = base_is_exact_local_module_augmentation
+                        || self.local_module_augmentation_symbol(base_sym_id).is_some();
                     let Some((
                         base_symbol_declarations,
                         base_symbol_value_declaration,
                         base_symbol_name,
                         base_symbol_flags,
-                    )) = self
-                        .get_cross_file_symbol(base_sym_id)
-                        .or_else(|| self.ctx.binder.get_symbol(base_sym_id))
-                        .map(|symbol| {
-                            (
-                                symbol.declarations.clone(),
-                                symbol.value_declaration,
-                                symbol.escaped_name.clone(),
-                                symbol.flags,
-                            )
-                        })
+                    )) = (if base_is_local_module_augmentation {
+                        self.ctx.binder.get_symbol(base_sym_id)
+                    } else {
+                        self.get_cross_file_symbol(base_sym_id)
+                            .or_else(|| self.ctx.binder.get_symbol(base_sym_id))
+                    })
+                    .map(|symbol| {
+                        (
+                            symbol.declarations.clone(),
+                            symbol.value_declaration,
+                            symbol.escaped_name.clone(),
+                            symbol.flags,
+                        )
+                    })
                     else {
                         continue;
                     };
@@ -921,7 +933,11 @@ impl<'a> CheckerState<'a> {
                     // This ensures the TypeParam TypeIds in base_type_params match
                     // the TypeIds embedded in the base type's member signatures,
                     // which is critical for substitution to work correctly.
-                    let mut base_type = None;
+                    let mut base_type = if base_is_exact_local_module_augmentation {
+                        self.current_module_augmentation_interface_type(base_sym_id)
+                    } else {
+                        self.local_module_augmentation_interface_type(base_sym_id)
+                    };
 
                     // Try class instance type first (needs special handling)
                     for &base_decl_idx in &base_symbol_declarations {
@@ -1260,15 +1276,16 @@ impl<'a> CheckerState<'a> {
     /// This function merges a derived interface type with a base interface type,
     /// combining their call signatures, construct signatures, properties, and index signatures.
     /// Derived members take precedence over base members.
-    ///
-    /// # Arguments
-    /// * `derived` - The derived interface type
-    /// * `base` - The base interface type
-    ///
-    /// # Returns
-    /// The merged `TypeId`
     pub(crate) fn merge_interface_types(&mut self, derived: TypeId, base: TypeId) -> TypeId {
         self.merge_interface_types_with_mode(derived, base, InterfaceMergeMode::Declaration)
+    }
+
+    pub(crate) fn merge_interface_types_augmentation(
+        &mut self,
+        derived: TypeId,
+        base: TypeId,
+    ) -> TypeId {
+        self.merge_interface_types_with_mode(derived, base, InterfaceMergeMode::Augmentation)
     }
 
     /// Heritage (`extends`) variant of [`Self::merge_interface_types`]: a
@@ -1367,7 +1384,15 @@ impl<'a> CheckerState<'a> {
                 dedup_call_signatures_keep_last(&mut call_signatures);
                 let mut construct_signatures = derived_shape.construct_signatures.clone();
                 construct_signatures.extend(base_shape.construct_signatures.iter().cloned());
-                dedup_call_signatures_keep_last(&mut construct_signatures);
+                if mode == InterfaceMergeMode::Augmentation {
+                    construct_signatures.rotate_right(base_shape.construct_signatures.len());
+                }
+                construct_signature_query::deduplicate_construct_signatures_keep_last_with_resolver(
+                    self.ctx.types,
+                    &self.ctx,
+                    &mut construct_signatures,
+                    true,
+                );
                 let properties =
                     self.merge_properties(&derived_shape.properties, &base_shape.properties, mode);
                 factory.callable(CallableShape {
@@ -1783,7 +1808,7 @@ impl<'a> CheckerState<'a> {
         base_prop: &tsz_solver::PropertyInfo,
         mode: InterfaceMergeMode,
     ) -> tsz_solver::PropertyInfo {
-        let merged_type = if mode == InterfaceMergeMode::Declaration
+        let merged_type = if mode != InterfaceMergeMode::Heritage
             && crate::query_boundaries::common::callable_shape_for_type(
                 self.ctx.types,
                 base_prop.type_id,

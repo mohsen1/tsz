@@ -1001,7 +1001,8 @@ impl CheckerState<'_> {
             // this symbol's authoritative type (#13846). Concrete results — and
             // the deliberate `ERROR`/`UNKNOWN` cross-file cycle markers — are
             // fine to persist.
-            let result_is_bailout_artifact = resolved_under_bailout && result == TypeId::ANY;
+            let result_is_bailout_artifact =
+                Self::is_cross_arena_bailout_artifact(bailout_epoch_before, result);
             let result_params = checker
                 .ctx
                 .get_existing_def_id(sym_id)
@@ -1010,15 +1011,9 @@ impl CheckerState<'_> {
 
             // Collect child data before dropping (child borrows from self.ctx.types).
 
-            // Merge child's symbol_types back to parent to avoid re-resolving the
-            // same types across delegations.  Without this, multi-file tests with
-            // complex type libraries (react.d.ts) hang due to O(K×N) rework.
-            //
-            // For cross-file delegations (correct binder+arena pairing), ALL entries
-            // are safe to merge.  For lib delegations, the child uses the parent's
-            // binder with a lib arena, so entries for SymbolIds that belong to the
-            // parent's binder may be corrupt (node index collision).  We filter those
-            // out by only merging SymbolIds that the parent's binder doesn't own.
+            // Cross-file children use a matching binder+arena, so all entries are
+            // reusable. Lib children share the parent binder; retain only remapped
+            // lib symbols to avoid raw-id/node-index collisions.
             let child_symbol_types: Vec<(SymbolId, TypeId)> = if needs_cross_file_delegation {
                 // Cross-file: safe to merge everything
                 checker.ctx.symbol_types.iter().collect()
@@ -1036,19 +1031,12 @@ impl CheckerState<'_> {
                     .collect()
             };
 
-            // def_to_symbol and def_type_params are no longer collected from the
-            // child for merge-back. The child's `get_or_create_def_id()` and
-            // `insert_def_type_params()` write through to the shared
-            // `DefinitionStore`, so the parent can read them on next access via
-            // the fallback path in `def_to_symbol_id()` and `get_def_type_params()`.
+            // Definition identity and type params write through to the shared
+            // `DefinitionStore`; only local environment bodies need merging.
 
-            // Merge the child's DefId→TypeId mappings into the parent's type_env.
-            // The DefinitionStore write-through (set_body) only works for DefIds
-            // that were created via register(), but get_or_create_def_id() does not
-            // call register(). Copy the child's local def_types cache to ensure the
-            // parent can resolve Lazy(DefId) references for types nested inside
-            // cross-file interfaces (e.g., IServer inside IConfig's properties).
-            if let Ok(child_env) = checker.ctx.type_env.try_borrow() {
+            // Preserve local bodies for nested `Lazy(DefId)` references whose ids
+            // were not registered in the shared store.
+            if !resolved_under_bailout && let Ok(child_env) = checker.ctx.type_env.try_borrow() {
                 self.merge_child_type_env_snapshots(
                     &child_env,
                     "delegate_cross_arena_symbol_resolution",
@@ -1060,69 +1048,48 @@ impl CheckerState<'_> {
 
             let child_lib_delegation_cache = std::mem::take(&mut checker.ctx.lib_delegation_cache);
 
-            // Propagate lib type resolution cache from child to parent.
-            // Without this, child contexts that resolve lib types (Array, Promise, etc.)
-            // lose those cached results, forcing the parent to re-resolve them.
+            // Reuse child lib-name resolutions when the subtree completed.
             let child_lib_type_cache: Vec<(String, Option<TypeId>)> =
                 std::mem::take(&mut checker.ctx.lib_type_resolution_caches.types)
                     .into_iter()
                     .collect();
 
-            // Collect circular type alias markers so the parent can detect
-            // cross-file cycles.  When the child resolves `type B = A` and
-            // finds A in the resolution set (from the parent), it marks A as
-            // circular.  Propagating this back lets the parent's TS2456 check
-            // for A fire correctly.
+            // Preserve child-discovered cross-file alias cycles for TS2456.
             let child_circular_aliases: Vec<SymbolId> =
                 checker.ctx.circular_type_aliases.iter().copied().collect();
 
-            // Propagate class instance types so that type-position references
-            // (e.g., `foo(): Cls`) can resolve the instance type without
-            // re-computing it from the class declaration (which lives in a
-            // different arena and would fail).
+            // Reuse class instances materialized in the owner arena.
             let child_instance_types: Vec<(SymbolId, TypeId)> =
                 checker.ctx.symbol_instance_types.iter().collect();
 
             // Drop child checker to release borrow on self.ctx.types.
             drop(checker);
 
-            // Merge collected data into the parent.
-            // Note: def_to_symbol, def_type_params, and type_env DefId->TypeId
-            // mappings are NOT merged back here. The child already wrote through
-            // to the shared DefinitionStore, and the parent reads from
-            // DefinitionStore on local cache miss.
-            // Merge the child's resolved symbol types back into the parent, but
-            // drop a provisional `any` minted under a depth-cap bailout while
-            // resolving this symbol. Such an entry is a registration-window
-            // artifact: merging it back propagates the poison first-writer-wins
-            // into the parent and the program-global bucket, where it later
-            // mis-routes identical patterns in other files (the immer
-            // `[WRITABLE]` computed-key poison, #13846). Gating on bailout
-            // *provenance* (not on the value being `any`) keeps genuine
-            // cross-file `any` results cached, and dropping only the provisional
-            // `any` lets a later shallower pass recompute and persist the
-            // authoritative answer without a recompute storm over the concrete
-            // siblings. `ERROR`/`UNKNOWN` cross-file cycle markers are preserved.
+            // Drop only `any` with bailout provenance. Genuine `any` and deliberate
+            // cross-file cycle sentinels remain reusable; concrete siblings avoid a
+            // recomputation storm (#13846).
             for (sym_id, type_id) in child_symbol_types {
                 if resolved_under_bailout && type_id == TypeId::ANY {
                     continue;
                 }
                 self.ctx.symbol_types.entry_or_insert(sym_id, type_id);
             }
-            self.ctx
-                .namespace_module_names
-                .extend(child_namespace_names);
-            for (name, cache_value) in child_lib_delegation_cache.symbol_types() {
+            if !resolved_under_bailout {
                 self.ctx
-                    .lib_delegation_cache
-                    .entry_or_insert_symbol_type(name, cache_value);
-            }
-            for (name, type_id) in child_lib_type_cache {
-                self.ctx
-                    .lib_type_resolution_caches
-                    .types
-                    .entry(name)
-                    .or_insert(type_id);
+                    .namespace_module_names
+                    .extend(child_namespace_names);
+                for (name, cache_value) in child_lib_delegation_cache.symbol_types() {
+                    self.ctx
+                        .lib_delegation_cache
+                        .entry_or_insert_symbol_type(name, cache_value);
+                }
+                for (name, type_id) in child_lib_type_cache {
+                    self.ctx
+                        .lib_type_resolution_caches
+                        .types
+                        .entry(name)
+                        .or_insert(type_id);
+                }
             }
             for sym in child_circular_aliases {
                 self.ctx.circular_type_aliases.insert(sym);
@@ -1136,10 +1103,7 @@ impl CheckerState<'_> {
                     .entry_or_insert(sym_id, inst_type);
             }
 
-            // Cache the result for lib delegations by SymbolId.
-            // This prevents redundant child checker creation for the same lib symbol.
-            // Skipped under a depth-cap bailout: the result is a transiently
-            // incomplete artifact that must not be frozen (#13846).
+            // Cache completed lib delegations by `SymbolId`.
             if symbol_type_cache_file_idx.is_none()
                 && !needs_cross_file_delegation
                 && !result_is_bailout_artifact
@@ -1152,10 +1116,7 @@ impl CheckerState<'_> {
                 }
             }
 
-            // Write through to the canonical cross-file symbol-type cache so
-            // other parallel checkers can reuse this result without rebuilding
-            // a child checker. Skipped under a depth-cap bailout so a provisional
-            // result is not promoted first-writer-wins (#13846).
+            // Publish completed results to the canonical cross-file cache.
             if let Some(target_file_idx) =
                 symbol_type_cache_file_idx.filter(|_| !result_is_bailout_artifact)
             {
@@ -1183,14 +1144,8 @@ impl CheckerState<'_> {
                 }
             }
 
-            // Record completed *sentinel* results in the session memo so
-            // repeats within this file-check session replay them instead of
-            // re-running the child checker (issue #13041's livelock was
-            // exclusively repeated identical ERROR completions). Non-sentinel
-            // results stay on the gated shared-store caches above, which
-            // already model requester stability; memoizing them here changed
-            // elaboration output on the valibot/kysely canaries. In-progress
-            // guard returns above never reach this write.
+            // Memoize only completed sentinels; successful results use the shared
+            // caches above, preserving requester-sensitive elaboration (#13041).
             if matches!(result, TypeId::ERROR | TypeId::UNKNOWN) {
                 tsz_common::perf_counters::record_delegate_cross_arena_full_work_sentinel_result();
             }
@@ -1364,6 +1319,11 @@ impl CheckerState<'_> {
         if !self.ctx.enter_recursion() {
             return None;
         }
+        // A deeper class-member query can itself require owner-arena
+        // delegation. Capture the bailout provenance so a provisional `any`
+        // result is not published; a concrete completed class instance remains
+        // authoritative even if one nested query hit the depth cap.
+        let bailout_epoch_before = Self::cross_arena_bailout_epoch();
 
         // Use the target arena's file name for correct is_js_file() detection.
         let delegate_file_name = symbol_arena
@@ -1464,15 +1424,20 @@ impl CheckerState<'_> {
             let _class_boundary = Self::enter_cross_arena_class_boundary();
             checker.class_instance_type_with_params_from_symbol(delegate_sym_id)
         };
+        let result_is_bailout_artifact = result.as_ref().is_some_and(|(type_id, _)| {
+            Self::is_cross_arena_bailout_artifact(bailout_epoch_before, *type_id)
+        });
         // Lib-merged symbols have no registered file target, so no other
         // publish site runs for them; publish under the caller-visible id so
         // repeated queries reuse the instance type instead of re-delegating.
-        if lib_merged_origin.is_some()
+        if !result_is_bailout_artifact
+            && lib_merged_origin.is_some()
             && let Some((instance_type, params)) = result.as_ref()
         {
             self.publish_delegated_class_instance_type(sym_id, *instance_type, params);
         }
-        if self.ctx.share_owner_symbol_type_results
+        if !result_is_bailout_artifact
+            && self.ctx.share_owner_symbol_type_results
             && let (Some(file_idx), Some((type_id, params))) = (query_file_idx, result.as_ref())
             && *type_id != TypeId::UNKNOWN
             && *type_id != TypeId::ERROR
@@ -1490,6 +1455,7 @@ impl CheckerState<'_> {
 
         if let (Some(shared_name), Some((type_id, _))) =
             (shared_lib_class_name.as_deref(), result.as_ref())
+            && !result_is_bailout_artifact
         {
             self.cache_shared_actual_lib_class_delegation(shared_name, *type_id);
         }
@@ -1501,7 +1467,8 @@ impl CheckerState<'_> {
         let completed_negative = result
             .as_ref()
             .is_none_or(|(type_id, _)| matches!(*type_id, TypeId::ERROR | TypeId::UNKNOWN));
-        if completed_negative
+        if !result_is_bailout_artifact
+            && completed_negative
             && let Some(file_idx) = query_file_idx
             && let Some(fp) = memo_context_fp
         {
@@ -1527,15 +1494,21 @@ impl CheckerState<'_> {
         &mut self,
         sym_id: SymbolId,
     ) -> Option<TypeId> {
-        // Prefer the symbol's declared arena, but fall back to explicit
-        // cross-file ownership when the current binder does not know it.
-        let mut delegate_arena: Option<&tsz_parser::NodeArena> = self
-            .ctx
-            .binder
-            .symbol_arenas
-            .get(&sym_id)
-            .map(std::convert::AsRef::as_ref);
-        let mut delegate_file_idx = None;
+        // A checker-local owner edge was established by the exact resolver
+        // invocation that produced this raw id, so it must beat the binder's
+        // raw-id `symbol_arenas` entry. The latter can describe an unrelated
+        // same-number symbol from another file.
+        let explicit_file_idx = self.ctx.local_symbol_file_target_override(sym_id);
+        let mut delegate_arena: Option<&tsz_parser::NodeArena> = explicit_file_idx
+            .map(|file_idx| self.ctx.get_arena_for_file(file_idx as u32))
+            .or_else(|| {
+                self.ctx
+                    .binder
+                    .symbol_arenas
+                    .get(&sym_id)
+                    .map(std::convert::AsRef::as_ref)
+            });
+        let mut delegate_file_idx = explicit_file_idx;
 
         // Order-independent delegation decision + cache key (#13255): see the
         // comment in `delegate_cross_arena_symbol_resolution`. The interface
@@ -1635,12 +1608,17 @@ impl CheckerState<'_> {
             return Some(direct_type);
         }
 
-        // Guard against deep cross-arena recursion
-        let cross_arena_guard = Self::enter_cross_arena_delegation()?;
+        // Guard against deep cross-arena recursion.
+        let Some(cross_arena_guard) = Self::enter_cross_arena_delegation() else {
+            return Some(TypeId::ANY);
+        };
 
         if !self.ctx.enter_recursion() {
-            return None;
+            Self::mark_cross_arena_bailout();
+            drop(cross_arena_guard);
+            return Some(TypeId::ANY);
         }
+        let bailout_epoch_before = Self::cross_arena_bailout_epoch();
 
         let delegate_file_name = symbol_arena
             .source_files
@@ -1698,30 +1676,29 @@ impl CheckerState<'_> {
         if result == TypeId::ERROR {
             result = checker.get_type_of_symbol(sym_id);
         }
+        let resolved_under_bailout = Self::cross_arena_bailout_epoch() != bailout_epoch_before;
 
-        // Merge the child's DefId→TypeId mappings into the parent's type_env.
-        // The child may have resolved inner types (e.g., IServer inside IConfig)
-        // and registered their DefId→body mappings in its local type_env cache.
-        // Without this merge, the parent cannot resolve Lazy(DefId) references
-        // for those inner types after the child checker is dropped.
-        if let Ok(child_env) = checker.ctx.type_env.try_borrow() {
-            self.merge_child_type_env_snapshots(&child_env, "delegate_cross_arena_interface_type");
-        } else {
-            tracing::warn!(
-                "delegate_cross_arena_interface_type: could not borrow child type_env for snapshot"
-            );
+        if !resolved_under_bailout {
+            if let Ok(child_env) = checker.ctx.type_env.try_borrow() {
+                self.merge_child_type_env_snapshots(
+                    &child_env,
+                    "delegate_cross_arena_interface_type",
+                );
+            } else {
+                tracing::warn!(
+                    "delegate_cross_arena_interface_type: could not borrow child type_env for snapshot"
+                );
+            }
+            self.ctx
+                .merge_missing_symbol_file_targets_from(&checker.ctx);
         }
 
-        // Merge the child's cross_file_symbol_targets back into the parent.
-        // The child may have discovered new symbol → file mappings (e.g., when
-        // resolving qualified names like `server.IWorkspace` where IWorkspace
-        // belongs to server.ts). Without this merge, the parent cannot look up
-        // these symbols in the correct binder, causing SymbolId collisions.
-        self.ctx
-            .merge_missing_symbol_file_targets_from(&checker.ctx);
-
+        drop(checker);
         self.ctx.leave_recursion();
         drop(cross_arena_guard);
+        if resolved_under_bailout {
+            return Some(TypeId::ANY);
+        }
 
         let outcome = if result != TypeId::UNKNOWN && result != TypeId::ERROR {
             // Register instance type → DefId so the TypeFormatter can display
@@ -1854,19 +1831,26 @@ impl CheckerState<'_> {
         }
 
         let Some(cross_arena_guard) = Self::enter_cross_arena_delegation() else {
-            return if results.is_empty() {
-                None
-            } else {
-                Some(results)
-            };
+            results.extend(
+                misses
+                    .iter()
+                    .copied()
+                    .map(|member_idx| (member_idx, TypeId::ANY)),
+            );
+            return Some(results);
         };
         if !self.ctx.enter_recursion() {
-            return if results.is_empty() {
-                None
-            } else {
-                Some(results)
-            };
+            Self::mark_cross_arena_bailout();
+            drop(cross_arena_guard);
+            results.extend(
+                misses
+                    .iter()
+                    .copied()
+                    .map(|member_idx| (member_idx, TypeId::ANY)),
+            );
+            return Some(results);
         }
+        let bailout_epoch_before = Self::cross_arena_bailout_epoch();
 
         let delegate_file_name = interface_arena
             .source_files
@@ -1885,6 +1869,14 @@ impl CheckerState<'_> {
             delegate_file_name,
             self,
             tsz_common::perf_counters::CheckerCreationReason::DelegateCrossArenaOther,
+        );
+        let preserve_symbol = delegate_binder
+            .get_node_symbol(interface_idx)
+            .unwrap_or(tsz_binder::SymbolId(u32::MAX));
+        self.clear_delegated_symbol_cache_collisions(
+            &mut checker,
+            delegate_binder,
+            preserve_symbol,
         );
         checker.ctx.current_file_idx = delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
         let parent_is_declaration_file = self.ctx.file_name.ends_with(".d.ts")
@@ -1935,7 +1927,9 @@ impl CheckerState<'_> {
                 )
             });
 
-        for member_idx in misses {
+        let mut delegated_results = rustc_hash::FxHashMap::default();
+        let mut member_bailout_epoch_before = bailout_epoch_before;
+        for &member_idx in &misses {
             let mut result = checker.get_type_of_interface_member_simple(member_idx);
             if let Some(substitution) = substitution.as_ref() {
                 result = crate::query_boundaries::common::instantiate_type(
@@ -1944,25 +1938,38 @@ impl CheckerState<'_> {
                     substitution,
                 );
             }
+            let authoritative =
+                !Self::is_cross_arena_bailout_artifact(member_bailout_epoch_before, result);
+            member_bailout_epoch_before = Self::cross_arena_bailout_epoch();
             if result != TypeId::UNKNOWN && result != TypeId::ERROR {
-                if type_args.is_none()
-                    && let Some(file_idx) = delegate_file_idx
-                {
-                    self.ctx.cache_cross_file_interface_member_simple_type(
-                        interface_idx,
-                        member_idx,
-                        file_idx as u32,
-                        result,
-                    );
-                }
-                results.insert(member_idx, result);
+                delegated_results.insert(member_idx, (result, authoritative));
             }
         }
         checker.pop_type_parameters(interface_updates);
 
+        drop(checker);
         self.ctx.leave_recursion();
         drop(cross_arena_guard);
 
+        if type_args.is_none()
+            && let Some(file_idx) = delegate_file_idx
+        {
+            for (&member_idx, &(member_type, authoritative)) in &delegated_results {
+                if authoritative {
+                    self.ctx.cache_cross_file_interface_member_simple_type(
+                        interface_idx,
+                        member_idx,
+                        file_idx as u32,
+                        member_type,
+                    );
+                }
+            }
+        }
+        results.extend(
+            delegated_results
+                .into_iter()
+                .map(|(member_idx, (member_type, _))| (member_idx, member_type)),
+        );
         Some(results)
     }
 }

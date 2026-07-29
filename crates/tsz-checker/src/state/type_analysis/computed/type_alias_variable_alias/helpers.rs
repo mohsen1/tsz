@@ -204,15 +204,27 @@ impl<'a> CheckerState<'a> {
 
         let mut props: Vec<PropertyInfo> = Vec::new();
         for &(name, export_sym_id) in &ordered_exports {
-            if self.should_skip_namespace_export_name(&exports_table, name, export_sym_id) {
+            if self.should_skip_namespace_export_name(&exports_table, name, export_sym_id)
+                || self.is_type_only_export_symbol(export_sym_id)
+                || self.is_export_from_type_only_wildcard(module_name, name)
+                || self.is_export_type_only_from_file(
+                    module_name,
+                    name,
+                    Some(self.ctx.current_file_idx),
+                )
+            {
                 continue;
             }
+            let Some(prop_type) =
+                self.namespace_import_export_property_type(module_name, export_sym_id, name)
+            else {
+                continue;
+            };
             let declaration_order = if name == "default" {
                 1
             } else {
                 props.len() as u32 + 2
             };
-            let prop_type = self.get_type_of_symbol(export_sym_id);
             let name_atom = self.ctx.types.intern_string(name);
             props.push(type_analysis_boundary::namespace_export_property(
                 name_atom,
@@ -220,6 +232,7 @@ impl<'a> CheckerState<'a> {
                 declaration_order,
             ));
         }
+        self.append_module_augmentation_runtime_export_properties(module_name, &mut props);
         Self::normalize_namespace_export_declaration_order(&mut props);
         let module_type = type_analysis_boundary::namespace_object_type(self.ctx.types, props);
         self.ctx.namespace_module_names.insert(

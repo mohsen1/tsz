@@ -8,8 +8,13 @@ pub(crate) mod function_type_circular;
 pub(crate) mod function_type_helpers;
 pub(crate) mod function_type_signature_display;
 mod interface_heritage_class;
+mod interface_signature_merge;
 pub mod interface_type;
 pub mod module_augmentation;
+mod module_augmentation_cache;
+mod module_augmentation_constructs;
+#[cfg(test)]
+mod module_augmentation_exact_runtime_tests;
 mod module_augmentation_prime;
 mod module_augmentation_redirect;
 pub(crate) mod module_augmentation_value;

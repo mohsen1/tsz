@@ -1492,19 +1492,14 @@ impl CheckerState<'_> {
         // Capture the cross-arena bailout epoch so a provisional `any` minted
         // because a cross-arena delegation was refused by the depth cap during
         // this resolution is not frozen as the symbol's authoritative type. A
-        // later shallower pass recomputes the real type (the immer `[WRITABLE]`
-        // computed-key poison, #13846). Gated on provenance (not on the value
-        // being `any`) so genuine `any` results still cache; only the
-        // provisional `any` is dropped, so a single shallow resolution
-        // self-heals the cache without a recompute storm. `ERROR`/`UNKNOWN` are
-        // deliberate cross-file cycle markers (and are already excluded from the
-        // program bucket), so they are left untouched here.
+        // concrete completed result remains authoritative even if one nested
+        // query bailed out while it was being assembled.
         let bailout_epoch_before = Self::cross_arena_bailout_epoch();
         self.push_symbol_dependency(sym_id, true);
         let (result, type_params) = self.compute_type_of_symbol(sym_id);
         self.pop_symbol_dependency();
         let result_is_bailout_artifact =
-            Self::cross_arena_bailout_epoch() != bailout_epoch_before && result == TypeId::ANY;
+            Self::is_cross_arena_bailout_artifact(bailout_epoch_before, result);
 
         // Fold cross-file `declare module` augmentations into an exported
         // interface's materialized body at this canonical resolution point, so
@@ -1581,7 +1576,6 @@ impl CheckerState<'_> {
         } else {
             result
         };
-
         // Pop from resolution stack
         if use_local_symbol_state {
             self.ctx.symbol_resolution_stack.pop();

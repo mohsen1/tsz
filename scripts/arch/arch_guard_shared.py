@@ -1233,6 +1233,12 @@ TRAIT_METHOD_COUNT_CHECKS = [
         # supertrait.
         75,
     ),
+    (
+        "Solver boundary: TypeConstructSignaturesCache method count (#8205)",
+        ROOT / "crates" / "tsz-solver" / "src" / "caches" / "db.rs",
+        "TypeConstructSignaturesCache",
+        2,
+    ),
 ]
 
 VALID_CHECKER_CONTEXT_LIFETIMES = {
@@ -1411,7 +1417,10 @@ ROOT_SOLVER_EXPLICIT_REEXPORT_COUNT_CHECKS = [
 # Ratcheted 3050 -> 3049 by the 2026-07-14 goal campaign: the declaration-emit
 # portability walk, nested-application display, and object-literal request-facts
 # callers now route through the `diagnostics` boundary.
-QUERY_BOUNDARY_COMMON_REFERENCE_BASELINE = 3049
+# Ratcheted 3049 -> 3045 by the module-augmentation owner-identity campaign:
+# type rewriting, property access, call/construct shape queries, and enum facts
+# now route through their concern-specific boundaries.
+QUERY_BOUNDARY_COMMON_REFERENCE_BASELINE = 3045
 
 # Temporary green-campaign headroom for #14351. Guard tests keep the baseline
 # tight underneath this reserve, so reductions still force ratchets while urgent

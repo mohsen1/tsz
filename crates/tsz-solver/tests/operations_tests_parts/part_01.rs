@@ -169,6 +169,8 @@ fn make_array_test_env(
         type_params: vec![],
         this_type: None,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: true,
     };
     // reduce<U>(callbackfn: (prev: U, curr: T, idx: number, arr: T[]) => U, initialValue: U): U
@@ -225,6 +227,8 @@ fn make_array_test_env(
         type_params: vec![u_param],
         this_type: None,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: true,
     };
     let reduce_callable = interner.callable(CallableShape {
@@ -1558,6 +1562,8 @@ fn test_call_generic_callable_signature() {
             this_type: None,
             return_type: t_type,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         construct_signatures: Vec::new(),
@@ -1639,6 +1645,8 @@ fn test_infer_call_signature_identity() {
         this_type: None,
         return_type: t_type,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
 

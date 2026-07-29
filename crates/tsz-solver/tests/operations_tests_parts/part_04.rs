@@ -1640,6 +1640,8 @@ fn test_array_constructor_rest_mismatch_keeps_nullable_fallback_array() {
                 this_type: None,
                 return_type: interner.array(TypeId::ANY),
                 type_predicate: None,
+                has_literal_types: false,
+                construct_origin: None,
                 is_method: false,
             },
             CallSignature {
@@ -1653,6 +1655,8 @@ fn test_array_constructor_rest_mismatch_keeps_nullable_fallback_array() {
                 this_type: None,
                 return_type: array_t,
                 type_predicate: None,
+                has_literal_types: false,
+                construct_origin: None,
                 is_method: false,
             },
             CallSignature {
@@ -1666,6 +1670,8 @@ fn test_array_constructor_rest_mismatch_keeps_nullable_fallback_array() {
                 this_type: None,
                 return_type: array_t,
                 type_predicate: None,
+                has_literal_types: false,
+                construct_origin: None,
                 is_method: false,
             },
         ],

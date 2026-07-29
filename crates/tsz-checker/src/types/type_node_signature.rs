@@ -8,6 +8,24 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl TypeNodeChecker<'_, '_> {
+    pub(super) fn signature_has_literal_type_annotations(
+        &self,
+        signature: &tsz_parser::parser::node::SignatureData,
+    ) -> bool {
+        signature.parameters.as_ref().is_some_and(|parameters| {
+            parameters.nodes.iter().copied().any(|parameter_idx| {
+                self.ctx
+                    .arena
+                    .get(parameter_idx)
+                    .and_then(|node| self.ctx.arena.get_parameter(node))
+                    .and_then(|parameter| self.ctx.arena.get(parameter.type_annotation))
+                    .is_some_and(|type_node| {
+                        type_node.kind == tsz_parser::parser::syntax_kind_ext::LITERAL_TYPE
+                    })
+            })
+        })
+    }
+
     /// Extract parameter information from a signature.
     pub(super) fn extract_params_from_signature(
         &mut self,

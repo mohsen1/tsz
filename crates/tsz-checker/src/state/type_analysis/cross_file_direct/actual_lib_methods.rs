@@ -551,6 +551,31 @@ impl<'a> CheckerState<'a> {
         delegate_arena: Option<&NodeArena>,
         needs_cross_file_delegation: bool,
     ) -> Option<(TypeId, Vec<TypeParamInfo>)> {
+        let bailout_epoch_before = Self::cross_arena_bailout_epoch();
+        let result = self.direct_actual_lib_symbol_type_unchecked(
+            sym_id,
+            delegate_arena_source,
+            delegate_arena,
+            needs_cross_file_delegation,
+        );
+        if Self::cross_arena_bailout_epoch() == bailout_epoch_before {
+            return result;
+        }
+        let mut params = result.map(|(_, params)| params).unwrap_or_default();
+        for param in &mut params {
+            param.constraint = param.constraint.map(|_| TypeId::ANY);
+            param.default = param.default.map(|_| TypeId::ANY);
+        }
+        Some((TypeId::ANY, params))
+    }
+
+    fn direct_actual_lib_symbol_type_unchecked(
+        &mut self,
+        sym_id: SymbolId,
+        delegate_arena_source: CrossArenaSymbolMissSource,
+        delegate_arena: Option<&NodeArena>,
+        needs_cross_file_delegation: bool,
+    ) -> Option<(TypeId, Vec<TypeParamInfo>)> {
         if let Some(result) = self.direct_builtin_lib_interface_symbol_type(
             sym_id,
             delegate_arena_source,
@@ -628,12 +653,18 @@ impl<'a> CheckerState<'a> {
         // generic utility aliases stay on fallback so application/indexed-access
         // behavior sees the declared alias shape with type parameters in scope.
         if symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
+            let bailout_epoch_before = Self::cross_arena_bailout_epoch();
+            let proof =
+                self.direct_actual_lib_type_alias_body(sym_id, &symbol, &name, delegate_arena);
+            if Self::cross_arena_bailout_epoch() != bailout_epoch_before {
+                return Some((TypeId::ANY, Vec::new()));
+            }
             let DirectActualLibAliasBodyProof {
                 body: alias_type,
                 type_params: params,
                 def_id: _def_id,
                 outcome,
-            } = self.direct_actual_lib_type_alias_body(sym_id, &symbol, &name, delegate_arena)?;
+            } = proof?;
             if outcome != DirectActualLibAliasBodyOutcome::Success {
                 return None;
             }
@@ -674,6 +705,7 @@ impl<'a> CheckerState<'a> {
         {
             return None;
         }
+        let bailout_epoch_before = Self::cross_arena_bailout_epoch();
         let (direct_type, params) = if has_interface_type_params {
             let (direct_type, params) = self.resolve_lib_type_with_params(&name);
             if let Some(direct_type) = direct_type {
@@ -741,7 +773,7 @@ impl<'a> CheckerState<'a> {
         // base declared in the same namespace. The body-only lowerings above
         // drop them; this runs the namespace-aware heritage merge keyed by the
         // qualified name so the base interface members are instantiated in.
-        let (direct_type, params) = match heritage_merge_name {
+        let (direct_type, mut params) = match heritage_merge_name {
             Some(merge_name) => {
                 let merged = self
                     .merge_lib_interface_heritage(direct_type, &merge_name)
@@ -750,6 +782,13 @@ impl<'a> CheckerState<'a> {
             }
             None => (direct_type, params),
         };
+        if Self::cross_arena_bailout_epoch() != bailout_epoch_before {
+            for param in &mut params {
+                param.constraint = param.constraint.map(|_| TypeId::ANY);
+                param.default = param.default.map(|_| TypeId::ANY);
+            }
+            return Some((TypeId::ANY, params));
+        }
         self.ctx.symbol_types.insert(sym_id, direct_type);
         self.ctx
             .lib_delegation_cache

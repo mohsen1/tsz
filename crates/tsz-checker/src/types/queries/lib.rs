@@ -213,6 +213,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+        let bailout_epoch_before = Self::cross_arena_bailout_epoch();
 
         let factory = self.ctx.types.factory();
         let lib_contexts = self.ctx.lib_contexts.clone();
@@ -427,11 +428,19 @@ impl<'a> CheckerState<'a> {
             // heritage-incomplete (base-dropped) form is still missing inherited
             // members, and pinning it would freeze the thin form in the shared
             // store (#13862 / #12299).
-            if !heritage_incomplete {
+            if !heritage_incomplete && Self::cross_arena_bailout_epoch() == bailout_epoch_before {
                 self.register_augmented_lib_body(name, merged);
             }
         }
 
+        let mut params = first_params.unwrap_or_default();
+        if Self::cross_arena_bailout_epoch() != bailout_epoch_before {
+            for param in &mut params {
+                param.constraint = param.constraint.map(|_| TypeId::ANY);
+                param.default = param.default.map(|_| TypeId::ANY);
+            }
+            return (Some(TypeId::ANY), params);
+        }
         // Mirror into shared cache when safe (no local augmentations).
         if !requires_parallel_local_resolution
             && let Some(ref shared) = self.ctx.shared_lib_type_cache
@@ -439,7 +448,7 @@ impl<'a> CheckerState<'a> {
             shared.insert(name.to_string(), lib_type_id);
         }
 
-        (lib_type_id, first_params.unwrap_or_default())
+        (lib_type_id, params)
     }
 
     /// Get the text representation of a heritage clause name.
@@ -627,11 +636,11 @@ impl<'a> CheckerState<'a> {
             })
     }
 
-    fn namespace_has_umd_augmentation_member(
-        &self,
+    fn namespace_umd_augmentation_member_type(
+        &mut self,
         namespace_name: &str,
         property_name: &str,
-    ) -> bool {
+    ) -> Option<TypeId> {
         let mut module_specs = Vec::new();
         let mut collect_from_binder = |binder: &tsz_binder::BinderState| {
             if let Some(sym_id) = binder.file_locals.get(namespace_name)
@@ -651,10 +660,8 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        module_specs.into_iter().any(|module_spec| {
-            self.collect_module_augmentation_names(&module_spec)
-                .iter()
-                .any(|name| name == property_name)
+        module_specs.into_iter().find_map(|module_spec| {
+            self.module_augmentation_runtime_export_type(&module_spec, property_name)
         })
     }
 
@@ -975,16 +982,20 @@ impl<'a> CheckerState<'a> {
                         module_name,
                         Some(self.ctx.current_file_idx),
                     ) && surface.has_commonjs_exports
+                        && let Some(member_type) =
+                            surface.lookup_named_export(property_name, self.ctx.types)
                     {
-                        if let Some(prop) = surface
-                            .named_exports
-                            .iter()
-                            .find(|prop| self.ctx.types.resolve_atom(prop.name) == property_name)
-                        {
-                            return Some(prop.type_id);
-                        }
-                        return None;
+                        return Some(member_type);
                     }
+                }
+
+                if let Some(module_specifier) = import_module.as_deref()
+                    && self
+                        .module_augmentation_target_native_spaces(module_specifier, property_name)
+                        .is_some_and(|(_, has_value)| !has_value)
+                {
+                    return self
+                        .module_augmentation_runtime_export_type(module_specifier, property_name);
                 }
 
                 if direct_member_id.is_none()
@@ -1005,7 +1016,7 @@ impl<'a> CheckerState<'a> {
                     let member_type =
                         self.resolve_validated_namespace_member(sym_id, member_id, property_name)?;
                     return if let Some(module_specifier) = import_module.as_deref() {
-                        Some(self.apply_module_augmentations(
+                        Some(self.apply_module_value_augmentations(
                             module_specifier,
                             property_name,
                             member_type,
@@ -1019,7 +1030,7 @@ impl<'a> CheckerState<'a> {
                     let member_type =
                         self.resolve_validated_namespace_member(sym_id, member_id, property_name)?;
                     return if let Some(module_specifier) = import_module.as_deref() {
-                        Some(self.apply_module_augmentations(
+                        Some(self.apply_module_value_augmentations(
                             module_specifier,
                             property_name,
                             member_type,
@@ -1040,19 +1051,17 @@ impl<'a> CheckerState<'a> {
                     ) {
                         let member_type =
                             self.get_validated_member_type(reexported_sym, property_name)?;
-                        return Some(self.apply_module_augmentations(
+                        return Some(self.apply_module_value_augmentations(
                             module_specifier,
                             property_name,
                             member_type,
                         ));
                     }
 
-                    if self
-                        .collect_module_augmentation_names(module_specifier)
-                        .iter()
-                        .any(|name| name == property_name)
+                    if let Some(member_type) = self
+                        .module_augmentation_runtime_export_type(module_specifier, property_name)
                     {
-                        return Some(TypeId::ANY);
+                        return Some(member_type);
                     }
                 }
 
@@ -1072,7 +1081,7 @@ impl<'a> CheckerState<'a> {
                     let member_type =
                         self.resolve_validated_namespace_member(sym_id, member_id, property_name)?;
                     return if let Some(module_specifier) = import_module.as_deref() {
-                        Some(self.apply_module_augmentations(
+                        Some(self.apply_module_value_augmentations(
                             module_specifier,
                             property_name,
                             member_type,
@@ -1083,9 +1092,10 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if sym_flags & symbol_flags::MODULE != 0
-                    && self.namespace_has_umd_augmentation_member(sym_name.as_str(), property_name)
+                    && let Some(member_type) = self
+                        .namespace_umd_augmentation_member_type(sym_name.as_str(), property_name)
                 {
-                    return Some(TypeId::ANY);
+                    return Some(member_type);
                 }
 
                 None
@@ -1154,12 +1164,19 @@ impl<'a> CheckerState<'a> {
                         Some(self.ctx.current_file_idx),
                     )
                     && surface.has_commonjs_exports
+                    && let Some(member_type) =
+                        surface.lookup_named_export(property_name, self.ctx.types)
                 {
-                    return surface
-                        .named_exports
-                        .iter()
-                        .find(|prop| self.ctx.types.resolve_atom(prop.name) == property_name)
-                        .map(|prop| prop.type_id);
+                    return Some(member_type);
+                }
+
+                if let Some(module_specifier) = import_module.as_deref()
+                    && self
+                        .module_augmentation_target_native_spaces(module_specifier, property_name)
+                        .is_some_and(|(_, has_value)| !has_value)
+                {
+                    return self
+                        .module_augmentation_runtime_export_type(module_specifier, property_name);
                 }
 
                 if direct_member_id.is_none()
@@ -1187,7 +1204,7 @@ impl<'a> CheckerState<'a> {
                     let member_type =
                         self.resolve_validated_namespace_member(sym_id, member_id, property_name)?;
                     return if let Some(module_specifier) = import_module.as_deref() {
-                        Some(self.apply_module_augmentations(
+                        Some(self.apply_module_value_augmentations(
                             module_specifier,
                             property_name,
                             member_type,
@@ -1207,7 +1224,7 @@ impl<'a> CheckerState<'a> {
                     let member_type =
                         self.resolve_validated_namespace_member(sym_id, member_id, property_name)?;
                     return if let Some(module_specifier) = import_module.as_deref() {
-                        Some(self.apply_module_augmentations(
+                        Some(self.apply_module_value_augmentations(
                             module_specifier,
                             property_name,
                             member_type,
@@ -1218,12 +1235,10 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if let Some(ref module_specifier) = import_module
-                    && self
-                        .collect_module_augmentation_names(module_specifier)
-                        .iter()
-                        .any(|name| name == property_name)
+                    && let Some(member_type) = self
+                        .module_augmentation_runtime_export_type(module_specifier, property_name)
                 {
-                    return Some(TypeId::ANY);
+                    return Some(member_type);
                 }
 
                 None
@@ -1613,6 +1628,21 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if let Some(module_specifier) = import_module.as_deref()
+            && self
+                .module_augmentation_target_native_spaces(module_specifier, property_name)
+                .is_some_and(|(_, has_value)| !has_value)
+        {
+            return self.module_augmentation_runtime_export_type(module_specifier, property_name);
+        }
+
+        if let Some(module_specifier) = import_module.as_deref()
+            && let Some(function_value_type) =
+                self.namespace_function_interface_value_type(module_specifier, property_name)
+        {
+            return Some(function_value_type);
+        }
+
         if let Some(member_id) = direct_member_id {
             // Check type-only wildcard export guard for direct members
             if let Some(ref module_specifier) = import_module
@@ -1623,7 +1653,11 @@ impl<'a> CheckerState<'a> {
             let member_type =
                 self.resolve_validated_namespace_member(sym_id, member_id, property_name)?;
             return if let Some(module_specifier) = import_module.as_deref() {
-                Some(self.apply_module_augmentations(module_specifier, property_name, member_type))
+                Some(self.apply_module_value_augmentations(
+                    module_specifier,
+                    property_name,
+                    member_type,
+                ))
             } else {
                 Some(member_type)
             };
@@ -1639,7 +1673,11 @@ impl<'a> CheckerState<'a> {
             let member_type =
                 self.resolve_validated_namespace_member(sym_id, member_id, property_name)?;
             return if let Some(module_specifier) = import_module.as_deref() {
-                Some(self.apply_module_augmentations(module_specifier, property_name, member_type))
+                Some(self.apply_module_value_augmentations(
+                    module_specifier,
+                    property_name,
+                    member_type,
+                ))
             } else {
                 Some(member_type)
             };
@@ -1657,7 +1695,7 @@ impl<'a> CheckerState<'a> {
             ) {
                 let member_type =
                     self.resolve_validated_namespace_member(sym_id, member_id, property_name)?;
-                return Some(self.apply_module_augmentations(
+                return Some(self.apply_module_value_augmentations(
                     module_specifier,
                     property_name,
                     member_type,
@@ -1671,15 +1709,17 @@ impl<'a> CheckerState<'a> {
                 &mut visited_aliases,
             ) {
                 let member_type = self.get_validated_member_type(reexported_sym, property_name)?;
-                return Some(self.apply_module_augmentations(
+                return Some(self.apply_module_value_augmentations(
                     module_specifier,
                     property_name,
                     member_type,
                 ));
             }
 
-            if self.module_augmentation_introduces_member(module_specifier, property_name) {
-                return Some(TypeId::ANY);
+            if let Some(member_type) =
+                self.module_augmentation_runtime_export_type(module_specifier, property_name)
+            {
+                return Some(member_type);
             }
 
             if let Some(umd_name) =
@@ -1706,7 +1746,11 @@ impl<'a> CheckerState<'a> {
             let member_type =
                 self.resolve_validated_namespace_member(sym_id, member_id, property_name)?;
             return if let Some(module_specifier) = import_module.as_deref() {
-                Some(self.apply_module_augmentations(module_specifier, property_name, member_type))
+                Some(self.apply_module_value_augmentations(
+                    module_specifier,
+                    property_name,
+                    member_type,
+                ))
             } else {
                 Some(member_type)
             };
@@ -1723,16 +1767,6 @@ impl<'a> CheckerState<'a> {
     ) -> Option<tsz_binder::SymbolId> {
         self.resolve_effective_module_exports_from_file(module_specifier, Some(source_file_idx))
             .and_then(|exports| exports.get(property_name))
-    }
-
-    fn module_augmentation_introduces_member(
-        &self,
-        module_specifier: &str,
-        property_name: &str,
-    ) -> bool {
-        !self
-            .get_module_augmentation_declarations(module_specifier, property_name)
-            .is_empty()
     }
 
     fn resolve_namespace_member_across_binders(

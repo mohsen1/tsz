@@ -415,6 +415,21 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
+                // Declaration spaces are independent here. A type-only
+                // re-export occupies only the barrel's type space, so a module
+                // augmentation that introduces only a value (for example a
+                // function) can own the same exported name without a duplicate
+                // identifier. A type-bearing augmentation still overlaps and
+                // follows the normal merge/conflict rules below.
+                let reexport_is_type_only = export_decl.is_type_only || spec.is_type_only;
+                if reexport_is_type_only
+                    && conflict_decls
+                        .iter()
+                        .all(|(_, flags, _, _, _)| (*flags & tsz_binder::symbol_flags::TYPE) == 0)
+                {
+                    continue;
+                }
+
                 // `export { X [as Y] } from "M"` forwards M's export; it is not a local
                 // declaration of X. Suppress the conflict only when the current file's own
                 // augmentation targets exactly the same module M (verified via from_file_idx)

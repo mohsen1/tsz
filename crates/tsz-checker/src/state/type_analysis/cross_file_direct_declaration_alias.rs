@@ -37,8 +37,18 @@ impl<'a> CheckerState<'a> {
             .as_deref()
             .and_then(|arena| self.ctx.get_file_idx_for_arena(arena));
         let symbol_arena = declaration_alias_arena?;
-        let (direct_type, direct_params) =
-            self.direct_declaration_file_type_alias_result(sym_id, symbol_arena.as_ref())?;
+        let bailout_epoch_before = Self::cross_arena_bailout_epoch();
+        let direct_result =
+            self.direct_declaration_file_type_alias_result(sym_id, symbol_arena.as_ref());
+        if Self::cross_arena_bailout_epoch() != bailout_epoch_before {
+            let mut params = direct_result.map(|(_, params)| params).unwrap_or_default();
+            for param in &mut params {
+                param.constraint = param.constraint.map(|_| TypeId::ANY);
+                param.default = param.default.map(|_| TypeId::ANY);
+            }
+            return Some((TypeId::ANY, params));
+        }
+        let (direct_type, direct_params) = direct_result?;
 
         self.ctx.symbol_types.insert(sym_id, direct_type);
         if let Some(file_idx) = symbol_type_cache_file_idx.or(declaration_alias_file_idx)
@@ -135,6 +145,7 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
 
+            let bailout_epoch_before = Self::cross_arena_bailout_epoch();
             let (alias_type, mut params) = self.resolve_lib_type_with_params(&name);
             let alias_type = alias_type?;
             if matches!(alias_type, TypeId::UNKNOWN | TypeId::ERROR) {
@@ -145,6 +156,13 @@ impl<'a> CheckerState<'a> {
                 if params.is_empty() {
                     return None;
                 }
+            }
+            if Self::cross_arena_bailout_epoch() != bailout_epoch_before {
+                for param in &mut params {
+                    param.constraint = param.constraint.map(|_| TypeId::ANY);
+                    param.default = param.default.map(|_| TypeId::ANY);
+                }
+                return Some((TypeId::ANY, params));
             }
             self.ctx
                 .lib_delegation_cache

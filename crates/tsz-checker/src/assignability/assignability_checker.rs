@@ -488,7 +488,14 @@ impl<'a> CheckerState<'a> {
                     }
                     normalized.map_or_else(
                         || sig.clone(),
-                        |shape| call_signature_from_function_shape(shape, sig.is_method),
+                        |shape| {
+                            call_signature_from_function_shape(
+                                shape,
+                                sig.is_method,
+                                sig.has_literal_types,
+                                sig.construct_origin,
+                            )
+                        },
                     )
                 };
             let call_signatures: Vec<_> = shape

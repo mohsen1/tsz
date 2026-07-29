@@ -153,6 +153,8 @@ impl<'a> CheckerState<'a> {
                                     sig.this_type,
                                     rough_sig_return_type,
                                     sig.type_predicate,
+                                    sig.has_literal_types,
+                                    sig.construct_origin,
                                     sig.is_method,
                                 )
                             })
@@ -170,6 +172,8 @@ impl<'a> CheckerState<'a> {
                     Vec::new(),
                     None,
                     rough_sig_return_type,
+                    None,
+                    false,
                     None,
                     false,
                 ));

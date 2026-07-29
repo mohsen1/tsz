@@ -8,6 +8,7 @@ name a destination shell, and every mapped shell must exist as a real
     python3 scripts/arch/test_checker_field_inventory.py
 """
 
+import tempfile
 from unittest import mock
 
 from test_arch_guard_support import ROOT, load_arch_script_module, pathlib, unittest
@@ -17,6 +18,40 @@ INVENTORY_PATH = ROOT / "scripts" / "arch" / "checker_field_inventory.py"
 
 def load_inventory_module():
     return load_arch_script_module("checker_field_inventory", INVENTORY_PATH)
+
+
+class CheckerContextFieldParsingTests(unittest.TestCase):
+    def setUp(self):
+        self.inv = load_inventory_module()
+
+    def test_all_field_visibilities_and_multiline_types_are_inventoried(self):
+        fixture = """\
+pub struct CheckerContext<'a> {
+    pub public_field: u32,
+    pub(crate) crate_field:
+        Vec<&'a str>,
+    private_field: Option<String>,
+}
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "context.rs"
+            path.write_text(fixture, encoding="utf-8")
+            fields = self.inv.parse_checker_context_fields(path)
+
+        self.assertEqual(
+            [(field.name, field.rust_type) for field in fields],
+            [
+                ("public_field", "u32"),
+                ("crate_field", "Vec<&'a str>"),
+                ("private_field", "Option<String>"),
+            ],
+        )
+
+    def test_real_inventory_includes_private_augmentation_journal(self):
+        fields = self.inv.parse_checker_context_fields(
+            self.inv.CHECKER_CONTEXT_RS
+        )
+        self.assertIn("augmentation_local_journals", {field.name for field in fields})
 
 
 class DestinationShellContractTests(unittest.TestCase):

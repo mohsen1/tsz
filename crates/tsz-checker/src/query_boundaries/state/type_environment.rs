@@ -188,34 +188,7 @@ fn instantiate_type_environment_signature(
     signature: &CallSignature,
     type_args: &[TypeId],
 ) -> CallSignature {
-    let substitution = TypeSubstitution::from_signature_args(
-        db.as_type_database(),
-        &signature.type_params,
-        type_args,
-    );
-    let params = signature
-        .params
-        .iter()
-        .map(|param| {
-            super::super::signature_building::param_info(
-                param.name,
-                instantiate_type(db, param.type_id, &substitution),
-                param.optional,
-                param.rest,
-            )
-        })
-        .collect();
-
-    super::super::signature_building::call_signature(
-        Vec::new(),
-        params,
-        signature
-            .this_type
-            .map(|type_id| instantiate_type(db, type_id, &substitution)),
-        instantiate_type(db, signature.return_type, &substitution),
-        signature.type_predicate,
-        signature.is_method,
-    )
+    super::super::signature_building::instantiate_signature(db, signature, type_args)
 }
 
 pub(crate) fn unconstrained_type_environment_type_param(

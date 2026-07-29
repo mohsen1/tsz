@@ -119,12 +119,14 @@ impl DefStateFlags {
         self.directly_named_alias_bodies.insert(body);
     }
 
-    /// Whether `body` should be displayed structurally because it was produced
-    /// by a reducing operator and is not also a directly-written alias body.
     #[inline]
-    pub(crate) fn is_computed_body(&self, body: TypeId) -> bool {
+    pub(crate) fn is_body_computed_marked(&self, body: TypeId) -> bool {
         self.computed_alias_bodies.contains(&body)
-            && !self.directly_named_alias_bodies.contains(&body)
+    }
+
+    #[inline]
+    pub(crate) fn is_body_directly_named(&self, body: TypeId) -> bool {
+        self.directly_named_alias_bodies.contains(&body)
     }
 
     /// Flag a non-generic type alias whose tuple body was spread-flattened, so

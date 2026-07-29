@@ -4,10 +4,79 @@ use crate::state::CheckerState;
 use crate::types_domain::queries::core::GlobalReceiver;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(super) fn namespace_import_property_is_const_enum(
+        &self,
+        use_idx: NodeIndex,
+        property_name: &str,
+    ) -> bool {
+        let Some(local_name) = self
+            .ctx
+            .arena
+            .get_identifier_at(use_idx)
+            .map(|identifier| identifier.escaped_text.as_str())
+        else {
+            return false;
+        };
+        let Some(alias_sym_id) = crate::state_domain::type_analysis::
+            source_file_import_binding::source_file_import_binding_symbol(
+                self.ctx.arena,
+                self.ctx.binder,
+                local_name,
+            )
+        else {
+            return false;
+        };
+        let selected = self.ctx.binder.resolve_identifier_with_filter(
+            self.ctx.arena,
+            use_idx,
+            &[],
+            |candidate| {
+                self.ctx.binder.get_symbol(candidate).is_some_and(|symbol| {
+                    symbol.has_any_flags(symbol_flags::VALUE | symbol_flags::ALIAS)
+                })
+            },
+        );
+        if selected != Some(alias_sym_id) {
+            return false;
+        }
+        let Some(alias) = self.ctx.binder.get_symbol(alias_sym_id) else {
+            return false;
+        };
+        let namespace_like = alias.import_name() == Some("*")
+            || alias.declarations.iter().copied().any(|declaration| {
+                self.ctx
+                    .arena
+                    .get(declaration)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION)
+            });
+        if !namespace_like {
+            return false;
+        }
+        let Some(module_specifier) = alias.import_module() else {
+            return false;
+        };
+        let resolved = self
+            .ctx
+            .resolve_import_target_from_file(self.ctx.current_file_idx, module_specifier)
+            .and_then(|target_file_idx| {
+                let mut visited = rustc_hash::FxHashSet::default();
+                self.resolve_export_in_file(target_file_idx, property_name, &mut visited)
+            })
+            .or_else(|| self.resolve_ambient_module_export(module_specifier, property_name));
+        let Some((symbol_id, owner_file_idx)) = resolved else {
+            return false;
+        };
+        self.ctx
+            .get_binder_for_file(owner_file_idx)
+            .and_then(|binder| binder.get_symbol(symbol_id))
+            .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::CONST_ENUM))
+    }
+
     /// Fast path for enum/namespace member value access (`E.Member` or `Ns.Member`).
     /// Returns Some(type) if this is an enum/namespace member access that can be resolved
     /// directly, None otherwise (fall through to general property-access pipeline).
@@ -165,7 +234,9 @@ impl<'a> CheckerState<'a> {
                 expression,
                 crate::query_boundaries::name_resolution::NameLookupKind::Type,
             );
-            return Some(TypeId::ERROR);
+            // TS1361/TS1362 diagnose the import/export syntax, not the member's
+            // semantic type. Continue so downstream checks see the exact enum
+            // member rather than an artificial ERROR.
         }
 
         if is_enum {

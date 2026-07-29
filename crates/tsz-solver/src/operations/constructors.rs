@@ -15,7 +15,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// Key differences from function calls:
     /// - Uses `construct_signatures` instead of `call_signatures`
     /// - For unions: ALL members must be constructable (stricter than function calls)
-    /// - For intersections: Returns intersection of instance types (Mixin pattern)
+    /// - For intersections: combines ordinary signatures as overloads and folds
+    ///   true mixin constructor returns into those candidates
     pub fn resolve_new(&mut self, type_id: TypeId, arg_types: &[TypeId]) -> CallResult {
         // Intrinsics are never Function/Callable/Union/Intersection/Application
         // /Lazy — fail fast as NotCallable.
@@ -157,7 +158,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let mut first_this_mismatch: Option<(TypeId, TypeId)> = None; // (expected, actual)
         let mut all_this_mismatches_identical = true;
 
-        for sig in &shape.construct_signatures {
+        let construct_signatures =
+            crate::type_queries::reorder_construct_overload_candidates(&shape.construct_signatures);
+        for sig in &construct_signatures {
             let func = FunctionShape {
                 params: sig.params.clone(),
                 this_type: sig.this_type,
@@ -515,49 +518,38 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     fn resolve_intersection_new(
         &mut self,
         intersection_type: TypeId,
-        list_id: TypeListId,
+        _list_id: TypeListId,
         arg_types: &[TypeId],
     ) -> CallResult {
-        let members = self.interner.type_list(list_id);
-        let mut return_types = Vec::with_capacity(members.len());
-        let mut failures = Vec::with_capacity(members.len());
-
-        for &member in members.iter() {
-            // Try to resolve new on each member
-            match self.resolve_new(member, arg_types) {
-                CallResult::Success(ret) => {
-                    return_types.push(ret);
-                }
-                CallResult::NotCallable { .. } => {
-                    // Ignore non-constructable members in an intersection
-                    // (e.g. Constructor & { staticProp: number })
-                    continue;
-                }
-                err => {
-                    // If it IS constructable but failed (e.g. arg mismatch), record it
-                    failures.push(err);
-                }
-            }
-        }
-
-        if !return_types.is_empty() {
-            if return_types.len() == 1 {
-                return CallResult::Success(return_types[0]);
-            }
-            // Return intersection of all instance types (Mixin pattern)
-            let intersection_result = self.interner.intersection(return_types);
-            CallResult::Success(intersection_result)
-        } else if !failures.is_empty() {
-            // If we found constructors but they failed matching args, return the failure
-            failures
-                .into_iter()
-                .next()
-                .expect("failures is non-empty when no constituent is callable")
+        let construct_signatures = if let Some(resolver) = self.checker.type_resolver() {
+            crate::type_queries::get_construct_signatures_with_resolver(
+                self.interner,
+                &resolver,
+                intersection_type,
+            )
         } else {
-            // No constructable members found
-            CallResult::NotCallable {
+            crate::type_queries::get_construct_signatures_with_resolver(
+                self.interner,
+                &self.interner,
+                intersection_type,
+            )
+        };
+        let Some(construct_signatures) = construct_signatures else {
+            return CallResult::NotCallable {
                 type_id: intersection_type,
-            }
-        }
+            };
+        };
+        self.resolve_callable_new(
+            &CallableShape {
+                call_signatures: Vec::new(),
+                construct_signatures,
+                properties: Vec::new(),
+                string_index: None,
+                number_index: None,
+                symbol: None,
+                is_abstract: false,
+            },
+            arg_types,
+        )
     }
 }

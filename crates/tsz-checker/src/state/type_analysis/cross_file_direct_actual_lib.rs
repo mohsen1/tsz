@@ -156,7 +156,15 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let (direct_type, params) = self.resolve_lib_type_with_params(&name);
+        let bailout_epoch_before = Self::cross_arena_bailout_epoch();
+        let (direct_type, mut params) = self.resolve_lib_type_with_params(&name);
+        if Self::cross_arena_bailout_epoch() != bailout_epoch_before {
+            for param in &mut params {
+                param.constraint = param.constraint.map(|_| TypeId::ANY);
+                param.default = param.default.map(|_| TypeId::ANY);
+            }
+            return Some((TypeId::ANY, params));
+        }
         let direct_type = direct_type?;
         if matches!(direct_type, TypeId::UNKNOWN | TypeId::ERROR) {
             return None;
@@ -217,12 +225,20 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        let bailout_epoch_before = Self::cross_arena_bailout_epoch();
         let direct_type = self.resolve_lib_type_by_name(&name)?;
         if matches!(direct_type, TypeId::UNKNOWN | TypeId::ERROR) {
             return None;
         }
 
-        let params = self.get_type_params_for_symbol(sym_id);
+        let mut params = self.get_type_params_for_symbol(sym_id);
+        if Self::cross_arena_bailout_epoch() != bailout_epoch_before {
+            for param in &mut params {
+                param.constraint = param.constraint.map(|_| TypeId::ANY);
+                param.default = param.default.map(|_| TypeId::ANY);
+            }
+            return Some((TypeId::ANY, params));
+        }
         let def_id = self
             .resolve_actual_lib_name_to_def_id_for_lowering(&name)
             .unwrap_or_else(|| self.ctx.get_or_create_def_id(sym_id));

@@ -504,6 +504,8 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                         this_type: function.this_type,
                         return_type: function.return_type,
                         type_predicate: function.type_predicate,
+                        has_literal_types: false,
+                        construct_origin: None,
                         is_method: function.is_method,
                     };
                     if function.is_constructor {

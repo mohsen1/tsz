@@ -357,3 +357,97 @@ accept('kind', 'wrong')
         result.diagnostics
     );
 }
+
+/// Dynamic `import()` uses the same runtime namespace surface as a namespace
+/// import: native values receive value-side augmentations, augmentation-only
+/// namespaces are present, and pure type additions remain absent.
+#[test]
+fn dynamic_import_uses_runtime_module_augmentation_surface() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+    write_file(
+        &base.join("native.ts"),
+        r#"export declare function f(value: string): "s";
+export interface NativeInterface { native: true }
+export interface NativeTypeOnly { hidden: true }
+"#,
+    );
+    write_file(
+        &base.join("augmentation.ts"),
+        r#"import "./native";
+declare module "./native" {
+    function f(value: number): "n";
+    namespace f {
+        const meta: "function-meta";
+    }
+    namespace AddedRuntime {
+        const meta: "added-meta";
+    }
+    interface AddedTypeOnly {
+        hidden: true;
+    }
+    namespace NativeInterface {
+        const meta: "interface-meta";
+    }
+}
+"#,
+    );
+    write_file(
+        &base.join("consumer.ts"),
+        r#"import "./augmentation";
+async function inspect() {
+    const mod = await import("./native");
+
+    const nativeCall: "s" = mod.f("text");
+    const augmentedCall: "n" = mod.f(1);
+    const functionMeta: "function-meta" = mod.f.meta;
+    const addedMeta: "added-meta" = mod.AddedRuntime.meta;
+    const interfaceMeta: "interface-meta" = mod.NativeInterface.meta;
+
+    const wrongReturn: "n" = mod.f("text");
+    mod.f(true);
+    mod.AddedTypeOnly;
+}
+"#,
+    );
+
+    let args = parse_args(&[
+        "tsz",
+        "--noEmit",
+        "--strict",
+        "--target",
+        "es2022",
+        "--module",
+        "esnext",
+        "--moduleResolution",
+        "bundler",
+        "native.ts",
+        "augmentation.ts",
+        "consumer.ts",
+    ]);
+    let result = compile(&args, base).expect("compile should succeed");
+    let actual: Vec<u32> = result
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect();
+
+    assert_eq!(
+        actual,
+        [2322, 2769, 2339],
+        "dynamic import must expose only the augmented runtime namespace surface: {:#?}",
+        result.diagnostics
+    );
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == 2339)
+            .is_some_and(|diagnostic| {
+                diagnostic.message_text.contains("typeof import(")
+                    && diagnostic.message_text.contains("native")
+            }),
+        "the missing type-only addition must retain namespace import display: {:#?}",
+        result.diagnostics
+    );
+}

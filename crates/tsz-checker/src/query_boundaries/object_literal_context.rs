@@ -39,6 +39,8 @@ pub(crate) fn synthetic_this_method_callable(
             this_type: None,
             return_type,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: true,
         }],
         construct_signatures: Vec::new(),

@@ -666,6 +666,8 @@ pub fn classify_for_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> C
                 return_type: function.return_type,
                 type_params: function.type_params.clone(),
                 type_predicate: function.type_predicate,
+                has_literal_types: false,
+                construct_origin: None,
                 is_method: function.is_method,
             };
             CallSignaturesKind::MultipleSignatures(vec![signature])
@@ -693,6 +695,8 @@ pub fn classify_for_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> C
                             return_type: function.return_type,
                             type_params: function.type_params.clone(),
                             type_predicate: function.type_predicate,
+                            has_literal_types: false,
+                            construct_origin: None,
                             is_method: function.is_method,
                         });
                     }
@@ -1682,6 +1686,8 @@ mod tests {
             this_type: Some(TypeId(100)),
             return_type: TypeId(8), // boolean
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: true,
         };
 
@@ -1702,6 +1708,8 @@ mod tests {
             this_type: Some(TypeId(200)),
             return_type: TypeId(8),
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: true,
         };
 
@@ -1738,6 +1746,8 @@ mod tests {
             this_type: None,
             return_type: TypeId(8),
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: true,
         };
 
@@ -1758,6 +1768,8 @@ mod tests {
             this_type: None,
             return_type: TypeId(8),
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: true,
         };
 
@@ -1784,6 +1796,8 @@ mod tests {
             this_type: None,
             return_type: TypeId(8),
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         };
 
@@ -1798,6 +1812,8 @@ mod tests {
             this_type: None,
             return_type: TypeId(8),
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         };
 

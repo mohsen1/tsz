@@ -29,6 +29,16 @@ impl DeclSiteKey {
 }
 
 impl DefinitionStore {
+    fn find_decl_site_def_by_key(&self, key: DeclSiteKey) -> Option<DefId> {
+        self.decl_site_to_def
+            .get(&key)
+            .map(|entry| *entry)
+            .or_else(|| {
+                self.augmentation_parent()
+                    .and_then(|parent| parent.find_decl_site_def_by_key(key))
+            })
+    }
+
     pub(super) fn decl_site_key_for_info(info: &DefinitionInfo) -> Option<DeclSiteKey> {
         DeclSiteKey::from_info(info)
     }
@@ -36,6 +46,10 @@ impl DefinitionStore {
     pub(super) fn find_decl_site_def_for_info(&self, info: &DefinitionInfo) -> Option<DefId> {
         DeclSiteKey::from_info(info)
             .and_then(|key| self.decl_site_to_def.get(&key).map(|entry| *entry))
+            .or_else(|| {
+                self.augmentation_parent()
+                    .and_then(|parent| parent.find_decl_site_def_for_info(info))
+            })
     }
 
     pub(super) fn infos_have_same_decl_site(
@@ -84,8 +98,13 @@ impl DefinitionStore {
     }
 
     fn decl_site_key(&self, id: DefId) -> Option<DeclSiteKey> {
-        let info = self.definitions.get(&id)?;
-        DeclSiteKey::from_info(&info)
+        self.definitions
+            .get(&id)
+            .and_then(|info| DeclSiteKey::from_info(&info))
+            .or_else(|| {
+                self.augmentation_parent()
+                    .and_then(|parent| parent.decl_site_key(id))
+            })
     }
 
     /// Canonical representative for a binder declaration site, if known.
@@ -96,7 +115,7 @@ impl DefinitionStore {
     /// first registered solver `DefId`.
     pub fn canonical_decl_site_def_id(&self, def_id: DefId) -> DefId {
         self.decl_site_key(def_id)
-            .and_then(|key| self.decl_site_to_def.get(&key).map(|entry| *entry))
+            .and_then(|key| self.find_decl_site_def_by_key(key))
             .unwrap_or(def_id)
     }
 

@@ -6,6 +6,36 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
+    /// Whether `sym_id` is the binder-local declaration published for an
+    /// interface inside a string-literal module augmentation.
+    ///
+    /// Raw `SymbolId`s are binder-relative. An augmentation-body symbol can
+    /// therefore share its numeric id with a cloned lib symbol; the exact
+    /// current-binder registry entry is authoritative for type nodes written in
+    /// that augmentation body.
+    pub(super) fn is_current_module_augmentation_symbol(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+        expected_name: &str,
+    ) -> bool {
+        if self
+            .ctx
+            .resolve_dynamic_symbol_file_index(sym_id)
+            .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
+        {
+            return false;
+        }
+        self.ctx
+            .binder
+            .augmentation_target_modules
+            .contains_key(&sym_id)
+            && self
+                .ctx
+                .binder
+                .get_symbol(sym_id)
+                .is_some_and(|symbol| symbol.escaped_name == expected_name)
+    }
+
     /// Resolve a DefId from a node index via the type resolver.
     ///
     /// Uses the stable-identity helper `ensure_def_id_with_alias` to mint
@@ -27,8 +57,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
                 .and_then(|binder| binder.get_symbol(sym_id))
                 .is_some_and(|symbol| symbol.escaped_name == ident.escaped_text);
-            if (self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
-                || self.ctx.symbol_is_from_lib(sym_id))
+            let is_current_module_augmentation_symbol =
+                self.is_current_module_augmentation_symbol(sym_id, ident.escaped_text.as_str());
+            if !is_current_module_augmentation_symbol
+                && (self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                    || self.ctx.symbol_is_from_lib(sym_id))
                 && !authoritative_symbol_exists
             {
                 self.ctx

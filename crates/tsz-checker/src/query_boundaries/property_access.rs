@@ -11,6 +11,7 @@ pub(crate) use super::common::raw_property_type;
 pub(crate) use super::common::{
     array_element_type, callable_shape_for_type as callable_shape, is_string_type, unwrap_readonly,
 };
+pub(crate) use super::common::{type_application, type_shape_symbol};
 
 /// Resolve a named property on a type through the solver's property evaluator.
 ///
@@ -244,6 +245,8 @@ pub(crate) const fn strict_bind_call_apply_call_signature(
         this_type,
         return_type,
         type_predicate,
+        has_literal_types: false,
+        construct_origin: None,
         is_method,
     }
 }

@@ -215,15 +215,21 @@ impl<'a> CheckerState<'a> {
             }
 
             let mut signature = base_signature.clone();
+            signature.has_literal_types = false;
             let jsdoc_params = Self::extract_jsdoc_param_names(&jsdoc);
             signature.params.truncate(jsdoc_params.len());
 
             for (i, (param_name, _)) in jsdoc_params.iter().enumerate() {
+                let jsdoc_type_expr = Self::extract_jsdoc_param_type_string(&jsdoc, param_name);
+                signature.has_literal_types |= jsdoc_type_expr
+                    .as_deref()
+                    .is_some_and(Self::jsdoc_type_expr_has_literal_syntax);
                 let Some(param) = signature.params.get_mut(i) else {
                     break;
                 };
 
-                let jsdoc_optional = Self::extract_jsdoc_param_type_string(&jsdoc, param_name)
+                let jsdoc_optional = jsdoc_type_expr
+                    .as_deref()
                     .is_some_and(|type_expr| type_expr.trim().ends_with('='))
                     || Self::is_jsdoc_param_optional_by_brackets(&jsdoc, param_name);
 

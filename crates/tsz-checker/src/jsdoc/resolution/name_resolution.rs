@@ -104,6 +104,18 @@ impl<'a> CheckerState<'a> {
             })
     }
 
+    /// Whether a JSDoc type expression is directly literal syntax.
+    ///
+    /// Optional, variadic, parenthesized, union, and named-wrapper expressions
+    /// deliberately remain false even when they resolve to a literal type.
+    pub(crate) fn jsdoc_type_expr_has_literal_syntax(type_expr: &str) -> bool {
+        let type_expr = type_expr.trim();
+        strip_quoted_string(type_expr).is_some()
+            || matches!(type_expr, "true" | "false" | "null")
+            || (Self::jsdoc_type_expr_may_be_numeric_literal(type_expr)
+                && parse_numeric_literal_value(type_expr).is_some())
+    }
+
     pub(crate) fn resolve_jsdoc_implicit_any_builtin_type(
         &mut self,
         type_expr: &str,

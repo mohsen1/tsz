@@ -24,6 +24,27 @@ struct ResolvedIdentifierFlowInputs<'a> {
 }
 
 impl CheckerState<'_> {
+    pub(crate) fn const_enum_value_usage_is_valid(&self, idx: NodeIndex) -> bool {
+        let Some(parent_node) = self
+            .ctx
+            .arena
+            .get_extended(idx)
+            .filter(|extended| extended.parent.is_some())
+            .and_then(|extended| self.ctx.arena.get(extended.parent))
+        else {
+            return false;
+        };
+        ((parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || parent_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            && self
+                .ctx
+                .arena
+                .get_access_expr(parent_node)
+                .is_some_and(|access| access.expression == idx))
+            || parent_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+            || parent_node.kind == syntax_kind_ext::TYPE_QUERY
+    }
+
     /// Compute the type of an identifier that the binder resolved to `sym_id`.
     ///
     /// Drives the resolved-identifier phases in their original order: special
@@ -256,9 +277,68 @@ impl CheckerState<'_> {
             return Some(TypeId::ERROR);
         }
 
-        if !self.is_identifier_in_type_position(idx)
-            && self.alias_resolves_to_uninstantiated_namespace(sym_id)
+        let identifier_is_in_type_position = self.is_identifier_in_type_position(idx);
+        let alias_resolves_to_type_only = self.alias_resolves_to_type_only(sym_id);
+        if alias_resolves_to_type_only
+            && !identifier_is_in_type_position
+            && let Some(candidate_id) = self.local_current_file_value_symbol_named(name)
+            && let Some(candidate) = self.ctx.binder.get_symbol(candidate_id)
+            && candidate.value_declaration.is_some()
         {
+            let value_type = self
+                .type_of_value_declaration_for_symbol(candidate_id, candidate.value_declaration);
+            if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                return Some(self.check_flow_usage(idx, value_type, candidate_id));
+            }
+        }
+
+        let alias_resolves_to_uninstantiated_namespace = !identifier_is_in_type_position
+            && self.alias_resolves_to_uninstantiated_namespace(sym_id);
+        // An uninstantiated native namespace can gain a disjoint runtime
+        // declaration from module augmentation. Recover that exact value before
+        // the ordinary TS2708 guard decides the native declaration has no value.
+        if (alias_resolves_to_uninstantiated_namespace || alias_resolves_to_type_only)
+            && let Some(binding) = self.named_import_augmentation_runtime_binding(idx, name)
+        {
+            let replayed_through_export_type = binding.origin
+                == crate::types_domain::module_augmentation_value::
+                    ModuleAugmentationRuntimeOrigin::ReplayFallback
+                && self.is_export_type_only_syntax_across_binders(
+                    &binding.module_specifier,
+                    &binding.import_name,
+                );
+            let is_export_expression = self
+                .ctx
+                .arena
+                .get_extended(idx)
+                .and_then(|extended| self.ctx.arena.get(extended.parent))
+                .is_some_and(|parent| {
+                    parent.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+                        || parent.kind == syntax_kind_ext::EXPORT_DECLARATION
+                });
+            let suppress_type_only_diagnostic = self.is_heritage_type_only_context(idx)
+                || self.is_in_ambient_computed_property_context()
+                || self.is_in_type_query_context(idx)
+                || is_export_expression;
+            if (binding.binding_is_type_only || replayed_through_export_type)
+                && !suppress_type_only_diagnostic
+            {
+                self.report_wrong_meaning(
+                    name,
+                    idx,
+                    sym_id,
+                    crate::query_boundaries::name_resolution::NameLookupKind::Type,
+                    crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                );
+            }
+            return Some(self.instantiate_callable_result_from_request(
+                idx,
+                binding.type_id,
+                request,
+            ));
+        }
+
+        if alias_resolves_to_uninstantiated_namespace {
             self.report_wrong_meaning(
                 name,
                 idx,
@@ -269,43 +349,7 @@ impl CheckerState<'_> {
             return Some(TypeId::ERROR);
         }
 
-        if self.alias_resolves_to_type_only(sym_id) {
-            if !self.is_identifier_in_type_position(idx)
-                && let Some(candidate_id) = self.local_current_file_value_symbol_named(name)
-                && let Some(candidate) = self.ctx.binder.get_symbol(candidate_id)
-                && candidate.value_declaration.is_some()
-            {
-                let value_type = self.type_of_value_declaration_for_symbol(
-                    candidate_id,
-                    candidate.value_declaration,
-                );
-                if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
-                    return Some(self.check_flow_usage(idx, value_type, candidate_id));
-                }
-            }
-            let augmentation_lookup = self
-                .get_cross_file_symbol(sym_id)
-                .or_else(|| self.ctx.binder.get_symbol(sym_id))
-                .and_then(|symbol| {
-                    symbol.import_module().map(|module_spec| {
-                        (
-                            module_spec.to_string(),
-                            symbol
-                                .import_name()
-                                .map(str::to_string)
-                                .unwrap_or_else(|| name.to_string()),
-                        )
-                    })
-                });
-            if let Some((module_spec, import_name)) = augmentation_lookup
-                && let Some(value_type) =
-                    self.module_augmentation_value_type(&module_spec, &import_name)
-            {
-                return Some(
-                    self.instantiate_callable_result_from_request(idx, value_type, request),
-                );
-            }
-
+        if alias_resolves_to_type_only {
             // Duplicate import-equals aliases may merge type-only and value targets
             // under one symbol. If a value import binding with the same local name
             // exists in the current source/module block, don't treat this as type-only.
@@ -481,33 +525,15 @@ impl CheckerState<'_> {
         // TS2475: 'const' enums can only be used in property or index access
         // expressions or the right hand side of an import/export assignment or
         // type query.
-        if (flags & tsz_binder::symbol_flags::CONST_ENUM) != 0 {
-            let is_valid_const_enum_usage = if let Some(parent_ext) =
-                self.ctx.arena.get_extended(idx)
-                && parent_ext.parent.is_some()
-                && let Some(parent_node) = self.ctx.arena.get(parent_ext.parent)
-            {
-                use tsz_parser::parser::syntax_kind_ext;
-                (parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                    || parent_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
-                    && self
-                        .ctx
-                        .arena
-                        .get_access_expr(parent_node)
-                        .is_some_and(|access| access.expression == idx)
-                    || parent_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
-                    || parent_node.kind == syntax_kind_ext::TYPE_QUERY
-            } else {
-                false
-            };
-            if !is_valid_const_enum_usage {
-                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                self.error_at_node(
+        if (flags & tsz_binder::symbol_flags::CONST_ENUM) != 0
+            && !self.const_enum_value_usage_is_valid(idx)
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.error_at_node(
                         idx,
                         diagnostic_messages::CONST_ENUMS_CAN_ONLY_BE_USED_IN_PROPERTY_OR_INDEX_ACCESS_EXPRESSIONS_OR_THE_RIGH,
                         diagnostic_codes::CONST_ENUMS_CAN_ONLY_BE_USED_IN_PROPERTY_OR_INDEX_ACCESS_EXPRESSIONS_OR_THE_RIGH,
                     );
-            }
         }
 
         let has_type = (flags & tsz_binder::symbol_flags::TYPE) != 0;
@@ -649,7 +675,7 @@ impl CheckerState<'_> {
                 != 0
             && (flags & tsz_binder::symbol_flags::VALUE) == 0
             && let Some((value_sym_id, value_decl, value_file_idx)) =
-                self.same_file_value_symbol_for_type_symbol(sym_id)
+                self.same_file_value_symbol_for_type_symbol(sym_id, Some(idx))
         {
             let value_type = if value_file_idx == self.ctx.current_file_idx {
                 self.type_of_value_declaration_for_symbol(value_sym_id, value_decl)
@@ -678,10 +704,22 @@ impl CheckerState<'_> {
                 has_value = has_value,
                 "get_type_of_identifier: TYPE-only symbol, checking for VALUE in libs"
             );
-            // Cross-lib merging: interface/type may be in one lib while VALUE
-            // declaration is in another. Resolve by declaration node first to
-            // avoid SymbolId collisions across binders.
-            let value_type = self.type_of_value_symbol_by_name(name);
+            // Cross-lib/global merging: an interface/type may be in one
+            // declaration file while its VALUE declaration is in another.
+            // A lexical type declared in an external module cannot participate
+            // in that merge. Looking it up program-wide by spelling lets an
+            // unrelated module augmentation with the same name suppress the
+            // required TS2693.
+            let can_merge_with_program_global = !self.ctx.binder.is_external_module()
+                || self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                || symbol_declarations
+                    .iter()
+                    .any(|&declaration| self.is_inside_global_augmentation(declaration));
+            let value_type = if can_merge_with_program_global {
+                self.type_of_value_symbol_by_name(name)
+            } else {
+                TypeId::UNKNOWN
+            };
             trace!(
                 name = name,
                 value_type = ?value_type,
@@ -846,119 +884,123 @@ impl CheckerState<'_> {
         // value-declaration via cross-file delegation so the call-site
         // sees the value-side type instead of the interface type that
         // `compute_type_of_symbol` returns by default.
-        // `(target_sym_id, value_decl, file_idx, is_plain_value_type_alias)`.
-        // The final flag marks a name-merged plain `TYPE_ALIAS` (no `INTERFACE`,
-        // no `CLASS`) over a value, the only shape allowed to fall back to the
-        // symbol's own type when its value declaration lowers to a
-        // non-instantiable value-position type.
-        let alias_target_merged_value_info: Option<(tsz_binder::SymbolId, NodeIndex, usize, bool)> =
-            ((flags & tsz_binder::symbol_flags::ALIAS) != 0)
-                .then(|| {
-                    let mut target_sym_id =
-                        self.ctx.resolve_import_alias_chain_and_register(sym_id)?;
-                    // Default imports resolve through `target_binder.file_locals`'s
-                    // synthesized "default" alias. That alias has `ALIAS`
-                    // flag but no `import_module`/`import_name`, so a
-                    // second `resolve_import_alias_and_register` returns
-                    // `None`. Instead follow the `default` alias's
-                    // `declarations[0]` — which is the `export_clause`
-                    // Identifier for `export default <Foo>` — and look
-                    // up that identifier's text in the same target
-                    // binder to reach the underlying merged symbol.
-                    if let Some(target) = self.get_symbol_globally(target_sym_id)
-                        && (target.flags & tsz_binder::symbol_flags::ALIAS) != 0
-                        && target.import_module().is_none()
-                        && (target.escaped_name == "default"
-                            || target.import_name() == Some("default"))
-                        && let Some(decl_idx) = target.primary_declaration()
-                        && let Some(target_file_idx) =
-                            self.ctx.resolve_symbol_file_index(target_sym_id)
-                        && let Some(target_binder) = self.ctx.get_binder_for_file(target_file_idx)
+        // `(target_sym_id, value_decl, file_idx, is_plain_value_type_alias,
+        // is_function_interface)`.
+        // The fourth flag marks a name-merged plain `TYPE_ALIAS` (no
+        // `INTERFACE`, no `CLASS`) over a value, the only shape allowed to fall
+        // back to the symbol's own type when its value declaration lowers to a
+        // non-instantiable value-position type. The final flag selects the
+        // complete runtime function declaration group without admitting the
+        // same-name interface's callable signatures.
+        let alias_target_merged_value_info: Option<(
+            tsz_binder::SymbolId,
+            NodeIndex,
+            usize,
+            bool,
+            bool,
+        )> = ((flags & tsz_binder::symbol_flags::ALIAS) != 0)
+            .then(|| {
+                let mut target_sym_id = self.ctx.resolve_import_alias_chain_and_register(sym_id)?;
+                // Default imports resolve through `target_binder.file_locals`'s
+                // synthesized "default" alias. That alias has `ALIAS`
+                // flag but no `import_module`/`import_name`, so a
+                // second `resolve_import_alias_and_register` returns
+                // `None`. Instead follow the `default` alias's
+                // `declarations[0]` — which is the `export_clause`
+                // Identifier for `export default <Foo>` — and look
+                // up that identifier's text in the same target
+                // binder to reach the underlying merged symbol.
+                if let Some(target) = self.get_symbol_globally(target_sym_id)
+                    && (target.flags & tsz_binder::symbol_flags::ALIAS) != 0
+                    && target.import_module().is_none()
+                    && (target.escaped_name == "default" || target.import_name() == Some("default"))
+                    && let Some(decl_idx) = target.primary_declaration()
+                    && let Some(target_file_idx) = self.ctx.resolve_symbol_file_index(target_sym_id)
+                    && let Some(target_binder) = self.ctx.get_binder_for_file(target_file_idx)
+                {
+                    let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+                    if let Some(ident) = target_arena.get_identifier_at(decl_idx)
+                        && let Some(underlying) = target_binder.file_locals.get(&ident.escaped_text)
+                        && underlying != target_sym_id
                     {
-                        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
-                        if let Some(ident) = target_arena.get_identifier_at(decl_idx)
-                            && let Some(underlying) =
-                                target_binder.file_locals.get(&ident.escaped_text)
-                            && underlying != target_sym_id
-                        {
-                            self.ctx
-                                .register_symbol_file_target(underlying, target_file_idx);
-                            target_sym_id = underlying;
-                        }
+                        self.ctx
+                            .register_symbol_file_target(underlying, target_file_idx);
+                        target_sym_id = underlying;
                     }
-                    // Read the *target's* real declaration data from its owning
-                    // binder. `get_symbol_globally` would pin a raw-id-colliding
-                    // local import alias here (per-file binders mint colliding
-                    // ids), hiding a merged value+type-alias target's VALUE side
-                    // and collapsing the value-position type to the type-alias
-                    // body (e.g. an imported `const x = Symbol.for(..)` merged
-                    // with `type x = typeof x` would resolve to an unevaluated
-                    // `typeof x` cross-arena).
-                    let target = self.resolved_import_target_symbol(target_sym_id)?;
-                    let tflags = target.flags;
-                    if (tflags
-                        & (tsz_binder::symbol_flags::INTERFACE
-                            | tsz_binder::symbol_flags::TYPE_ALIAS))
-                        != 0
-                        && (tflags & tsz_binder::symbol_flags::VALUE) != 0
-                        && (tflags & tsz_binder::symbol_flags::ALIAS) == 0
-                        && target.import_module().is_none()
-                        && target.value_declaration.is_some()
-                    {
-                        let target_file_idx = self.ctx.resolve_symbol_file_index(target_sym_id)?;
-                        // The value-position type must come from the *value*
-                        // declaration, not whichever declaration the binder
-                        // recorded as `value_declaration`. When a `TYPE_ALIAS` is
-                        // declared before its name-merged const/var (e.g.
-                        // `type Foo = ...; const Foo: any;`), the binder records
-                        // the type-alias node as `value_declaration`; typing that
-                        // type-alias node as a value yields a possibly-undefined
-                        // type and produces false TS18048/TS2722 on
-                        // `new Foo()` / `Foo()`. Prefer a declaration node whose
-                        // kind is not a type-alias so the const's declared value
-                        // type is used.
-                        //
-                        // Restrict this correction to a name-merged plain
-                        // `TYPE_ALIAS` (no `INTERFACE`, no `CLASS`) over a value.
-                        // `INTERFACE`+value (constructor companion) and `CLASS`
-                        // merges keep the recorded `value_declaration` untouched:
-                        // their value side is the companion declaration the
-                        // binder already records correctly.
-                        let is_plain_value_type_alias = (tflags
-                            & (tsz_binder::symbol_flags::INTERFACE
-                                | tsz_binder::symbol_flags::CLASS))
-                            == 0;
-                        let target_value_decl = if is_plain_value_type_alias {
-                            self.value_declaration_skipping_type_alias(target, target_file_idx)
-                                .unwrap_or(target.value_declaration)
-                        } else {
-                            target.value_declaration
-                        };
-                        Some((
-                            target_sym_id,
-                            target_value_decl,
-                            target_file_idx,
-                            is_plain_value_type_alias,
-                        ))
-                    } else if (tflags
-                        & (tsz_binder::symbol_flags::INTERFACE
-                            | tsz_binder::symbol_flags::TYPE_ALIAS))
-                        != 0
-                        && (tflags & tsz_binder::symbol_flags::VALUE) == 0
-                    {
-                        // `TYPE_ALIAS`/`INTERFACE` without a merged value: the
-                        // value side is a separate same-file symbol whose value
-                        // declaration models it correctly, so no symbol-type
-                        // fallback is needed.
-                        self.same_file_value_symbol_for_type_symbol(target_sym_id)
-                            .map(|(value_sym_id, value_decl, value_file_idx)| {
-                                (value_sym_id, value_decl, value_file_idx, false)
-                            })
+                }
+                // Read the *target's* real declaration data from its owning
+                // binder. `get_symbol_globally` would pin a raw-id-colliding
+                // local import alias here (per-file binders mint colliding
+                // ids), hiding a merged value+type-alias target's VALUE side
+                // and collapsing the value-position type to the type-alias
+                // body (e.g. an imported `const x = Symbol.for(..)` merged
+                // with `type x = typeof x` would resolve to an unevaluated
+                // `typeof x` cross-arena).
+                let target = self.resolved_import_target_symbol(target_sym_id)?;
+                let tflags = target.flags;
+                if (tflags
+                    & (tsz_binder::symbol_flags::INTERFACE | tsz_binder::symbol_flags::TYPE_ALIAS))
+                    != 0
+                    && (tflags & tsz_binder::symbol_flags::VALUE) != 0
+                    && (tflags & tsz_binder::symbol_flags::ALIAS) == 0
+                    && target.import_module().is_none()
+                    && target.value_declaration.is_some()
+                {
+                    let target_file_idx = self.ctx.resolve_symbol_file_index(target_sym_id)?;
+                    // The value-position type must come from the *value*
+                    // declaration, not whichever declaration the binder
+                    // recorded as `value_declaration`. When a `TYPE_ALIAS` is
+                    // declared before its name-merged const/var (e.g.
+                    // `type Foo = ...; const Foo: any;`), the binder records
+                    // the type-alias node as `value_declaration`; typing that
+                    // type-alias node as a value yields a possibly-undefined
+                    // type and produces false TS18048/TS2722 on
+                    // `new Foo()` / `Foo()`. Prefer a declaration node whose
+                    // kind is not a type-alias so the const's declared value
+                    // type is used.
+                    //
+                    // Restrict this correction to a name-merged plain
+                    // `TYPE_ALIAS` (no `INTERFACE`, no `CLASS`) over a value.
+                    // `INTERFACE`+value (constructor companion) and `CLASS`
+                    // merges keep the recorded `value_declaration` untouched:
+                    // their value side is the companion declaration the
+                    // binder already records correctly.
+                    let is_plain_value_type_alias = (tflags
+                        & (tsz_binder::symbol_flags::INTERFACE | tsz_binder::symbol_flags::CLASS))
+                        == 0;
+                    let is_function_interface = (tflags & tsz_binder::symbol_flags::FUNCTION) != 0
+                        && (tflags & tsz_binder::symbol_flags::INTERFACE) != 0;
+                    let target_value_decl = if is_plain_value_type_alias {
+                        self.value_declaration_skipping_type_alias(target, target_file_idx)
+                            .unwrap_or(target.value_declaration)
                     } else {
-                        None
-                    }
-                })
-                .flatten();
+                        target.value_declaration
+                    };
+                    Some((
+                        target_sym_id,
+                        target_value_decl,
+                        target_file_idx,
+                        is_plain_value_type_alias,
+                        is_function_interface,
+                    ))
+                } else if (tflags
+                    & (tsz_binder::symbol_flags::INTERFACE | tsz_binder::symbol_flags::TYPE_ALIAS))
+                    != 0
+                    && (tflags & tsz_binder::symbol_flags::VALUE) == 0
+                {
+                    // `TYPE_ALIAS`/`INTERFACE` without a merged value: the
+                    // value side is a separate same-file symbol whose value
+                    // declaration models it correctly, so no symbol-type
+                    // fallback is needed.
+                    self.same_file_value_symbol_for_type_symbol(target_sym_id, None)
+                        .map(|(value_sym_id, value_decl, value_file_idx)| {
+                            (value_sym_id, value_decl, value_file_idx, false, false)
+                        })
+                } else {
+                    None
+                }
+            })
+            .flatten();
         let is_merged_interface_value =
             (has_type && has_value && (flags & tsz_binder::symbol_flags::INTERFACE) != 0)
                 || alias_target_merged_value_info.is_some();
@@ -1009,13 +1051,25 @@ impl CheckerState<'_> {
                 target_value_decl,
                 target_file_idx,
                 is_plain_value_type_alias,
+                is_function_interface,
             )) = alias_target_merged_value_info
             {
-                let from_value_decl = self.type_of_value_declaration_for_cross_file_symbol(
-                    target_sym_id,
-                    target_value_decl,
-                    target_file_idx,
-                );
+                let from_value_decl = if is_function_interface {
+                    // `value_declaration` identifies one function declaration,
+                    // while the runtime value owns every body-less overload in
+                    // the target symbol's function declaration group.
+                    self.type_of_function_group_for_cross_file_symbol(
+                        target_sym_id,
+                        target_value_decl,
+                        target_file_idx,
+                    )
+                } else {
+                    self.type_of_value_declaration_for_cross_file_symbol(
+                        target_sym_id,
+                        target_value_decl,
+                        target_file_idx,
+                    )
+                };
                 // For a name-merged plain `TYPE_ALIAS` + value, the value
                 // declaration can still lower to a non-instantiable
                 // value-position type (e.g. `void`/`undefined` when a generic
@@ -1191,6 +1245,21 @@ impl CheckerState<'_> {
                 {
                     value_type = recomputed;
                 }
+            }
+            // A named import of a native merged value (for example, a
+            // function+interface declaration) reaches this path after the
+            // cross-file alias shortcut deliberately declines it. Carry the
+            // import edge's exact module/export identity to the value-space
+            // augmentation query so same-name namespace companions contribute
+            // statics without leaking type-side interface members.
+            if let Some((module_specifier, import_name, _)) =
+                self.resolve_named_import_for_local_name(idx, name)
+            {
+                value_type = self.apply_module_value_augmentations_to_direct_value(
+                    &module_specifier,
+                    &import_name,
+                    value_type,
+                );
             }
             if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
                 return Some(self.check_flow_usage(idx, value_type, sym_id));

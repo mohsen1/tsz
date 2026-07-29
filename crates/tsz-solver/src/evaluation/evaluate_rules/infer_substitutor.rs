@@ -507,6 +507,8 @@ impl<'a> InferSubstitutor<'a> {
                             return_type,
                             type_params: sig.type_params.clone(),
                             type_predicate: sig.type_predicate,
+                            has_literal_types: sig.has_literal_types,
+                            construct_origin: sig.construct_origin,
                             is_method: sig.is_method,
                         }
                     })
@@ -546,6 +548,8 @@ impl<'a> InferSubstitutor<'a> {
                             return_type,
                             type_params: sig.type_params.clone(),
                             type_predicate: sig.type_predicate,
+                            has_literal_types: sig.has_literal_types,
+                            construct_origin: sig.construct_origin,
                             is_method: sig.is_method,
                         }
                     })

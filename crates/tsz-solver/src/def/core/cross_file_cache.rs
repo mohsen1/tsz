@@ -74,10 +74,18 @@ impl CrossFileQueryCache {
         args_hash: u64,
         type_id: TypeId,
         type_params: Vec<TypeParamInfo>,
-    ) {
-        self.resolved_cross_file_queries
+    ) -> bool {
+        use dashmap::mapref::entry::Entry;
+        match self
+            .resolved_cross_file_queries
             .entry((kind, file_idx, primary, secondary, args_hash))
-            .or_insert_with(|| (type_id, Arc::new(type_params)));
+        {
+            Entry::Vacant(entry) => {
+                entry.insert((type_id, Arc::new(type_params)));
+                true
+            }
+            Entry::Occupied(_) => false,
+        }
     }
 
     /// Current program-local scope stamp (clamped to >= 1).

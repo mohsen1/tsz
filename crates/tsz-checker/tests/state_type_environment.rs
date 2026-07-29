@@ -43,6 +43,41 @@ fn classifies_and_extracts_environment_resolution_shapes() {
 }
 
 #[test]
+fn callable_signature_instantiation_preserves_literal_specialization_provenance() {
+    let types = TypeInterner::new();
+    let type_param = tsz_solver::TypeParamInfo {
+        name: types.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: tsz_solver::TypeParamOrigin::User,
+    };
+    let type_param_type = types.type_param(type_param);
+    let mut signature = tsz_solver::CallSignature::new(
+        vec![tsz_solver::ParamInfo::unnamed(type_param_type)],
+        type_param_type,
+    );
+    signature.type_params.push(type_param);
+    signature.has_literal_types = true;
+    let construct_origin = tsz_solver::ConstructSignatureOrigin {
+        owner: Some(DefId(123)),
+        declaration_file: types.intern_string("construct-origin.ts"),
+        declaration_pos: 10,
+        declaration_end: 20,
+    };
+    signature.construct_origin = Some(construct_origin);
+
+    let instantiated =
+        instantiate_type_environment_signatures(&types, &[signature], &[TypeId::STRING])
+            .expect("generic signature should be instantiated");
+
+    assert!(instantiated[0].has_literal_types);
+    assert_eq!(instantiated[0].construct_origin, Some(construct_origin));
+    assert_eq!(instantiated[0].params[0].type_id, TypeId::STRING);
+    assert_eq!(instantiated[0].return_type, TypeId::STRING);
+}
+
+#[test]
 fn mapped_source_classification_via_boundary() {
     let types = TypeInterner::new();
 

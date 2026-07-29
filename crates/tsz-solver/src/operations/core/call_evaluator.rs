@@ -617,6 +617,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         this_type: func.this_type,
                         return_type: func.return_type,
                         type_predicate: func.type_predicate,
+                        has_literal_types: false,
+                        construct_origin: None,
                         is_method: func.is_method,
                     };
                     result.push((i, vec![sig]));
@@ -830,6 +832,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         this_type: combined_this,
                         return_type: union_return,
                         type_predicate: None,
+                        // First-pass union signatures clone the anchor's
+                        // propagating flags in tsc.
+                        has_literal_types: sig.has_literal_types,
+                        construct_origin: sig.construct_origin,
                         is_method: sig.is_method,
                     });
                 }
@@ -892,6 +898,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             .interner
                             .factory()
                             .union2(combined.return_type, other_sig.return_type);
+                        // The fallback phase uses
+                        // `combineSignaturesOfUnionMembers`, which ORs
+                        // propagating flags from both signatures.
+                        combined.has_literal_types |= other_sig.has_literal_types;
                     }
                 }
             }

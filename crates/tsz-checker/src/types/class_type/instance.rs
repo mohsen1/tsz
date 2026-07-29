@@ -342,6 +342,7 @@ impl<'a> CheckerState<'a> {
                                     None,
                                     return_type,
                                     None,
+                                    false,
                                 )],
                             )
                         } else {
@@ -1073,6 +1074,7 @@ impl<'a> CheckerState<'a> {
                                 None,
                                 return_type,
                                 None,
+                                false,
                             )],
                         );
                         partial_props.push(class_type::class_member_property(
@@ -1159,6 +1161,7 @@ impl<'a> CheckerState<'a> {
                         this_type,
                         TypeId::ANY,
                         None,
+                        false,
                     )
                 } else {
                     self.call_signature_from_method(method, member_idx)

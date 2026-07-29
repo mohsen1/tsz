@@ -223,6 +223,38 @@ impl<'a> CheckerState<'a> {
                             | diagnostic_codes::CANNOT_BE_USED_AS_A_VALUE_BECAUSE_IT_WAS_IMPORTED_USING_IMPORT_TYPE
                     )
             });
+        let exact_augmentation_callee_type = if callee_emitted_type_only_value_error {
+            let callee_identity = self
+                .ctx
+                .arena
+                .skip_parenthesized_and_assertions(call.expression);
+            let callee_identifier_name = self
+                .ctx
+                .arena
+                .get_identifier_at(callee_identity)
+                .map(|identifier| identifier.escaped_text.to_string());
+            if let Some(callee_identifier_name) = callee_identifier_name.as_deref() {
+                self.named_import_augmentation_runtime_binding(
+                    callee_identity,
+                    callee_identifier_name,
+                )
+                .map(|binding| (callee_identity, binding.type_id))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let callee_has_exact_augmentation_runtime = exact_augmentation_callee_type.is_some();
+        if let Some((callee_identity, exact_type)) = exact_augmentation_callee_type
+            && callee_identity == call.expression
+        {
+            // Preserve the established bare-identifier recovery. Transparent
+            // wrappers have already computed their own outer type (including
+            // any assertion), so they only need the exact-runtime provenance
+            // above to suppress the synthetic TS2349 companion.
+            callee_type = exact_type;
+        }
 
         // Check for dynamic import module resolution (TS2307)
         if let Some(dynamic_import_type) = self.check_and_resolve_dynamic_import(idx, call) {
@@ -439,7 +471,7 @@ impl<'a> CheckerState<'a> {
         // chain merged a namespace value with a function-typed type-only
         // import), so the call would otherwise resolve to Success and the
         // accompanying TS2349 would be missing. See `typeOnlyMerge3.ts`.
-        if callee_emitted_type_only_value_error {
+        if callee_emitted_type_only_value_error && !callee_has_exact_augmentation_runtime {
             // Still evaluate arguments so downstream definite-assignment /
             // unresolved-name diagnostics still fire on argument sites.
             return self.error_not_callable_and_collect_any_args(
@@ -723,6 +755,19 @@ impl<'a> CheckerState<'a> {
         let callee_is_union = common::is_union_type(self.ctx.types, resolved_for_classification);
         let overload_signatures = if callee_is_union {
             None
+        } else if is_super_call
+            && common::intersection_members(self.ctx.types, resolved_for_classification).is_none()
+        {
+            crate::query_boundaries::construct_signatures::construct_signatures_for_type(
+                self.ctx.types,
+                resolved_for_classification,
+            )
+            .filter(|signatures| signatures.len() > 1)
+            .map(|signatures| {
+                crate::query_boundaries::construct_signatures::reorder_construct_overload_candidates(
+                    &signatures,
+                )
+            })
         } else {
             match classification {
                 query::CallSignaturesKind::Callable(_) => {
@@ -802,7 +847,7 @@ impl<'a> CheckerState<'a> {
                     callee_type: callee_type_for_resolution,
                     callee_has_declared_generic_signature: false,
                     raw_callee_shape: None,
-                    is_super_call: false,
+                    is_super_call,
                     is_optional_chain: nullish_cause.is_some(),
                     allow_contextual_mismatch_deferral: false,
                 },

@@ -4,7 +4,7 @@ use crate::query_boundaries::construct_signatures as signature_construction;
 use tsz_common::Atom;
 use tsz_solver::computation::{ContextualTypeContext, TypeSubstitution};
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
-use tsz_solver::operations::{AssignabilityChecker, CallResult};
+use tsz_solver::operations::AssignabilityChecker;
 use tsz_solver::relations::subtype::{TypeEnvironment, TypeResolver};
 use tsz_solver::{FunctionShape, ObjectShape, ParamInfo, PropertyInfo, TupleElement, TypeId};
 
@@ -12,6 +12,7 @@ pub(crate) use super::super::common::array_element_type as array_element_type_fo
 pub(crate) use super::super::common::is_type_parameter_like as is_type_parameter_type;
 pub(crate) use super::super::common::lazy_def_id as lazy_def_id_for_type;
 pub(crate) use super::super::common::tuple_elements as tuple_elements_for_type;
+pub(crate) use tsz_solver::operations::CallResult;
 
 const SPREAD_ARGUMENT_MARKER_NAME: &str = "__tsz_spread_argument__";
 const SENSITIVE_ARGUMENT_PLACEHOLDER_NAME: &str = "__sensitive_arg__";
@@ -461,21 +462,27 @@ pub(crate) fn resolve_application_base_def_id<R: TypeResolver>(
         })
 }
 
-/// Get the construct signature of a type, preferring a generic one.
+/// Get the first arity-compatible construct signature after overload ordering.
 /// Used for two-pass inference in `new` expressions where the construct
 /// signature may have type parameters that need to be inferred.
 ///
-/// For overloaded constructors (e.g. `Map` with `new()` and `new<K,V>(entries?)`),
-/// we prefer the generic signature so that `is_generic_new` is set correctly
-/// and proper contextual types are provided to array/object literal arguments.
-pub(crate) fn get_construct_signature(
+/// Candidate order is semantically observable for context-sensitive arguments,
+/// so a later generic candidate must not replace an earlier literal-specialized
+/// or source-ordered candidate merely to trigger the generic two-pass path.
+pub(crate) fn get_construct_signature<R: TypeResolver>(
     db: &dyn TypeDatabase,
+    resolver: &R,
     type_id: TypeId,
     arg_count: usize,
 ) -> Option<FunctionShape> {
-    let sigs = tsz_solver::type_queries::get_construct_signatures(db, type_id)?;
+    let sigs =
+        signature_construction::construct_signatures_for_type_with_resolver(db, resolver, type_id)?;
+    let sigs = signature_construction::reorder_construct_overload_candidates(&sigs);
     let signature_accepts_arg_count = |params: &[tsz_solver::ParamInfo], count: usize| {
-        let required_count = params.iter().filter(|p| !p.optional).count();
+        let required_count = params
+            .iter()
+            .filter(|param| !param.optional && !param.rest)
+            .count();
         let has_rest = params.iter().any(|p| p.rest);
         if has_rest {
             count >= required_count
@@ -488,18 +495,10 @@ pub(crate) fn get_construct_signature(
         .filter(|s| signature_accepts_arg_count(&s.params, arg_count))
         .collect();
 
-    // Prefer generic signatures among arity-compatible candidates.
     let sig = if !applicable.is_empty() {
-        applicable
-            .iter()
-            .find(|s| !s.type_params.is_empty())
-            .copied()
-            .or_else(|| applicable.first().copied())?
+        applicable.first().copied()?
     } else {
-        // Fallback to previous behavior when no signature matches arity.
-        sigs.iter()
-            .find(|s| !s.type_params.is_empty())
-            .or_else(|| sigs.first())?
+        sigs.first()?
     };
     Some(signature_construction::function_shape_from_call_signature(
         sig, true,

@@ -228,7 +228,13 @@ pub fn check_functions_parallel(program: &MergedProgram) -> CheckResult {
         .files
         .iter()
         .enumerate()
-        .map(|(file_idx, file)| Arc::new(create_binder_from_bound_file(file, program, file_idx)))
+        .map(|(file_idx, file)| {
+            let mut binder = create_binder_from_bound_file(file, program, file_idx);
+            binder.symbol_arenas = Arc::clone(&program.symbol_arenas);
+            binder.declaration_arenas = Arc::clone(&program.declaration_arenas);
+            binder.sym_to_decl_indices = Arc::clone(&program.sym_to_decl_indices);
+            Arc::new(binder)
+        })
         .collect();
     let all_binders = Arc::new(shared_binders.clone());
     let all_arenas = Arc::new(
@@ -485,12 +491,16 @@ impl<'a> ParallelCheckPlan<'a> {
                 .iter()
                 .enumerate()
                 .map(|(file_idx, file)| {
-                    Arc::new(create_binder_from_bound_file_with_shared(
+                    let mut binder = create_binder_from_bound_file_with_shared(
                         file,
                         program,
                         file_idx,
                         &shared_binder_data,
-                    ))
+                    );
+                    binder.symbol_arenas = Arc::clone(&program.symbol_arenas);
+                    binder.declaration_arenas = Arc::clone(&program.declaration_arenas);
+                    binder.sym_to_decl_indices = Arc::clone(&program.sym_to_decl_indices);
+                    Arc::new(binder)
                 })
                 .collect(),
         );

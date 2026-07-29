@@ -1384,6 +1384,8 @@ fn test_classify_callable_overloaded() {
                 this_type: None,
                 return_type: TypeId::STRING,
                 type_predicate: None,
+                has_literal_types: false,
+                construct_origin: None,
                 is_method: false,
             },
             CallSignature {
@@ -1397,6 +1399,8 @@ fn test_classify_callable_overloaded() {
                 this_type: None,
                 return_type: TypeId::NUMBER,
                 type_predicate: None,
+                has_literal_types: false,
+                construct_origin: None,
                 is_method: false,
             },
         ],

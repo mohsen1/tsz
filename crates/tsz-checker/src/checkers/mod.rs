@@ -610,6 +610,39 @@ mod tests {
         state::set_cross_arena_bailout_epoch_for_test(0);
     }
 
+    /// An epoch advance records that a nested delegation was refused, but it
+    /// does not make an independently completed enclosing result provisional.
+    /// Only the `any` sentinel returned by the refused query is invalidated;
+    /// concrete results and deliberate cycle sentinels remain authoritative.
+    #[test]
+    fn cross_arena_bailout_artifact_requires_any_sentinel_provenance() {
+        use crate::CheckerState;
+        use crate::state_domain::state;
+        use tsz_solver::TypeId;
+
+        state::set_cross_arena_bailout_epoch_for_test(17);
+        let before = CheckerState::<'_>::cross_arena_bailout_epoch();
+
+        assert!(
+            !CheckerState::<'_>::is_cross_arena_bailout_artifact(before, TypeId::ANY),
+            "a genuine `any` without an epoch advance is not a bailout artifact"
+        );
+
+        state::set_cross_arena_bailout_epoch_for_test(18);
+        assert!(
+            CheckerState::<'_>::is_cross_arena_bailout_artifact(before, TypeId::ANY),
+            "the `any` sentinel returned under an advanced epoch is provisional"
+        );
+        for completed in [TypeId::STRING, TypeId::ERROR, TypeId::UNKNOWN] {
+            assert!(
+                !CheckerState::<'_>::is_cross_arena_bailout_artifact(before, completed),
+                "an epoch advance must not invalidate completed result {completed:?}"
+            );
+        }
+
+        state::set_cross_arena_bailout_epoch_for_test(0);
+    }
+
     /// The cross-arena depth guard is RAII-owned: early returns and unwinds drop
     /// the guard instead of relying on every caller to remember a matching
     /// manual leave.

@@ -55,7 +55,11 @@ impl<'a> CheckerState<'a> {
         let arity_compatible_signature_count = signatures
             .iter()
             .filter(|sig| {
-                let required = sig.params.iter().filter(|param| !param.optional).count();
+                let required = sig
+                    .params
+                    .iter()
+                    .filter(|param| !param.optional && !param.rest)
+                    .count();
                 let has_rest = sig.params.iter().any(|param| param.rest);
                 args.len() >= required && (has_rest || args.len() <= sig.params.len())
             })

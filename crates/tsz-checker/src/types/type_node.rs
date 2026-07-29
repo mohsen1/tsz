@@ -1226,14 +1226,17 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         let (params, this_type) = self.extract_params_from_signature(sig);
                         let return_type = self
                             .resolve_return_type_with_params_in_scope(sig.type_annotation, &params);
-                        construct_signatures.push(signature_building_boundary::call_signature(
+                        let mut signature = signature_building_boundary::call_signature(
                             type_params,
                             params,
                             this_type,
                             return_type,
                             None,
                             false,
-                        ));
+                        );
+                        signature.has_literal_types =
+                            self.signature_has_literal_type_annotations(sig);
+                        construct_signatures.push(signature);
                         self.pop_type_parameters_for_type_literal_signature(type_param_updates);
                     }
                     METHOD_SIGNATURE | PROPERTY_SIGNATURE => {

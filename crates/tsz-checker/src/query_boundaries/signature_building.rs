@@ -102,6 +102,8 @@ pub(crate) const fn call_signature(
         this_type,
         return_type,
         type_predicate,
+        has_literal_types: false,
+        construct_origin: None,
         is_method,
     }
 }
@@ -126,7 +128,7 @@ pub(crate) fn instantiate_signature(
     type_args: &[TypeId],
 ) -> CallSignature {
     let substitution = TypeSubstitution::from_signature_args(db, &sig.type_params, type_args);
-    call_signature(
+    let mut instantiated = call_signature(
         Vec::new(),
         instantiate_params(db, &sig.params, &substitution),
         sig.this_type
@@ -134,7 +136,10 @@ pub(crate) fn instantiate_signature(
         instantiate_type(db, sig.return_type, &substitution),
         instantiate_predicate(db, sig.type_predicate.as_ref(), &substitution),
         sig.is_method,
-    )
+    );
+    instantiated.has_literal_types = sig.has_literal_types;
+    instantiated.construct_origin = sig.construct_origin;
+    instantiated
 }
 
 pub(crate) fn partially_instantiate_signature(
@@ -165,7 +170,7 @@ pub(crate) fn partially_instantiate_signature(
         })
         .collect();
 
-    call_signature(
+    let mut instantiated = call_signature(
         remaining_type_params,
         instantiate_params(db, &sig.params, &substitution),
         sig.this_type
@@ -173,7 +178,10 @@ pub(crate) fn partially_instantiate_signature(
         instantiate_type(db, sig.return_type, &substitution),
         instantiate_predicate(db, sig.type_predicate.as_ref(), &substitution),
         sig.is_method,
-    )
+    );
+    instantiated.has_literal_types = sig.has_literal_types;
+    instantiated.construct_origin = sig.construct_origin;
+    instantiated
 }
 
 fn instantiate_params(

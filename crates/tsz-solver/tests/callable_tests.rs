@@ -22,6 +22,8 @@ fn test_callable_same_signature() {
         this_type: None,
         return_type: TypeId::NUMBER,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
 
@@ -62,6 +64,8 @@ fn test_callable_more_overloads() {
         this_type: None,
         return_type: TypeId::NUMBER,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
 
@@ -76,6 +80,8 @@ fn test_callable_more_overloads() {
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
 
@@ -116,6 +122,8 @@ fn test_callable_missing_overload() {
         this_type: None,
         return_type: TypeId::NUMBER,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
 
@@ -130,6 +138,8 @@ fn test_callable_missing_overload() {
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
 
@@ -170,6 +180,8 @@ fn test_callable_with_construct() {
         this_type: None,
         return_type: obj_type,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
 
@@ -221,6 +233,8 @@ fn test_construct_sig_literal_params_are_contravariant_not_bivariant() {
             this_type: None,
             return_type: obj,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         properties: vec![],
@@ -243,6 +257,8 @@ fn test_construct_sig_literal_params_are_contravariant_not_bivariant() {
             this_type: None,
             return_type: obj,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         properties: vec![],
@@ -270,6 +286,8 @@ fn test_callable_covariant_return() {
         this_type: None,
         return_type: hello,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
 
@@ -279,6 +297,8 @@ fn test_callable_covariant_return() {
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
 
@@ -337,6 +357,8 @@ fn test_function_to_callable() {
             this_type: None,
             return_type: TypeId::NUMBER,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         construct_signatures: vec![],
@@ -367,6 +389,8 @@ fn test_callable_to_function() {
             this_type: None,
             return_type: TypeId::NUMBER,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         construct_signatures: vec![],
@@ -406,6 +430,8 @@ fn test_callable_with_properties() {
             this_type: None,
             return_type: TypeId::VOID,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         construct_signatures: vec![],
@@ -425,6 +451,8 @@ fn test_callable_with_properties() {
             this_type: None,
             return_type: TypeId::VOID,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         construct_signatures: vec![],
@@ -452,6 +480,8 @@ fn test_callable_missing_property() {
             this_type: None,
             return_type: TypeId::VOID,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         construct_signatures: vec![],
@@ -468,6 +498,8 @@ fn test_callable_missing_property() {
             this_type: None,
             return_type: TypeId::VOID,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         construct_signatures: vec![],
@@ -501,6 +533,8 @@ fn test_overload_signature_exact_match() {
         this_type: None,
         return_type: TypeId::NUMBER,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
 
@@ -515,6 +549,8 @@ fn test_overload_signature_exact_match() {
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
 
@@ -557,6 +593,8 @@ fn test_overload_signature_order_priority() {
         this_type: None,
         return_type: special_return,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
 
@@ -572,6 +610,8 @@ fn test_overload_signature_order_priority() {
         this_type: None,
         return_type: general_return,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
 
@@ -607,6 +647,8 @@ fn test_overload_multiple_arities() {
         this_type: None,
         return_type: TypeId::VOID,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
 
@@ -621,6 +663,8 @@ fn test_overload_multiple_arities() {
         this_type: None,
         return_type: TypeId::NUMBER,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
 
@@ -643,6 +687,8 @@ fn test_overload_multiple_arities() {
         this_type: None,
         return_type: TypeId::BOOLEAN,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
 
@@ -721,6 +767,8 @@ fn test_generic_overload_simple() {
         this_type: None,
         return_type: t_param,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
 
@@ -781,6 +829,8 @@ fn test_generic_overload_with_constraint() {
         this_type: None,
         return_type: keyof_t,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
 
@@ -876,6 +926,8 @@ fn test_generic_overload_multiple_type_params() {
         this_type: None,
         return_type: tuple_return,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
 
@@ -919,6 +971,8 @@ fn test_optional_param_overload_matching() {
         this_type: None,
         return_type: TypeId::NUMBER,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
 
@@ -941,6 +995,8 @@ fn test_optional_param_overload_matching() {
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
 
@@ -998,6 +1054,8 @@ fn test_all_optional_params_overload() {
         this_type: None,
         return_type: TypeId::VOID,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
 
@@ -1016,6 +1074,8 @@ fn test_all_optional_params_overload() {
         this_type: None,
         return_type: TypeId::VOID,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
 
@@ -1058,6 +1118,8 @@ fn test_optional_and_rest_param_overload() {
         this_type: None,
         return_type: TypeId::VOID,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
 
@@ -1081,6 +1143,8 @@ fn test_optional_and_rest_param_overload() {
         this_type: None,
         return_type: TypeId::VOID,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
 
@@ -1145,6 +1209,8 @@ fn test_contextual_instantiation_generic_call_signature_with_rest_target() {
             this_type: None,
             return_type: b_type,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         construct_signatures: vec![],
@@ -1166,6 +1232,8 @@ fn test_contextual_instantiation_generic_call_signature_with_rest_target() {
             this_type: None,
             return_type: TypeId::STRING,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         construct_signatures: vec![],
@@ -1386,6 +1454,8 @@ fn test_contextual_instantiation_callable_to_generic_function_target() {
             this_type: None,
             return_type: TypeId::VOID,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         construct_signatures: vec![],
@@ -1472,6 +1542,8 @@ fn test_contextual_instantiation_generic_function_to_callable_target() {
             this_type: None,
             return_type: placeholder,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         construct_signatures: vec![],
@@ -1510,6 +1582,8 @@ fn test_nongeneric_construct_sig_not_assignable_to_generic_target() {
             this_type: None,
             return_type: my_class,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         properties: vec![],
@@ -1541,6 +1615,8 @@ fn test_nongeneric_construct_sig_not_assignable_to_generic_target() {
             this_type: None,
             return_type: t_type,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         properties: vec![],
@@ -1613,6 +1689,8 @@ fn test_nongeneric_construct_sig_nested_callback_not_assignable_to_generic_targe
             this_type: None,
             return_type: source_return,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         properties: vec![],
@@ -1686,6 +1764,8 @@ fn test_nongeneric_construct_sig_nested_callback_not_assignable_to_generic_targe
             this_type: None,
             return_type: target_return,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         properties: vec![],
@@ -1724,6 +1804,8 @@ fn test_generic_callable_return_type_mismatch_not_assignable() {
             this_type: None,
             return_type: s_array,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         construct_signatures: vec![],
@@ -1751,6 +1833,8 @@ fn test_generic_callable_return_type_mismatch_not_assignable() {
             this_type: None,
             return_type: t_type,
             type_predicate: None,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }],
         construct_signatures: vec![],

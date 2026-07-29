@@ -313,7 +313,7 @@ impl<'a> CheckerState<'a> {
             // Whether this local name is a named import (its augmentations are
             // applied below). Computed once and reused by the #13933 deferral
             // guard and the module-augmentation block.
-            let module_specifier = self.resolve_named_import_module_for_local_name(name);
+            let named_import = self.resolve_named_import_for_local_name(name_idx, name);
             // #13933: defer a force-eligible non-generic lib interface (e.g.
             // `Worker`, `MessagePort`, `Event`) to a bare `Lazy(DefId)` instead
             // of materializing its full transitive heritage closure at the
@@ -322,7 +322,7 @@ impl<'a> CheckerState<'a> {
             // we return. A named import takes the augmentation path below, so it
             // is excluded here. The deferred reference resolves on demand to the
             // byte-identical body. Gated by `TSZ_DISABLE_DECL_LAZY_LIB`.
-            if module_specifier.is_none()
+            if named_import.is_none()
                 && let Some(lazy) = self.try_defer_eligible_lib_type_reference(sym_id)
             {
                 return Some(lazy);
@@ -335,8 +335,9 @@ impl<'a> CheckerState<'a> {
             {
                 result = lib_type;
             }
-            if let Some(module_specifier) = module_specifier {
-                result = self.apply_module_augmentations(&module_specifier, name, result);
+            if let Some((module_specifier, import_name, _)) = named_import {
+                result =
+                    self.apply_module_type_augmentations(&module_specifier, &import_name, result);
                 // In type-reference position, a class name means the instance
                 // type, not the constructor. If augmentation produced a Callable
                 // with construct signatures (constructor type), extract the
@@ -344,14 +345,12 @@ impl<'a> CheckerState<'a> {
                 // correctly.
                 if let Some(shape) =
                     crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, result)
-                    && !shape.construct_signatures.is_empty()
+                    && let Some(owner) = shape.symbol
+                    && self.symbol_has_class_declaration(owner)
+                    && let Some(prototype_index) = crate::query_boundaries::class_type::
+                        symbol_owned_class_prototype_property_index(self.ctx.types, &shape, owner)
                 {
-                    let prototype_name = self.ctx.types.intern_string("prototype");
-                    if let Some(proto_prop) =
-                        shape.properties.iter().find(|p| p.name == prototype_name)
-                    {
-                        result = proto_prop.type_id;
-                    }
+                    result = shape.properties[prototype_index].type_id;
                 }
             }
             return Some(result);
@@ -462,74 +461,45 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    pub(crate) fn resolve_named_import_module_for_local_name(
+    pub(crate) fn resolve_named_import_for_local_name(
         &self,
+        use_idx: NodeIndex,
         local_name: &str,
-    ) -> Option<String> {
-        let source_file = self.ctx.arena.source_files.first()?;
-
-        for &stmt_idx in &source_file.statements.nodes {
-            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
-                continue;
-            };
-            if stmt_node.kind != syntax_kind_ext::IMPORT_DECLARATION {
-                continue;
-            }
-            let Some(import_decl) = self.ctx.arena.get_import_decl(stmt_node) else {
-                continue;
-            };
-            if import_decl.import_clause.is_none() {
-                continue;
-            }
-            let Some(clause_node) = self.ctx.arena.get(import_decl.import_clause) else {
-                continue;
-            };
-            let Some(clause) = self.ctx.arena.get_import_clause(clause_node) else {
-                continue;
-            };
-            if clause.named_bindings.is_none() {
-                continue;
-            }
-
-            let Some(bindings_node) = self.ctx.arena.get(clause.named_bindings) else {
-                continue;
-            };
-            if bindings_node.kind != syntax_kind_ext::NAMED_IMPORTS {
-                continue;
-            }
-            let Some(named_imports) = self.ctx.arena.get_named_imports(bindings_node) else {
-                continue;
-            };
-
-            for &element_idx in &named_imports.elements.nodes {
-                let Some(element_node) = self.ctx.arena.get(element_idx) else {
-                    continue;
-                };
-                let Some(specifier) = self.ctx.arena.get_specifier(element_node) else {
-                    continue;
-                };
-                let Some(local_ident) = self
-                    .ctx
-                    .arena
-                    .get(specifier.name)
-                    .and_then(|n| self.ctx.arena.get_identifier(n))
-                else {
-                    continue;
-                };
-                if local_ident.escaped_text.as_str() != local_name {
-                    continue;
-                }
-                let Some(module_node) = self.ctx.arena.get(import_decl.module_specifier) else {
-                    continue;
-                };
-                let Some(module_literal) = self.ctx.arena.get_literal(module_node) else {
-                    continue;
-                };
-                return Some(module_literal.text.clone());
-            }
+    ) -> Option<(String, String, bool)> {
+        let alias_sym_id = crate::state_domain::type_analysis::source_file_import_binding::
+            source_file_import_binding_symbol(self.ctx.arena, self.ctx.binder, local_name)?;
+        // This is a value-space identity check: a nearer pure type declaration
+        // shadows the import's type meaning but not its runtime meaning. Explicit
+        // type-only imports remain eligible because they are still ALIAS symbols;
+        // their syntax restriction is diagnosed after exact value recovery.
+        let selected = self.ctx.binder.resolve_identifier_with_filter(
+            self.ctx.arena,
+            use_idx,
+            &[],
+            |candidate| {
+                self.ctx.binder.get_symbol(candidate).is_some_and(|symbol| {
+                    symbol.has_any_flags(symbol_flags::VALUE | symbol_flags::ALIAS)
+                })
+            },
+        );
+        if selected != Some(alias_sym_id) {
+            return None;
         }
-
-        None
+        let alias = self.ctx.binder.get_symbol(alias_sym_id)?;
+        let is_named_import = alias.declarations.iter().copied().any(|declaration| {
+            self.ctx
+                .arena
+                .get(declaration)
+                .is_some_and(|node| node.kind == syntax_kind_ext::IMPORT_SPECIFIER)
+        });
+        if !is_named_import {
+            return None;
+        }
+        Some((
+            alias.import_module()?.to_string(),
+            alias.import_name().unwrap_or(local_name).to_string(),
+            alias.is_type_only,
+        ))
     }
 
     pub(crate) fn resolve_namespace_import_module_for_local_name(

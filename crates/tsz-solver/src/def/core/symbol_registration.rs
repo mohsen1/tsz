@@ -28,6 +28,16 @@ impl DefinitionStore {
         file_idx: u32,
         info: DefinitionInfo,
     ) -> (DefId, bool) {
+        if self.augmentation_parent().is_some() {
+            let (identity, semantics) =
+                super::augmentation_transaction::AugmentationDefinitionSemantics::split(info);
+            let result = self
+                .augmentation_root()
+                .register_for_symbol(symbol_id, file_idx, identity);
+            self.stage_registered_definition_semantics(result.0, semantics);
+            return result;
+        }
+
         use dashmap::mapref::entry::Entry;
         match self.symbol_def_index.entry((symbol_id, file_idx)) {
             Entry::Occupied(existing) => {

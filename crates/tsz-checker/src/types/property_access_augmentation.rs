@@ -14,26 +14,267 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn module_augmentation_target_file_idx(&self, object_type: TypeId) -> Option<usize> {
+        let base_type =
+            crate::query_boundaries::property_access::unwrap_readonly(self.ctx.types, object_type);
+        let mut identity_types = Vec::with_capacity(4);
+        let mut push_identity = |type_id| {
+            if !identity_types.contains(&type_id) {
+                identity_types.push(type_id);
+            }
+        };
+        if let Some(application) =
+            crate::query_boundaries::property_access::type_application(self.ctx.types, base_type)
+        {
+            push_identity(application.base);
+        }
+        if let Some(display_alias) = self.ctx.types.get_display_alias(base_type) {
+            if let Some(application) = crate::query_boundaries::property_access::type_application(
+                self.ctx.types,
+                display_alias,
+            ) {
+                push_identity(application.base);
+            }
+            push_identity(display_alias);
+        }
+        push_identity(base_type);
+
+        for &identity_type in &identity_types {
+            let def_id =
+                crate::query_boundaries::property_access::def_id(self.ctx.types, identity_type)
+                    .or_else(|| self.ctx.definition_store.find_def_for_type(identity_type));
+            if let Some(file_idx) = def_id
+                .and_then(|def_id| self.ctx.definition_store.get_file_id(def_id))
+                .filter(|&file_idx| file_idx != u32::MAX)
+            {
+                return Some(file_idx as usize);
+            }
+        }
+
+        for identity_type in identity_types {
+            let symbol = crate::query_boundaries::property_access::type_shape_symbol(
+                self.ctx.types,
+                identity_type,
+            )
+            .or_else(|| self.ctx.resolve_type_to_symbol_id(identity_type));
+            if let Some(file_idx) = symbol.and_then(|symbol| {
+                self.ctx
+                    .resolve_dynamic_symbol_file_index(symbol)
+                    .or_else(|| self.ctx.resolve_symbol_file_index(symbol))
+            }) {
+                return Some(file_idx);
+            }
+        }
+        None
+    }
+
     fn module_augmentation_lookup_name_for_type(&self, object_type: TypeId) -> Option<String> {
         let base_type =
             crate::query_boundaries::property_access::unwrap_readonly(self.ctx.types, object_type);
 
         let application_base =
-            crate::query_boundaries::common::type_application(self.ctx.types, base_type)
+            crate::query_boundaries::property_access::type_application(self.ctx.types, base_type)
                 .map(|application| application.base)
                 .or_else(|| {
                     self.ctx
                         .types
                         .get_display_alias(base_type)
                         .and_then(|alias| {
-                            crate::query_boundaries::common::type_application(self.ctx.types, alias)
-                                .map(|application| application.base)
+                            crate::query_boundaries::property_access::type_application(
+                                self.ctx.types,
+                                alias,
+                            )
+                            .map(|application| application.base)
                         })
                 });
 
         application_base
             .and_then(|base| self.named_type_display_name(base))
             .or_else(|| self.named_type_display_name(base_type))
+    }
+
+    /// Whether this receiver is the value/constructor side of a class.
+    ///
+    /// A class's instance object and constructor callable can carry the same
+    /// declaration symbol and display name. Construct signatures distinguish
+    /// the value side structurally; the exact target binder then confirms that
+    /// the shape symbol belongs to a class rather than a constructable
+    /// interface. Type-side module-augmentation members must never be recovered
+    /// on this receiver.
+    fn module_augmentation_receiver_is_class_value(
+        &self,
+        object_type: TypeId,
+        type_name: &str,
+    ) -> bool {
+        if crate::query_boundaries::common::construct_signatures_for_type(
+            self.ctx.types,
+            object_type,
+        )
+        .is_none_or(|signatures| signatures.is_empty())
+        {
+            return false;
+        }
+
+        let base_type =
+            crate::query_boundaries::property_access::unwrap_readonly(self.ctx.types, object_type);
+        let mut identities = vec![base_type];
+        if let Some(display_alias) = self.ctx.types.get_display_alias(base_type)
+            && !identities.contains(&display_alias)
+        {
+            identities.push(display_alias);
+        }
+        for identity in identities {
+            let symbol = crate::query_boundaries::property_access::type_shape_symbol(
+                self.ctx.types,
+                identity,
+            )
+            .or_else(|| self.ctx.resolve_type_to_symbol_id(identity));
+            let Some(symbol) = symbol else {
+                continue;
+            };
+            let owner_file_idx =
+                crate::query_boundaries::property_access::def_id(self.ctx.types, identity)
+                    .or_else(|| self.ctx.definition_store.find_def_for_type(identity))
+                    .and_then(|definition| self.ctx.definition_store.get_file_id(definition))
+                    .filter(|&file_idx| file_idx != u32::MAX)
+                    .map(|file_idx| file_idx as usize)
+                    .or_else(|| self.ctx.resolve_dynamic_symbol_file_index(symbol))
+                    .or_else(|| self.ctx.resolve_symbol_file_index(symbol));
+            let Some(owner) = owner_file_idx.and_then(|file_idx| {
+                self.ctx
+                    .get_binder_for_file(file_idx)
+                    .and_then(|binder| binder.get_symbol(symbol))
+            }) else {
+                continue;
+            };
+            if owner.escaped_name == type_name
+                && owner.has_any_flags(tsz_binder::symbol_flags::CLASS)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn module_augmentation_target_is_declared_ambient(&self, module_spec: &str) -> bool {
+        let binder_declares_target =
+            |binder: &tsz_binder::BinderState| binder.declared_modules.contains(module_spec);
+        self.ctx
+            .all_binders
+            .as_ref()
+            .is_some_and(|binders| binders.iter().any(|binder| binder_declares_target(binder)))
+            || binder_declares_target(self.ctx.binder)
+    }
+
+    /// Select property-augmentation declarations by resolved module identity.
+    ///
+    /// Each declaration keeps the file that owns its module specifier so
+    /// relative specifiers are resolved in the correct source context. This
+    /// also prevents two files with the same raw augmentation key from being
+    /// merged after only one of them matched the receiver.
+    fn module_augmentation_property_candidates(
+        &self,
+        receiver_owner_file: Option<usize>,
+        interface_name: &str,
+    ) -> Vec<(String, Vec<tsz_binder::ModuleAugmentation>)> {
+        let mut entries = Vec::new();
+        if let Some(index) = self.ctx.global_module_augmentations_index.as_ref() {
+            for (module_spec, augmentations) in index.iter() {
+                for (owner_file_idx, augmentation) in augmentations {
+                    if augmentation.name == interface_name {
+                        entries.push((module_spec.clone(), *owner_file_idx, augmentation.clone()));
+                    }
+                }
+            }
+        } else if let Some(binders) = self.ctx.all_binders.as_ref() {
+            for (owner_file_idx, binder) in binders.iter().enumerate() {
+                for (module_spec, augmentations) in binder.module_augmentations.iter() {
+                    for augmentation in augmentations {
+                        if augmentation.name == interface_name {
+                            entries.push((
+                                module_spec.clone(),
+                                owner_file_idx,
+                                augmentation.clone(),
+                            ));
+                        }
+                    }
+                }
+            }
+        } else {
+            for (module_spec, augmentations) in self.ctx.binder.module_augmentations.iter() {
+                for augmentation in augmentations {
+                    if augmentation.name == interface_name {
+                        entries.push((
+                            module_spec.clone(),
+                            self.ctx.current_file_idx,
+                            augmentation.clone(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        entries.retain(|(module_spec, owner_file_idx, _)| {
+            let target_file = self
+                .ctx
+                .resolve_import_target_from_file(*owner_file_idx, module_spec);
+            let target_is_declared_ambient = target_file.is_none()
+                && self.module_augmentation_target_is_declared_ambient(module_spec);
+            crate::query_boundaries::module_augmentation::property_augmentation_matches_receiver(
+                receiver_owner_file,
+                target_file,
+                target_is_declared_ambient,
+            )
+        });
+        entries.sort_by(|left, right| {
+            let declaration_position =
+                |owner_file_idx: usize, augmentation: &tsz_binder::ModuleAugmentation| {
+                    augmentation
+                        .arena
+                        .as_deref()
+                        .or_else(|| {
+                            self.ctx
+                                .all_arenas
+                                .as_ref()
+                                .and_then(|arenas| arenas.get(owner_file_idx))
+                                .map(AsRef::as_ref)
+                        })
+                        .or_else(|| {
+                            (owner_file_idx == self.ctx.current_file_idx).then_some(self.ctx.arena)
+                        })
+                        .and_then(|arena| arena.get(augmentation.node))
+                        .map_or(u32::MAX, |node| node.pos)
+                };
+            left.1
+                .cmp(&right.1)
+                .then_with(|| {
+                    declaration_position(left.1, &left.2)
+                        .cmp(&declaration_position(right.1, &right.2))
+                })
+                .then_with(|| left.0.cmp(&right.0))
+        });
+
+        let mut grouped: Vec<(String, Vec<tsz_binder::ModuleAugmentation>)> = Vec::new();
+        for (module_spec, owner_file_idx, mut augmentation) in entries {
+            if augmentation.arena.is_none()
+                && let Some(arena) = self
+                    .ctx
+                    .all_arenas
+                    .as_ref()
+                    .and_then(|arenas| arenas.get(owner_file_idx))
+            {
+                augmentation.arena = Some(std::sync::Arc::clone(arena));
+            }
+            if let Some((_, declarations)) = grouped
+                .iter_mut()
+                .find(|(candidate, _)| candidate == &module_spec)
+            {
+                declarations.push(augmentation);
+            } else {
+                grouped.push((module_spec, vec![augmentation]));
+            }
+        }
+        grouped
     }
 
     pub(super) fn resolve_array_global_augmentation_property(
@@ -46,7 +287,7 @@ impl<'a> CheckerState<'a> {
             property_name,
             object_type
         );
-        use crate::query_boundaries::common::PropertyAccessResult;
+        use crate::query_boundaries::property_access::PropertyAccessResult;
         use rustc_hash::FxHashMap;
         use std::sync::Arc;
         use tsz_lowering::TypeLowering;
@@ -270,19 +511,21 @@ impl<'a> CheckerState<'a> {
         // finds the augmented member on the `Window` arm. The lib intersection is
         // eagerly merged into a single object, so recover its recorded origin when
         // the type is no longer a structural intersection.
-        let intersection_members =
-            crate::query_boundaries::common::intersection_members(self.ctx.types, object_type)
-                .or_else(|| {
-                    self.ctx
-                        .types
-                        .get_merged_intersection_origin(object_type)
-                        .and_then(|origin| {
-                            crate::query_boundaries::common::intersection_members(
-                                self.ctx.types,
-                                origin,
-                            )
-                        })
-                });
+        let intersection_members = crate::query_boundaries::property_access::intersection_members(
+            self.ctx.types,
+            object_type,
+        )
+        .or_else(|| {
+            self.ctx
+                .types
+                .get_merged_intersection_origin(object_type)
+                .and_then(|origin| {
+                    crate::query_boundaries::property_access::intersection_members(
+                        self.ctx.types,
+                        origin,
+                    )
+                })
+        });
         if let Some(members) = intersection_members {
             let mut found = Vec::new();
             for member in members {
@@ -354,7 +597,7 @@ impl<'a> CheckerState<'a> {
         interface_name: &str,
         property_name: &str,
     ) -> Option<TypeId> {
-        use crate::query_boundaries::common::PropertyAccessResult;
+        use crate::query_boundaries::property_access::PropertyAccessResult;
         use rustc_hash::FxHashMap;
         use std::sync::Arc;
         use tsz_lowering::TypeLowering;
@@ -699,40 +942,28 @@ impl<'a> CheckerState<'a> {
 
         let type_name = self.module_augmentation_lookup_name_for_type(object_type)?;
 
-        let module_specs: Vec<String> =
-            if let Some(aug_index) = self.ctx.global_module_augmentations_index.as_ref() {
-                aug_index
-                    .iter()
-                    .filter(|(_, entries)| entries.iter().any(|(_, aug)| aug.name == type_name))
-                    .map(|(key, _)| key.clone())
-                    .collect()
-            } else if let Some(all_binders) = self.ctx.all_binders.as_ref() {
-                let mut specs = Vec::new();
-                for binder in all_binders.as_ref() {
-                    for (key, augs) in binder.module_augmentations.as_ref() {
-                        if augs.iter().any(|aug| aug.name == type_name) && !specs.contains(key) {
-                            specs.push(key.clone());
-                        }
-                    }
-                }
-                specs
-            } else {
-                let mut specs = Vec::new();
-                for (key, augs) in self.ctx.binder.module_augmentations.as_ref() {
-                    if augs.iter().any(|aug| aug.name == type_name) {
-                        specs.push(key.clone());
-                    }
-                }
-                specs
-            };
+        let target_file_idx = self.module_augmentation_target_file_idx(object_type);
+        if self.module_augmentation_receiver_is_class_value(object_type, &type_name) {
+            return None;
+        }
 
-        if module_specs.is_empty() {
+        let augmentation_candidates =
+            self.module_augmentation_property_candidates(target_file_idx, &type_name);
+
+        if augmentation_candidates.is_empty() {
             return None;
         }
 
         let prop_name_atom = self.ctx.types.intern_string(property_name);
-        for module_spec in &module_specs {
-            let members = self.get_module_augmentation_members(module_spec, &type_name);
+        for (module_spec, declarations) in &augmentation_candidates {
+            let members = self
+                .get_module_augmentation_members_inner(
+                    module_spec,
+                    &type_name,
+                    None,
+                    Some(declarations),
+                )
+                .properties;
             if let Some(matching_member) = members.iter().find(|m| m.name == prop_name_atom) {
                 return Some(matching_member.type_id);
             }

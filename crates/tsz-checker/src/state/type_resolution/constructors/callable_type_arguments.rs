@@ -121,8 +121,12 @@ impl<'a> CheckerState<'a> {
                 }
 
                 let sig = {
-                    let mut sig =
-                        call_signature_from_function_shape(shape.as_ref().clone(), shape.is_method);
+                    let mut sig = call_signature_from_function_shape(
+                        shape.as_ref().clone(),
+                        shape.is_method,
+                        false,
+                        None,
+                    );
                     // This path deliberately drops the `this` parameter: an
                     // instantiation expression yields a bare call signature.
                     sig.this_type = None;

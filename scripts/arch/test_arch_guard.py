@@ -937,6 +937,38 @@ class ArchGuardTraitMethodCountTests(unittest.TestCase):
             "TypeDatabase method-count check is missing from TRAIT_METHOD_COUNT_CHECKS"
         )
 
+    def test_construct_signature_cache_is_a_narrow_supertrait(self):
+        path = (
+            self.arch_guard.ROOT
+            / "crates"
+            / "tsz-solver"
+            / "src"
+            / "caches"
+            / "db.rs"
+        )
+        database_body = self.arch_guard.find_trait_body(path, "TypeDatabase")
+        cache_body = self.arch_guard.find_trait_body(
+            path, "TypeConstructSignaturesCache"
+        )
+        self.assertIsNotNone(database_body)
+        self.assertIsNotNone(cache_body)
+
+        database_methods = self.arch_guard.extract_trait_method_names_from_body(
+            database_body
+        )
+        cache_methods = self.arch_guard.extract_trait_method_names_from_body(cache_body)
+        self.assertNotIn("construct_signatures_memo", database_methods)
+        self.assertNotIn("set_construct_signatures_memo", database_methods)
+        self.assertEqual(
+            cache_methods,
+            ["construct_signatures_memo", "set_construct_signatures_memo"],
+        )
+
+        trait_header = path.read_text(encoding="utf-8").split(
+            "pub trait TypeDatabase:", 1
+        )[1].split("{", 1)[0]
+        self.assertIn("TypeConstructSignaturesCache", trait_header)
+
     def test_real_typedatabase_passes_at_pinned_cap(self):
         """The pinned cap must match the live count (no off-by-one)."""
         for entry in self.arch_guard.TRAIT_METHOD_COUNT_CHECKS:

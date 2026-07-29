@@ -946,6 +946,22 @@ impl<'a> CheckerState<'a> {
         module_name: &str,
         source_file_idx: Option<usize>,
     ) -> Option<TypeId> {
+        let bailout_epoch_before = Self::cross_arena_bailout_epoch();
+        let namespace_module_names_before = self.ctx.namespace_module_names.clone();
+        let result = self.commonjs_module_value_type_unchecked(module_name, source_file_idx);
+        if Self::cross_arena_bailout_epoch() != bailout_epoch_before {
+            self.ctx.namespace_module_names = namespace_module_names_before;
+            Some(TypeId::ANY)
+        } else {
+            result
+        }
+    }
+
+    fn commonjs_module_value_type_unchecked(
+        &mut self,
+        module_name: &str,
+        source_file_idx: Option<usize>,
+    ) -> Option<TypeId> {
         if let Some(json_type) = self.json_module_type_for_module(module_name, source_file_idx) {
             return Some(json_type);
         }
@@ -1037,16 +1053,6 @@ impl<'a> CheckerState<'a> {
                 .or(exports_table_target);
             let surface =
                 augment_target.map(|target_idx| self.resolve_js_export_surface(target_idx));
-            if let Some(surface) = surface.as_ref()
-                && surface.has_commonjs_exports
-            {
-                let display_name = self.imported_namespace_display_module_name(module_name);
-                return crate::query_boundaries::js_exports::commonjs_export_surface_type_with_display_name(
-                    self,
-                    surface,
-                    display_name,
-                );
-            }
             let mut props: Vec<PropertyInfo> = if surface
                 .as_ref()
                 .is_some_and(|s| s.has_commonjs_exports)
@@ -1069,14 +1075,16 @@ impl<'a> CheckerState<'a> {
                         || self.should_skip_namespace_export_name(&exports_table, name, sym_id)
                         || self.is_type_only_export_symbol(sym_id)
                         || self.is_export_from_type_only_wildcard(module_name, name)
-                        || self.export_symbol_has_no_value(sym_id)
                         || self.is_export_type_only_from_file(module_name, name, source_file_idx)
                     {
                         continue;
                     }
 
-                    let mut prop_type = self.get_type_of_symbol(sym_id);
-                    prop_type = self.apply_module_augmentations(module_name, name, prop_type);
+                    let Some(prop_type) =
+                        self.namespace_import_export_property_type(module_name, sym_id, name)
+                    else {
+                        continue;
+                    };
                     let declaration_order = if name == "default" {
                         1
                     } else {
@@ -1095,22 +1103,7 @@ impl<'a> CheckerState<'a> {
             };
 
             if !module_is_non_module_entity {
-                for aug_name in self.collect_module_augmentation_names(module_name) {
-                    let name_atom = self.ctx.types.intern_string(&aug_name);
-                    if props.iter().any(|p| p.name == name_atom) {
-                        continue;
-                    }
-
-                    // Cross-file augmentation declarations may live in a different
-                    // arena; use `any` here to preserve namespace member visibility.
-                    props.push(
-                        crate::query_boundaries::js_exports::commonjs_namespace_any_property(
-                            self.ctx.types,
-                            &aug_name,
-                            0,
-                        ),
-                    );
-                }
+                self.append_module_augmentation_runtime_export_properties(module_name, &mut props);
             }
 
             let has_named_props = !props.is_empty();
@@ -1127,25 +1120,30 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        if let Some(direct_export_assignment_type) = direct_export_assignment_type {
-            return Some(direct_export_assignment_type);
-        }
-
         // Use the unified JS export surface for the no-export-table fallback.
         // This synthesizes module.exports, exports.foo, Object.defineProperty,
         // and prototype assignments through one authority.
-        if let Some(surface) =
+        if let Some(mut surface) =
             self.resolve_js_export_surface_for_module(module_name, source_file_idx)
-            && surface.has_commonjs_exports
         {
-            let display_name = self.imported_namespace_display_module_name(module_name);
-            return crate::query_boundaries::js_exports::commonjs_export_surface_type_with_display_name(
-                self,
-                &surface,
-                display_name,
+            self.append_module_augmentation_runtime_export_properties(
+                module_name,
+                &mut surface.named_exports,
             );
+            if !surface.named_exports.is_empty() {
+                surface.has_commonjs_exports = true;
+                surface.has_augmented_named_exports = true;
+            }
+            if surface.has_commonjs_exports {
+                let display_name = self.imported_namespace_display_module_name(module_name);
+                return crate::query_boundaries::js_exports::commonjs_export_surface_type_with_display_name(
+                    self,
+                    &surface,
+                    display_name,
+                );
+            }
         }
 
-        None
+        direct_export_assignment_type
     }
 }

@@ -305,6 +305,21 @@ impl<'a> CheckerState<'a> {
             );
             return None;
         }
+        // A native type-only export can gain a disjoint runtime declaration
+        // through augmentation. Resolving the native symbol here would seed
+        // VALUE merging with its interface/type-alias body, leaking instance
+        // properties onto the JavaScript value. Let the canonical named-import
+        // path exact-resolve the augmentation runtime declaration instead.
+        if !is_default_import
+            && self
+                .module_augmentation_target_native_spaces(&module_name, &import_name)
+                .is_some_and(|(_, has_value)| !has_value)
+        {
+            tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
+                AliasOutcome::MissingTarget,
+            );
+            return None;
+        }
 
         let target_binder = explicit_default_target_file_idx
             .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
@@ -344,7 +359,9 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .register_symbol_file_target(target_sym_id, file_idx);
         }
-        let (mut result, params) = if target_flags & symbol_flags::TYPE_ALIAS != 0 {
+        let bailout_epoch_before = Self::cross_arena_bailout_epoch();
+        let mut pending_target_cache = None;
+        let (mut result, mut params) = if target_flags & symbol_flags::TYPE_ALIAS != 0 {
             let direct_cache_scope =
                 is_default_import.then(|| self.ctx.source_file_symbol_type_cache_scope());
             let cached_or_direct = target_file_idx
@@ -384,22 +401,8 @@ impl<'a> CheckerState<'a> {
                     }
                     let resolved = resolved?;
                     if let Some(file_idx) = target_file_idx {
-                        if let Some(scope) = direct_cache_scope {
-                            self.ctx.cache_stable_source_file_symbol_arena_type(
-                                target_sym_id,
-                                file_idx as u32,
-                                scope,
-                                resolved.0,
-                                resolved.1.clone(),
-                            );
-                        } else {
-                            self.ctx.cache_cross_file_symbol_type(
-                                target_sym_id,
-                                file_idx as u32,
-                                resolved.0,
-                                resolved.1.clone(),
-                            );
-                        }
+                        pending_target_cache =
+                            Some((file_idx, direct_cache_scope, resolved.0, resolved.1.clone()));
                     }
                     Some(resolved)
                 });
@@ -415,12 +418,8 @@ impl<'a> CheckerState<'a> {
                 cached_or_direct.unwrap_or_else(|| {
                     let resolved = self.type_reference_symbol_type_with_params(target_sym_id);
                     if let Some(file_idx) = target_file_idx {
-                        self.ctx.cache_cross_file_symbol_type(
-                            target_sym_id,
-                            file_idx as u32,
-                            resolved.0,
-                            resolved.1.clone(),
-                        );
+                        pending_target_cache =
+                            Some((file_idx, None, resolved.0, resolved.1.clone()));
                     }
                     resolved
                 })
@@ -428,7 +427,37 @@ impl<'a> CheckerState<'a> {
         } else {
             (self.get_type_of_symbol(target_sym_id), Vec::new())
         };
-        result = self.apply_module_augmentations(&module_name, &import_name, result);
+        // This shortcut returns the imported symbol's value for general
+        // non-type-alias exports. Keep interface/call signatures on the type
+        // declaration space and namespace runtime members on this value.
+        result = self.apply_module_value_augmentations(&module_name, &import_name, result);
+        if Self::is_cross_arena_bailout_artifact(bailout_epoch_before, result) {
+            for param in &mut params {
+                param.constraint = param.constraint.map(|_| TypeId::ANY);
+                param.default = param.default.map(|_| TypeId::ANY);
+            }
+            return Some((TypeId::ANY, params));
+        }
+        if let Some((file_idx, direct_cache_scope, target_type, target_params)) =
+            pending_target_cache
+        {
+            if let Some(scope) = direct_cache_scope {
+                self.ctx.cache_stable_source_file_symbol_arena_type(
+                    target_sym_id,
+                    file_idx as u32,
+                    scope,
+                    target_type,
+                    target_params,
+                );
+            } else {
+                self.ctx.cache_cross_file_symbol_type(
+                    target_sym_id,
+                    file_idx as u32,
+                    target_type,
+                    target_params,
+                );
+            }
+        }
         if result == TypeId::ERROR {
             tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
                 AliasOutcome::ErrorResult,

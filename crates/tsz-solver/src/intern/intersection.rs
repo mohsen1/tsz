@@ -660,13 +660,20 @@ impl TypeInterner {
 
         // Reduce intersection using subtype checks (e.g., {a: 1} & {a: 1 | number} => {a: 1})
         // Skip reduction if intersection contains complex types (TypeParameters, Lazy, etc.)
+        // or multiple constructor sources. Constructor constituents form one
+        // ordered overload set; assignability is intentionally coarser than
+        // tsc's effective-signature identity (`NoInfer<[A, B]>` is assignable
+        // like `[A, B]` but retains non-tuple rest arity). Projection owns the
+        // later exact deduplication.
         let has_complex = flat.iter().any(|&id| {
             matches!(
                 self.lookup(id),
                 Some(TypeData::TypeParameter(_) | TypeData::Lazy(_))
             )
         });
-        if !has_complex {
+        if !has_complex
+            && !crate::type_queries::has_multiple_construct_signature_sources(self, &flat)
+        {
             self.reduce_intersection_subtypes(&mut flat);
         }
 
@@ -687,25 +694,8 @@ impl TypeInterner {
         // can properly intersect the instance types (mixin pattern). Merging would
         // collapse `(new => A) & (new => B)` into a single callable with two
         // construct signatures treated as overloads, losing the intersection semantics.
-        let mut construct_source_count = 0;
-        for &member in members {
-            if member.is_intrinsic() {
-                continue;
-            }
-            let has_construct = match self.lookup(member) {
-                Some(TypeData::Function(func_id)) => self.function_shape(func_id).is_constructor,
-                Some(TypeData::Callable(callable_id)) => !self
-                    .callable_shape(callable_id)
-                    .construct_signatures
-                    .is_empty(),
-                _ => false,
-            };
-            if has_construct {
-                construct_source_count += 1;
-                if construct_source_count > 1 {
-                    return None; // Don't merge: keep intersection of constructors
-                }
-            }
+        if crate::type_queries::has_multiple_construct_signature_sources(self, members) {
+            return None;
         }
 
         let mut call_signatures: Vec<CallSignature> = Vec::with_capacity(members.len());
@@ -726,6 +716,8 @@ impl TypeInterner {
                         this_type: func.this_type,
                         return_type: func.return_type,
                         type_predicate: func.type_predicate,
+                        has_literal_types: false,
+                        construct_origin: None,
                         is_method: func.is_method,
                     };
                     if func.is_constructor {

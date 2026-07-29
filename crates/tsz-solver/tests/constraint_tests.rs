@@ -1612,6 +1612,8 @@ fn test_object_entries_like_callable_any_arg_uses_first_overload() {
         this_type: None,
         return_type: return_sig2,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
 
@@ -1633,6 +1635,8 @@ fn test_object_entries_like_callable_any_arg_uses_first_overload() {
         this_type: None,
         return_type: return_sig1,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
 

@@ -1,6 +1,7 @@
 use super::*;
 use crate::def::DefId;
 use crate::intern::TypeInterner;
+use crate::relations::subtype::TypeEnvironment;
 use crate::types::{ConditionalType, MappedType, TypeParamInfo, TypeParamOrigin};
 use std::cell::Cell;
 
@@ -176,6 +177,152 @@ fn test_collect_properties_single_object() {
         assert_eq!(properties.len(), 1);
         assert_eq!(properties[0].name, interner.intern_string("x"));
     }
+}
+
+#[test]
+fn collect_properties_expands_registered_array_surface() {
+    let interner = TypeInterner::new();
+    let mut resolver = TypeEnvironment::new();
+    let param = TypeParamInfo::simple(interner.intern_string("Element"));
+    let param_type = interner.type_param(param);
+    let array_body = interner.object(vec![test_property(&interner, "arraySurface", param_type)]);
+    let array_def = DefId(8_100);
+    resolver.insert_def_with_params(array_def, array_body, vec![param]);
+    resolver.set_array_base_type(interner.lazy(array_def), vec![param]);
+
+    let result = collect_properties(interner.array(TypeId::STRING), &interner, &resolver);
+    let PropertyCollectionResult::Properties {
+        properties,
+        number_index,
+        ..
+    } = result
+    else {
+        panic!("registered Array<T> surface should be structurally collectable");
+    };
+    let property = properties
+        .iter()
+        .find(|property| property.name == interner.intern_string("arraySurface"))
+        .expect("array base member should be collected");
+    assert_eq!(
+        property.type_id,
+        TypeId::STRING,
+        "Array<T> members must be instantiated with the concrete element type"
+    );
+    assert_eq!(
+        number_index.map(|index| index.value_type),
+        Some(TypeId::STRING),
+        "Array<T> must contribute its intrinsic numeric index even without reading lib members"
+    );
+}
+
+#[test]
+fn collect_properties_includes_callable_named_members() {
+    let interner = TypeInterner::new();
+    let callable = interner.callable(CallableShape {
+        properties: vec![test_property(&interner, "callableSurface", TypeId::BOOLEAN)],
+        ..CallableShape::default()
+    });
+
+    let result = collect_properties(callable, &interner, &MockResolver);
+    let PropertyCollectionResult::Properties { properties, .. } = result else {
+        panic!("callable named properties should be structurally collectable");
+    };
+    assert_eq!(properties.len(), 1);
+    assert_eq!(properties[0].type_id, TypeId::BOOLEAN);
+}
+
+#[test]
+fn collect_properties_preserves_tuple_slots_length_and_index_surface() {
+    let interner = TypeInterner::new();
+    let tuple = interner.tuple(vec![
+        TupleElement::fixed(TypeId::STRING),
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: true,
+            rest: false,
+        },
+    ]);
+
+    let PropertyCollectionResult::Properties {
+        properties,
+        number_index,
+        ..
+    } = collect_properties(tuple, &interner, &MockResolver)
+    else {
+        panic!("tuple should contribute an object-like property surface");
+    };
+    let zero = properties
+        .iter()
+        .find(|property| property.name == interner.intern_string("0"))
+        .expect("fixed tuple slot 0");
+    assert_eq!(zero.type_id, TypeId::STRING);
+    assert!(!zero.optional);
+    let one = properties
+        .iter()
+        .find(|property| property.name == interner.intern_string("1"))
+        .expect("optional tuple slot 1");
+    assert_eq!(one.type_id, TypeId::NUMBER);
+    assert!(one.optional);
+    let length = properties
+        .iter()
+        .find(|property| property.name == interner.intern_string("length"))
+        .expect("tuple literal length property");
+    assert_eq!(
+        length.type_id,
+        interner.union2(interner.literal_number(1.0), interner.literal_number(2.0))
+    );
+    assert_eq!(
+        number_index.map(|index| index.value_type),
+        Some(interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::UNDEFINED,]))
+    );
+
+    let readonly_tuple = interner.readonly_type(tuple);
+    let PropertyCollectionResult::Properties {
+        properties,
+        number_index,
+        ..
+    } = collect_properties(readonly_tuple, &interner, &MockResolver)
+    else {
+        panic!("readonly tuple should contribute an object-like property surface");
+    };
+    assert!(properties.iter().all(|property| property.readonly));
+    assert!(number_index.is_some_and(|index| index.readonly));
+}
+
+#[test]
+fn normalize_property_infos_merges_duplicates_without_reordering_unique_names() {
+    let interner = TypeInterner::new();
+    let first = test_property(&interner, "first", TypeId::BOOLEAN);
+    let shared_string = test_property(&interner, "shared", TypeId::STRING);
+    let last = test_property(&interner, "last", TypeId::NUMBER);
+    let shared_number = test_property(&interner, "shared", TypeId::NUMBER);
+
+    let normalized =
+        normalize_property_infos(&interner, vec![first, shared_string, last, shared_number]);
+
+    assert_eq!(normalized.len(), 3);
+    assert_eq!(normalized[0].name, interner.intern_string("first"));
+    assert_eq!(normalized[1].name, interner.intern_string("shared"));
+    assert_eq!(normalized[1].type_id, TypeId::NEVER);
+    assert_eq!(normalized[2].name, interner.intern_string("last"));
+}
+
+#[test]
+fn declaration_order_collection_restores_order_from_canonical_object_shape() {
+    let interner = TypeInterner::new();
+    let source_order = interner.object(vec![
+        test_property(&interner, "zeta", TypeId::STRING),
+        test_property(&interner, "alpha", TypeId::NUMBER),
+    ]);
+
+    let PropertyCollectionResult::Properties { properties, .. } =
+        collect_properties_in_declaration_order(source_order, &interner, &MockResolver)
+    else {
+        panic!("object members should be collectable");
+    };
+    assert_eq!(properties[0].name, interner.intern_string("zeta"));
+    assert_eq!(properties[1].name, interner.intern_string("alpha"));
 }
 
 #[test]

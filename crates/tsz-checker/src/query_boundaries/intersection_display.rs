@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use tsz_solver::construction::TypeDatabase;
 use tsz_solver::relations::subtype::TypeResolver;
-use tsz_solver::{ObjectShape, TypeId};
+use tsz_solver::{IndexSignature, ObjectShape, PropertyInfo, TypeId};
 
 pub(crate) use tsz_solver::objects::PropertyCollectionResult;
 
@@ -11,6 +11,14 @@ pub(crate) fn collect_properties<R: TypeResolver>(
     resolver: &R,
 ) -> PropertyCollectionResult {
     tsz_solver::objects::collect_properties(type_id, db, resolver)
+}
+
+pub(crate) fn collect_properties_in_declaration_order<R: TypeResolver>(
+    type_id: TypeId,
+    db: &dyn TypeDatabase,
+    resolver: &R,
+) -> PropertyCollectionResult {
+    tsz_solver::objects::collect_properties_in_declaration_order(type_id, db, resolver)
 }
 
 pub(crate) fn collected_properties_object_type<R: TypeResolver>(
@@ -65,4 +73,41 @@ pub(crate) fn collected_properties_object_shape<R: TypeResolver>(
         })),
         _ => None,
     }
+}
+
+pub(crate) fn collected_properties_object_shape_in_declaration_order<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    type_id: TypeId,
+) -> Option<Arc<ObjectShape>> {
+    match collect_properties_in_declaration_order(type_id, db, resolver) {
+        PropertyCollectionResult::Properties {
+            properties,
+            string_index,
+            number_index,
+            symbol_index,
+        } => Some(Arc::new(ObjectShape {
+            properties,
+            string_index,
+            number_index,
+            symbol_index,
+            ..ObjectShape::default()
+        })),
+        _ => None,
+    }
+}
+
+pub(crate) fn normalize_property_infos(
+    db: &dyn TypeDatabase,
+    properties: Vec<PropertyInfo>,
+) -> Vec<PropertyInfo> {
+    tsz_solver::objects::normalize_property_infos(db, properties)
+}
+
+pub(crate) fn merge_index_signature_infos(
+    db: &dyn TypeDatabase,
+    current: Option<IndexSignature>,
+    incoming: Option<IndexSignature>,
+) -> Option<IndexSignature> {
+    tsz_solver::objects::merge_index_signature_infos(db, current, incoming)
 }

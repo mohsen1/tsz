@@ -2,6 +2,19 @@ use super::*;
 use crate::lower::host::LoweringHost;
 
 impl<'a> TypeLowering<'a> {
+    pub(crate) fn parameter_list_has_literal_type_annotations(
+        &self,
+        parameters: &NodeList,
+    ) -> bool {
+        parameters.nodes.iter().copied().any(|parameter_idx| {
+            self.arena
+                .get(parameter_idx)
+                .and_then(|node| self.arena.get_parameter(node))
+                .and_then(|parameter| self.arena.get(parameter.type_annotation))
+                .is_some_and(|type_node| type_node.kind == syntax_kind_ext::LITERAL_TYPE)
+        })
+    }
+
     /// Lower a function-like declaration (Method, Constructor, Function) to a `TypeId`.
     ///
     /// This is used for overload compatibility checking where we need the structural type
@@ -134,9 +147,12 @@ impl<'a> TypeLowering<'a> {
                         parts.call_signatures.push(self.lower_call_signature(sig));
                     }
                     k if k == syntax_kind_ext::CONSTRUCT_SIGNATURE => {
-                        parts
-                            .construct_signatures
-                            .push(self.lower_call_signature(sig));
+                        let mut signature = self.lower_call_signature(sig);
+                        signature.has_literal_types =
+                            sig.parameters.as_ref().is_some_and(|parameters| {
+                                self.parameter_list_has_literal_type_annotations(parameters)
+                            });
+                        parts.construct_signatures.push(signature);
                     }
                     k if k == syntax_kind_ext::METHOD_SIGNATURE => {
                         if let Some(name) = self.lower_signature_name(sig.name) {
@@ -421,17 +437,25 @@ impl<'a> TypeLowering<'a> {
         }
 
         if !parts.call_signatures.is_empty() || !parts.construct_signatures.is_empty() {
-            // `CallableShape` keeps the single-slot index convention: a `symbol`
-            // index rides in `string_index` (its `key_type` discriminates it).
-            return self.interner.callable(CallableShape {
+            let string_index = parts.string_index;
+            let symbol_index = parts.symbol_index;
+            let callable = self.interner.callable(CallableShape {
                 call_signatures: parts.call_signatures,
                 construct_signatures: parts.construct_signatures,
                 properties,
-                string_index: parts.string_index.or(parts.symbol_index),
+                string_index: string_index.or(symbol_index),
                 number_index: parts.number_index,
                 symbol: symbol_id,
                 is_abstract: false,
             });
+            if string_index.is_some() && symbol_index.is_some() {
+                let symbol_surface = self.interner.object_with_index(ObjectShape {
+                    symbol_index,
+                    ..ObjectShape::default()
+                });
+                return self.interner.intersect_types_raw2(callable, symbol_surface);
+            }
+            return callable;
         }
 
         let flags = if parts.has_late_bound_members {
@@ -480,6 +504,8 @@ impl<'a> TypeLowering<'a> {
             this_type,
             return_type,
             type_predicate,
+            has_literal_types: false,
+            construct_origin: None,
             is_method: false,
         }
     }

@@ -356,6 +356,8 @@ pub(crate) fn call_signature_from_function_shape_for_display(
     crate::query_boundaries::construct_signatures::call_signature_from_function_shape(
         shape.clone(),
         shape.is_method,
+        false,
+        None,
     )
 }
 
@@ -434,6 +436,8 @@ pub(crate) fn instantiate_call_signature_for_display(
             .map(|this_type| instantiate_type(db, this_type, &subst)),
         return_type: instantiate_type(db, sig.return_type, &subst),
         type_predicate: sig.type_predicate,
+        has_literal_types: sig.has_literal_types,
+        construct_origin: sig.construct_origin,
         is_method: sig.is_method,
     })
 }

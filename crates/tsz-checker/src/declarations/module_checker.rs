@@ -767,10 +767,22 @@ impl<'a> CheckerState<'a> {
             // Create an object type with all module exports
             let mut props: Vec<tsz_solver::PropertyInfo> = Vec::new();
             for &(name, export_sym_id) in &ordered_exports {
-                if name == "export=" {
+                if self.should_skip_namespace_export_name(&exports_table, name, export_sym_id)
+                    || self.is_type_only_export_symbol(export_sym_id)
+                    || self.is_export_from_type_only_wildcard(module_name, name)
+                    || self.is_export_type_only_from_file(
+                        module_name,
+                        name,
+                        Some(self.ctx.current_file_idx),
+                    )
+                {
                     continue;
                 }
-                let prop_type = self.get_type_of_symbol(export_sym_id);
+                let Some(prop_type) =
+                    self.namespace_import_export_property_type(module_name, export_sym_id, name)
+                else {
+                    continue;
+                };
                 let declaration_order = if name == "default" {
                     1
                 } else {
@@ -784,38 +796,7 @@ impl<'a> CheckerState<'a> {
                 ));
             }
 
-            // Merge module augmentations
-            // Module augmentations add interfaces/types to existing modules
-            // e.g., declare module 'express' { interface Request { user?: User; } }
-            if let Some(augmentations) = self.ctx.binder.module_augmentations.get(module_name) {
-                for aug in augmentations {
-                    // Resolve the augmentation declaration's type against its own
-                    // arena/binder (#14853). A cross-file augmentation that adds a
-                    // new export otherwise collapsed to `any` here, dropping every
-                    // assignability error against the dynamically-imported member.
-                    let aug_arena = aug.arena.as_deref().unwrap_or(self.ctx.arena);
-                    let aug_type = self
-                        .augmentation_export_declaration_type(aug.node, aug_arena)
-                        .unwrap_or(tsz_solver::TypeId::ANY);
-                    let name_atom = self.ctx.types.intern_string(&aug.name);
-
-                    // Check if this augments an existing export
-                    if let Some(existing) = props.iter_mut().find(|p| p.name == name_atom) {
-                        // Merge types - for interfaces, this creates an intersection
-                        existing.type_id = declaration_exports::module_export_augmented_type(
-                            self.ctx.types,
-                            existing.type_id,
-                            aug_type,
-                        );
-                        existing.write_type = existing.type_id;
-                    } else {
-                        // New export from augmentation
-                        props.push(declaration_exports::declaration_export_property(
-                            name_atom, aug_type, 0,
-                        ));
-                    }
-                }
-            }
+            self.append_module_augmentation_runtime_export_properties(module_name, &mut props);
 
             // When esModuleInterop / allowSyntheticDefaultImports is enabled
             // and the module uses `export =`, synthesize a `default` property

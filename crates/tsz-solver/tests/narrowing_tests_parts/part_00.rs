@@ -2,11 +2,9 @@
 fn test_find_discriminants_basic() {
     let interner = TypeInterner::new();
     let type_name = interner.intern_string("type");
-
     // type Action = { type: "add" } | { type: "remove" }
     let type_add = interner.literal_string("add");
     let type_remove = interner.literal_string("remove");
-
     let member1 = interner.object(vec![PropertyInfo::new(type_name, type_add)]);
     let member2 = interner.object(vec![PropertyInfo::new(type_name, type_remove)]);
 
@@ -1029,6 +1027,8 @@ fn test_narrow_by_typeof_function_includes_callable() {
         this_type: None,
         return_type: TypeId::STRING,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
     let callable = interner.callable(CallableShape {
@@ -1040,7 +1040,6 @@ fn test_narrow_by_typeof_function_includes_callable() {
         ..Default::default()
     });
     let union = interner.union(vec![callable, TypeId::NUMBER]);
-
     let narrowed = narrow_by_typeof(&interner, union, "function");
     assert_eq!(narrowed, callable);
 }
@@ -1380,9 +1379,10 @@ fn test_call_signature_with_type_predicate() {
             type_id: Some(TypeId::NUMBER),
             parameter_index: None,
         }),
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     };
-
     assert!(sig.type_predicate.is_some());
     let pred = sig.type_predicate.unwrap();
     assert_eq!(pred.type_id, Some(TypeId::NUMBER));

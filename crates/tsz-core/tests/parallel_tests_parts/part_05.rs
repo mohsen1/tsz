@@ -933,3 +933,52 @@ export const unset = Symbol.for('@ts-pattern/unset');
         "bare `Symbol.for` must resolve to the global SymbolConstructor; got {consumer_2339:#?}"
     );
 }
+
+#[test]
+fn parallel_checker_retains_cross_file_class_interface_construct_groups() {
+    let files = vec![
+        (
+            "class-interface-first.ts".to_string(),
+            r#"
+interface LocalConstructResult { selected: "local" }
+class MixedConstruct {}
+interface MixedConstruct {
+    new (value: string): LocalConstructResult;
+}
+"#
+            .to_string(),
+        ),
+        (
+            "class-interface-second.ts".to_string(),
+            r#"
+interface ForeignConstructResult { selected: "foreign" }
+interface MixedConstruct {
+    new (value: number): ForeignConstructResult;
+}
+declare const MixedCtor: MixedConstruct;
+const localResult: LocalConstructResult = new MixedCtor("value");
+const foreignResult: ForeignConstructResult = new MixedCtor(1);
+"#
+            .to_string(),
+        ),
+    ];
+    let program = merge_bind_results(parse_and_bind_parallel(files));
+    let result = check_files_parallel(
+        &program,
+        &CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &[],
+    );
+    let diagnostics: Vec<_> = result
+        .file_results
+        .iter()
+        .flat_map(|file| file.diagnostics.iter())
+        .collect();
+
+    assert!(
+        diagnostics.is_empty(),
+        "parallel root and delegated checkers must share merged declaration provenance; got {diagnostics:#?}"
+    );
+}

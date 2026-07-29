@@ -102,6 +102,8 @@ impl<'a> CheckerState<'a> {
                 this_type: None,
                 return_type,
                 type_predicate: None,
+                has_literal_types: false,
+                construct_origin: None,
                 is_method: false,
             };
             return Some(self.ctx.types.factory().callable(CallableShape {

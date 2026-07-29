@@ -28,6 +28,14 @@ pub(crate) fn is_enum_type(ctx: &CheckerContext<'_>, type_id: TypeId) -> bool {
     enum_symbol_with_flags(ctx, type_id, symbol_flags::ENUM).is_some()
 }
 
+/// Whether `type_id` is represented by the solver's nominal enum type.
+///
+/// Unlike [`is_enum_type`], this query does not require a checker-local symbol
+/// lookup, so it remains valid for an enum lowered from a foreign binder arena.
+pub(crate) fn is_nominal_enum_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::visitor::is_enum_type(db, type_id)
+}
+
 /// Check if a type is an enum-family fallback operand for arithmetic
 /// validation: either a direct enum type/member, or a union whose every member
 /// resolves to an enum or enum member.

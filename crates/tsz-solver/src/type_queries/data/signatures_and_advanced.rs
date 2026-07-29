@@ -4,12 +4,21 @@
 //! and base-type validity checks.
 
 use super::accessors::get_object_shape;
+use super::construct_signature_identity::{
+    ConstructSignatureCoarseIdentity, construct_signature_identity,
+    construct_signature_identity_requires_resolver,
+};
 use super::content_predicates::{
     contains_infer_types_db, contains_type_parameters_db, get_intersection_members,
 };
+use super::transparent_alias::expose_transparent_alias_once;
+use crate::canonicalize::Canonicalizer;
 use crate::construction::{QueryDatabase, TypeDatabase};
-use crate::evaluation::evaluate::{evaluate_index_access, evaluate_type};
+use crate::evaluation::evaluate::{
+    evaluate_index_access, evaluate_type, evaluate_type_with_resolver,
+};
 use crate::instantiation::instantiate::instantiate_type_params_to_constraints_uncached;
+use crate::relations::subtype::{NoopResolver, TypeResolver};
 use crate::types::{CallSignature, ConditionalType, TypeData, TypeId};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::Atom;
@@ -627,6 +636,51 @@ pub fn get_callable_shape(
     }
 }
 
+/// Whether two or more members contribute construct signatures directly or
+/// through a transparent `NoInfer` wrapper.
+///
+/// Constructor intersections are ordered overload sets. Structural subtype
+/// reduction is deliberately coarser than tsc's effective-signature identity,
+/// so both the interner and evaluator use this gate before pruning members;
+/// exact duplicate removal happens later in construct-signature projection.
+pub fn has_multiple_construct_signature_sources(db: &dyn TypeDatabase, members: &[TypeId]) -> bool {
+    let mut construct_source_count = 0;
+    for &member in members {
+        if direct_member_has_construct_signatures(db, member) {
+            construct_source_count += 1;
+            if construct_source_count > 1 {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn direct_member_has_construct_signatures(db: &dyn TypeDatabase, mut type_id: TypeId) -> bool {
+    for _ in 0..32 {
+        if type_id.is_intrinsic() {
+            return false;
+        }
+        match db.lookup(type_id) {
+            Some(TypeData::Function(func_id)) => {
+                return db.function_shape(func_id).is_constructor;
+            }
+            Some(TypeData::Callable(callable_id)) => {
+                return !db
+                    .callable_shape(callable_id)
+                    .construct_signatures
+                    .is_empty();
+            }
+            // `NoInfer<T>` is transparent to signature projection and
+            // assignability. Count its inner constructor so subtype pruning
+            // cannot erase an ordered overload before projection.
+            Some(TypeData::NoInfer(inner)) => type_id = inner,
+            _ => return false,
+        }
+    }
+    false
+}
+
 /// Get call signatures from a type.
 ///
 /// For `Callable` types, returns their call signatures directly.
@@ -654,31 +708,427 @@ pub fn get_call_signatures(
     None
 }
 
-/// Get construct signatures from a type.
+/// Get construct signatures from a type, including TypeScript's intersection
+/// mixin transform.
 ///
-/// For `Callable` types, returns their construct signatures directly.
-/// For intersection types, collects construct signatures from all callable members.
-/// Returns None if no construct signatures are found.
+/// Ordinary intersection constituents contribute one combined overload set.
+/// A mixin constructor (one non-generic `...args: any[]` signature) is instead
+/// removed and its instance type is intersected into every remaining
+/// constructor return. When every constructor is a mixin, the first is retained
+/// as the candidate and the remaining instance types are mixed into its return.
 pub fn get_construct_signatures(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<Vec<crate::CallSignature>> {
+    get_construct_signatures_with_resolver(db, &NoopResolver, type_id)
+}
+
+/// Resolver-aware constructor-signature projection.
+///
+/// This is the semantic call-resolution path for intersections whose mixin
+/// rest parameter is written through a type alias. The plain
+/// [`get_construct_signatures`] query deliberately remains resolver-free for
+/// storage-only callers and unit tests.
+pub fn get_construct_signatures_with_resolver<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    type_id: TypeId,
+) -> Option<Vec<crate::CallSignature>> {
+    get_construct_signatures_with_resolver_inner(db, resolver, type_id, 0)
+}
+
+fn get_construct_signatures_with_resolver_inner<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    type_id: TypeId,
+    depth: u8,
+) -> Option<Vec<crate::CallSignature>> {
+    if depth >= 64 {
+        return None;
+    }
     if let Some(shape) = get_callable_shape(db, type_id) {
         return Some(shape.construct_signatures.clone());
     }
-    // For intersection types, collect construct signatures from all members
+    if !type_id.is_intrinsic()
+        && let Some(TypeData::Function(shape_id)) = db.lookup(type_id)
+    {
+        let shape = db.function_shape(shape_id);
+        return shape.is_constructor.then(|| {
+            vec![CallSignature {
+                type_params: shape.type_params.clone(),
+                params: shape.params.clone(),
+                this_type: shape.this_type,
+                return_type: shape.return_type,
+                type_predicate: shape.type_predicate,
+                has_literal_types: false,
+                construct_origin: None,
+                is_method: shape.is_method,
+            }]
+        });
+    }
+    if !type_id.is_intrinsic() {
+        match db.lookup(type_id) {
+            // tsc's `getSignaturesOfType` observes `NoInfer<T>` as `T`.
+            Some(TypeData::NoInfer(inner)) => {
+                return get_construct_signatures_with_resolver_inner(
+                    db,
+                    resolver,
+                    inner,
+                    depth + 1,
+                );
+            }
+            // TSZ retains transparent aliases as `Lazy`/`Application` nodes.
+            // Expose exactly that alias boundary rather than generally
+            // evaluating an arbitrary type into a constructor.
+            Some(TypeData::Lazy(_) | TypeData::Application(_)) => {
+                let exposed = expose_transparent_alias_once(db, resolver, type_id)?;
+                if exposed == type_id {
+                    return None;
+                }
+                return get_construct_signatures_with_resolver_inner(
+                    db,
+                    resolver,
+                    exposed,
+                    depth + 1,
+                );
+            }
+            _ => {}
+        }
+    }
+
     if let Some(members) = get_intersection_members(db, type_id) {
-        let mut all_sigs = Vec::new();
-        for member in members.iter() {
-            if let Some(shape) = get_callable_shape(db, *member) {
-                all_sigs.extend(shape.construct_signatures.iter().cloned());
+        let projection_resolver_sensitive = members
+            .iter()
+            .any(|&member| construct_projection_requires_resolver(db, member, 0));
+        if resolver.is_noop()
+            && !projection_resolver_sensitive
+            && let Some(cached) = db.construct_signatures_memo(type_id)
+        {
+            return (!cached.is_empty()).then(|| cached.as_ref().to_vec());
+        }
+        let signature_groups: Vec<Vec<CallSignature>> = members
+            .iter()
+            .map(|&member| {
+                get_construct_signatures_with_resolver_inner(db, resolver, member, depth + 1)
+                    .unwrap_or_default()
+            })
+            .collect();
+        let resolver_sensitive = projection_resolver_sensitive
+            || signature_groups.iter().flatten().any(|signature| {
+                construct_signature_identity_requires_resolver(db, resolver, signature)
+                    || signature.params.iter().any(|parameter| {
+                        parameter.rest && mixin_probe_requires_resolver(db, parameter.type_id)
+                    })
+            });
+        if !resolver.is_noop()
+            && !resolver_sensitive
+            && let Some(cached) = db.construct_signatures_memo(type_id)
+        {
+            return (!cached.is_empty()).then(|| cached.as_ref().to_vec());
+        }
+        let constructor_count = signature_groups
+            .iter()
+            .filter(|signatures| !signatures.is_empty())
+            .count();
+        if constructor_count == 0 {
+            if !resolver_sensitive {
+                db.set_construct_signatures_memo(type_id, Vec::new().into());
+            }
+            return None;
+        }
+
+        let mut mixin_flags: Vec<bool> = signature_groups
+            .iter()
+            .map(|signatures| is_mixin_construct_signature_group(db, resolver, signatures))
+            .collect();
+        if constructor_count == mixin_flags.iter().filter(|&&is_mixin| is_mixin).count()
+            && let Some(first_mixin) = mixin_flags.iter_mut().find(|is_mixin| **is_mixin)
+        {
+            *first_mixin = false;
+        }
+
+        let mut all_signatures = Vec::new();
+        let mut signature_identities: FxHashMap<
+            ConstructSignatureCoarseIdentity,
+            Vec<Option<TypeId>>,
+        > = FxHashMap::default();
+        // Reuse one operation-local DAG cache across every candidate. The
+        // cache is dropped with this projection and never retains resolver
+        // state in the shared construct-signature memo.
+        let mut identity_canonicalizer = Canonicalizer::for_signature_identity(db, resolver);
+        for (group_index, signatures) in signature_groups.iter().enumerate() {
+            if mixin_flags[group_index] {
+                continue;
+            }
+            for signature in signatures {
+                let mut signature = signature.clone();
+                if mixin_flags.iter().any(|&is_mixin| is_mixin) {
+                    // `includeMixinType` preserves original intersection-member
+                    // order: the selected ordinary return occupies its
+                    // constituent's slot, while every true mixin contributes its
+                    // return at its own slot.
+                    let return_types = signature_groups
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(index, group)| {
+                            if index == group_index {
+                                Some(signature.return_type)
+                            } else if mixin_flags[index] {
+                                Some(group[0].return_type)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    signature.return_type = crate::utils::intersection_or_single(db, return_types);
+                }
+                let identity = construct_signature_identity(
+                    db,
+                    resolver,
+                    &mut identity_canonicalizer,
+                    &signature,
+                );
+                let prior_this_types = signature_identities.entry(identity.coarse).or_default();
+                let duplicate = prior_this_types.iter().any(|&prior_this| {
+                    match (prior_this, identity.this_type) {
+                        (Some(prior), Some(current)) => prior == current,
+                        _ => true,
+                    }
+                });
+                if !duplicate {
+                    prior_this_types.push(identity.this_type);
+                    all_signatures.push(signature);
+                }
             }
         }
-        if !all_sigs.is_empty() {
-            return Some(all_sigs);
+        if !resolver_sensitive {
+            db.set_construct_signatures_memo(type_id, all_signatures.clone().into());
+        }
+        return Some(all_signatures);
+    }
+    None
+}
+
+fn construct_projection_requires_resolver(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    depth: u8,
+) -> bool {
+    if depth >= 64 || type_id.is_intrinsic() {
+        return depth >= 64;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::Lazy(_) | TypeData::Application(_) | TypeData::TypeQuery(_)) => true,
+        Some(TypeData::NoInfer(inner)) => {
+            construct_projection_requires_resolver(db, inner, depth + 1)
+        }
+        Some(TypeData::Intersection(list_id)) => db
+            .type_list(list_id)
+            .iter()
+            .any(|&member| construct_projection_requires_resolver(db, member, depth + 1)),
+        _ => false,
+    }
+}
+
+fn is_mixin_construct_signature_group<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    signatures: &[CallSignature],
+) -> bool {
+    let [signature] = signatures else {
+        return false;
+    };
+    if !signature.type_params.is_empty() {
+        return false;
+    }
+    let [parameter] = signature.params.as_slice() else {
+        return false;
+    };
+    parameter.rest
+        && (parameter.type_id == TypeId::ANY
+            || mixin_array_element_type(db, resolver, parameter.type_id) == Some(TypeId::ANY))
+}
+
+/// Counterpart of tsc's `getElementTypeOfArrayType` mixin probe.
+///
+/// Transparent aliases/applications and readonly wrappers may expose an array,
+/// but a type parameter's *constraint* must never be followed: `T extends
+/// any[]` is not itself the direct `any[]` rest type required by the mixin rule.
+fn mixin_array_element_type<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    let mut current = type_id;
+    for _ in 0..16 {
+        match db.lookup(current) {
+            Some(TypeData::Array(element)) => return Some(element),
+            Some(TypeData::ReadonlyType(inner)) => current = inner,
+            Some(TypeData::Application(_) | TypeData::Lazy(_)) => {
+                // Expose an alias body without eagerly evaluating its outer
+                // wrapper. In particular, `type Args = NoInfer<any[]>` is not a
+                // mixin rest type: full evaluation would erase `NoInfer` and
+                // incorrectly turn it into the direct `any[]` shape.
+                let evaluated = expose_transparent_alias_once(db, resolver, current)
+                    .unwrap_or_else(|| evaluate_type_with_resolver(db, resolver, current));
+                if evaluated == current {
+                    return None;
+                }
+                current = evaluated;
+            }
+            Some(
+                TypeData::Conditional(_)
+                | TypeData::IndexAccess(_, _)
+                | TypeData::Mapped(_)
+                | TypeData::TypeQuery(_),
+            ) => {
+                // These are transparent semantic computations: once an alias
+                // application exposes one at its outer boundary, tsc asks for
+                // the resolved parameter type before `isArrayType`. Keep this
+                // whitelist narrow so opaque wrappers such as `NoInfer` and
+                // `Substitution`, and constrained type parameters, remain
+                // non-mixins even when their evaluated/constraint type is an
+                // `any[]`.
+                let evaluated = evaluate_type_with_resolver(db, resolver, current);
+                if evaluated == current {
+                    return None;
+                }
+                current = evaluated;
+            }
+            // In particular, do not chase `TypeParameter`/`Infer`
+            // constraints or accept tuple element unions.
+            _ => return None,
         }
     }
     None
+}
+
+fn mixin_probe_requires_resolver(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    let mut current = type_id;
+    for _ in 0..16 {
+        match db.lookup(current) {
+            Some(TypeData::ReadonlyType(inner)) => current = inner,
+            Some(
+                TypeData::Application(_)
+                | TypeData::Lazy(_)
+                | TypeData::Conditional(_)
+                | TypeData::IndexAccess(_, _)
+                | TypeData::Mapped(_)
+                | TypeData::TypeQuery(_),
+            ) => return true,
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// Deduplicate construct signatures while preserving the last identical entry.
+///
+/// Interface declaration merging needs the last copy of a shared diamond base
+/// signature so that derived overload groups remain ahead of the inherited
+/// catch-all. Signature identity is solver-owned: it includes alpha-normalized
+/// type parameters, effective tuple-rest arity and positional types, `this`,
+/// return/predicate shape, and (when requested) the syntax-level literal marker
+/// that drives constructor overload specialization.
+pub fn deduplicate_construct_signatures_keep_last(
+    db: &dyn TypeDatabase,
+    signatures: &mut Vec<CallSignature>,
+    include_literal_provenance: bool,
+) {
+    deduplicate_construct_signatures_keep_last_with_resolver(
+        db,
+        &NoopResolver,
+        signatures,
+        include_literal_provenance,
+    );
+}
+
+/// Resolver-aware declaration-merge deduplication.
+///
+/// A real resolver is required when identity-bearing positions contain type
+/// aliases. TypeScript stores an alias reference as its semantic target with
+/// separate display metadata; TSZ stores it as `Lazy`/`Application`, so the
+/// identity canonicalizer must expose aliases before structural comparison.
+pub fn deduplicate_construct_signatures_keep_last_with_resolver<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    signatures: &mut Vec<CallSignature>,
+    include_literal_provenance: bool,
+) {
+    if signatures.len() <= 1 {
+        return;
+    }
+
+    let mut keep = vec![false; signatures.len()];
+    let mut identities: FxHashMap<
+        (ConstructSignatureCoarseIdentity, Option<bool>),
+        Vec<Option<TypeId>>,
+    > = FxHashMap::default();
+    // Amortize shared alias/object subgraphs across the entire merge; this
+    // cache is operation-local and is released before returning.
+    let mut canonicalizer = Canonicalizer::for_signature_identity(db, resolver);
+
+    for index in (0..signatures.len()).rev() {
+        let signature = &signatures[index];
+        let identity = construct_signature_identity(db, resolver, &mut canonicalizer, signature);
+        let key = (
+            identity.coarse,
+            include_literal_provenance.then_some(signature.has_literal_types),
+        );
+        let prior_this_types = identities.entry(key).or_default();
+        let duplicate =
+            prior_this_types
+                .iter()
+                .any(|&prior_this| match (prior_this, identity.this_type) {
+                    (Some(prior), Some(current)) => prior == current,
+                    _ => true,
+                });
+        if !duplicate {
+            prior_this_types.push(identity.this_type);
+            keep[index] = true;
+        }
+    }
+
+    let mut index = 0;
+    signatures.retain(|_| {
+        let retain = keep[index];
+        index += 1;
+        retain
+    });
+}
+
+/// Rebuild projected mixin instance returns with the source base instance last.
+///
+/// An inferred class-expression mixin is displayed as `ReturnedClass & Base`.
+/// Constructor projection may already have folded the same base into a return
+/// using the constructor intersection's storage order (`Base & ReturnedClass`).
+/// Flatten those projected intersections, remove every exact constituent of
+/// the (possibly intersected) base, and append the base constituents once at
+/// the source-defined tail. Other constituents keep their existing order,
+/// including explicitly instantiated generic return members.
+pub fn mixin_instance_returns_with_base_last(
+    db: &dyn TypeDatabase,
+    returns: Vec<TypeId>,
+    base_instance: TypeId,
+) -> TypeId {
+    let base_members: Vec<TypeId> = get_intersection_members(db, base_instance)
+        .map_or_else(|| vec![base_instance], |members| members.as_ref().to_vec());
+    let base_member_set: FxHashSet<TypeId> = base_members.iter().copied().collect();
+    let mut ordered = Vec::with_capacity(returns.len() + base_members.len());
+    for return_type in returns {
+        if let Some(members) = get_intersection_members(db, return_type) {
+            ordered.extend(
+                members
+                    .iter()
+                    .copied()
+                    .filter(|member| !base_member_set.contains(member)),
+            );
+        } else if !base_member_set.contains(&return_type) {
+            ordered.push(return_type);
+        }
+    }
+    ordered.extend(base_members);
+    crate::utils::intersection_or_single(db, ordered)
 }
 
 /// Returns `true` when the *apparent* type of `type_id` carries a call or

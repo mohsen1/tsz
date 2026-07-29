@@ -78,15 +78,10 @@ impl<'a> CheckerState<'a> {
                     .copied()
                     .unwrap_or(TypeId::ERROR);
             }
-            if let Some(cached) = self
-                .ctx
-                .class_instance_type_cache
-                .borrow()
-                .get(&class_idx)
-                .copied()
-            {
-                return cached;
-            }
+            // The shared cache contains the canonical, module-augmentation-
+            // applied instance. Declaration-only value extraction needs the
+            // class's own instance surface as its merge base, so a completed
+            // canonical entry is not admissible in this mode.
         }
 
         // Self-reference deferral (cache-miss only): a *fresh* instance-type

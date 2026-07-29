@@ -1227,6 +1227,7 @@ impl CheckerContext<'_> {
         // (e.g., `MyClass<T>` instead of just `MyClass`).
         self.definition_store
             .set_type_params(def_id, params.clone());
+        self.record_def_type_params_augmentation_undo(def_id);
         self.def_type_params.borrow_mut().insert(def_id, params);
     }
 
@@ -1250,6 +1251,7 @@ impl CheckerContext<'_> {
         if let Some(store_params) = self.definition_store.get_type_params(def_id)
             && !store_params.is_empty()
         {
+            self.record_def_type_params_augmentation_undo(def_id);
             self.def_type_params
                 .borrow_mut()
                 .insert(def_id, store_params.clone());
@@ -1272,6 +1274,7 @@ impl CheckerContext<'_> {
             && !canonical_params.is_empty()
         {
             // Cache for future lookups under the requesting DefId.
+            self.record_def_type_params_augmentation_undo(def_id);
             self.def_type_params
                 .borrow_mut()
                 .insert(def_id, canonical_params.clone());

@@ -22,6 +22,8 @@ fn construct_sig(type_params: Vec<TypeParamInfo>, return_type: TypeId) -> CallSi
         this_type: None,
         return_type,
         type_predicate: None,
+        has_literal_types: false,
+        construct_origin: None,
         is_method: false,
     }
 }

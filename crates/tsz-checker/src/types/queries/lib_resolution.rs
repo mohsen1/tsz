@@ -672,9 +672,15 @@ impl<'a> CheckerState<'a> {
     /// resolvable and merges them into a flattened body. The flattened (not
     /// intersection) shape keeps generic inference over DOM types intact.
     pub(crate) fn resolve_lib_type_by_name(&mut self, name: &str) -> Option<TypeId> {
+        let bailout_epoch_before = Self::cross_arena_bailout_epoch();
         enter_lib_resolution();
         let result = self.resolve_lib_type_by_name_inner(name);
         let depth_after = leave_lib_resolution();
+        if Self::cross_arena_bailout_epoch() != bailout_epoch_before {
+            clear_lib_resolution_mark(name);
+            self.ctx.lib_type_resolution_caches.types.remove(name);
+            return Some(TypeId::ANY);
+        }
 
         // Only the outermost call drains, never while already draining, and only
         // when the cascade left some cycle-incomplete name behind. A nested
@@ -687,6 +693,11 @@ impl<'a> CheckerState<'a> {
         set_lib_resolution_draining(true);
         self.drain_incomplete_lib_heritage(collect_incomplete_lib_names());
         set_lib_resolution_draining(false);
+        if Self::cross_arena_bailout_epoch() != bailout_epoch_before {
+            clear_lib_resolution_mark(name);
+            self.ctx.lib_type_resolution_caches.types.remove(name);
+            return Some(TypeId::ANY);
+        }
 
         // The drain rewired the def body / caches for `name` if it was part of a
         // cycle; return the now-complete type so the caller does not keep the
@@ -822,6 +833,7 @@ impl<'a> CheckerState<'a> {
                 return cached;
             }
         }
+        let bailout_epoch_before = Self::cross_arena_bailout_epoch();
 
         tracing::trace!(name, "resolve_lib_type_by_name: called");
         // Mark this name as in-progress. Recursive lib graphs such as
@@ -1033,6 +1045,11 @@ impl<'a> CheckerState<'a> {
                         stack.extend(decl_arena.get_children(node_idx));
                     }
                 }
+                if Self::cross_arena_bailout_epoch() != bailout_epoch_before {
+                    clear_lib_resolution_mark(name);
+                    self.ctx.lib_type_resolution_caches.types.remove(name);
+                    return Some(TypeId::ANY);
+                }
 
                 let binder = selected_binder;
                 let resolver = |node_idx: NodeIndex| -> Option<u32> {
@@ -1234,6 +1251,11 @@ impl<'a> CheckerState<'a> {
             lib_type_id = Some(merged);
             heritage_incomplete = incomplete;
         }
+        if Self::cross_arena_bailout_epoch() != bailout_epoch_before {
+            clear_lib_resolution_mark(name);
+            self.ctx.lib_type_resolution_caches.types.remove(name);
+            return Some(TypeId::ANY);
+        }
 
         // Merge global augmentations (declare global { interface X { ... } }).
         if let Some(merged) = self.merge_global_augmentations(name, lib_type_id, &lib_contexts) {
@@ -1250,34 +1272,6 @@ impl<'a> CheckerState<'a> {
                 .lib_type_resolution_caches
                 .types
                 .insert(name.to_string(), Some(ty));
-
-            // Register the final merged type in type_to_def so the formatter can
-            // display "Date" instead of expanding all members. The initial
-            // registration uses the pre-merge TypeId which changes after heritage
-            // merging and global augmentations add more members.
-            let selected_is_identity = selected_lib_def_id.is_some_and(|def_id| {
-                crate::query_boundaries::lib_augmentations::is_lazy_def_identity(
-                    self.ctx.types,
-                    ty,
-                    def_id,
-                )
-            });
-            let name_atom = self.ctx.types.intern_string(name);
-            let canonical_def_id = self
-                .ctx
-                .definition_store
-                .find_defs_by_name(name_atom)
-                .and_then(|defs| defs.first().copied());
-            if let Some(def_id) = canonical_def_id
-                && !selected_is_identity
-                && !crate::query_boundaries::lib_augmentations::is_lazy_def_identity(
-                    self.ctx.types,
-                    ty,
-                    def_id,
-                )
-            {
-                self.ctx.definition_store.register_type_to_def(ty, def_id);
-            }
         }
 
         // Process heritage clauses from global augmentations.
@@ -1368,6 +1362,40 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
+            }
+        }
+        if Self::cross_arena_bailout_epoch() != bailout_epoch_before {
+            clear_lib_resolution_mark(name);
+            self.ctx.lib_type_resolution_caches.types.remove(name);
+            return Some(TypeId::ANY);
+        }
+
+        // Register the final merged type in type_to_def so the formatter can
+        // display "Date" instead of expanding all members. Delay this reusable
+        // publication until every delegated heritage query completed cleanly.
+        if let Some(ty) = lib_type_id {
+            let selected_is_identity = selected_lib_def_id.is_some_and(|def_id| {
+                crate::query_boundaries::lib_augmentations::is_lazy_def_identity(
+                    self.ctx.types,
+                    ty,
+                    def_id,
+                )
+            });
+            let name_atom = self.ctx.types.intern_string(name);
+            let canonical_def_id = self
+                .ctx
+                .definition_store
+                .find_defs_by_name(name_atom)
+                .and_then(|defs| defs.first().copied());
+            if let Some(def_id) = canonical_def_id
+                && !selected_is_identity
+                && !crate::query_boundaries::lib_augmentations::is_lazy_def_identity(
+                    self.ctx.types,
+                    ty,
+                    def_id,
+                )
+            {
+                self.ctx.definition_store.register_type_to_def(ty, def_id);
             }
         }
 

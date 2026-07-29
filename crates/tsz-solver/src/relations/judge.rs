@@ -913,6 +913,8 @@ impl<'a> DefaultJudge<'a> {
                     this_type: shape.this_type,
                     return_type: shape.return_type,
                     type_predicate: shape.type_predicate,
+                    has_literal_types: false,
+                    construct_origin: None,
                     is_method: shape.is_method,
                 }])
             }
@@ -944,6 +946,8 @@ impl<'a> DefaultJudge<'a> {
                     this_type: shape.this_type,
                     return_type: shape.return_type,
                     type_predicate: shape.type_predicate,
+                    has_literal_types: false,
+                    construct_origin: None,
                     is_method: false,
                 }])
             }

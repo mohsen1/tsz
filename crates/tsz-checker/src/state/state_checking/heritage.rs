@@ -496,7 +496,17 @@ impl<'a> CheckerState<'a> {
                         let resolved_sym =
                             self.resolve_alias_symbol(heritage_sym, &mut visited_aliases);
                         let sym_to_check = resolved_sym.unwrap_or(heritage_sym);
-                        if let Some(symbol) = self.get_cross_file_symbol(sym_to_check) {
+                        let is_local_module_augmentation_symbol = self
+                            .current_module_augmentation_type_position_symbol(expr_idx)
+                            .is_some_and(|symbol| symbol == heritage_sym || symbol == sym_to_check)
+                            || self
+                                .local_module_augmentation_symbol(sym_to_check)
+                                .is_some();
+                        if let Some(symbol) = if is_local_module_augmentation_symbol {
+                            self.ctx.binder.get_symbol(sym_to_check)
+                        } else {
+                            self.get_cross_file_symbol(sym_to_check)
+                        } {
                             let is_namespace = symbol.has_any_flags(symbol_flags::MODULE);
                             let has_non_namespace_value = symbol
                                 .has_any_flags(symbol_flags::VALUE & !symbol_flags::VALUE_MODULE);
@@ -518,6 +528,14 @@ impl<'a> CheckerState<'a> {
                         let resolved_sym =
                             self.resolve_alias_symbol(heritage_sym, &mut visited_aliases);
                         let sym_to_check = resolved_sym.unwrap_or(heritage_sym);
+                        let is_exact_local_module_augmentation_symbol = self
+                            .current_module_augmentation_type_position_symbol(expr_idx)
+                            .is_some_and(|symbol| symbol == heritage_sym || symbol == sym_to_check);
+                        let is_local_module_augmentation_symbol =
+                            is_exact_local_module_augmentation_symbol
+                                || self
+                                    .local_module_augmentation_symbol(sym_to_check)
+                                    .is_some();
 
                         // Guard against infinite recursion: if this symbol is already being resolved
                         // as a class instance type, skip the type resolution to prevent stack overflow.
@@ -526,7 +544,11 @@ impl<'a> CheckerState<'a> {
                             .class_instance_resolution_set
                             .contains(&sym_to_check);
 
-                        if let Some(symbol) = self.get_cross_file_symbol(sym_to_check) {
+                        if let Some(symbol) = if is_local_module_augmentation_symbol {
+                            self.ctx.binder.get_symbol(sym_to_check)
+                        } else {
+                            self.get_cross_file_symbol(sym_to_check)
+                        } {
                             let is_namespace = symbol.has_any_flags(symbol_flags::MODULE);
                             // Merged declarations like `namespace N {}` + `class N {}`
                             // are valid values in `extends`. Only emit TS2708 for
@@ -607,12 +629,16 @@ impl<'a> CheckerState<'a> {
                         // like Array, Object, Promise have both interface and variable
                         // declarations (`interface Array` + `declare var Array: ArrayConstructor`),
                         // and the variable provides the constructor for extends.
-                        let is_interface_only =
-                            self.get_cross_file_symbol(sym_to_check).is_some_and(|s| {
-                                s.has_any_flags(symbol_flags::INTERFACE)
-                                    && !s.has_any_flags(symbol_flags::CLASS)
-                                    && !s.has_any_flags(symbol_flags::VARIABLE)
-                            });
+                        let is_interface_only = (if is_local_module_augmentation_symbol {
+                            self.ctx.binder.get_symbol(sym_to_check)
+                        } else {
+                            self.get_cross_file_symbol(sym_to_check)
+                        })
+                        .is_some_and(|s| {
+                            s.has_any_flags(symbol_flags::INTERFACE)
+                                && !s.has_any_flags(symbol_flags::CLASS)
+                                && !s.has_any_flags(symbol_flags::VARIABLE)
+                        });
 
                         if is_interface_only && is_class_declaration {
                             // Emit TS2689: Cannot extend an interface (only for classes)
@@ -827,7 +853,24 @@ impl<'a> CheckerState<'a> {
                         } else if !is_class_declaration {
                             let instantiated_type = if is_being_resolved {
                                 TypeId::ERROR
+                            } else if is_exact_local_module_augmentation_symbol {
+                                // A sibling interface declared in this exact
+                                // string-literal augmentation owns its body in
+                                // the current binder. Resolve that declaration
+                                // directly; the generic type-node path can
+                                // otherwise reuse a same-number foreign
+                                // `SymbolId`/`DefId` and validate the wrong
+                                // non-object body.
+                                self.current_module_augmentation_interface_type(sym_to_check)
+                                    .unwrap_or_else(|| self.get_type_from_type_node(type_idx))
                             } else {
+                                // The type-node query carries the exact heritage
+                                // syntax and installs the declaration owner's
+                                // binder-local identity for module
+                                // augmentations. Re-selecting by the raw
+                                // `SymbolId` here can pick a same-number sibling
+                                // interface and turn a valid nested base into a
+                                // non-object TS2312.
                                 self.get_type_from_type_node(type_idx)
                             };
                             if instantiated_type == TypeId::ERROR

@@ -585,10 +585,12 @@ impl<'a> CheckerState<'a> {
                 // Found class in another file's arena. Create a child checker
                 // with that arena and directly compute the class type.
                 let Some(cross_arena_guard) = Self::enter_cross_arena_delegation() else {
-                    return (TypeId::ERROR, Vec::new());
+                    return (TypeId::ANY, Vec::new());
                 };
                 if !self.ctx.enter_recursion() {
-                    return (TypeId::ERROR, Vec::new());
+                    Self::mark_cross_arena_bailout();
+                    drop(cross_arena_guard);
+                    return (TypeId::ANY, Vec::new());
                 }
 
                 let delegate_binder = self
@@ -601,6 +603,7 @@ impl<'a> CheckerState<'a> {
                     .map(|sf| sf.file_name.clone())
                     .unwrap_or_else(|| self.ctx.file_name.clone());
 
+                let bailout_epoch_before = Self::cross_arena_bailout_epoch();
                 let mut checker = CheckerState::delegate_for_arena(
                     arena.as_ref(),
                     delegate_binder,
@@ -636,11 +639,25 @@ impl<'a> CheckerState<'a> {
                 } else {
                     (TypeId::UNKNOWN, None)
                 };
+                let result_is_bailout_artifact =
+                    Self::is_cross_arena_bailout_artifact(bailout_epoch_before, result);
 
                 // Collect child data before dropping (checker borrows from self)
-                let child_instance_types: Vec<(SymbolId, TypeId)> =
-                    checker.ctx.symbol_instance_types.iter().collect();
+                let child_instance_types: Vec<(SymbolId, TypeId)> = checker
+                    .ctx
+                    .symbol_instance_types
+                    .iter()
+                    .filter(|(_, type_id)| {
+                        !Self::is_cross_arena_bailout_artifact(bailout_epoch_before, *type_id)
+                    })
+                    .collect();
                 drop(checker);
+
+                if result_is_bailout_artifact {
+                    drop(cross_arena_guard);
+                    self.ctx.leave_recursion();
+                    return (TypeId::ANY, Vec::new());
+                }
 
                 // Now safe to mutate self
                 if let Some(inst) = cross_instance_type
@@ -1315,6 +1332,7 @@ impl<'a> CheckerState<'a> {
             .map(|sf| sf.file_name.clone())
             .unwrap_or_else(|| self.ctx.file_name.clone());
 
+        let bailout_epoch_before = Self::cross_arena_bailout_epoch();
         let mut checker = Box::new(CheckerState::with_parent_cache_attributed(
             arena,
             binder,
@@ -1334,7 +1352,9 @@ impl<'a> CheckerState<'a> {
             .symbol_resolution_depth
             .set(self.ctx.symbol_resolution_depth.get());
         let result = checker.type_of_value_declaration_for_symbol(sym_id, decl_idx);
-        if !matches!(result, TypeId::ERROR | TypeId::UNKNOWN) {
+        let result_is_bailout_artifact =
+            Self::is_cross_arena_bailout_artifact(bailout_epoch_before, result);
+        if !result_is_bailout_artifact && !matches!(result, TypeId::ERROR | TypeId::UNKNOWN) {
             self.ctx
                 .lib_delegation_cache
                 .insert_declaration_node_type(arena, decl_idx, 1, result);
