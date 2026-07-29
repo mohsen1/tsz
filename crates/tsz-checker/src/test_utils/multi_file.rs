@@ -15,6 +15,41 @@ use tsz_binder::BinderState;
 use tsz_binder::lib_loader::LibFile;
 use tsz_parser::parser::ParserState;
 
+/// Build the test-harness `SymbolId -> file_idx` disambiguation index.
+///
+/// The driver's `build_global_symbol_file_index` maps only symbols the
+/// cross-file resolution pipeline actually handed out with their owning
+/// arena — the map is a HINT, and an absent entry means "resolve locally /
+/// by name". Per-file binders reuse raw `SymbolId`s from 0, so registering
+/// every symbol of every binder claims foreign ownership of a checking
+/// file's own locals and import aliases (the false-TS2538 family, #15983).
+/// Register only raw ids owned by exactly one binder; ambiguous ids fall
+/// back to local/name-based resolution like an unresolved driver entry.
+fn build_test_symbol_file_index(
+    all_binders: &[Arc<BinderState>],
+) -> rustc_hash::FxHashMap<tsz_binder::SymbolId, usize> {
+    let mut symbol_file_index = rustc_hash::FxHashMap::default();
+    let mut ambiguous = rustc_hash::FxHashSet::default();
+    for (file_idx, binder) in all_binders.iter().enumerate() {
+        for symbol in binder.symbols.iter() {
+            match symbol_file_index.entry(symbol.id) {
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    e.insert(file_idx);
+                }
+                std::collections::hash_map::Entry::Occupied(e) => {
+                    if *e.get() != file_idx {
+                        ambiguous.insert(symbol.id);
+                    }
+                }
+            }
+        }
+    }
+    for sym_id in &ambiguous {
+        symbol_file_index.remove(sym_id);
+    }
+    symbol_file_index
+}
+
 /// Parse, bind, and type-check a multi-file project, returning diagnostics for
 /// the entry file.
 ///
@@ -114,15 +149,7 @@ pub fn check_multi_file_with_global_index(
     let all_arenas = Arc::new(arenas);
     let all_binders = Arc::new(binders);
 
-    // Build the immutable declaring-file index (SymbolId -> file_idx), matching
-    // the driver's `build_global_symbol_file_index`. First binder owning a raw
-    // SymbolId wins, deterministic by file index.
-    let mut symbol_file_index = rustc_hash::FxHashMap::default();
-    for (file_idx, binder) in all_binders.iter().enumerate() {
-        for symbol in binder.symbols.iter() {
-            symbol_file_index.entry(symbol.id).or_insert(file_idx);
-        }
-    }
+    let symbol_file_index = build_test_symbol_file_index(&all_binders);
 
     let types = TypeInterner::new();
     let mut checker = CheckerState::new(
@@ -179,13 +206,7 @@ pub fn check_all_multi_file_with_global_index(
     let all_arenas = Arc::new(arenas);
     let all_binders = Arc::new(binders);
 
-    let mut symbol_file_index = rustc_hash::FxHashMap::default();
-    for (file_idx, binder) in all_binders.iter().enumerate() {
-        for symbol in binder.symbols.iter() {
-            symbol_file_index.entry(symbol.id).or_insert(file_idx);
-        }
-    }
-    let symbol_file_index = Arc::new(symbol_file_index);
+    let symbol_file_index = Arc::new(build_test_symbol_file_index(&all_binders));
 
     let types = TypeInterner::new();
     let mut diagnostics = Vec::new();
@@ -329,14 +350,7 @@ fn check_multi_file_with_libs_impl(
     checker.ctx.set_resolved_modules(resolved_modules);
 
     if stamp {
-        // Build the immutable declaring-file index (SymbolId -> file_idx) like
-        // the driver's `build_global_symbol_file_index`.
-        let mut symbol_file_index = rustc_hash::FxHashMap::default();
-        for (file_idx, binder) in all_binders.iter().enumerate() {
-            for symbol in binder.symbols.iter() {
-                symbol_file_index.entry(symbol.id).or_insert(file_idx);
-            }
-        }
+        let symbol_file_index = build_test_symbol_file_index(&all_binders);
         checker
             .ctx
             .set_global_symbol_file_index(Arc::new(symbol_file_index));
