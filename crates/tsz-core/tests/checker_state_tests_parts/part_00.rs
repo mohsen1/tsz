@@ -1788,8 +1788,8 @@ class Rectangle {
         .filter(|d| d.code == diagnostic_codes::DUPLICATE_IDENTIFIER)
         .count();
     assert_eq!(
-        duplicate_count, 1,
-        "Expected 1 TS2300 for duplicate getter (only on second occurrence, matching tsc), got: {:?}",
+        duplicate_count, 2,
+        "Expected TS2300 at both duplicate getter declarations, matching tsc 7.0.2; got: {:?}",
         checker.ctx.diagnostics
     );
 }
