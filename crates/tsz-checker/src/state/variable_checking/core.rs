@@ -15,6 +15,7 @@ use tsz_solver::TypeId;
 
 mod annotation_context;
 mod async_jsdoc_return;
+mod lib_decl_arena;
 mod precheck_helpers;
 mod prior_value;
 
@@ -1287,23 +1288,60 @@ impl<'a> CheckerState<'a> {
                                 }
                                 for &lib_decl in &lib_sym.declarations {
                                     if lib_decl.is_some() {
-                                        let Some(cross_arena_guard) =
-                                            CheckerState::enter_cross_arena_delegation()
-                                        else {
+                                        // A merged binder's symbol keeps
+                                        // declaration indices from every file
+                                        // that contributed to it, and
+                                        // `NodeIndex` is arena-local. Reading
+                                        // one against the wrong arena resolves
+                                        // to an unrelated node instead of
+                                        // failing, so the child checker below
+                                        // would materialize (and compare
+                                        // against) a foreign lib member's type.
+                                        if !lib_decl_arena::lib_declaration_belongs_to_arena(
+                                            &binder, &arena, lib_sym_id, lib_decl, &name,
+                                        ) {
                                             continue;
-                                        };
-                                        let mut lib_checker =
-                                            CheckerState::new_with_shared_def_store(
-                                                &arena,
-                                                &binder,
-                                                types,
-                                                "lib.d.ts".to_string(),
-                                                compiler_options.clone(),
-                                                definition_store.clone(),
-                                            );
-                                        lib_checker.ctx.lib_contexts = lib_contexts.clone();
-                                        let lib_type = lib_checker.get_type_of_node(lib_decl);
-                                        drop(cross_arena_guard);
+                                        }
+                                        // A lib global's annotation is a bare
+                                        // reference to a lib type (`declare var
+                                        // Symbol: SymbolConstructor;`). Resolve
+                                        // it through the canonical,
+                                        // name-verified lib def query. The
+                                        // child-checker fallback lowers the
+                                        // same annotation through the raw
+                                        // `SymbolId -> DefId` map, which is
+                                        // first-writer-wins across lib binders
+                                        // and answers with an unrelated lib
+                                        // entity's def.
+                                        let lib_type =
+                                            match lib_decl_arena::lib_global_annotation_type(
+                                                &self.ctx, &arena, lib_decl,
+                                            ) {
+                                                Some(annotation_type) => annotation_type,
+                                                None => {
+                                                    let Some(cross_arena_guard) =
+                                                        CheckerState::enter_cross_arena_delegation(
+                                                        )
+                                                    else {
+                                                        continue;
+                                                    };
+                                                    let mut lib_checker =
+                                                        CheckerState::new_with_shared_def_store(
+                                                            &arena,
+                                                            &binder,
+                                                            types,
+                                                            "lib.d.ts".to_string(),
+                                                            compiler_options.clone(),
+                                                            definition_store.clone(),
+                                                        );
+                                                    lib_checker.ctx.lib_contexts =
+                                                        lib_contexts.clone();
+                                                    let materialized =
+                                                        lib_checker.get_type_of_node(lib_decl);
+                                                    drop(cross_arena_guard);
+                                                    materialized
+                                                }
+                                            };
                                         if !is_in_namespace && !is_in_external_module {
                                             // TS2403 only applies to compatible global-scope vars.
                                             if !is_in_function_scope
