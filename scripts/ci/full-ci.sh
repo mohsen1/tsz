@@ -446,6 +446,12 @@ run_lint() {
   fi
 }
 
+# Every workspace crate whose tests the unit lane adjudicates. A crate absent
+# here is covered by no lane at all: its failures reach no junit, so
+# known-failures-check.mjs can neither fail on them nor ratchet them down, and
+# any baseline entry naming it is inert (#15999 §3). The
+# `known_failure_packages_are_in_the_unit_lane` contract test in
+# scripts/ci/test_full_ci_unit_gate.py holds that invariant.
 _UNIT_TEST_PACKAGES=(
   tsz-common
   tsz-scanner
@@ -456,6 +462,8 @@ _UNIT_TEST_PACKAGES=(
   tsz-emitter
   tsz-lsp
   tsz-core
+  tsz-cli
+  tsz-conformance
 )
 
 # The `tsz-checker` lib-test target can exceed hosted runner memory even with
@@ -480,7 +488,10 @@ unit_test_packages() {
     printf '%s\n' "${_UNIT_TEST_PACKAGES[@]}"
     return
   fi
-  local known=" tsz-common tsz-scanner tsz-parser tsz-binder tsz-solver tsz-checker tsz-emitter tsz-lsp tsz-core "
+  # Derived from _UNIT_TEST_PACKAGES rather than hand-copied: a second literal
+  # list drifts silently, and a crate missing from it is rejected as "unknown"
+  # even though the full lane runs it.
+  local known=" ${_UNIT_TEST_PACKAGES[*]} "
   local crate
   for crate in $override; do
     if [[ "$known" != *" $crate "* ]]; then
