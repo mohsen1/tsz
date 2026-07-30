@@ -65,6 +65,7 @@ mod module_entity;
 mod package_resolution;
 mod program_context;
 pub use program_context::ProgramContext;
+mod contested_symbols;
 mod request_cache;
 mod resolver;
 mod source_file_symbol_type_cache_scope;
@@ -78,6 +79,7 @@ use crate::diagnostics::Diagnostic;
 use crate::query_boundaries::common::{QueryDatabase, TypeEnvironment};
 pub use aliases::*;
 pub use analysis_state_types::*;
+pub use contested_symbols::build_contested_symbol_ids;
 pub(crate) use diagnostic_indices::DiagnosticIndices;
 pub use request_cache::{RequestCacheCounters, RequestCacheKey};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -1563,6 +1565,15 @@ pub struct CheckerContext<'a> {
     /// of `cross_file_symbol_targets`. Read sites use `resolve_symbol_file_index()`
     /// which checks the local overlay first, then this shared base.
     pub global_symbol_file_index: Option<Arc<FxHashMap<SymbolId, usize>>>,
+
+    /// Raw `SymbolId`s declared by two or more binders in this program.
+    ///
+    /// Such an id names a different declaration in each binder, so it has no
+    /// single owning file. `resolve_symbol_file_index()` and friends answer
+    /// `None` for these instead of picking whichever binder wrote last, which
+    /// sends callers down their local/name-based fallback. Empty (and so
+    /// free) once the driver's global `SymbolId` remap has run.
+    pub contested_symbol_ids: Option<Arc<FxHashSet<SymbolId>>>,
 
     /// All arenas for cross-file resolution (indexed by `file_idx` from `Symbol.decl_file_idx`).
     /// Set during multi-file type checking to allow resolving declarations across files.

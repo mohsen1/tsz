@@ -442,6 +442,7 @@ impl<'a> CheckerContext<'a> {
             private_constructor_types: FxHashSet::default(),
             cross_file_symbol_targets: RefCell::new(super::SymbolFileTargetsOverlay::default()),
             global_symbol_file_index: None,
+            contested_symbol_ids: None,
             all_arenas: None,
             all_binders: None,
             global_file_locals_index: None,

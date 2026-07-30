@@ -94,6 +94,12 @@ pub struct ProgramContext {
     /// Read sites fall back to this base map when the local
     /// `cross_file_symbol_targets` overlay has no entry.
     pub global_symbol_file_index: Option<Arc<FxHashMap<SymbolId, usize>>>,
+    /// Raw `SymbolId`s declared by two or more of `all_binders`.
+    ///
+    /// Built once by `build_global_indices()` and shared with every checker so
+    /// the O(symbols) scan is not repeated per file. Cross-file owner queries
+    /// answer `None` for these ids instead of naming an arbitrary binder.
+    pub contested_symbol_ids: Option<Arc<FxHashSet<SymbolId>>>,
     /// Pre-computed global `file_locals` index: name -> Vec<(`file_idx`, SymbolId)>.
     /// Built once from all binders; shared across all checkers via `Arc`.
     pub global_file_locals_index: Option<GlobalFileLocalsIndex>,
@@ -189,6 +195,7 @@ impl Default for ProgramContext {
             skeleton_module_exports_index: None,
             symbol_file_targets: Arc::new(vec![]),
             global_symbol_file_index: None,
+            contested_symbol_ids: None,
             global_file_locals_index: None,
             global_module_exports_index: None,
             global_module_augmentations_index: None,
@@ -280,6 +287,9 @@ impl ProgramContext {
         }
         // Pre-install remaining global indices before set_all_binders so it
         // can skip re-computing them. This avoids O(N) binder scans per checker.
+        if let Some(ref ids) = self.contested_symbol_ids {
+            ctx.set_contested_symbol_ids(Arc::clone(ids));
+        }
         if let Some(ref idx) = self.global_file_locals_index {
             ctx.global_file_locals_index = Some(Arc::clone(idx));
         }
@@ -375,6 +385,13 @@ impl ProgramContext {
     /// When these fields are `Some`, `set_all_binders` skips re-computing them.
     pub fn build_global_indices(&mut self) {
         self.source_file_symbol_type_cache_scope = next_source_file_symbol_type_cache_scope();
+
+        // Which raw `SymbolId`s name a declaration in more than one binder.
+        // Computed here, once per program, so every checker shares the answer
+        // and `set_all_binders` never has to scan symbols per file.
+        self.contested_symbol_ids = Some(Arc::new(super::build_contested_symbol_ids(
+            &self.all_binders,
+        )));
 
         // Phase 2 step 2: when the driver pre-built
         // `skeleton_module_augmentations_index` from `SkeletonIndex`, skip the

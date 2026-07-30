@@ -27,6 +27,7 @@ fn empty_program_context() -> ProgramContext {
         skeleton_module_exports_index: None,
         symbol_file_targets: Arc::new(vec![]),
         global_symbol_file_index: None,
+        contested_symbol_ids: None,
         global_file_locals_index: None,
         global_module_exports_index: None,
         global_module_augmentations_index: None,

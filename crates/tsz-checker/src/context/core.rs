@@ -184,8 +184,12 @@ impl<'a> CheckerContext<'a> {
     ///
     /// Checks the layered `cross_file_symbol_targets` overlay first, then falls
     /// back to the shared `global_symbol_file_index` base map.
-    /// Returns `None` if the symbol has no known cross-file owner.
+    /// Returns `None` if the symbol has no known cross-file owner, including
+    /// when the raw id is contested (see [`Self::symbol_id_is_contested`]).
     pub fn resolve_symbol_file_index(&self, sym_id: SymbolId) -> Option<usize> {
+        if self.symbol_id_is_contested(sym_id) {
+            return None;
+        }
         if let Some(idx) = self.resolve_dynamic_symbol_file_index(sym_id) {
             return Some(idx);
         }
@@ -201,7 +205,43 @@ impl<'a> CheckerContext<'a> {
 
     /// Resolve only dynamically-discovered `SymbolId` ownership.
     pub fn resolve_dynamic_symbol_file_index(&self, sym_id: SymbolId) -> Option<usize> {
+        if self.symbol_id_is_contested(sym_id) {
+            return None;
+        }
         self.cross_file_symbol_targets.borrow().get(sym_id)
+    }
+
+    /// Whether a foreign owner for `sym_id` would contradict the checking
+    /// file's own symbol table.
+    ///
+    /// True only when the raw id is declared by two or more binders *and* the
+    /// file being checked is one of them. That conjunction is what makes the
+    /// answer knowably wrong rather than merely unproven: the id names a real
+    /// local declaration here, so pointing it at another file claims foreign
+    /// ownership of this file's own local or import alias — the `#15983`
+    /// false-`TS2538` mechanism.
+    ///
+    /// Contested ids the checking file does *not* declare are left alone. It
+    /// has no competing claim to make, and refusing those too strands
+    /// legitimate cross-file resolutions on their name-based fallback.
+    ///
+    /// The rule has to hold for the dynamically discovered overlay as well as
+    /// the static index: the overlay is consulted first, so one dynamic
+    /// registration would otherwise defeat a static index that had correctly
+    /// dropped the id as ambiguous.
+    #[must_use]
+    pub fn symbol_id_is_contested(&self, sym_id: SymbolId) -> bool {
+        if !self
+            .contested_symbol_ids
+            .as_ref()
+            .is_some_and(|ids| ids.contains(&sym_id))
+        {
+            return false;
+        }
+        self.all_binders
+            .as_ref()
+            .and_then(|binders| binders.get(self.current_file_idx))
+            .is_some_and(|binder| binder.symbols.get(sym_id).is_some())
     }
 
     /// Resolve a `SymbolId` to its *declaring* file index from the shared,
@@ -221,6 +261,9 @@ impl<'a> CheckerContext<'a> {
     /// (e.g. ambient-module exports discovered only during resolution); callers
     /// fall back to the dynamic overlay in that case.
     pub fn resolve_symbol_declaring_file_index(&self, sym_id: SymbolId) -> Option<usize> {
+        if self.symbol_id_is_contested(sym_id) {
+            return None;
+        }
         self.global_symbol_file_index
             .as_ref()
             .and_then(|map| map.get(&sym_id).copied())
@@ -354,6 +397,15 @@ impl<'a> CheckerContext<'a> {
     /// into the local `cross_file_symbol_targets` overlay.
     pub fn set_global_symbol_file_index(&mut self, index: Arc<FxHashMap<SymbolId, usize>>) {
         self.global_symbol_file_index = Some(index);
+    }
+
+    /// Install the shared set of raw `SymbolId`s declared in more than one
+    /// binder, so cross-file owner queries can refuse to answer for them.
+    ///
+    /// Pre-installing this before [`Self::set_all_binders`] keeps the O(symbols)
+    /// scan at the driver level instead of paying it once per file checker.
+    pub fn set_contested_symbol_ids(&mut self, ids: Arc<FxHashSet<SymbolId>>) {
+        self.contested_symbol_ids = Some(ids);
     }
 
     /// Set lib contexts for global type resolution.
@@ -671,6 +723,16 @@ impl<'a> CheckerContext<'a> {
     /// `set_declared_modules_from_skeleton`), the declared-modules binder scan
     /// is skipped — the skeleton-derived data is used instead.
     pub fn set_all_binders(&mut self, binders: Arc<Vec<Arc<BinderState>>>) {
+        // Raw `SymbolId`s only name a unique declaration program-wide after the
+        // driver's global remap. Callers that assemble binders themselves (the
+        // test harnesses, and any pre-merge path) leave each binder numbering
+        // from 0, so record which ids collide before anything can resolve one
+        // to an owning file. `ProgramContext` pre-installs this, which is what
+        // keeps the scan off the per-file fast path below.
+        if self.contested_symbol_ids.is_none() {
+            self.contested_symbol_ids = Some(Arc::new(super::build_contested_symbol_ids(&binders)));
+        }
+
         // If the 5 name-based global indices are already pre-populated (from ProgramContext),
         // skip the O(N) binder scans entirely. This is the fast path for multi-file
         // checking where ProgramContext::build_global_indices was called once at the driver level.
