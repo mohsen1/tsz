@@ -171,6 +171,30 @@ impl<'a> CheckerState<'a> {
         if self.try_elaborate_callback_body_diagnostics(idx, param_type) {
             return;
         }
+        // Promote a readonly-array/tuple → mutable-array/tuple argument mismatch to
+        // TS4104 ("The type 'X' is 'readonly' and cannot be assigned to the mutable
+        // type 'Y'"), matching the direct-assignment path
+        // (`check_assignable_or_report_at_with_options`) and tsc, which reports
+        // TS4104 rather than the generic TS2345 for this reason.
+        if let Some(reason) = self.readonly_to_mutable_array_or_tuple_reason(arg_type, param_type) {
+            let source_display = Some(self.format_type_for_diagnostic_role(
+                arg_type,
+                DiagnosticTypeDisplayRole::CallArgument {
+                    parameter: param_type,
+                    argument_idx: idx,
+                },
+            ));
+            let diag = self.render_failure_reason_with_source_display(
+                &reason,
+                arg_type,
+                param_type,
+                idx,
+                0,
+                source_display,
+            );
+            self.ctx.push_diagnostic(diag);
+            return;
+        }
         let analysis = self.analyze_assignability_failure(arg_type, param_type);
 
         // tsc promotes a sole missing-required-property failure to the PRIMARY
