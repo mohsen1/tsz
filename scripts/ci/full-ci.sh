@@ -426,10 +426,12 @@ run_lint() {
   # — separate cache key from .target/debug so dev incrementals on a
   # contributor's machine aren't poisoned by CI-shaped fingerprints, and
   # vice versa.
-  # tsz-conformance is excluded: it pre-dates workspace lint inheritance and
-  # has existing violations that need a dedicated cleanup PR before it can
-  # join the gate (#13453).
-  cargo clippy --profile ci-lint --workspace --exclude tsz-conformance \
+  # tsz-conformance joined this deny-level gate once measured clippy-clean
+  # under it (#13453 is closed; the exclusion outlived its justification).
+  # It stays excluded from the separate pedantic warn-level ratchet below
+  # (scripts/arch/check-clippy-warn-ratchet.py) — that group has a real,
+  # measured ~6.4k-warning backlog on this crate pending dedicated cleanup.
+  cargo clippy --profile ci-lint --workspace \
     --all-targets -- -D warnings || return $?
   scripts/arch/check-checker-boundaries.sh || return $?
   # Warn-level ratchet: counts must not rise above the committed baseline.
