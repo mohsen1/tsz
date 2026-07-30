@@ -1287,23 +1287,85 @@ impl<'a> CheckerState<'a> {
                                 }
                                 for &lib_decl in &lib_sym.declarations {
                                     if lib_decl.is_some() {
-                                        let Some(cross_arena_guard) =
-                                            CheckerState::enter_cross_arena_delegation()
-                                        else {
+                                        // A merged symbol's `declarations` mixes its VALUE
+                                        // declarations with any same-named TYPE-space
+                                        // declarations (e.g. `declare var Array:
+                                        // ArrayConstructor` merged with `interface
+                                        // Array<T> { ... }`, both named `Array`) and, for a
+                                        // `declare namespace Reflect { ... }`-style global,
+                                        // a `MODULE_DECLARATION` whose synthesized "typeof
+                                        // namespace" value type this pass does not attempt
+                                        // to materialize. Only a plain value declaration can
+                                        // be a "prior declaration" for TS2403; a type-only
+                                        // declaration occupies a different declaration space
+                                        // (see the VALUE-flag check above) and a namespace
+                                        // declaration needs its own synthesis, so neither is
+                                        // materialized here.
+                                        use tsz_parser::parser::syntax_kind_ext;
+                                        if arena.get(lib_decl).is_some_and(|node| {
+                                            matches!(
+                                                node.kind,
+                                                syntax_kind_ext::INTERFACE_DECLARATION
+                                                    | syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                                                    | syntax_kind_ext::MODULE_DECLARATION
+                                            )
+                                        }) {
                                             continue;
-                                        };
-                                        let mut lib_checker =
-                                            CheckerState::new_with_shared_def_store(
-                                                &arena,
-                                                &binder,
-                                                types,
-                                                "lib.d.ts".to_string(),
-                                                compiler_options.clone(),
-                                                definition_store.clone(),
-                                            );
-                                        lib_checker.ctx.lib_contexts = lib_contexts.clone();
-                                        let lib_type = lib_checker.get_type_of_node(lib_decl);
-                                        drop(cross_arena_guard);
+                                        }
+                                        // Resolve the lib global's type by reading its
+                                        // type annotation's referenced type BY NAME
+                                        // (`resolve_lib_type_by_name`) instead of
+                                        // materializing it with an ad-hoc child checker
+                                        // scoped to this one lib binder's own arena.
+                                        // Every lib binder's symbols share the u32::MAX
+                                        // declaration-file sentinel, so the child
+                                        // checker's raw-SymbolId resolution collides with
+                                        // whichever def a DIFFERENT lib binder registered
+                                        // under the same numeric id — the SymbolId-
+                                        // reinterpreted-as-DefId family also seen in
+                                        // #13862/#15778 (`Symbol` materializing as
+                                        // `blur`, `Array` as `CSSImportRule`, etc.).
+                                        // `resolve_lib_type_by_name` is the same
+                                        // collision-hardened, name-keyed route ordinary
+                                        // lib type references already resolve through.
+                                        // Declarations without a simple named type
+                                        // annotation (rare for `declare var` globals)
+                                        // fall back to the previous per-declaration
+                                        // child-checker materialization.
+                                        let lib_type = arena
+                                            .get(lib_decl)
+                                            .and_then(|node| arena.get_variable_declaration(node))
+                                            .filter(|vd| vd.type_annotation.is_some())
+                                            .and_then(|vd| arena.get(vd.type_annotation))
+                                            .and_then(|ann| arena.get_type_ref(ann))
+                                            .and_then(|type_ref| arena.get(type_ref.type_name))
+                                            .and_then(|name_node| arena.get_identifier(name_node))
+                                            .and_then(|ident| {
+                                                self.resolve_lib_type_by_name(
+                                                    ident.escaped_text.as_str(),
+                                                )
+                                            })
+                                            .unwrap_or_else(|| {
+                                                let Some(cross_arena_guard) =
+                                                    CheckerState::enter_cross_arena_delegation()
+                                                else {
+                                                    return TypeId::ERROR;
+                                                };
+                                                let mut lib_checker =
+                                                    CheckerState::new_with_shared_def_store(
+                                                        &arena,
+                                                        &binder,
+                                                        types,
+                                                        "lib.d.ts".to_string(),
+                                                        compiler_options.clone(),
+                                                        definition_store.clone(),
+                                                    );
+                                                lib_checker.ctx.lib_contexts = lib_contexts.clone();
+                                                let lib_type =
+                                                    lib_checker.get_type_of_node(lib_decl);
+                                                drop(cross_arena_guard);
+                                                lib_type
+                                            });
                                         if !is_in_namespace && !is_in_external_module {
                                             // TS2403 only applies to compatible global-scope vars.
                                             if !is_in_function_scope
