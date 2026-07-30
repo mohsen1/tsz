@@ -99,7 +99,14 @@ fn readonly_tuple_satisfies_specific_mutable_element_constraint() {
 fn readonly_array_source_still_fails_against_mutable_array_constraint() {
     // tsc rejects a plain `readonly X[]` source at the constraint
     // boundary because its element list is unbounded; only tuples are
-    // loosened. tsz must mirror this rejection.
+    // loosened. tsz must mirror this rejection. Verified against the
+    // pinned tsc 7.0.2 oracle: the rejection's head diagnostic is TS4104
+    // ("The type 'readonly string[]' is 'readonly' and cannot be assigned
+    // to the mutable type 'unknown[]'."), not the generic TS2345 — tsc
+    // promotes the readonly-to-mutable reason to the head diagnostic here
+    // exactly as it does for a concretely-typed parameter, even though the
+    // constraint's mutable shape (`unknown[]`) was only reached through the
+    // type parameter's fallback.
     let source = r#"
         function processArray<T extends unknown[]>(arr: T): T[number] {
             return arr[0];
@@ -109,9 +116,10 @@ fn readonly_array_source_still_fails_against_mutable_array_constraint() {
     "#;
     let codes = error_codes(&check(source));
     assert!(
-        codes.contains(&2345),
+        codes.contains(&4104),
         "plain ReadonlyArray source must still be rejected at the \
-         constraint boundary; got error codes: {codes:?}"
+         constraint boundary, via TS4104 (matching tsc 7.0.2); got error \
+         codes: {codes:?}"
     );
 }
 
