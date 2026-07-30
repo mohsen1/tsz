@@ -146,14 +146,18 @@ const r = concat([1, 2] as const, ['a', 'b'] as const);
 
 #[test]
 fn aliased_readonly_tuple_variable_still_rejected() {
-    // A variable is not fresh, so readonly stays binding (TS2345).
+    // A variable is not fresh, so readonly stays binding. The argument path
+    // reports the precise TS4104, not the generic TS2345 (#16001). Verified
+    // against tsc 7.0.2, which emits exactly:
+    //   error TS4104: The type 'readonly [1, 2]' is 'readonly' and cannot be
+    //   assigned to the mutable type '[number, number]'.
     let src = r#"
 declare function f(t: [number, number]): void;
 const a = [1, 2] as const;
 f(a);
 "#;
     assert!(
-        codes(src).contains(&2345),
+        codes(src).contains(&4104),
         "aliased readonly tuple must still be rejected against a mutable param"
     );
 }
@@ -161,13 +165,20 @@ f(a);
 #[test]
 fn readonly_array_source_still_rejected_for_variadic_generic() {
     // A readonly *array* (unbounded) is not a fresh fixed literal: rejected.
+    // The argument path reports the precise TS4104, not the generic TS2345
+    // (#16001). tsc 7.0.2 emits TS4104 here at the same position.
+    //
+    // Only the code is asserted, deliberately. tsz currently renders the target
+    // as '[...readonly unknown[]]' where tsc renders the instantiated
+    // 'number[]'; asserting the current rendering would freeze that divergence
+    // into a baseline. Tracked separately — see the PR that updated this test.
     let src = r#"
 declare function f<T extends readonly unknown[]>(t: [...T]): T;
 declare const arr: readonly number[];
 const r = f(arr);
 "#;
     assert!(
-        codes(src).contains(&2345),
+        codes(src).contains(&4104),
         "readonly array source must still be rejected against `[...T]`"
     );
 }

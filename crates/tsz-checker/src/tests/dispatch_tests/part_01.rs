@@ -1574,9 +1574,15 @@ var p3 = m3.Color.Blue;
 }
 
 #[test]
-fn ts2345_readonly_array_preserves_readonly_in_message() {
-    // When a readonly array is passed where a mutable array is expected,
-    // the TS2345 message should display 'readonly number[]' not 'number[]'.
+fn ts4104_readonly_array_preserves_readonly_in_message() {
+    // When a readonly array is passed where a mutable array is expected, the
+    // argument path reports the precise TS4104 rather than the generic TS2345
+    // (#16001), and the message must still display 'readonly number[]' rather
+    // than silently widening the source to 'number[]'.
+    //
+    // Verified against tsc 7.0.2, which emits exactly:
+    //   error TS4104: The type 'readonly number[]' is 'readonly' and cannot be
+    //   assigned to the mutable type 'number[]'.
     let diags = check_source_diagnostics(
         r#"
 declare const a: readonly number[];
@@ -1584,17 +1590,17 @@ declare function fn(x: number[]): void;
 fn(a);
 "#,
     );
-    let matching = diagnostics_with_code(&diags, 2345);
-    assert_eq!(matching.len(), 1, "Expected one TS2345, got: {diags:?}");
+    let matching = diagnostics_with_code(&diags, 4104);
+    assert_eq!(matching.len(), 1, "Expected one TS4104, got: {diags:?}");
 
     let msg = &matching[0].message_text;
     assert!(
         msg.contains("'readonly number[]'"),
-        "Expected 'readonly number[]' in TS2345 message, got: {msg}"
+        "Expected 'readonly number[]' in TS4104 message, got: {msg}"
     );
     assert!(
-        msg.contains("parameter of type 'number[]'"),
-        "Expected 'number[]' as target type, got: {msg}"
+        msg.contains("mutable type 'number[]'"),
+        "Expected 'number[]' as the mutable target type, got: {msg}"
     );
 }
 
