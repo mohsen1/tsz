@@ -1184,7 +1184,7 @@ impl<'a> CheckerState<'a> {
     /// shapes with no receiver — letting the call resolver apply the default
     /// `void` receiver.
     pub(crate) fn access_receiver_type(&mut self, callee_idx: NodeIndex) -> Option<TypeId> {
-        let unwrapped = self.ctx.arena.skip_parenthesized_and_assertions(callee_idx);
+        let unwrapped = self.ctx.arena.skip_outer_expressions(callee_idx);
         let node = self.ctx.arena.get(unwrapped)?;
         if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION

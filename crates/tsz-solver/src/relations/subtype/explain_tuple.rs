@@ -10,7 +10,7 @@ use crate::def::resolver::TypeResolver;
 use crate::diagnostics::SubtypeFailureReason;
 use crate::relations::subtype::SubtypeChecker;
 use crate::types::{TupleElement, TypeId};
-use crate::visitor::is_type_parameter;
+use crate::visitor::{is_type_parameter, type_param_info};
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Build a `TupleElementTypeMismatch` for a failing element pair, recursing
@@ -186,6 +186,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
                 if let Some(variadic) = expansion.variadic {
                     let variadic_is_type_param = is_type_parameter(self.interner, variadic);
+                    let variadic_is_declared_binder = type_param_info(self.interner, variadic)
+                        .is_some_and(|info| !info.is_infer_placeholder());
                     let variadic_array = self.interner.array(variadic);
                     // The source positions aligned to this single target rest slot
                     // span `[variadic_start ..= variadic_end]`: everything after the
@@ -196,7 +198,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     // failing index.
                     let variadic_start = i + expansion.fixed.len();
                     let variadic_end = source_end.saturating_sub(1);
+                    let mut matched_source_element = false;
                     for (j, s_elem) in source_iter {
+                        matched_source_element = true;
                         if s_elem.rest {
                             if !self.check_subtype(s_elem.type_id, variadic_array).is_true() {
                                 return Some(self.tuple_element_type_mismatch(
@@ -224,6 +228,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                                     .map(Box::new),
                             });
                         }
+                    }
+                    if variadic_is_declared_binder && !matched_source_element {
+                        return Some(SubtypeFailureReason::TupleElementMismatch {
+                            source_count: source.len(),
+                            target_count: target.len(),
+                        });
                     }
                     return None;
                 }

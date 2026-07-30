@@ -45,6 +45,7 @@ fn subtype_cache_key_matches_equivalent_relation_policy_projection() {
     checker.allow_bivariant_param_count = true;
     checker.erase_generics = false;
     checker.allow_erased_generic_signature_retry = true;
+    checker.allow_provisional_rest_union = true;
     checker.in_callback_param_check = true;
 
     let expected_flags = RelationFlags::STRICT_NULL_CHECKS
@@ -57,6 +58,7 @@ fn subtype_cache_key_matches_equivalent_relation_policy_projection() {
         | RelationFlags::ALLOW_BIVARIANT_PARAM_COUNT
         | RelationFlags::NO_ERASE_GENERICS
         | RelationFlags::ALLOW_ERASED_GENERIC_SIGNATURE_RETRY
+        | RelationFlags::PROVISIONAL_REST_UNION
         | RelationFlags::IN_CALLBACK_PARAM_CHECK
         | RelationFlags::STRICT_READONLY_IDENTITY;
     let expected_policy = RelationPolicy::from_relation_flags(expected_flags)

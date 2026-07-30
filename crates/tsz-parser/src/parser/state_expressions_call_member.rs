@@ -394,8 +394,11 @@ impl ParserState {
                     if self.scanner.has_preceding_line_break() {
                         break;
                     }
-                    self.next_token();
+                    // The node ends at the `!`, not at the token that follows
+                    // it. Capture the operator end before advancing so member
+                    // receivers such as `value!.method()` retain an exact span.
                     let end_pos = self.token_end();
+                    self.next_token();
 
                     expr = self.arena.add_unary_expr_ex(
                         syntax_kind_ext::NON_NULL_EXPRESSION,
@@ -517,7 +520,10 @@ impl ParserState {
                         } else {
                             // Not a call or tagged template - this is an instantiation expression
                             // (e.g., f<string>, new Foo<number>, a<b>?.())
-                            let end_pos = self.token_end();
+                            // `try_parse_type_arguments_for_call` has advanced
+                            // to the first token after `>`. Its full start is
+                            // therefore the exact end of this expression.
+                            let end_pos = self.token_full_start();
                             expr = self.arena.add_expr_with_type_args(
                                 crate::parser::syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS,
                                 start_pos,

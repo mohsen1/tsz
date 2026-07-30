@@ -77,7 +77,7 @@ pub(crate) fn cached_bivariant_assignability_with_resolver<
         sound_mode,
     );
 
-    if is_cacheable {
+    if is_cacheable && relation_result.is_cacheable() {
         let cache_key = assignability_cache_key(source, target, flags, inheritance_graph);
         db.insert_assignability_cache(cache_key, relation_result.is_related());
     }

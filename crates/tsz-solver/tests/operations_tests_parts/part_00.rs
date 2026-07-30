@@ -63,6 +63,7 @@ fn call_evaluator_cache_statistics_account_for_contextual_sensitivity() {
 
     let empty = evaluator.cache_statistics();
     assert_eq!(empty.contextual_sensitivity_entries, 0);
+    assert_eq!(empty.declared_bare_rest_entries, 0);
     assert_eq!(empty.estimated_size_bytes(), 0);
 
     let func = interner.function(FunctionShape {
@@ -83,6 +84,7 @@ fn call_evaluator_cache_statistics_account_for_contextual_sensitivity() {
     assert!(evaluator.is_contextually_sensitive(func));
     let populated = evaluator.cache_statistics();
     assert_eq!(populated.contextual_sensitivity_entries, 1);
+    assert_eq!(populated.declared_bare_rest_entries, 0);
     assert!(
         populated.estimated_size_bytes() > empty.estimated_size_bytes(),
         "populated call evaluator cache should report nonzero estimated residency"
@@ -93,6 +95,70 @@ fn call_evaluator_cache_statistics_account_for_contextual_sensitivity() {
     assert_eq!(
         repeated.contextual_sensitivity_entries,
         populated.contextual_sensitivity_entries
+    );
+    assert_eq!(
+        repeated.estimated_size_bytes(),
+        populated.estimated_size_bytes()
+    );
+}
+
+#[test]
+fn call_evaluator_memoizes_declared_bare_rest_classification() {
+    let interner = TypeInterner::new();
+    let unknown_array = interner.array(TypeId::UNKNOWN);
+    let pack_info = TypeParamInfo {
+        name: interner.intern_string("Pack"),
+        constraint: Some(unknown_array),
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::DeclScoped {
+            file: interner.intern_string("rest-cache.ts"),
+            node: 1,
+        },
+    };
+    let pack = interner.fresh_type_param(pack_info);
+    let callback = |rest_type| {
+        interner.function(FunctionShape {
+            type_params: vec![],
+            params: vec![ParamInfo {
+                name: None,
+                type_id: rest_type,
+                optional: false,
+                rest: true,
+            }],
+            this_type: None,
+            return_type: TypeId::VOID,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        })
+    };
+    let source = callback(pack);
+    let target = callback(unknown_array);
+    let params = [ParamInfo::unnamed(target)];
+    let args = [source];
+
+    let mut subtype = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut subtype);
+    assert!(
+        evaluator
+            .check_argument_types_with(&params, &args, true, false, None)
+            .is_some(),
+        "the strict raw-rest relation must reject the opaque callback"
+    );
+    let populated = evaluator.cache_statistics();
+    assert_eq!(populated.declared_bare_rest_entries, 1);
+
+    assert!(
+        evaluator
+            .check_argument_types_with(&params, &args, true, false, None)
+            .is_some()
+    );
+    let repeated = evaluator.cache_statistics();
+    assert_eq!(
+        repeated.declared_bare_rest_entries,
+        populated.declared_bare_rest_entries,
+        "a repeated pair must reuse operation-local classifications"
     );
     assert_eq!(
         repeated.estimated_size_bytes(),

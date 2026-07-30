@@ -56,24 +56,106 @@ impl<'a> CheckerState<'a> {
         self.logical_call_argument_nodes(idx)?.into_iter().next()
     }
 
-    /// tsc anchors `TS2769` at the *last* argument-error candidate's first
-    /// non-assignable argument (`reportCallResolutionErrors` selects
-    /// `candidatesForArgumentError[len-1]`, and the wrapped diagnostic's span is
-    /// that candidate's `isSignatureApplicable` elaboration node). The solver
-    /// threads the positional index of each candidate's first failing argument
-    /// onto its `PendingDiagnostic`; here we map the last argument-error
-    /// failure's index onto the call's logical argument nodes and drill into the
-    /// argument the way tsc's `elaborateError` does (object-literal member,
-    /// array element, or callback body), so the anchor lands on the exact
-    /// sub-node rather than the callee.
-    pub(super) fn indexed_overload_argument_anchor(
+    /// Node that owns an implicit method-`this` mismatch for a call.
+    ///
+    /// Property/element calls report against their receiver; a bare callable
+    /// reports against the whole call-like expression. This anchor is independent of the
+    /// number of explicit call arguments.
+    pub(super) fn this_type_mismatch_anchor_node(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let node = self.ctx.arena.get(idx)?;
+        let callee = if let Some(call) = self.ctx.arena.get_call_expr(node) {
+            call.expression
+        } else if node.kind == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION {
+            self.ctx.arena.get_tagged_template(node)?.tag
+        } else {
+            return None;
+        };
+        let callee_idx = self.ctx.arena.skip_outer_expressions(callee);
+        let Some(callee) = self.ctx.arena.get(callee_idx) else {
+            return Some(idx);
+        };
+        let Some(access) = self.ctx.arena.get_access_expr(callee) else {
+            return Some(idx);
+        };
+        Some(access.expression)
+    }
+
+    /// Resolve the source span for an implicit method-`this` mismatch.
+    ///
+    /// A bare tagged-template node may extend through its trailing semicolon,
+    /// while `tsc` underlines only the tag and template. Receiver-based calls
+    /// retain the ordinary exact-node span.
+    pub(super) fn this_type_mismatch_anchor(
         &self,
         idx: NodeIndex,
-        argument_failures: &[&tsz_solver::PendingDiagnostic],
+    ) -> Option<super::fingerprint_policy::ResolvedDiagnosticAnchor> {
+        use crate::error_reporter::fingerprint_policy::DiagnosticAnchorKind;
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let anchor_idx = self.this_type_mismatch_anchor_node(idx)?;
+        let mut anchor = self.resolve_diagnostic_anchor(anchor_idx, DiagnosticAnchorKind::Exact)?;
+        let node = self.ctx.arena.get(idx)?;
+        if anchor_idx == idx
+            && node.kind == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION
+            && let Some(tagged) = self.ctx.arena.get_tagged_template(node)
+            && let Some(template) = self.ctx.arena.get(tagged.template)
+        {
+            anchor.length = template.end.saturating_sub(anchor.start);
+        } else if anchor_idx != idx {
+            let end = anchor.start.saturating_add(anchor.length);
+            let semantic_end = self.this_receiver_semantic_end(anchor_idx, end);
+            anchor.length = semantic_end.saturating_sub(anchor.start);
+        }
+        Some(anchor)
+    }
+
+    fn this_receiver_semantic_end(&self, idx: NodeIndex, fallback_end: u32) -> u32 {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return fallback_end;
+        };
+
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.ctx.arena.get_access_expr(node)
+            && let Some(name) = self.ctx.arena.get(access.name_or_argument)
+        {
+            // Property-access nodes currently carry the following token in
+            // their broad parser span. The property name is the structural end
+            // of the receiver (`a.b` in `a.b.m()`).
+            return name.end.min(fallback_end);
+        }
+        if node.kind == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION
+            && let Some(tagged) = self.ctx.arena.get_tagged_template(node)
+            && let Some(template) = self.ctx.arena.get(tagged.template)
+        {
+            return template.end.min(fallback_end);
+        }
+        node.end.min(fallback_end)
+    }
+
+    /// Resolve the anchor described by the last signed, non-arity overload
+    /// failure. Argument failures carry a positional index; implicit
+    /// method-`this` failures point at the receiver expression.
+    pub(super) fn last_overload_failure_anchor(
+        &self,
+        idx: NodeIndex,
+        failures: &[tsz_solver::PendingDiagnostic],
     ) -> Option<super::fingerprint_policy::ResolvedDiagnosticAnchor> {
         use crate::error_reporter::fingerprint_policy::DiagnosticAnchorKind;
 
-        let last = argument_failures.last()?;
+        let last = failures
+            .iter()
+            .rev()
+            .find(|failure| !failure.is_arity_failure() && failure.overload_signature.is_some())?;
+        if last.code
+            == crate::diagnostics::diagnostic_codes::THE_THIS_CONTEXT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_METHODS_THIS_OF_TYPE
+        {
+            return self.this_type_mismatch_anchor(idx);
+        }
+
         let index = last.argument_index?;
         let args = self.logical_call_argument_nodes(idx)?;
         let arg_idx = *args.get(index)?;

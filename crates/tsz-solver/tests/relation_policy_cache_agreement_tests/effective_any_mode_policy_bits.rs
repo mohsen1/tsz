@@ -16,7 +16,8 @@ fn effective_cached_any_mode_projection_preserves_policy_bits() {
         | RelationFlags::ALLOW_BIVARIANT_PARAM_COUNT
         | RelationFlags::ALLOW_ERASED_GENERIC_SIGNATURE_RETRY
         | RelationFlags::IN_CALLBACK_PARAM_CHECK
-        | RelationFlags::STRICT_READONLY_IDENTITY;
+        | RelationFlags::STRICT_READONLY_IDENTITY
+        | RelationFlags::PROVISIONAL_REST_UNION;
     let policy = RelationPolicy::from_relation_flags(passthrough_flags)
         .with_strict_subtype_checking(true)
         .with_strict_any_propagation(true)

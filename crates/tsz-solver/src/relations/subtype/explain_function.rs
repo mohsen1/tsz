@@ -8,7 +8,9 @@
 use crate::def::resolver::TypeResolver;
 use crate::diagnostics::SubtypeFailureReason;
 use crate::relations::subtype::SubtypeChecker;
-use crate::types::{CallSignature, CallableShape, FunctionShape, PropertyInfo, TypeId};
+use crate::types::{
+    CallSignature, CallableShape, FunctionShape, PropertyInfo, TupleElement, TypeId,
+};
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     pub(super) fn explain_function_failure(
@@ -16,36 +18,42 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: &FunctionShape,
         target: &FunctionShape,
     ) -> Option<SubtypeFailureReason> {
-        // tsc's `compareSignaturesRelated` compares parameters before return
-        // types, so when both a parameter and the return type are incompatible
-        // it surfaces the parameter mismatch. Match that ordering: run the
-        // parameter (arity + per-position) checks first and only fall back to
-        // the return-type mismatch once the parameters are compatible.
-        if let Some(parameter_failure) = self.explain_function_parameter_failure(source, target) {
-            return Some(parameter_failure);
-        }
-
-        // Check return type
-        if !(self
-            .check_subtype(source.return_type, target.return_type)
-            .is_true()
-            || self.allow_void_return && target.return_type == TypeId::VOID)
-        {
-            let nested = self.explain_failure(source.return_type, target.return_type);
-            return Some(SubtypeFailureReason::ReturnTypeMismatch {
-                source_return: source.return_type,
-                target_return: target.return_type,
-                nested_reason: nested.map(Box::new),
-            });
-        }
-
-        None
+        self.with_provisional_rest_union_function_scope(
+            |checker, allow_provisional_rest_union_at_this_depth| {
+                // tsc's `compareSignaturesRelated` compares parameters before
+                // return types, so when both are incompatible it surfaces the
+                // parameter mismatch.
+                if let Some(parameter_failure) = checker.explain_function_parameter_failure(
+                    source,
+                    target,
+                    allow_provisional_rest_union_at_this_depth,
+                ) {
+                    return Some(parameter_failure);
+                }
+                if checker
+                    .check_subtype(source.return_type, target.return_type)
+                    .is_true()
+                    || checker.allow_void_return && target.return_type == TypeId::VOID
+                {
+                    return None;
+                }
+                let nested_reason = checker
+                    .explain_failure(source.return_type, target.return_type)
+                    .map(Box::new);
+                Some(SubtypeFailureReason::ReturnTypeMismatch {
+                    source_return: source.return_type,
+                    target_return: target.return_type,
+                    nested_reason,
+                })
+            },
+        )
     }
 
     fn explain_function_parameter_failure(
         &mut self,
         source: &FunctionShape,
         target: &FunctionShape,
+        allow_provisional_rest_union_at_this_depth: bool,
     ) -> Option<SubtypeFailureReason> {
         // Check parameter count
         let target_has_rest = target.params.last().is_some_and(|p| p.rest);
@@ -85,6 +93,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Check parameter types
         let source_has_rest = source.params.last().is_some_and(|p| p.rest);
+        let provisional_rest_union = allow_provisional_rest_union_at_this_depth
+            && source
+                .params
+                .last()
+                .filter(|param| param.rest)
+                .zip(target.params.last().filter(|param| param.rest))
+                .is_some_and(|(source_rest, target_rest)| {
+                    self.is_bare_rest_type_param(source_rest.type_id)
+                        && self.rest_type_has_union_surface(target_rest.type_id)
+                });
         let source_fixed_count = if source_has_rest {
             source.params.len().saturating_sub(1)
         } else {
@@ -114,6 +132,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let Some(rest_elem_type) = rest_elem_type else {
                 return None; // Invalid rest parameter
             };
+            if source_has_rest {
+                let source_rest = source.params.last()?;
+                let target_rest = target.params.last()?;
+                if self.bare_source_rest_compatibility(
+                    source_rest.type_id,
+                    target_rest.type_id,
+                    is_method_or_ctor,
+                    provisional_rest_union,
+                ) == Some(false)
+                {
+                    let inner_reason = self
+                        .explain_failure(target_rest.type_id, source_rest.type_id)
+                        .map(Box::new);
+                    return Some(SubtypeFailureReason::ParameterTypeMismatch {
+                        param_index: source_fixed_count,
+                        source_param: source_rest.type_id,
+                        target_param: target_rest.type_id,
+                        inner_reason,
+                    });
+                }
+            }
             if rest_elem_type.is_any_or_unknown()
                 && let Some((param_index, source_param)) =
                     self.first_top_rest_unassignable_source_param(&source.params)
@@ -172,8 +211,39 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
+        if provisional_rest_union {
+            return None;
+        }
+
         if source_has_rest {
             let rest_param = source.params.last()?;
+            if target_fixed_count > source_fixed_count
+                && self.is_bare_rest_type_param(rest_param.type_id)
+            {
+                let target_tuple = self.interner.tuple(
+                    target
+                        .params
+                        .iter()
+                        .skip(source_fixed_count)
+                        .take(target_fixed_count.saturating_sub(source_fixed_count))
+                        .map(|param| TupleElement {
+                            type_id: param.type_id,
+                            name: param.name,
+                            optional: param.optional,
+                            rest: false,
+                        })
+                        .collect(),
+                );
+                let inner_reason = self
+                    .explain_failure(target_tuple, rest_param.type_id)
+                    .map(Box::new);
+                return Some(SubtypeFailureReason::ParameterTypeMismatch {
+                    param_index: source_fixed_count,
+                    source_param: rest_param.type_id,
+                    target_param: target_tuple,
+                    inner_reason,
+                });
+            }
             let rest_elem_type = self.get_array_element_type(rest_param.type_id);
             let rest_is_top = self.allow_bivariant_rest && rest_elem_type.is_any_or_unknown();
 

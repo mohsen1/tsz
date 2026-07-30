@@ -262,7 +262,7 @@ fn1`${{}}`;
 }
 
 #[test]
-fn ts2769_bind_call_with_non_undefined_this_arg_anchors_bind_member() {
+fn ts2769_bind_call_with_bare_outer_rest_anchors_receiver() {
     let source = r#"
 function bar<T extends unknown[]>(callback: (this: 1, ...args: T) => void) {
     callback.bind(2);
@@ -270,17 +270,430 @@ function bar<T extends unknown[]>(callback: (this: 1, ...args: T) => void) {
 "#;
 
     let diagnostics = check_source_with_strict_null(source);
-    let diag = diagnostics
-        .iter()
-        .find(|d| d.code == 2769)
-        .expect("expected TS2769");
-
-    let bind_start = source.find("bind(2)").expect("expected bind call token") as u32;
     assert_eq!(
-        diag.start, bind_start,
-        "TS2769 should anchor at `bind` for callback.bind(2)-style failures"
+        diagnostics.len(),
+        1,
+        "expected one overload diagnostic, got: {diagnostics:?}"
     );
-    assert_eq!(diag.length, 4, "TS2769 should cover only `bind`");
+    let diag = &diagnostics[0];
+    assert_eq!(diag.code, 2769);
+
+    let receiver_start = source.find("callback.bind").expect("expected receiver") as u32;
+    assert_eq!(
+        diag.start, receiver_start,
+        "TS2769 should anchor at the receiver for a failed method-this relation"
+    );
+    assert_eq!(diag.length, "callback".len() as u32);
+    let related_chain: Vec<_> = diag
+        .related_information
+        .iter()
+        .map(|related| (related.depth, related.code))
+        .collect();
+    assert_eq!(
+        related_chain,
+        vec![(0, 2770), (1, 2684), (2, 2328), (3, 2322), (4, 5075)],
+        "unexpected receiver failure chain: {diag:?}"
+    );
+}
+
+#[test]
+fn this_mismatch_anchors_bare_and_tagged_call_like_expressions() {
+    let source = r#"
+declare function bare(this: { ok: 1 }, value: number): void;
+bare(12);
+
+declare function bareTag(this: { ok: 1 }, strings: TemplateStringsArray): void;
+bareTag``;
+
+interface Host {
+    tag(this: { ok: 1 }, strings: TemplateStringsArray): void;
+}
+declare const host: Host;
+host.tag``;
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    for needle in ["bare(12)", "bareTag``"] {
+        let start = source.find(needle).expect("expected bare call-like") as u32;
+        let diagnostic = diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.start == start)
+            .unwrap_or_else(|| {
+                panic!("expected full call-like anchor for {needle}: {diagnostics:?}")
+            });
+        assert_eq!(
+            diagnostic.length,
+            needle.len() as u32,
+            "bare `this` mismatch must cover the whole call-like expression"
+        );
+    }
+
+    let member_call_start = source.find("host.tag``").expect("expected member tag") as u32;
+    let member_diagnostic = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.start == member_call_start)
+        .unwrap_or_else(|| panic!("expected receiver anchor for tagged member: {diagnostics:?}"));
+    assert_eq!(member_diagnostic.length, "host".len() as u32);
+}
+
+#[test]
+fn this_mismatch_receiver_anchors_follow_expression_structure() {
+    let source = r#"
+interface Leaf {
+    method<T>(this: { ok: 1 }): void;
+}
+declare const holder: { leaf: Leaf };
+declare function make(this: void, strings: TemplateStringsArray): Leaf;
+
+holder.leaf /* gap */ .method();
+holder["leaf"] /* gap */ .method();
+holder.leaf /* gap */ ["method"]();
+make`` /* gap */ .method();
+
+interface Number {
+    method(this: { ok: 1 }): void;
+}
+1..method();
+
+declare const host: Leaf;
+(host) /* gap */ .method();
+(host) /* gap */ ["method"]();
+(host as Leaf) /* gap */ .method();
+(<Leaf>host) /* gap */ .method();
+(host satisfies Leaf) /* gap */ .method();
+(host)! /* gap */ .method();
+
+interface GenericHost {
+    <T>(): void;
+    method<T>(this: { ok: 1 }): void;
+}
+declare const genericHost: GenericHost;
+genericHost<string> /* gap */ ?.["method"]();
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let expected = [
+        ("holder.leaf /* gap */ .method()", "holder.leaf"),
+        ("holder[\"leaf\"] /* gap */ .method()", "holder[\"leaf\"]"),
+        ("holder.leaf /* gap */ [\"method\"]()", "holder.leaf"),
+        ("make`` /* gap */ .method()", "make``"),
+        ("1..method()", "1."),
+        ("(host) /* gap */ .method()", "(host)"),
+        ("(host) /* gap */ [\"method\"]()", "(host)"),
+        ("(host as Leaf) /* gap */ .method()", "(host as Leaf)"),
+        ("(<Leaf>host) /* gap */ .method()", "(<Leaf>host)"),
+        (
+            "(host satisfies Leaf) /* gap */ .method()",
+            "(host satisfies Leaf)",
+        ),
+        ("(host)! /* gap */ .method()", "(host)!"),
+        (
+            "genericHost<string> /* gap */ ?.[\"method\"]()",
+            "genericHost<string>",
+        ),
+    ];
+    let receiver_diagnostics = diagnostics
+        .iter()
+        .filter(|diagnostic| matches!(diagnostic.code, 2684 | 2741))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        receiver_diagnostics.len(),
+        expected.len(),
+        "expected one `this` diagnostic per structural receiver: {diagnostics:?}"
+    );
+    for (call, anchor_text) in expected {
+        let call_start = source.find(call).expect("expected call expression");
+        let relative_anchor = call.find(anchor_text).expect("expected receiver in call");
+        let expected_start = (call_start + relative_anchor) as u32;
+        let diagnostic = receiver_diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.start == expected_start)
+            .unwrap_or_else(|| {
+                panic!(
+                    "expected `{anchor_text}` anchor for `{call}` at {expected_start}: {diagnostics:?}"
+                )
+            });
+        assert_eq!(
+            diagnostic.length,
+            anchor_text.len() as u32,
+            "unexpected receiver length for `{call}`: {diagnostic:?}"
+        );
+    }
+}
+
+#[test]
+fn overloaded_generic_tagged_this_failures_use_receiver_anchors() {
+    let source = r#"
+interface Host {
+    tag<T>(this: { left: 1 }, strings: TemplateStringsArray, value: T): void;
+    tag<T>(this: { right: 1 }, strings: TemplateStringsArray, value: T): void;
+}
+declare const host: Host;
+host.tag`${true}`;
+(host)["tag"]`${true}`;
+
+interface BareTag {
+    <T>(this: { left: 1 }, strings: TemplateStringsArray, value: T): void;
+    <T>(this: { right: 1 }, strings: TemplateStringsArray, value: T): void;
+}
+declare const bareTag: BareTag;
+bareTag`${true}`;
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    let expected = [
+        ("host.tag`${true}`", "host"),
+        ("(host)[\"tag\"]`${true}`", "(host)"),
+        ("bareTag`${true}`", "bareTag`${true}`"),
+    ];
+    let overload_diagnostics = diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == 2769)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        overload_diagnostics.len(),
+        expected.len(),
+        "expected one overload diagnostic per tagged call: {diagnostics:?}"
+    );
+    for (call, anchor_text) in expected {
+        let call_start = source.find(call).expect("expected tagged call");
+        let expected_start =
+            (call_start + call.find(anchor_text).expect("expected tagged anchor")) as u32;
+        let diagnostic = overload_diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.start == expected_start)
+            .unwrap_or_else(|| panic!("expected `{anchor_text}` anchor: {diagnostics:?}"));
+        assert_eq!(diagnostic.code, 2769);
+        assert_eq!(diagnostic.length, anchor_text.len() as u32);
+    }
+}
+
+#[test]
+fn ts2769_this_failure_chain_is_independent_of_argument_count() {
+    let source = r#"
+type B = (x: string) => void;
+type C = (x: number) => void;
+interface M0 {
+    (this: B): void;
+    (this: C): void;
+}
+interface M2 {
+    (this: B, a: 1, b: 2): void;
+    (this: C, a: 1, b: 2): void;
+}
+declare function f0(x: boolean): void;
+declare namespace f0 {
+    let m: M0;
+}
+declare function f2(x: boolean): void;
+declare namespace f2 {
+    let m: M2;
+}
+f0.m();
+f2.m(1, 2);
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    assert_eq!(
+        diagnostics.len(),
+        2,
+        "expected one overload diagnostic per call, got: {diagnostics:?}"
+    );
+    let mut chains = Vec::new();
+    for (receiver, call) in [("f0", "f0.m()"), ("f2", "f2.m(1, 2)")] {
+        let start = source.find(call).expect("expected call") as u32;
+        let diag = diagnostics
+            .iter()
+            .find(|diag| diag.start == start)
+            .unwrap_or_else(|| panic!("expected diagnostic for {call}: {diagnostics:?}"));
+        assert_eq!(diag.code, 2769);
+        assert_eq!(diag.length, receiver.len() as u32);
+        let chain: Vec<_> = diag
+            .related_information
+            .iter()
+            .map(|related| (related.depth, related.code))
+            .collect();
+        assert_eq!(&chain[..2], &[(0, 2770), (1, 2684)]);
+        chains.push(chain);
+    }
+    assert_eq!(
+        chains[0], chains[1],
+        "receiver reason depth must not depend on the explicit argument count"
+    );
+}
+
+#[test]
+fn ts2769_this_missing_property_promotes_relation_head() {
+    let source = r#"
+interface ExpectedB { b: number; }
+interface ExpectedC { c: number; }
+interface ObjectMethod {
+    (this: ExpectedB): void;
+    (this: ExpectedC): void;
+}
+declare const objectReceiver: {
+    f: (x: boolean) => void;
+    m: ObjectMethod;
+};
+objectReceiver.m();
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    assert_eq!(
+        diagnostics.len(),
+        1,
+        "expected one overload diagnostic, got: {diagnostics:?}"
+    );
+    let diag = &diagnostics[0];
+    assert_eq!(diag.code, 2769);
+    let receiver_start = source.find("objectReceiver.m").expect("expected receiver") as u32;
+    assert_eq!(diag.start, receiver_start);
+    assert_eq!(diag.length, "objectReceiver".len() as u32);
+    let chain: Vec<_> = diag
+        .related_information
+        .iter()
+        .map(|related| (related.depth, related.code))
+        .collect();
+    assert_eq!(
+        chain,
+        vec![(0, 2770), (1, 2741)],
+        "the missing-property reason must replace the TS2684 wrapper: {diag:?}"
+    );
+}
+
+#[test]
+fn sole_this_failure_among_arity_failures_collapses_at_receiver() {
+    let source = r#"
+interface MissingReceiver {
+    ok: 1;
+    missing: MissingOverloads;
+}
+interface MissingOverloads {
+    (this: { nope: 1 }): void;
+    (this: MissingReceiver, x: 1): void;
+}
+declare const missingReceiver: MissingReceiver;
+missingReceiver.missing();
+
+interface IncompatibleReceiver {
+    ok: 1;
+    incompatible: IncompatibleOverloads;
+}
+interface IncompatibleOverloads {
+    (this: { ok: 2 }): void;
+    (this: IncompatibleReceiver, x: 1): void;
+}
+declare const incompatibleReceiver: IncompatibleReceiver;
+incompatibleReceiver.incompatible();
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    assert_eq!(
+        diagnostics.len(),
+        2,
+        "one applicability failure plus arity-only failures should collapse: {diagnostics:?}"
+    );
+
+    let missing = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2741)
+        .unwrap_or_else(|| panic!("expected promoted missing-property head: {diagnostics:?}"));
+    assert_eq!(
+        missing.start,
+        source
+            .find("missingReceiver.missing")
+            .expect("expected missing receiver") as u32
+    );
+    assert_eq!(missing.length, "missingReceiver".len() as u32);
+
+    let incompatible = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2684)
+        .unwrap_or_else(|| panic!("expected direct this mismatch: {diagnostics:?}"));
+    assert_eq!(
+        incompatible.start,
+        source
+            .find("incompatibleReceiver.incompatible")
+            .expect("expected incompatible receiver") as u32
+    );
+    assert_eq!(incompatible.length, "incompatibleReceiver".len() as u32);
+    let related_codes: Vec<_> = incompatible
+        .related_information
+        .iter()
+        .map(|related| related.code)
+        .collect();
+    assert_eq!(
+        related_codes,
+        vec![2326, 2322],
+        "direct TS2684 must retain the property relation chain: {incompatible:?}"
+    );
+}
+
+#[test]
+fn ts2769_anchor_follows_last_signed_failure_kind() {
+    let source = r#"
+interface MixedReceiver {
+    ok: 1;
+    lastThis: LastThisOverloads;
+    lastCallback: LastCallbackOverloads;
+}
+interface LastThisOverloads {
+    (this: MixedReceiver, callback: () => string): void;
+    (this: { nope: 1 }, callback: () => number): void;
+}
+interface LastCallbackOverloads {
+    (this: { nope: 1 }, callback: () => number): void;
+    (this: MixedReceiver, callback: () => string): void;
+}
+declare const mixedReceiver: MixedReceiver;
+mixedReceiver.lastThis(() => 123);
+mixedReceiver.lastCallback(() => 456);
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    assert_eq!(
+        diagnostics.len(),
+        2,
+        "expected one overload diagnostic per mixed-order call: {diagnostics:?}"
+    );
+
+    let receiver_start = source
+        .find("mixedReceiver.lastThis")
+        .expect("expected receiver call") as u32;
+    let receiver_diag = diagnostics
+        .iter()
+        .find(|diag| diag.start == receiver_start)
+        .unwrap_or_else(|| panic!("last this failure should own the receiver: {diagnostics:?}"));
+    assert_eq!(receiver_diag.code, 2769);
+    assert_eq!(receiver_diag.length, "mixedReceiver".len() as u32);
+    assert_eq!(
+        receiver_diag
+            .related_information
+            .iter()
+            .map(|related| related.code)
+            .collect::<Vec<_>>(),
+        vec![2770, 2741]
+    );
+
+    let callback_start = source.rfind("456").expect("expected callback body") as u32;
+    let callback_diag = diagnostics
+        .iter()
+        .find(|diag| diag.start == callback_start)
+        .unwrap_or_else(|| panic!("last callback failure should own its body: {diagnostics:?}"));
+    assert_eq!(callback_diag.code, 2769);
+    assert_eq!(callback_diag.length, 3);
+    let callback_codes: Vec<_> = callback_diag
+        .related_information
+        .iter()
+        .map(|related| related.code)
+        .collect();
+    assert_eq!(callback_codes.first(), Some(&2770));
+    assert_eq!(callback_codes.last(), Some(&2322));
+    assert!(
+        !callback_codes
+            .iter()
+            .any(|code| matches!(code, 2684 | 2741)),
+        "the last callback failure must not be rendered as a receiver failure: {callback_diag:?}"
+    );
 }
 
 #[test]

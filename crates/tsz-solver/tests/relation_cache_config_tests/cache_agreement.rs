@@ -168,7 +168,8 @@ fn policy_cache_config_preserves_typed_extended_bits() {
         | RelationFlags::ASSUME_RELATED_ON_CYCLE
         | RelationFlags::ASSUME_RELATED_ON_DEPTH
         | RelationFlags::IN_CALLBACK_PARAM_CHECK
-        | RelationFlags::STRICT_READONLY_IDENTITY;
+        | RelationFlags::STRICT_READONLY_IDENTITY
+        | RelationFlags::PROVISIONAL_REST_UNION;
 
     let config = RelationPolicy::from_relation_flags(typed_flags).cache_config();
 
@@ -199,6 +200,7 @@ fn policy_cache_config_preserves_typed_extended_bits() {
             .flags
             .contains(RelationFlags::STRICT_READONLY_IDENTITY)
     );
+    assert!(config.flags.contains(RelationFlags::PROVISIONAL_REST_UNION));
 }
 
 #[test]
@@ -261,7 +263,8 @@ fn relation_policy_typed_accessors_preserve_packed_relation_bits() {
             | RelationFlags::ALLOW_BIVARIANT_REST
             | RelationFlags::ALLOW_BIVARIANT_PARAM_COUNT
             | RelationFlags::ALLOW_ERASED_GENERIC_SIGNATURE_RETRY
-            | RelationFlags::STRICT_READONLY_IDENTITY,
+            | RelationFlags::STRICT_READONLY_IDENTITY
+            | RelationFlags::PROVISIONAL_REST_UNION,
     );
     let disabled = RelationPolicy::unflagged_compatibility();
 
@@ -275,6 +278,7 @@ fn relation_policy_typed_accessors_preserve_packed_relation_bits() {
     assert!(enabled.allow_bivariant_param_count());
     assert!(enabled.allow_erased_generic_signature_retry());
     assert!(enabled.strict_readonly_identity());
+    assert!(enabled.allow_provisional_rest_union());
 
     assert!(!disabled.strict_null_checks());
     assert!(!disabled.strict_function_types());
@@ -286,6 +290,7 @@ fn relation_policy_typed_accessors_preserve_packed_relation_bits() {
     assert!(!disabled.allow_bivariant_param_count());
     assert!(!disabled.allow_erased_generic_signature_retry());
     assert!(!disabled.strict_readonly_identity());
+    assert!(!disabled.allow_provisional_rest_union());
 }
 
 #[test]

@@ -30,6 +30,11 @@ fn relation_policy_cache_config_unifies_equivalent_flag_and_builder_bits() {
             RelationPolicy::unflagged_compatibility().with_skip_weak_type_checks(true),
         ),
         (
+            "provisional rest union",
+            RelationPolicy::from_relation_flags(RelationFlags::PROVISIONAL_REST_UNION),
+            RelationPolicy::unflagged_compatibility().with_provisional_rest_union(true),
+        ),
+        (
             "assume related on cycle",
             RelationPolicy::from_relation_flags(RelationFlags::ASSUME_RELATED_ON_CYCLE),
             RelationPolicy::unflagged_compatibility().with_assume_related_on_cycle(true),
@@ -101,6 +106,12 @@ fn relation_policy_builder_overrides_remove_prior_flag_bits_from_cache_config() 
                 .with_erase_generics(true),
             RelationFlags::NO_ERASE_GENERICS,
         ),
+        (
+            "provisional rest union",
+            RelationPolicy::from_relation_flags(RelationFlags::PROVISIONAL_REST_UNION)
+                .with_provisional_rest_union(false),
+            RelationFlags::PROVISIONAL_REST_UNION,
+        ),
     ];
 
     for (name, policy, flag) in cases {
@@ -144,6 +155,10 @@ fn relation_policy_behavior_builders_partition_cache_config() {
             "skip weak type checks",
             base.with_skip_weak_type_checks(true).cache_config(),
         ),
+        (
+            "provisional rest union",
+            base.with_provisional_rest_union(true).cache_config(),
+        ),
     ];
 
     for (name, config) in cases {
@@ -176,6 +191,7 @@ fn relation_policy_builder_cache_matrix_covers_current_behavior_builders() {
             "with_strict_subtype_checking",
             "with_strict_any_propagation",
             "with_any_propagation_mode",
+            "with_provisional_rest_union",
             "with_assume_related_on_cycle",
             "with_assume_related_on_depth",
             "with_skip_weak_type_checks",

@@ -105,6 +105,65 @@ pub(crate) fn union_members_for_assignability(
     tsz_solver::type_queries::get_union_members(db, ty)
 }
 
+/// Whether a failed bare-source-rest relation must remain visible instead of
+/// being hidden by the checker's generic-callable suppression fallback.
+pub(crate) fn bare_source_rest_requires_visible_relation_failure<R: TypeResolver>(
+    db: &dyn tsz_solver::construction::QueryDatabase,
+    resolver: &R,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    tsz_solver::type_queries::bare_source_rest_requires_visible_relation_failure(
+        db, resolver, source, target,
+    )
+}
+
+/// Whether a type structurally contains a declared callable rest binder.
+///
+/// It is intentionally a semantic visitor query so checker diagnostics do not
+/// walk raw solver shapes.
+pub(crate) fn contains_declared_bare_function_rest<R: TypeResolver>(
+    db: &dyn tsz_solver::construction::QueryDatabase,
+    resolver: &R,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::type_queries::contains_declared_bare_function_rest_with_resolver(
+        db, resolver, type_id,
+    )
+}
+
+/// Whether either side of a relation structurally contains a declared
+/// callable rest binder.
+///
+/// Function-parameter variance can put the decisive binder on either outer
+/// relation side. Callers use this query to retain the raw callable surfaces;
+/// the relation still decides whether those surfaces are compatible.
+pub(crate) fn relation_contains_declared_bare_function_rest<R: TypeResolver>(
+    db: &dyn tsz_solver::construction::QueryDatabase,
+    resolver: &R,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    contains_declared_bare_function_rest(db, resolver, source)
+        || contains_declared_bare_function_rest(db, resolver, target)
+}
+
+/// Whether an assignability relation must retain its raw declared-rest
+/// surfaces and keep a failed verdict visible to diagnostics.
+///
+/// The directional query recognizes the exact bare-source mismatch family;
+/// the pair query conservatively covers the same binder after parameter
+/// variance places it on the opposite outer side.
+pub(crate) fn declared_bare_rest_relation_is_raw_sensitive<R: TypeResolver>(
+    db: &dyn tsz_solver::construction::QueryDatabase,
+    resolver: &R,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    bare_source_rest_requires_visible_relation_failure(db, resolver, source, target)
+        || relation_contains_declared_bare_function_rest(db, resolver, source, target)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

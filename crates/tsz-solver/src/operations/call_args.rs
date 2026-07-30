@@ -9,7 +9,7 @@
 use super::{AssignabilityChecker, CallEvaluator, CallResult};
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type_cached};
 use crate::operations::iterators::{get_iterator_info, target_has_non_iterable_property_shape};
-use crate::types::{ParamInfo, TemplateSpan, TupleElement, TypeData, TypeId, TypeParamInfo};
+use crate::types::{ParamInfo, TupleElement, TypeData, TypeId, TypeParamInfo};
 use crate::utils::{self, TupleRestExpansion};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
@@ -43,6 +43,8 @@ fn with_evaluates_visited<R>(f: impl FnOnce(&mut FxHashSet<crate::TypeId>) -> R)
     r
 }
 
+mod placeholder_queries;
+mod strict_assignability;
 mod string_helpers;
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
@@ -127,7 +129,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         arg_types: &[TypeId],
         allow_bivariant_callbacks: bool,
     ) -> Option<CallResult> {
-        self.check_argument_types_with(params, arg_types, false, allow_bivariant_callbacks)
+        self.check_argument_types_with(params, arg_types, false, allow_bivariant_callbacks, None)
     }
 
     pub(crate) fn check_argument_types_with(
@@ -136,13 +138,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         arg_types: &[TypeId],
         strict: bool,
         allow_bivariant_callbacks: bool,
+        provisional_rest_union_sites: Option<&[bool]>,
     ) -> Option<CallResult> {
         let arg_count = arg_types.len();
         let rest_start = params
             .last()
             .filter(|param| param.rest)
             .map(|_| params.len().saturating_sub(1));
-        let aggregate_rest_check = self.check_aggregate_rest_arguments(params, arg_types, strict);
+        let aggregate_rest_check = self.check_aggregate_rest_arguments(
+            params,
+            arg_types,
+            strict,
+            provisional_rest_union_sites,
+        );
         for (i, arg_type) in arg_types.iter().enumerate() {
             if rest_start.is_some_and(|start| i >= start)
                 && let Some(result) = aggregate_rest_check.clone()
@@ -422,10 +430,30 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 crate::type_queries::is_callable_type(self.interner, expanded_arg_type);
             let param_is_callable =
                 crate::type_queries::is_callable_type(self.interner, effective_param_type);
+            // Method provenance only makes this outer parameter comparison
+            // bivariant. If either callable contains a declared rest binder,
+            // route through the normal raw-surface relation so nested callback
+            // parameters still enter strict callback mode.
+            let rest_sensitive_callback_pair = callback_bivariance_enabled
+                && param_signature_is_method
+                && arg_is_callable
+                && param_is_callable
+                && [
+                    self.contains_declared_bare_function_rest_query(expanded_arg_type),
+                    self.contains_declared_bare_function_rest_query(effective_param_type),
+                ]
+                .into_iter()
+                .any(|result| {
+                    !matches!(
+                        result,
+                        crate::type_queries::RestBinderQuery::Complete(false)
+                    )
+                });
             let use_bivariant_callbacks = callback_bivariance_enabled
                 && param_signature_is_method
                 && arg_is_callable
-                && param_is_callable;
+                && param_is_callable
+                && !rest_sensitive_callback_pair;
             trace!(
                 arg_index = i,
                 arg_type_id = %expanded_arg_type.0,
@@ -435,6 +463,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 param_signature_is_method,
                 arg_is_callable,
                 param_is_callable,
+                rest_sensitive_callback_pair,
                 use_bivariant_callbacks,
                 "selected callback variance mode for call argument"
             );
@@ -478,11 +507,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let assignable = if use_bivariant_callbacks {
                 self.checker
                     .is_assignable_to_bivariant_callback(expanded_arg_type, effective_param_type)
-            } else if strict {
-                let result = self
-                    .checker
-                    .is_assignable_to_strict(expanded_arg_type, effective_param_type);
-                if !result {
+            } else {
+                let result = self.argument_assignable_preserving_rest_surface(
+                    expanded_arg_type,
+                    effective_param_type,
+                    strict,
+                    true,
+                    provisional_rest_union_sites
+                        .and_then(|sites| sites.get(i))
+                        .copied()
+                        .unwrap_or(false),
+                );
+                if strict && !result {
                     tracing::debug!(
                         "Strict assignability failed at index {}: {:?} <: {:?}",
                         i,
@@ -491,13 +527,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     );
                 }
                 result
-                    || self.is_assignable_via_contextual_signatures_strict(
-                        expanded_arg_type,
-                        effective_param_type,
-                    )
-            } else {
-                self.checker
-                    .is_assignable_to(expanded_arg_type, effective_param_type)
             };
             let assignable = assignable
                 || if crate::contains_this_type(self.interner, effective_param_type) {
@@ -558,6 +587,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         params: &[ParamInfo],
         arg_types: &[TypeId],
         strict: bool,
+        provisional_rest_union_sites: Option<&[bool]>,
     ) -> Option<Option<CallResult>> {
         let rest_param = params.last().filter(|param| param.rest)?;
         let rest_start = params.len().saturating_sub(1);
@@ -596,11 +626,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 break;
             };
             let expected = self.tuple_arg_element_type(fixed_element);
-            let assignable = if strict {
-                self.checker.is_assignable_to_strict(arg_type, expected)
-            } else {
-                self.checker.is_assignable_to(arg_type, expected)
-            };
+            let assignable = self.argument_assignable_preserving_rest_surface(
+                arg_type,
+                expected,
+                strict,
+                false,
+                provisional_rest_union_sites
+                    .and_then(|sites| sites.get(rest_start + fixed_index))
+                    .copied()
+                    .unwrap_or(false),
+            );
             if !assignable {
                 return Some(Some(CallResult::ArgumentTypeMismatch {
                     index: rest_start + fixed_index,
@@ -624,23 +659,105 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         rest: true,
                     });
                 }
-                elements.extend(expansion.tail);
+                elements.extend(expansion.tail.iter().copied());
                 self.interner.tuple(elements)
             };
         }
         let rest_args = &rest_args[aggregate_offset..];
+        // An open spread can occupy the variadic middle while every optional
+        // fixed suffix is omitted. It is not a single positional argument for
+        // the final optional slot. Validate the spread against the variadic
+        // domain itself before the whole-tuple relation right-aligns suffixes.
+        if !expansion.tail.is_empty()
+            && expansion.tail.iter().all(|element| element.optional)
+            && let [open_spread] = rest_args
+            && let Some(variadic) = expansion.variadic
+        {
+            let generic_inner = self.generic_spread_argument_marker_inner(*open_spread);
+            let named_inner = self.spread_argument_marker_inner(*open_spread);
+            if generic_inner == Some(variadic)
+                || named_inner == Some(variadic)
+                || named_inner.is_some_and(|inner| {
+                    let actual = self.normalize_spread_actual_type(inner);
+                    let expected = self.interner.array(variadic);
+                    self.argument_assignable_preserving_rest_surface(
+                        actual,
+                        expected,
+                        strict,
+                        false,
+                        provisional_rest_union_sites
+                            .and_then(|sites| sites.get(rest_start + aggregate_offset))
+                            .copied()
+                            .unwrap_or(false),
+                    )
+                })
+            {
+                return Some(None);
+            }
+        }
+        // An unresolved variadic middle can make the whole-tuple relation
+        // appear related before it reaches a fixed suffix. Recheck every
+        // supplied fixed tail slot at its exact right alignment. The per-site
+        // provisional bit still authorizes a callback whose binder was
+        // inferred by this aggregate operation; fixed siblings remain rigid.
+        let tail_len = expansion.tail.len();
+        if self.rest_type_has_unresolved_variadic_middle_with_tail(aggregate_expected)
+            && tail_len <= rest_args.len()
+        {
+            let tail_start = rest_args.len() - tail_len;
+            for (offset, (&actual_tail, expected_tail)) in rest_args[tail_start..]
+                .iter()
+                .zip(expansion.tail.iter())
+                .enumerate()
+            {
+                // An open spread marker denotes an indeterminate run in the
+                // variadic middle, not one positional argument aligned to the
+                // fixed suffix. The aggregate tuple relation below still
+                // enforces required suffixes; skip only this exact-slot raw
+                // recheck.
+                if self.spread_argument_marker_inner(actual_tail).is_some()
+                    || self
+                        .generic_spread_argument_marker_inner(actual_tail)
+                        .is_some()
+                {
+                    continue;
+                }
+                let expected_tail = self.tuple_arg_element_type(expected_tail);
+                let arg_index = rest_start + aggregate_offset + tail_start + offset;
+                if !self.argument_assignable_preserving_rest_surface(
+                    actual_tail,
+                    expected_tail,
+                    strict,
+                    false,
+                    provisional_rest_union_sites
+                        .and_then(|sites| sites.get(arg_index))
+                        .copied()
+                        .unwrap_or(false),
+                ) {
+                    return Some(Some(CallResult::ArgumentTypeMismatch {
+                        index: arg_index,
+                        expected: expected_tail,
+                        actual: actual_tail,
+                        fallback_return: TypeId::ERROR,
+                    }));
+                }
+            }
+        }
         let actual = self.aggregate_rest_actual_type(rest_args);
-        let assignable = if strict {
-            self.checker
-                .is_assignable_to_strict(actual, aggregate_expected)
-        } else {
-            self.checker.is_assignable_to(actual, aggregate_expected)
-        };
+        let assignable = self.argument_assignable_preserving_rest_surface(
+            actual,
+            aggregate_expected,
+            strict,
+            false,
+            false,
+        );
         if assignable
             || self.aggregate_args_match_unresolved_variadic_middle(
                 rest_args,
                 aggregate_expected,
                 strict,
+                provisional_rest_union_sites,
+                rest_start + aggregate_offset,
             )
         {
             return Some(None);
@@ -667,6 +784,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         rest_args: &[TypeId],
         expected: TypeId,
         strict: bool,
+        provisional_rest_union_sites: Option<&[bool]>,
+        first_arg_index: usize,
     ) -> bool {
         let expansion = self.expand_tuple_rest(expected);
         let Some(variadic) = expansion.variadic else {
@@ -685,15 +804,36 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return false;
         }
 
-        for (actual, expected) in rest_args.iter().zip(expansion.fixed.iter()) {
-            if !self.argument_assignable_to_tuple_element(*actual, expected, strict) {
+        for (offset, (actual, expected)) in rest_args.iter().zip(expansion.fixed.iter()).enumerate()
+        {
+            if !self.argument_assignable_to_tuple_element(
+                *actual,
+                expected,
+                strict,
+                provisional_rest_union_sites
+                    .and_then(|sites| sites.get(first_arg_index + offset))
+                    .copied()
+                    .unwrap_or(false),
+            ) {
                 return false;
             }
         }
 
         let tail_start = rest_args.len() - tail_len;
-        for (actual, expected) in rest_args[tail_start..].iter().zip(expansion.tail.iter()) {
-            if !self.argument_assignable_to_tuple_element(*actual, expected, strict) {
+        for (offset, (actual, expected)) in rest_args[tail_start..]
+            .iter()
+            .zip(expansion.tail.iter())
+            .enumerate()
+        {
+            if !self.argument_assignable_to_tuple_element(
+                *actual,
+                expected,
+                strict,
+                provisional_rest_union_sites
+                    .and_then(|sites| sites.get(first_arg_index + tail_start + offset))
+                    .copied()
+                    .unwrap_or(false),
+            ) {
                 return false;
             }
         }
@@ -706,13 +846,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         actual: TypeId,
         expected: &TupleElement,
         strict: bool,
+        provisional_site: bool,
     ) -> bool {
         let expected = self.tuple_arg_element_type(expected);
-        if strict {
-            self.checker.is_assignable_to_strict(actual, expected)
-        } else {
-            self.checker.is_assignable_to(actual, expected)
-        }
+        self.argument_assignable_preserving_rest_surface(
+            actual,
+            expected,
+            strict,
+            false,
+            provisional_site,
+        )
     }
 
     pub(crate) fn arg_targets_aggregate_rest_param(
@@ -1514,15 +1657,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         params: &[ParamInfo],
         arg_types: &[TypeId],
         var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
-    ) -> Option<(usize, TypeId, TypeId)> {
+    ) -> Option<(
+        usize,
+        TypeId,
+        TypeId,
+        Vec<crate::inference::infer::InferenceVar>,
+    )> {
         let rest_param = params.last().filter(|param| param.rest)?;
         let rest_start = params.len().saturating_sub(1);
 
         let rest_param_type = self.unwrap_readonly(rest_param.type_id);
         let target = match self.interner.lookup(rest_param_type) {
-            Some(TypeData::TypeParameter(_)) if var_map.contains_key(&rest_param_type) => {
-                Some((rest_start, rest_param_type, 0))
-            }
+            Some(TypeData::TypeParameter(_)) if var_map.contains_key(&rest_param_type) => Some((
+                rest_start,
+                rest_param_type,
+                0,
+                vec![var_map[&rest_param_type]],
+            )),
             Some(TypeData::Tuple(elements)) => {
                 let elements = self.interner.tuple_list(elements);
                 // A tuple-typed rest parameter is, to tsc, just a tuple parameter:
@@ -1551,8 +1702,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 if infer_var_rest_count != 1 {
                     return None;
                 }
+                let inference_vars = elements
+                    .iter()
+                    .filter(|element| element.rest)
+                    .filter_map(|element| var_map.get(&element.type_id).copied())
+                    .collect();
                 let source_tuple = self.build_rest_argument_source_tuple(arg_types, rest_start);
-                return Some((rest_start, rest_param_type, source_tuple));
+                return Some((rest_start, rest_param_type, source_tuple, inference_vars));
             }
             // Application rest param: e.g., `...args: TupleMapper<Tuple>` where Tuple
             // is an inference variable and TupleMapper is a mapped type alias.
@@ -1572,7 +1728,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     return None;
                 }
                 if has_infer_arg {
-                    Some((rest_start, rest_param_type, 0))
+                    let inference_vars = match self.interner.lookup(evaluated_rest_type) {
+                        Some(TypeData::Tuple(elements)) => self
+                            .interner
+                            .tuple_list(elements)
+                            .iter()
+                            .filter(|element| element.rest)
+                            .filter_map(|element| var_map.get(&element.type_id).copied())
+                            .collect(),
+                        _ => Vec::new(),
+                    };
+                    Some((rest_start, rest_param_type, 0, inference_vars))
                 } else {
                     None
                 }
@@ -1580,7 +1746,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             _ => None,
         }?;
 
-        let (start_index, target_type, trailing_count) = target;
+        let (start_index, target_type, trailing_count, inference_vars) = target;
         if start_index >= arg_types.len() {
             return None;
         }
@@ -1605,12 +1771,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // in another tuple.  This ensures `f(...u)` where `u: U extends string[]`
         // constrains `T = U` (not `T = [U]`) against `...args: T`.
         if tuple_elements.len() == 1 && tuple_elements[0].rest {
-            return Some((start_index, target_type, tuple_elements[0].type_id));
+            return Some((
+                start_index,
+                target_type,
+                tuple_elements[0].type_id,
+                inference_vars,
+            ));
         }
         Some((
             start_index,
             target_type,
             self.interner.tuple(tuple_elements),
+            inference_vars,
         ))
     }
 
@@ -1745,206 +1917,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 self.type_references_substitution_keys(arg_type, substitution)
             }
             _ => false,
-        }
-    }
-
-    #[inline]
-    pub(crate) fn type_contains_placeholder(
-        &self,
-        ty: TypeId,
-        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
-        visited: &mut FxHashSet<TypeId>,
-    ) -> bool {
-        if var_map.contains_key(&ty) {
-            return true;
-        }
-        // Fast path: intrinsic types (primitives, never, any, etc.) never contain placeholders
-        if ty.is_intrinsic() {
-            return false;
-        }
-        if !visited.insert(ty) {
-            return false;
-        }
-
-        let key = match self.interner.lookup(ty) {
-            Some(key) => key,
-            None => return false,
-        };
-
-        match key {
-            TypeData::Array(elem) => self.type_contains_placeholder(elem, var_map, visited),
-            TypeData::Tuple(elements) => {
-                let elements = self.interner.tuple_list(elements);
-                elements
-                    .iter()
-                    .any(|elem| self.type_contains_placeholder(elem.type_id, var_map, visited))
-            }
-            TypeData::Union(members) | TypeData::Intersection(members) => {
-                let members = self.interner.type_list(members);
-                members
-                    .iter()
-                    .any(|&member| self.type_contains_placeholder(member, var_map, visited))
-            }
-            TypeData::Object(shape_id) => {
-                let shape = self.interner.object_shape(shape_id);
-                shape
-                    .properties
-                    .iter()
-                    .any(|prop| self.type_contains_placeholder(prop.type_id, var_map, visited))
-            }
-            TypeData::ObjectWithIndex(shape_id) => {
-                let shape = self.interner.object_shape(shape_id);
-                shape
-                    .properties
-                    .iter()
-                    .any(|prop| self.type_contains_placeholder(prop.type_id, var_map, visited))
-                    || shape.string_index.as_ref().is_some_and(|idx| {
-                        self.type_contains_placeholder(idx.key_type, var_map, visited)
-                            || self.type_contains_placeholder(idx.value_type, var_map, visited)
-                    })
-                    || shape.number_index.as_ref().is_some_and(|idx| {
-                        self.type_contains_placeholder(idx.key_type, var_map, visited)
-                            || self.type_contains_placeholder(idx.value_type, var_map, visited)
-                    })
-            }
-            TypeData::Application(app_id) => {
-                let app = self.interner.type_application(app_id);
-                self.type_contains_placeholder(app.base, var_map, visited)
-                    || app
-                        .args
-                        .iter()
-                        .any(|&arg| self.type_contains_placeholder(arg, var_map, visited))
-            }
-            TypeData::Function(shape_id) => {
-                let shape = self.interner.function_shape(shape_id);
-                shape.type_params.iter().any(|tp| {
-                    tp.constraint.is_some_and(|constraint| {
-                        self.type_contains_placeholder(constraint, var_map, visited)
-                    }) || tp.default.is_some_and(|default| {
-                        self.type_contains_placeholder(default, var_map, visited)
-                    })
-                }) || shape
-                    .params
-                    .iter()
-                    .any(|param| self.type_contains_placeholder(param.type_id, var_map, visited))
-                    || shape.this_type.is_some_and(|this_type| {
-                        self.type_contains_placeholder(this_type, var_map, visited)
-                    })
-                    || self.type_contains_placeholder(shape.return_type, var_map, visited)
-                    || shape.type_predicate.as_ref().is_some_and(|pred| {
-                        pred.type_id
-                            .is_some_and(|ty| self.type_contains_placeholder(ty, var_map, visited))
-                    })
-            }
-            TypeData::Callable(shape_id) => {
-                let shape = self.interner.callable_shape(shape_id);
-                let in_call = shape.call_signatures.iter().any(|sig| {
-                    sig.type_params.iter().any(|tp| {
-                        tp.constraint.is_some_and(|constraint| {
-                            self.type_contains_placeholder(constraint, var_map, visited)
-                        }) || tp.default.is_some_and(|default| {
-                            self.type_contains_placeholder(default, var_map, visited)
-                        })
-                    }) || sig.params.iter().any(|param| {
-                        self.type_contains_placeholder(param.type_id, var_map, visited)
-                    }) || sig.this_type.is_some_and(|this_type| {
-                        self.type_contains_placeholder(this_type, var_map, visited)
-                    }) || self.type_contains_placeholder(sig.return_type, var_map, visited)
-                        || sig.type_predicate.as_ref().is_some_and(|pred| {
-                            pred.type_id.is_some_and(|ty| {
-                                self.type_contains_placeholder(ty, var_map, visited)
-                            })
-                        })
-                });
-                if in_call {
-                    return true;
-                }
-                let in_construct = shape.construct_signatures.iter().any(|sig| {
-                    sig.type_params.iter().any(|tp| {
-                        tp.constraint.is_some_and(|constraint| {
-                            self.type_contains_placeholder(constraint, var_map, visited)
-                        }) || tp.default.is_some_and(|default| {
-                            self.type_contains_placeholder(default, var_map, visited)
-                        })
-                    }) || sig.params.iter().any(|param| {
-                        self.type_contains_placeholder(param.type_id, var_map, visited)
-                    }) || sig.this_type.is_some_and(|this_type| {
-                        self.type_contains_placeholder(this_type, var_map, visited)
-                    }) || self.type_contains_placeholder(sig.return_type, var_map, visited)
-                        || sig.type_predicate.as_ref().is_some_and(|pred| {
-                            pred.type_id.is_some_and(|ty| {
-                                self.type_contains_placeholder(ty, var_map, visited)
-                            })
-                        })
-                });
-                if in_construct {
-                    return true;
-                }
-                shape
-                    .properties
-                    .iter()
-                    .any(|prop| self.type_contains_placeholder(prop.type_id, var_map, visited))
-            }
-            TypeData::Conditional(cond_id) => {
-                let cond = self.interner.get_conditional(cond_id);
-                self.type_contains_placeholder(cond.check_type, var_map, visited)
-                    || self.type_contains_placeholder(cond.extends_type, var_map, visited)
-                    || self.type_contains_placeholder(cond.true_type, var_map, visited)
-                    || self.type_contains_placeholder(cond.false_type, var_map, visited)
-            }
-            TypeData::Mapped(mapped_id) => {
-                let mapped = self.interner.get_mapped(mapped_id);
-                mapped.type_param.constraint.is_some_and(|constraint| {
-                    self.type_contains_placeholder(constraint, var_map, visited)
-                }) || mapped.type_param.default.is_some_and(|default| {
-                    self.type_contains_placeholder(default, var_map, visited)
-                }) || self.type_contains_placeholder(mapped.constraint, var_map, visited)
-                    || self.type_contains_placeholder(mapped.template, var_map, visited)
-            }
-            TypeData::IndexAccess(obj, idx) => {
-                self.type_contains_placeholder(obj, var_map, visited)
-                    || self.type_contains_placeholder(idx, var_map, visited)
-            }
-            TypeData::KeyOf(operand)
-            | TypeData::ReadonlyType(operand)
-            | TypeData::NoInfer(operand) => {
-                self.type_contains_placeholder(operand, var_map, visited)
-            }
-            TypeData::Substitution {
-                base_type,
-                constraint,
-            } => {
-                self.type_contains_placeholder(base_type, var_map, visited)
-                    || self.type_contains_placeholder(constraint, var_map, visited)
-            }
-            TypeData::TemplateLiteral(spans) => {
-                let spans = self.interner.template_list(spans);
-                spans.iter().any(|span| match span {
-                    TemplateSpan::Text(_) => false,
-                    TemplateSpan::Type(inner) => {
-                        self.type_contains_placeholder(*inner, var_map, visited)
-                    }
-                })
-            }
-            TypeData::StringIntrinsic { type_arg, .. } => {
-                self.type_contains_placeholder(type_arg, var_map, visited)
-            }
-            TypeData::Enum(_def_id, member_type) => {
-                self.type_contains_placeholder(member_type, var_map, visited)
-            }
-            TypeData::TypeParameter(_)
-            | TypeData::Infer(_)
-            | TypeData::Intrinsic(_)
-            | TypeData::Literal(_)
-            | TypeData::Lazy(_)
-            | TypeData::Recursive(_)
-            | TypeData::BoundParameter(_)
-            | TypeData::TypeQuery(_)
-            | TypeData::UniqueSymbol(_)
-            | TypeData::ThisType
-            | TypeData::ModuleNamespace(_)
-            | TypeData::UnresolvedTypeName(_)
-            | TypeData::Error => false,
         }
     }
 }

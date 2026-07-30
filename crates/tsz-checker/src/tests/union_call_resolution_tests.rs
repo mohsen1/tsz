@@ -58,10 +58,11 @@ x.f();
 
 /// Companion lock: `f4: F3 | F5` — both multi-overload, but `(this: B)` is
 /// in both members. The union IS callable; the actual `this` (`A & C & {...}`)
-/// fails the intersection so TS2684 is correct here. Verifies the fix did not
-/// over-shoot into the compat-found branch.
+/// fails the intersection. TypeScript 7 promotes the sole missing-`b`
+/// relation reason to TS2741. Verifies the fix did not over-shoot into the
+/// no-compatible-signature branch.
 #[test]
-fn union_two_multi_overload_compat_found_emits_ts2684() {
+fn union_two_multi_overload_compat_found_promotes_missing_this_property() {
     let diags = check_source_diagnostics(
         r#"
 type A = { a: string };
@@ -84,11 +85,11 @@ x.f();
 "#,
     );
 
-    let ts2684: Vec<_> = diags.iter().filter(|d| d.code == 2684).collect();
+    let ts2741: Vec<_> = diags.iter().filter(|d| d.code == 2741).collect();
     assert_eq!(
-        ts2684.len(),
+        ts2741.len(),
         1,
-        "Expected exactly one TS2684 for F3|F5 (this:B common but x not assignable to B), got: {:?}",
+        "Expected exactly one TS2741 for the missing `b` receiver property, got: {:?}",
         diags
             .iter()
             .map(|d| (d.code, &d.message_text))

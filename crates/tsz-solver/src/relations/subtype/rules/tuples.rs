@@ -163,8 +163,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     // TSC: "Source provides no match for variadic element at position N
                     //        in target."
                     let variadic_is_type_param = is_type_parameter(self.interner, variadic);
+                    let variadic_is_declared_binder = type_param_info(self.interner, variadic)
+                        .is_some_and(|info| !info.is_infer_placeholder());
                     let variadic_array = self.interner.array(variadic);
+                    let mut matched_source_element = false;
                     for (_, s_elem) in source_iter {
+                        matched_source_element = true;
                         if s_elem.rest {
                             // When both source and target rest elements are type parameters,
                             // compare them directly (U <: T) rather than via Array(T).
@@ -191,6 +195,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         } else if !self.check_subtype(s_elem.type_id, variadic).is_true() {
                             return SubtypeResult::False;
                         }
+                    }
+                    if variadic_is_declared_binder && !matched_source_element {
+                        // An unresolved variadic binder is universally
+                        // quantified. Even an empty concrete tuple cannot
+                        // satisfy `[...T]`: `T` may be instantiated with a
+                        // stricter subtype of its constraint.
+                        return SubtypeResult::False;
                     }
                     return SubtypeResult::True;
                 }

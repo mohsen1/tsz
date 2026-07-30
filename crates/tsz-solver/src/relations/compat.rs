@@ -1547,6 +1547,18 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         result
     }
 
+    fn is_assignable_strict_with_provisional_rest_union(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        let previous = self.subtype.allow_provisional_rest_union;
+        self.subtype.allow_provisional_rest_union = true;
+        let result = self.is_assignable_strict(source, target);
+        self.subtype.allow_provisional_rest_union = previous;
+        result
+    }
+
     /// Explain why `source` is not assignable to `target` using TS compatibility rules.
     pub fn explain_failure(
         &mut self,
@@ -1825,6 +1837,10 @@ impl<'a, R: TypeResolver> AssignabilityChecker for CompatChecker<'a, R> {
         self.is_assignable_strict(source, target)
     }
 
+    fn is_assignable_to_provisional_rest_union(&mut self, source: TypeId, target: TypeId) -> bool {
+        self.is_assignable_strict_with_provisional_rest_union(source, target)
+    }
+
     fn is_assignable_to_bivariant_callback(&mut self, source: TypeId, target: TypeId) -> bool {
         // Bypass the cache and perform a one-off check with non-strict function variance.
         // Bivariant callback checking disables strict_function_types for parameter TYPE
@@ -1835,6 +1851,10 @@ impl<'a, R: TypeResolver> AssignabilityChecker for CompatChecker<'a, R> {
 
     fn evaluate_type(&mut self, type_id: TypeId) -> TypeId {
         self.subtype.evaluate_type(type_id)
+    }
+
+    fn type_resolver(&self) -> Option<&dyn TypeResolver> {
+        Some(self.subtype.resolver)
     }
 }
 

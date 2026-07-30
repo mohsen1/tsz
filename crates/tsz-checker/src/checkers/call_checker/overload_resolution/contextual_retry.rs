@@ -53,6 +53,22 @@ impl<'a> CheckerState<'a> {
         {
             return None;
         }
+        if let CallResult::ArgumentTypeMismatch {
+            actual, expected, ..
+        } = result
+            && crate::query_boundaries::assignability::relation_contains_declared_bare_function_rest(
+                self.ctx.types,
+                &self.ctx,
+                *actual,
+                *expected,
+            )
+        {
+            // Contextual collection may retype a declared callback argument
+            // against the very parameter it failed to satisfy. Preserve a raw
+            // rest-binder mismatch instead of turning that circular retry into
+            // success.
+            return None;
+        }
 
         let sig_shape = function_shape_from_call_signature_preserving_method(sig, false);
         let return_sub_for_retry = if contextual_type.is_some() {

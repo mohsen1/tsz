@@ -10,13 +10,135 @@ use crate::operations::generic_call::{
 };
 use crate::operations::widening;
 use crate::operations::{AssignabilityChecker, CallEvaluator, CallResult};
-use crate::types::{FunctionShape, ParamInfo, TypeData, TypeId, TypePredicate};
+use crate::types::{FunctionShape, ParamInfo, TypeData, TypeId, TypeParamInfo, TypePredicate};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::trace;
 
 use super::FinishGenericCallResolutionArgs;
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
+    fn transparent_bare_rest_type_parameter_query(
+        &self,
+        type_id: TypeId,
+    ) -> crate::type_queries::RestBinderQuery<Option<TypeParamInfo>> {
+        if let Some(resolver) = self.checker.type_resolver() {
+            crate::type_queries::transparent_bare_rest_type_parameter_with_resolver_query(
+                self.interner,
+                &resolver,
+                type_id,
+            )
+        } else {
+            crate::type_queries::transparent_bare_rest_type_parameter_with_resolver_query(
+                self.interner,
+                &self.interner,
+                type_id,
+            )
+        }
+    }
+
+    fn rest_type_has_union_surface_query(
+        &self,
+        type_id: TypeId,
+    ) -> crate::type_queries::RestBinderQuery<bool> {
+        if let Some(resolver) = self.checker.type_resolver() {
+            crate::type_queries::rest_type_has_union_surface_with_resolver_query(
+                self.interner,
+                &resolver,
+                type_id,
+            )
+        } else {
+            crate::type_queries::rest_type_has_union_surface_with_resolver_query(
+                self.interner,
+                &self.interner,
+                type_id,
+            )
+        }
+    }
+
+    fn call_signatures_query(
+        &self,
+        type_id: TypeId,
+    ) -> crate::type_queries::RestBinderQuery<Option<Vec<crate::type_queries::RestCallableSignature>>>
+    {
+        if let Some(resolver) = self.checker.type_resolver() {
+            crate::type_queries::direct_provisional_call_signatures_with_resolver(
+                self.interner,
+                &resolver,
+                type_id,
+            )
+        } else {
+            crate::type_queries::direct_provisional_call_signatures_with_resolver(
+                self.interner,
+                &self.interner,
+                type_id,
+            )
+        }
+    }
+
+    fn direct_provisional_rest_union_site(
+        &self,
+        raw_type: TypeId,
+        instantiated_type: TypeId,
+        aggregate_rest_type_params: &[TypeParamInfo],
+    ) -> bool {
+        if aggregate_rest_type_params.is_empty() {
+            return false;
+        }
+        let instantiated_signatures = match self.call_signatures_query(instantiated_type) {
+            crate::type_queries::RestBinderQuery::Complete(Some(signatures)) => signatures,
+            crate::type_queries::RestBinderQuery::Complete(None)
+            | crate::type_queries::RestBinderQuery::Incomplete => return false,
+        };
+        let raw_signatures = match self.call_signatures_query(raw_type) {
+            crate::type_queries::RestBinderQuery::Complete(Some(signatures)) => signatures,
+            crate::type_queries::RestBinderQuery::Complete(None)
+            | crate::type_queries::RestBinderQuery::Incomplete => return false,
+        };
+        if raw_signatures.len() != instantiated_signatures.len() {
+            return false;
+        }
+        let mut found_call_owned_union = false;
+        for (raw, instantiated) in raw_signatures.iter().zip(instantiated_signatures.iter()) {
+            if raw.is_method != instantiated.is_method
+                || raw.params.len() != instantiated.params.len()
+            {
+                return false;
+            }
+            let Some(instantiated_rest) = instantiated.params.last().filter(|param| param.rest)
+            else {
+                continue;
+            };
+            let instantiated_has_union =
+                match self.rest_type_has_union_surface_query(instantiated_rest.type_id) {
+                    crate::type_queries::RestBinderQuery::Complete(value) => value,
+                    crate::type_queries::RestBinderQuery::Incomplete => return false,
+                };
+            if !instantiated_has_union {
+                continue;
+            }
+
+            // The relation flag applies to the whole callable value. Arm it
+            // only when every union-rest overload at this site is the aligned
+            // instantiation of a raw rest binder owned by this call. A sibling
+            // user-written union overload must keep ordinary strict semantics.
+            let Some(raw_rest) = raw.params.last().filter(|param| param.rest) else {
+                return false;
+            };
+            let raw_is_call_owned = matches!(
+                self.transparent_bare_rest_type_parameter_query(raw_rest.type_id),
+                crate::type_queries::RestBinderQuery::Complete(Some(info))
+                    if aggregate_rest_type_params
+                        .iter()
+                        .any(|type_param| type_param.is_same_binder(info))
+            );
+            if !raw_is_call_owned {
+                return false;
+            }
+            found_call_owned_union = true;
+        }
+        found_call_owned_union
+    }
+
     /// Register the exact declaration-scoped identities owned by `func`.
     ///
     /// Declaration origins are stable across reconstructed `TypeId`s, including
@@ -102,10 +224,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             callback_placeholder_subst,
             noinfer_param_vars,
             rest_tuple_target_type,
+            aggregate_rest_inference_vars,
             structural_return_subst,
             first_direct_primitive_mismatch,
             saw_deferred_arg,
         } = args;
+        let aggregate_rest_type_params = func
+            .type_params
+            .iter()
+            .zip(type_param_vars.iter())
+            .filter_map(|(type_param, inference_var)| {
+                aggregate_rest_inference_vars
+                    .contains(inference_var)
+                    .then_some(*type_param)
+            })
+            .collect::<Vec<_>>();
         let mut infer_ctx = infer_ctx;
         // 4. Resolve inference variables
         // CRITICAL: Strengthen inter-parameter constraints before resolution
@@ -1509,6 +1642,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Store BEFORE the final check so they're available even if the check fails
         // (the checker uses these to perform EPC on ArgumentTypeMismatch too).
         self.apply_callback_optional_rest_slots(func, arg_types, &mut instantiated_params);
+        let mut provisional_rest_union_sites = Vec::with_capacity(final_args_len);
+        for index in 0..final_args_len {
+            let raw_expected = self.param_type_for_arg_index(&func.params, index, final_args_len);
+            let instantiated_expected =
+                self.param_type_for_arg_index(&instantiated_params, index, final_args_len);
+            let provisional =
+                raw_expected
+                    .zip(instantiated_expected)
+                    .is_some_and(|(raw, instantiated)| {
+                        self.direct_provisional_rest_union_site(
+                            raw,
+                            instantiated,
+                            &aggregate_rest_type_params,
+                        )
+                    });
+            provisional_rest_union_sites.push(provisional);
+        }
         self.last_instantiated_params = Some(instantiated_params.clone());
 
         if let Some((index, expected, actual)) = first_direct_primitive_mismatch {
@@ -1524,9 +1674,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return result;
         }
 
-        if let Some(result) =
-            self.check_argument_types_with(&instantiated_params, &final_args, true, func.is_method)
-        {
+        if let Some(result) = self.check_argument_types_with(
+            &instantiated_params,
+            &final_args,
+            true,
+            func.is_method,
+            Some(&provisional_rest_union_sites),
+        ) {
             tracing::debug!("Final check failed: {:?}", result);
             return match result {
                 CallResult::ArgumentTypeMismatch {

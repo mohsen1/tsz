@@ -55,6 +55,20 @@ pub fn evaluate_type_with_resolver(
     evaluator.evaluate(type_id)
 }
 
+/// Evaluate a type with an explicit resolver while preserving the typed
+/// termination verdict.
+pub fn evaluate_type_result_with_resolver(
+    interner: &dyn TypeDatabase,
+    resolver: &impl TypeResolver,
+    type_id: TypeId,
+) -> EvaluationResult {
+    let mut evaluator = TypeEvaluator::with_resolver(interner, resolver);
+    evaluator.evaluate_request_result(
+        EvaluationRequest::new(type_id)
+            .with_exact_optional_property_types(interner.exact_optional_property_types()),
+    )
+}
+
 /// Convenience function for full type evaluation with explicit request options.
 pub fn evaluate_type_with_request(
     interner: &dyn TypeDatabase,

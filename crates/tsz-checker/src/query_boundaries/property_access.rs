@@ -1,5 +1,6 @@
 use tsz_common::Atom;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
+use tsz_solver::relations::subtype::TypeResolver;
 use tsz_solver::{
     CallSignature, CallableShape, FunctionShape, MappedModifier, ParamInfo, TupleElement, TypeId,
     TypeParamInfo, TypeParamOrigin, TypePredicate,
@@ -353,11 +354,53 @@ pub(crate) fn strict_bind_call_apply_args_param(
 }
 
 pub(crate) fn strict_bind_call_apply_generic_this_param(
-    db: &dyn TypeDatabase,
+    db: &dyn QueryDatabase,
     constraint: TypeId,
+    sig: &CallSignature,
 ) -> (TypeParamInfo, TypeId) {
+    let name_occurs_in = |type_id, name| {
+        tsz_solver::query::contains_type_parameter_named(db, type_id, name) || {
+            let evaluated = db.evaluate_type(type_id);
+            evaluated != type_id
+                && tsz_solver::query::contains_type_parameter_named(db, evaluated, name)
+        }
+    };
+    let name_is_used = |name| {
+        sig.type_params.iter().any(|param| {
+            param.name == name
+                || param
+                    .constraint
+                    .is_some_and(|constraint| name_occurs_in(constraint, name))
+                || param
+                    .default
+                    .is_some_and(|default| name_occurs_in(default, name))
+        }) || sig
+            .params
+            .iter()
+            .any(|param| name_occurs_in(param.type_id, name))
+            || sig
+                .this_type
+                .is_some_and(|this_type| name_occurs_in(this_type, name))
+            || sig
+                .type_predicate
+                .and_then(|predicate| predicate.type_id)
+                .is_some_and(|predicate_type| name_occurs_in(predicate_type, name))
+            || name_occurs_in(sig.return_type, name)
+    };
+    let mut suffix = 0_u32;
+    let name = loop {
+        let candidate = if suffix == 0 {
+            db.intern_string("TThis")
+        } else {
+            db.intern_string(&format!("TThis{suffix}"))
+        };
+        if !name_is_used(candidate) {
+            break candidate;
+        }
+        suffix = suffix.saturating_add(1);
+    };
     let info = TypeParamInfo {
-        name: db.intern_string("TThis"),
+        name,
         constraint: Some(constraint),
         default: None,
         is_const: false,
@@ -365,6 +408,68 @@ pub(crate) fn strict_bind_call_apply_generic_this_param(
     };
     let type_id = db.type_param(info);
     (info, type_id)
+}
+
+/// Build the implicit receiver constraint for the zero-bound-argument
+/// (`A = []`) specialization of the final generic `CallableFunction.bind`
+/// overload.
+///
+/// A bare rest parameter owned by an enclosing signature is fixed to its
+/// constraint before the `thisArg` is considered. For example, the `T` in
+/// `(this: 1, ...args: T) => void`, where `T extends unknown[]` belongs to the
+/// enclosing function, becomes `unknown[]`. Parameters declared by the
+/// receiver signature itself remain generic. `NoInfer<T>` is the same bare
+/// binder for this specialization, as is a transparent alias application such
+/// as `Identity<T>`. Tuple/array and other structural wrappers remain intact.
+pub(crate) fn strict_bind_call_apply_generic_bind_receiver_type<R: TypeResolver>(
+    db: &dyn QueryDatabase,
+    resolver: &R,
+    sig: &CallSignature,
+    generic_this_type: TypeId,
+) -> TypeId {
+    let params = sig
+        .params
+        .iter()
+        .map(|param| {
+            if !param.rest {
+                return *param;
+            }
+            let info =
+                match tsz_solver::type_queries::transparent_bare_rest_type_parameter_with_resolver_query(
+                    db,
+                    resolver,
+                    param.type_id,
+                ) {
+                    tsz_solver::type_queries::RestBinderQuery::Complete(Some(info)) => info,
+                    tsz_solver::type_queries::RestBinderQuery::Complete(None)
+                    | tsz_solver::type_queries::RestBinderQuery::Incomplete => return *param,
+                };
+            if sig
+                .type_params
+                .iter()
+                .any(|local| local.is_same_binder(info))
+            {
+                return *param;
+            }
+            ParamInfo {
+                type_id: info
+                    .constraint
+                    .filter(|constraint| *constraint != TypeId::ERROR)
+                    .unwrap_or(TypeId::UNKNOWN),
+                ..*param
+            }
+        })
+        .collect();
+
+    db.function(FunctionShape {
+        type_params: sig.type_params.clone(),
+        params,
+        this_type: Some(generic_this_type),
+        return_type: sig.return_type,
+        type_predicate: sig.type_predicate,
+        is_constructor: false,
+        is_method: false,
+    })
 }
 
 pub(crate) fn strict_bind_call_apply_method_type(

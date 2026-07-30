@@ -126,7 +126,7 @@ pub(crate) fn array_spread_rest_param_is_bare_type_param(
         .is_some_and(|rest_type| is_type_parameter_type(db, rest_type))
 }
 
-fn unwrapped_callable_rest_parameter_type(
+pub(crate) fn unwrapped_callable_rest_parameter_type(
     db: &dyn TypeDatabase,
     callable_type: Option<TypeId>,
 ) -> Option<TypeId> {

@@ -151,4 +151,46 @@ mod tests {
         assert_ne!(before_final, after_final);
         assert_ne!(before_subtype, after_subtype);
     }
+
+    #[test]
+    fn checker_relation_cache_keys_partition_typed_rest_and_any_policies() {
+        let graph = InheritanceGraph::new();
+        let base_policy =
+            relation_policy::from_checker_flags_u16(RelationFlags::STRICT_FUNCTION_TYPES);
+        let provisional_policy = base_policy.with_provisional_rest_union(true);
+        let overload_policy = base_policy.with_any_propagation_mode(
+            tsz_solver::relations::subtype::AnyPropagationMode::AnySourceNotRelated,
+        );
+        let overload_provisional_policy = provisional_policy.with_any_propagation_mode(
+            tsz_solver::relations::subtype::AnyPropagationMode::AnySourceNotRelated,
+        );
+
+        let base =
+            assignability_cache_key_for_policy(TypeId::STRING, TypeId::NUMBER, base_policy, &graph);
+        let provisional = assignability_cache_key_for_policy(
+            TypeId::STRING,
+            TypeId::NUMBER,
+            provisional_policy,
+            &graph,
+        );
+        let overload = assignability_cache_key_for_policy(
+            TypeId::STRING,
+            TypeId::NUMBER,
+            overload_policy,
+            &graph,
+        );
+        let overload_provisional = assignability_cache_key_for_policy(
+            TypeId::STRING,
+            TypeId::NUMBER,
+            overload_provisional_policy,
+            &graph,
+        );
+
+        assert_ne!(base, provisional);
+        assert_ne!(base, overload);
+        assert_ne!(provisional, overload_provisional);
+        assert_ne!(overload, overload_provisional);
+        assert_ne!(provisional, overload);
+        assert_ne!(base, overload_provisional);
+    }
 }

@@ -37,6 +37,35 @@ pub trait AssignabilityChecker {
         self.is_assignable_to(source, target)
     }
 
+    /// Strict assignability for a generic call's aggregate variadic-rest
+    /// validation. The default is the ordinary strict relation; the
+    /// compatibility checker preserves provisional inferred rest unions while
+    /// fixed prefix and suffix arguments are validated separately.
+    fn is_assignable_to_provisional_rest_union(&mut self, source: TypeId, target: TypeId) -> bool {
+        self.is_assignable_to_strict(source, target)
+    }
+
+    /// Raw-surface strict relation for generic-call final validation.
+    ///
+    /// Implementations with a separate checker preparation phase preserve
+    /// declared rest binders here and arm the provisional policy only for an
+    /// exact inference-produced callback target.
+    fn is_assignable_to_generic_call(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        strict: bool,
+        provisional_rest_union: bool,
+    ) -> bool {
+        if provisional_rest_union {
+            self.is_assignable_to_provisional_rest_union(source, target)
+        } else if strict {
+            self.is_assignable_to_strict(source, target)
+        } else {
+            self.is_assignable_to(source, target)
+        }
+    }
+
     /// Assignability check for bivariant callback parameters.
     ///
     /// This is used for method parameter positions where TypeScript allows
@@ -235,6 +264,14 @@ pub struct CallEvaluator<'a, C: AssignabilityChecker> {
     /// re-traversal on deeply nested type structures (e.g., long instantiation chains
     /// where each Application type references the previous one multiple times).
     pub(crate) contextual_sensitivity_cache: RefCell<FxHashMap<TypeId, bool>>,
+    /// Operation-local memo for declared bare callable-rest classification.
+    ///
+    /// Argument validation can ask about the same source/target pair while
+    /// choosing callback variance and again while preserving raw relation
+    /// surfaces. Cache the resolver-aware graph walk for the lifetime of this
+    /// call evaluator.
+    pub(crate) declared_bare_rest_cache:
+        RefCell<FxHashMap<TypeId, crate::type_queries::RestBinderQuery<bool>>>,
     /// Recursion depth for reverse mapped type inference through mapped type templates.
     /// Used as a hard cap to prevent runaway recursion (in addition to the
     /// `reverse_mapped_visited` set which short-circuits true recursive patterns).
@@ -281,6 +318,8 @@ pub struct CallEvaluator<'a, C: AssignabilityChecker> {
 pub struct CallEvaluatorCacheStatistics {
     /// Entries in the contextual-sensitivity memo keyed by input `TypeId`.
     pub contextual_sensitivity_entries: usize,
+    /// Entries in the declared bare callable-rest memo keyed by input `TypeId`.
+    pub declared_bare_rest_entries: usize,
     estimated_size_bytes: usize,
 }
 
@@ -342,6 +381,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             last_instantiated_predicate: None,
             last_instantiated_params: None,
             contextual_sensitivity_cache: RefCell::new(FxHashMap::default()),
+            declared_bare_rest_cache: RefCell::new(FxHashMap::default()),
             reverse_mapped_depth: Cell::new(0),
             reverse_mapped_visited: RefCell::new(FxHashSet::default()),
             reverse_alias_expansion_visited: RefCell::new(FxHashSet::default()),
@@ -354,10 +394,18 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     #[must_use]
     pub fn cache_statistics(&self) -> CallEvaluatorCacheStatistics {
         let contextual_sensitivity_entries = self.contextual_sensitivity_cache.borrow().len();
-        let estimated_size_bytes =
-            contextual_sensitivity_entries.saturating_mul(std::mem::size_of::<(TypeId, bool)>());
+        let declared_bare_rest_entries = self.declared_bare_rest_cache.borrow().len();
+        let estimated_size_bytes = contextual_sensitivity_entries
+            .saturating_mul(std::mem::size_of::<(TypeId, bool)>())
+            .saturating_add(
+                declared_bare_rest_entries.saturating_mul(std::mem::size_of::<(
+                    TypeId,
+                    crate::type_queries::RestBinderQuery<bool>,
+                )>()),
+            );
         CallEvaluatorCacheStatistics {
             contextual_sensitivity_entries,
+            declared_bare_rest_entries,
             estimated_size_bytes,
         }
     }

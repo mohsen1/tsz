@@ -80,10 +80,11 @@ fn property_access_boundary_owns_strict_bind_call_apply_construction_helpers() {
         "strict_bind_call_apply_this_arg_param",
         "strict_bind_call_apply_args_param",
         "strict_bind_call_apply_generic_this_param",
+        "strict_bind_call_apply_generic_bind_receiver_type",
         "strict_bind_call_apply_method_type",
     ] {
         assert!(
-            source.contains(&format!("fn {helper}(")),
+            source.contains(&format!("fn {helper}(")) || source.contains(&format!("fn {helper}<")),
             "query_boundaries::property_access must own `{helper}`"
         );
     }

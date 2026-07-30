@@ -29,13 +29,14 @@ use super::node::{
 use super::syntax_kind_ext::{
     ARRAY_BINDING_PATTERN, ARROW_FUNCTION, AS_EXPRESSION, BINARY_EXPRESSION, BLOCK,
     CLASS_DECLARATION, CLASS_EXPRESSION, CONSTRUCTOR, DEBUGGER_STATEMENT, ENUM_DECLARATION,
-    EXPORT_ASSIGNMENT, EXPORT_DECLARATION, EXPORT_SPECIFIER, FUNCTION_DECLARATION,
-    FUNCTION_EXPRESSION, GET_ACCESSOR, IMPORT_DECLARATION, IMPORT_EQUALS_DECLARATION, IMPORT_TYPE,
-    INDEX_SIGNATURE, INTERFACE_DECLARATION, METHOD_DECLARATION, METHOD_SIGNATURE, MODULE_BLOCK,
-    MODULE_DECLARATION, NAMED_EXPORTS, NAMESPACE_EXPORT_DECLARATION, NON_NULL_EXPRESSION,
-    OBJECT_BINDING_PATTERN, PARAMETER, PARENTHESIZED_EXPRESSION, PROPERTY_DECLARATION,
-    PROPERTY_SIGNATURE, SATISFIES_EXPRESSION, SET_ACCESSOR, TYPE_ALIAS_DECLARATION, TYPE_ASSERTION,
-    TYPE_PREDICATE, VARIABLE_DECLARATION, VARIABLE_DECLARATION_LIST, VARIABLE_STATEMENT,
+    EXPORT_ASSIGNMENT, EXPORT_DECLARATION, EXPORT_SPECIFIER, EXPRESSION_WITH_TYPE_ARGUMENTS,
+    FUNCTION_DECLARATION, FUNCTION_EXPRESSION, GET_ACCESSOR, IMPORT_DECLARATION,
+    IMPORT_EQUALS_DECLARATION, IMPORT_TYPE, INDEX_SIGNATURE, INTERFACE_DECLARATION,
+    METHOD_DECLARATION, METHOD_SIGNATURE, MODULE_BLOCK, MODULE_DECLARATION, NAMED_EXPORTS,
+    NAMESPACE_EXPORT_DECLARATION, NON_NULL_EXPRESSION, OBJECT_BINDING_PATTERN, PARAMETER,
+    PARENTHESIZED_EXPRESSION, PROPERTY_DECLARATION, PROPERTY_SIGNATURE, SATISFIES_EXPRESSION,
+    SET_ACCESSOR, TYPE_ALIAS_DECLARATION, TYPE_ASSERTION, TYPE_PREDICATE, VARIABLE_DECLARATION,
+    VARIABLE_DECLARATION_LIST, VARIABLE_STATEMENT,
 };
 
 /// Generate the single-condition typed getter bodies (`get_X(&Node) ->
@@ -392,6 +393,34 @@ impl NodeArenaInner {
                 && let Some(assertion) = self.get_type_assertion(node)
             {
                 idx = assertion.expression;
+                continue;
+            }
+            return idx;
+        }
+        idx
+    }
+
+    /// Skip TypeScript outer-expression wrappers used when discovering a
+    /// call-like expression's underlying callee.
+    ///
+    /// In addition to parentheses and assertions, a generic callee such as
+    /// `object.method<T>` is represented by `ExpressionWithTypeArguments`.
+    /// Unwrapping it preserves the property/element receiver for `this`.
+    #[must_use]
+    pub fn skip_outer_expressions(&self, mut idx: NodeIndex) -> NodeIndex {
+        for _ in 0..100 {
+            let stripped = self.skip_parenthesized_and_assertions(idx);
+            if stripped != idx {
+                idx = stripped;
+                continue;
+            }
+            let Some(node) = self.get(idx) else {
+                return idx;
+            };
+            if node.kind == EXPRESSION_WITH_TYPE_ARGUMENTS
+                && let Some(type_args) = self.get_expr_type_args(node)
+            {
+                idx = type_args.expression;
                 continue;
             }
             return idx;

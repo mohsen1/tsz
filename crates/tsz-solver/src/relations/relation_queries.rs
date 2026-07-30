@@ -168,6 +168,21 @@ impl RelationPolicy {
         self
     }
 
+    /// Allow generic-call aggregate rest unions to remain provisional while
+    /// their concrete prefix and suffix arguments are validated separately.
+    ///
+    /// This typed policy bit does not fit in the checker's legacy packed
+    /// `u16` flags, so checker query boundaries must opt in through this
+    /// builder rather than truncating the corresponding [`RelationFlags`] bit.
+    pub const fn with_provisional_rest_union(mut self, allow: bool) -> Self {
+        self.flags = if allow {
+            self.flags.union(RelationFlags::PROVISIONAL_REST_UNION)
+        } else {
+            self.flags.difference(RelationFlags::PROVISIONAL_REST_UNION)
+        };
+        self
+    }
+
     pub const fn with_assume_related_on_cycle(mut self, assume: bool) -> Self {
         self.assume_related_on_cycle = assume;
         self
@@ -231,6 +246,11 @@ impl RelationPolicy {
     pub const fn allow_erased_generic_signature_retry(self) -> bool {
         self.flags
             .contains(RelationFlags::ALLOW_ERASED_GENERIC_SIGNATURE_RETRY)
+    }
+
+    /// Whether generic-call aggregate rest unions stay provisional.
+    pub const fn allow_provisional_rest_union(self) -> bool {
+        self.flags.contains(RelationFlags::PROVISIONAL_REST_UNION)
     }
 
     /// Whether the next signature comparison is a callback parameter check.
@@ -430,7 +450,7 @@ impl RelationResult {
     /// unresolved semantic references, and shared solver-frame limits can make
     /// a verdict request-local without tripping the local recursion guard.
     #[inline]
-    pub(crate) const fn is_cacheable(self) -> bool {
+    pub const fn is_cacheable(self) -> bool {
         self.cacheable
     }
 }
@@ -911,6 +931,7 @@ const fn apply_policy_bits_to_subtype_checker<R: TypeResolver>(
     checker.allow_bivariant_param_count = policy.allow_bivariant_param_count();
     checker.strict_readonly_identity = policy.strict_readonly_identity();
     checker.allow_erased_generic_signature_retry = policy.allow_erased_generic_signature_retry();
+    checker.allow_provisional_rest_union = policy.allow_provisional_rest_union();
     checker.in_callback_param_check = policy.in_callback_param_check();
 }
 

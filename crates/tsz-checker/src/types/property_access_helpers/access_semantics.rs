@@ -1378,6 +1378,14 @@ impl<'a> CheckerState<'a> {
                                 property_access_query::strict_bind_call_apply_generic_this_param(
                                     self.ctx.types,
                                     this_arg_type,
+                                    sig,
+                                );
+                            let generic_receiver_type =
+                                property_access_query::strict_bind_call_apply_generic_bind_receiver_type(
+                                    self.ctx.types,
+                                    &self.ctx,
+                                    sig,
+                                    generic_this_type,
                                 );
                             let generic_bind_sig =
                                 property_access_query::strict_bind_call_apply_call_signature(
@@ -1390,7 +1398,7 @@ impl<'a> CheckerState<'a> {
                                             generic_this_type,
                                         ),
                                     ],
-                                    None,
+                                    Some(generic_receiver_type),
                                     property_access_query::strict_bind_call_apply_bound_return_type(
                                         self.ctx.types,
                                     sig,

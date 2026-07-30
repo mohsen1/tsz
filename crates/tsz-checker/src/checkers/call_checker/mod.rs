@@ -144,6 +144,50 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
         self.state.strict_relation_outcome(source, target).related
     }
 
+    fn is_assignable_to_provisional_rest_union(&mut self, source: TypeId, target: TypeId) -> bool {
+        if self
+            .state
+            .checker_only_assignability_may_apply(source, target)
+            && self
+                .state
+                .checker_only_assignability_failure_reason(source, target)
+                .is_some()
+        {
+            return false;
+        }
+        self.state.is_assignable_to_provisional_rest_union(
+            source,
+            target,
+            self.overload_subtype_pass,
+        )
+    }
+
+    fn is_assignable_to_generic_call(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        strict: bool,
+        provisional_rest_union: bool,
+    ) -> bool {
+        if self
+            .state
+            .checker_only_assignability_may_apply(source, target)
+            && self
+                .state
+                .checker_only_assignability_failure_reason(source, target)
+                .is_some()
+        {
+            return false;
+        }
+        self.state.is_assignable_to_generic_call_raw(
+            source,
+            target,
+            self.overload_subtype_pass,
+            strict,
+            provisional_rest_union,
+        )
+    }
+
     fn is_assignable_to_bivariant_callback(&mut self, source: TypeId, target: TypeId) -> bool {
         if self
             .state

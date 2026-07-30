@@ -48,6 +48,24 @@ impl<'a> CheckerState<'a> {
         if let Some(outcome) = self.variance_accepted_relation_outcome(source, target) {
             return outcome;
         }
+        if crate::query_boundaries::assignability::declared_bare_rest_relation_is_raw_sensitive(
+            self.ctx.types,
+            &self.ctx,
+            source,
+            target,
+        ) {
+            self.ensure_relation_inputs_ready(&[source, target]);
+            let raw_source = self.substitute_this_type_if_needed(source);
+            let raw_target = self.substitute_this_type_if_needed(target);
+            let request =
+                crate::query_boundaries::assignability::RelationRequest::assignability_reason(
+                    raw_source, raw_target,
+                );
+            let raw_outcome = self.execute_relation_request(&request);
+            if !raw_outcome.related {
+                return raw_outcome;
+            }
+        }
         let raw_source = source;
         let (source, target) = self.prepare_assignability_inputs(source, target);
         let request = crate::query_boundaries::assignability::RelationRequest::assignability_reason(

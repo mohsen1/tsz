@@ -56,7 +56,16 @@ impl<'a> CheckerState<'a> {
         arg_idx: NodeIndex,
     ) -> bool {
         let source = self.narrow_this_from_enclosing_typeof_guard(arg_idx, source);
-        if self.should_suppress_assignability_diagnostic(source, target) {
+        let bare_rest_failure_visible =
+            crate::query_boundaries::assignability::declared_bare_rest_relation_is_raw_sensitive(
+                self.ctx.types,
+                &self.ctx,
+                source,
+                target,
+            );
+        if self.should_suppress_assignability_diagnostic(source, target)
+            && !bare_rest_failure_visible
+        {
             return true;
         }
         if self.should_suppress_assignability_for_parse_recovery(arg_idx, arg_idx) {

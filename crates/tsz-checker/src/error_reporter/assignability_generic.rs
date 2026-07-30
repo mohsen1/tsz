@@ -60,7 +60,19 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::diagnostics::contains_type_parameters(self.ctx.types, source);
         let both_have_own_sig_params = has_own_signature_type_params(self.ctx.types, source)
             && has_own_signature_type_params(self.ctx.types, target);
-        if src_callable && tgt_callable && has_type_params && !both_have_own_sig_params {
+        let bare_rest_failure_visible =
+            crate::query_boundaries::assignability::declared_bare_rest_relation_is_raw_sensitive(
+                self.ctx.types,
+                &self.ctx,
+                source,
+                target,
+            );
+        if src_callable
+            && tgt_callable
+            && has_type_params
+            && !both_have_own_sig_params
+            && !bare_rest_failure_visible
+        {
             return;
         }
 
@@ -336,6 +348,7 @@ impl<'a> CheckerState<'a> {
                 && !authoritative_names_differ
                 && !pair_is_literal_value
                 && !exact_optional_structural_pair
+                && !bare_rest_failure_visible
             {
                 (
                     format_message(

@@ -107,6 +107,12 @@ bitflags::bitflags! {
         /// need a definitive proof can reject overflow without rejecting
         /// recursive structural types.
         const ASSUME_RELATED_ON_DEPTH       = 1 << 17;
+        /// Generic-call aggregate-rest validation is comparing an inferred
+        /// variadic tuple. A target union rest may therefore retain provisional
+        /// alternatives while the call's fixed prefix/tail checks validate the
+        /// concrete arguments. Cache those verdicts separately from ordinary
+        /// universally-quantified function assignment.
+        const PROVISIONAL_REST_UNION        = 1 << 18;
     }
 }
 
