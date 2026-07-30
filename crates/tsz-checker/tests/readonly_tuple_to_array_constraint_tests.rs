@@ -99,7 +99,10 @@ fn readonly_tuple_satisfies_specific_mutable_element_constraint() {
 fn readonly_array_source_still_fails_against_mutable_array_constraint() {
     // tsc rejects a plain `readonly X[]` source at the constraint
     // boundary because its element list is unbounded; only tuples are
-    // loosened. tsz must mirror this rejection.
+    // loosened. Verified against tsc 7.0.2: it reports TS4104 here (not
+    // the generic TS2345), the same code as the direct-assignment case,
+    // because the constraint-check falls back to comparing the argument
+    // against the constraint's own concrete mutable-array shape.
     let source = r#"
         function processArray<T extends unknown[]>(arr: T): T[number] {
             return arr[0];
@@ -109,9 +112,9 @@ fn readonly_array_source_still_fails_against_mutable_array_constraint() {
     "#;
     let codes = error_codes(&check(source));
     assert!(
-        codes.contains(&2345),
+        codes.contains(&4104),
         "plain ReadonlyArray source must still be rejected at the \
-         constraint boundary; got error codes: {codes:?}"
+         constraint boundary, matching tsc's TS4104; got error codes: {codes:?}"
     );
 }
 
