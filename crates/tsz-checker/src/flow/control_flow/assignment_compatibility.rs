@@ -38,10 +38,10 @@ impl<'a> FlowAnalyzer<'a> {
                 option_sensitive_relation = assignment_started_provisional;
                 let rhs = self.skip_parens_and_assertions(bin.right);
                 if option_sensitive_relation
-                    && !self
+                    && self
                         .arena
                         .get(rhs)
-                        .is_some_and(|rhs_node| rhs_node.kind == syntax_kind_ext::CALL_EXPRESSION)
+                        .is_none_or(|rhs_node| rhs_node.kind != syntax_kind_ext::CALL_EXPRESSION)
                 {
                     // Reduced syntax-only surfaces keep the established flow path.
                     return Some(flow_type);
