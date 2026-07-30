@@ -1063,7 +1063,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // 3. Round 1: Process non-contextual arguments only
         let rest_tuple_inference =
             self.rest_tuple_inference_target(&instantiated_params, arg_types, &var_map);
-        let rest_tuple_start = rest_tuple_inference.as_ref().map(|(start, _, _)| *start);
+        let rest_tuple_start = rest_tuple_inference.as_ref().map(|(start, _, _, _)| *start);
 
         for (i, &arg_type) in arg_types.iter().enumerate() {
             if rest_tuple_start.is_some_and(|start| i >= start) {
@@ -1143,7 +1143,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         // Process rest tuple in Round 1
-        if let Some((_start, target_type, tuple_type)) = rest_tuple_inference {
+        if let Some((_start, target_type, tuple_type, _inference_vars)) = rest_tuple_inference {
             self.mark_spread_rest_literal_mode(
                 &mut infer_ctx,
                 func,

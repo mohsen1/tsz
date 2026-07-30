@@ -98,7 +98,8 @@ pub(crate) fn cached_final_assignability(
         relation_result.iteration_exceeded(),
     );
 
-    if is_cacheable {
+    let relation_result_cacheable = relation_result.is_cacheable();
+    if is_cacheable && relation_result_cacheable {
         checker
             .ctx
             .types
@@ -106,7 +107,7 @@ pub(crate) fn cached_final_assignability(
     }
 
     let result = raw_related && !checker.assignability_true_override_rejects(source, target);
-    if is_cacheable && result != raw_related {
+    if is_cacheable && relation_result_cacheable && result != raw_related {
         checker
             .ctx
             .types

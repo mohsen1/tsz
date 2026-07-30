@@ -11,9 +11,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source_params: &[ParamInfo],
         target_params: &[ParamInfo],
         is_method: bool,
+        allow_provisional_union_member: bool,
     ) -> SubtypeResult {
         let target_has_rest = target_params.last().is_some_and(|p| p.rest);
         let source_has_rest = source_params.last().is_some_and(|p| p.rest);
+        if target_has_rest
+            && source_has_rest
+            && !allow_provisional_union_member
+            && let (Some(source_rest), Some(target_rest)) =
+                (source_params.last(), target_params.last())
+            && matches!(
+                self.bare_source_rest_compatibility(
+                    source_rest.type_id,
+                    target_rest.type_id,
+                    is_method,
+                    false,
+                ),
+                Some(false)
+            )
+        {
+            return SubtypeResult::False;
+        }
         let rest_elem_type = if target_has_rest {
             target_params
                 .last()
@@ -120,6 +138,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let Some(rest_param) = source_params.last() else {
                 return SubtypeResult::False;
             };
+            if !allow_provisional_union_member
+                && target_fixed_count > source_fixed_count
+                && self.is_bare_rest_type_param(rest_param.type_id)
+            {
+                return SubtypeResult::False;
+            }
             if self.is_tuple_list_rest_type(rest_param.type_id)
                 && target_fixed_count > source_fixed_count
             {

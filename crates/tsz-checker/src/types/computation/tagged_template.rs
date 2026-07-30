@@ -197,7 +197,7 @@ impl<'a> CheckerState<'a> {
             return TypeId::ANY;
         }
 
-        let unwrapped_tag = self.ctx.arena.skip_parenthesized_and_assertions(tagged.tag);
+        let unwrapped_tag = self.ctx.arena.skip_outer_expressions(tagged.tag);
         let force_bivariant_callbacks = matches!(
             self.ctx.arena.kind_at(unwrapped_tag),
             Some(

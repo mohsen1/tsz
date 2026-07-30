@@ -46,7 +46,7 @@ use crate::visitors::visitor_predicates::contains_type_matching;
 pub use api::{
     evaluate_conditional, evaluate_index_access, evaluate_index_access_with_options,
     evaluate_keyof, evaluate_mapped, evaluate_type, evaluate_type_result_with_request,
-    evaluate_type_with_request, evaluate_type_with_resolver,
+    evaluate_type_result_with_resolver, evaluate_type_with_request, evaluate_type_with_resolver,
 };
 use application_types::{ApplicationEvalContext, ApplicationEvalOutcome, HomomorphicMappedArg};
 pub(crate) use array_methods::{

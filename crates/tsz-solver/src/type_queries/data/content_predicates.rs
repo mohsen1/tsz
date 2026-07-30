@@ -1075,6 +1075,15 @@ pub fn rest_type_needs_aggregate_argument_check(db: &dyn TypeDatabase, type_id: 
             matches!(db.lookup(member), Some(TypeData::Tuple(_)))
                 || rest_type_needs_aggregate_argument_check(db, member)
         }),
+        Some(TypeData::Tuple(elements)) => {
+            let elements = db.tuple_list(elements);
+            let Some(rest_index) = elements.iter().position(|element| element.rest) else {
+                return false;
+            };
+            elements[rest_index + 1..]
+                .iter()
+                .any(|element| !element.rest)
+        }
         Some(
             TypeData::TypeParameter(_)
             | TypeData::Application(_)

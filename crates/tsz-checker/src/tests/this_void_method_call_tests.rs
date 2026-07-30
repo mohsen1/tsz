@@ -69,7 +69,8 @@ f(1);
 
 #[test]
 fn this_concrete_object_lacking_property_still_errors() {
-    // Negative control — a real `this` mismatch must still produce TS2684.
+    // Negative control — a real `this` mismatch must still report. TypeScript
+    // promotes a sole missing-required-property reason to TS2741.
     // Verifies the gate is keyed on `void`, not "any `this` annotation".
     let codes = diagnostic_codes(
         r#"
@@ -79,8 +80,8 @@ obj.m(1);
 "#,
     );
     assert!(
-        codes.contains(&2684),
-        "expected TS2684 for concrete `this` mismatch; got {codes:?}"
+        codes.contains(&2741),
+        "expected TS2741 for concrete `this` missing-property mismatch; got {codes:?}"
     );
 }
 

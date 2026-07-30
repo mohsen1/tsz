@@ -19,6 +19,7 @@ use super::{
 mod constraint_helpers;
 mod duplicate_shape;
 mod finalize;
+mod post_inference_helpers;
 
 pub(super) struct FinishGenericCallResolutionArgs<'a> {
     pub(super) func: &'a FunctionShape,
@@ -35,6 +36,9 @@ pub(super) struct FinishGenericCallResolutionArgs<'a> {
     pub(super) callback_placeholder_subst: &'a TypeSubstitution,
     pub(super) noinfer_param_vars: &'a FxHashSet<InferenceVar>,
     pub(super) rest_tuple_target_type: Option<TypeId>,
+    /// Inference variables owned by the variadic element(s) of the aggregate
+    /// rest tuple matched at this call.
+    pub(super) aggregate_rest_inference_vars: &'a [InferenceVar],
     pub(super) structural_return_subst: &'a TypeSubstitution,
     pub(super) first_direct_primitive_mismatch: Option<(usize, TypeId, TypeId)>,
     pub(super) saw_deferred_arg: bool,
@@ -947,10 +951,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Prepare rest tuple inference info
         let rest_tuple_inference =
             self.rest_tuple_inference_target(&instantiated_params, arg_types, &var_map);
-        let rest_tuple_start = rest_tuple_inference.as_ref().map(|(start, _, _)| *start);
+        let rest_tuple_start = rest_tuple_inference.as_ref().map(|(start, _, _, _)| *start);
         let rest_tuple_target_type = rest_tuple_inference
             .as_ref()
-            .map(|(_, target_type, _)| *target_type);
+            .map(|(_, target_type, _, _)| *target_type);
+        let mut aggregate_rest_inference_vars = Vec::new();
         let mut saw_deferred_arg = false;
         // Track whether any deferred (context-sensitive) arg's target type
         // contains the return type bare var's placeholder. If so, Round 2 will
@@ -1507,7 +1512,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // In that case the other parameter provides a more authoritative constraint
         // (e.g., from the handler's callback params), and the rest args should be
         // validated against the inferred type, not used to infer it.
-        if let Some((_start, target_type, tuple_type)) = rest_tuple_inference {
+        if let Some((_start, target_type, tuple_type, inference_vars)) = rest_tuple_inference {
             let target_var_map: FxHashMap<TypeId, crate::inference::infer::InferenceVar> =
                 FxHashMap::from_iter([(target_type, crate::inference::infer::InferenceVar(0))]);
             let appears_in_other_params = instantiated_params
@@ -1538,6 +1543,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let should_defer_to_other_param =
                 appears_in_other_params && (has_covariant_candidates || saw_deferred_arg);
             if !should_defer_to_other_param {
+                // Participation in aggregate tuple inference is not itself
+                // provenance: a fixed parameter may already have supplied the
+                // winning candidate for the same variable. Only variables
+                // whose first evidence comes from this aggregate operation may
+                // authorize the provisional direct-callback relation.
+                let aggregate_only_vars = inference_vars
+                    .into_iter()
+                    .filter(|&var| !infer_ctx.var_has_candidates(var))
+                    .collect::<Vec<_>>();
                 self.mark_spread_rest_literal_mode(
                     &mut infer_ctx,
                     func,
@@ -1553,6 +1567,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     target_type,
                     crate::types::InferencePriority::NakedTypeVariable,
                 );
+                aggregate_rest_inference_vars = aggregate_only_vars;
             }
         }
 
@@ -1921,76 +1936,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             callback_placeholder_subst: &callback_placeholder_subst,
             noinfer_param_vars: &noinfer_param_vars,
             rest_tuple_target_type,
+            aggregate_rest_inference_vars: &aggregate_rest_inference_vars,
             structural_return_subst: &structural_return_subst,
             first_direct_primitive_mismatch,
             saw_deferred_arg,
         })
-    }
-
-    /// Returns `true` when `ty` is or structurally contains a `TypeParameter` that
-    /// does not belong to the current generic call (i.e. is absent from `var_map`).
-    ///
-    /// "Foreign" covers two cases:
-    ///  - A bare `__infer_*` placeholder from an enclosing call scope.
-    ///  - The original, user-named `TypeParameter` (e.g. `T`) from the enclosing
-    ///    function — which appears when `generic_function_shape_for_inference`
-    ///    renames the callee's type params but the argument type still carries
-    ///    the outer scope's unsubstituted `TypeParameter`.
-    ///
-    /// Intrinsic and concrete types (primitives, objects, etc.) are never foreign.
-    /// The caller is responsible for ensuring `has_usable_contra_candidates` is
-    /// true before using this result, to prevent false positives for independent
-    /// generic calls like `identity(value[key])`.
-    fn type_contains_any_foreign_type_param(
-        &self,
-        ty: TypeId,
-        var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
-    ) -> bool {
-        if ty.is_intrinsic() {
-            return false;
-        }
-        match self.interner.lookup(ty) {
-            // Any TypeParameter not registered in this call's var_map is foreign.
-            Some(TypeData::TypeParameter(_)) => !var_map.contains_key(&ty),
-            Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => self
-                .interner
-                .type_list(list_id)
-                .iter()
-                .any(|&m| self.type_contains_any_foreign_type_param(m, var_map)),
-            Some(TypeData::IndexAccess(obj, idx)) => {
-                self.type_contains_any_foreign_type_param(obj, var_map)
-                    || self.type_contains_any_foreign_type_param(idx, var_map)
-            }
-            Some(TypeData::Array(elem)) => self.type_contains_any_foreign_type_param(elem, var_map),
-            Some(TypeData::Application(app_id)) => {
-                let app = self.interner.type_application(app_id);
-                self.type_contains_any_foreign_type_param(app.base, var_map)
-                    || app
-                        .args
-                        .iter()
-                        .any(|&a| self.type_contains_any_foreign_type_param(a, var_map))
-            }
-            _ => false,
-        }
-    }
-
-    fn application_expands_to_conditional_alias_for_return_display(
-        &mut self,
-        type_id: TypeId,
-    ) -> bool {
-        if !matches!(
-            self.interner.lookup(type_id),
-            Some(TypeData::Application(_))
-        ) {
-            return false;
-        }
-        self.checker
-            .expand_type_alias_application(type_id)
-            .is_some_and(|expanded| {
-                matches!(
-                    self.interner.lookup(expanded),
-                    Some(TypeData::Conditional(_))
-                )
-            })
     }
 }

@@ -451,3 +451,40 @@ fn mapped_type_contextual_keyword_names_vary_binder() {
         "{{[interface in keyof T]: ...}} should parse as a mapped type"
     );
 }
+
+#[test]
+fn assertion_expression_spans_exclude_following_trivia() {
+    for (source, expected_kind, expected_text) in [
+        (
+            "const x = value! /* gap */;",
+            syntax_kind_ext::NON_NULL_EXPRESSION,
+            "value!",
+        ),
+        (
+            "const x = generic<T> /* gap */;",
+            syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS,
+            "generic<T>",
+        ),
+        (
+            "const x = generic<A<B>> /* gap */;",
+            syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS,
+            "generic<A<B>>",
+        ),
+        (
+            "const x = <T>value /* gap */;",
+            syntax_kind_ext::TYPE_ASSERTION,
+            "<T>value",
+        ),
+    ] {
+        let (parser, initializer) =
+            parse_clean_var_initializer(source, "assertion expression span");
+        let arena = parser.get_arena();
+        let node = arena.get(initializer).expect("initializer");
+        assert_eq!(node.kind, expected_kind, "{source}");
+        assert_eq!(
+            node_text(arena, source, initializer),
+            expected_text,
+            "{source}"
+        );
+    }
+}

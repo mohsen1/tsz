@@ -426,6 +426,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if self.allow_erased_generic_signature_retry {
             flags |= RelationFlags::ALLOW_ERASED_GENERIC_SIGNATURE_RETRY;
         }
+        if self.allow_provisional_rest_union && self.provisional_rest_union_function_depth == 0 {
+            flags |= RelationFlags::PROVISIONAL_REST_UNION;
+        }
         if self.assume_related_on_cycle {
             flags |= RelationFlags::ASSUME_RELATED_ON_CYCLE;
         }

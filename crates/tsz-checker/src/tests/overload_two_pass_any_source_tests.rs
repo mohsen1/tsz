@@ -192,3 +192,542 @@ const probeNum: number = joined;
         "annotated callback param must reject the generic candidate in pass 1 (nested any source); result is string"
     );
 }
+
+/// The same nested-`any` rule must survive the generic call evaluator's
+/// aggregate variadic-rest relation. That relation uses a provisional-rest
+/// policy, but it must still compose with pass 1's `AnySourceNotRelated`
+/// policy rather than falling back to ordinary `any` propagation.
+#[test]
+fn generic_aggregate_rest_preserves_nested_any_rejection_during_subtype_pass() {
+    let declarations = r#"
+declare function select(value: string, callback: (value: string) => void): "fixed";
+declare function select<TValues extends readonly unknown[]>(
+    ...args: [...TValues, (...values: TValues) => void]
+): "generic";
+
+declare const opaque: any;
+const selected = select(opaque, (value: string) => {});
+"#;
+    assert_eq!(
+        count(
+            &format!("{declarations}\nconst fixedProbe: \"fixed\" = selected;"),
+            2322,
+        ),
+        0,
+        "both candidates must fail pass 1, so pass 2 selects the first fixed overload"
+    );
+    assert_eq!(
+        count(
+            &format!("{declarations}\nconst genericProbe: \"generic\" = selected;"),
+            2322,
+        ),
+        1,
+        "the generic probe must fail when the fixed overload wins pass 2"
+    );
+}
+
+#[test]
+fn provisional_aggregate_rest_does_not_relax_nested_fixed_callback_slots() {
+    let source = r#"
+declare function take<Outer extends unknown[], Prefix extends unknown[] = []>(
+    ...args: [...Prefix, (x: Outer) => void]
+): void;
+function f<Outer extends unknown[]>(source: (...args: Outer) => void) {
+    take<Outer>(source);
+}
+"#;
+    assert_eq!(
+        count(source, 2345),
+        1,
+        "the provisional aggregate policy must not leak into the nested callback relation"
+    );
+}
+
+#[test]
+fn provisional_aggregate_rest_matches_tsc_during_context_instantiation_retry() {
+    let source = r#"
+type Deferred<Value> = Value extends unknown ? Value : never;
+type Target<Outer extends unknown[]> =
+    <Inner>(callback: (...args: [] | [...Outer]) => void) => Deferred<Inner>;
+declare function take<Outer extends unknown[], Prefix extends unknown[] = []>(
+    ...args: [...Prefix, Target<Outer>]
+): void;
+function f<Outer extends unknown[]>(
+    source: <Inner>(callback: (...args: Outer) => void) => Inner,
+) {
+    take<Outer>(source);
+}
+"#;
+    assert_eq!(
+        count(source, 2345),
+        0,
+        "the nested generic context-instantiation shape is accepted by `tsc`"
+    );
+}
+
+#[test]
+fn context_instantiation_retry_preserves_rigid_nested_rest_failures() {
+    let source = r#"
+type Deferred<Value> = Value extends unknown ? Value : never;
+
+type DirectSource<Outer extends unknown[]> =
+    <Inner>(callback: (...args: [] | [...Outer]) => void) => Inner;
+type DirectTarget<Outer extends unknown[]> =
+    <Inner>(callback: (...args: Outer) => void) => Deferred<Inner>;
+declare function takeDirect<Outer extends unknown[], Prefix extends unknown[] = []>(
+    ...args: [...Prefix, DirectTarget<Outer>]
+): void;
+function direct<Outer extends unknown[]>(source: DirectSource<Outer>) {
+    takeDirect<Outer>(source);
+}
+
+type NullableSource<Outer extends unknown[]> =
+    <Inner>(callback: ((...args: [] | [...Outer]) => void) | undefined) => Inner;
+type NullableTarget<Outer extends unknown[]> =
+    <Inner>(callback: ((...args: Outer) => void) | undefined) => Deferred<Inner>;
+declare function takeNullable<Outer extends unknown[], Prefix extends unknown[] = []>(
+    ...args: [...Prefix, NullableTarget<Outer>]
+): void;
+function nullable<Outer extends unknown[]>(source: NullableSource<Outer>) {
+    takeNullable<Outer>(source);
+}
+
+type TupleSource<Outer extends unknown[]> =
+    <Inner>(...args: [callback: (...args: [] | [...Outer]) => void]) => Inner;
+type TupleTarget<Outer extends unknown[]> =
+    <Inner>(...args: [callback: (...args: Outer) => void]) => Deferred<Inner>;
+declare function takeTuple<Outer extends unknown[], Prefix extends unknown[] = []>(
+    ...args: [...Prefix, TupleTarget<Outer>]
+): void;
+function tupled<Outer extends unknown[]>(source: TupleSource<Outer>) {
+    takeTuple<Outer>(source);
+}
+
+type MethodSource<Outer extends unknown[]> = {
+    method<Inner>(callback: (...args: [] | [...Outer]) => void): Inner;
+}["method"];
+type MethodTarget<Outer extends unknown[]> = {
+    method<Inner>(callback: (...args: Outer) => void): Deferred<Inner>;
+}["method"];
+declare function takeMethod<Outer extends unknown[], Prefix extends unknown[] = []>(
+    ...args: [...Prefix, MethodTarget<Outer>]
+): void;
+function method<Outer extends unknown[]>(source: MethodSource<Outer>) {
+    takeMethod<Outer>(source);
+}
+"#;
+    assert_eq!(
+        count(source, 2345),
+        4,
+        "a contextual retry must preserve rigid nested rest failures through aliases, nullish wrappers, tuple-rest slots, and extracted methods"
+    );
+}
+
+#[test]
+fn context_instantiation_retry_preserves_rigid_overloaded_callback_failures() {
+    let source = r#"
+type DeferredOverload<Value> = Value extends unknown ? Value : never;
+type OverloadedSource<Outer extends unknown[]> =
+    <Inner>(callback: {
+        (...args: [] | [...Outer]): void;
+        (...args: [number]): void;
+    }) => Inner;
+type OverloadedTarget<Outer extends unknown[]> =
+    <Inner>(callback: {
+        (...args: Outer): void;
+        (...args: [number]): void;
+    }) => DeferredOverload<Inner>;
+declare function takeOverloaded<
+    Outer extends unknown[],
+    Prefix extends unknown[] = [],
+>(...args: [...Prefix, OverloadedTarget<Outer>]): void;
+function overloaded<Outer extends unknown[]>(source: OverloadedSource<Outer>) {
+    takeOverloaded<Outer>(source);
+}
+"#;
+    assert_eq!(
+        count(source, 2345),
+        1,
+        "an overload sibling must not let contextual instantiation erase a rigid bare-rest failure"
+    );
+}
+
+#[test]
+fn context_instantiation_retry_normalizes_inner_tuple_rest_surfaces() {
+    let source = r#"
+type Deferred<Value> = Value extends infer Inner ? Inner : never;
+type Target<Pack extends unknown[]> =
+    <Result>(callback: (...args: Pack) => void) => Deferred<Result>;
+declare function take<Pack extends unknown[], Prefix extends unknown[] = []>(
+    ...args: [...Prefix, Target<Pack>]
+): void;
+
+type FixedSource<Pack extends unknown[]> =
+    <Result>(callback: (...args: [Pack]) => void) => Result;
+function fixed<Pack extends unknown[]>(source: FixedSource<Pack>) {
+    take<Pack>(source);
+}
+
+type SpreadSource<Pack extends unknown[]> =
+    <Result>(callback: (...args: [...Pack]) => void) => Result;
+function spread<Pack extends unknown[]>(source: SpreadSource<Pack>) {
+    take<Pack>(source);
+}
+"#;
+    assert_eq!(
+        count(source, 2345),
+        1,
+        "a fixed one-tuple rest is not the generic pack, while a variadic tuple spread is"
+    );
+}
+
+#[test]
+fn provisional_aggregate_rest_preserves_resolver_aware_source_aliases() {
+    let source = r#"
+type Identity<Pack extends unknown[]> = Pack;
+type ConditionalIdentity<Pack extends unknown[]> =
+    Pack extends unknown[] ? Pack : never;
+declare function take<Values extends readonly unknown[]>(
+    ...args: [...Values, (...args: Values) => void]
+): void;
+function f<Outer extends unknown[]>(
+    prefix: Outer,
+    direct: (...args: Identity<Outer>) => void,
+    conditional: (...args: ConditionalIdentity<Outer>) => void,
+) {
+    take(...prefix, direct);
+    take(...prefix, conditional);
+}
+"#;
+    assert_eq!(
+        count(source, 2345),
+        0,
+        "transparent source aliases must retain the call-owned bare-rest provenance"
+    );
+}
+
+#[test]
+fn provisional_aggregate_rest_supports_callable_interface_slots() {
+    let source = r#"
+interface Callback<Pack extends unknown[]> {
+    (...args: Pack): void;
+}
+declare function take<Values extends readonly unknown[]>(
+    ...args: [...Values, Callback<Values>]
+): void;
+function f<Outer extends unknown[]>(
+    prefix: Outer,
+    callback: Callback<Outer>,
+) {
+    take(...prefix, callback);
+}
+"#;
+    assert_eq!(
+        count(source, 2345),
+        0,
+        "call-signature interfaces participate in the direct aggregate callback slot"
+    );
+}
+
+#[test]
+fn provisional_aggregate_rest_crosses_no_infer_callable_wrappers() {
+    let source = r#"
+interface Callback<Pack extends unknown[]> {
+    (...args: NoInfer<Pack>): void;
+}
+declare function take<Values extends unknown[]>(
+    ...args: [...Values, NoInfer<Callback<Values>>]
+): void;
+function f<Outer extends unknown[]>(
+    prefix: Outer,
+    callback: Callback<Outer>,
+) {
+    take(...prefix, callback);
+}
+"#;
+    assert_eq!(
+        count(source, 2345),
+        0,
+        "transparent `NoInfer` wrappers around the slot and its rest binder retain direct call-owned provenance"
+    );
+}
+
+#[test]
+fn provisional_aggregate_rest_rejects_mixed_user_union_overloads() {
+    let source = r#"
+interface Target<Pack extends unknown[]> {
+    (...args: Pack): void;
+    (...args: [] | [...Pack]): void;
+}
+interface Source<Pack extends unknown[]> {
+    (...args: Pack): void;
+}
+declare function take<Values extends unknown[]>(
+    ...args: [...Values, Target<Values>]
+): void;
+function f<Outer extends unknown[]>(prefix: Outer, source: Source<Outer>) {
+    take(...prefix, source);
+}
+"#;
+    assert_eq!(
+        count(source, 2345),
+        1,
+        "a call-owned overload must not authorize a sibling user-written union-rest overload"
+    );
+}
+
+#[test]
+fn provisional_aggregate_rest_is_scoped_to_the_logical_argument_slot() {
+    let source = r#"
+declare function take<Values extends unknown[]>(
+    ...args: [
+        ...Values,
+        provisional: (...args: Values) => void,
+        rigid: (...args: [] | [...Values]) => void,
+    ]
+): void;
+function f<Outer extends unknown[]>(
+    prefix: Outer,
+    source: (...args: Outer) => void,
+) {
+    take(...prefix, source, source);
+}
+"#;
+    assert_eq!(
+        count(source, 2345),
+        1,
+        "an inferred aggregate slot must not transfer provenance to an identical user-union sibling"
+    );
+}
+
+#[test]
+fn ordinary_union_inference_is_not_provisional() {
+    let source = r#"
+declare function inferred<Values extends unknown[]>(
+    value: Values,
+    callback: (...args: NoInfer<Values>) => void,
+): void;
+function f<Outer extends unknown[]>(
+    value: [] | [...Outer],
+    callback: (...args: Outer) => void,
+) {
+    inferred(value, callback);
+}
+"#;
+    assert_eq!(
+        count(source, 2345),
+        1,
+        "ordinary inference of a union must not acquire aggregate provenance"
+    );
+}
+
+#[test]
+fn explicit_union_type_argument_is_not_provisional() {
+    let source = r#"
+declare function explicit<Values extends unknown[]>(
+    callback: (...args: Values) => void,
+): void;
+function f<Outer extends unknown[]>(callback: (...args: Outer) => void) {
+    explicit<[] | [...Outer]>(callback);
+}
+"#;
+    assert_eq!(
+        count(source, 2345),
+        1,
+        "an explicitly supplied union must not acquire aggregate provenance"
+    );
+}
+
+#[test]
+fn provisional_aggregate_rest_crosses_direct_optional_and_nullable_wrappers() {
+    let source = r#"
+declare function optional<Values extends unknown[]>(
+    ...args: [...Values, callback?: (...args: Values) => void]
+): void;
+declare function nullable<Values extends unknown[]>(
+    ...args: [...Values, callback: ((...args: Values) => void) | undefined]
+): void;
+function f<Outer extends unknown[]>(
+    prefix: Outer,
+    callback: (...args: Outer) => void,
+) {
+    optional(...prefix, callback);
+    nullable(...prefix, callback);
+}
+"#;
+    assert_eq!(
+        count(source, 2345),
+        0,
+        "optional metadata and a single nullish shell retain direct aggregate provenance"
+    );
+}
+
+#[test]
+fn optional_aggregate_callback_tail_right_aligns_fixed_but_not_open_spreads() {
+    let concrete_open = r#"
+declare function optional<Values extends unknown[]>(
+    ...args: [...Values, callback?: (...args: Values) => void]
+): void;
+declare const openStrings: string[];
+
+optional(...openStrings);
+"#;
+    assert_eq!(
+        count(concrete_open, 2345),
+        0,
+        "a concrete open spread stays in the variadic middle"
+    );
+
+    let generic_open = r#"
+declare function optional<Values extends unknown[]>(
+    ...args: [...Values, callback?: (...args: Values) => void]
+): void;
+function omit<Outer extends unknown[]>(prefix: Outer) {
+    optional(...prefix);
+}
+"#;
+    assert_eq!(
+        count(generic_open, 2345),
+        0,
+        "a generic open spread stays in the variadic middle"
+    );
+
+    let rejected = r#"
+declare function optional<Values extends unknown[]>(
+    ...args: [...Values, callback?: (...args: Values) => void]
+): void;
+declare const fixedPair: [string, boolean];
+optional(...fixedPair);
+"#;
+    assert_eq!(
+        count(rejected, 2345),
+        1,
+        "a fixed tuple's trailing value is reserved for the optional callback"
+    );
+}
+
+#[test]
+fn expanded_spread_mismatch_is_not_refreshed_from_a_later_source_argument() {
+    let source = r#"
+declare function take<T>(
+    ...args: [first: string, second: number, tail: T]
+): void;
+declare const pair: [string, boolean];
+
+take(...pair, 0);
+"#;
+    assert_eq!(
+        count(source, 2345),
+        1,
+        "an expanded spread slot keeps its own mismatch when a later source argument shares its numeric index"
+    );
+}
+
+#[test]
+fn alias_application_marks_only_its_variadic_tuple_binder() {
+    let source = r#"
+type Args<Prefix extends unknown[], Fixed extends unknown[]> =
+    [...Prefix, value: Fixed, callback: (...args: NoInfer<Fixed>) => void];
+declare function take<Prefix extends unknown[], Fixed extends unknown[]>(
+    ...args: Args<Prefix, Fixed>
+): void;
+function f<Outer extends unknown[]>(
+    prefix: Outer,
+    value: [] | [...Outer],
+    callback: (...args: Outer) => void,
+) {
+    take(...prefix, value, callback);
+}
+"#;
+    assert_eq!(
+        count(source, 2345),
+        1,
+        "an alias application must not mark its fixed suffix binder as aggregate-owned"
+    );
+}
+
+#[test]
+fn aggregate_participation_does_not_override_an_ordinary_candidate() {
+    let source = r#"
+declare function take<Values extends unknown[]>(
+    value: Values,
+    ...args: [...Values, callback: (...args: NoInfer<Values>) => void]
+): void;
+function f<Outer extends unknown[]>(
+    value: [] | [...Outer],
+    callback: (...args: Outer) => void,
+) {
+    take(value, callback);
+}
+"#;
+    assert_eq!(
+        count(source, 2345),
+        1,
+        "a prior fixed-parameter candidate keeps an aggregate participant rigid"
+    );
+}
+
+#[test]
+fn provisional_aggregate_rest_does_not_cross_object_wrappers() {
+    let source = r#"
+declare function take<Outer extends unknown[]>(
+    ...args: [] | [{ callback: (...args: [] | [...Outer]) => void }]
+): void;
+function f<Outer extends unknown[]>(source: (...args: Outer) => void) {
+    take<Outer>({ callback: source });
+}
+"#;
+    assert_eq!(
+        count(source, 2345),
+        1,
+        "only a direct aggregate tuple callback slot may arm the provisional relation"
+    );
+}
+
+#[test]
+fn user_declared_direct_union_rest_is_not_provisional() {
+    let source = r#"
+declare function take<Outer extends unknown[], Prefix extends unknown[]>(
+    ...args: [...Prefix, (...args: [] | [...Outer]) => void]
+): void;
+function f<Outer extends unknown[], Prefix extends unknown[]>(
+    prefix: Prefix,
+    source: (...args: Outer) => void,
+) {
+    take<Outer, Prefix>(...prefix, source);
+}
+"#;
+    assert_eq!(
+        count(source, 2345),
+        1,
+        "only a union produced by substituting the callee's bare variadic is provisional"
+    );
+}
+
+#[test]
+fn provisional_aggregate_rest_does_not_cross_callable_properties() {
+    let source = r#"
+type Source<Outer extends unknown[]> = {
+    (...args: Outer): void;
+    callback: (...args: Outer) => void;
+};
+type Target<Values extends unknown[]> = {
+    (...args: Values): void;
+    callback: (...args: [] | [...Values]) => void;
+};
+declare function take<Values extends unknown[]>(
+    ...args: [...Values, Target<Values>]
+): void;
+function f<Outer extends unknown[]>(
+    prefix: Outer,
+    source: Source<Outer>,
+) {
+    take(...prefix, source);
+}
+"#;
+    assert_eq!(
+        count(source, 2345),
+        1,
+        "a direct callable surface must not authorize its function-valued properties"
+    );
+}

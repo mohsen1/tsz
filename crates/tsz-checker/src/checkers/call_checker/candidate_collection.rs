@@ -14,6 +14,7 @@ use crate::query_boundaries::checkers::call::{
     sensitive_argument_placeholder_type, spread_argument_marker_type,
     spread_type_parameter_constraint_is_array_or_tuple_like_for_call, tuple_elements_for_type,
     tuple_slice_variable_rest_offset, type_param_variadic_tuple_spread,
+    unwrapped_callable_rest_parameter_type,
 };
 use crate::query_boundaries::common::ContextualTypeContext;
 use crate::state::CheckerState;
@@ -1506,7 +1507,36 @@ impl<'a> CheckerState<'a> {
         if !ctx.is_rest_parameter_position(effective_index, expanded_count) {
             return None;
         }
-        let rest_type = ctx.get_rest_parameter_type(effective_index)?;
+        let positional_rest_type = ctx.get_rest_parameter_type(effective_index)?;
+        // A single open spread may occupy a variadic middle while an optional
+        // fixed suffix is omitted. Positional lookup right-aligns that one
+        // logical argument to the optional suffix, so prefer the declaration's
+        // whole aggregate rest tuple when it carries a variadic+fixed shape.
+        let declared_rest_type =
+            unwrapped_callable_rest_parameter_type(self.ctx.types, Some(callable_type));
+        let final_spread_can_omit_optional_suffix = effective_index + 1 == expanded_count
+            && declared_rest_type.is_some_and(|rest_type| {
+                tuple_elements_for_type(self.ctx.types, rest_type).is_some_and(|elements| {
+                    elements
+                        .iter()
+                        .position(|element| element.rest)
+                        .is_some_and(|rest_index| {
+                            !elements[rest_index + 1..].is_empty()
+                                && elements[rest_index + 1..]
+                                    .iter()
+                                    .all(|element| element.optional && !element.rest)
+                        })
+                })
+            });
+        let rest_type = declared_rest_type
+            .filter(|&rest_type| {
+                final_spread_can_omit_optional_suffix
+                    && crate::query_boundaries::checkers::call::rest_type_needs_aggregate_argument_check(
+                        self.ctx.types,
+                        rest_type,
+                    )
+            })
+            .unwrap_or(positional_rest_type);
         if self.rest_type_is_declared_on_callable(callable_type, rest_type) {
             return None;
         }

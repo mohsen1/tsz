@@ -196,3 +196,169 @@ fn no_false_2322_generic_rest_tuple_parameter_with_matching_return() {
          ) { a = b; }",
     );
 }
+
+#[test]
+fn keeps_2322_bare_outer_rest_against_concrete_unknown_rest() {
+    assert_has(
+        2322,
+        "function f<Values extends unknown[]>(
+           source: (...args: Values) => void,
+           target: (...args: unknown[]) => void
+         ) { target = source; }",
+    );
+}
+
+#[test]
+fn keeps_2322_bare_outer_rest_against_fixed_same_typed_slot() {
+    assert_has(
+        2322,
+        "function f<Values extends unknown[]>(
+           source: (...args: Values) => void,
+           target: (value: Values) => void
+         ) { target = source; }",
+    );
+}
+
+#[test]
+fn keeps_2322_bare_outer_rest_against_same_binder_union_rest() {
+    for target_rest in ["[] | [...Values]", "[Values] | [...Values]"] {
+        assert_has(
+            2322,
+            &format!(
+                "function f<Values extends unknown[]>(
+                   source: (...args: Values) => void,
+                   target: (...args: {target_rest}) => void
+                 ) {{ target = source; }}"
+            ),
+        );
+    }
+}
+
+#[test]
+fn keeps_2322_bare_outer_rest_against_aliased_union_rest() {
+    assert_has(
+        2322,
+        "type RestUnion<Pack extends unknown[]> = [] | [...Pack];
+         function f<Values extends unknown[]>(
+           source: (...args: Values) => void,
+           target: (...args: RestUnion<Values>) => void
+         ) { target = source; }",
+    );
+}
+
+#[test]
+fn keeps_2322_aliased_bare_outer_rest_against_union_rest() {
+    assert_has(
+        2322,
+        "type Identity<Pack extends unknown[]> = Pack;
+         function f<Values extends unknown[]>(
+           source: (...args: Identity<Values>) => void,
+           target: (...args: [] | [...Values]) => void
+         ) { target = source; }",
+    );
+}
+
+#[test]
+fn no_false_2322_bare_outer_rest_same_binder_or_any_rest() {
+    assert_no(
+        2322,
+        "function f<Values extends unknown[]>(
+           source: (...args: Values) => void,
+           same: (...args: Values) => void,
+           wildcard: (...args: any[]) => void
+         ) {
+           same = source;
+           wildcard = source;
+         }",
+    );
+}
+
+#[test]
+fn no_false_2322_bare_outer_rest_to_aliased_any_rest() {
+    assert_no(
+        2322,
+        "type AnyRest = any[];
+         function f<Values extends unknown[]>(
+           source: (...args: Values) => void,
+           wildcard: (...args: AnyRest) => void
+         ) {
+           wildcard = source;
+         }",
+    );
+}
+
+#[test]
+fn keeps_2322_callable_object_bare_outer_rest_against_fixed_slot() {
+    assert_has(
+        2322,
+        "function f<Args extends unknown[]>(
+           source: { (...args: Args): void },
+           target: { (value: Args): void }
+         ) { target = source; }",
+    );
+}
+
+#[test]
+fn keeps_2322_callable_object_bare_outer_rest_against_union_rest() {
+    assert_has(
+        2322,
+        "function f<Args extends unknown[]>(
+           source: { (...args: Args): void },
+           target: { (...args: [] | [...Args]): void }
+         ) { target = source; }",
+    );
+}
+
+#[test]
+fn keeps_2322_overloaded_callable_bare_outer_rest_against_fixed_slot() {
+    assert_has(
+        2322,
+        "function f<Args extends unknown[]>(
+           source: {
+             (...args: Args): void;
+             (...renamed: Args): void;
+           },
+           target: (value: Args) => void
+         ) { target = source; }",
+    );
+}
+
+#[test]
+fn keeps_2322_function_alias_application_bare_outer_rest_against_fixed_slot() {
+    assert_has(
+        2322,
+        "type Fn<Pack extends unknown[]> = (...args: Pack) => void;
+         function f<Args extends unknown[]>(
+           source: Fn<Args>,
+           target: (value: Args) => void
+         ) { target = source; }",
+    );
+}
+
+#[test]
+fn keeps_2322_callable_alias_application_bare_outer_rest_against_fixed_slot() {
+    assert_has(
+        2322,
+        "type Callable<Pack extends unknown[]> = { (...args: Pack): void };
+         function f<Args extends unknown[]>(
+           source: Callable<Args>,
+           target: { (value: Args): void }
+         ) { target = source; }",
+    );
+}
+
+#[test]
+fn no_false_2322_callable_alias_same_binder_or_concrete_application() {
+    assert_no(
+        2322,
+        "type Callable<Pack extends unknown[]> = { (...args: Pack): void };
+         function generic<Args extends unknown[]>(
+           source: Callable<Args>,
+           target: Callable<Args>
+         ) { target = source; }
+         function concrete(
+           source: Callable<[string]>,
+           target: { (value: string): void }
+         ) { target = source; }",
+    );
+}

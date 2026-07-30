@@ -1544,7 +1544,12 @@ impl<'a> CheckerState<'a> {
                 if emit_not_callable {
                     self.error_not_callable_at(callee_type, callee_expr);
                 }
-                self.error_this_type_mismatch_at(expected_this, actual_this, callee_expr);
+                self.error_call_this_type_mismatch_at(
+                    expected_this,
+                    actual_this,
+                    call_idx,
+                    callee_expr,
+                );
                 TypeId::ERROR
             }
         }
@@ -1556,6 +1561,16 @@ impl<'a> CheckerState<'a> {
         expected: TypeId,
     ) -> bool {
         if self.call_target_generic_rest_requires_fixed_arity_error(actual, expected) {
+            return false;
+        }
+        let bare_rest_failure_visible =
+            crate::query_boundaries::assignability::declared_bare_rest_relation_is_raw_sensitive(
+                self.ctx.types,
+                &self.ctx,
+                actual,
+                expected,
+            );
+        if bare_rest_failure_visible {
             return false;
         }
         if common::contains_this_type(self.ctx.types, expected) {

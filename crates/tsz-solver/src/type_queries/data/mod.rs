@@ -15,6 +15,7 @@ mod exact_property_keys;
 #[cfg(test)]
 mod free_param_cache_tests;
 mod nominal_and_base;
+mod rest_binder_queries;
 mod signatures_and_advanced;
 #[cfg(test)]
 mod tests;
@@ -26,5 +27,6 @@ pub use conditional_distribution::*;
 pub use content_predicates::*;
 pub use exact_property_keys::*;
 pub use nominal_and_base::*;
+pub use rest_binder_queries::*;
 pub use signatures_and_advanced::*;
 pub use type_id_list::{TypeIdList, TypeIdListIter};

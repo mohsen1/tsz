@@ -125,7 +125,10 @@ impl ParserState {
                 );
             }
         }
-        let end_pos = self.token_end();
+        // `parse_unary_expression` leaves the scanner on the first token after
+        // the operand. Match `finishNode` and exclude that following token (and
+        // its leading trivia) from the assertion expression's span.
+        let end_pos = self.token_full_start();
 
         self.arena.add_type_assertion(
             syntax_kind_ext::TYPE_ASSERTION,

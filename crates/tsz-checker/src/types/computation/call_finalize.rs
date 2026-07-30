@@ -389,9 +389,16 @@ impl<'a> CheckerState<'a> {
                             // (e.g. `A<unknown>` rather than the raw `A<T>` from the
                             // signature source text).
                             let reported_expected_param = expected_param;
-                            let arg_type = args
-                                .get(index)
-                                .copied()
+                            let expanded_args = self.build_expanded_args_for_error(args);
+                            let refresh_arg = (expanded_args.len() == arg_types.len())
+                                .then(|| expanded_args.get(index).copied())
+                                .flatten()
+                                .filter(|&arg_idx| {
+                                    self.ctx.arena.get(arg_idx).is_none_or(|arg_node| {
+                                        arg_node.kind != syntax_kind_ext::SPREAD_ELEMENT
+                                    })
+                                });
+                            let arg_type = refresh_arg
                                 .map(|arg_idx| {
                                     self.refreshed_generic_call_arg_type_with_context(
                                         arg_idx,
@@ -399,17 +406,48 @@ impl<'a> CheckerState<'a> {
                                         Some(expected_param),
                                     )
                                 })
-                                .unwrap_or(TypeId::UNKNOWN);
-                            let fresh_assignable = self
-                                .call_arg_relation_outcome_with_env(arg_type, expected_param)
-                                .related
-                                || self.is_assignable_via_contextual_signatures(
-                                    arg_type,
-                                    expected_param,
+                                // A fixed tuple spread expands to multiple solver
+                                // arguments while retaining one source AST argument.
+                                // Keep the solver's authoritative element type for a
+                                // slot inside that spread. Indexing `args` directly can
+                                // select a later, unrelated source argument; refreshing
+                                // that node can then hide the spread-element mismatch.
+                                .unwrap_or(actual);
+                            // A post-inference refresh must not replace the
+                            // solver's authoritative raw mismatch target with
+                            // a contextual/display-normalized surface. Parameter
+                            // variance can put the decisive bare binder on
+                            // either side of the outer relation.
+                            let mismatch_is_raw_rest_sensitive =
+                                crate::query_boundaries::assignability::relation_contains_declared_bare_function_rest(
+                                    self.ctx.types,
+                                    &self.ctx,
+                                    actual,
+                                    expected,
                                 );
+                            let refreshed_pair_is_raw_rest_sensitive =
+                                crate::query_boundaries::assignability::relation_contains_declared_bare_function_rest(
+                                    self.ctx.types,
+                                    &self.ctx,
+                                    arg_type,
+                                    expected,
+                                );
+                            let raw_rest_sensitive = mismatch_is_raw_rest_sensitive
+                                || refreshed_pair_is_raw_rest_sensitive;
+                            let fresh_assignable = if raw_rest_sensitive {
+                                self.is_assignable_to_generic_call_raw(
+                                    arg_type, expected, false, true, false,
+                                )
+                            } else {
+                                self.call_arg_relation_outcome_with_env(arg_type, expected_param)
+                                    .related
+                                    || self.is_assignable_via_contextual_signatures(
+                                        arg_type,
+                                        expected_param,
+                                    )
+                            };
                             let excess_property_recovery = if !fresh_assignable {
-                                args.get(index)
-                                    .copied()
+                                refresh_arg
                                     .filter(|&arg_idx| {
                                         self.ctx.arena.get(arg_idx).is_some_and(|arg_node| {
                                             arg_node.kind

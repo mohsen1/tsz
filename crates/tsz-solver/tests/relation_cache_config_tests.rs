@@ -12,7 +12,7 @@
 //! 4. Different `any_propagation_mode` values must produce distinct keys.
 //! 5. Every `RelationFlag` bit produces a distinct key, including
 //!    `ALLOW_ERASED_GENERIC_SIGNATURE_RETRY`, `IN_CALLBACK_PARAM_CHECK`,
-//!    and `STRICT_READONLY_IDENTITY`.
+//!    `STRICT_READONLY_IDENTITY`, and `PROVISIONAL_REST_UNION`.
 //! 6. Every sound-mode policy knob (`STRICT_ANY_PROPAGATION`,
 //!    `STRICT_SUBTYPE_CHECKING`, `DISABLE_METHOD_BIVARIANCE`) must
 //!    produce a distinct cache slot that does not collide with the
@@ -37,7 +37,7 @@ use crate::relations::relation_queries::{
 use crate::relations::subtype::AnyPropagationMode;
 use crate::types::{
     CachedAnyMode, FunctionShape, ParamInfo, PropertyInfo, RelationCacheConfig, RelationCacheKey,
-    RelationCacheKind, RelationFlags, TypeData, TypeParamInfo,
+    RelationCacheKind, RelationFlags, TupleElement, TypeData, TypeParamInfo, TypeParamOrigin,
 };
 
 #[path = "relation_cache_config_tests/cache_agreement.rs"]
@@ -192,6 +192,7 @@ fn each_relation_flag_bit_produces_a_distinct_key() {
         RelationFlags::ALLOW_ERASED_GENERIC_SIGNATURE_RETRY,
         RelationFlags::IN_CALLBACK_PARAM_CHECK,
         RelationFlags::STRICT_READONLY_IDENTITY,
+        RelationFlags::PROVISIONAL_REST_UNION,
     ];
 
     for bit in single_bits {
@@ -298,6 +299,64 @@ fn query_cache_relation_kinds_match_uncached_relation_queries() {
         Some(subtype_cached),
         "subtype slot must remain intact after the assignability lookup",
     );
+}
+
+#[test]
+fn provisional_rest_union_policy_partitions_query_cache_in_both_orders() {
+    let interner = TypeInterner::new();
+    let file = interner.intern_string("provisional-rest-cache.ts");
+    let rest_param = interner.fresh_type_param(TypeParamInfo {
+        name: interner.intern_string("Values"),
+        constraint: Some(interner.array(TypeId::UNKNOWN)),
+        default: None,
+        is_const: false,
+        origin: TypeParamOrigin::DeclScoped { file, node: 1 },
+    });
+    let rest_function = |rest_type| {
+        interner.function(FunctionShape {
+            type_params: vec![],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("values")),
+                type_id: rest_type,
+                optional: false,
+                rest: true,
+            }],
+            this_type: None,
+            return_type: TypeId::VOID,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        })
+    };
+    let source = rest_function(rest_param);
+    let fixed = interner.tuple(vec![TupleElement::fixed(rest_param)]);
+    let spread = interner.tuple(vec![TupleElement {
+        type_id: rest_param,
+        name: None,
+        optional: false,
+        rest: true,
+    }]);
+    let target = rest_function(interner.union_preserve_members(vec![fixed, spread]));
+    let ordinary = RelationPolicy::from_relation_flags(
+        RelationFlags::STRICT_FUNCTION_TYPES.union(RelationFlags::ALLOW_BIVARIANT_REST),
+    );
+    let provisional = ordinary.with_provisional_rest_union(true);
+
+    let db = QueryCache::new(&interner);
+    assert!(!db.is_assignable_to_with_policy(source, target, ordinary));
+    assert!(db.is_assignable_to_with_policy(source, target, provisional));
+    assert!(!db.is_assignable_to_with_policy(source, target, ordinary));
+
+    let ordinary_key = RelationCacheKey::for_assignability(source, target, ordinary.cache_config());
+    let provisional_key =
+        RelationCacheKey::for_assignability(source, target, provisional.cache_config());
+    assert_eq!(db.lookup_assignability_cache(ordinary_key), Some(false));
+    assert_eq!(db.lookup_assignability_cache(provisional_key), Some(true));
+
+    let reverse_db = QueryCache::new(&interner);
+    assert!(reverse_db.is_assignable_to_with_policy(source, target, provisional));
+    assert!(!reverse_db.is_assignable_to_with_policy(source, target, ordinary));
+    assert!(reverse_db.is_assignable_to_with_policy(source, target, provisional));
 }
 
 #[test]

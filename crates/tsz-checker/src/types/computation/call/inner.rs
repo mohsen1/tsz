@@ -743,10 +743,7 @@ impl<'a> CheckerState<'a> {
         // callee expression to find the underlying property/element access.
         // This ensures `o.test!()`, `(o.test)()`, `(o.test!)()` etc. are all
         // recognized as method calls with `o` as the `this` receiver.
-        let unwrapped_callee = self
-            .ctx
-            .arena
-            .skip_parenthesized_and_assertions(call.expression);
+        let unwrapped_callee = self.ctx.arena.skip_outer_expressions(call.expression);
 
         // Overload candidates need signature-specific contextual typing.
         let force_bivariant_callbacks = matches!(

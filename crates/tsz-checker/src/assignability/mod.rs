@@ -23,6 +23,7 @@ mod index_access_normalization;
 mod nullish_error_targets;
 mod overload_subtype_pass;
 mod polymorphic_this_diagnostics;
+mod provisional_rest_union;
 mod readonly_tuple_diagnostics;
 mod relation_outcome_helpers;
 pub mod subtype_identity_checker;

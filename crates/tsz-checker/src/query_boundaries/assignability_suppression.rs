@@ -480,7 +480,17 @@ impl<'a> CheckerState<'a> {
                 source,
                 target,
             );
-
+        let bare_rest_failure_visible =
+            crate::query_boundaries::assignability::declared_bare_rest_relation_is_raw_sensitive(
+                self.ctx.types,
+                &self.ctx,
+                source,
+                target,
+            );
+        let source_contains_free_infer =
+            contains_free_infer_types(self.ctx.types, self.ctx.types.evaluate_type(source));
+        let target_contains_free_infer =
+            contains_free_infer_types(self.ctx.types, evaluated_target_for_infer_suppression);
         matches!(source, TypeId::ERROR)
             || matches!(target, TypeId::ERROR | TypeId::ANY)
             || contains_error_application(target)
@@ -488,9 +498,8 @@ impl<'a> CheckerState<'a> {
             || (source == TypeId::ANY && target != TypeId::NEVER)
             // Inference placeholders are transient solver state. Emitting TS2322/TS2345
             // while they are still present creates contextual false positives.
-            || contains_free_infer_types(self.ctx.types, self.ctx.types.evaluate_type(source))
-            || (contains_free_infer_types(self.ctx.types, evaluated_target_for_infer_suppression)
-                && !target_is_conditional_for_infer_suppression)
+            || source_contains_free_infer
+            || (target_contains_free_infer && !target_is_conditional_for_infer_suppression)
             // Suppress TS2322 for non-callable types with type parameters that may
             // cause false positives due to complex generic constraints
             // (e.g., T extends { [P in T]: number }). Callable/generic signature
@@ -529,6 +538,7 @@ impl<'a> CheckerState<'a> {
                 && is_callable_or_function(source)
                 && is_callable_or_function(target)
                 && contains_type_parameters(source)
+                && !bare_rest_failure_visible
                 && !self.callable_types_have_disjoint_type_parameters(source, target)
                 // A genuine return mismatch confirmed by the solver while holding
                 // shared/outer type parameters opaque (no-erase-generics) must not be

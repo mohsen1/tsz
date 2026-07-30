@@ -20,7 +20,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 use super::super::{CallableContext, OverloadResolution, SelectedTypePredicate};
-use super::retry_state::{BestTypeMismatch, NoReturnContextFallback};
+use super::retry_state::{BestTypeMismatch, NoReturnContextFallback, best_this_type_mismatch};
 
 impl<'a> CheckerState<'a> {
     /// Resolve an overloaded call by trying each signature.
@@ -1851,6 +1851,27 @@ impl<'a> CheckerState<'a> {
                             actual,
                         )
                         .with_overload_signature(overload_signature()),
+                    );
+                }
+                CallResult::ThisTypeMismatch {
+                    expected_this,
+                    actual_this,
+                    emit_not_callable,
+                } => {
+                    all_arg_count_mismatches = false;
+                    type_mismatch_count += 1;
+                    if type_mismatch_count == 1 {
+                        best_type_mismatch = Some(best_this_type_mismatch(
+                            sig_arg_types.clone(),
+                            expected_this,
+                            actual_this,
+                            emit_not_callable,
+                            std::mem::take(&mut self.ctx.node_types),
+                        ));
+                    }
+                    failures.push(
+                        PendingDiagnosticBuilder::this_type_mismatch(expected_this, actual_this)
+                            .with_overload_signature(overload_signature()),
                     );
                 }
                 _ => {

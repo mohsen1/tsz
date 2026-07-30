@@ -21,6 +21,13 @@ impl<'a> CheckerState<'a> {
         arg_type: TypeId,
         param_type: TypeId,
     ) -> bool {
+        let bare_rest_failure_visible =
+            crate::query_boundaries::assignability::declared_bare_rest_relation_is_raw_sensitive(
+                self.ctx.types,
+                &self.ctx,
+                arg_type,
+                param_type,
+            );
         // Suppress when types are identical or either is a special escape-hatch type.
         if arg_type == param_type
             || arg_type == TypeId::ERROR
@@ -41,24 +48,27 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        if crate::query_boundaries::assignability::are_types_structurally_identical(
-            self.ctx.types,
-            &self.ctx,
-            arg_type,
-            param_type,
-        ) {
+        if !bare_rest_failure_visible
+            && crate::query_boundaries::assignability::are_types_structurally_identical(
+                self.ctx.types,
+                &self.ctx,
+                arg_type,
+                param_type,
+            )
+        {
             return true;
         }
 
         let evaluated_arg = self.evaluate_type_for_assignability(arg_type);
         let evaluated_param = self.evaluate_type_for_assignability(param_type);
-        crate::query_boundaries::diagnostics::same_non_class_nominal_application_surface(
-            self.ctx.types,
-            &self.ctx,
-            &self.ctx.definition_store,
-            &[arg_type, evaluated_arg],
-            &[param_type, evaluated_param],
-        )
+        !bare_rest_failure_visible
+            && crate::query_boundaries::diagnostics::same_non_class_nominal_application_surface(
+                self.ctx.types,
+                &self.ctx,
+                &self.ctx.definition_store,
+                &[arg_type, evaluated_arg],
+                &[param_type, evaluated_param],
+            )
     }
 
     /// Report an argument not assignable error using solver diagnostics with source tracking.
@@ -89,7 +99,9 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         structural_tuple_display: bool,
     ) {
-        if self.should_suppress_argument_not_assignable_diagnostic(arg_type, param_type) {
+        let suppress_argument =
+            self.should_suppress_argument_not_assignable_diagnostic(arg_type, param_type);
+        if suppress_argument {
             return;
         }
         if self.should_suppress_constraint_cascade_constructor_argument(arg_type, param_type) {
@@ -1071,23 +1083,32 @@ impl<'a> CheckerState<'a> {
         } else {
             idx
         };
-        // When the heuristic falls back to the callee (`OverloadPrimary`), tsc
-        // instead anchors `TS2769` at the last argument-error candidate's
-        // failing argument. Substitute that indexed argument anchor here so the
-        // callee fallback only survives when no argument-error candidate carries
-        // a positional index (e.g. `this`-type mismatches). Argument anchors the
-        // heuristic already resolved (`Exact`/literal/tagged) are left intact.
-        // `.bind`/`.call`/`.apply` with a non-`undefined` this-argument is a
-        // distinct tsc anchor rule (the failing this-argument is the receiver,
-        // so tsc anchors on the member expression, not the explicit argument);
-        // leave those to the existing `OverloadPrimary` handling rather than
-        // redirecting them to the positional argument.
-        let indexed_argument_anchor = matches!(anchor_kind, DiagnosticAnchorKind::OverloadPrimary)
-            .then(|| self.indexed_overload_argument_anchor(idx, &argument_failures))
-            .flatten();
-        let Some(anchor) = callback_body_failure_span
-            .or(indexed_argument_anchor)
-            .or_else(|| self.resolve_diagnostic_anchor(anchor_idx, anchor_kind))
+        // Implicit method-`this` provenance outranks literal/tagged argument
+        // heuristics because `tsc` checks the receiver before explicit
+        // arguments. Other indexed failures refine only the ordinary
+        // `OverloadPrimary` fallback.
+        let last_signed_failure_is_this = failures
+            .iter()
+            .rev()
+            .find(|failure| !failure.is_arity_failure() && failure.overload_signature.is_some())
+            .is_some_and(|failure| {
+                failure.code
+                    == diagnostic_codes::THE_THIS_CONTEXT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_METHODS_THIS_OF_TYPE
+            });
+        let indexed_argument_anchor = if last_signed_failure_is_this {
+            self.this_type_mismatch_anchor(idx)
+        } else if matches!(anchor_kind, DiagnosticAnchorKind::OverloadPrimary) {
+            self.last_overload_failure_anchor(idx, failures)
+        } else {
+            None
+        };
+        let provenance_anchor = if last_signed_failure_is_this {
+            indexed_argument_anchor.or(callback_body_failure_span)
+        } else {
+            callback_body_failure_span.or(indexed_argument_anchor)
+        };
+        let Some(anchor) =
+            provenance_anchor.or_else(|| self.resolve_diagnostic_anchor(anchor_idx, anchor_kind))
         else {
             return;
         };
@@ -1165,11 +1186,14 @@ impl<'a> CheckerState<'a> {
             .iter()
             .map(|failure| {
                 let chain = self
-                    .overload_failure_argument_node(idx, failure)
+                    .overload_failure_reason_anchor_node(idx, failure)
                     .map(|arg_idx| self.overload_candidate_reason_chain(failure, arg_idx, &span))
                     .unwrap_or_default();
-                let source_target = (failure.code
-                    == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE)
+                let source_target = matches!(
+                    failure.code,
+                    diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+                        | diagnostic_codes::THE_THIS_CONTEXT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_METHODS_THIS_OF_TYPE
+                )
                     .then(|| match (failure.args.first(), failure.args.get(1)) {
                         (
                             Some(&tsz_solver::DiagnosticArg::Type(source)),
@@ -1305,16 +1329,24 @@ impl<'a> CheckerState<'a> {
     /// (`related_from_failure_reason`), then re-anchor every line onto the
     /// shared `TS2769` span: chain lines are message-chain text, not
     /// cross-location pointers. Candidates whose pending diagnostic already
-    /// carries a related payload keep it (the caller renders it); arity and
-    /// `this` failures carry no chain, matching tsc.
-    /// The argument node one overload candidate's failure describes: the
-    /// logical argument containing the failure's span, or the sole argument
-    /// when the failure carries no span (solver-resolved candidates).
-    fn overload_failure_argument_node(
+    /// carries a related payload keep it (the caller renders it). Argument and
+    /// `this` type failures share the relation-reason path; arity failures do
+    /// not carry a structural chain.
+    /// The AST node one overload candidate's relation failure describes.
+    ///
+    /// An implicit method-`this` failure belongs to the receiver regardless of
+    /// explicit argument count. Argument failures use their source span, with
+    /// the sole-argument fallback retained for solver-resolved candidates.
+    fn overload_failure_reason_anchor_node(
         &self,
         idx: NodeIndex,
         failure: &tsz_solver::PendingDiagnostic,
     ) -> Option<NodeIndex> {
+        if failure.code
+            == diagnostic_codes::THE_THIS_CONTEXT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_METHODS_THIS_OF_TYPE
+        {
+            return self.this_type_mismatch_anchor_node(idx);
+        }
         let arg_nodes = self.logical_call_argument_nodes(idx)?;
         let Some(span) = failure.span.as_ref() else {
             return match arg_nodes.as_slice() {
@@ -1335,8 +1367,11 @@ impl<'a> CheckerState<'a> {
         span: &tsz_solver::SourceSpan,
     ) -> Vec<DiagnosticRelatedInformation> {
         if !failure.related.is_empty()
-            || failure.code
-                != diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+            || !matches!(
+                failure.code,
+                diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
+                    | diagnostic_codes::THE_THIS_CONTEXT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_METHODS_THIS_OF_TYPE
+            )
         {
             return Vec::new();
         }
@@ -1454,19 +1489,88 @@ impl<'a> CheckerState<'a> {
         actual_this: TypeId,
         idx: NodeIndex,
     ) {
-        if let Some(loc) = self.get_source_location(idx) {
-            let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
-                self.ctx.types,
-                &self.ctx.binder.symbols,
-                self.ctx.file_name.as_str(),
+        let Some(anchor) = self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::Exact) else {
+            return;
+        };
+        self.error_this_type_mismatch_at_anchor(expected_this, actual_this, anchor);
+    }
+
+    fn error_this_type_mismatch_at_anchor(
+        &mut self,
+        expected_this: TypeId,
+        actual_this: TypeId,
+        anchor: ResolvedDiagnosticAnchor,
+    ) {
+        let failure_reason = self
+            .analyze_assignability_failure(actual_this, expected_this)
+            .failure_reason;
+        if let Some(reason) = failure_reason.as_ref()
+            && matches!(
+                reason,
+                tsz_solver::SubtypeFailureReason::MissingProperty { .. }
+                    | tsz_solver::SubtypeFailureReason::MissingProperties { .. }
             )
-            .with_def_store(&self.ctx.definition_store);
-            let diag =
-                builder.this_type_mismatch(expected_this, actual_this, loc.start, loc.length());
-            self.ctx
-                .diagnostics
-                .push(diag.to_checker_diagnostic(&self.ctx.file_name));
+            && self.missing_property_head_promotion_applies(actual_this, expected_this)
+        {
+            let mut diag =
+                self.render_failure_reason(reason, actual_this, expected_this, anchor.node_idx, 0);
+            if matches!(
+                diag.code,
+                diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+                    | diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
+                    | diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
+            ) {
+                diag.start = anchor.start;
+                diag.length = anchor.length;
+                self.ctx.push_diagnostic(diag);
+                return;
+            }
         }
+
+        let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
+            self.ctx.types,
+            &self.ctx.binder.symbols,
+            self.ctx.file_name.as_str(),
+        )
+        .with_def_store(&self.ctx.definition_store);
+        let diag =
+            builder.this_type_mismatch(expected_this, actual_this, anchor.start, anchor.length);
+        if let Some(reason) = failure_reason {
+            self.emit_render_request_at_anchor(
+                anchor,
+                DiagnosticRenderRequest::with_failure_reason(
+                    DiagnosticAnchorKind::Exact,
+                    diag.code,
+                    diag.message,
+                    reason,
+                    actual_this,
+                    expected_this,
+                ),
+            );
+        } else {
+            self.ctx
+                .push_diagnostic(diag.to_checker_diagnostic(&self.ctx.file_name));
+        }
+    }
+
+    /// Report a direct call's implicit-method-`this` mismatch at the receiver.
+    /// Overload resolution may collapse one applicability failure past
+    /// arity-only candidates, but the diagnostic still belongs to the receiver
+    /// rather than the member/callee token.
+    pub(crate) fn error_call_this_type_mismatch_at(
+        &mut self,
+        expected_this: TypeId,
+        actual_this: TypeId,
+        call_idx: NodeIndex,
+        callee_idx: NodeIndex,
+    ) {
+        let Some(anchor) = self
+            .this_type_mismatch_anchor(call_idx)
+            .or_else(|| self.resolve_diagnostic_anchor(callee_idx, DiagnosticAnchorKind::Exact))
+        else {
+            return;
+        };
+        self.error_this_type_mismatch_at_anchor(expected_this, actual_this, anchor);
     }
 
     /// Report a "type is not callable" error using solver diagnostics with source tracking.

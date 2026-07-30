@@ -479,6 +479,22 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> crate::query_boundaries::assignability::RelationOutcome {
+        if crate::query_boundaries::assignability::declared_bare_rest_relation_is_raw_sensitive(
+            self.ctx.types,
+            &self.ctx,
+            source,
+            target,
+        ) {
+            self.ensure_relation_inputs_ready(&[source, target]);
+            let request = crate::query_boundaries::assignability::RelationRequest::call_arg(
+                self.substitute_this_type_if_needed(source),
+                self.substitute_this_type_if_needed(target),
+            );
+            let raw_outcome = self.execute_relation_request(&request);
+            if !raw_outcome.related {
+                return raw_outcome;
+            }
+        }
         let (source, target) = self.prepare_assignability_inputs(source, target);
         let request =
             crate::query_boundaries::assignability::RelationRequest::call_arg(source, target);

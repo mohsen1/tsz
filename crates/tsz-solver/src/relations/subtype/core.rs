@@ -676,6 +676,21 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// retry, but ordinary assignments must keep the failed inference as a real
     /// mismatch so invalid reverse generic assignments still report TS2322.
     pub allow_erased_generic_signature_retry: bool,
+    /// Generic-call aggregate-rest validation may carry a provisional union
+    /// containing both inferred concrete tuples and the original variadic
+    /// binder. In that operation only, the union continues through the legacy
+    /// element-wise rest relation; ordinary function assignment keeps bare
+    /// source rests universally quantified.
+    pub(crate) allow_provisional_rest_union: bool,
+    /// Nesting depth of function relations while the provisional-rest policy
+    /// is armed.
+    ///
+    /// The aggregate call relation may contain several direct callback slots,
+    /// so this is a scoped depth rather than a one-shot token. Only a
+    /// first-level function relation may consume the provisional union escape;
+    /// callback types nested inside that function keep ordinary strict
+    /// semantics.
+    pub(crate) provisional_rest_union_function_depth: u32,
     /// Type parameter equivalences established during generic function subtype checking.
     ///
     /// When alpha-renaming in `check_function_subtype` maps target type params to source
@@ -830,6 +845,8 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             max_depth: MAX_SUBTYPE_DEPTH,
             erase_generics: true,
             allow_erased_generic_signature_retry: false,
+            allow_provisional_rest_union: false,
+            provisional_rest_union_function_depth: 0,
             eval_cache: FxHashMap::default(),
             apparent_primitive_shapes: std::array::from_fn(|_| None),
             type_param_equivalences: Vec::new(),
@@ -890,6 +907,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             max_depth: MAX_SUBTYPE_DEPTH,
             erase_generics: true,
             allow_erased_generic_signature_retry: false,
+            allow_provisional_rest_union: false,
+            provisional_rest_union_function_depth: 0,
             eval_cache: FxHashMap::default(),
             apparent_primitive_shapes: std::array::from_fn(|_| None),
             type_param_equivalences: Vec::new(),
@@ -1163,6 +1182,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.relation_limit_events.reset();
         self.local_relation_cache.clear();
         self.explain_eval_fuel = None;
+        self.provisional_rest_union_function_depth = 0;
     }
 
     /// Return entry and size accounting for this checker's operation-local caches.
@@ -1532,6 +1552,10 @@ impl<'a, R: TypeResolver> AssignabilityChecker for SubtypeChecker<'a, R> {
 
     fn evaluate_type(&mut self, type_id: TypeId) -> TypeId {
         SubtypeChecker::evaluate_type(self, type_id)
+    }
+
+    fn type_resolver(&self) -> Option<&dyn TypeResolver> {
+        Some(self.resolver)
     }
 }
 

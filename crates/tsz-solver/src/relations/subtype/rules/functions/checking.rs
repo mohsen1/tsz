@@ -5,6 +5,7 @@
 
 use crate::instantiation::instantiate::TypeSubstitution;
 use crate::type_param_info;
+use crate::type_queries::unpack_tuple_rest_parameter;
 use crate::types::{
     CallableShape, CallableShapeId, FunctionShape, FunctionShapeId, ObjectFlags, ObjectShape,
     ParamInfo, PropertyInfo, TypeData, TypeId, TypeParamInfo, Visibility,
@@ -52,19 +53,102 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             self.in_callback_param_check,
             self.in_bivariant_callback_return_check,
         );
-        let result = self.check_function_subtype_impl(source, target, allow_constructor_bivariance);
-        if result.is_true() {
-            return result;
+        let rigid_rest_pair_is_strict = self.strict_function_types
+            && (callback_modes.0 || !target.is_method)
+            && (!target.is_constructor
+                || force_strict_construct_params
+                || !allow_constructor_bivariance);
+        let allow_provisional_rest_union_at_this_depth =
+            self.allow_provisional_rest_union && self.provisional_rest_union_function_depth == 0;
+        if rigid_rest_pair_is_strict
+            && !self.local_generic_rest_binders_are_alpha_paired(source, target)
+            && self.rigid_bare_rest_parameter_mismatch(
+                source,
+                target,
+                allow_provisional_rest_union_at_this_depth,
+            )
+        {
+            // `check_function_subtype_impl` normally consumes these one-shot
+            // modes at entry. This early rejection must consume them too.
+            self.in_callback_param_check = false;
+            self.in_bivariant_callback_return_check = false;
+            return SubtypeResult::False;
         }
-        if let Some(retry) = self.retry_generic_signature_with_context_instantiation(
-            source,
-            target,
-            result,
-            callback_modes,
-        ) {
-            return retry;
+        self.with_provisional_rest_union_function_scope(
+            |checker, allow_provisional_rest_union_at_this_depth| {
+                let result = checker.check_function_subtype_impl(
+                    source,
+                    target,
+                    allow_constructor_bivariance,
+                    allow_provisional_rest_union_at_this_depth,
+                );
+                if result.is_true() {
+                    return result;
+                }
+                checker
+                    .retry_generic_signature_with_context_instantiation(
+                        source,
+                        target,
+                        result,
+                        callback_modes,
+                        allow_provisional_rest_union_at_this_depth,
+                    )
+                    .unwrap_or(result)
+            },
+        )
+    }
+
+    /// Whether the two written rest slots are binders owned by corresponding
+    /// type parameters of same-arity generic signatures.
+    ///
+    /// The early rigid-rest guard runs before `check_function_subtype_impl`
+    /// alpha-renames generic signatures. Do not reject a pair that the normal
+    /// signature normalization will turn into the same binder.
+    fn local_generic_rest_binders_are_alpha_paired(
+        &mut self,
+        source: &FunctionShape,
+        target: &FunctionShape,
+    ) -> bool {
+        if source.type_params.is_empty() || source.type_params.len() != target.type_params.len() {
+            return false;
         }
-        result
+        let Some(source_rest) = source.params.last().filter(|param| param.rest) else {
+            return false;
+        };
+        let Some(target_rest) = target.params.last().filter(|param| param.rest) else {
+            return false;
+        };
+        let Some(source_binder) = self.bare_rest_type_param(source_rest.type_id) else {
+            return false;
+        };
+        let Some(target_binder) = self
+            .bare_rest_type_param(target_rest.type_id)
+            .or_else(|| self.single_variadic_tuple_rest_binder(target_rest.type_id))
+        else {
+            return false;
+        };
+        let Some(source_index) = source
+            .type_params
+            .iter()
+            .position(|param| param.is_same_binder(source_binder))
+        else {
+            return false;
+        };
+        let Some(target_index) = target
+            .type_params
+            .iter()
+            .position(|param| param.is_same_binder(target_binder))
+        else {
+            return false;
+        };
+
+        if alpha_name_pair_enabled()
+            && let Some(permutation) =
+                name_aware_target_permutation(&source.type_params, &target.type_params)
+        {
+            return permutation.get(source_index) == Some(&target_index);
+        }
+        source_index == target_index
     }
 
     /// True when any of `candidate_tp_ids` occurs *free* in `shape`'s parameter
@@ -216,6 +300,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: &FunctionShape,
         target: &FunctionShape,
         allow_constructor_bivariance: bool,
+        allow_provisional_rest_union_at_this_depth: bool,
     ) -> SubtypeResult {
         // Capture and reset the callback-param-check flags at function entry so
         // every terminal path consumes the one-shot mode and nested sub-checks
@@ -637,6 +722,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     &inferred_source,
                     &target_instantiated,
                     allow_constructor_bivariance,
+                    allow_provisional_rest_union_at_this_depth,
                 );
                 if result.is_true() {
                     self.type_param_equivalences.truncate(equiv_start);
@@ -860,6 +946,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
+        let raw_rest_types = source_instantiated
+            .params
+            .last()
+            .filter(|param| param.rest)
+            .zip(target_instantiated.params.last().filter(|param| param.rest))
+            .map(|(source_rest, target_rest)| (source_rest.type_id, target_rest.type_id));
+        let provisional_rest_union = allow_provisional_rest_union_at_this_depth
+            && raw_rest_types.is_some_and(|(source_rest, target_rest)| {
+                self.is_bare_rest_type_param(source_rest)
+                    && self.rest_type_has_union_surface(target_rest)
+            });
+
         self.normalize_rest_param_types(&mut source_instantiated);
         self.normalize_rest_param_types(&mut target_instantiated);
 
@@ -960,6 +1058,26 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             allow_constructor_bivariance && target_instantiated.is_constructor;
         let is_method = !in_callback_param_check
             && (target_instantiated.is_method || constructor_param_bivariance);
+        let raw_bare_source_rest_compatibility = {
+            // Use the same one-shot strict-callback variance mode as the fixed
+            // and expanded-rest parameter comparisons below.
+            let saved_force_strict_callback_params = self.force_strict_callback_param_variance;
+            self.force_strict_callback_param_variance = in_callback_param_check;
+            let result = raw_rest_types.and_then(|(source_rest, target_rest)| {
+                self.bare_source_rest_compatibility(
+                    source_rest,
+                    target_rest,
+                    is_method,
+                    provisional_rest_union,
+                )
+            });
+            self.force_strict_callback_param_variance = saved_force_strict_callback_params;
+            result
+        };
+        if raw_bare_source_rest_compatibility == Some(false) {
+            self.type_param_equivalences.truncate(equiv_start);
+            return SubtypeResult::False;
+        }
 
         // The lib iterator/generator declarations encode `next(value?)` as a single
         // rest parameter with tuple-list type `[] | [TNext]`. Compare that whole
@@ -993,47 +1111,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // We unpack tuple rest parameters into individual fixed parameters for proper matching.
         // Before unpacking, evaluate Application types in rest params (e.g., MappedType<T>
         // that evaluates to a tuple) so unpack_tuple_rest_parameter can detect the tuple.
-        use crate::type_queries::unpack_tuple_rest_parameter;
-        let source_params_unpacked: Vec<ParamInfo> = source_instantiated
-            .params
-            .iter()
-            .flat_map(|p| {
-                if p.rest
-                    && matches!(
-                        self.interner.lookup(p.type_id),
-                        Some(TypeData::Application(_))
-                    )
-                {
-                    let evaluated = self.evaluate_type(p.type_id);
-                    if evaluated != p.type_id {
-                        let mut ep = *p;
-                        ep.type_id = evaluated;
-                        return unpack_tuple_rest_parameter(self.interner, &ep);
-                    }
-                }
-                unpack_tuple_rest_parameter(self.interner, p)
-            })
-            .collect();
-        let target_params_unpacked: Vec<ParamInfo> = target_instantiated
-            .params
-            .iter()
-            .flat_map(|p| {
-                if p.rest
-                    && matches!(
-                        self.interner.lookup(p.type_id),
-                        Some(TypeData::Application(_))
-                    )
-                {
-                    let evaluated = self.evaluate_type(p.type_id);
-                    if evaluated != p.type_id {
-                        let mut ep = *p;
-                        ep.type_id = evaluated;
-                        return unpack_tuple_rest_parameter(self.interner, &ep);
-                    }
-                }
-                unpack_tuple_rest_parameter(self.interner, p)
-            })
-            .collect();
+        let source_params_unpacked = self.unpack_normalized_params(&source_instantiated.params);
+        let target_params_unpacked = self.unpack_normalized_params(&target_instantiated.params);
 
         // Handle union-of-tuple rest parameters in target.
         // When target has `...args: [A] | [B, C] | [D]`, try each union member separately.
@@ -1091,6 +1170,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             &source_params_unpacked,
                             &variant_params,
                             is_method,
+                            provisional_rest_union
+                                || raw_bare_source_rest_compatibility == Some(true),
                         )
                         .is_true();
                     if require_all_variants && !matched {
@@ -1111,6 +1192,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Check rest parameter handling (after unpacking)
         let target_has_rest = target_params_unpacked.last().is_some_and(|p| p.rest);
         let source_has_rest = source_params_unpacked.last().is_some_and(|p| p.rest);
+        if target_has_rest
+            && source_has_rest
+            && raw_bare_source_rest_compatibility != Some(true)
+            && let (Some(source_rest), Some(target_rest)) =
+                (source_params_unpacked.last(), target_params_unpacked.last())
+            && matches!(
+                self.bare_source_rest_compatibility(
+                    source_rest.type_id,
+                    target_rest.type_id,
+                    is_method,
+                    false,
+                ),
+                Some(false)
+            )
+        {
+            self.type_param_equivalences.truncate(equiv_start);
+            return SubtypeResult::False;
+        }
         let rest_elem_type = if target_has_rest {
             target_params_unpacked
                 .last()
@@ -1247,6 +1346,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 let Some(rest_param) = source_params_unpacked.last() else {
                     return SubtypeResult::False;
                 };
+                if target_fixed_count > source_fixed_count
+                    && self.is_bare_rest_type_param(rest_param.type_id)
+                {
+                    return SubtypeResult::False;
+                }
                 if self.is_tuple_list_rest_type(rest_param.type_id)
                     && target_fixed_count > source_fixed_count
                 {

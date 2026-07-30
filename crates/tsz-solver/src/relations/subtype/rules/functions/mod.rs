@@ -22,6 +22,13 @@ use tsz_common::Atom;
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
 
+#[derive(Clone, Copy)]
+struct CallbackParameterPair {
+    source_nonnull: TypeId,
+    target_nonnull: TypeId,
+    enters_callback_mode: bool,
+}
+
 /// Build a `TypeSubstitution` that maps each type parameter to its constraint
 /// (or `unknown` if unconstrained). This corresponds to tsc's `getCanonicalSignature`
 /// behavior — used when generic signatures need to be compared structurally after
@@ -142,6 +149,18 @@ pub(super) fn resolve_contextual_source_inference_candidate(
 }
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
+    pub(crate) fn with_provisional_rest_union_function_scope<T>(
+        &mut self,
+        operation: impl FnOnce(&mut Self, bool) -> T,
+    ) -> T {
+        let previous_depth = self.provisional_rest_union_function_depth;
+        let allow_at_this_depth = self.allow_provisional_rest_union && previous_depth == 0;
+        self.provisional_rest_union_function_depth = previous_depth.saturating_add(1);
+        let result = operation(self, allow_at_this_depth);
+        self.provisional_rest_union_function_depth = previous_depth;
+        result
+    }
+
     pub(crate) fn type_param_appears_in_mapped_context(
         &self,
         type_id: TypeId,
@@ -421,49 +440,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let use_bivariance = !force_strict_callback_params
             && (method_should_be_bivariant || !self.strict_function_types);
 
-        // When the parameter types are themselves callable (callbacks), tsc treats
-        // the recursive comparison under `SignatureCheckMode.Callback` when the
-        // outer slot is method-bivariant. That drops the outer covariant retry
-        // and makes the callback's own parameter list strict. tsc skips this
-        // path for slots that originated as instantiated generic parameters
-        // (`value: T` in `Bivar<T>`); those keep ordinary method bivariance.
-        let callback_originated_from_instantiated_generic =
-            self.callback_param_originated_from_instantiated_generic(source_type, target_type);
-        // tsc detects callback parameters with `getSingleCallSignature(getNonNullableType(t))`,
-        // i.e. it strips `null`/`undefined` before deciding whether a parameter is a
-        // callback. A method parameter typed `((value: T) => R) | undefined` (the exact
-        // shape of `Promise.then`'s `onfulfilled`) is therefore still a callback and must
-        // be compared with strict callback variance, not relaxed method bivariance. The
-        // strictness only applies when both sides agree on nullability — tsc additionally
-        // gates on `getTypeFacts(IsUndefinedOrNull)` matching across source and target.
-        let s_nonnull = crate::narrowing::utils::remove_nullish(self.interner, source_type);
-        let t_nonnull = crate::narrowing::utils::remove_nullish(self.interner, target_type);
-        let s_is_nullable = s_nonnull != source_type;
-        let t_is_nullable = t_nonnull != target_type;
-        // Reuse the raw modality flags computed above when no nullish member was
-        // stripped (the common path); only re-query callability on the stripped
-        // form when the parameter actually was a nullish union, keeping the hot
-        // non-nullable path free of extra `evaluate_type` walks.
-        let s_call_for_callback = if s_is_nullable {
-            self.callable_modality_flags_for_type(s_nonnull).0
-        } else {
-            s_has_call
-        };
-        let t_call_for_callback = if t_is_nullable {
-            self.callable_modality_flags_for_type(t_nonnull).0
-        } else {
-            t_has_call
-        };
-        // `inner_signature_is_method_like` probes call `evaluate_type`; keep them
-        // behind the cheaper predicates and the `method_should_be_bivariant`
-        // short-circuit so they only run for non-method callback slots.
-        let entering_callback_check = s_call_for_callback
-            && t_call_for_callback
-            && s_is_nullable == t_is_nullable
-            && !callback_originated_from_instantiated_generic
-            && (method_should_be_bivariant
-                || self.callable_first_signature_is_method(s_nonnull)
-                || self.callable_first_signature_is_method(t_nonnull));
+        let callback_pair = self.classify_callback_parameter_pair(
+            source_type,
+            target_type,
+            s_has_call,
+            t_has_call,
+            method_should_be_bivariant,
+        );
+        let entering_callback_check = callback_pair.is_some_and(|pair| pair.enters_callback_mode);
         let entering_bivariant_callback_return =
             entering_callback_check && method_should_be_bivariant;
         let saved_in_callback = self.in_callback_param_check;
@@ -515,6 +499,56 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.in_callback_param_check = saved_in_callback;
         self.in_bivariant_callback_return_check = saved_in_bivariant_callback_return;
         result
+    }
+
+    /// Classify a pair of callable parameter slots using the same nullability,
+    /// instantiated-generic, and method-origin rules in both the direct
+    /// relation and the contextual-retry guard.
+    fn classify_callback_parameter_pair(
+        &mut self,
+        source_type: TypeId,
+        target_type: TypeId,
+        source_has_call: bool,
+        target_has_call: bool,
+        method_should_be_bivariant: bool,
+    ) -> Option<CallbackParameterPair> {
+        // tsc probes `getSingleCallSignature(getNonNullableType(t))` and only
+        // enters callback mode when both sides carry the same nullish facts.
+        let source_nonnull = crate::narrowing::utils::remove_nullish(self.interner, source_type);
+        let target_nonnull = crate::narrowing::utils::remove_nullish(self.interner, target_type);
+        let source_is_nullable = source_nonnull != source_type;
+        let target_is_nullable = target_nonnull != target_type;
+        if source_is_nullable != target_is_nullable {
+            return None;
+        }
+        let source_call_for_callback = if source_is_nullable {
+            self.callable_modality_flags_for_type(source_nonnull).0
+        } else {
+            source_has_call
+        };
+        let target_call_for_callback = if target_is_nullable {
+            self.callable_modality_flags_for_type(target_nonnull).0
+        } else {
+            target_has_call
+        };
+        if !source_call_for_callback || !target_call_for_callback {
+            return None;
+        }
+
+        // Slots materialized from a generic method argument retain ordinary
+        // method bivariance. They remain callable pairs, but do not enter the
+        // immediate strict-callback mode.
+        let originated_from_instantiated_generic =
+            self.callback_param_originated_from_instantiated_generic(source_type, target_type);
+        let enters_callback_mode = !originated_from_instantiated_generic
+            && (method_should_be_bivariant
+                || self.callable_first_signature_is_method(source_nonnull)
+                || self.callable_first_signature_is_method(target_nonnull));
+        Some(CallbackParameterPair {
+            source_nonnull,
+            target_nonnull,
+            enters_callback_mode,
+        })
     }
 
     fn same_named_type_param_application_pair(
@@ -1079,15 +1113,226 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
-    pub(crate) fn normalize_rest_param_types(&mut self, shape: &mut FunctionShape) {
-        for param in &mut shape.params {
+    /// Return the binder carried by a bare variadic rest type.
+    ///
+    /// `NoInfer<T>` is still the same opaque variadic slot as `T`; the wrapper
+    /// only affects inference. Array, tuple, and other structural wrappers are
+    /// deliberately not peeled. Call-local and higher-order inference
+    /// placeholders stay provisional: they are not universally quantified
+    /// source binders and must keep participating in ordinary inference.
+    fn bare_rest_type_param(&mut self, type_id: TypeId) -> Option<TypeParamInfo> {
+        if let Some(query_db) = self.query_db {
+            return match crate::type_queries::transparent_bare_rest_type_parameter_with_resolver_query(
+                query_db,
+                self.resolver,
+                type_id,
+            ) {
+                crate::type_queries::RestBinderQuery::Complete(value) => value,
+                crate::type_queries::RestBinderQuery::Incomplete => {
+                    self.note_incomplete_evaluation_relation_event();
+                    None
+                }
+            };
+        }
+        self.bare_rest_type_param_inner(type_id)
+    }
+
+    fn bare_rest_type_param_inner(&mut self, type_id: TypeId) -> Option<TypeParamInfo> {
+        let mut current = type_id;
+        let mut seen = FxHashSet::default();
+        for _ in 0..crate::type_queries::data::MAX_REST_BINDER_QUERY_STEPS {
+            if current.is_intrinsic() || !seen.insert(current) {
+                return None;
+            }
+            match self.interner.lookup(current) {
+                Some(TypeData::TypeParameter(info)) if !info.is_infer_placeholder() => {
+                    return Some(info);
+                }
+                Some(TypeData::NoInfer(inner)) => current = inner,
+                Some(TypeData::Substitution { base_type, .. }) => current = base_type,
+                Some(TypeData::Application(_) | TypeData::Conditional(_) | TypeData::Lazy(_)) => {
+                    let evaluated = self.evaluate_type(current);
+                    if evaluated == current || evaluated == TypeId::ERROR {
+                        return None;
+                    }
+                    current = evaluated;
+                }
+                _ => return None,
+            }
+        }
+        self.note_incomplete_evaluation_relation_event();
+        None
+    }
+
+    pub(crate) fn is_bare_rest_type_param(&mut self, type_id: TypeId) -> bool {
+        if let Some(query_db) = self.query_db {
+            return match crate::type_queries::transparent_bare_rest_type_parameter_with_resolver_query(
+                query_db,
+                self.resolver,
+                type_id,
+            ) {
+                crate::type_queries::RestBinderQuery::Complete(value) => value.is_some(),
+                crate::type_queries::RestBinderQuery::Incomplete => {
+                    self.note_incomplete_evaluation_relation_event();
+                    true
+                }
+            };
+        }
+        self.bare_rest_type_param_inner(type_id).is_some()
+    }
+
+    fn is_unresolved_bare_rest(&self, type_id: TypeId) -> bool {
+        match self.interner.lookup(type_id) {
+            Some(TypeData::TypeParameter(_) | TypeData::Infer(_)) => true,
+            Some(TypeData::NoInfer(inner)) => self.is_unresolved_bare_rest(inner),
+            Some(TypeData::Substitution { base_type, .. }) => {
+                self.is_unresolved_bare_rest(base_type)
+            }
+            _ => false,
+        }
+    }
+
+    fn single_variadic_tuple_rest_binder(&mut self, type_id: TypeId) -> Option<TypeParamInfo> {
+        if let Some(query_db) = self.query_db {
+            return match crate::type_queries::single_variadic_tuple_rest_type_parameter_with_resolver_query(
+                query_db,
+                self.resolver,
+                type_id,
+            ) {
+                crate::type_queries::RestBinderQuery::Complete(value) => value,
+                crate::type_queries::RestBinderQuery::Incomplete => {
+                    self.note_incomplete_evaluation_relation_event();
+                    None
+                }
+            };
+        }
+        let TypeData::Tuple(elements_id) = self.interner.lookup(type_id)? else {
+            return None;
+        };
+        let elements = self.interner.tuple_list(elements_id);
+        let [element] = &*elements else {
+            return None;
+        };
+        (element.rest && !element.optional)
+            .then(|| self.bare_rest_type_param_inner(element.type_id))
+            .flatten()
+    }
+
+    fn is_concrete_any_array_rest(&mut self, type_id: TypeId) -> bool {
+        let mut current = type_id;
+        let mut seen = FxHashSet::default();
+        for _ in 0..crate::type_queries::data::MAX_REST_BINDER_QUERY_STEPS {
+            if current.is_intrinsic() || !seen.insert(current) {
+                return false;
+            }
+            match self.interner.lookup(current) {
+                Some(TypeData::Array(element)) => return element == TypeId::ANY,
+                Some(TypeData::NoInfer(inner)) => current = inner,
+                Some(TypeData::Application(_) | TypeData::Conditional(_) | TypeData::Lazy(_)) => {
+                    let evaluated = self.evaluate_type(current);
+                    if evaluated == current || evaluated == TypeId::ERROR {
+                        return false;
+                    }
+                    current = evaluated;
+                }
+                _ => return false,
+            }
+        }
+        self.note_incomplete_evaluation_relation_event();
+        false
+    }
+
+    pub(crate) fn rest_type_has_union_surface(&mut self, type_id: TypeId) -> bool {
+        if let Some(query_db) = self.query_db {
+            return match crate::type_queries::rest_type_has_union_surface_with_resolver_query(
+                query_db,
+                self.resolver,
+                type_id,
+            ) {
+                crate::type_queries::RestBinderQuery::Complete(value) => value,
+                crate::type_queries::RestBinderQuery::Incomplete => {
+                    self.note_incomplete_evaluation_relation_event();
+                    false
+                }
+            };
+        }
+
+        let mut current = type_id;
+        let mut seen = FxHashSet::default();
+        for _ in 0..crate::type_queries::data::MAX_REST_BINDER_QUERY_STEPS {
+            if current.is_intrinsic() || !seen.insert(current) {
+                return false;
+            }
+            match self.interner.lookup(current) {
+                Some(TypeData::Union(_)) => return true,
+                Some(TypeData::NoInfer(inner)) => current = inner,
+                Some(TypeData::Substitution { constraint, .. }) => current = constraint,
+                Some(TypeData::Application(_) | TypeData::Conditional(_) | TypeData::Lazy(_)) => {
+                    let evaluated = self.evaluate_type(current);
+                    if evaluated == current || evaluated == TypeId::ERROR {
+                        return false;
+                    }
+                    current = evaluated;
+                }
+                _ => return false,
+            }
+        }
+        self.note_incomplete_evaluation_relation_event();
+        false
+    }
+
+    /// Decide the raw-rest relation for an opaque source variadic.
+    ///
+    /// A bare source `...T` is universally quantified. It cannot be projected
+    /// through `T`'s constraint and compared element-wise with an unrelated
+    /// rest shape. Compare the raw rest types through the ordinary parameter
+    /// relation so strictness, method bivariance, `NoInfer`, and transparent
+    /// tuple spreads retain their existing semantics. Concrete `any[]` remains
+    /// TypeScript's universal callable-rest exception.
+    ///
+    /// `None` means the source rest is structural rather than a bare type
+    /// parameter, so ordinary element-wise comparison should continue.
+    pub(crate) fn bare_source_rest_compatibility(
+        &mut self,
+        source_type: TypeId,
+        target_type: TypeId,
+        is_method: bool,
+        allow_provisional_union: bool,
+    ) -> Option<bool> {
+        let source_binder = self.bare_rest_type_param(source_type)?;
+        let target_binder = self.bare_rest_type_param(target_type);
+        let target_variadic_tuple_binder = self.single_variadic_tuple_rest_binder(target_type);
+        if target_binder
+            .into_iter()
+            .chain(target_variadic_tuple_binder)
+            .any(|target_binder| source_binder.is_same_binder(target_binder))
+        {
+            return Some(true);
+        }
+        if allow_provisional_union {
+            debug_assert!(
+                self.rest_type_has_union_surface(target_type),
+                "the provisional bare-rest escape is scoped to a union target"
+            );
+            return None;
+        }
+        if self.is_concrete_any_array_rest(target_type) {
+            return Some(true);
+        }
+        let strict_parameter_relation = self.force_strict_callback_param_variance
+            || (self.strict_function_types && (!is_method || self.disable_method_bivariance));
+        if strict_parameter_relation && self.rest_type_has_union_surface(target_type) {
+            return Some(false);
+        }
+        Some(self.are_parameters_compatible_impl(source_type, target_type, is_method))
+    }
+
+    fn normalize_rest_params(&mut self, params: &mut [ParamInfo]) {
+        for param in params {
             if !param.rest {
                 continue;
             }
-            if matches!(
-                self.interner.lookup(param.type_id),
-                Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
-            ) {
+            if self.is_unresolved_bare_rest(param.type_id) {
                 // Preserve bare type-parameter rest slots such as `...args: T`.
                 // Eagerly evaluating them to their constraints (often `any[]`)
                 // drops the min-arity guard used by function assignability and
@@ -1099,6 +1344,43 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 param.type_id = evaluated;
             }
         }
+    }
+
+    pub(crate) fn normalize_rest_param_types(&mut self, shape: &mut FunctionShape) {
+        self.normalize_rest_params(&mut shape.params);
+    }
+
+    /// Expand tuple-list rest parameters after their application surfaces have
+    /// been normalized. This is shared by direct signature comparison and the
+    /// contextual-retry guard so both observe the same logical slots.
+    pub(crate) fn unpack_normalized_params(&mut self, params: &[ParamInfo]) -> Vec<ParamInfo> {
+        use crate::type_queries::unpack_tuple_rest_parameter;
+
+        params
+            .iter()
+            .flat_map(|param| {
+                if param.rest
+                    && matches!(
+                        self.interner.lookup(param.type_id),
+                        Some(TypeData::Application(_))
+                    )
+                {
+                    let evaluated = self.evaluate_type(param.type_id);
+                    if evaluated != param.type_id {
+                        let mut evaluated_param = *param;
+                        evaluated_param.type_id = evaluated;
+                        return unpack_tuple_rest_parameter(self.interner, &evaluated_param);
+                    }
+                }
+                unpack_tuple_rest_parameter(self.interner, param)
+            })
+            .collect()
+    }
+
+    pub(crate) fn normalized_unpacked_params(&mut self, params: &[ParamInfo]) -> Vec<ParamInfo> {
+        let mut normalized = params.to_vec();
+        self.normalize_rest_params(&mut normalized);
+        self.unpack_normalized_params(&normalized)
     }
 
     pub(crate) fn is_effective_never_type(&mut self, type_id: TypeId) -> bool {

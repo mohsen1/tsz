@@ -11,7 +11,7 @@
 //! before comparing, so the two signatures can relate by identity.
 
 use crate::relations::subtype::{SubtypeChecker, SubtypeResult, TypeResolver};
-use crate::types::FunctionShape;
+use crate::types::{FunctionShape, ParamInfo};
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// tsc parity: `instantiateSignatureInContextOf` for two same-arity generic
@@ -44,6 +44,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: &FunctionShape,
         direct_result: SubtypeResult,
         callback_modes: (bool, bool),
+        allow_provisional_rest_union_at_this_depth: bool,
     ) -> Option<SubtypeResult> {
         if direct_result.is_true() {
             return None;
@@ -63,6 +64,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // occurrence the inference is an identity operation and the re-comparison
         // would fail again.
         if !self.target_references_own_type_params_non_bare(target) {
+            return None;
+        }
+        // A retry may infer the source signature into apparent equality, but it
+        // must not erase a strict failure already established inside one of its
+        // callback parameters. Determine strictness at the nested slot itself:
+        // even a bivariant method parent enters `SignatureCheckMode::Callback`
+        // when both slot types are callable.
+        let parent_params_are_method = !callback_modes.0 && target.is_method;
+        if self.nested_rigid_rest_blocks_contextual_retry(source, target, parent_params_are_method)
+        {
             return None;
         }
         // Contextual inference matches the source's type parameters positionally
@@ -91,8 +102,171 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             &inferred_source,
             &target_for_inference,
             allow_constructor_bivariance,
+            allow_provisional_rest_union_at_this_depth,
         );
         retry.is_true().then_some(retry)
+    }
+
+    pub(super) fn rigid_bare_rest_parameter_mismatch(
+        &mut self,
+        source: &FunctionShape,
+        target: &FunctionShape,
+        allow_provisional_rest_union: bool,
+    ) -> bool {
+        self.rigid_bare_rest_params_mismatch(
+            &source.params,
+            &target.params,
+            allow_provisional_rest_union,
+        )
+    }
+
+    fn rigid_bare_rest_params_mismatch(
+        &mut self,
+        source: &[ParamInfo],
+        target: &[ParamInfo],
+        allow_provisional_rest_union: bool,
+    ) -> bool {
+        let Some((source_rest_index, source_rest)) =
+            source.iter().enumerate().find(|(_, param)| param.rest)
+        else {
+            return false;
+        };
+        let source_is_bare = if let Some(db) = self.query_db {
+            match crate::type_queries::transparent_bare_rest_type_parameter_with_resolver_query(
+                db,
+                self.resolver,
+                source_rest.type_id,
+            ) {
+                crate::type_queries::RestBinderQuery::Complete(Some(_)) => true,
+                crate::type_queries::RestBinderQuery::Complete(None) => false,
+                crate::type_queries::RestBinderQuery::Incomplete => {
+                    self.note_incomplete_evaluation_relation_event();
+                    return true;
+                }
+            }
+        } else {
+            self.is_bare_rest_type_param(source_rest.type_id)
+        };
+        if !source_is_bare {
+            return false;
+        }
+        let target_fixed_count = target.iter().take_while(|param| !param.rest).count();
+        if target_fixed_count > source_rest_index {
+            return true;
+        }
+        let Some(target_rest) = target.last().filter(|param| param.rest) else {
+            return false;
+        };
+        let provisional_union =
+            allow_provisional_rest_union && self.rest_type_has_union_surface(target_rest.type_id);
+        self.bare_source_rest_compatibility(
+            source_rest.type_id,
+            target_rest.type_id,
+            false,
+            provisional_union,
+        ) == Some(false)
+    }
+
+    /// Preserve a rigid nested callback failure across the generic
+    /// context-instantiation retry. Function parameters are contravariant, so
+    /// the written target parameter is the nested relation source. For each
+    /// written source-parameter signature (the nested relation target), every
+    /// target-parameter overload must fail rigidly before retry is blocked.
+    pub(super) fn nested_rigid_rest_blocks_contextual_retry(
+        &mut self,
+        source: &FunctionShape,
+        target: &FunctionShape,
+        parent_params_are_method: bool,
+    ) -> bool {
+        let Some(db) = self.query_db else {
+            return false;
+        };
+        let source_params = self.normalized_unpacked_params(&source.params);
+        let target_params = self.normalized_unpacked_params(&target.params);
+        let parent_method_is_bivariant =
+            parent_params_are_method && !self.disable_method_bivariance;
+
+        for (source_param, target_param) in source_params.iter().zip(target_params.iter()) {
+            let (source_type, target_type) =
+                self.effective_param_type_pair(source_param, target_param);
+            let source_has_call = self.callable_modality_flags_for_type(source_type).0;
+            let target_has_call = self.callable_modality_flags_for_type(target_type).0;
+            let Some(pair) = self.classify_callback_parameter_pair(
+                source_type,
+                target_type,
+                source_has_call,
+                target_has_call,
+                parent_method_is_bivariant,
+            ) else {
+                continue;
+            };
+            // Instantiated-generic callback slots retain the parent's ordinary
+            // method bivariance, including its reverse-direction retry.
+            if parent_method_is_bivariant && !pair.enters_callback_mode {
+                continue;
+            }
+            // Written source parameters become nested relation targets under
+            // contravariance; written target parameters become nested sources.
+            let nested_target_signatures = crate::type_queries::call_signatures_with_resolver(
+                db,
+                self.resolver,
+                pair.source_nonnull,
+            );
+            let nested_source_signatures = crate::type_queries::call_signatures_with_resolver(
+                db,
+                self.resolver,
+                pair.target_nonnull,
+            );
+            let nested_target_signatures = match nested_target_signatures {
+                crate::type_queries::RestBinderQuery::Complete(Some(value)) => value,
+                crate::type_queries::RestBinderQuery::Complete(None) => continue,
+                crate::type_queries::RestBinderQuery::Incomplete => {
+                    self.note_incomplete_evaluation_relation_event();
+                    return true;
+                }
+            };
+            let nested_source_signatures = match nested_source_signatures {
+                crate::type_queries::RestBinderQuery::Complete(Some(value)) => value,
+                crate::type_queries::RestBinderQuery::Complete(None) => continue,
+                crate::type_queries::RestBinderQuery::Incomplete => {
+                    self.note_incomplete_evaluation_relation_event();
+                    return true;
+                }
+            };
+            // This guard proves a rigid failure only for the single-signature
+            // callback lane. Overloads have N x M matching plus erased-signature
+            // fallbacks, which this narrow provenance check does not reproduce.
+            if nested_target_signatures.len() != 1 || nested_source_signatures.len() != 1 {
+                continue;
+            }
+            for nested_target in &nested_target_signatures {
+                let nested_is_strict = self.strict_function_types
+                    && (pair.enters_callback_mode
+                        || !nested_target.is_method
+                        || self.disable_method_bivariance);
+                if !nested_is_strict {
+                    continue;
+                }
+                let nested_target_params = &nested_target.params;
+                let mut every_nested_source_fails_rigidly = true;
+                for nested_source in &nested_source_signatures {
+                    let nested_source_params = &nested_source.params;
+                    let rigid_mismatch = self.rigid_bare_rest_params_mismatch(
+                        nested_source_params,
+                        nested_target_params,
+                        false,
+                    );
+                    if !rigid_mismatch {
+                        every_nested_source_fails_rigidly = false;
+                        break;
+                    }
+                }
+                if every_nested_source_fails_rigidly {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// True when any of `target`'s own type parameters occurs in a parameter,
@@ -132,5 +306,69 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         evaluated.this_type = evaluated.this_type.map(|t| self.evaluate_type(t));
         evaluated.return_type = self.evaluate_type(evaluated.return_type);
         evaluated
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::construction::TypeInterner;
+    use crate::relations::subtype::SubtypeChecker;
+    use crate::types::{TypeId, TypeParamInfo, TypeParamOrigin};
+
+    #[test]
+    fn nested_retry_guard_follows_contravariant_parameter_direction() {
+        let interner = TypeInterner::new();
+        let pack = interner.fresh_type_param(TypeParamInfo {
+            name: interner.intern_string("Pack"),
+            constraint: Some(interner.array(TypeId::UNKNOWN)),
+            default: None,
+            is_const: false,
+            origin: TypeParamOrigin::DeclScoped {
+                file: interner.intern_string("nested-rest-direction.ts"),
+                node: 1,
+            },
+        });
+        let rest_params = vec![ParamInfo {
+            name: None,
+            type_id: pack,
+            optional: false,
+            rest: true,
+        }];
+        let fixed_params = vec![ParamInfo::unnamed(pack)];
+        let callback = |params| {
+            interner.function(FunctionShape {
+                type_params: vec![],
+                params,
+                this_type: None,
+                return_type: TypeId::VOID,
+                type_predicate: None,
+                is_constructor: false,
+                is_method: false,
+            })
+        };
+        let outer = |callback_type| FunctionShape {
+            type_params: vec![],
+            params: vec![ParamInfo::unnamed(callback_type)],
+            this_type: None,
+            return_type: TypeId::VOID,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        };
+        let written_source = outer(callback(fixed_params.clone()));
+        let written_target = outer(callback(rest_params.clone()));
+
+        let mut checker = SubtypeChecker::new(&interner).with_query_db(&interner);
+        checker.strict_function_types = true;
+        checker.allow_bivariant_rest = true;
+
+        assert!(checker.rigid_bare_rest_params_mismatch(&rest_params, &fixed_params, false));
+        assert!(!checker.rigid_bare_rest_params_mismatch(&fixed_params, &rest_params, false));
+        assert!(checker.nested_rigid_rest_blocks_contextual_retry(
+            &written_source,
+            &written_target,
+            false,
+        ));
     }
 }
