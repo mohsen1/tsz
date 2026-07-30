@@ -503,7 +503,12 @@ import { styles } from "package-a";
 }
 
 #[test]
-fn test_prepare_test_dir_threads_no_types_and_symbols_into_generated_tsconfig() {
+fn test_prepare_test_dir_excludes_no_types_and_symbols_from_generated_tsconfig() {
+    // `noTypesAndSymbols` is a harness-only test directive (HARNESS_ONLY_DIRECTIVES):
+    // tsc's own compiler-options schema has no such flag, so threading it into the
+    // written tsconfig would hand the tsz/tsc binary a fabricated option. Its real
+    // effect — excluding `@types` packages from the root `files` list — is exercised
+    // separately in `test_prepare_test_dir_no_types_and_symbols_excludes_at_types_from_root_files`.
     let content = "";
     let filenames = vec![("usage.ts".to_string(), "export {};".to_string())];
     let options: HashMap<String, String> =
@@ -515,17 +520,22 @@ fn test_prepare_test_dir_threads_no_types_and_symbols_into_generated_tsconfig() 
     let tsconfig_json: serde_json::Value = serde_json::from_str(&tsconfig_raw).unwrap();
     let compiler_options = tsconfig_json
         .get("compilerOptions")
-        .and_then(serde_json::Value::as_object)
-        .expect("compilerOptions object should exist");
+        .and_then(serde_json::Value::as_object);
 
-    assert_eq!(
-        compiler_options.get("noTypesAndSymbols"),
-        Some(&serde_json::Value::Bool(true))
+    let has_no_types_and_symbols =
+        compiler_options.is_some_and(|opts| opts.contains_key("noTypesAndSymbols"));
+    assert!(
+        !has_no_types_and_symbols,
+        "noTypesAndSymbols is harness-only and must not appear in the generated tsconfig's \
+         compilerOptions, got {compiler_options:?}"
     );
 }
 
 #[test]
-fn test_prepare_test_dir_threads_no_types_and_symbols_into_root_tsconfig_merge() {
+fn test_prepare_test_dir_excludes_no_types_and_symbols_from_root_tsconfig_merge() {
+    // Same harness-only exclusion as above, but merging directives into an
+    // authored root tsconfig.json rather than generating one from scratch —
+    // real directive options (`module`) still merge in.
     let content = "";
     let filenames = vec![
         (
@@ -550,9 +560,10 @@ fn test_prepare_test_dir_threads_no_types_and_symbols_into_root_tsconfig_merge()
         compiler_options.get("module"),
         Some(&serde_json::Value::String("commonjs".to_string()))
     );
-    assert_eq!(
-        compiler_options.get("noTypesAndSymbols"),
-        Some(&serde_json::Value::Bool(true))
+    assert!(
+        !compiler_options.contains_key("noTypesAndSymbols"),
+        "noTypesAndSymbols is harness-only and must not appear in the merged tsconfig's \
+         compilerOptions, got {compiler_options:?}"
     );
 }
 

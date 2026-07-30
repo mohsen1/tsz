@@ -87,7 +87,12 @@ CHANGED_CRATES=$(echo "$CHANGED_RS" | sed -n 's|^crates/\([^/]*\)/.*|\1|p' | sor
 PKG_FLAGS=""
 for crate in $CHANGED_CRATES; do
     if [ -f "crates/$crate/Cargo.toml" ]; then
-        PKG_FLAGS="$PKG_FLAGS -p $crate"
+        # The crate directory name does not always match the Cargo package
+        # name (e.g. crates/conformance -> package "tsz-conformance"), and
+        # `cargo -p <dir-name>` fails with "did not match any packages" when
+        # they diverge. Read the real package name from Cargo.toml.
+        pkg_name=$(sed -n 's/^name *= *"\([^"]*\)"/\1/p' "crates/$crate/Cargo.toml" | head -1)
+        PKG_FLAGS="$PKG_FLAGS -p ${pkg_name:-$crate}"
     fi
 done
 if [ -z "$PKG_FLAGS" ]; then
