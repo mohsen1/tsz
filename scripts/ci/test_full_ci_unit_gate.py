@@ -147,5 +147,114 @@ class UnitGateWiringTests(unittest.TestCase):
         self.assertEqual(rc, 7)
 
 
+KNOWN_FAILURES = ROOT / "scripts" / "ci" / "known-failures.txt"
+CRATES_DIR = ROOT / "crates"
+
+
+def _baseline_packages():
+    """Packages named by `scripts/ci/known-failures.txt` entries.
+
+    A baseline line is `binary-id::test-name`, and nextest's binary-id always
+    starts with the package name, so the first `::` segment is the owner.
+    """
+    packages = set()
+    for line in KNOWN_FAILURES.read_text(encoding="utf-8").splitlines():
+        entry = line.strip()
+        if not entry or entry.startswith("#"):
+            continue
+        packages.add(entry.split("::", 1)[0])
+    return packages
+
+
+def _workspace_packages():
+    names = set()
+    for manifest in CRATES_DIR.glob("*/Cargo.toml"):
+        for line in manifest.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if stripped.startswith("name"):
+                _, _, value = stripped.partition("=")
+                names.add(value.strip().strip('"'))
+                break
+    return names
+
+
+class UnitLaneCoverageTests(unittest.TestCase):
+    """The lane must actually adjudicate every package the baseline names.
+
+    #15999 §3: `tsz-cli` and `tsz-conformance` sat in no unit lane, so the six
+    `tsz-cli` baseline entries were inert — CI never ran that package, its
+    tests reached no junit, and known-failures-check.mjs treated them as
+    neither a new failure nor a shrink. They read like coverage and were not.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        script = FULL_CI.read_text(encoding="utf-8")
+        start = script.index("_UNIT_TEST_PACKAGES=(")
+        end = script.index("\n}", script.index("unit_test_packages() {")) + 2
+        cls.packages_fn = script[start:end]
+
+    def _resolve(self, env_line="", expect_rc=0):
+        harness = textwrap.dedent(
+            f"""#!/usr/bin/env bash
+            set -Eeuo pipefail
+            {env_line}
+            {self.packages_fn}
+            set +e
+            unit_test_packages
+            echo "RC=$?"
+            """
+        )
+        proc = subprocess.run(["bash", "-c", harness], capture_output=True, text=True)
+        lines = proc.stdout.splitlines()
+        rc_lines = [ln for ln in lines if ln.startswith("RC=")]
+        self.assertEqual(len(rc_lines), 1, msg=f"missing RC line:\n{proc.stdout}")
+        rc = int(rc_lines[0][len("RC=") :])
+        self.assertEqual(rc, expect_rc, msg=proc.stdout + proc.stderr)
+        return [ln for ln in lines if not ln.startswith("RC=")]
+
+    def test_known_failure_packages_are_in_the_unit_lane(self):
+        lane = set(self._resolve())
+        uncovered = sorted(_baseline_packages() - lane)
+        self.assertEqual(
+            uncovered,
+            [],
+            msg=(
+                "known-failures.txt names packages the unit lane never runs: "
+                f"{uncovered}. Their entries can never fail the gate nor "
+                "ratchet down. Add them to _UNIT_TEST_PACKAGES in "
+                "scripts/ci/full-ci.sh, or drop the entries."
+            ),
+        )
+
+    def test_lane_packages_exist_in_the_workspace(self):
+        workspace = _workspace_packages()
+        unknown = sorted(set(self._resolve()) - workspace)
+        self.assertEqual(
+            unknown,
+            [],
+            msg=f"_UNIT_TEST_PACKAGES names non-workspace crates: {unknown}",
+        )
+
+    def test_override_accepts_every_lane_package(self):
+        # The validator's `known` list is derived from _UNIT_TEST_PACKAGES; a
+        # hand-copied second literal drifts and rejects lane crates as unknown.
+        lane = self._resolve()
+        for crate in lane:
+            with self.subTest(crate=crate):
+                self.assertEqual(
+                    self._resolve(
+                        env_line=f"export _TSZ_CI_UNIT_PACKAGES_OVERRIDE='{crate}'"
+                    ),
+                    [crate],
+                )
+
+    def test_override_still_rejects_an_unknown_crate(self):
+        self._resolve(
+            env_line="export _TSZ_CI_UNIT_PACKAGES_OVERRIDE='tsz-not-a-crate'",
+            expect_rc=2,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
