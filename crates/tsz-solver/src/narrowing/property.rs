@@ -5,6 +5,7 @@
 //! - Property type lookup for narrowing
 //! - Object-like type detection for instanceof support
 
+use super::cache::NarrowPropertyPresenceKey;
 use super::{CachedPropertyType, NarrowingContext};
 use crate::operations::property::PropertyAccessResult;
 use crate::types::{
@@ -78,6 +79,24 @@ impl<'a> NarrowingContext<'a> {
             present
         )
         .entered();
+
+        // A union member's alias can resolve back to the enclosing union
+        // itself (e.g. a `Record<string, Either<X, A>>` indexed-access
+        // element, or a 3-way discriminated union reached through a generic
+        // instantiation path): the nested-union recursion below would then
+        // re-enter this function with the identical `(source_type,
+        // property_name, present)` triple forever. Guard the whole call so a
+        // re-entrant cycle returns the type unchanged instead of overflowing
+        // the stack.
+        let guard_key = NarrowPropertyPresenceKey {
+            source: source_type,
+            property: property_name,
+            present,
+        };
+        let Some(_visit_guard) = self.cache.narrow_property_presence_visit_guard(guard_key) else {
+            trace!("Cyclic narrow_by_property_presence re-entry, returning source unchanged");
+            return source_type;
+        };
 
         // Handle special cases
         if source_type == TypeId::ANY {

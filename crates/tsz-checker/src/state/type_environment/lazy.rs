@@ -779,7 +779,7 @@ impl CheckerState<'_> {
         self.resolve_type_for_property_access_inner(type_id, &mut visited)
     }
 
-    pub(crate) fn resolve_type_for_property_access(&mut self, type_id: TypeId) -> TypeId {
+    pub(crate) fn resolve_type_for_property_access(&mut self, mut type_id: TypeId) -> TypeId {
         // A union whose members are `Application(Lazy(DefId), …)` instantiations
         // of generic lib references (e.g. `Int32Array | Uint8Array`) keeps those
         // members opaque under the solver's environment-free evaluator, hiding
@@ -788,12 +788,22 @@ impl CheckerState<'_> {
         // members are interned in their raw application form rather than the
         // resolved object form a directly-declared union would carry. Resolve
         // the application members through the type environment first so property
-        // and element access see the interface shape; the recursion then runs
+        // and element access see the interface shape; the loop below then runs
         // the normal per-member resolution on the resolved union. This precedes
         // the per-id resolve cache, which can otherwise return a stale identity
         // entry recorded on an earlier pass before the members were resolvable.
-        if let Some(resolved) = self.resolve_union_application_members(type_id) {
-            return self.resolve_type_for_property_access(resolved);
+        // Bounded by a fuel counter (matching `resolve_type_uncached`'s cycle
+        // guard): a cross-file generic union member can re-evaluate to a
+        // freshly interned but structurally-equal application each pass, so
+        // unbounded recursion here previously stack-overflowed instead of
+        // reaching a fixed point.
+        let mut fuel = 100;
+        while fuel > 0 {
+            fuel -= 1;
+            match self.resolve_union_application_members(type_id) {
+                Some(resolved) if resolved != type_id => type_id = resolved,
+                _ => break,
+            }
         }
 
         // Lazy single-member fast path: a bare `Lazy(DefId)` reference to a
