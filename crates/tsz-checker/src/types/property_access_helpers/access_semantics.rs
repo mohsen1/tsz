@@ -59,7 +59,15 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        (symbol.flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) != 0
+        // An ES `class`'s prototype is the closed instance type: a missing
+        // member read through it is an ordinary TS2339, exactly like
+        // `new C().x`. Checked-JS prototype-expando opening (which lets a
+        // read-before-assignment return `any` instead of reporting) applies
+        // only to function-as-constructor receivers, matching the sibling
+        // `expando_receiver_is_function_constructor` predicate.
+        let is_function = (symbol.flags & symbol_flags::FUNCTION) != 0;
+        let is_class = (symbol.flags & symbol_flags::CLASS) != 0;
+        is_function && !is_class
     }
 
     /// Whether `access_expr` (the receiver of a `.prototype.X` access) refers
@@ -137,6 +145,43 @@ impl<'a> CheckerState<'a> {
         let is_function = (symbol.flags & symbol_flags::FUNCTION) != 0;
         let is_class = (symbol.flags & symbol_flags::CLASS) != 0;
         is_function && !is_class
+    }
+
+    /// Whether `access_expr` is a `C.prototype` receiver where `C` resolves to
+    /// an ES `class` declaration. A class's prototype is the closed instance
+    /// type, so unlike a function-as-constructor's expando prototype, a bare
+    /// JSDoc-commented read of one of its members is not a declaration site —
+    /// the member either already exists on the class or the access is an
+    /// ordinary missing-member error.
+    pub(crate) fn expando_receiver_is_class(&self, access_expr: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(access_expr) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(node) else {
+            return false;
+        };
+        let Some(member) = self.ctx.arena.get(access.name_or_argument) else {
+            return false;
+        };
+        let is_prototype = member.kind == SyntaxKind::Identifier as u16
+            && self
+                .ctx
+                .arena
+                .get_identifier(member)
+                .is_some_and(|ident| ident.escaped_text == "prototype");
+        if !is_prototype {
+            return false;
+        }
+        let Some(sym_id) = self.resolve_identifier_symbol(access.expression) else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        (symbol.flags & symbol_flags::CLASS) != 0
     }
 
     pub(crate) fn property_access_is_write_target_or_base(

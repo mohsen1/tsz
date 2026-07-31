@@ -793,9 +793,18 @@ impl BinderState {
                 | symbol_flags::NAMESPACE_MODULE))
             != 0;
         let is_js_class_root = is_js_like_source && (symbol.flags & symbol_flags::CLASS) != 0;
+        // A class's prototype is the closed instance type: unlike its own
+        // static side (`Base.newProp = 2`, a genuine expando), a write
+        // through `Base.prototype…` for a member the class doesn't declare
+        // must still report TS2339. Function and namespace roots keep the
+        // permissive prototype-expando path — a JS constructor's prototype
+        // is genuinely open.
+        let is_class_prototype_chain =
+            is_js_class_root && obj_key.split('.').any(|segment| segment == "prototype");
         if ((is_function_or_namespace_root && (symbol.flags & symbol_flags::CLASS) == 0)
             || is_js_class_root)
             && !is_prototype_element_access
+            && !is_class_prototype_chain
         {
             // A NESTED object chain (`a.b.…x.p = e`, `obj_key` has a dot)
             // declares an expando in a TS file only when the chain's ROOT is

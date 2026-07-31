@@ -84,6 +84,85 @@ K.prototype.late;
     );
 }
 
+/// The suppression is keyed on the `.prototype` receiver being a class, not on
+/// the presence of a JSDoc comment: the identical read with no annotation at
+/// all must also report TS2339. Oracle: `tsc` 7.0.2 agrees.
+#[test]
+fn class_prototype_read_with_no_jsdoc_reports_ts2339() {
+    let codes = diag_codes_js(
+        r#"
+class K {
+    method() {}
+}
+K.prototype.late;
+"#,
+    );
+    assert!(
+        codes.contains(&2339),
+        "a class-prototype read of an absent member must report TS2339 with or without a JSDoc comment. Got: {codes:?}"
+    );
+}
+
+/// Contrast that localises the family: `new K().late` and `K.prototype.late`
+/// share the same receiver type `K`, so both must report TS2339 identically —
+/// the defect was confined to the `.prototype` path, not the receiver type.
+#[test]
+fn new_expression_read_of_absent_member_still_reports_ts2339() {
+    let codes = diag_codes_js(
+        r#"
+class K {
+    method() {}
+}
+new K().late;
+"#,
+    );
+    assert!(
+        codes.contains(&2339),
+        "new K().late must keep reporting TS2339 exactly like K.prototype.late. Got: {codes:?}"
+    );
+}
+
+/// The write form (`K.prototype.late = 1`) is silenced by a different
+/// mechanism than the read form: the binder's expando-property tracking
+/// unconditionally treated any `ClassName.prototype.member` write as
+/// expando-capable, the same way it legitimately does for a class's own
+/// static side (`Base.newProp = 2`). Oracle: `tsc` 7.0.2 reports TS2339 here
+/// too.
+#[test]
+fn class_prototype_write_of_absent_member_reports_ts2339() {
+    let codes = diag_codes_js(
+        r#"
+class K {
+    method() {}
+}
+K.prototype.late = 1;
+"#,
+    );
+    assert!(
+        codes.contains(&2339),
+        "writing an absent member through a class prototype must report TS2339, not be accepted as an expando. Got: {codes:?}"
+    );
+}
+
+/// Anti-hardcoding cover for the class-prototype rule: structural (class vs
+/// function), not keyed on identifier names.
+#[test]
+fn class_prototype_rule_works_with_renamed_binders() {
+    let codes = diag_codes_js(
+        r#"
+class Widget {
+    render() {}
+}
+/** @type {() => void} */
+Widget.prototype.unrelated;
+"#,
+    );
+    assert!(
+        codes.contains(&2339),
+        "the class-prototype TS2339 rule must hold for any class/member name pair. Got: {codes:?}"
+    );
+}
+
 /// Positive control, oracle-confirmed clean: reading a member the class really
 /// declares through `.prototype` must stay silent. This is the case the TS2339
 /// rule above must not over-fire on.
