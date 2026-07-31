@@ -3,6 +3,7 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 pub(super) struct GeneratorDeclarationYieldCtx {
@@ -39,20 +40,21 @@ impl CheckerState<'_> {
             function_is_async,
             early_yield_type,
         } = ctx;
-        // This speculative pass is not diagnostic-safe for `yield*`: when the
-        // delegate is itself an evolving (`var`/`let x = []`) binding whose type
-        // depends circularly on this same yield* aggregate, running the body
-        // check here resolves that circularity as a side effect, so the later
-        // "real" declaration-check pass no longer sees it as unresolved and
-        // skips the implicit-any diagnostics it owns (TS2322/TS7005/TS7034).
-        // This is not JS-specific — TypeScript's own `yieldExpressionInControlFlow.ts`
-        // conformance fixture hits the identical shape in a plain `.ts` file
-        // (`var o = []; while (true) { o = yield* o }`), confirmed by a
-        // corpus-wide compare-to-parent regression when this bail was narrowed
-        // to `is_js_file()` alone. Bail on any `yield*` until this pass can
-        // detect the circular-evolving-binding shape structurally instead of by
-        // file kind.
-        if self.generator_body_contains_yield_star(body, true) {
+        // This speculative pass is not diagnostic-safe for a `yield*` whose
+        // delegate reads an evolving (`var o;` / `let x = []`) binding: that
+        // binding's type depends circularly on the very yield* aggregate being
+        // inferred here, so running the body check resolves the circularity as
+        // a side effect and the later "real" declaration-check pass no longer
+        // sees it as unresolved — silently dropping the implicit-any
+        // diagnostics it owns (TS2322/TS7005/TS7034). This is not JS-specific:
+        // TypeScript's own `yieldExpressionInControlFlow.ts` conformance
+        // fixture hits the identical shape in a plain `.ts` file
+        // (`var o = []; while (true) { o = yield* o }`), which is why an
+        // earlier narrowing to `is_js_file()` alone regressed the corpus.
+        // The hazard is the *evolving delegate*, not `yield*` itself, so the
+        // gate is that shape structurally — an ordinary delegate (array,
+        // annotated generator, `const` binding, type parameter) infers through.
+        if self.generator_body_delegates_to_evolving_binding(body, true) {
             return None;
         }
 
@@ -115,19 +117,7 @@ impl CheckerState<'_> {
         let Some(node) = self.ctx.arena.get(node_idx) else {
             return false;
         };
-        if !is_root
-            && matches!(
-                node.kind,
-                k if k == syntax_kind_ext::FUNCTION_DECLARATION
-                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
-                    || k == syntax_kind_ext::METHOD_DECLARATION
-                    || k == syntax_kind_ext::GET_ACCESSOR
-                    || k == syntax_kind_ext::SET_ACCESSOR
-                    || k == syntax_kind_ext::CONSTRUCTOR
-                    || k == syntax_kind_ext::CLASS_DECLARATION
-                    || k == syntax_kind_ext::CLASS_EXPRESSION
-            )
-        {
+        if !is_root && Self::node_kind_owns_its_own_yields(node.kind) {
             return false;
         }
         if node.kind == syntax_kind_ext::YIELD_EXPRESSION {
@@ -140,33 +130,28 @@ impl CheckerState<'_> {
             .any(|child| self.generator_body_contains_yield(child, false))
     }
 
-    /// Whether `node_idx` contains a `yield*` delegate for this generator, not
-    /// one nested inside another function or class.
-    fn generator_body_contains_yield_star(&self, node_idx: NodeIndex, is_root: bool) -> bool {
+    /// Whether `node_idx` contains a `yield*` whose delegate operand reads an
+    /// evolving (implicit-any) binding, for this generator rather than one
+    /// nested inside another function or class.
+    ///
+    /// This is the shape the speculative pass must not run on: the delegate's
+    /// own type is still being derived from control flow, and one of the
+    /// assignments feeding it is the `yield*` aggregate this pass is computing.
+    fn generator_body_delegates_to_evolving_binding(
+        &self,
+        node_idx: NodeIndex,
+        is_root: bool,
+    ) -> bool {
         let Some(node) = self.ctx.arena.get(node_idx) else {
             return false;
         };
-        if !is_root
-            && matches!(
-                node.kind,
-                k if k == syntax_kind_ext::FUNCTION_DECLARATION
-                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
-                    || k == syntax_kind_ext::METHOD_DECLARATION
-                    || k == syntax_kind_ext::GET_ACCESSOR
-                    || k == syntax_kind_ext::SET_ACCESSOR
-                    || k == syntax_kind_ext::CONSTRUCTOR
-                    || k == syntax_kind_ext::CLASS_DECLARATION
-                    || k == syntax_kind_ext::CLASS_EXPRESSION
-            )
-        {
+        if !is_root && Self::node_kind_owns_its_own_yields(node.kind) {
             return false;
         }
         if node.kind == syntax_kind_ext::YIELD_EXPRESSION
-            && self
-                .ctx
-                .arena
-                .get_unary_expr_ex(node)
-                .is_some_and(|yield_expr| yield_expr.asterisk_token)
+            && let Some(yield_expr) = self.ctx.arena.get_unary_expr_ex(node)
+            && yield_expr.asterisk_token
+            && self.expression_reads_evolving_binding(yield_expr.expression)
         {
             return true;
         }
@@ -174,6 +159,48 @@ impl CheckerState<'_> {
             .arena
             .get_children(node_idx)
             .into_iter()
-            .any(|child| self.generator_body_contains_yield_star(child, false))
+            .any(|child| self.generator_body_delegates_to_evolving_binding(child, false))
+    }
+
+    /// Whether any reference anywhere in the delegate operand's subtree
+    /// resolves to an evolving binding.
+    ///
+    /// The whole subtree counts, nested closures included: a delegate built
+    /// from a closure that reads the evolving binding still routes that
+    /// binding's unresolved type into this aggregate, and bailing is the safe
+    /// direction.
+    fn expression_reads_evolving_binding(&self, node_idx: NodeIndex) -> bool {
+        if node_idx.is_none() {
+            return false;
+        }
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind == SyntaxKind::Identifier as u16
+            && self
+                .flow_analyzer()
+                .reference_is_evolving_array_symbol(node_idx)
+        {
+            return true;
+        }
+        self.ctx
+            .arena
+            .get_children(node_idx)
+            .into_iter()
+            .any(|child| self.expression_reads_evolving_binding(child))
+    }
+
+    /// Node kinds that introduce a generator/function boundary, so their
+    /// `yield`s belong to that inner function rather than the one being
+    /// inferred.
+    const fn node_kind_owns_its_own_yields(kind: u16) -> bool {
+        kind == syntax_kind_ext::FUNCTION_DECLARATION
+            || kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            || kind == syntax_kind_ext::METHOD_DECLARATION
+            || kind == syntax_kind_ext::GET_ACCESSOR
+            || kind == syntax_kind_ext::SET_ACCESSOR
+            || kind == syntax_kind_ext::CONSTRUCTOR
+            || kind == syntax_kind_ext::CLASS_DECLARATION
+            || kind == syntax_kind_ext::CLASS_EXPRESSION
     }
 }

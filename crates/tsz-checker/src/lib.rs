@@ -292,6 +292,9 @@ mod function_type_relation_routing_arch_tests;
 #[path = "tests/function_type_return_node_tests.rs"]
 mod function_type_return_node_tests;
 #[cfg(test)]
+#[path = "tests/generator_declaration_yield_star_inference_tests.rs"]
+mod generator_declaration_yield_star_inference_tests;
+#[cfg(test)]
 #[path = "../tests/generator_union_return_type_tests.rs"]
 mod generator_union_return_type_tests;
 #[cfg(test)]
