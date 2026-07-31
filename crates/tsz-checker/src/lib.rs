@@ -1623,6 +1623,9 @@ mod satisfies_callback_return_widening_tests;
 #[path = "tests/satisfies_relation_routing_arch_tests.rs"]
 mod satisfies_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/self_recursive_default_param_provisional_signature_tests.rs"]
+mod self_recursive_default_param_provisional_signature_tests;
+#[cfg(test)]
 #[path = "tests/self_referential_arrow_property_soundness_tests.rs"]
 mod self_referential_arrow_property_soundness_tests;
 #[cfg(test)]

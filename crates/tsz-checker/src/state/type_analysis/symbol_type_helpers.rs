@@ -338,20 +338,26 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Provisional self-reference type for a circular `const`/`let`/`var` bound
-    /// to an arrow or function expression whose parameters and return type are
-    /// all explicitly annotated.
+    /// to an arrow or function expression whose return type is explicitly
+    /// annotated and whose every parameter has either an explicit type
+    /// annotation or a default-value initializer.
     ///
     /// `tsc` resolves an in-body self-reference of such a binding to the
-    /// initializer's declared signature, which is computable from the
-    /// annotations alone without analyzing the body. Without a provisional,
-    /// the variable symbol — which is not a `FUNCTION` symbol, so
+    /// initializer's declared signature, which is computable without
+    /// analyzing the body: a default-valued parameter's type comes from its
+    /// own initializer expression, not from the enclosing function's body or
+    /// return type, so it needs no circular resolution either. Without a
+    /// provisional, the variable symbol — which is not a `FUNCTION` symbol, so
     /// [`Self::provisional_circular_function_symbol_type`] does not apply —
     /// collapses to `ERROR`/`unknown` during the cycle, so `param.map(self)`
-    /// degrades to `unknown[]` and yields a false `TS18046`/`TS2571`.
+    /// degrades to `unknown[]` and yields a false `TS18046`/`TS2571`, or a
+    /// downstream sibling generic-callback inference silently defaults to
+    /// `unknown` and produces a false `TS2322`.
     ///
-    /// Only fires when every parameter and the return type are annotated: an
-    /// un-annotated arrow genuinely needs body inference to determine its
-    /// signature, so it is left to the existing cycle behavior.
+    /// Only fires when the return type is annotated and every parameter is
+    /// either annotated or has a default initializer: a parameter with
+    /// neither genuinely needs body inference to determine its type, so that
+    /// shape is left to the existing cycle behavior.
     pub(crate) fn provisional_circular_variable_function_symbol_type(
         &mut self,
         sym_id: SymbolId,
@@ -430,8 +436,10 @@ impl<'a> CheckerState<'a> {
         Some(decl.initializer)
     }
 
-    /// Whether a function/arrow node has an explicit return-type annotation and
-    /// an explicit type annotation on every parameter.
+    /// Whether a function/arrow node has an explicit return-type annotation
+    /// and every parameter is independently resolvable — either an explicit
+    /// type annotation or a default-value initializer, either of which gives
+    /// the parameter a type without analyzing the function's own body.
     fn function_has_explicit_param_and_return_annotations(
         &self,
         func: &tsz_parser::parser::node::FunctionData,
@@ -444,7 +452,9 @@ impl<'a> CheckerState<'a> {
                 .arena
                 .get(param_idx)
                 .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
-                .is_some_and(|param| param.type_annotation != NodeIndex::NONE)
+                .is_some_and(|param| {
+                    param.type_annotation != NodeIndex::NONE || param.initializer != NodeIndex::NONE
+                })
         })
     }
 
