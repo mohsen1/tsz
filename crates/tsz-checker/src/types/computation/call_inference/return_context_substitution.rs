@@ -677,6 +677,25 @@ impl<'a> CheckerState<'a> {
                 substitution,
                 visited,
             );
+            // A type-predicate target (`x is I`) carries a tracked type
+            // parameter the same way an ordinary return type does; tsc infers
+            // `I` from it when a concrete sibling argument's predicate target
+            // is matched against it. `return_type` for a predicate-returning
+            // function is just `boolean`, so without this the predicate's own
+            // target type is never visited and `I` stays unresolved.
+            if let (Some(source_pred), Some(target_pred)) =
+                (source_fn.type_predicate, target_fn.type_predicate)
+                && let (Some(source_pred_ty), Some(target_pred_ty)) =
+                    (source_pred.type_id, target_pred.type_id)
+            {
+                self.collect_return_context_substitution(
+                    source_pred_ty,
+                    target_pred_ty,
+                    tracked_type_params,
+                    substitution,
+                    visited,
+                );
+            }
             if substitution.len() > substitution_len_before_callable
                 || (source_application.is_none() && target_application.is_none())
             {

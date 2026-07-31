@@ -2558,3 +2558,6 @@ path = "tests/generic_mapped_to_index_signature_tests.rs"
 [[test]]
 name = "object_literal_synthetic_this_display_order_tests"
 path = "tests/object_literal_synthetic_this_display_order_tests.rs"
+[[test]]
+name = "predicate_target_return_only_sibling_tests"
+path = "tests/predicate_target_return_only_sibling_tests.rs"
