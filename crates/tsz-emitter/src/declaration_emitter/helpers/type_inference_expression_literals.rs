@@ -583,6 +583,20 @@ impl<'a> DeclarationEmitter<'a> {
         {
             scratch.emit_type_parameters(type_params);
         }
+        // An unannotated generator's return type is `Generator<Y, R, N>` (or
+        // `AsyncGenerator<...>`), where `Y` comes from `yield` operands the
+        // solver already aggregated during checking, not from `return`
+        // statements. This AST-only reconstruction only ever looks at
+        // `return`, so `body_returns_void` below would collapse any
+        // no-explicit-return generator body (including ones that only
+        // `yield`) to a bare `void`, discarding the generator shape
+        // entirely. Bail out and let the caller fall back to the
+        // solver-resolved signature type, which already builds the correct
+        // `Generator<...>` application (`unannotated_generator_return_type`
+        // in the checker).
+        if func.type_annotation.is_none() && func.asterisk_token {
+            return None;
+        }
         scratch.write("(");
         scratch.emit_parameters_with_body(&func.parameters, func.body);
         scratch.write(") => ");

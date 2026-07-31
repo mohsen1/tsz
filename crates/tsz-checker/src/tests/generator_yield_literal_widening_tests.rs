@@ -12,9 +12,14 @@
 //!   callback signature) still widens — generatorTypeCheck63;
 //! - a fresh enum-member access widens to its parent enum.
 //!
-//! `yield*` delegation still collapses the inferred yield type to `any`
-//! (declarations bail in `infer_generator_declaration_yield_type`; expressions
-//! lose the generator shape entirely); that family is tracked separately.
+//! `yield*` delegation in unannotated generator *declarations* still bails
+//! in `infer_generator_declaration_yield_type`, collapsing the inferred
+//! yield type to `any`; that family is tracked separately. Unannotated
+//! generator *expressions* (`const g = function* () { ... }`) used to lose
+//! the entire `Generator<...>` shape in declaration emit, independent of
+//! `yield*` — fixed at the emitter layer (crates/tsz-cli's
+//! `generator_expression_initializer_dts_emit_tests`), since the checker's
+//! own inferred type was already correct.
 
 use crate::context::CheckerOptions;
 use crate::test_utils::{check_source_with_libs, load_default_lib_files};
