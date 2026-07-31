@@ -194,3 +194,104 @@ function* stream() {
         "yield* declaration recovery must preserve checked-JS implicit-any diagnostics; got: {codes:?}"
     );
 }
+
+#[test]
+fn yield_star_array_declaration_infers_the_delegated_element_type() {
+    // The signature recovery pass used to bail on *any* `yield*`, leaving an
+    // unannotated generator declaration's yield type at `any` and silently
+    // dropping every downstream diagnostic. tsc infers `number` here.
+    let codes = strict_codes_with_libs(
+        r#"
+declare function want(x: string): void;
+function* fromArray() { yield* [1, 2]; }
+for (const v of fromArray()) { want(v); }
+export {};
+"#,
+    );
+
+    assert!(
+        codes.contains(&2345),
+        "`yield* [1, 2]` in a declaration must infer number, not any; got: {codes:?}"
+    );
+}
+
+#[test]
+fn yield_star_declaration_yield_type_is_not_binder_name_specific() {
+    // Same shape, different binder names — the recovery gate is structural,
+    // not keyed to any particular identifier.
+    let codes = strict_codes_with_libs(
+        r#"
+declare function accept(x: string): void;
+function* zzz() { yield* ["a"]; }
+for (const q of zzz()) { accept(q); }
+export {};
+"#,
+    );
+
+    assert!(
+        !codes.contains(&2345),
+        "string elements must satisfy a string consumer; got: {codes:?}"
+    );
+}
+
+#[test]
+fn mixed_yield_and_yield_star_declaration_unions_both_contributions() {
+    let codes = strict_codes_with_libs(
+        r#"
+declare function want(x: string): void;
+function* mixed() { yield 5; yield* [1, 2]; }
+for (const v of mixed()) { want(v); }
+export {};
+"#,
+    );
+
+    assert!(
+        codes.contains(&2345),
+        "a plain yield beside a yield* must still reach the yield union; got: {codes:?}"
+    );
+}
+
+#[test]
+fn self_referential_yield_star_still_defers_to_the_declaration_body_pass() {
+    // Negative control for the structural gate: an evolving `var` whose type
+    // feeds back through the very `yield*` it delegates to must still skip the
+    // recovery pass, so the real body pass owns TS7005/TS7034. Renamed binder
+    // relative to the checked-JS guard test above.
+    let codes = checked_js_codes_with_libs(
+        r#"
+function* pump() {
+    var reservoir = []
+    while (true) {
+        reservoir = yield* reservoir
+    }
+}
+"#,
+    );
+
+    assert!(
+        codes.contains(&7005) && codes.contains(&7034),
+        "self-referential yield* must preserve implicit-any diagnostics; got: {codes:?}"
+    );
+}
+
+#[test]
+fn annotated_evolving_binder_does_not_trip_the_self_reference_gate() {
+    // An *annotated* local is not an evolving binding, so a `yield*` over it
+    // must not disable yield-type recovery.
+    let codes = strict_codes_with_libs(
+        r#"
+declare function want(x: string): void;
+function* annotated() {
+    const source: number[] = [1, 2];
+    yield* source;
+}
+for (const v of annotated()) { want(v); }
+export {};
+"#,
+    );
+
+    assert!(
+        codes.contains(&2345),
+        "an annotated local operand must still allow yield recovery; got: {codes:?}"
+    );
+}

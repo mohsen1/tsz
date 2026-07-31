@@ -39,7 +39,7 @@ impl CheckerState<'_> {
             function_is_async,
             early_yield_type,
         } = ctx;
-        if self.generator_body_contains_yield_star(body, true) {
+        if self.generator_body_has_self_referential_yield_star(body) {
             return None;
         }
 
@@ -102,19 +102,7 @@ impl CheckerState<'_> {
         let Some(node) = self.ctx.arena.get(node_idx) else {
             return false;
         };
-        if !is_root
-            && matches!(
-                node.kind,
-                k if k == syntax_kind_ext::FUNCTION_DECLARATION
-                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
-                    || k == syntax_kind_ext::METHOD_DECLARATION
-                    || k == syntax_kind_ext::GET_ACCESSOR
-                    || k == syntax_kind_ext::SET_ACCESSOR
-                    || k == syntax_kind_ext::CONSTRUCTOR
-                    || k == syntax_kind_ext::CLASS_DECLARATION
-                    || k == syntax_kind_ext::CLASS_EXPRESSION
-            )
-        {
+        if !is_root && Self::is_nested_function_or_class_boundary(node.kind) {
             return false;
         }
         if node.kind == syntax_kind_ext::YIELD_EXPRESSION {
@@ -127,33 +115,82 @@ impl CheckerState<'_> {
             .any(|child| self.generator_body_contains_yield(child, false))
     }
 
-    /// Whether `node_idx` contains a `yield*` delegate for this generator, not
-    /// one nested inside another function or class.
-    fn generator_body_contains_yield_star(&self, node_idx: NodeIndex, is_root: bool) -> bool {
+    /// Whether the generator body contains a `yield*` whose operand feeds back
+    /// into the very aggregate the delegation produces.
+    ///
+    /// The recovery pass below walks the body a second time to recover a yield
+    /// type. That is safe for a delegation whose operand type is already
+    /// knowable (`yield* [1, 2]`, `yield* inner()`, `yield* someIterable`), but
+    /// not for the *evolving-binding* shape:
+    ///
+    /// ```text
+    /// function* stream() {
+    ///     var bucket = []          // evolving, no annotation
+    ///     while (true) {
+    ///         bucket = yield* bucket   // type depends on the aggregate it delegates to
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// There the operand's type is only settled by the real declaration body
+    /// pass, so pre-checking it here consumes the implicit-any diagnostics
+    /// (`TS7005`/`TS7034`) that pass owns. Detect that structurally — a `yield*`
+    /// operand mentioning an un-annotated `var`/`let` binder introduced by this
+    /// same body — rather than bailing on every `yield*`, which erases the
+    /// inferred yield type for every ordinary delegation as well.
+    fn generator_body_has_self_referential_yield_star(&self, body: NodeIndex) -> bool {
+        let mut evolving: Vec<String> = Vec::new();
+        self.collect_evolving_body_binders(body, true, &mut evolving);
+        if evolving.is_empty() {
+            return false;
+        }
+        self.yield_star_operand_mentions(body, true, &evolving)
+    }
+
+    /// Collect un-annotated `var`/`let` binding names introduced directly by
+    /// this generator body (not by a nested function or class).
+    fn collect_evolving_body_binders(
+        &self,
+        node_idx: NodeIndex,
+        is_root: bool,
+        out: &mut Vec<String>,
+    ) {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return;
+        };
+        if !is_root && Self::is_nested_function_or_class_boundary(node.kind) {
+            return;
+        }
+        if node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+            && let Some(decl) = self.ctx.arena.get_variable_declaration(node)
+            && decl.type_annotation.is_none()
+            && let Some(name_node) = self.ctx.arena.get(decl.name)
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+        {
+            out.push(ident.escaped_text.to_string());
+        }
+        for child in self.ctx.arena.get_children(node_idx) {
+            self.collect_evolving_body_binders(child, false, out);
+        }
+    }
+
+    /// Whether some `yield*` operand in this body mentions one of `binders`.
+    fn yield_star_operand_mentions(
+        &self,
+        node_idx: NodeIndex,
+        is_root: bool,
+        binders: &[String],
+    ) -> bool {
         let Some(node) = self.ctx.arena.get(node_idx) else {
             return false;
         };
-        if !is_root
-            && matches!(
-                node.kind,
-                k if k == syntax_kind_ext::FUNCTION_DECLARATION
-                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
-                    || k == syntax_kind_ext::METHOD_DECLARATION
-                    || k == syntax_kind_ext::GET_ACCESSOR
-                    || k == syntax_kind_ext::SET_ACCESSOR
-                    || k == syntax_kind_ext::CONSTRUCTOR
-                    || k == syntax_kind_ext::CLASS_DECLARATION
-                    || k == syntax_kind_ext::CLASS_EXPRESSION
-            )
-        {
+        if !is_root && Self::is_nested_function_or_class_boundary(node.kind) {
             return false;
         }
         if node.kind == syntax_kind_ext::YIELD_EXPRESSION
-            && self
-                .ctx
-                .arena
-                .get_unary_expr_ex(node)
-                .is_some_and(|yield_expr| yield_expr.asterisk_token)
+            && let Some(yield_expr) = self.ctx.arena.get_unary_expr_ex(node)
+            && yield_expr.asterisk_token
+            && self.subtree_mentions_binder(yield_expr.expression, binders)
         {
             return true;
         }
@@ -161,6 +198,34 @@ impl CheckerState<'_> {
             .arena
             .get_children(node_idx)
             .into_iter()
-            .any(|child| self.generator_body_contains_yield_star(child, false))
+            .any(|child| self.yield_star_operand_mentions(child, false, binders))
+    }
+
+    /// Whether `node_idx`'s subtree references any identifier in `binders`.
+    fn subtree_mentions_binder(&self, node_idx: NodeIndex, binders: &[String]) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+        if let Some(ident) = self.ctx.arena.get_identifier(node)
+            && binders.iter().any(|b| b == ident.escaped_text.as_str())
+        {
+            return true;
+        }
+        self.ctx
+            .arena
+            .get_children(node_idx)
+            .into_iter()
+            .any(|child| self.subtree_mentions_binder(child, binders))
+    }
+
+    const fn is_nested_function_or_class_boundary(kind: u16) -> bool {
+        kind == syntax_kind_ext::FUNCTION_DECLARATION
+            || kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            || kind == syntax_kind_ext::METHOD_DECLARATION
+            || kind == syntax_kind_ext::GET_ACCESSOR
+            || kind == syntax_kind_ext::SET_ACCESSOR
+            || kind == syntax_kind_ext::CONSTRUCTOR
+            || kind == syntax_kind_ext::CLASS_DECLARATION
+            || kind == syntax_kind_ext::CLASS_EXPRESSION
     }
 }
