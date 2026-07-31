@@ -712,6 +712,26 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::FOR_AWAIT_LOOPS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
                     );
                 }
+            } else {
+                // TS1103: 'for await' loops are only allowed within async
+                // functions and at the top levels of modules. This is to
+                // `for await` exactly what TS1308 is to a bare `await`
+                // expression's non-top-level arm.
+                if let Some((await_pos, await_len)) = await_anchor {
+                    self.error(
+                        await_pos,
+                        await_len,
+                        diagnostic_messages::FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS_OF
+                            .to_string(),
+                        diagnostic_codes::FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS_OF,
+                    );
+                } else {
+                    self.error_at_node(
+                        stmt_idx,
+                        diagnostic_messages::FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS_OF,
+                        diagnostic_codes::FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS_OF,
+                    );
+                }
             }
             return;
         }
