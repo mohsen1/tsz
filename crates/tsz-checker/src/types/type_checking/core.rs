@@ -1572,7 +1572,11 @@ impl<'a> CheckerState<'a> {
         if is_await_using {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
-            if self.ctx.function_depth == 0 {
+            // Same top-level-await-eligibility predicate as `check_await_expression`
+            // (#16072): a namespace body disqualifies `await using` from being
+            // top level without being function-like, so this is not
+            // `function_depth == 0`.
+            if self.is_directly_at_source_file_top_level(list_idx) {
                 // TS2853: Top-level 'await using' is only valid in modules.
                 if !self.ctx.is_external_module_file() {
                     self.error_at_node(

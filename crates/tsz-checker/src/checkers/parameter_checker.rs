@@ -981,6 +981,9 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // TS1308: a parameter initializer is never top-level (#16072).
+            self.check_await_expression(param.initializer);
+
             // TS2372: Check if the initializer references the parameter itself
             // e.g., function f(x = x) { }, function f(x = x + 1) { }, or
             //        function f(b = b.toString()) { }

@@ -595,8 +595,14 @@ impl<'a> CheckerState<'a> {
                     if !self.ctx.in_async_context() && !self.ctx.has_syntax_parse_errors {
                         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
-                        // Check if we're at top level of a module
-                        let at_top_level = self.ctx.function_depth == 0;
+                        // Check if we're directly at the top level of the
+                        // source file. This is a stricter predicate than
+                        // `function_depth == 0`: a namespace body, a class
+                        // property initializer, and a parameter initializer
+                        // all disqualify top-level-await eligibility without
+                        // being function-like (see
+                        // `is_directly_at_source_file_top_level`).
+                        let at_top_level = self.is_directly_at_source_file_top_level(current_idx);
 
                         if at_top_level {
                             // tsc's `checkAwaitExpression` emits these two
@@ -661,6 +667,55 @@ impl<'a> CheckerState<'a> {
                 | syntax_kind_ext::SET_ACCESSOR
                 | syntax_kind_ext::CONSTRUCTOR
         )
+    }
+
+    /// Whether `idx` sits directly at the top level of the source file, for
+    /// the purposes of top-level-`await`/`await using` eligibility
+    /// (TS1308/TS2852 vs TS1375+TS1378/TS2853+TS2854).
+    ///
+    /// This is a stricter, and distinct, predicate from `function_depth == 0`
+    /// (owned by #16070 for the `break`/`continue` jump-boundary question).
+    /// `tsc` asks whether the nearest enclosing container is the source file
+    /// itself: a namespace/module body, a class property initializer, and a
+    /// parameter initializer all disqualify a node from being top-level
+    /// without being function-like, so `function_depth` — which only
+    /// increments at function-like boundaries — cannot answer this question.
+    /// Property/parameter initializers are deliberately `function_depth`-flat
+    /// (the TS2715 abstract-property family relies on that), so widening
+    /// `function_depth` to cover them would silently re-break it.
+    pub(crate) fn is_directly_at_source_file_top_level(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        let mut iterations = 0;
+        loop {
+            iterations += 1;
+            if iterations > crate::state::MAX_TREE_WALK_ITERATIONS {
+                return false;
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                // Walked all the way up without hitting a disqualifying
+                // container; treat the root itself as top level.
+                return true;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+            if parent_node.kind == syntax_kind_ext::SOURCE_FILE {
+                return true;
+            }
+            if parent_node.is_function_like()
+                || parent_node.kind == syntax_kind_ext::MODULE_BLOCK
+                || parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                || parent_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                || parent_node.kind == syntax_kind_ext::PARAMETER
+            {
+                return false;
+            }
+            current = parent_idx;
+        }
     }
 
     // --- Variable Statement Validation ---

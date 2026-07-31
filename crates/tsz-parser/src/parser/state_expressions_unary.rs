@@ -201,6 +201,25 @@ impl ParserState {
             // Note: TS2524 ('await' expressions cannot be used in a parameter initializer)
             // is emitted by the checker, not the parser, matching TSC behavior.
             // Fall through to parse as await expression for error recovery
+        } else if !self.in_async_context()
+            && self.in_parameter_default_context()
+            && has_following_expression
+        {
+            // A non-async function/method/constructor's parameter-default
+            // `await <expr>` still parses as an AwaitExpression: tsc's
+            // grammar here is syntactic and does not depend on async-ness in
+            // this position, only the *diagnostics* it produces do. Without
+            // this arm, control fell into the generic non-async branch
+            // below, which has no case for "in a parameter default AND
+            // followed by a real expression" — it parsed `await` as a bare
+            // identifier and left the following expression as a stray
+            // token, producing a spurious TS1005 instead of tsc's real
+            // TS1308 + TS2524 pair. Both are emitted by the checker (TS1308
+            // from `check_await_expression`, TS2524 from
+            // `get_type_of_await_expression_with_request`'s
+            // `is_in_default_parameter` check), matching tsc, which reports
+            // both together.
+            // Fall through to parse as await expression.
         } else if !self.in_async_context() {
             // NOT in async context - 'await' should be treated as identifier
             // In parameter default context of non-async functions, 'await' is a valid identifier
