@@ -9,8 +9,12 @@
 //! | --- | --- | --- |
 //! | `await x` | TS1308 | TS1375 / TS1378 |
 //! | `await using x = …` | TS2852 | TS2853 / TS2854 |
-//! | `await(x)` in a script | TS2311 | TS1375 / TS1378 |
 //! | `break;` / `continue;` | TS1107 | TS1105 / TS1104 |
+//!
+//! (`for await` and the `await(x)`-as-identifier TS2311 special case belong to
+//! the same family but are *silent* in tsz from every function body, member or
+//! free, so the boundary alone cannot make them answer. Both are tracked in
+//! #16071 rather than pinned red here.)
 //!
 //! tsz raised `ctx.function_depth` for free function bodies and static blocks
 //! but not for method/constructor/accessor bodies, so every one of those rows
