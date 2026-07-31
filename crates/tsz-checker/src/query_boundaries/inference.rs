@@ -199,10 +199,30 @@ fn complete_contextual_type_param_plan(
         // own free parameter intact is what `tsc` reports, and it matches the
         // choice `instantiate_shadowed_contextual_type_param` already makes for
         // the narrower "candidate is the whole contextual type" case.
-        if plan
-            .substitution
-            .get(tp.name)
-            .is_some_and(|mapped| common::contains_type_parameter_named(db, mapped, tp.name))
+        //
+        // A *self-referential constraint* mentions its own parameter name for a
+        // completely different reason and must not be caught here:
+        //
+        // ```ts
+        // <O extends NoExcessProperties<RepeatOptions<A>, O>, A>(options: O): ...
+        // ```
+        //
+        // `O`'s candidate mentions `O` because `O`'s own constraint does, not
+        // because an enclosing signature declares a second `O`. Dropping that
+        // binding would strip the contextual type off `options`' nested callback
+        // parameters and report a spurious `TS7006` under `noImplicitAny`.
+        // Distinguish by where the self-mention comes from: the callee's own
+        // declaration, or an inferred argument. Binder identity cannot make this
+        // call -- two unconstrained same-named parameters intern to one
+        // `TypeId`, which is the very collision this guard exists for.
+        let constraint_is_self_referential = tp.constraint.is_some_and(|constraint| {
+            common::contains_type_parameter_named(db, constraint, tp.name)
+        });
+        if !constraint_is_self_referential
+            && plan
+                .substitution
+                .get(tp.name)
+                .is_some_and(|mapped| common::contains_type_parameter_named(db, mapped, tp.name))
         {
             plan.substitution.remove(tp.name);
             continue;

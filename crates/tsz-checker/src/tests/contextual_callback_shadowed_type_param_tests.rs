@@ -185,6 +185,65 @@ function outer(v: Box<string>) {
     );
 }
 
+/// Self-referential-constraint control, reduced from
+/// `compiler/contextualParameterAndSelfReferentialConstraint1.ts`.
+///
+/// `O`'s candidate mentions `O` because `O`'s own constraint is
+/// self-referential, not because an enclosing signature declares a second `O`.
+/// The shadowing guard must not fire here: dropping the binding strips the
+/// contextual type off `options`' nested callback parameter and reports a
+/// spurious TS7006 under `noImplicitAny`. This is the shape that distinguishes
+/// "mentions a same-named parameter" from "mentions an *enclosing* one".
+#[test]
+fn self_referential_constraint_keeps_nested_callback_parameter_contextual() {
+    let diags = check_source_diagnostics(
+        r#"
+type Excl<T, U> = T extends U ? never : T;
+
+type NoExcessProperties<T, U> = T & {
+  readonly [K in Excl<keyof U, keyof T>]: never;
+};
+
+interface Effect<out A> {
+  readonly EffectTypeId: {
+    readonly _A: (_: never) => A;
+  };
+}
+
+declare function pipe<A, B>(a: A, ab: (a: A) => B): B;
+
+interface RepeatOptions<A> {
+  until?: (_: A) => boolean;
+}
+
+declare const repeat: {
+  <O extends NoExcessProperties<RepeatOptions<A>, O>, A>(
+    options: O,
+  ): (self: Effect<A>) => Effect<A>;
+};
+
+pipe(
+  {} as Effect<boolean>,
+  repeat({
+    until: (x) => {
+      return x;
+    },
+  }),
+);
+"#,
+    );
+
+    let implicit_any: Vec<_> = diags.iter().filter(|d| d.code == 7006).collect();
+    assert!(
+        implicit_any.is_empty(),
+        "expected no TS7006 — a self-referential constraint must keep its nested callback parameter contextually typed, got: {:?}",
+        implicit_any
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
 /// Negative/fallback control: a callee type parameter with *no* inference
 /// candidate must still be defaulted, so the callback parameter reads as
 /// `unknown` rather than staying generic. Guards the `new Promise((res) => ...)`
