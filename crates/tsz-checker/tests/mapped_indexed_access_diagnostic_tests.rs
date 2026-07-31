@@ -39,17 +39,26 @@ let pair2: Pairs<FooBar>[keyof FooBar] = {
         2,
         "expected one TS2322 per invalid assignment, got: {diagnostics:#?}"
     );
+    // tsc 7.0.2 oracle (`--noEmit --strict --pretty false`) on this exact
+    // source: the `pair1` assignment (annotated `Pair<FooBar>`, a generic
+    // alias) keeps the alias name in its TS2322 target; the `pair2`
+    // assignment (annotated with the raw `Pairs<FooBar>[keyof FooBar]`
+    // indexed-access expression, no alias indirection) shows that
+    // expression's evaluated union instead. The two assignments have
+    // different type annotations, so they are not expected to display the
+    // same target — this assertion previously claimed both should show the
+    // evaluated union, which tsc does not do for the aliased case.
     assert!(
         ts2322
             .iter()
             .any(|diag| diag.message_text.contains("Pair<FooBar>")),
-        "alias target should stay on the outer assignment diagnostic: {ts2322:#?}"
+        "alias target should stay on the pair1 assignment diagnostic: {ts2322:#?}"
     );
     assert!(
         ts2322.iter().any(|diag| diag
             .message_text
-            .contains("{ key: \"foo\"; value: string; } | { key: \"bar\"; value: number; }")),
-        "indexed-access target should display its evaluated union on the outer assignment: {ts2322:#?}"
+            .contains("{ key: \"bar\"; value: number; } | { key: \"foo\"; value: string; }")),
+        "raw indexed-access target should display its evaluated union on the pair2 assignment: {ts2322:#?}"
     );
     assert!(
         ts2322.iter().all(|diag| !diag
