@@ -687,6 +687,18 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // tsc suppresses every grammar diagnostic this function can emit
+        // (TS1103, TS18038, TS1431, TS1432) whenever the *program* has a real
+        // syntax parse error, not just the current file: a malformed
+        // `for await (... in ...)` in one file silences these checks for a
+        // `for await` in an unrelated non-async function in another file of
+        // the same program. Use the program-wide flag, not the per-file
+        // `has_syntax_parse_errors` that gates the unrelated `await`
+        // expression grammar checks.
+        if self.ctx.has_parse_errors {
+            return;
+        }
+
         // The `await` keyword sits immediately after `for `.
         let await_anchor = self
             .ctx
@@ -736,14 +748,8 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Top-level `for await`. tsc suppresses these grammar checks whenever the
-        // *program* has a real syntax parse error (not just the current file):
-        // a `for await (... in ...)` parse error in a sibling file silences the
-        // top-level for-await grammar checks everywhere. Use the program-wide
-        // flag to mirror that, not the per-file `has_syntax_parse_errors`.
-        if self.ctx.has_parse_errors {
-            return;
-        }
+        // Top-level `for await`. The program-wide parse-error guard above
+        // already covers this branch.
         let Some((await_pos, await_len)) = await_anchor else {
             return;
         };

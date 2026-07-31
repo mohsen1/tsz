@@ -14,8 +14,20 @@
 //! `ctx.function_depth` raise for method/constructor/accessor bodies; without
 //! it those three shapes fall through to the top-level branch (TS1431/TS1432)
 //! regardless of this fix.
+//!
+//! Every diagnostic this function can emit is also suppressed program-wide
+//! when the program has a real syntax parse error, not just the current
+//! file — the conformance fixture `parser.forAwait.es2018.ts` puts a
+//! genuinely malformed `for await (const x in y) {}` (parser reports TS1005,
+//! `'of' expected`) in one `@filename` block alongside an otherwise-valid
+//! non-async `for await...of` in another, and `tsc` reports only the parse
+//! error across the whole program. The suppression check below approximates
+//! that with a single file (`has_parse_errors` is set per parsed unit in the
+//! `check_source_with_parse_health` harness), which is enough to pin that a
+//! parse error anywhere in the checked unit suppresses TS1103 for a `for
+//! await` elsewhere in it.
 
-use crate::test_utils::check_source_codes;
+use crate::test_utils::{check_source_codes, check_source_codes_with_parse_health};
 
 /// Core repro from #16071: a non-async free function body.
 #[test]
@@ -197,5 +209,34 @@ function f() {
     assert!(
         !codes.contains(&1103),
         "a plain `for..of` with no `await` must not report TS1103; got {codes:?}"
+    );
+}
+
+/// A real syntax parse error in the checked unit (`for await (... in ...)`,
+/// which parses as TS1005 `'of' expected`, not TS1103 — `in` is not valid
+/// after `for await`) suppresses TS1103 for an unrelated, otherwise-valid
+/// non-async `for await...of` in the same unit. `parser.forAwait.es2018.ts`'s
+/// exact shape: without this guard tsz reports the parse error plus a
+/// spurious TS1103 that `tsc` never emits once the program has a parse error.
+#[test]
+fn parse_error_elsewhere_in_unit_suppresses_ts1103() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+for await (const x in y) {
+}
+function f5() {
+    let y: any;
+    for await (const x of y) {
+    }
+}
+"#,
+    );
+    assert!(
+        codes.contains(&1005),
+        "the malformed `for await (... in ...)` must still report the parse error; got {codes:?}"
+    );
+    assert!(
+        !codes.contains(&1103),
+        "a parse error elsewhere in the unit must suppress TS1103 for the otherwise-valid `for await`; got {codes:?}"
     );
 }
