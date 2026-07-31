@@ -180,6 +180,33 @@ fn complete_contextual_type_param_plan(
         }) {
             continue;
         }
+        // A round-1 candidate may legitimately mention a type parameter of an
+        // *enclosing* signature that happens to share this parameter's name:
+        //
+        // ```ts
+        // declare function each<T>(v: T, run: (v: T) => void): void;
+        // function outer<T>(v: Box<T>) { each(v, sub => { /* sub: Box<T> */ }); }
+        // ```
+        //
+        // Here the callee's `T` is fixed to `Box<T_outer>`, which is concrete
+        // enough for `tsc` -- the free `T_outer` belongs to `outer`, not to
+        // `each`. Substitutions are name-keyed, so at this point the two
+        // occurrences are indistinguishable and defaulting the callee's `T`
+        // would rewrite the enclosing `T` as well, yielding `Box<unknown>` and
+        // a spurious `TS2322`/`TS2345` on the callback body.
+        //
+        // Drop the binding instead of defaulting it: leaving the candidate's
+        // own free parameter intact is what `tsc` reports, and it matches the
+        // choice `instantiate_shadowed_contextual_type_param` already makes for
+        // the narrower "candidate is the whole contextual type" case.
+        if plan
+            .substitution
+            .get(tp.name)
+            .is_some_and(|mapped| common::contains_type_parameter_named(db, mapped, tp.name))
+        {
+            plan.substitution.remove(tp.name);
+            continue;
+        }
         let replacement = tp.default.or(tp.constraint).unwrap_or(TypeId::UNKNOWN);
         let replacement = common::instantiate_type(db, replacement, &plan.substitution);
         let replacement = if common::contains_type_parameters(db, replacement)

@@ -928,6 +928,9 @@ mod constraint_position_nullable_access_tests;
 #[path = "tests/constraint_validation_relation_routing_arch_tests.rs"]
 mod constraint_validation_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/contextual_callback_shadowed_type_param_tests.rs"]
+mod contextual_callback_shadowed_type_param_tests;
+#[cfg(test)]
 #[path = "tests/contextual_return_wrapper_tests.rs"]
 mod contextual_return_wrapper_tests;
 #[cfg(test)]
