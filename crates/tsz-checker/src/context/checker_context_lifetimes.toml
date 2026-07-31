@@ -249,6 +249,7 @@ generic_excess_skip = { lifetime = "FileLocalReset", capability = "FileTypeCache
 iteration_depth = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
 switch_depth = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
 function_depth = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+class_member_body_depth = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "function_depth baseline of the enclosing class member body; drives grammar/boundary diagnostics; clear at file-session boundary" }
 is_unreachable = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
 has_reported_unreachable = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
 label_stack = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }

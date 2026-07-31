@@ -242,7 +242,7 @@ impl<'a> CheckerState<'a> {
         right_idx: NodeIndex,
     ) {
         let right_idx = self.ctx.arena.skip_parenthesized_and_assertions(right_idx);
-        if !self.is_this_expression(right_idx) || self.ctx.function_depth != 0 {
+        if !self.is_this_expression(right_idx) || !self.ctx.directly_in_class_member_body() {
             return;
         }
 

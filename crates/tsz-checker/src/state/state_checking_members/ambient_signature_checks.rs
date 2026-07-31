@@ -1034,7 +1034,9 @@ impl<'a> CheckerState<'a> {
 
             let body_request = request.read().contextual_opt(None);
             self.clear_type_cache_recursive(method.body);
+            let saved_member_body_depth = self.ctx.enter_class_member_body();
             self.check_statement_with_request(method.body, &body_request);
+            self.ctx.exit_class_member_body(saved_member_body_depth);
 
             self.ctx.restore_async_context(saved_async_depth);
 
@@ -1505,7 +1507,9 @@ impl<'a> CheckerState<'a> {
 
             let body_request = request.read().contextual_opt(None);
             self.clear_type_cache_recursive(accessor.body);
+            let saved_member_body_depth = self.ctx.enter_class_member_body();
             self.check_statement_with_request(accessor.body, &body_request);
+            self.ctx.exit_class_member_body(saved_member_body_depth);
             if is_getter {
                 // Check if this is an async getter
                 let is_async = self.has_async_modifier(&accessor.modifiers);

@@ -294,7 +294,9 @@ impl<'a> CheckerState<'a> {
             // SymbolId), the parameter type cached earlier gets erased. Re-caching
             // ensures the parameter type is available for initializer evaluation.
             self.cache_parameter_types(&ctor.parameters.nodes, None);
+            let saved_member_body_depth = self.ctx.enter_class_member_body();
             self.check_statement_with_request(ctor.body, &body_request);
+            self.ctx.exit_class_member_body(saved_member_body_depth);
             self.pop_return_type();
 
             // TS2377: Constructors for derived classes must contain a super() call.

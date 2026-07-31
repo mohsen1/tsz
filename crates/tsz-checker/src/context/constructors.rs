@@ -493,6 +493,7 @@ impl<'a> CheckerContext<'a> {
             iteration_depth: 0,
             switch_depth: 0,
             function_depth: 0,
+            class_member_body_depth: 0,
             is_unreachable: false,
             has_reported_unreachable: false,
             label_stack: Vec::new(),
