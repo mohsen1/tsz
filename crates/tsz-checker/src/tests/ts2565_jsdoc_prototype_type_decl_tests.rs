@@ -6,9 +6,15 @@
 //! property's type via JSDoc. tsc treats this as a declaration, not an
 //! "used before assigned" read.
 //!
-//! For ES `class C {}` declarations the same prototype attachment is still a
-//! genuine "used before assigned" because the prototype shape is the class
-//! instance type — tsc emits TS2565 there.
+//! For ES `class C {}` declarations the same prototype attachment does NOT
+//! declare anything: `C.prototype` is the class instance type, which is closed,
+//! so the member simply does not exist. tsc reports **TS2339**, not TS2565.
+//!
+//! That second rule was previously asserted here as TS2565, which describes a
+//! diagnostic `tsc` never emits for this shape. See #16049 for the oracle
+//! matrix (`tsc` 7.0.2, `--strict --allowJs --checkJs`) and for the underlying
+//! tsz defect: the TS path already reports TS2339 for `K.prototype.late`, and
+//! only the checked-JS path stays silent.
 
 use crate::context::CheckerOptions;
 use crate::test_utils::check_source;
@@ -50,6 +56,13 @@ new C().x;
     );
 }
 
+/// A JSDoc `@type` statement does not open an ES `class`'s prototype: the
+/// instance type is closed, so the member does not exist and the read is a
+/// plain TS2339. Oracle (`tsc` 7.0.2 `--strict --allowJs --checkJs`):
+/// `error TS2339: Property 'late' does not exist on type 'K'.`
+///
+/// The suppression that makes this silent is checked-JS-only — the identical
+/// program in a `.ts` file already reports TS2339 today. See #16049.
 #[test]
 fn ts2565_still_fires_for_jsdoc_typed_prototype_on_class() {
     let codes = diag_codes_js(
@@ -62,8 +75,31 @@ K.prototype.late;
 "#,
     );
     assert!(
-        codes.contains(&2565),
-        "TS2565 must STILL fire for JSDoc-typed prototype on ES `class` (the prototype shape is the class instance type, late attachment is genuinely 'used before assigned'). Got: {codes:?}"
+        codes.contains(&2339),
+        "an ES `class` prototype is closed, so a JSDoc-typed late attachment must report TS2339 (tsc 7.0.2 does), not be silently accepted. Got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2565),
+        "tsc reports TS2339 here, never TS2565 — the prototype member is absent, not read before assignment. Got: {codes:?}"
+    );
+}
+
+/// Positive control, oracle-confirmed clean: reading a member the class really
+/// declares through `.prototype` must stay silent. This is the case the TS2339
+/// rule above must not over-fire on.
+#[test]
+fn class_prototype_read_of_declared_member_is_clean() {
+    let codes = diag_codes_js(
+        r#"
+class K {
+    method() {}
+}
+K.prototype.method;
+"#,
+    );
+    assert!(
+        !codes.contains(&2339),
+        "a member the class declares is present on its prototype. Got: {codes:?}"
     );
 }
 
