@@ -80,10 +80,7 @@ fn skip_lib_check_drops_declaration_diagnostics_keeps_user_diagnostics() {
                 "shapes.d.ts",
                 "declare interface WideShape { edge: number }\ndeclare const fallback: WideShap;\n",
             ),
-            (
-                "main.ts",
-                "const rounded = 1;\nexport const r = roundd;\n",
-            ),
+            ("main.ts", "const rounded = 1;\nexport const r = roundd;\n"),
         ],
         true,
     );

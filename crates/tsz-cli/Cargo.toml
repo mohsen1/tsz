@@ -242,6 +242,10 @@ path = "tests/merged_unique_symbol_factory_cli_tests.rs"
 name = "js_export_surface_commonjs_cli_tests"
 path = "tests/js_export_surface_commonjs_cli_tests.rs"
 
+[[test]]
+name = "skip_lib_check_declaration_diagnostics_tests"
+path = "tests/skip_lib_check_declaration_diagnostics_tests.rs"
+
 [dev-dependencies]
 tempfile = { workspace = true }
 

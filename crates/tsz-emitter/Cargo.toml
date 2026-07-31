@@ -434,6 +434,10 @@ path = "tests/es5_instance_field_init_order_tests.rs"
 name = "logical_assignment_temp_numbering_tests"
 path = "tests/logical_assignment_temp_numbering_tests.rs"
 
+[[test]]
+name = "async_method_super_capture_3759_tests"
+path = "tests/async_method_super_capture_3759_tests.rs"
+
 [lints]
 workspace = true
 
