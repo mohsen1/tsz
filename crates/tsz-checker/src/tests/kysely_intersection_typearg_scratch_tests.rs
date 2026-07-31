@@ -22,7 +22,13 @@ fn codes(source: &str) -> Vec<u32> {
 fn messages(source: &str) -> Vec<String> {
     crate::test_utils::check_source(source, "test.ts", opts())
         .iter()
-        .map(|diag| format!("TS{}: {}", diag.code, diag.message_text))
+        .map(|diag| {
+            let mut lines = vec![format!("TS{}: {}", diag.code, diag.message_text)];
+            for rel in &diag.related_information {
+                lines.push(format!("  related: {}", rel.message_text));
+            }
+            lines.join("\n")
+        })
         .collect()
 }
 
