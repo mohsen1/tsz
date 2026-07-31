@@ -2544,6 +2544,9 @@ path = "tests/instanceof_promise_recursive_narrowing_tests.rs"
 name = "default_export_merge_diagnostics_tests"
 path = "tests/default_export_merge_diagnostics_tests.rs"
 [[test]]
+name = "type_predicate_sibling_argument_evidence_tests"
+path = "tests/type_predicate_sibling_argument_evidence_tests.rs"
+[[test]]
 name = "indexed_access_concrete_missing_key_ts2536_tests"
 path = "tests/indexed_access_concrete_missing_key_ts2536_tests.rs"
 [[test]]
