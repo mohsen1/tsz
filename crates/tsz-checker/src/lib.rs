@@ -145,6 +145,9 @@ mod await_alias_union_distribution_tests;
 #[path = "tests/await_concise_arrow_body_grammar_tests.rs"]
 mod await_concise_arrow_body_grammar_tests;
 #[cfg(test)]
+#[path = "tests/await_static_block_grammar_tests.rs"]
+mod await_static_block_grammar_tests;
+#[cfg(test)]
 #[path = "tests/await_structural_thenable_tests.rs"]
 mod await_structural_thenable_tests;
 #[cfg(test)]
