@@ -901,6 +901,9 @@ mod computed_alias_source_display_tests;
 #[path = "tests/computed_symbol_name_unification_tests.rs"]
 mod computed_symbol_name_unification_tests;
 #[cfg(test)]
+#[path = "tests/concise_arrow_body_await_grammar_tests.rs"]
+mod concise_arrow_body_await_grammar_tests;
+#[cfg(test)]
 #[path = "tests/concise_body_return_excess_property_tests.rs"]
 mod concise_body_return_excess_property_tests;
 #[cfg(test)]

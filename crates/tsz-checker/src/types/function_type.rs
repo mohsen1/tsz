@@ -1860,6 +1860,22 @@ impl<'a> CheckerState<'a> {
                     std::mem::take(&mut self.ctx.generator_yield_operand_types);
                 let saved_had_ts7057 = std::mem::replace(&mut self.ctx.generator_had_ts7057, false);
                 if !skip_body_check {
+                    // A concise (expression) body has no `ReturnStatement`, so
+                    // the statement-rooted `await` grammar scan never reaches
+                    // it: every root of that scan is a statement-level
+                    // expression position (return/if/expression-statement/
+                    // for-await/variable-declaration/decorator/property
+                    // initializer). Root it here so a concise body is scanned
+                    // exactly like the block body's `return` expression is.
+                    //
+                    // Placed inside the body-checking region so it inherits
+                    // that region's visit guards, and after `function_depth`
+                    // and this function's own async context are established —
+                    // the `await` is judged against the function that owns it,
+                    // not the file.
+                    if body_is_expression {
+                        self.check_await_expression(body);
+                    }
                     let body_request = self
                         .function_body_statement_request(body_is_expression, effective_body_ctx);
                     self.check_function_body_statement_with_own_literal_context(
