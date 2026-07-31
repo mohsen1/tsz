@@ -103,6 +103,64 @@ K.prototype.method;
     );
 }
 
+/// Same defect as `ts2565_still_fires_for_jsdoc_typed_prototype_on_class`, but
+/// with no JSDoc `@type` comment at all — proves the suppression is keyed on
+/// the `.prototype` receiver being a class, not on the JSDoc annotation.
+/// Oracle (`tsc` 7.0.2 `--strict --allowJs --checkJs`): `TS2339`.
+#[test]
+fn class_prototype_missing_member_read_reports_ts2339_without_jsdoc() {
+    let codes = diag_codes_js(
+        r#"
+class K {
+    method() {}
+}
+K.prototype.late;
+"#,
+    );
+    assert!(
+        codes.contains(&2339),
+        "an ES `class` prototype is closed even with no JSDoc annotation present. Got: {codes:?}"
+    );
+}
+
+/// Anti-hardcoding cover for the TS2339 rule: renamed binders, structural not
+/// identifier-keyed.
+#[test]
+fn class_prototype_missing_member_reports_ts2339_with_renamed_class() {
+    let codes = diag_codes_js(
+        r#"
+class Widget {
+    render() {}
+}
+/** @type {(x: number) => void} */
+Widget.prototype.attach;
+"#,
+    );
+    assert!(
+        codes.contains(&2339),
+        "the rule must fire for an arbitrarily-named class, not just `K`. Got: {codes:?}"
+    );
+}
+
+/// Regression control: `new K().late` must keep reporting TS2339 exactly as
+/// before — this fix must not touch the ordinary (non-`.prototype`) missing-
+/// member path.
+#[test]
+fn class_instance_missing_member_still_reports_ts2339() {
+    let codes = diag_codes_js(
+        r#"
+class K {
+    method() {}
+}
+new K().late;
+"#,
+    );
+    assert!(
+        codes.contains(&2339),
+        "new K().late must still report TS2339. Got: {codes:?}"
+    );
+}
+
 /// Anti-hardcoding cover: the rule is structural (function vs class), not
 /// based on identifier names — works with arbitrary names.
 #[test]

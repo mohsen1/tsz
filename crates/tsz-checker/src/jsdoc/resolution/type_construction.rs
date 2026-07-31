@@ -308,6 +308,9 @@ impl<'a> CheckerState<'a> {
             if self.expression_text(expr_stmt.expression).as_deref() != Some(name) {
                 continue;
             }
+            if self.is_closed_class_prototype_property_chain(expr_stmt.expression) {
+                continue;
+            }
             if let Some(jsdoc_type) = self.js_statement_declared_type(idx) {
                 return Some(
                     self.combine_jsdoc_instance_and_prototype_type(jsdoc_type, prototype_type),
@@ -317,6 +320,51 @@ impl<'a> CheckerState<'a> {
 
         allow_prototype_only_fallback.then_some(())?;
         Some(self.relabel_jsdoc_assigned_value_type(name, prototype_type?))
+    }
+
+    /// Whether `expr_idx` is a `C.prototype.member` chain whose `C.prototype`
+    /// receiver is an ES `class`, not a function-as-constructor.
+    ///
+    /// A bare top-level `C.prototype.member;` statement carrying a leading
+    /// JSDoc `@type` comment is, for a function-as-constructor `C`, a genuine
+    /// late prototype-property *declaration* (mirrors `expando_receiver_is_
+    /// function_constructor`'s function-vs-class line). For an ES `class C`,
+    /// `C.prototype` is the closed instance type: the member either already
+    /// exists or it does not, and a JSDoc comment on a bare read cannot
+    /// declare a new one. Skipping this declaration path for a class receiver
+    /// lets the read fall through to ordinary missing-member resolution,
+    /// which reports `TS2339` exactly as `new C().member` does.
+    fn is_closed_class_prototype_property_chain(&self, expr_idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(node) else {
+            return false;
+        };
+        let Some(prototype_node) = self.ctx.arena.get(access.expression) else {
+            return false;
+        };
+        if prototype_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(prototype_access) = self.ctx.arena.get_access_expr(prototype_node) else {
+            return false;
+        };
+        let is_prototype_member = self
+            .ctx
+            .arena
+            .get_identifier_at(prototype_access.name_or_argument)
+            .is_some_and(|ident| ident.escaped_text == "prototype");
+        if !is_prototype_member {
+            return false;
+        }
+
+        !self.expando_receiver_is_function_constructor(access.expression)
     }
 
     fn relabel_jsdoc_assigned_value_type(&mut self, name: &str, ty: TypeId) -> TypeId {

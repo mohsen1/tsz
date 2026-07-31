@@ -59,7 +59,13 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        (symbol.flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) != 0
+        // Only a function-as-constructor's prototype is an open, expando-extensible
+        // shape in checked JS (mirrors `expando_receiver_is_function_constructor`
+        // below). An ES `class`'s prototype is the closed instance type: a missing
+        // member read through it is an ordinary TS2339, exactly as `new C().x` is.
+        let is_function = (symbol.flags & symbol_flags::FUNCTION) != 0;
+        let is_class = (symbol.flags & symbol_flags::CLASS) != 0;
+        is_function && !is_class
     }
 
     /// Whether `access_expr` (the receiver of a `.prototype.X` access) refers
