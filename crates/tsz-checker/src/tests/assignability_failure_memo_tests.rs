@@ -10,7 +10,7 @@
 
 use crate::context::{AssignabilityFailureMemo, CachedAssignabilityAnalysis, CheckerOptions};
 use crate::test_utils::check_source;
-use tsz_common::perf_counters::PerfCounters;
+use tsz_common::perf_counters::ScopedPerfCounters;
 use tsz_solver::TypeId;
 
 // ---------------------------------------------------------------------------
@@ -82,18 +82,33 @@ fn memo_drops_entries_when_any_stamp_component_moves() {
 }
 
 // ---------------------------------------------------------------------------
-// Counter-asserted single-pass behavior. nextest runs each test in its own
-// process, so the process-global counters are isolated per test.
+// Counter-asserted single-pass behavior.
+//
+// The perf counters are process-wide monotonic atomics with no reset, so
+// reading their *totals* measures everything the whole test binary has done so
+// far, not the program under test. That only happens to work under a
+// process-per-test runner: under any shared-process run the `== 0` assertion
+// below is a guaranteed false red, and — silently, which is worse — the `>= 1`
+// assertions are false greens served by a sibling test's increments.
+//
+// `ScopedPerfCounters` gives the measuring thread a private, zeroed set for the
+// duration of the check, so every assertion here is about this test's own work
+// under any runner.
 // ---------------------------------------------------------------------------
 
-fn enable_counters() {
-    tsz_common::perf_counters::force_enable_perf_counters_for_tests();
+/// Check `source` with counting scoped to this thread, returning the
+/// diagnostics alongside the `(reason_walks, memo_hits)` attributable to the
+/// check itself.
+fn check_source_counting_relation_failures(
+    source: &str,
+    name: &str,
+) -> (Vec<crate::diagnostics::Diagnostic>, u64, u64) {
+    let counted = ScopedPerfCounters::new();
     assert!(tsz_common::perf_counters::enabled_fast());
-}
-
-fn relation_failure_counts() -> (u64, u64) {
-    let snapshot = PerfCounters::snapshot();
+    let diagnostics = check_source(source, name, CheckerOptions::default());
+    let snapshot = counted.snapshot();
     (
+        diagnostics,
         snapshot.relation_failure.reason_walks,
         snapshot.relation_failure.memo_hits,
     )
@@ -105,17 +120,14 @@ fn relation_failure_counts() -> (u64, u64) {
 /// same prepared pair is a memo hit instead of a second walk.
 #[test]
 fn failing_assignment_serves_second_analysis_from_memo() {
-    enable_counters();
-    let diagnostics = check_source(
+    let (diagnostics, walks, hits) = check_source_counting_relation_failures(
         "let target: { outer: { inner: string } } = { outer: { inner: 42 } };",
         "memo_hit.ts",
-        CheckerOptions::default(),
     );
     assert!(
         diagnostics.iter().any(|d| d.code == 2322),
         "expected a TS2322 diagnostic, got {diagnostics:?}"
     );
-    let (walks, hits) = relation_failure_counts();
     assert!(walks >= 1, "a failing relation must walk a reason once");
     assert!(
         hits >= 1,
@@ -127,17 +139,14 @@ fn failing_assignment_serves_second_analysis_from_memo() {
 /// so an α-renamed failing assignment behaves identically.
 #[test]
 fn failing_assignment_renamed_binders_serves_second_analysis_from_memo() {
-    enable_counters();
-    let diagnostics = check_source(
+    let (diagnostics, walks, hits) = check_source_counting_relation_failures(
         "let zebra: { hull: { mast: string } } = { hull: { mast: 42 } };",
         "memo_hit_renamed.ts",
-        CheckerOptions::default(),
     );
     assert!(
         diagnostics.iter().any(|d| d.code == 2322),
         "expected a TS2322 diagnostic, got {diagnostics:?}"
     );
-    let (walks, hits) = relation_failure_counts();
     assert!(walks >= 1);
     assert!(hits >= 1, "walks={walks}, hits={hits}");
 }
@@ -147,17 +156,14 @@ fn failing_assignment_renamed_binders_serves_second_analysis_from_memo() {
 /// gateway already captured the pair.
 #[test]
 fn failing_call_argument_reports_ts2345_without_extra_walks() {
-    enable_counters();
-    let diagnostics = check_source(
+    let (diagnostics, walks, _hits) = check_source_counting_relation_failures(
         "function takeRecord(arg: { tag: string }): void {}\ndeclare let payload: { tag: number };\ntakeRecord(payload);",
         "memo_call_arg.ts",
-        CheckerOptions::default(),
     );
     assert!(
         diagnostics.iter().any(|d| d.code == 2345),
         "expected a TS2345 diagnostic, got {diagnostics:?}"
     );
-    let (walks, _hits) = relation_failure_counts();
     assert!(walks >= 1, "a failing call argument must walk a reason");
 }
 
@@ -166,23 +172,46 @@ fn failing_call_argument_reports_ts2345_without_extra_walks() {
 /// issue #13213) and zero memo traffic.
 #[test]
 fn passing_program_does_zero_reason_collection() {
-    enable_counters();
-    let diagnostics = check_source(
+    let (diagnostics, walks, hits) = check_source_counting_relation_failures(
         r#"
 let person: { name: string; age: number } = { name: "n", age: 3 };
 function consume(value: { name: string }): string { return value.name; }
 consume(person);
 "#,
         "memo_passing.ts",
-        CheckerOptions::default(),
     );
     assert!(
         diagnostics.is_empty(),
         "expected a clean program, got {diagnostics:?}"
     );
-    let (walks, hits) = relation_failure_counts();
     assert_eq!(walks, 0, "passing relations must not walk failure reasons");
     assert_eq!(hits, 0, "passing relations must not touch the memo");
+}
+
+/// The scope itself is the thing the four tests above depend on, so it gets a
+/// direct witness: a second measurement on the same thread must not inherit the
+/// first one's counts. Without the scope this asserts `12 == 0` — exactly the
+/// false red that made `passing_program_does_zero_reason_collection` look
+/// broken on clean `main` under any shared-process runner.
+#[test]
+fn scoped_counters_do_not_inherit_a_previous_measurement_on_the_same_thread() {
+    let (diagnostics, walks, _hits) = check_source_counting_relation_failures(
+        "let target: { outer: { inner: string } } = { outer: { inner: 42 } };",
+        "scope_witness_failing.ts",
+    );
+    assert!(diagnostics.iter().any(|d| d.code == 2322));
+    assert!(walks >= 1, "the failing check must have counted walks");
+
+    let (clean, clean_walks, clean_hits) = check_source_counting_relation_failures(
+        "let ok: { name: string } = { name: \"n\" };",
+        "scope_witness_passing.ts",
+    );
+    assert!(clean.is_empty(), "expected a clean program, got {clean:?}");
+    assert_eq!(
+        clean_walks, 0,
+        "a fresh scope must not see the previous measurement's walks"
+    );
+    assert_eq!(clean_hits, 0);
 }
 
 // ---------------------------------------------------------------------------
