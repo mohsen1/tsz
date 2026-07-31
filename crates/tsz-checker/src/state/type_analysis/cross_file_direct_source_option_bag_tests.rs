@@ -98,13 +98,23 @@ fn setup_cross_file_index_state<'a>(
     (state, sym)
 }
 
-fn enable_perf_counters_for_direct_lowering_test() {
-    #[cfg(any(test, debug_assertions))]
-    tsz_common::perf_counters::force_enable_perf_counters_for_tests();
+/// Give the calling test a private, thread-scoped counter set instead of the
+/// process-wide atomics: `direct_interface_lowering_count` /
+/// `with_parent_cache_constructed_count` below take before/after snapshots
+/// and diff them, and a plain before/after delta on process-wide counters is
+/// immune to increments made before the window but not to increments a
+/// sibling thread makes *inside* it under a shared-process runner (`cargo
+/// test`, not `nextest`). Keep the returned guard alive for the rest of the
+/// test.
+#[must_use]
+fn scoped_perf_counters_for_direct_lowering_test() -> tsz_common::perf_counters::ScopedPerfCounters
+{
+    let scope = tsz_common::perf_counters::ScopedPerfCounters::new();
     assert!(
         tsz_common::perf_counters::enabled_fast(),
         "direct-lowering branch tests need perf counters enabled"
     );
+    scope
 }
 
 fn direct_interface_lowering_count(outcome: DirectCrossFileInterfaceLoweringOutcome) -> u64 {
@@ -145,7 +155,7 @@ fn delegate_cross_arena_source_option_bag_lowers_directly_via_cross_file_index()
         &target_binder,
     );
 
-    enable_perf_counters_for_direct_lowering_test();
+    let _scope = scoped_perf_counters_for_direct_lowering_test();
     let success_before =
         direct_interface_lowering_count(DirectCrossFileInterfaceLoweringOutcome::Success);
     let child_checkers_before = with_parent_cache_constructed_count();
@@ -213,7 +223,7 @@ fn delegate_cross_arena_source_option_bag_with_sibling_alias_lowers_directly_via
         &target_binder,
     );
 
-    enable_perf_counters_for_direct_lowering_test();
+    let _scope = scoped_perf_counters_for_direct_lowering_test();
     let success_before =
         direct_interface_lowering_count(DirectCrossFileInterfaceLoweringOutcome::Success);
     let child_checkers_before = with_parent_cache_constructed_count();
@@ -323,7 +333,7 @@ fn delegate_cross_arena_source_option_bag_resolves_in_program_with_module_augmen
         "fixture should make the source-file symbol-arena cache ineligible"
     );
 
-    enable_perf_counters_for_direct_lowering_test();
+    let _scope = scoped_perf_counters_for_direct_lowering_test();
     let success_before =
         direct_interface_lowering_count(DirectCrossFileInterfaceLoweringOutcome::Success);
     let child_checkers_before = with_parent_cache_constructed_count();
@@ -569,7 +579,7 @@ fn delegate_cross_arena_source_interface_with_heritage_still_falls_back() {
         &target_binder,
     );
 
-    enable_perf_counters_for_direct_lowering_test();
+    let _scope = scoped_perf_counters_for_direct_lowering_test();
     let success_before =
         direct_interface_lowering_count(DirectCrossFileInterfaceLoweringOutcome::Success);
     let complex_before = direct_interface_lowering_count(

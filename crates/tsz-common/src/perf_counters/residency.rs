@@ -42,29 +42,54 @@ pub struct ResidencyGauges {
     type_cache_bytes_est: AtomicU64,
 }
 
+impl ResidencyGauges {
+    const fn new_zero() -> Self {
+        Self {
+            recorded_any: AtomicBool::new(false),
+            ast_unique_arena_count: AtomicU64::new(0),
+            ast_unique_arena_bytes_est: AtomicU64::new(0),
+            bound_file_count: AtomicU64::new(0),
+            bound_file_state_bytes_est: AtomicU64::new(0),
+            lib_binder_count: AtomicU64::new(0),
+            lib_binder_symbol_bytes_est: AtomicU64::new(0),
+            program_symbol_state_bytes_est: AtomicU64::new(0),
+            definition_store_bytes_est: AtomicU64::new(0),
+            type_interner_bytes_est: AtomicU64::new(0),
+            skeleton_index_bytes_est: AtomicU64::new(0),
+            pre_merge_bind_total_bytes_est: AtomicU64::new(0),
+            retained_file_state_bytes_est: AtomicU64::new(0),
+            retained_file_state_pressure: AtomicU64::new(0),
+            shared_query_cache_entries: AtomicU64::new(0),
+            shared_query_cache_bytes_est: AtomicU64::new(0),
+            type_cache_count: AtomicU64::new(0),
+            type_cache_bytes_est: AtomicU64::new(0),
+        }
+    }
+}
+
 static RESIDENCY_GAUGES: OnceLock<ResidencyGauges> = OnceLock::new();
 
+// Test-only per-thread residency-gauge overlay, installed by
+// `ScopedPerfCounters` alongside its `SCOPED_COUNTERS` overlay (see
+// `runtime.rs`). Residency is a gauge, not an accumulating counter: two
+// threads recording different programs' residency concurrently on the
+// process-wide `RESIDENCY_GAUGES` statics would each overwrite the other's
+// values with `Ordering::Relaxed` stores, so a shared-process test reading
+// its own recorded values back has no guarantee it sees them rather than a
+// sibling's. Scoping this the same way `counters()` is scoped removes that
+// race for any test built on `ScopedPerfCounters`.
+#[cfg(any(test, debug_assertions))]
+thread_local! {
+    static SCOPED_RESIDENCY_GAUGES: std::cell::Cell<Option<&'static ResidencyGauges>> =
+        const { std::cell::Cell::new(None) };
+}
+
 fn residency_gauges() -> &'static ResidencyGauges {
-    RESIDENCY_GAUGES.get_or_init(|| ResidencyGauges {
-        recorded_any: AtomicBool::new(false),
-        ast_unique_arena_count: AtomicU64::new(0),
-        ast_unique_arena_bytes_est: AtomicU64::new(0),
-        bound_file_count: AtomicU64::new(0),
-        bound_file_state_bytes_est: AtomicU64::new(0),
-        lib_binder_count: AtomicU64::new(0),
-        lib_binder_symbol_bytes_est: AtomicU64::new(0),
-        program_symbol_state_bytes_est: AtomicU64::new(0),
-        definition_store_bytes_est: AtomicU64::new(0),
-        type_interner_bytes_est: AtomicU64::new(0),
-        skeleton_index_bytes_est: AtomicU64::new(0),
-        pre_merge_bind_total_bytes_est: AtomicU64::new(0),
-        retained_file_state_bytes_est: AtomicU64::new(0),
-        retained_file_state_pressure: AtomicU64::new(0),
-        shared_query_cache_entries: AtomicU64::new(0),
-        shared_query_cache_bytes_est: AtomicU64::new(0),
-        type_cache_count: AtomicU64::new(0),
-        type_cache_bytes_est: AtomicU64::new(0),
-    })
+    #[cfg(any(test, debug_assertions))]
+    if let Some(scoped) = SCOPED_RESIDENCY_GAUGES.with(std::cell::Cell::get) {
+        return scoped;
+    }
+    RESIDENCY_GAUGES.get_or_init(ResidencyGauges::new_zero)
 }
 
 /// Merged-program residency categories, recorded by
@@ -240,7 +265,7 @@ pub struct ResidencySnapshot {
 /// category has been recorded (counters disabled, or a driver that does
 /// not wire residency recording).
 pub(crate) fn snapshot_residency() -> Option<ResidencySnapshot> {
-    let g = RESIDENCY_GAUGES.get()?;
+    let g = residency_gauges();
     if !g.recorded_any.load(Ordering::Relaxed) {
         return None;
     }

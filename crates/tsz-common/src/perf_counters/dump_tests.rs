@@ -7,7 +7,13 @@ mod dump_tests {
         // added to storage/snapshot state without being surfaced in the text
         // dump. Bump one distinctive bucket per family and lock the formatter
         // surface so future bucket-family additions have to update this test.
-        force_enable_perf_counters_for_tests();
+        //
+        // Scoped: the dump only prints a bucket's label when its count is
+        // nonzero (see `dump.rs`), so an unscoped process-wide counter could
+        // in principle pass because a concurrently-running sibling test
+        // happened to bump the same enum variant, not because this test's own
+        // formatter wiring is correct.
+        let _scope = ScopedPerfCounters::new();
 
         let c = counters();
         c.with_parent_cache_by_reason[CheckerCreationReason::ImportType.as_index()]
@@ -121,7 +127,7 @@ mod dump_tests {
         // Keep scalar snapshot sections from repeating the original #13130
         // drift pattern: a counter can be wired into storage and JSON while
         // remaining invisible to humans reading the text dump.
-        force_enable_perf_counters_for_tests();
+        let _scope = ScopedPerfCounters::new();
 
         let c = counters();
         c.relation_limit_cache_hits
@@ -197,9 +203,14 @@ mod dump_tests {
     #[test]
     fn eval_termination_guard_recorder_targets_named_bucket() {
         // #14346: `record_eval_termination_guard` increments exactly the
-        // bucket for the guard that fired, with counters on. Delta-based so it
-        // tolerates other tests sharing the process-wide atomics.
-        force_enable_perf_counters_for_tests();
+        // bucket for the guard that fired. Scoped rather than delta-based:
+        // a before/after delta on the process-wide atomics is immune to
+        // increments made before the window but not to increments a sibling
+        // thread makes concurrently inside it (see #16017's `assignability_
+        // failure_memo_tests` false red/green pair for the general failure
+        // mode), so a private per-thread counter set is the version of this
+        // test that cannot be perturbed by anything but its own call.
+        let _scope = ScopedPerfCounters::new();
         let c = counters();
         let load = |g: EvaluationTerminationGuard| {
             c.eval_termination_guard_fires[g.as_index()].load(Ordering::Relaxed)
