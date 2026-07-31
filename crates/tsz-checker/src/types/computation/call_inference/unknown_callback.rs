@@ -198,11 +198,7 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
-        if !crate::query_boundaries::generic_instantiation::type_contains_type_parameter_binder(
-            self.ctx.types,
-            other_param_type,
-            type_param,
-        ) {
+        if !self.type_or_predicate_target_mentions_type_param(other_param_type, type_param) {
             return false;
         }
         let other_arg_type = arg_types
@@ -229,12 +225,24 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         // The return position of the sibling callback's contextual signature
-        // always counts as inference evidence.
+        // always counts as inference evidence — including a type-predicate
+        // target (`x is T`), which is the sibling's only inference channel
+        // for callbacks like `isApplicable: (v: any) => v is I`.
         if crate::query_boundaries::generic_instantiation::type_contains_type_parameter_binder(
             self.ctx.types,
             other_callback.return_type,
             type_param,
-        ) {
+        ) || other_callback
+            .type_predicate
+            .and_then(|predicate| predicate.type_id)
+            .is_some_and(|predicate_type| {
+                crate::query_boundaries::generic_instantiation::type_contains_type_parameter_binder(
+                    self.ctx.types,
+                    predicate_type,
+                    type_param,
+                )
+            })
+        {
             return true;
         }
         // A parameter position counts only when the sibling lambda annotates
@@ -317,5 +325,44 @@ impl<'a> CheckerState<'a> {
             return call_checker::get_contextual_signature(self.ctx.types, evaluated);
         }
         None
+    }
+
+    /// Whether `ty` mentions `type_param` — either structurally (params,
+    /// return type, and everything else the shared content walk already
+    /// covers) or as a signature's type-predicate target (`x is T`).
+    ///
+    /// The shared `ChildPolicy::CONTENT_PREDICATE` walk backing
+    /// `type_contains_type_parameter_binder` deliberately does not descend
+    /// into a signature's type-predicate target (its own doc calls this
+    /// exclusion a preserved historical accident, "not known to be
+    /// semantic"), so a callback argument whose only channel for a type
+    /// parameter is a predicate — e.g. `isApplicable: (v: any) => v is I` —
+    /// is invisible to that walk. This evidence site needs to see it: such a
+    /// predicate is `tsc`'s primary inference source for `I`, so treating it
+    /// as "no evidence" defaults `I` to `unknown` and produces spurious
+    /// TS18046/TS2698 diagnostics inside sibling callback bodies that
+    /// legitimately depend on `I`.
+    fn type_or_predicate_target_mentions_type_param(
+        &mut self,
+        ty: TypeId,
+        type_param: tsz_solver::TypeParamInfo,
+    ) -> bool {
+        if crate::query_boundaries::generic_instantiation::type_contains_type_parameter_binder(
+            self.ctx.types,
+            ty,
+            type_param,
+        ) {
+            return true;
+        }
+        self.resolved_callback_contextual_signature(ty)
+            .and_then(|shape| shape.type_predicate)
+            .and_then(|predicate| predicate.type_id)
+            .is_some_and(|predicate_type| {
+                crate::query_boundaries::generic_instantiation::type_contains_type_parameter_binder(
+                    self.ctx.types,
+                    predicate_type,
+                    type_param,
+                )
+            })
     }
 }
