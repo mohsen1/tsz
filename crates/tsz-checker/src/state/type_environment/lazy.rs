@@ -793,7 +793,16 @@ impl CheckerState<'_> {
         // the per-id resolve cache, which can otherwise return a stale identity
         // entry recorded on an earlier pass before the members were resolvable.
         if let Some(resolved) = self.resolve_union_application_members(type_id) {
-            return self.resolve_type_for_property_access(resolved);
+            // Depth guard: a non-converging application member (e.g. a
+            // `Record<K, V>`-indexed alias residue) can keep "changing" the
+            // union forever. Mirrors `resolve_type_for_property_access_inner`'s
+            // own recursion-depth guard, since nothing else bounds this path.
+            if !self.ctx.enter_recursion() {
+                return resolved;
+            }
+            let result = self.resolve_type_for_property_access(resolved);
+            self.ctx.leave_recursion();
+            return result;
         }
 
         // Lazy single-member fast path: a bare `Lazy(DefId)` reference to a
