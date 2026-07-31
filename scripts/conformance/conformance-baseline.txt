@@ -204,7 +204,6 @@ FAIL TypeScript/tests/cases/compiler/reachabilityChecks7.ts | expected:[TS2355,T
 FAIL TypeScript/tests/cases/compiler/reactJsxReactResolvedNodeNext.tsx | expected:[] actual:[TS2374]
 FAIL TypeScript/tests/cases/compiler/reactJsxReactResolvedNodeNextEsm.tsx | expected:[] actual:[TS2374]
 FAIL TypeScript/tests/cases/compiler/readonlyMembers.ts | expected:[TS2540,TS2542] actual:[TS2540,TS2542]
-FAIL TypeScript/tests/cases/compiler/readonlyTupleAndArrayElaboration.ts | expected:[TS2322,TS4104] actual:[TS2322,TS2345,TS4104]
 FAIL TypeScript/tests/cases/compiler/recursiveClassReferenceTest.ts | expected:[TS2304,TS2663,TS2741] actual:[TS2304,TS2552,TS2663,TS2741]
 FAIL TypeScript/tests/cases/compiler/recursiveExportAssignmentAndFindAliasedType1.ts | expected:[TS2303] actual:[TS2303]
 FAIL TypeScript/tests/cases/compiler/recursiveExportAssignmentAndFindAliasedType2.ts | expected:[TS2303] actual:[TS2303]
@@ -263,10 +262,6 @@ FAIL TypeScript/tests/cases/compiler/unusedVariablesWithUnderscoreInBindingEleme
 FAIL TypeScript/tests/cases/compiler/unusedVariablesWithUnderscoreInForOfLoop.ts | expected:[TS6133,TS6198] actual:[TS6133]
 FAIL TypeScript/tests/cases/compiler/varianceCantBeStrictWhileStructureIsnt.ts | expected:[] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/widenedTypes.ts | expected:[TS2322,TS2358,TS2695,TS18050] actual:[TS2322,TS2358,TS2407,TS2695]
-FAIL TypeScript/tests/cases/conformance/Symbols/ES5SymbolProperty3.ts | expected:[TS2403] actual:[TS2403]
-FAIL TypeScript/tests/cases/conformance/Symbols/ES5SymbolProperty4.ts | expected:[TS2403] actual:[TS2403]
-FAIL TypeScript/tests/cases/conformance/Symbols/ES5SymbolProperty5.ts | expected:[TS2403,TS2554] actual:[TS2403,TS2554]
-FAIL TypeScript/tests/cases/conformance/Symbols/ES5SymbolProperty7.ts | expected:[TS2403] actual:[TS2403]
 FAIL TypeScript/tests/cases/conformance/ambient/ambientDeclarationsPatterns_merging1.ts | expected:[TS2305] actual:[TS2305]
 FAIL TypeScript/tests/cases/conformance/ambient/ambientDeclarationsPatterns_merging2.ts | expected:[TS2305] actual:[TS2305]
 FAIL TypeScript/tests/cases/conformance/ambient/ambientDeclarationsPatterns_merging3.ts | expected:[TS2339] actual:[]
@@ -5273,6 +5268,7 @@ PASS TypeScript/tests/cases/compiler/readonlyFloat32ArrayAssignableWithFloat32Ar
 PASS TypeScript/tests/cases/compiler/readonlyInDeclarationFile.ts
 PASS TypeScript/tests/cases/compiler/readonlyInNonPropertyParameters.ts
 PASS TypeScript/tests/cases/compiler/readonlyPropertySubtypeRelationDirected.ts
+PASS TypeScript/tests/cases/compiler/readonlyTupleAndArrayElaboration.ts
 PASS TypeScript/tests/cases/compiler/reassignStaticProp.ts
 PASS TypeScript/tests/cases/compiler/reboundBaseClassSymbol.ts
 PASS TypeScript/tests/cases/compiler/reboundIdentifierOnImportAlias.ts
@@ -6495,7 +6491,11 @@ PASS TypeScript/tests/cases/compiler/yieldStarContextualType.ts
 PASS TypeScript/tests/cases/compiler/yieldStringLiteral.ts
 PASS TypeScript/tests/cases/conformance/Symbols/ES5SymbolProperty1.ts
 PASS TypeScript/tests/cases/conformance/Symbols/ES5SymbolProperty2.ts
+PASS TypeScript/tests/cases/conformance/Symbols/ES5SymbolProperty3.ts
+PASS TypeScript/tests/cases/conformance/Symbols/ES5SymbolProperty4.ts
+PASS TypeScript/tests/cases/conformance/Symbols/ES5SymbolProperty5.ts
 PASS TypeScript/tests/cases/conformance/Symbols/ES5SymbolProperty6.ts
+PASS TypeScript/tests/cases/conformance/Symbols/ES5SymbolProperty7.ts
 PASS TypeScript/tests/cases/conformance/Symbols/ES5SymbolType1.ts
 PASS TypeScript/tests/cases/conformance/additionalChecks/noPropertyAccessFromIndexSignature1.ts
 PASS TypeScript/tests/cases/conformance/ambient/ambientDeclarations.ts
