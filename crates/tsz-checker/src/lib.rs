@@ -457,6 +457,9 @@ mod jsdoc_typedef_bare_import_tests;
 #[path = "../tests/jsx_component_attribute_tests.rs"]
 mod jsx_component_attribute_tests;
 #[cfg(test)]
+#[path = "tests/keyof_type_parameter_deferred_heritage_tests.rs"]
+mod keyof_type_parameter_deferred_heritage_tests;
+#[cfg(test)]
 #[path = "tests/lazy_lib_fuel_determinism_tests.rs"]
 mod lazy_lib_fuel_determinism_tests;
 #[cfg(test)]

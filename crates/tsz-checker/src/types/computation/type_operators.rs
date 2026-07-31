@@ -195,8 +195,23 @@ impl<'a> CheckerState<'a> {
             TypeResolutionKind::Resolved => {}
         }
 
+        // No key set could be collected. For a concrete operand that means the
+        // operand really has no keys (`keyof {}`), so `never` is the answer.
+        // For an operand that still mentions a type parameter there is nothing
+        // to collect *yet*: `keyof T` is a deferred index type until `T` is
+        // instantiated, and the solver's evaluator above deliberately returned
+        // the operator unchanged for exactly that reason. Collapsing it to
+        // `never` erases the operator, so a generic interface's `keyof T`
+        // member compares as `never` against every implementation
+        // (false TS2416/TS2430) and drops out of any union it appears in.
+        let unresolved_fallback =
+            if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, operand) {
+                deferred_keyof
+            } else {
+                TypeId::NEVER
+            };
         crate::query_boundaries::common::keyof_object_properties(self.ctx.types, operand)
-            .unwrap_or(TypeId::NEVER)
+            .unwrap_or(unresolved_fallback)
     }
 
     /// Get the class declaration node from a `TypeId`.
