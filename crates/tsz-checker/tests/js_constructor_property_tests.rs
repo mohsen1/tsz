@@ -557,8 +557,14 @@ g.expando;
     );
 }
 
+/// An ES `class`'s prototype is the closed instance type, so a missing-member
+/// read through it is an ordinary TS2339, never TS2565 — `NewAjax.prototype`
+/// is not an expando-capable root the way a function-as-constructor's
+/// prototype is. Oracle (`tsc` 7.0.2 `--strict --allowJs --checkJs`):
+/// `error TS2339: Property 'case6_unexpectedlyResolvesPathToNodeModules' does
+/// not exist on type 'NewAjax'.` See #16049.
 #[test]
-fn test_js_prototype_read_before_assignment_reports_ts2565() {
+fn test_js_prototype_read_before_assignment_reports_ts2339() {
     let source = r#"
 class NewAjax {}
 NewAjax.prototype.case6_unexpectedlyResolvesPathToNodeModules;
@@ -568,18 +574,16 @@ NewAjax.prototype.case6_unexpectedlyResolvesPathToNodeModules;
 
     assert!(
         diagnostics.iter().any(|(code, message)| {
-            *code == 2565
+            *code == 2339
                 && message.contains(
-                    "Property 'case6_unexpectedlyResolvesPathToNodeModules' is used before being assigned."
+                    "Property 'case6_unexpectedlyResolvesPathToNodeModules' does not exist on type 'NewAjax'."
                 )
         }),
-        "Expected JS prototype read on an expando-capable root to report TS2565, got: {diagnostics:?}"
+        "Expected JS class-prototype read of an absent member to report TS2339 (tsc 7.0.2 does), got: {diagnostics:?}"
     );
     assert!(
-        diagnostics
-            .iter()
-            .all(|(code, _)| *code != 2339 && *code != 2551),
-        "Expected JS prototype read-before-write to avoid missing-member diagnostics, got: {diagnostics:?}"
+        diagnostics.iter().all(|(code, _)| *code != 2565),
+        "An ES class prototype is closed, not expando-capable — tsc never reports TS2565 here, got: {diagnostics:?}"
     );
 }
 
