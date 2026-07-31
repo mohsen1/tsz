@@ -1390,6 +1390,9 @@ mod narrowed_union_source_display_tests;
 #[path = "tests/narrowing_union_source_display_tests.rs"]
 mod narrowing_union_source_display_tests;
 #[cfg(test)]
+#[path = "tests/nested_function_async_context_scope_tests.rs"]
+mod nested_function_async_context_scope_tests;
+#[cfg(test)]
 #[path = "tests/nested_tuple_literal_source_display_tests.rs"]
 mod nested_tuple_literal_source_display_tests;
 #[cfg(test)]

@@ -203,11 +203,10 @@ fn sync_arrow_argument_under_async_enclosing_function_drops_promiselike_leak() {
     // the same `PromiseLike` leak, so the arrow's own `async`ness is not the
     // trigger. `tsc@7.0.2 --strict --target es2017` reports nothing here.
     //
-    // This shape carries a *second*, independent false positive that predates
-    // and survives the leak fix (`Type 'number' is not assignable to type
-    // 'Promise<number>'`, tracked separately), so this case pins the leak
-    // signature rather than full cleanliness — asserting `is_empty()` here
-    // would make the test a proxy for an unrelated defect.
+    // The second, independent false positive this shape used to carry
+    // (`Type 'number' is not assignable to type 'Promise<number>'`, #16053 —
+    // the non-async arrow inheriting its enclosing async function's
+    // `Promise`-unwrapping) is fixed, so this case now pins full cleanliness.
     let diags = diagnostic_summaries(
         r#"
 /// <reference lib="es2015.promise" />
@@ -221,7 +220,7 @@ async function run(): Promise<number> {
 "#,
     );
     assert!(
-        !diags.iter().any(|d| d.contains("PromiseLike")),
+        diags.is_empty(),
         "the async return-context expansion must not survive as an inference \
          candidate for the callee's type parameter; got {diags:?}"
     );

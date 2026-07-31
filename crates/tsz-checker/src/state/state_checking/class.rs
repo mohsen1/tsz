@@ -835,8 +835,7 @@ impl<'a> CheckerState<'a> {
 
         // Class bodies reset the async context — field initializers and static blocks
         // don't inherit async from the enclosing function. Methods define their own context.
-        let saved_async_depth = self.ctx.async_depth;
-        self.ctx.async_depth = 0;
+        let saved_async_depth = self.ctx.enter_function_async_context(false);
 
         // Check each class member
         for &member_idx in &class.members.nodes {
@@ -852,7 +851,7 @@ impl<'a> CheckerState<'a> {
         // self-reference (issue #14819).
         self.check_class_member_circular_annotations(stmt_idx, &class.members.nodes);
 
-        self.ctx.async_depth = saved_async_depth;
+        self.ctx.restore_async_context(saved_async_depth);
 
         // Check for duplicate member names (TS2300, TS2393)
         self.check_duplicate_class_members(&class.members.nodes);
@@ -1188,8 +1187,7 @@ impl<'a> CheckerState<'a> {
 
         // Class bodies reset the async context — field initializers don't
         // inherit async from the enclosing function.
-        let saved_async_depth = self.ctx.async_depth;
-        self.ctx.async_depth = 0;
+        let saved_async_depth = self.ctx.enter_function_async_context(false);
 
         for &member_idx in &class.members.nodes {
             self.check_class_member_with_request(member_idx, request);
@@ -1253,7 +1251,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        self.ctx.async_depth = saved_async_depth;
+        self.ctx.restore_async_context(saved_async_depth);
 
         // TS7023 / TS7024: un-annotated members whose inferred return type is
         // circular through a `this.`/`Class.` self-invocation (issue #14805).
