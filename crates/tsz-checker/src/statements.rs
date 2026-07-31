@@ -589,6 +589,7 @@ impl StatementChecker {
                         .map(|l| (l.condition, l.statement))
                 };
                 if let Some((condition, statement)) = loop_data {
+                    state.check_await_expression(condition);
                     state.get_type_of_node_with_request(condition, &non_contextual_request);
                     state.check_truthy_or_falsy(condition);
 
@@ -626,6 +627,21 @@ impl StatementChecker {
                         .map(|l| (l.initializer, l.condition, l.incrementor, l.statement))
                 };
                 if let Some((initializer, condition, incrementor, statement)) = loop_data {
+                    // The `for` clause expressions carry the TS1308/TS1375/TS1378
+                    // `await`-grammar walk themselves. Rooted here, before the
+                    // reachability analysis below, because tsc's grammar checks are
+                    // syntactic: `return; for (; await 1; await 2) {}` still reports,
+                    // while the branches below skip typing the condition and the
+                    // incrementor once the clause is known unreachable. An
+                    // initializer that is a variable declaration list is already
+                    // rooted by the declaration check.
+                    if condition.is_some() {
+                        state.check_await_expression(condition);
+                    }
+                    if incrementor.is_some() {
+                        state.check_await_expression(incrementor);
+                    }
+
                     // Track whether the initializer terminates control flow
                     // (e.g., calls an IIFE that always throws).
                     let mut init_terminates = false;
@@ -641,6 +657,7 @@ impl StatementChecker {
                             state
                                 .check_variable_declaration_list_with_request(initializer, request);
                         } else {
+                            state.check_await_expression(initializer);
                             state.get_type_of_node_with_request(
                                 initializer,
                                 &non_contextual_request,
@@ -853,6 +870,8 @@ impl StatementChecker {
                 };
 
                 if let Some((expression, case_block)) = switch_data {
+                    state.check_await_expression(expression);
+
                     // Use the declared/widened type (no flow narrowing) for the switch
                     // discriminant. tsc's checkExpression returns the non-narrowed type,
                     // preventing false TS2678 when flow narrows the discriminant
@@ -906,6 +925,7 @@ impl StatementChecker {
                             if clause_expr.is_none() {
                                 has_default = true;
                             } else {
+                                state.check_await_expression(*clause_expr);
                                 // Check case expression with switch type as contextual type.
                                 // This enables excess property checking (TS2353) for object
                                 // literal case expressions, matching tsc behavior.
@@ -1014,6 +1034,7 @@ impl StatementChecker {
                         .map(|r| r.expression)
                 };
                 if let Some(operand) = operand {
+                    state.check_await_expression(operand);
                     state.get_type_of_node_with_request(operand, &non_contextual_request);
                 }
             }
