@@ -22,8 +22,16 @@ fn flow_assignment_and_predicate_exclusion_use_relation_outcome_boundary() {
             }
         }
     }
-    let assignment_source = fs::read_to_string("src/flow/control_flow/assignment.rs")
+    // `whole_assignment_rhs_is_compatible`/`pack_relation_flags` call sites moved
+    // into the sibling `assignment_compatibility.rs` module (whole-RHS fallback
+    // validation split out of `assignment.rs`), so pin both sources together.
+    let mut assignment_source = fs::read_to_string("src/flow/control_flow/assignment.rs")
         .expect("failed to read flow assignment source");
+    assignment_source.push('\n');
+    assignment_source.push_str(
+        &fs::read_to_string("src/flow/control_flow/assignment_compatibility.rs")
+            .expect("failed to read flow assignment compatibility source"),
+    );
     let call_predicate_source =
         fs::read_to_string("src/flow/control_flow/call_condition_narrowing.rs")
             .expect("failed to read call predicate narrowing source");
