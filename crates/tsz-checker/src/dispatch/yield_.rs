@@ -427,6 +427,19 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         expression_type,
                         true,
                     );
+                    // Unlike the sync path below, this does not yet fall back to the
+                    // checker's env-aware property-access chain when `async_info` is
+                    // `None` — `get_async_iterable_element_type` is itself just
+                    // `get_iterator_info` retried sync-then-async, so it shares the
+                    // same `TypeData::Lazy(DefId)` blind spot rather than escaping it
+                    // (see #16030's module doc). Widening this arm the same way the
+                    // sync arm was widened surfaced a real, separate gap: an
+                    // uninstantiated generic delegate (`yield* g()` for a bare
+                    // `<T>() => AsyncGenerator<T>`) resolved to its structural `T`
+                    // (defaulting to `unknown`) instead of the contextual yield type
+                    // the containing annotated generator provides, regressing
+                    // `asyncYieldStarContextualType.ts`. Left as solver-only pending a
+                    // fix that also threads contextual typing into the delegate call.
                     let element = async_info.as_ref().map_or_else(
                         || {
                             tsz_solver::operations::get_async_iterable_element_type(
@@ -487,42 +500,59 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             .checker
                             .get_generator_return_type_argument(expression_type);
                     }
-                    // Collect yield* element type for unannotated generators when resolvable
-                    // (skip when get_iterator_info returns None/fallback ANY).
+                    // Collect yield* element type for unannotated generators.
                     // Always collect regardless of contextual yield type — the final
                     // generator yield type must come from actual body yields, not context
                     // (see function_type.rs comment on final_generator_yield_type).
-                    if let Some(ref i) = info {
-                        // In non-strict mode (strictNullChecks: false), an empty iterable
-                        // like `[]` produces `never[]` (element type: `never`). But tsc
-                        // treats the element type as `undefined` for generator yield
-                        // inference in non-strict mode — "In non-strict mode, `[]` produces
-                        // the type `undefined[]` which is implicitly any." (TypeScript docs).
-                        //
-                        // When we encounter `yield* []`, the element type is `never` but
-                        // should be treated as `undefined` for yield type collection so that
-                        // the non-strict null widening in function_type.rs (never[] → any)
-                        // fires correctly and emits TS7055.
-                        let effective_yield_type = if i.yield_type == TypeId::NEVER
-                            && !self.checker.ctx.strict_null_checks()
-                        {
-                            TypeId::UNDEFINED
-                        } else {
-                            i.yield_type
-                        };
-                        self.checker
-                            .ctx
-                            .push_generator_yield_contribution(effective_yield_type, false);
-                        // When yield* delegates to an iterable with `any` element type
-                        // (e.g. `any[]`), suppress TS7055 at the function level.
-                        // tsc considers the `any` yield type to be "explained" by
-                        // the delegated iterable's type, not requiring a function-level
-                        // implicit-any warning. Set the flag to suppress TS7055.
-                        if i.yield_type == TypeId::ANY {
-                            self.checker.ctx.generator_had_ts7057 = true;
+                    let yield_type = match info {
+                        Some(ref i) => {
+                            // In non-strict mode (strictNullChecks: false), an empty iterable
+                            // like `[]` produces `never[]` (element type: `never`). But tsc
+                            // treats the element type as `undefined` for generator yield
+                            // inference in non-strict mode — "In non-strict mode, `[]` produces
+                            // the type `undefined[]` which is implicitly any." (TypeScript docs).
+                            //
+                            // When we encounter `yield* []`, the element type is `never` but
+                            // should be treated as `undefined` for yield type collection so that
+                            // the non-strict null widening in function_type.rs (never[] → any)
+                            // fires correctly and emits TS7055.
+                            if i.yield_type == TypeId::NEVER
+                                && !self.checker.ctx.strict_null_checks()
+                            {
+                                TypeId::UNDEFINED
+                            } else {
+                                i.yield_type
+                            }
                         }
+                        None => {
+                            // `get_iterator_info` is a pure structural (solver-only) query:
+                            // its `[Symbol.iterator]` lookup cannot evaluate through a
+                            // `TypeData::Lazy(DefId)` alias body, which is how every
+                            // non-array/tuple lib iterable (`Set<T>`, `Iterable<T>`,
+                            // `Generator<T>`, a delegate through another generator
+                            // declaration) exposes that member — the lookup instead
+                            // resolves the method to `ANY`, which the `ThisType`
+                            // fallback then re-interprets as "the delegate IS the
+                            // iterator", so `next()` is never found and the whole query
+                            // returns `None`. `for..of` already solves this exact gap
+                            // (`ForOfElementKind::Other` in `for_of_element_type_classified`)
+                            // via the checker's env-aware property-access chain; reuse the
+                            // same query here instead of silently collapsing to `any`.
+                            self.checker.resolve_iterator_element_type(expression_type)
+                        }
+                    };
+                    self.checker
+                        .ctx
+                        .push_generator_yield_contribution(yield_type, false);
+                    // When yield* delegates to an iterable with `any` element type
+                    // (e.g. `any[]`), suppress TS7055 at the function level.
+                    // tsc considers the `any` yield type to be "explained" by
+                    // the delegated iterable's type, not requiring a function-level
+                    // implicit-any warning. Set the flag to suppress TS7055.
+                    if yield_type == TypeId::ANY {
+                        self.checker.ctx.generator_had_ts7057 = true;
                     }
-                    info.map_or(TypeId::ANY, |i| i.yield_type)
+                    yield_type
                 }
             } else {
                 expression_type

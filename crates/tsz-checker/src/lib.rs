@@ -304,6 +304,9 @@ mod generator_yield_identity_tests;
 #[path = "tests/generator_yield_literal_widening_tests.rs"]
 mod generator_yield_literal_widening_tests;
 #[cfg(test)]
+#[path = "tests/generator_yieldstar_symbol_iterator_contribution_tests.rs"]
+mod generator_yieldstar_symbol_iterator_contribution_tests;
+#[cfg(test)]
 #[path = "tests/generic_call_non_fresh_object_widening_tests.rs"]
 mod generic_call_non_fresh_object_widening_tests;
 #[cfg(test)]
