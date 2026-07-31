@@ -209,8 +209,13 @@ impl<'a> CheckerState<'a> {
             .get(other_index)
             .copied()
             .unwrap_or(TypeId::UNKNOWN);
-        if other_arg_type == TypeId::ANY
-            || other_arg_type == TypeId::UNKNOWN
+        // `any` is a fully resolved, deliberate type: `tsc` infers the shared
+        // type parameter as `any` from an `any`-typed sibling argument (the
+        // same candidate Round 1 inference already computes), so it counts as
+        // evidence like any other concrete type. Only `unknown`/`error`/still
+        // resolving (`infer`-containing) sibling types are genuinely
+        // uninformative and must not gate off this diagnostic.
+        if other_arg_type == TypeId::UNKNOWN
             || other_arg_type == TypeId::ERROR
             || common::contains_infer_types(self.ctx.types, other_arg_type)
         {
