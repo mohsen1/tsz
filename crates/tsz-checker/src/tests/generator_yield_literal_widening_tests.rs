@@ -12,14 +12,22 @@
 //!   callback signature) still widens — generatorTypeCheck63;
 //! - a fresh enum-member access widens to its parent enum.
 //!
-//! `yield*` delegation to an array/tuple source now infers the real element
-//! type in declaration signatures too (`generator_yield_identity_tests`); a
-//! JS-file-only bail in `infer_generator_declaration_yield_type` remains for
-//! checked-JS diagnostic ordering. Delegation to a `Generator`/`Iterator`-
-//! shaped value still collapses to `any` (a `next()` property-type resolution
-//! gap in `get_iterator_info`, not a declaration-path issue), and generator
-//! *expressions* (`const f = function* () {...}`) still lose the shape
-//! entirely; both are tracked separately under #15632.
+//! `yield*` delegation in unannotated generator *declarations* still bails
+//! in `infer_generator_declaration_yield_type`, collapsing the inferred
+//! yield type to `any`: the bail guards a real circular-inference hazard
+//! (an evolving `var`/`let` binding whose type depends on the very yield*
+//! aggregate it delegates to — TypeScript's own `yieldExpressionInControlFlow.ts`
+//! conformance fixture hits this in plain `.ts`, not just checked-JS) that
+//! the pre-pass cannot yet distinguish from an ordinary, non-circular
+//! delegate; that family is tracked separately under #15632. `yield*`'s own
+//! expression result (the delegated iterator's `TReturn`) is fixed for
+//! array/tuple sources (`generator_yield_identity_tests`): it defaults to
+//! `any`, not `undefined`, matching `Iterator<T, TReturn = any, TNext =
+//! undefined>`. Unannotated generator *expressions* (`const g = function*
+//! () { ... }`) used to lose the entire `Generator<...>` shape in
+//! declaration emit, independent of `yield*` — fixed at the emitter layer
+//! (`crates/tsz-cli`'s `generator_expression_initializer_dts_emit_tests`),
+//! since the checker's own inferred type was already correct.
 
 use crate::context::CheckerOptions;
 use crate::test_utils::{check_source_with_libs, load_default_lib_files};

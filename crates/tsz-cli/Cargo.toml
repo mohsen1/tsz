@@ -192,6 +192,10 @@ name = "generator_yield_literal_widening_dts_emit_tests"
 path = "tests/generator_yield_literal_widening_dts_emit_tests.rs"
 
 [[test]]
+name = "generator_expression_initializer_dts_emit_tests"
+path = "tests/generator_expression_initializer_dts_emit_tests.rs"
+
+[[test]]
 name = "declaration_type_walk_boundary_dts_emit_tests"
 path = "tests/declaration_type_walk_boundary_dts_emit_tests.rs"
 

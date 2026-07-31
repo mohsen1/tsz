@@ -196,66 +196,6 @@ function* stream() {
 }
 
 #[test]
-fn yield_star_array_declaration_infers_element_yield_type() {
-    // `yield* [1, 2, 3]` in an unannotated `function*` *declaration* must
-    // contribute the array's element type to the inferred yield union, same
-    // as a plain `yield`. Previously the declaration signature's suppressed
-    // pre-pass bailed on any `yield*` and fell back to `Generator<any, ...>`,
-    // hiding a real TS2322 at a mismatched consumer.
-    let codes = strict_codes_with_libs(
-        r#"
-function* relayArray() {
-    yield* [1, 2, 3];
-}
-const wrong: string = relayArray().next().value;
-export {};
-"#,
-    );
-    assert!(
-        codes.contains(&2322),
-        "declaration's inferred number yield (from yield* [1,2,3]) must surface TS2322 at a string consumer; got: {codes:?}"
-    );
-}
-
-#[test]
-fn yield_star_array_declaration_accepts_matching_consumer() {
-    let codes = strict_codes_with_libs(
-        r#"
-function* relayArray() {
-    yield* [1, 2, 3];
-}
-const ok: number | void = relayArray().next().value;
-export {};
-"#,
-    );
-    assert!(
-        !codes.contains(&2322),
-        "a consumer matching the yield* array's element type must not error; got: {codes:?}"
-    );
-}
-
-#[test]
-fn yield_star_tuple_declaration_infers_union_yield_type() {
-    // A tuple source contributes the union of its element types, mirroring
-    // the array case but exercising `get_tuple_iterator_info` instead of
-    // `get_array_iterator_info`.
-    let codes = strict_codes_with_libs(
-        r#"
-declare const t: [number, string];
-function* relayTuple() {
-    yield* t;
-}
-const wrong: boolean = relayTuple().next().value;
-export {};
-"#,
-    );
-    assert!(
-        codes.contains(&2322),
-        "declaration's inferred `number | string` yield (from a tuple) must surface TS2322 at a boolean consumer; got: {codes:?}"
-    );
-}
-
-#[test]
 fn yield_star_array_result_type_defaults_to_any_not_undefined() {
     // `yield* expr`'s own expression result is the delegated iterator's
     // `TReturn`. `Array<T>`'s iterator is `Iterator<T, TReturn = any, TNext =
