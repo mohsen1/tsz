@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Single owner of the known-failures unit-gate contract checks (#15646):
-# the baseline growth/integrity gate plus the contract tests for the gate
-# wiring. Both the ci.yml cheap-guards step and full-ci.sh run_lint invoke
+# Single owner of the cheap per-merge repo-hygiene contract checks: the
+# known-failures unit-gate baseline growth/integrity gate and its wiring
+# contract tests (#15646), plus the orphaned-test-file reachability guard
+# (#16013). Both the ci.yml cheap-guards step and full-ci.sh run_lint invoke
 # this script, so the two tiers cannot drift.
 set -Eeuo pipefail
 
@@ -21,3 +22,5 @@ python3 scripts/ci/test_check_known_failures_growth.py
 python3 scripts/ci/test_unit_nextest.py
 python3 scripts/ci/test_full_ci_unit_gate.py
 node scripts/ci/test-known-failures-check.mjs
+python3 scripts/ci/check-test-file-reachability.py
+python3 scripts/ci/test_check_test_file_reachability.py

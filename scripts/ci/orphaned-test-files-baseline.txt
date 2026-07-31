@@ -1,0 +1,24 @@
+# Baseline for scripts/ci/check-test-file-reachability.py (#16013).
+#
+# Shrink-only, same shape as scripts/ci/known-failures.txt: removing an entry
+# (because the file was wired into a Cargo.toml [[test]] stanza or a src/
+# #[path] include, or deleted) is always fine. Adding an entry is not — a
+# newly orphaned file should be fixed, not baselined.
+#
+# #16013 listed 11 candidates; 5 of them (symbol_resolution_tests.rs,
+# ts2305_tests.rs, ts2306_tests.rs, ts2498_export_star_export_equals_tests.rs,
+# widening_integration_tests.rs) turned out to already be reachable via a
+# cross-crate `crates/tsz-core/src/lib.rs` `#[path]` include into
+# `tsz-checker/tests/` — the same mechanism #16013 itself credited for
+# excluding `constructor_accessibility.rs`/`void_return_exception.rs`, just
+# not run for these five. The remaining 6 files (38 #[test] fns) are
+# genuinely unreachable; each wants oracle-first verification before being
+# resurrected (a dormant suite freezes stale expectations — see #16013's
+# #15632-revert precedent), so they are tracked here rather than fixed in
+# this diff.
+tsz-checker/tests/indexed_access_concrete_missing_key_ts2536_tests.rs
+tsz-checker/tests/ts6133_write_only_destructuring_tests.rs
+tsz-checker/tests/generic_mapped_to_index_signature_tests.rs
+tsz-checker/tests/object_literal_synthetic_this_display_order_tests.rs
+tsz-emitter/tests/async_method_super_capture_3759_tests.rs
+tsz-cli/tests/skip_lib_check_declaration_diagnostics_tests.rs
