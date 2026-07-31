@@ -39,6 +39,19 @@ impl CheckerState<'_> {
             function_is_async,
             early_yield_type,
         } = ctx;
+        // This speculative pass is not diagnostic-safe for `yield*`: when the
+        // delegate is itself an evolving (`var`/`let x = []`) binding whose type
+        // depends circularly on this same yield* aggregate, running the body
+        // check here resolves that circularity as a side effect, so the later
+        // "real" declaration-check pass no longer sees it as unresolved and
+        // skips the implicit-any diagnostics it owns (TS2322/TS7005/TS7034).
+        // This is not JS-specific — TypeScript's own `yieldExpressionInControlFlow.ts`
+        // conformance fixture hits the identical shape in a plain `.ts` file
+        // (`var o = []; while (true) { o = yield* o }`), confirmed by a
+        // corpus-wide compare-to-parent regression when this bail was narrowed
+        // to `is_js_file()` alone. Bail on any `yield*` until this pass can
+        // detect the circular-evolving-binding shape structurally instead of by
+        // file kind.
         if self.generator_body_contains_yield_star(body, true) {
             return None;
         }

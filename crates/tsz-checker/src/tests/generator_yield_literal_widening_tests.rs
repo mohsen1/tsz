@@ -14,12 +14,22 @@
 //!
 //! `yield*` delegation in unannotated generator *declarations* still bails
 //! in `infer_generator_declaration_yield_type`, collapsing the inferred
-//! yield type to `any`; that family is tracked separately. Unannotated
-//! generator *expressions* (`const g = function* () { ... }`) used to lose
-//! the entire `Generator<...>` shape in declaration emit, independent of
-//! `yield*` — fixed at the emitter layer (crates/tsz-cli's
-//! `generator_expression_initializer_dts_emit_tests`), since the checker's
-//! own inferred type was already correct.
+//! yield type to `any`: the bail guards a real circular-inference hazard
+//! (an evolving `var`/`let` binding whose type depends on the very yield*
+//! aggregate it delegates to — TypeScript's own `yieldExpressionInControlFlow.ts`
+//! conformance fixture hits this in plain `.ts`, not just checked-JS) that
+//! the pre-pass cannot yet distinguish from an ordinary, non-circular
+//! delegate; that family is tracked separately under #15632. `yield*`'s own
+//! expression result for an array/tuple delegate is the iterator's
+//! `TReturn` — `BuiltinIteratorReturn` in lib.d.ts, an intrinsic that
+//! resolves to `undefined` under the default `strictBuiltInIteratorReturn`,
+//! not the bare `Iterator<T, TReturn = any, ...>` default (tsz does not
+//! model `strictBuiltInIteratorReturn` separately, so `undefined` is the
+//! only value implemented). Unannotated generator *expressions* (`const g =
+//! function* () { ... }`) used to lose the entire `Generator<...>` shape in
+//! declaration emit, independent of `yield*` — fixed at the emitter layer
+//! (`crates/tsz-cli`'s `generator_expression_initializer_dts_emit_tests`),
+//! since the checker's own inferred type was already correct.
 
 use crate::context::CheckerOptions;
 use crate::test_utils::{check_source_with_libs, load_default_lib_files};
