@@ -916,6 +916,9 @@ mod conditional_flow_substitution_ts2344_tests;
 #[path = "../tests/conditional_keyof_test.rs"]
 mod conditional_keyof_test;
 #[cfg(test)]
+#[path = "tests/conditional_narrowed_index_through_generic_alias_tests.rs"]
+mod conditional_narrowed_index_through_generic_alias_tests;
+#[cfg(test)]
 #[path = "tests/conditional_never_param_inference_tests.rs"]
 mod conditional_never_param_inference_tests;
 #[cfg(test)]

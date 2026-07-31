@@ -1242,12 +1242,11 @@ impl<'a> CheckerState<'a> {
         &mut self,
         node_idx: NodeIndex,
         object_node_idx: NodeIndex,
+        index_node_idx: NodeIndex,
         index_type_for_check: TypeId,
     ) -> bool {
         let object_name = self.simple_type_reference_name(object_node_idx);
-        let Some(object_name) = object_name.as_deref() else {
-            return false;
-        };
+        let index_name = self.simple_type_reference_name(index_node_idx);
 
         let mut current = self.ctx.arena.parent_of(node_idx);
         while let Some(parent_idx) = current {
@@ -1257,39 +1256,71 @@ impl<'a> CheckerState<'a> {
             if parent_node.kind == syntax_kind_ext::CONDITIONAL_TYPE
                 && let Some(cond) = self.ctx.arena.get_conditional_type(parent_node)
                 && self.is_descendant_of(node_idx, cond.true_type)
-                && self.simple_type_reference_name(cond.check_type).as_deref() == Some(object_name)
             {
-                let extends_type = self.get_type_from_type_node(cond.extends_type);
-                let extends_type = self.evaluate_type_with_env(extends_type);
-                let keyof_extends = self.indexed_access_keyof_with_env(extends_type);
-                if self
-                    .indexed_access_key_space_relation_outcome(index_type_for_check, keyof_extends)
-                    .related
-                {
-                    return true;
-                }
-                if let Some(prop_atom) =
-                    crate::query_boundaries::checkers::generic::string_literal_value(
-                        self.ctx.types,
-                        index_type_for_check,
-                    )
-                {
-                    let property_name = self.ctx.types.resolve_atom(prop_atom);
-                    let prop_type =
-                        self.resolve_property_access_with_env(extends_type, &property_name);
-                    if matches!(
-                        prop_type,
-                        PropertyAccessResult::Success { .. }
-                            | PropertyAccessResult::PossiblyNullOrUndefined { .. }
-                    ) {
+                let check_type_name = self.simple_type_reference_name(cond.check_type);
+                let object_narrowed =
+                    object_name.is_some() && check_type_name.as_deref() == object_name.as_deref();
+                if object_narrowed {
+                    let extends_type = self.get_type_from_type_node(cond.extends_type);
+                    let extends_type = self.evaluate_type_with_env(extends_type);
+                    let keyof_extends = self.indexed_access_keyof_with_env(extends_type);
+                    if self
+                        .indexed_access_key_space_relation_outcome(
+                            index_type_for_check,
+                            keyof_extends,
+                        )
+                        .related
+                    {
+                        return true;
+                    }
+                    if let Some(prop_atom) =
+                        crate::query_boundaries::checkers::generic::string_literal_value(
+                            self.ctx.types,
+                            index_type_for_check,
+                        )
+                    {
+                        let property_name = self.ctx.types.resolve_atom(prop_atom);
+                        let prop_type =
+                            self.resolve_property_access_with_env(extends_type, &property_name);
+                        if matches!(
+                            prop_type,
+                            PropertyAccessResult::Success { .. }
+                                | PropertyAccessResult::PossiblyNullOrUndefined { .. }
+                        ) {
+                            return true;
+                        }
+                    }
+                    if let Some((wants_string, wants_number)) =
+                        self.get_index_key_kind(index_type_for_check)
+                        && self.is_element_indexable(extends_type, wants_string, wants_number)
+                    {
                         return true;
                     }
                 }
-                if let Some((wants_string, wants_number)) =
-                    self.get_index_key_kind(index_type_for_check)
-                    && self.is_element_indexable(extends_type, wants_string, wants_number)
-                {
-                    return true;
+
+                // Mirror of the object-narrowed case above: the *index*, not the
+                // object, is the conditional's narrowed check type — e.g.
+                // `T extends TB ? DB[T] : Y` where `TB extends keyof DB`. Within
+                // the true branch tsc narrows `T` to (a subtype of) `TB`, so the
+                // access is valid whenever `TB` (the extends type) is itself a
+                // valid key of the object, regardless of `T`'s own full
+                // (possibly wider, e.g. union with unrelated members) declared
+                // constraint. Without this, wrapping the direct access in
+                // another generic alias (`Id<DB[T]>`) — which forces eager
+                // type-argument resolution of `DB[T]` using `T`'s un-narrowed
+                // constraint — produces a spurious TS2536/TS2538.
+                if index_name.is_some() && check_type_name.as_deref() == index_name.as_deref() {
+                    let extends_type = self.get_type_from_type_node(cond.extends_type);
+                    let extends_type = self.evaluate_type_with_env(extends_type);
+                    let object_type = self.get_type_from_type_node(object_node_idx);
+                    let object_type_for_check = self.evaluate_type_with_env(object_type);
+                    let keyof_object = self.indexed_access_keyof_with_env(object_type_for_check);
+                    if self
+                        .indexed_access_key_space_relation_outcome(extends_type, keyof_object)
+                        .related
+                    {
+                        return true;
+                    }
                 }
             }
             current = self

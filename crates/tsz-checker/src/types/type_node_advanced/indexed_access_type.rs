@@ -26,12 +26,32 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             let object_type = self.check(indexed_access.object_type);
             let index_type = self.check(indexed_access.index_type);
 
-            // TS2538: Check if the index type is valid (string, number, symbol, or literal thereof)
-            if let Some(invalid_member) = self.get_invalid_index_type_member(index_type) {
+            // TS2538: Check if the index type is valid (string, number, symbol, or literal thereof).
+            //
+            // When the index is a naked type parameter `T` used inside the true
+            // branch of an enclosing `T extends U ? ... : ...` conditional (e.g.
+            // `T extends TB ? Id<DB[T]> : never`), tsc narrows `T` to (a subtype
+            // of) `U` for this position, so validity is judged against `U`, not
+            // against `T`'s own (possibly wider) declared constraint. Without
+            // this, a `T` constrained to a union with an unrelated, non-key
+            // member (`TB | boolean`) spuriously fails here even though the
+            // union member actually reachable in this branch (`TB`) is a valid
+            // key — this is the eager type-argument elaboration of a generic
+            // alias wrapping the access (`Id<DB[T]>`) forcing this check before
+            // any use-site substitution narrows `T`.
+            let invalid_member_check_type = self
+                .conditional_narrowed_check_type_param_extends(indexed_access.index_type)
+                .map(|extends_node| self.check(extends_node))
+                .unwrap_or(index_type);
+            if let Some(invalid_member) =
+                self.get_invalid_index_type_member(invalid_member_check_type)
+            {
                 let (diag_pos, diag_len) =
                     self.indexed_access_index_diagnostic_span(node, indexed_access.index_type);
-                for member in self.invalid_index_type_diagnostic_members(index_type, invalid_member)
-                {
+                for member in self.invalid_index_type_diagnostic_members(
+                    invalid_member_check_type,
+                    invalid_member,
+                ) {
                     let mut formatter = self.ctx.create_type_formatter();
                     let index_type_str = formatter.format(member);
                     let message = crate::diagnostics::format_message(
@@ -678,6 +698,71 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// Get the specific type that makes this type invalid as an index type (TS2538).
     fn get_invalid_index_type_member(&self, type_id: TypeId) -> Option<TypeId> {
         crate::query_boundaries::common::get_invalid_index_type_member(self.ctx.types, type_id)
+    }
+
+    /// The name of a bare type-reference/identifier node (`T`), or `None` for
+    /// any other node shape.
+    fn simple_type_reference_name(&self, node_idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(node_idx)?;
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            let type_ref = self.ctx.arena.get_type_ref(node)?;
+            let name_node = self.ctx.arena.get(type_ref.type_name)?;
+            let ident = self.ctx.arena.get_identifier(name_node)?;
+            return Some(ident.escaped_text.to_string());
+        }
+        if node.kind == SyntaxKind::Identifier as u16 {
+            let ident = self.ctx.arena.get_identifier(node)?;
+            return Some(ident.escaped_text.to_string());
+        }
+        None
+    }
+
+    /// Whether `node_a` is `node_b` or a descendant of it in the AST.
+    fn is_descendant_of(&self, node_a: NodeIndex, node_b: NodeIndex) -> bool {
+        let mut current = Some(node_a);
+        while let Some(idx) = current {
+            if idx == node_b {
+                return true;
+            }
+            current = self.ctx.arena.parent_of(idx);
+        }
+        false
+    }
+
+    /// When `index_node_idx` is a naked type-parameter reference (`T`) used
+    /// inside the true branch of an enclosing `T extends U ? ... : ...`
+    /// conditional type, returns `U`'s AST node — tsc narrows `T` to (a
+    /// subtype of) `U` for validity checks performed at this position, even
+    /// though the conditional itself stays deferred until `T` is
+    /// instantiated. Mirrors the object-narrowed case handled for indexed
+    /// *expressions* by
+    /// `CheckerState::conditional_true_branch_constraint_allows_index`; this
+    /// is the type-node-elaboration counterpart, needed because a naked index
+    /// wrapped in another generic alias (`Id<DB[T]>`) is type-checked here,
+    /// eagerly, before any use-site substitution narrows `T`.
+    fn conditional_narrowed_check_type_param_extends(
+        &self,
+        index_node_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let index_name = self.simple_type_reference_name(index_node_idx)?;
+        let mut current = self.ctx.arena.parent_of(index_node_idx);
+        while let Some(parent_idx) = current {
+            let parent_node = self.ctx.arena.get(parent_idx)?;
+            if parent_node.kind == syntax_kind_ext::CONDITIONAL_TYPE
+                && let Some(cond) = self.ctx.arena.get_conditional_type(parent_node)
+                && self.is_descendant_of(index_node_idx, cond.true_type)
+                && self.simple_type_reference_name(cond.check_type).as_deref()
+                    == Some(index_name.as_str())
+            {
+                return Some(cond.extends_type);
+            }
+            current = self
+                .ctx
+                .arena
+                .get_extended(parent_idx)
+                .map(|ext| ext.parent);
+        }
+        None
     }
 
     fn invalid_index_type_diagnostic_members(
