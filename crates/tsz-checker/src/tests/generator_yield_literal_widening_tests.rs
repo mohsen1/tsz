@@ -20,11 +20,13 @@
 //! conformance fixture hits this in plain `.ts`, not just checked-JS) that
 //! the pre-pass cannot yet distinguish from an ordinary, non-circular
 //! delegate; that family is tracked separately under #15632. `yield*`'s own
-//! expression result (the delegated iterator's `TReturn`) is fixed for
-//! array/tuple sources (`generator_yield_identity_tests`): it defaults to
-//! `any`, not `undefined`, matching `Iterator<T, TReturn = any, TNext =
-//! undefined>`. Unannotated generator *expressions* (`const g = function*
-//! () { ... }`) used to lose the entire `Generator<...>` shape in
+//! expression result for an array/tuple delegate is the iterator's
+//! `TReturn` — `BuiltinIteratorReturn` in lib.d.ts, an intrinsic that
+//! resolves to `undefined` under the default `strictBuiltInIteratorReturn`,
+//! not the bare `Iterator<T, TReturn = any, ...>` default (tsz does not
+//! model `strictBuiltInIteratorReturn` separately, so `undefined` is the
+//! only value implemented). Unannotated generator *expressions* (`const g =
+//! function* () { ... }`) used to lose the entire `Generator<...>` shape in
 //! declaration emit, independent of `yield*` — fixed at the emitter layer
 //! (`crates/tsz-cli`'s `generator_expression_initializer_dts_emit_tests`),
 //! since the checker's own inferred type was already correct.

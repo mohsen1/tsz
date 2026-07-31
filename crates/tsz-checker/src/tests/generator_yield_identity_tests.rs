@@ -194,29 +194,3 @@ function* stream() {
         "yield* declaration recovery must preserve checked-JS implicit-any diagnostics; got: {codes:?}"
     );
 }
-
-#[test]
-fn yield_star_array_result_type_defaults_to_any_not_undefined() {
-    // `yield* expr`'s own expression result is the delegated iterator's
-    // `TReturn`. `Array<T>`'s iterator is `Iterator<T, TReturn = any, TNext =
-    // undefined>` — the untyped `TReturn` defaults to `any`, not `undefined`.
-    // Getting this backwards makes `x = yield* someArray` a false TS2322
-    // against any non-`undefined`-accepting target (this exact shape is what
-    // `yield_star_generator_declaration_preserves_checked_js_implicit_any_diagnostics`
-    // guards for JS; this is the plain-TS control).
-    let codes = strict_codes_with_libs(
-        r#"
-function* stream() {
-    let bucket: number[] = [];
-    while (true) {
-        bucket = yield* bucket;
-    }
-}
-export {};
-"#,
-    );
-    assert!(
-        !codes.contains(&2322),
-        "assigning yield*'s array-delegated result (any) back to number[] must not error; got: {codes:?}"
-    );
-}
