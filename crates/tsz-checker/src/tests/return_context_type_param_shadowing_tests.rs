@@ -125,6 +125,23 @@ function execute<T>(callback: () => Promise<T>): Promise<T> {
 }
 
 #[test]
+fn debug_probe_e_no_generics_async_enclosing() {
+    let diags = diagnostic_summaries(
+        r#"
+/// <reference lib="es2015.promise" />
+declare function withConnection<T>(consumer: (connection: string) => Promise<T>): Promise<T>;
+
+async function run(): Promise<number> {
+    return withConnection(async (connection) => {
+        return connection.length;
+    });
+}
+"#,
+    );
+    assert!(diags.is_empty(), "expected clean; got {diags:?}");
+}
+
+#[test]
 fn async_return_of_mismatched_generic_call_still_reports_ts2322() {
     // Negative case: an actually-wrong return must still fail with tsc's
     // diagnostic (`number` is not the enclosing `T`).
