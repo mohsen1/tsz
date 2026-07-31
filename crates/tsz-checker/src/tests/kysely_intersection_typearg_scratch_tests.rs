@@ -52,3 +52,92 @@ class Impl<DB> implements Container<DB> {
     let diags = messages(src);
     assert!(diags.is_empty(), "PROBE messages: {diags:#?}");
 }
+
+#[test]
+fn scratch_bare_function_no_interface() {
+    let src = r#"
+interface FunctionModule<DB, TB extends keyof DB> {
+    agg: TB & string;
+    plain: TB;
+}
+declare function createFunctionModule<DB, TB extends keyof DB>(): FunctionModule<DB, TB>;
+function make<DB>(): FunctionModule<DB, keyof DB> {
+    return createFunctionModule();
+}
+"#;
+    let diags = messages(src);
+    assert!(diags.is_empty(), "PROBE bare-fn messages: {diags:#?}");
+}
+
+#[test]
+fn scratch_single_member_no_interface() {
+    let src = r#"
+interface FunctionModule<DB, TB extends keyof DB> {
+    agg: TB & string;
+}
+declare function createFunctionModule<DB, TB extends keyof DB>(): FunctionModule<DB, TB>;
+function make<DB>(): FunctionModule<DB, keyof DB> {
+    return createFunctionModule();
+}
+"#;
+    let diags = messages(src);
+    assert!(diags.is_empty(), "PROBE single-member messages: {diags:#?}");
+}
+
+#[test]
+fn scratch_implements_no_intersection_member() {
+    let src = r#"
+interface FunctionModule<DB, TB extends keyof DB> {
+    plain: TB;
+}
+declare function createFunctionModule<DB, TB extends keyof DB>(): FunctionModule<DB, TB>;
+interface Container<DB> {
+    fn: FunctionModule<DB, keyof DB>;
+}
+class Impl<DB> implements Container<DB> {
+    get fn(): FunctionModule<DB, keyof DB> {
+        return createFunctionModule();
+    }
+}
+"#;
+    let diags = messages(src);
+    assert!(
+        diags.is_empty(),
+        "PROBE no-intersection messages: {diags:#?}"
+    );
+}
+
+#[test]
+fn scratch_implements_no_call_plain_field() {
+    let src = r#"
+interface FunctionModule<DB, TB extends keyof DB> {
+    agg: TB & string;
+}
+interface Container<DB> {
+    fn: FunctionModule<DB, keyof DB>;
+}
+declare class Impl<DB> implements Container<DB> {
+    fn: FunctionModule<DB, keyof DB>;
+}
+"#;
+    let diags = messages(src);
+    assert!(
+        diags.is_empty(),
+        "PROBE no-call-plain-field messages: {diags:#?}"
+    );
+}
+
+#[test]
+fn scratch_direct_assign_no_call() {
+    // No generic-call inference at all: just assign a bare Application whose
+    // TB argument is annotated as `keyof DB` against the same interface.
+    let src = r#"
+interface FunctionModule<DB, TB extends keyof DB> {
+    agg: TB & string;
+}
+declare const x: FunctionModule<{ a: 1 }, "a">;
+const y: FunctionModule<{ a: 1 }, keyof { a: 1 }> = x;
+"#;
+    let diags = messages(src);
+    assert!(diags.is_empty(), "PROBE direct-assign messages: {diags:#?}");
+}
