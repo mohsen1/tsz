@@ -896,6 +896,7 @@ impl<'a> CheckerState<'a> {
         if self.conditional_true_branch_constraint_allows_index(
             node_idx,
             data.object_type,
+            data.index_type,
             index_type_for_check,
         ) {
             return;
