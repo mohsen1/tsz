@@ -505,7 +505,10 @@ impl<'a> FlowAnalyzer<'a> {
         simplified
     }
 
-    pub(super) fn reference_is_evolving_array_symbol(&self, reference: NodeIndex) -> bool {
+    /// Whether `reference` reads a binding whose type is still evolving from
+    /// control flow — an implicit-any local, or an unannotated `var`/`let`
+    /// seeded with `[]`.
+    pub(crate) fn reference_is_evolving_array_symbol(&self, reference: NodeIndex) -> bool {
         let Some(sym_id) = self.reference_symbol(reference) else {
             return false;
         };
