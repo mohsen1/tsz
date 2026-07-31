@@ -631,10 +631,9 @@ impl<'a> CheckerState<'a> {
             func.type_annotation,
         );
 
-        // Enter async context for await expression checking
-        if func.is_async {
-            self.ctx.enter_async_context();
-        }
+        // Scope the async context to THIS function. A non-async function
+        // nested inside an async one must not inherit the outer flag.
+        let saved_async_depth = self.ctx.enter_function_async_context(func.is_async);
 
         // For generator functions with explicit return type (Generator<Y, R, N> or AsyncGenerator<Y, R, N>),
         // return statements should be checked against TReturn (R), not the full Generator type.
@@ -777,10 +776,7 @@ impl<'a> CheckerState<'a> {
         self.ctx.pop_yield_type();
         self.ctx.pop_generator_next_type();
 
-        // Exit async context
-        if func.is_async {
-            self.ctx.exit_async_context();
-        }
+        self.ctx.restore_async_context(saved_async_depth);
 
         if pushed_this_type {
             self.ctx.this_type_stack.pop();

@@ -1685,10 +1685,9 @@ impl<'a> CheckerState<'a> {
                 false
             };
 
-            // Enter async context if applicable
-            if is_async_for_context {
-                self.ctx.enter_async_context();
-            }
+            // Scope the async context to THIS function. A non-async function
+            // nested inside an async one must not inherit the outer flag.
+            let saved_async_depth = self.ctx.enter_function_async_context(is_async_for_context);
 
             // Push this_type to the stack before checking the body
             // This ensures this references inside the function have the proper type context
@@ -1916,9 +1915,7 @@ impl<'a> CheckerState<'a> {
             self.ctx.pop_yield_type();
             self.ctx.pop_generator_next_type();
 
-            if is_async_for_context {
-                self.ctx.exit_async_context();
-            }
+            self.ctx.restore_async_context(saved_async_depth);
 
             self.ctx.function_depth -= 1;
         }

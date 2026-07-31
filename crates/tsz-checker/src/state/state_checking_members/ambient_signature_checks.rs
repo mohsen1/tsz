@@ -1028,19 +1028,15 @@ impl<'a> CheckerState<'a> {
             };
             self.ctx.push_yield_type(contextual_yield_type);
 
-            // Enter async context for await expression checking
-            if is_async {
-                self.ctx.enter_async_context();
-            }
+            // Scope the async context to THIS method body. A non-async
+            // function nested inside an async one must not inherit the flag.
+            let saved_async_depth = self.ctx.enter_function_async_context(is_async);
 
             let body_request = request.read().contextual_opt(None);
             self.clear_type_cache_recursive(method.body);
             self.check_statement_with_request(method.body, &body_request);
 
-            // Exit async context
-            if is_async {
-                self.ctx.exit_async_context();
-            }
+            self.ctx.restore_async_context(saved_async_depth);
 
             let mut check_return_type =
                 self.return_type_for_implicit_return_check(return_type, is_async, is_generator);

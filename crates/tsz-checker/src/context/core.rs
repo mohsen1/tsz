@@ -1280,19 +1280,28 @@ impl<'a> CheckerContext<'a> {
         self.generator_next_type_stack.last().copied().flatten()
     }
 
-    /// Enter an async context (increment async depth).
-    pub const fn enter_async_context(&mut self) {
-        self.async_depth += 1;
+    /// Enter the body of a function whose own `async` modifier is `is_async`,
+    /// returning the previous state for [`Self::restore_async_context`].
+    ///
+    /// Async-ness is a property of the *immediately enclosing* function, never
+    /// of the nesting depth. `tsc` reads
+    /// `getFunctionFlags(func) & FunctionFlags.Async` on the function that owns
+    /// the node, so a plain function nested inside an `async` one is **not** in
+    /// an async context: its return expressions are not `Promise`-unwrapped and
+    /// an `await` in its body is a grammar error. Entering a body therefore
+    /// *replaces* the flag instead of inheriting it.
+    pub fn enter_function_async_context(&mut self, is_async: bool) -> u32 {
+        let saved = self.async_depth;
+        self.async_depth = u32::from(is_async);
+        saved
     }
 
-    /// Exit an async context (decrement async depth).
-    pub const fn exit_async_context(&mut self) {
-        if self.async_depth > 0 {
-            self.async_depth -= 1;
-        }
+    /// Restore the async context saved by [`Self::enter_function_async_context`].
+    pub const fn restore_async_context(&mut self, saved: u32) {
+        self.async_depth = saved;
     }
 
-    /// Check if we're currently inside an async function.
+    /// Check if the immediately enclosing function is async.
     pub const fn in_async_context(&self) -> bool {
         self.async_depth > 0
     }
