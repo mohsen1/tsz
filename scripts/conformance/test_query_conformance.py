@@ -183,5 +183,160 @@ class QueryConformanceDashboardTests(unittest.TestCase):
         )
 
 
+class QueryConformanceReadmeFreshnessTests(unittest.TestCase):
+    """Tests for the README-vs-detail freshness check.
+
+    Distinct from show_snapshot_freshness (detail vs. checked TypeScript
+    corpus domain): this compares conformance-detail.json's summary against
+    what README.md publicly claims, mirroring
+    scripts/emit/query-emit.py's emit_freshness_status family for emit.
+    """
+
+    def test_readme_parser_reads_plain_progress_line(self):
+        summary = query_conformance.conformance_summary_from_readme_text(
+            """<!-- CONFORMANCE_START -->
+```
+Progress: [███████████████████░] 90.0% (9/10 tests)
+```
+<!-- CONFORMANCE_END -->""",
+        )
+
+        self.assertEqual(summary, {"passed": 9, "runnable": 10})
+
+    def test_readme_parser_reads_candidate_partition(self):
+        summary = query_conformance.conformance_summary_from_readme_text(
+            """<!-- CONFORMANCE_START -->
+```
+Progress: [████████████████████] 100.0% (8/8 runnable tests)
+Candidates: 10 (8 runnable, 1 unsupported, 1 skipped)
+```
+<!-- CONFORMANCE_END -->""",
+        )
+
+        self.assertEqual(
+            summary,
+            {
+                "passed": 8,
+                "runnable": 8,
+                "candidates": 10,
+                "unsupported": 1,
+                "skipped": 1,
+            },
+        )
+
+    def test_readme_parser_returns_none_without_markers(self):
+        self.assertIsNone(query_conformance.conformance_summary_from_readme_text("no markers here"))
+
+    def test_freshness_status_reports_stale_when_readme_leads_detail(self):
+        status = query_conformance.conformance_readme_freshness_status(
+            {"passed": 11430, "runnable": 12043},
+            {"passed": 11435, "runnable": 12043},
+        )
+
+        self.assertEqual(status["state"], "stale")
+        self.assertEqual(status["passedDelta"], 5)
+
+    def test_freshness_status_reports_detail_ahead_when_detail_leads_readme(self):
+        status = query_conformance.conformance_readme_freshness_status(
+            {"passed": 11435, "runnable": 12043},
+            {"passed": 11430, "runnable": 12043},
+        )
+
+        self.assertEqual(status["state"], "detail-ahead")
+        self.assertEqual(status["passedDelta"], -5)
+
+    def test_freshness_status_reports_aggregate_match(self):
+        summary = {"passed": 11435, "runnable": 12043}
+        status = query_conformance.conformance_readme_freshness_status(summary, dict(summary))
+
+        self.assertEqual(status["state"], "aggregate-match")
+        self.assertTrue(query_conformance.conformance_readme_detail_is_current(status))
+
+    def test_freshness_status_reports_different_domain(self):
+        status = query_conformance.conformance_readme_freshness_status(
+            {"passed": 11435, "runnable": 12043},
+            {"passed": 11435, "runnable": 12000},
+        )
+
+        self.assertEqual(status["state"], "different-domain")
+        self.assertEqual(status["runnableDelta"], -43)
+        self.assertFalse(query_conformance.conformance_readme_detail_is_current(status))
+
+    def test_freshness_status_reports_missing_or_unknown(self):
+        self.assertEqual(
+            query_conformance.conformance_readme_freshness_status(None, {"passed": 1, "runnable": 1})["state"],
+            "missing-detail",
+        )
+        self.assertEqual(
+            query_conformance.conformance_readme_freshness_status({"passed": 1, "runnable": 1}, None)["state"],
+            "unknown-public",
+        )
+
+    def test_require_current_readme_exits_nonzero_when_stale(self):
+        old_load_detail = query_conformance.load_detail
+        old_summary_from_readme = query_conformance.conformance_summary_from_readme
+        old_argv = sys.argv
+        try:
+            query_conformance.load_detail = lambda: {"summary": {"passed": 9, "total": 10}}
+            query_conformance.conformance_summary_from_readme = lambda: {
+                "passed": 10,
+                "runnable": 10,
+            }
+            sys.argv = ["query-conformance.py", "--require-current-readme"]
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                exit_code = query_conformance.main()
+        finally:
+            query_conformance.load_detail = old_load_detail
+            query_conformance.conformance_summary_from_readme = old_summary_from_readme
+            sys.argv = old_argv
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("Conformance detail freshness: stale", stderr.getvalue())
+
+    def test_require_current_readme_exits_zero_when_matched(self):
+        old_load_detail = query_conformance.load_detail
+        old_summary_from_readme = query_conformance.conformance_summary_from_readme
+        old_argv = sys.argv
+        try:
+            query_conformance.load_detail = lambda: {"summary": {"passed": 10, "total": 10}}
+            query_conformance.conformance_summary_from_readme = lambda: {
+                "passed": 10,
+                "runnable": 10,
+            }
+            sys.argv = ["query-conformance.py", "--require-current-readme"]
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                exit_code = query_conformance.main()
+        finally:
+            query_conformance.load_detail = old_load_detail
+            query_conformance.conformance_summary_from_readme = old_summary_from_readme
+            sys.argv = old_argv
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("aggregate-match", stderr.getvalue())
+
+    def test_committed_conformance_detail_is_not_stale_relative_to_readme(self):
+        """Guard against conformance-detail.json silently drifting behind the
+        public README aggregate (the class of bug #16031 measured: README and
+        the committed detail file disagreeing about the passed/runnable count).
+        """
+        detail_summary = query_conformance.conformance_detail_summary(query_conformance.load_detail())
+        public_summary = query_conformance.conformance_summary_from_readme()
+        self.assertIsNotNone(
+            public_summary,
+            "README conformance aggregate block missing; cannot evaluate freshness",
+        )
+        status = query_conformance.conformance_readme_freshness_status(detail_summary, public_summary)
+        self.assertIn(
+            status["state"],
+            ("aggregate-match", "detail-ahead"),
+            "committed scripts/conformance/conformance-detail.json is "
+            f"'{status['state']}' relative to the README conformance aggregate "
+            f"({status}); refresh conformance-detail.json or README.md's "
+            "CONFORMANCE block before landing conformance metric claims.",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
