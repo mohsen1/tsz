@@ -128,6 +128,61 @@ declare class Impl<DB> implements Container<DB> {
 }
 
 #[test]
+fn scratch_implements_no_intersection_member_renamed_inner_db() {
+    // Same as scratch_implements_no_intersection_member, but FunctionModule's
+    // OWN first type parameter is renamed from "DB" to "Database" so it no
+    // longer collides (by name) with Container's/Impl's own "DB". If this
+    // passes while the "DB"-named sibling fails, the bug is a name-keyed
+    // type-parameter collision across nesting levels, not a keyof/never
+    // evaluation defect in general.
+    let src = r#"
+interface FunctionModule<Database, TB extends keyof Database> {
+    plain: TB;
+}
+declare function createFunctionModule<Database, TB extends keyof Database>(): FunctionModule<Database, TB>;
+interface Container<DB> {
+    fn: FunctionModule<DB, keyof DB>;
+}
+class Impl<DB> implements Container<DB> {
+    get fn(): FunctionModule<DB, keyof DB> {
+        return createFunctionModule();
+    }
+}
+"#;
+    let diags = messages(src);
+    assert!(
+        diags.is_empty(),
+        "PROBE renamed-inner-db messages: {diags:#?}"
+    );
+}
+
+#[test]
+fn scratch_implements_renamed_container_db() {
+    // Same as scratch_implements_no_intersection_member, but Container's own
+    // type parameter is renamed to "C" so only Impl's class param and
+    // FunctionModule's own param are named "DB".
+    let src = r#"
+interface FunctionModule<DB, TB extends keyof DB> {
+    plain: TB;
+}
+declare function createFunctionModule<DB, TB extends keyof DB>(): FunctionModule<DB, TB>;
+interface Container<C> {
+    fn: FunctionModule<C, keyof C>;
+}
+class Impl<DB> implements Container<DB> {
+    get fn(): FunctionModule<DB, keyof DB> {
+        return createFunctionModule();
+    }
+}
+"#;
+    let diags = messages(src);
+    assert!(
+        diags.is_empty(),
+        "PROBE renamed-container-db messages: {diags:#?}"
+    );
+}
+
+#[test]
 fn scratch_direct_assign_no_call() {
     // No generic-call inference at all: just assign a bare Application whose
     // TB argument is annotated as `keyof DB` against the same interface.
