@@ -1129,7 +1129,12 @@ impl StatementChecker {
                 state.get_type_of_node_with_request(stmt_idx, request);
             }
             _ => {
-                // Catch-all for other statement types
+                // Catch-all for other statement types, including a concise
+                // (expression-body) arrow/function body: unlike a block body,
+                // it has no wrapping `ExpressionStatement`/`ReturnStatement`
+                // node to carry the TS1308/TS1375/TS1378 `await`-grammar walk,
+                // so this is the only root that ever visits it.
+                state.check_await_expression(stmt_idx);
                 state.get_type_of_node_with_request(stmt_idx, &non_contextual_request);
             }
         }
