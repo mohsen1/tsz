@@ -10,7 +10,7 @@
 //! causing it to be added to `referenced_symbols` and suppressing TS6133.
 
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::test_utils::check_source;
+use tsz_checker::test_utils::{check_source, diagnostic_line_column};
 
 fn check_write_only(source: &str) -> Vec<(u32, u32, u32)> {
     check_source(
@@ -24,12 +24,17 @@ fn check_write_only(source: &str) -> Vec<(u32, u32, u32)> {
         },
     )
     .into_iter()
-    .map(|d| (d.code, d.line_and_char.line + 1, d.line_and_char.character + 1))
+    .map(|d| {
+        let (line, column) = diagnostic_line_column(source, &d);
+        (d.code, line, column)
+    })
     .collect()
 }
 
 fn has_ts6133_at(diags: &[(u32, u32, u32)], line: u32, col: u32) -> bool {
-    diags.iter().any(|&(code, l, c)| code == 6133 && l == line && c == col)
+    diags
+        .iter()
+        .any(|&(code, l, c)| code == 6133 && l == line && c == col)
 }
 
 fn has_no_ts6133(diags: &[(u32, u32, u32)]) -> bool {
