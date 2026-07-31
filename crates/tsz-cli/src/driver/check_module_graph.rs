@@ -160,13 +160,37 @@ pub(super) fn propagate_module_export_maps(
 /// order (matching tsc behavior which gracefully handles circular imports).
 ///
 /// Only file indices present in `file_indices` are included in the output.
+///
+/// # Tie-breaking and root independence
+///
+/// A dependency graph rarely admits a single topological order, and an import
+/// cycle admits none at all, so every tie has to be broken by some secondary
+/// key. `stable_order_key` supplies that key: `stable_order_key[idx]` ranks
+/// file `idx` against its peers, and entries missing from the map rank last
+/// (falling back to the raw file index).
+///
+/// The key must not be derived from the program's file *index*. Indices are
+/// assigned in root-discovery order, so an index-keyed tie-break makes the
+/// resulting check order a function of the `tsconfig` root list rather than of
+/// the file set — the same eight files check in a different order depending on
+/// which of them the `include` glob happens to name (issue #16036). Callers
+/// pass a rank derived from the file *name*, which is a property of the file
+/// set alone.
 pub(super) fn topological_file_order(
     file_indices: &[usize],
     resolved_module_paths: &FxHashMap<(usize, String), usize>,
+    stable_order_key: &FxHashMap<usize, u32>,
 ) -> Vec<usize> {
     if file_indices.len() <= 1 {
         return file_indices.to_vec();
     }
+
+    // Rank a file for tie-breaking. Files absent from `stable_order_key` sort
+    // after every ranked file and among themselves by index, which keeps the
+    // empty-map case identical to the historical index-only ordering.
+    let rank = |idx: usize| -> (u32, usize) {
+        (stable_order_key.get(&idx).copied().unwrap_or(u32::MAX), idx)
+    };
 
     // Build adjacency list: src -> [targets it imports].
     // Edge A -> B means "A depends on B" (A imports B).
@@ -201,10 +225,11 @@ pub(super) fn topological_file_order(
         }
     }
 
-    // Seed queue with nodes that have no dependencies, in sorted order for determinism.
+    // Seed queue with nodes that have no dependencies, in stable-key order for
+    // determinism.
     let mut queue: VecDeque<usize> = VecDeque::new();
     let mut sorted_indices: Vec<usize> = file_indices.to_vec();
-    sorted_indices.sort_unstable();
+    sorted_indices.sort_unstable_by_key(|&idx| rank(idx));
     for &idx in &sorted_indices {
         if in_degree[&idx] == 0 {
             queue.push_back(idx);
@@ -216,7 +241,7 @@ pub(super) fn topological_file_order(
         result.push(node);
         if let Some(dependents) = reverse_deps.get(&node) {
             let mut sorted_dependents = dependents.clone();
-            sorted_dependents.sort_unstable();
+            sorted_dependents.sort_unstable_by_key(|&idx| rank(idx));
             for &dependent in &sorted_dependents {
                 let deg = in_degree.get_mut(&dependent).unwrap();
                 *deg -= 1;
@@ -227,14 +252,21 @@ pub(super) fn topological_file_order(
         }
     }
 
-    // If cycles exist, append remaining nodes in their original order.
+    // If cycles exist, append the remaining nodes. Kahn's algorithm drains
+    // every acyclic node, so what is left is exactly the cyclic component —
+    // the part of the graph that has no topological order at all and is
+    // therefore ordered *entirely* by the tie-break. Appending in
+    // `file_indices` order would make that order root-dependent (#16036), so
+    // append in stable-key order like every other tie above.
     if result.len() < file_indices.len() {
         let in_result: FxHashSet<usize> = result.iter().copied().collect();
-        for &idx in file_indices {
-            if !in_result.contains(&idx) {
-                result.push(idx);
-            }
-        }
+        let mut remaining: Vec<usize> = file_indices
+            .iter()
+            .copied()
+            .filter(|idx| !in_result.contains(idx))
+            .collect();
+        remaining.sort_unstable_by_key(|&idx| rank(idx));
+        result.extend(remaining);
     }
 
     result
@@ -251,11 +283,41 @@ fn is_node_modules_declaration_file(name: &str) -> bool {
             .any(|component| component.as_os_str() == "node_modules")
 }
 
+/// Rank file indices by file name so topological tie-breaks depend on the file
+/// *set* rather than on the root list that produced the file indices.
+///
+/// Program file indices are assigned in root-discovery order, so two runs over
+/// the identical eight-file program hand the same file a different index
+/// depending on which files the `tsconfig` `include` glob names as roots. Any
+/// ordering that tie-breaks on the index therefore inherits that dependence;
+/// ranking by name does not, because a file's name is the same in every root
+/// configuration that contains it (issue #16036).
+pub(super) fn stable_file_order_key(
+    file_indices: &[usize],
+    program: &MergedProgram,
+) -> FxHashMap<usize, u32> {
+    let mut by_name: Vec<usize> = file_indices.to_vec();
+    by_name.sort_unstable_by(|&a, &b| {
+        program.files[a]
+            .file_name
+            .cmp(&program.files[b].file_name)
+            // File names are unique within a program; the index tie-break only
+            // guards against a caller passing the same index twice.
+            .then_with(|| a.cmp(&b))
+    });
+    by_name
+        .into_iter()
+        .enumerate()
+        .map(|(rank, idx)| (idx, rank as u32))
+        .collect()
+}
+
 pub(super) fn order_fresh_check_work_items(
     work_items: &mut Vec<usize>,
     resolved_module_paths: &FxHashMap<(usize, String), usize>,
     program: &MergedProgram,
 ) {
-    *work_items = topological_file_order(work_items, resolved_module_paths);
+    let stable_key = stable_file_order_key(work_items, program);
+    *work_items = topological_file_order(work_items, resolved_module_paths, &stable_key);
     work_items.sort_by_key(|&idx| is_node_modules_declaration_file(&program.files[idx].file_name));
 }

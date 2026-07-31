@@ -1067,20 +1067,20 @@ interface Node {
 
     #[test]
     fn topo_order_empty() {
-        let result = topological_file_order(&[], &FxHashMap::default());
+        let result = topological_file_order(&[], &FxHashMap::default(), &FxHashMap::default());
         assert!(result.is_empty());
     }
 
     #[test]
     fn topo_order_single_file() {
-        let result = topological_file_order(&[0], &FxHashMap::default());
+        let result = topological_file_order(&[0], &FxHashMap::default(), &FxHashMap::default());
         assert_eq!(result, vec![0]);
     }
 
     #[test]
     fn topo_order_no_deps() {
         // Three files with no dependencies — output should be sorted by index
-        let result = topological_file_order(&[2, 0, 1], &FxHashMap::default());
+        let result = topological_file_order(&[2, 0, 1], &FxHashMap::default(), &FxHashMap::default());
         assert_eq!(result, vec![0, 1, 2]);
     }
 
@@ -1092,7 +1092,7 @@ interface Node {
         deps.insert((0, "./b".to_string()), 1);
         deps.insert((1, "./c".to_string()), 2);
 
-        let result = topological_file_order(&[0, 1, 2], &deps);
+        let result = topological_file_order(&[0, 1, 2], &deps, &FxHashMap::default());
         assert_eq!(result, vec![2, 1, 0]);
     }
 
@@ -1106,7 +1106,7 @@ interface Node {
         deps.insert((1, "./c".to_string()), 3);
         deps.insert((2, "./c".to_string()), 3);
 
-        let result = topological_file_order(&[0, 1, 2, 3], &deps);
+        let result = topological_file_order(&[0, 1, 2, 3], &deps, &FxHashMap::default());
         assert_eq!(result, vec![3, 1, 2, 0]);
     }
 
@@ -1118,7 +1118,7 @@ interface Node {
         deps.insert((0, "./b".to_string()), 1);
         deps.insert((1, "./a".to_string()), 0);
 
-        let result = topological_file_order(&[0, 1], &deps);
+        let result = topological_file_order(&[0, 1], &deps, &FxHashMap::default());
         assert_eq!(result.len(), 2);
         assert!(result.contains(&0));
         assert!(result.contains(&1));
@@ -1132,7 +1132,7 @@ interface Node {
         deps.insert((0, "./b".to_string()), 1);
         deps.insert((1, "./a".to_string()), 0);
 
-        let result = topological_file_order(&[0, 1, 2], &deps);
+        let result = topological_file_order(&[0, 1, 2], &deps, &FxHashMap::default());
         assert_eq!(result[0], 2, "dependency-free file should come first");
         assert_eq!(result.len(), 3);
     }
@@ -1143,7 +1143,7 @@ interface Node {
         let mut deps = FxHashMap::default();
         deps.insert((0, "./ext".to_string()), 5);
 
-        let result = topological_file_order(&[0, 1], &deps);
+        let result = topological_file_order(&[0, 1], &deps, &FxHashMap::default());
         assert_eq!(result.len(), 2);
         // Both have no in-set dependencies, so sorted order
         assert_eq!(result, vec![0, 1]);
@@ -1155,8 +1155,91 @@ interface Node {
         let mut deps = FxHashMap::default();
         deps.insert((0, "./self".to_string()), 0);
 
-        let result = topological_file_order(&[0, 1], &deps);
+        let result = topological_file_order(&[0, 1], &deps, &FxHashMap::default());
         assert_eq!(result, vec![0, 1]);
+    }
+
+    /// Order the same four-file import cycle twice, under two different index
+    /// assignments, and return the resulting *name* sequences.
+    ///
+    /// Program file indices are assigned in root-discovery order, so changing
+    /// which file the `tsconfig` `include` glob names first hands the same file
+    /// a different index. Both runs below describe the identical module graph
+    /// (the edges are written in terms of names) and differ only in that
+    /// assignment — mirroring zod's `types.ts` / `helpers/partialUtil.ts` cycle
+    /// in issue #16036.
+    fn cycle_order_under_two_root_discovery_orders(
+        stable_key: bool,
+    ) -> (Vec<&'static str>, Vec<&'static str>) {
+        const CYCLE_EDGES: [(&str, &str); 4] = [
+            ("types.ts", "partialUtil.ts"),
+            ("partialUtil.ts", "index.ts"),
+            ("index.ts", "external.ts"),
+            ("external.ts", "types.ts"),
+        ];
+
+        let order_of = |names: [&'static str; 4]| -> Vec<&'static str> {
+            let position = |name: &str| names.iter().position(|n| *n == name).unwrap();
+            let mut deps = FxHashMap::default();
+            for (from, to) in CYCLE_EDGES {
+                deps.insert((position(from), to.to_string()), position(to));
+            }
+
+            let indices: Vec<usize> = (0..names.len()).collect();
+            // Mirrors `stable_file_order_key`: rank by file name, which is a
+            // property of the file set and not of the root list.
+            let key: FxHashMap<usize, u32> = if stable_key {
+                let mut by_name = indices.clone();
+                by_name.sort_unstable_by_key(|&idx| names[idx]);
+                by_name
+                    .into_iter()
+                    .enumerate()
+                    .map(|(rank, idx)| (idx, rank as u32))
+                    .collect()
+            } else {
+                FxHashMap::default()
+            };
+
+            topological_file_order(&indices, &deps, &key)
+                .into_iter()
+                .map(|idx| names[idx])
+                .collect()
+        };
+
+        (
+            order_of(["types.ts", "index.ts", "external.ts", "partialUtil.ts"]),
+            order_of(["partialUtil.ts", "index.ts", "external.ts", "types.ts"]),
+        )
+    }
+
+    #[test]
+    fn topo_order_of_a_cycle_is_independent_of_root_discovery_order() {
+        // Regression for #16036. A cycle admits no topological order at all, so
+        // Kahn's algorithm drains nothing and the entire component is ordered by
+        // the tie-break. With a name-derived key the two root configurations
+        // must check the identical file set in the identical order.
+        let (from_types_root, from_partial_util_root) =
+            cycle_order_under_two_root_discovery_orders(true);
+        assert_eq!(
+            from_types_root, from_partial_util_root,
+            "the same file set must check in the same order regardless of which \
+             of its files the tsconfig root list names"
+        );
+    }
+
+    #[test]
+    fn topo_order_of_a_cycle_without_a_stable_key_is_root_dependent() {
+        // Negative control: the same scenario with no stable key falls back to
+        // the raw file index, which is exactly the root-discovery-order
+        // dependence #16036 reports. Without this the positive test above could
+        // pass on a graph that never had a tie to break.
+        let (from_types_root, from_partial_util_root) =
+            cycle_order_under_two_root_discovery_orders(false);
+        assert_ne!(
+            from_types_root, from_partial_util_root,
+            "index tie-breaking is expected to be root-dependent; if this ever \
+             holds, the fixture stopped exercising the cycle-append path"
+        );
     }
 
     #[test]
