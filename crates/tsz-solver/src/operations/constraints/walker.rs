@@ -797,36 +797,96 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     }
                 }
             }
-            // Both source and target are intersections. Decomposing only one
-            // side and constraining the other's full (undecomposed) type
-            // against every member of the decomposed side turns a naked
-            // member on the un-decomposed side into candidates from every
-            // member of the other side: `T & string` (source) against
-            // `X & string` (target) would constrain naked `T` against both
-            // `X` (correct upper bound) and `string` (spurious upper bound),
-            // and the two upper bounds then combine into the artificial
-            // `X & string` instead of `X`. When both intersections have the
-            // same arity, pair a naked member only with its positional
-            // counterpart on the other side; structured (non-naked) members
-            // keep the broad, unpaired matching used by mismatched arities.
+            // Both source and target are intersections. tsc's inferFromTypes
+            // (checker.ts) does not pair members positionally by index: it
+            // first cancels constituent pairs that are literally identical
+            // between the two sides (`inferFromMatchingTypes` with
+            // `isTypeIdenticalTo`), then infers each *remaining* target
+            // member from the *whole* remaining (re-combined) source
+            // (`inferToMultipleTypes`). A naked type-variable member is not
+            // matched against its positional counterpart — it is matched
+            // against the whole reduced source, same as every other member,
+            // and only gets its own dedicated (lower-priority) inference when
+            // it is the *only* naked member left standing.
+            //
+            // Decomposing only one side and constraining the other's full
+            // (undecomposed) type against every member of the decomposed
+            // side is correct in the common case, but without the identical-
+            // pair cancellation step it over-constrains: `T & string`
+            // (source) against `X & string` (target) would broadly constrain
+            // naked `T` against both `X` (its real counterpart) and `string`
+            // (an unrelated member), combining into an artificial
+            // `X & string` upper bound instead of `X`. Once the identical
+            // `string` members are cancelled from both sides first, the
+            // reduced pair is just `T` against `X`, which the existing naked-
+            // target-variable path below already infers correctly.
+            //
+            // A naked member that is NOT cancelled away, and is not the
+            // intersection's only naked member, must still see the whole
+            // (reduced) source rather than one positional slice of it —
+            // dropping the other source members loses real structure tsc
+            // keeps (`silentNeverPropagation.ts`: `TActions` alone in
+            // `ModuleWithState<TState> & TActions` must be inferred as the
+            // full `ModuleWithState<{a:number}> & {foo():true}` candidate,
+            // not just `{foo():true}`).
             (Some(TypeData::Intersection(s_members)), Some(TypeData::Intersection(t_members))) => {
                 let s_members = self.interner.type_list(s_members);
                 let t_members = self.interner.type_list(t_members);
-                if s_members.len() == t_members.len() {
-                    for (index, &t_member) in t_members.iter().enumerate() {
-                        let s_member = s_members[index];
-                        if var_map.contains_key(&s_member) || var_map.contains_key(&t_member) {
-                            self.constrain_types(ctx, var_map, s_member, t_member, priority);
-                            continue;
+                let mut source_cancelled = vec![false; s_members.len()];
+                let mut any_cancelled = false;
+                let remaining_targets: Vec<TypeId> = t_members
+                    .iter()
+                    .copied()
+                    .filter(|&t_member| {
+                        let mut matched = false;
+                        for (si, &s_member) in s_members.iter().enumerate() {
+                            if !source_cancelled[si] && s_member == t_member {
+                                source_cancelled[si] = true;
+                                matched = true;
+                                any_cancelled = true;
+                                break;
+                            }
                         }
-                        for &other_s_member in s_members.iter() {
-                            self.constrain_types(ctx, var_map, other_s_member, t_member, priority);
-                        }
-                    }
+                        !matched
+                    })
+                    .collect();
+                let remaining_sources: Vec<TypeId> = s_members
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| !source_cancelled[*index])
+                    .map(|(_, &s_member)| s_member)
+                    .collect();
+                if remaining_sources.is_empty() || remaining_targets.is_empty() {
+                    // tsc makes no further inference once one side is fully
+                    // cancelled by identical-member matches.
+                    return;
+                }
+                let reduced_source = if !any_cancelled {
+                    source
+                } else if remaining_sources.len() == 1 {
+                    remaining_sources[0]
                 } else {
-                    for &t_member in t_members.iter() {
-                        self.constrain_types(ctx, var_map, source, t_member, priority);
+                    self.interner.intersection(remaining_sources)
+                };
+                let naked_target_vars: Vec<TypeId> = remaining_targets
+                    .iter()
+                    .copied()
+                    .filter(|t| var_map.contains_key(t))
+                    .collect();
+                for &t_member in &remaining_targets {
+                    if var_map.contains_key(&t_member) {
+                        continue;
                     }
+                    self.constrain_types(ctx, var_map, reduced_source, t_member, priority);
+                }
+                if naked_target_vars.len() == 1 {
+                    self.constrain_types(
+                        ctx,
+                        var_map,
+                        reduced_source,
+                        naked_target_vars[0],
+                        priority,
+                    );
                 }
             }
             (_, Some(TypeData::Intersection(t_members))) => {
