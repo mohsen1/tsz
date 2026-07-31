@@ -1,15 +1,15 @@
 {
-  "timestamp": "2026-07-30T05:06:57Z",
-  "git_sha": "2ad8b391d593f65eaf1b369650ffc3b8d9ed58a4",
+  "timestamp": "2026-07-31T09:47:59Z",
+  "git_sha": "2a8c4d7912182e309290ab890d5465a429926b2b",
   "summary": {
     "candidates": 12585,
     "total_tests": 12043,
     "runnable": 12043,
-    "passed": 11430,
-    "failed": 613,
+    "passed": 11435,
+    "failed": 608,
     "unsupported": 507,
     "skipped": 35,
-    "pass_rate": 94.9
+    "pass_rate": 95.0
   },
   "areas_by_pass_rate": [
     {
@@ -267,9 +267,9 @@
     {
       "area": "compiler",
       "total": 6147,
-      "passed": 5882,
-      "failed": 265,
-      "pass_rate": 95.69
+      "passed": 5883,
+      "failed": 264,
+      "pass_rate": 95.71
     },
     {
       "area": "types/intersection",
@@ -1270,10 +1270,6 @@
       "count": 3
     },
     {
-      "code": "TS2345",
-      "count": 3
-    },
-    {
       "code": "TS2407",
       "count": 3
     },
@@ -1311,6 +1307,10 @@
     },
     {
       "code": "TS2411",
+      "count": 2
+    },
+    {
+      "code": "TS2345",
       "count": 2
     },
     {
@@ -1464,11 +1464,11 @@
       "count": 3
     },
     {
-      "code": "TS2365",
+      "code": "TS2554",
       "count": 2
     },
     {
-      "code": "TS2554",
+      "code": "TS2365",
       "count": 2
     },
     {
@@ -1520,11 +1520,11 @@
       "count": 1
     },
     {
-      "code": "TS8026",
+      "code": "TS8027",
       "count": 1
     },
     {
-      "code": "TS8027",
+      "code": "TS8026",
       "count": 1
     },
     {
@@ -1745,7 +1745,7 @@
     },
     {
       "code": "TS2345",
-      "count": 15
+      "count": 14
     },
     {
       "code": "TS2304",
@@ -1899,9 +1899,9 @@
   "categories": {
     "false_positive": 65,
     "all_missing": 92,
-    "wrong_code": 275,
-    "fingerprint_only": 181,
+    "wrong_code": 274,
+    "fingerprint_only": 177,
     "same_code_count_drift": 0,
-    "close_to_passing": 241
+    "close_to_passing": 240
   }
 }
