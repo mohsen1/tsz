@@ -228,6 +228,25 @@ pub(crate) fn is_fresh_literal_indexed_object(db: &dyn TypeDatabase, type_id: Ty
     db.object_shape(shape_id).is_fresh_literal()
 }
 
+/// Whether a union contextual type puts an array literal in tuple context.
+///
+/// Mirrors `tsc`'s `checkArrayLiteral`, which decides tuple-ness with
+/// `inTupleContext = !!contextualType && someType(contextualType,
+/// isTupleLikeType)`: a *single* tuple constituent is enough, and the other
+/// constituents neither have to be tuples nor have to be array-shaped at all.
+/// Requiring every constituent to be a tuple made any union pairing a tuple
+/// with another shape (`[string] | Record<string, number>`,
+/// `[string] | number[]`, `Tree<T> | Record<string, Tree<T>>`) widen the
+/// literal to an array, so an element list that only ever satisfies the tuple
+/// arm reported a spurious `TS2322`.
+///
+/// Plain `Array<T>` constituents deliberately do not count on their own:
+/// `tsc`'s `isTupleLikeType` is `isTupleType(type) || !!getPropertyOfType(type,
+/// "0")`, and an array type has neither, so a union whose only array-shaped
+/// members are arrays stays in array context. That keeps the ambiguous-union
+/// element machinery — which reports `TS7006` for conflicting callback arms in
+/// `Record<string, (arg: string) => void> | Array<(arg: number) => void>` —
+/// reachable.
 pub(crate) fn union_context_prefers_tuple_array_literal(
     db: &dyn TypeDatabase,
     contextual: TypeId,
@@ -236,20 +255,15 @@ pub(crate) fn union_context_prefers_tuple_array_literal(
         return false;
     };
 
-    let mut saw_tuple = false;
-    for member in members {
-        let Some(applicable) = crate::query_boundaries::common::array_applicable_type(db, member)
-        else {
-            return false;
-        };
-
-        if !crate::query_boundaries::common::is_tuple_type(db, applicable) {
-            return false;
+    members.iter().copied().any(|member| {
+        let mut member = member;
+        while let Some(inner) =
+            crate::query_boundaries::common::unwrap_readonly_or_noinfer(db, member)
+        {
+            member = inner;
         }
-        saw_tuple = true;
-    }
-
-    saw_tuple
+        crate::query_boundaries::common::is_tuple_type(db, member)
+    })
 }
 
 pub(crate) fn widen_mutable_object_literal_property_types(
@@ -407,18 +421,33 @@ mod tests {
         assert!(union_context_prefers_tuple_array_literal(&db, contextual));
     }
 
+    /// `tsc` 7.0.2 accepts `const b1: [string] | number[] = [s]`: `someType(…,
+    /// isTupleLikeType)` is satisfied by the tuple arm alone, so the literal is
+    /// a tuple and the array arm never has to accept `string[]`.
     #[test]
-    fn union_context_does_not_prefer_tuple_for_array_member() {
+    fn union_context_prefers_tuple_alongside_array_member() {
         let db = TypeInterner::new();
         let contextual = db.union(vec![tuple(&db, TypeId::STRING), db.array(TypeId::NUMBER)]);
 
-        assert!(!union_context_prefers_tuple_array_literal(&db, contextual));
+        assert!(union_context_prefers_tuple_array_literal(&db, contextual));
     }
 
+    /// A non-array constituent does not veto the tuple arm either — `tsc`
+    /// accepts `const a: [string] | number = [s]`.
     #[test]
-    fn union_context_does_not_prefer_tuple_for_non_applicable_member() {
+    fn union_context_prefers_tuple_alongside_non_applicable_member() {
         let db = TypeInterner::new();
         let contextual = db.union(vec![tuple(&db, TypeId::STRING), TypeId::NUMBER]);
+
+        assert!(union_context_prefers_tuple_array_literal(&db, contextual));
+    }
+
+    /// No tuple constituent, no tuple context: a union of plain arrays stays in
+    /// array context so the ambiguous-union element machinery still runs.
+    #[test]
+    fn union_context_does_not_prefer_tuple_without_a_tuple_member() {
+        let db = TypeInterner::new();
+        let contextual = db.union(vec![db.array(TypeId::STRING), db.array(TypeId::NUMBER)]);
 
         assert!(!union_context_prefers_tuple_array_literal(&db, contextual));
     }
