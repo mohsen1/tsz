@@ -148,6 +148,9 @@ mod await_concise_arrow_body_grammar_tests;
 #[path = "tests/await_grammar_statement_position_tests.rs"]
 mod await_grammar_statement_position_tests;
 #[cfg(test)]
+#[path = "tests/await_static_block_grammar_tests.rs"]
+mod await_static_block_grammar_tests;
+#[cfg(test)]
 #[path = "tests/await_structural_thenable_tests.rs"]
 mod await_structural_thenable_tests;
 #[cfg(test)]
