@@ -6,11 +6,15 @@ mod residency_tests {
     /// `Some(residency)` snapshot with the recorded values and a coherent
     /// tracked total.
     ///
-    /// Note: the gauges are process-wide and nextest runs each test in its
-    /// own process, so this test owns the gauge state for its lifetime.
+    /// Uses `ScopedPerfCounters` rather than relying on process ownership:
+    /// the residency gauges are last-write-wins `store`s (a program's byte
+    /// estimate, not an accumulating count), so under a shared-process
+    /// runner a sibling test recording a different program's residency
+    /// concurrently would silently overwrite the values asserted below. The
+    /// scope gives this thread a private gauge set for its duration.
     #[test]
     fn residency_record_propagates_into_snapshot() {
-        force_enable_perf_counters_for_tests();
+        let _scope = ScopedPerfCounters::new();
 
         record_merged_program_residency(&MergedProgramResidencyRecord {
             ast_unique_arena_count: 12,

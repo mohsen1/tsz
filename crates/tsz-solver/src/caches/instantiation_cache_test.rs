@@ -712,7 +712,14 @@ fn unchanged_conditional_instantiation_skips_conditional_reintern() {
     // non-empty substitution. If all four arms remain unchanged, though, the
     // walk should return the original `TypeId` without probing the conditional
     // interner again.
-    tsz_common::perf_counters::force_enable_perf_counters_for_tests();
+    //
+    // Scoped: `conditional_intern_calls` is a process-wide atomic, and this
+    // test reads a before/after delta on it. Without `ScopedPerfCounters`, a
+    // sibling thread interning an unrelated conditional between the two reads
+    // would inflate `after` and mask a real regression here just as easily as
+    // it would produce a false failure (see #16017's writeup of this counter
+    // class under a shared-process runner).
+    let _scope = tsz_common::perf_counters::ScopedPerfCounters::new();
 
     let interner = TypeInterner::new();
     let (u_atom, _u_id) = type_param(&interner, "U");
@@ -747,7 +754,10 @@ fn unchanged_conditional_instantiation_skips_conditional_reintern() {
 
 #[test]
 fn changed_conditional_instantiation_still_rebuilds_conditional() {
-    tsz_common::perf_counters::force_enable_perf_counters_for_tests();
+    // Scoped for the same reason as `unchanged_conditional_instantiation_
+    // skips_conditional_reintern` above: `conditional_intern_calls` is a
+    // process-wide atomic and this test reads a before/after delta on it.
+    let _scope = tsz_common::perf_counters::ScopedPerfCounters::new();
 
     let interner = TypeInterner::new();
     let (t_atom, t_id) = type_param(&interner, "T");

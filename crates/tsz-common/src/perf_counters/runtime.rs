@@ -684,9 +684,20 @@ pub fn counters() -> &'static PerfCounters {
 ///
 /// Increments made on *other* threads while the scope is live still land on the
 /// process-wide set, so measure work that runs on the thread holding the guard.
+///
+/// This also scopes the residency gauges (`record_merged_program_residency`
+/// and friends, in `residency.rs`): those live in a separate process-wide
+/// `OnceLock<ResidencyGauges>` disjoint from the `PerfCounters` atomics this
+/// guard was originally written for, but they are gauges (last-write-wins
+/// `store`s), not accumulating counters, so a second thread recording a
+/// different program's residency while this scope is live would otherwise
+/// silently overwrite the values a test just recorded. Installing both
+/// overlays from one guard keeps a single `ScopedPerfCounters::new()` call
+/// sufficient for tests that touch either family.
 #[cfg(any(test, debug_assertions))]
 pub struct ScopedPerfCounters {
     previous: Option<&'static PerfCounters>,
+    previous_residency: Option<&'static ResidencyGauges>,
 }
 
 #[cfg(any(test, debug_assertions))]
@@ -702,7 +713,16 @@ impl ScopedPerfCounters {
         let fresh: &'static PerfCounters = Box::leak(Box::new(PerfCounters::new_zero()));
         fresh.enabled.store(true, Ordering::Relaxed);
         let previous = SCOPED_COUNTERS.with(|slot| slot.replace(Some(fresh)));
-        Self { previous }
+
+        let fresh_residency: &'static ResidencyGauges =
+            Box::leak(Box::new(ResidencyGauges::new_zero()));
+        let previous_residency =
+            SCOPED_RESIDENCY_GAUGES.with(|slot| slot.replace(Some(fresh_residency)));
+
+        Self {
+            previous,
+            previous_residency,
+        }
     }
 
     /// Snapshot the scoped counters — the totals recorded on this thread since
@@ -724,6 +744,7 @@ impl Default for ScopedPerfCounters {
 impl Drop for ScopedPerfCounters {
     fn drop(&mut self) {
         SCOPED_COUNTERS.with(|slot| slot.set(self.previous));
+        SCOPED_RESIDENCY_GAUGES.with(|slot| slot.set(self.previous_residency));
     }
 }
 
