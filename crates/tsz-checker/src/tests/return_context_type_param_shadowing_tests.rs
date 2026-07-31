@@ -76,6 +76,165 @@ class Builder {
 }
 
 #[test]
+fn probe_a_sync_callback_argument() {
+    let diags = diagnostic_summaries(
+        r#"
+/// <reference lib="es2015.promise" />
+interface Runner {
+    withConnection<T>(consumer: (connection: string) => Promise<T>): Promise<T>;
+}
+class Builder {
+    declare readonly runner: Runner;
+    run<T>(callback: (db: number) => Promise<T>): Promise<T> {
+        return this.runner.withConnection((connection) => {
+            return callback(connection.length);
+        });
+    }
+}
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "PROBE A (sync arrow, sync method): {diags:?}"
+    );
+}
+
+#[test]
+fn probe_b_renamed_type_params_async_callback() {
+    let diags = diagnostic_summaries(
+        r#"
+/// <reference lib="es2015.promise" />
+interface Runner {
+    withConnection<UInner>(consumer: (connection: string) => Promise<UInner>): Promise<UInner>;
+}
+class Builder {
+    declare readonly runner: Runner;
+    async run<TOuter>(callback: (db: number) => Promise<TOuter>): Promise<TOuter> {
+        return this.runner.withConnection(async (connection) => {
+            return await callback(connection.length);
+        });
+    }
+}
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "PROBE B (renamed, no collision): {diags:?}"
+    );
+}
+
+#[test]
+fn probe_c_free_function_async_callback() {
+    let diags = diagnostic_summaries(
+        r#"
+/// <reference lib="es2015.promise" />
+declare function withConnection<T>(consumer: (connection: string) => Promise<T>): Promise<T>;
+
+async function run<T>(callback: (db: number) => Promise<T>): Promise<T> {
+    return withConnection(async (connection) => {
+        return await callback(connection.length);
+    });
+}
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "PROBE C (free function, no class): {diags:?}"
+    );
+}
+
+#[test]
+fn probe_d_async_method_sync_arrow() {
+    let diags = diagnostic_summaries(
+        r#"
+/// <reference lib="es2015.promise" />
+declare function withConnection<T>(consumer: (connection: string) => Promise<T>): Promise<T>;
+
+async function run<T>(callback: (db: number) => Promise<T>): Promise<T> {
+    return withConnection((connection) => callback(connection.length));
+}
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "PROBE D (async fn, sync arrow): {diags:?}"
+    );
+}
+
+#[test]
+fn probe_e_no_outer_generic_async() {
+    let diags = diagnostic_summaries(
+        r#"
+/// <reference lib="es2015.promise" />
+declare function withConnection<T>(consumer: (connection: string) => Promise<T>): Promise<T>;
+
+async function run(): Promise<number> {
+    return withConnection(async (connection) => {
+        return connection.length;
+    });
+}
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "PROBE E (no outer generic, async): {diags:?}"
+    );
+}
+
+#[test]
+fn probe_f_no_outer_generic_sync() {
+    let diags = diagnostic_summaries(
+        r#"
+/// <reference lib="es2015.promise" />
+declare function withConnection<T>(consumer: (connection: string) => Promise<T>): Promise<T>;
+
+function run(): Promise<number> {
+    return withConnection(async (connection) => {
+        return connection.length;
+    });
+}
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "PROBE F (no outer generic, sync): {diags:?}"
+    );
+}
+
+#[test]
+fn probe_g_explicit_type_argument() {
+    let diags = diagnostic_summaries(
+        r#"
+/// <reference lib="es2015.promise" />
+declare function withConnection<T>(consumer: (connection: string) => Promise<T>): Promise<T>;
+
+async function run<T>(callback: (db: number) => Promise<T>): Promise<T> {
+    return withConnection<T>((connection) => callback(connection.length));
+}
+"#,
+    );
+    assert!(diags.is_empty(), "PROBE G (explicit type arg): {diags:?}");
+}
+
+#[test]
+fn probe_h_non_promise_return_async_outer() {
+    let diags = diagnostic_summaries(
+        r#"
+/// <reference lib="es2015.promise" />
+declare function pick<T>(consumer: (connection: string) => T): T;
+
+async function run<T>(callback: (db: number) => T): Promise<T> {
+    return pick((connection) => callback(connection.length));
+}
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "PROBE H (non-Promise callee return): {diags:?}"
+    );
+}
+
+#[test]
 fn async_return_of_generic_call_with_renamed_type_params_is_clean() {
     // Renamed-binder adjacents: the fix must not depend on the parameters
     // actually colliding.
