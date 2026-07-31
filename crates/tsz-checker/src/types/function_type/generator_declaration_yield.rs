@@ -39,7 +39,15 @@ impl CheckerState<'_> {
             function_is_async,
             early_yield_type,
         } = ctx;
-        if self.generator_body_contains_yield_star(body, true) {
+        // In a checked-JS file, this speculative pass is not diagnostic-safe for
+        // `yield*`: it resolves an evolving (`var x = []`) delegate's circular
+        // type as a side effect, so the later "real" declaration-check pass no
+        // longer sees it as unresolved and skips the implicit-any diagnostics it
+        // owns (TS7005/TS7034). TypeScript source files don't hit this — their
+        // `var`/`let` bindings get an explicit or inferred non-evolving type
+        // before the generator body is ever walked. Keep bailing here for JS
+        // only; the plain-TS declaration path is fixed below.
+        if self.ctx.is_js_file() && self.generator_body_contains_yield_star(body, true) {
             return None;
         }
 

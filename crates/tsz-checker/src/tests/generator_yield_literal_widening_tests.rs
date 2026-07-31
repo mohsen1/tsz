@@ -12,9 +12,14 @@
 //!   callback signature) still widens — generatorTypeCheck63;
 //! - a fresh enum-member access widens to its parent enum.
 //!
-//! `yield*` delegation still collapses the inferred yield type to `any`
-//! (declarations bail in `infer_generator_declaration_yield_type`; expressions
-//! lose the generator shape entirely); that family is tracked separately.
+//! `yield*` delegation to an array/tuple source now infers the real element
+//! type in declaration signatures too (`generator_yield_identity_tests`); a
+//! JS-file-only bail in `infer_generator_declaration_yield_type` remains for
+//! checked-JS diagnostic ordering. Delegation to a `Generator`/`Iterator`-
+//! shaped value still collapses to `any` (a `next()` property-type resolution
+//! gap in `get_iterator_info`, not a declaration-path issue), and generator
+//! *expressions* (`const f = function* () {...}`) still lose the shape
+//! entirely; both are tracked separately under #15632.
 
 use crate::context::CheckerOptions;
 use crate::test_utils::{check_source_with_libs, load_default_lib_files};

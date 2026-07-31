@@ -123,15 +123,14 @@ pub fn get_iterator_info(
 
 /// Get iterator info for Array types.
 const fn get_array_iterator_info(array_type: TypeId, elem_type: TypeId) -> Option<IteratorInfo> {
-    // Arrays yield their element type
-    // The iterator type for Array<T> has:
-    // - yield: T
-    // - return: undefined
-    // - next: accepts undefined (TNext = undefined)
+    // Arrays yield their element type. lib.d.ts's `Array<T>[Symbol.iterator]()`
+    // returns `IterableIterator<T>`, which extends the default-parameterized
+    // `Iterator<T, TReturn = any, TNext = undefined>` — the untyped return
+    // defaults to `any`, not `undefined` (that default belongs to `TNext`).
     Some(IteratorInfo {
         iterator_type: array_type,
         yield_type: elem_type,
-        return_type: TypeId::UNDEFINED,
+        return_type: TypeId::ANY,
         next_type: TypeId::UNDEFINED,
     })
 }
@@ -157,7 +156,7 @@ fn get_tuple_iterator_info(db: &dyn TypeDatabase, tuple_type: TypeId) -> Option<
             Some(IteratorInfo {
                 iterator_type: tuple_type,
                 yield_type,
-                return_type: TypeId::UNDEFINED,
+                return_type: TypeId::ANY,
                 next_type: TypeId::UNDEFINED,
             })
         }
