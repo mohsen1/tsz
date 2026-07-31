@@ -68,7 +68,27 @@
 # run and failed the next, on identical trees — same cross-arena
 # non-determinism class as the zod parallel flake above. Fix-or-remove in
 # issue #15983.
-# baseline-status: reconciled r9
+# 2026-07-31 re-reconcile (r10): two ADDITIONS, both verified failing on clean
+# origin/main @ 28d4fcb (per-target run: `cargo test -p tsz-checker --test
+# generic_call_assignment_flow_tests`, 25 passed / 2 failed). Neither is a
+# harness ordering artifact discovered by this session — both were already
+# root-caused by earlier ones:
+# - colliding_generic_terminals_keep_flow_diagnostics_clean_across_file_orders
+#   deliberately constructs two files whose exported terminals collide on a
+#   raw binder-relative SymbolId (the test asserts the collision as a
+#   precondition) and is the same contested-cross-file-identity class as
+#   #15983/#14344 — false TS18048s once the flow-fallback path resolves the
+#   wrong file's terminal through the colliding id.
+# - imported_generic_result_narrows_inside_reduce_arrow was traced (not by
+#   this session) to a different mechanism: the callee's deferred generic
+#   result resolves to a still-unresolved `TypeData::Lazy(DefId)` at
+#   flow-fallback time, and `flow_call_fallback.rs::single_non_rest_generic_call`
+#   has no arm to force-resolve it, falling into the `Unsupported` catch-all —
+#   reframed as a slice of #15396/#13979, not the #15983 SymbolId family.
+# Fix-or-remove tracked in #15983 and #15396/#13979 respectively; #15999
+# closed as superseded (its other three sections were independently fixed by
+# #16002/#16003/#16006/#16007).
+# baseline-status: reconciled r10
 
 tsz-checker::commonjs_module_export_alias_tests::test_module_exports_forward_read_reports_ts2565
 tsz-checker::conditional_application_display_tests::deferred_generic_conditional_keeps_branch_union
@@ -86,6 +106,8 @@ tsz-checker::cross_module_nested_interface_tests::test_three_file_namespace_impo
 tsz-checker::cross_module_nested_interface_tests::test_workspace_method_type_resolution
 tsz-checker::cross_module_nested_interface_tests::test_workspace_property_type_resolution
 tsz-checker::flow_assignment_relation_routing_arch_tests::flow_assignment_and_predicate_exclusion_use_relation_outcome_boundary
+tsz-checker::generic_call_assignment_flow_tests::colliding_generic_terminals_keep_flow_diagnostics_clean_across_file_orders
+tsz-checker::generic_call_assignment_flow_tests::imported_generic_result_narrows_inside_reduce_arrow
 tsz-checker::generic_generator_member_substitution_tests::generic_generator_genuine_mismatch_still_errors_with_substituted_source
 tsz-checker::import_type_ambient_module_member_tests::cross_file_import_type_member_still_works
 tsz-checker::import_type_utility_identity_tests::import_type_extends_structural_match_no_false_positive
