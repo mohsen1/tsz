@@ -797,6 +797,38 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     }
                 }
             }
+            // Both source and target are intersections. Decomposing only one
+            // side and constraining the other's full (undecomposed) type
+            // against every member of the decomposed side turns a naked
+            // member on the un-decomposed side into candidates from every
+            // member of the other side: `T & string` (source) against
+            // `X & string` (target) would constrain naked `T` against both
+            // `X` (correct upper bound) and `string` (spurious upper bound),
+            // and the two upper bounds then combine into the artificial
+            // `X & string` instead of `X`. When both intersections have the
+            // same arity, pair a naked member only with its positional
+            // counterpart on the other side; structured (non-naked) members
+            // keep the broad, unpaired matching used by mismatched arities.
+            (Some(TypeData::Intersection(s_members)), Some(TypeData::Intersection(t_members))) => {
+                let s_members = self.interner.type_list(s_members);
+                let t_members = self.interner.type_list(t_members);
+                if s_members.len() == t_members.len() {
+                    for (index, &t_member) in t_members.iter().enumerate() {
+                        let s_member = s_members[index];
+                        if var_map.contains_key(&s_member) || var_map.contains_key(&t_member) {
+                            self.constrain_types(ctx, var_map, s_member, t_member, priority);
+                            continue;
+                        }
+                        for &other_s_member in s_members.iter() {
+                            self.constrain_types(ctx, var_map, other_s_member, t_member, priority);
+                        }
+                    }
+                } else {
+                    for &t_member in t_members.iter() {
+                        self.constrain_types(ctx, var_map, source, t_member, priority);
+                    }
+                }
+            }
             (_, Some(TypeData::Intersection(t_members))) => {
                 let t_members = self.interner.type_list(t_members);
                 for &member in t_members.iter() {
