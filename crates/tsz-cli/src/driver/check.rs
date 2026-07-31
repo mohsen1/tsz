@@ -1316,7 +1316,8 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
         // files that import them, improving incremental invalidation accuracy.
         {
             let queue_vec: Vec<usize> = work_queue.iter().copied().collect();
-            let ordered = topological_file_order(&queue_vec, &resolved_module_paths);
+            let stable_key = stable_file_order_key(&queue_vec, program);
+            let ordered = topological_file_order(&queue_vec, &resolved_module_paths, &stable_key);
             work_queue.clear();
             for idx in ordered {
                 work_queue.push_back(idx);
