@@ -2,6 +2,7 @@
 
 use super::{AssignabilityChecker, CallResult, resolve_call_with_checker};
 use crate::construction::QueryDatabase;
+use crate::relations::subtype::TypeResolver;
 use crate::{IntrinsicKind, TypeData, TypeId};
 use rustc_hash::FxHashSet;
 
@@ -25,6 +26,7 @@ enum SignatureGate {
 fn single_non_rest_generic_call<C: AssignabilityChecker>(
     db: &dyn QueryDatabase,
     checker: &mut C,
+    resolver: &dyn TypeResolver,
     type_id: TypeId,
     seen: &mut FxHashSet<TypeId>,
     remaining_steps: &mut usize,
@@ -40,11 +42,11 @@ fn single_non_rest_generic_call<C: AssignabilityChecker>(
 
     let evaluated = checker.evaluate_type(type_id);
     let result = if evaluated != type_id {
-        single_non_rest_generic_call(db, checker, evaluated, seen, remaining_steps)
+        single_non_rest_generic_call(db, checker, resolver, evaluated, seen, remaining_steps)
     } else if let Some(expanded) = checker.expand_type_alias_application(type_id)
         && expanded != type_id
     {
-        single_non_rest_generic_call(db, checker, expanded, seen, remaining_steps)
+        single_non_rest_generic_call(db, checker, resolver, expanded, seen, remaining_steps)
     } else {
         match db.lookup(type_id) {
             Some(TypeData::Function(shape_id)) => {
@@ -76,7 +78,14 @@ fn single_non_rest_generic_call<C: AssignabilityChecker>(
                 let mut found = None;
                 let mut unsupported = false;
                 for &member in db.type_list(list_id).iter() {
-                    match single_non_rest_generic_call(db, checker, member, seen, remaining_steps) {
+                    match single_non_rest_generic_call(
+                        db,
+                        checker,
+                        resolver,
+                        member,
+                        seen,
+                        remaining_steps,
+                    ) {
                         SignatureGate::NonCallable => {}
                         SignatureGate::One(call_type) if found.is_none() => {
                             found = Some(call_type);
@@ -98,9 +107,38 @@ fn single_non_rest_generic_call<C: AssignabilityChecker>(
             Some(TypeData::TypeParameter(info)) => {
                 info.constraint
                     .map_or(SignatureGate::Unsupported, |constraint| {
-                        single_non_rest_generic_call(db, checker, constraint, seen, remaining_steps)
+                        single_non_rest_generic_call(
+                            db,
+                            checker,
+                            resolver,
+                            constraint,
+                            seen,
+                            remaining_steps,
+                        )
                     })
             }
+            // A cross-file callee reaches this walk as a still-deferred
+            // `Lazy(DefId)`: the declaration is registered with the
+            // `TypeEnvironment`, but nothing on the flow-fallback path had
+            // collapsed it yet, and a same-file callee is already a concrete
+            // `Function` by the time flow analysis runs. Resolving the def
+            // through the caller's resolver is a map lookup, not a forcing
+            // path, so the walk stays as conservative as it is for a local
+            // callee. An unregistered def still resolves to nothing and falls
+            // through to the deferred catch-all below.
+            Some(TypeData::Lazy(def_id)) => resolver
+                .resolve_lazy(def_id, db.as_type_database())
+                .filter(|&resolved| resolved != type_id)
+                .map_or(SignatureGate::Unsupported, |resolved| {
+                    single_non_rest_generic_call(
+                        db,
+                        checker,
+                        resolver,
+                        resolved,
+                        seen,
+                        remaining_steps,
+                    )
+                }),
             Some(TypeData::Application(_) | TypeData::Conditional(_) | TypeData::Union(_)) => {
                 SignatureGate::Unsupported
             }
@@ -153,6 +191,7 @@ where
     let SignatureGate::One(call_type) = single_non_rest_generic_call(
         db,
         &mut checker,
+        resolver,
         func_type,
         &mut FxHashSet::default(),
         &mut remaining_steps,
@@ -309,6 +348,191 @@ mod tests {
             &db,
             &TypeEnvironment::new(),
             wrapped,
+            &[TypeId::STRING],
+            |_| {},
+        );
+        assert_eq!(result, None);
+    }
+
+    /// Register `def_id` as `body` and hand back the deferred reference a
+    /// cross-file callee actually arrives as.
+    fn registered_lazy(
+        db: &TypeInterner,
+        env: &mut TypeEnvironment,
+        def: u32,
+        body: TypeId,
+    ) -> TypeId {
+        env.insert_def(DefId(def), body);
+        db.lazy(DefId(def))
+    }
+
+    #[test]
+    fn resolves_one_generic_signature_through_a_registered_lazy_def() {
+        let db = TypeInterner::new();
+        let mut env = TypeEnvironment::new();
+        let deferred = registered_lazy(&db, &mut env, 21, generic_identity(&db, "T"));
+        let result = resolve_single_non_rest_generic_call_with_compat_checker(
+            &db,
+            &env,
+            deferred,
+            &[TypeId::STRING],
+            |_| {},
+        );
+        assert_eq!(result, Some(TypeId::STRING));
+    }
+
+    #[test]
+    fn resolves_a_registered_lazy_def_under_a_renamed_binder() {
+        let db = TypeInterner::new();
+        let mut env = TypeEnvironment::new();
+        let deferred = registered_lazy(&db, &mut env, 22, generic_identity(&db, "Payload"));
+        let result = resolve_single_non_rest_generic_call_with_compat_checker(
+            &db,
+            &env,
+            deferred,
+            &[TypeId::NUMBER],
+            |_| {},
+        );
+        assert_eq!(result, Some(TypeId::NUMBER));
+    }
+
+    #[test]
+    fn resolves_a_registered_lazy_def_nested_in_an_intersection_wrapper() {
+        let db = TypeInterner::new();
+        let mut env = TypeEnvironment::new();
+        let deferred = registered_lazy(&db, &mut env, 23, generic_identity(&db, "T"));
+        let wrapped = db.intersection2(deferred, db.object(Vec::new()));
+        let result = resolve_single_non_rest_generic_call_with_compat_checker(
+            &db,
+            &env,
+            wrapped,
+            &[TypeId::STRING],
+            |_| {},
+        );
+        assert_eq!(result, Some(TypeId::STRING));
+    }
+
+    #[test]
+    fn resolves_a_registered_lazy_def_behind_a_constraint_chain() {
+        let db = TypeInterner::new();
+        let mut env = TypeEnvironment::new();
+        let deferred = registered_lazy(&db, &mut env, 24, generic_identity(&db, "T"));
+        let wrapped = constrained_chain(&db, deferred, 3);
+        let result = resolve_single_non_rest_generic_call_with_compat_checker(
+            &db,
+            &env,
+            wrapped,
+            &[TypeId::STRING],
+            |_| {},
+        );
+        assert_eq!(result, Some(TypeId::STRING));
+    }
+
+    #[test]
+    fn rejects_an_unregistered_lazy_def() {
+        let db = TypeInterner::new();
+        let result = resolve_single_non_rest_generic_call_with_compat_checker(
+            &db,
+            &TypeEnvironment::new(),
+            db.lazy(DefId(25)),
+            &[TypeId::STRING],
+            |_| {},
+        );
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn rejects_a_registered_lazy_def_whose_body_is_not_generic() {
+        let db = TypeInterner::new();
+        let mut env = TypeEnvironment::new();
+        let concrete = db.function(FunctionShape {
+            type_params: Vec::new(),
+            params: vec![ParamInfo {
+                name: None,
+                type_id: TypeId::STRING,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: TypeId::STRING,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+        let deferred = registered_lazy(&db, &mut env, 26, concrete);
+        let result = resolve_single_non_rest_generic_call_with_compat_checker(
+            &db,
+            &env,
+            deferred,
+            &[TypeId::STRING],
+            |_| {},
+        );
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn rejects_a_registered_lazy_def_whose_body_takes_a_rest_parameter() {
+        let db = TypeInterner::new();
+        let mut env = TypeEnvironment::new();
+        let parameter = TypeParamInfo {
+            name: db.intern_string("T"),
+            constraint: None,
+            default: None,
+            is_const: false,
+            origin: TypeParamOrigin::User,
+        };
+        let parameter_type = db.type_param(parameter);
+        let variadic = db.function(FunctionShape {
+            type_params: vec![parameter],
+            params: vec![ParamInfo {
+                name: None,
+                type_id: db.array(parameter_type),
+                optional: false,
+                rest: true,
+            }],
+            this_type: None,
+            return_type: parameter_type,
+            type_predicate: None,
+            is_constructor: false,
+            is_method: false,
+        });
+        let deferred = registered_lazy(&db, &mut env, 27, variadic);
+        let result = resolve_single_non_rest_generic_call_with_compat_checker(
+            &db,
+            &env,
+            deferred,
+            &[TypeId::STRING],
+            |_| {},
+        );
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn rejects_a_lazy_def_registered_as_its_own_body() {
+        let db = TypeInterner::new();
+        let mut env = TypeEnvironment::new();
+        let self_referential = db.lazy(DefId(28));
+        env.insert_def(DefId(28), self_referential);
+        let result = resolve_single_non_rest_generic_call_with_compat_checker(
+            &db,
+            &env,
+            self_referential,
+            &[TypeId::STRING],
+            |_| {},
+        );
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn rejects_two_registered_lazy_defs_with_one_generic_signature_each() {
+        let db = TypeInterner::new();
+        let mut env = TypeEnvironment::new();
+        let first = registered_lazy(&db, &mut env, 29, generic_identity(&db, "T"));
+        let second = registered_lazy(&db, &mut env, 30, generic_identity(&db, "U"));
+        let result = resolve_single_non_rest_generic_call_with_compat_checker(
+            &db,
+            &env,
+            db.intersection2(first, second),
             &[TypeId::STRING],
             |_| {},
         );
