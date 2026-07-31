@@ -13,8 +13,8 @@
 //! Also guards the property-table dedup for repeated direct keys
 //! (`{ a: 1, b: 2, a: 3 }` renders `{ a: number; b: number; }`).
 
-use tsz_checker::test_utils::check_with_options_code_messages;
 use tsz_checker::CheckerOptions;
+use tsz_checker::test_utils::check_with_options_code_messages;
 
 fn get_diagnostics(source: &str) -> Vec<(u32, String)> {
     check_with_options_code_messages(
@@ -157,4 +157,126 @@ const e: string = { wprop: n, zprop: n, wprop: n };
         "duplicate direct key should render once, got: {msg:?}",
     );
     assert_member_order(&msg, &["wprop", "zprop"]);
+}
+
+// =============================================================================
+// Duplicate direct keys in the *annotated-initializer* source display.
+//
+// `object_literal_source_type_display` renders the source of a TS2322/TS2345
+// from the object-literal syntax rather than from the finalized literal type,
+// and used to emit one member per element — so a repeated key rendered twice.
+// tsc's property table keeps the FIRST position and the LAST value.
+//
+// Every expectation below is pinned against `tsc` 7.0.2
+// (`--noEmit --strict --pretty false --lib es2015`).
+// =============================================================================
+
+/// Exact-message control: a repeated key with a *different* value type each
+/// time. tsc prints `{ zprop: boolean; wprop: string; }` — first position,
+/// last value. This is the case that proves the rendering is not merely
+/// deduped but takes the correct occurrence's type.
+#[test]
+fn duplicate_direct_key_keeps_first_position_and_last_value() {
+    let diags = get_diagnostics(
+        r#"
+const e: string = { zprop: 1, wprop: "s", zprop: true };
+"#,
+    );
+    let msg = message_mentioning(&diags, &["zprop", "wprop"]);
+    assert!(
+        msg.contains("{ zprop: boolean; wprop: string; }"),
+        "expected tsc's first-position/last-value rendering, got: {msg:?}",
+    );
+}
+
+/// The same key three times collapses to one member. Guards against a fix that
+/// only dedupes an adjacent pair.
+#[test]
+fn triple_duplicate_direct_key_renders_once() {
+    let diags = get_diagnostics(
+        r"
+declare const n: number;
+const e: string = { zprop: n, wprop: n, zprop: n, zprop: n };
+",
+    );
+    let msg = message_mentioning(&diags, &["zprop", "wprop"]);
+    assert_eq!(
+        msg.matches("zprop").count(),
+        1,
+        "a key repeated three times must still render once, got: {msg:?}",
+    );
+    assert_member_order(&msg, &["zprop", "wprop"]);
+}
+
+/// Shorthand members participate in the same property table. Binder names
+/// differ from the property-assignment cases so nothing keys on identifier text.
+#[test]
+fn duplicate_shorthand_key_renders_once() {
+    let diags = get_diagnostics(
+        r"
+const alpha = 1, beta = 2;
+const e: string = { alpha, beta, alpha };
+",
+    );
+    let msg = message_mentioning(&diags, &["alpha", "beta"]);
+    assert_eq!(
+        msg.matches("alpha").count(),
+        1,
+        "duplicate shorthand key must render once, got: {msg:?}",
+    );
+    assert_member_order(&msg, &["alpha", "beta"]);
+}
+
+/// A quoted key and a bare key naming the same property are one table entry.
+#[test]
+fn quoted_and_bare_same_key_render_once() {
+    let diags = get_diagnostics(
+        r#"
+declare const n: number;
+const e: string = { "kprop": n, kprop: n };
+"#,
+    );
+    let msg = message_mentioning(&diags, &["kprop"]);
+    assert_eq!(
+        msg.matches("kprop").count(),
+        1,
+        "a quoted and a bare spelling of one key must render once, got: {msg:?}",
+    );
+}
+
+/// The dedup applies to a nested literal reached through the recursive arm of
+/// the display builder, not only to the outermost literal.
+#[test]
+fn duplicate_key_inside_nested_literal_renders_once() {
+    let diags = get_diagnostics(
+        r"
+declare const n: number;
+const e: string = { outer: { zprop: n, wprop: n, zprop: n } };
+",
+    );
+    let msg = message_mentioning(&diags, &["outer", "zprop"]);
+    assert_eq!(
+        msg.matches("zprop").count(),
+        1,
+        "duplicate key in a nested literal must render once, got: {msg:?}",
+    );
+    assert_member_order(&msg, &["outer", "zprop", "wprop"]);
+}
+
+/// Negative control: a literal with no repeated key must be untouched by the
+/// dedup — same member count, same source order, no collapsing of distinct
+/// names that merely share a prefix.
+#[test]
+fn distinct_keys_including_shared_prefix_all_render() {
+    let diags = get_diagnostics(
+        r"
+declare const n: number;
+const e: string = { pre: n, prefix: n, prefixed: n };
+",
+    );
+    let msg = message_mentioning(&diags, &["pre", "prefix"]);
+    assert!(
+        msg.contains("{ pre: number; prefix: number; prefixed: number; }"),
+        "distinct keys must all render in source order, got: {msg:?}",
+    );
 }

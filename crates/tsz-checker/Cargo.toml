@@ -2546,3 +2546,15 @@ path = "tests/default_export_merge_diagnostics_tests.rs"
 [[test]]
 name = "type_predicate_sibling_argument_evidence_tests"
 path = "tests/type_predicate_sibling_argument_evidence_tests.rs"
+[[test]]
+name = "indexed_access_concrete_missing_key_ts2536_tests"
+path = "tests/indexed_access_concrete_missing_key_ts2536_tests.rs"
+[[test]]
+name = "ts6133_write_only_destructuring_tests"
+path = "tests/ts6133_write_only_destructuring_tests.rs"
+[[test]]
+name = "generic_mapped_to_index_signature_tests"
+path = "tests/generic_mapped_to_index_signature_tests.rs"
+[[test]]
+name = "object_literal_synthetic_this_display_order_tests"
+path = "tests/object_literal_synthetic_this_display_order_tests.rs"
