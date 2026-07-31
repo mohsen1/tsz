@@ -630,9 +630,33 @@ impl PerfCounters {
     }
 }
 
-/// Get the process-wide counters. The first call also reads `TSZ_PERF_COUNTERS`
-/// to set the `enabled` flag.
+// Test-only per-thread counter overlay installed by `ScopedPerfCounters`.
+//
+// The counters are otherwise a single process-wide set of monotonic atomics
+// with no reset, so a test that asserts on counter *totals* is really asserting
+// on everything the whole test binary has done so far. That is only correct
+// under a process-per-test runner. When the overlay is active, `counters()`
+// hands the calling thread a private set instead, so a measurement is
+// attributable to exactly the work done inside the scope no matter which runner
+// (or thread count) is in play.
+#[cfg(any(test, debug_assertions))]
+thread_local! {
+    static SCOPED_COUNTERS: std::cell::Cell<Option<&'static PerfCounters>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Get the counters to record into. Normally the process-wide set, whose first
+/// call also reads `TSZ_PERF_COUNTERS` to set the `enabled` flag.
+///
+/// In test and debug builds a [`ScopedPerfCounters`] guard can redirect the
+/// calling thread to a private set. Release builds compile that branch out
+/// entirely, and even in debug builds every recorder checks [`enabled_fast`]
+/// before it gets here, so the redirect costs nothing when counting is off.
 pub fn counters() -> &'static PerfCounters {
+    #[cfg(any(test, debug_assertions))]
+    if let Some(scoped) = SCOPED_COUNTERS.with(std::cell::Cell::get) {
+        return scoped;
+    }
     COUNTERS.get_or_init(|| {
         let c = PerfCounters::new_zero();
         if std::env::var_os("TSZ_PERF_COUNTERS").is_some() {
@@ -640,6 +664,67 @@ pub fn counters() -> &'static PerfCounters {
         }
         c
     })
+}
+
+/// RAII guard giving the current thread a private, zeroed counter set for the
+/// duration of a measurement, and turning the counter gate on so the recorders
+/// actually fire.
+///
+/// Test-only. Use it whenever a test asserts on counter values: without it a
+/// `== 0` assertion is a false red as soon as any sibling test has already
+/// counted in the same process, and — worse, because it is silent — a `>= 1`
+/// assertion is a false green served by a neighbor's increments rather than by
+/// the work under test.
+///
+/// ```ignore
+/// let counted = tsz_common::perf_counters::ScopedPerfCounters::new();
+/// run_the_work_under_test();
+/// let snapshot = counted.snapshot();
+/// ```
+///
+/// Increments made on *other* threads while the scope is live still land on the
+/// process-wide set, so measure work that runs on the thread holding the guard.
+#[cfg(any(test, debug_assertions))]
+pub struct ScopedPerfCounters {
+    previous: Option<&'static PerfCounters>,
+}
+
+#[cfg(any(test, debug_assertions))]
+impl ScopedPerfCounters {
+    /// Install a fresh counter set for this thread and force the gate on.
+    ///
+    /// The set is intentionally leaked: [`counters()`] hands out `&'static`
+    /// references that recorders may hold across the scope, and a test binary
+    /// creates a bounded number of scopes.
+    #[must_use]
+    pub fn new() -> Self {
+        force_enable_perf_counters_for_tests();
+        let fresh: &'static PerfCounters = Box::leak(Box::new(PerfCounters::new_zero()));
+        fresh.enabled.store(true, Ordering::Relaxed);
+        let previous = SCOPED_COUNTERS.with(|slot| slot.replace(Some(fresh)));
+        Self { previous }
+    }
+
+    /// Snapshot the scoped counters — the totals recorded on this thread since
+    /// the guard was created.
+    #[must_use]
+    pub fn snapshot(&self) -> PerfCounterSnapshot {
+        PerfCounters::snapshot()
+    }
+}
+
+#[cfg(any(test, debug_assertions))]
+impl Default for ScopedPerfCounters {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(any(test, debug_assertions))]
+impl Drop for ScopedPerfCounters {
+    fn drop(&mut self) {
+        SCOPED_COUNTERS.with(|slot| slot.set(self.previous));
+    }
 }
 
 /// Increment a counter when counters are enabled. The branch is the
