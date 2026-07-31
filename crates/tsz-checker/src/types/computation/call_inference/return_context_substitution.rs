@@ -677,6 +677,27 @@ impl<'a> CheckerState<'a> {
                 substitution,
                 visited,
             );
+            // A type-predicate function's asserted type (`x is I`) is carried
+            // in `type_predicate.type_id`, not `return_type` (which is always
+            // `boolean`/`void`). Without this, a type parameter that only
+            // appears as a predicate target is invisible to return-context
+            // matching: two ordinary parameters or an ordinary return
+            // position bind the parameter fine, but a sibling predicate
+            // argument's inferred target type never reaches the substitution
+            // that types the rest of the call.
+            if let (Some(source_predicate), Some(target_predicate)) =
+                (source_fn.type_predicate, target_fn.type_predicate)
+                && let (Some(source_predicate_type), Some(target_predicate_type)) =
+                    (source_predicate.type_id, target_predicate.type_id)
+            {
+                self.collect_return_context_substitution(
+                    source_predicate_type,
+                    target_predicate_type,
+                    tracked_type_params,
+                    substitution,
+                    visited,
+                );
+            }
             if substitution.len() > substitution_len_before_callable
                 || (source_application.is_none() && target_application.is_none())
             {
