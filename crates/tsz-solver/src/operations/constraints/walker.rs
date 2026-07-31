@@ -34,8 +34,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // Source placeholders become upper bounds outside contravariant
         // inference. Placeholder-free parameter dependency recovery can opt in
         // to candidate routing for its explicit reverse edge.
+        //
+        // The reverse edge exists only to model the contravariant role swap, so
+        // it is gated on the contravariant *routing* being live, not merely on
+        // the traversal direction. A target signature whose declaration origin
+        // grants parameter bivariance keeps `in_contra_mode` while deliberately
+        // suppressing contra-candidate routing (`collects_contra_candidates`);
+        // taking the reverse edge there would file the target as an ordinary
+        // covariant candidate, which `tsc` never does — it only ever infers into
+        // a variable in *target* position. Fall back to the upper bound instead.
         if let Some(&var) = var_map.get(&source) {
-            if ctx.in_contra_mode
+            if ctx.collects_contra_candidates()
                 || ctx.parameter_recovery_mode == ParameterRecoveryMode::StandaloneReverse
             {
                 ctx.add_candidate(var, target, priority);

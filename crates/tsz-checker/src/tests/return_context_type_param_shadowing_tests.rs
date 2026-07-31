@@ -150,3 +150,79 @@ async function bad<T>(callback: () => Promise<T>): Promise<T> {
         "expected TS2322 number-vs-T; got {diags:?}"
     );
 }
+
+#[test]
+fn async_arrow_argument_infers_awaited_return_without_enclosing_generics() {
+    // #16048 probe E: the trigger needs no type parameter on the enclosing
+    // function at all. The async arrow's contextual return type is the
+    // callee's own unresolved `T`, and the async return-context expansion
+    // (`T | PromiseLike<T> | Promise<T>`) must not survive as an inference
+    // candidate for `T`.
+    let diags = diagnostic_summaries(
+        r#"
+/// <reference lib="es2015.promise" />
+declare function withConnection<T>(consumer: (connection: string) => Promise<T>): Promise<T>;
+
+async function run(): Promise<number> {
+    return withConnection(async (connection) => {
+        return connection.length;
+    });
+}
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "async arrow argument must infer T = number, not T = number | PromiseLike<number>; got {diags:?}"
+    );
+}
+
+#[test]
+fn async_arrow_argument_infers_awaited_return_under_sync_enclosing_function() {
+    // #16048 probe F: the enclosing function need not be `async` either.
+    let diags = diagnostic_summaries(
+        r#"
+/// <reference lib="es2015.promise" />
+declare function withConnection<T>(consumer: (connection: string) => Promise<T>): Promise<T>;
+
+function run(): Promise<number> {
+    return withConnection(async (connection) => {
+        return connection.length;
+    });
+}
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "sync enclosing function with an async arrow argument must stay clean; got {diags:?}"
+    );
+}
+
+#[test]
+fn sync_arrow_argument_under_async_enclosing_function_drops_promiselike_leak() {
+    // #16048 probe D: a plain (non-async) arrow returning a `Promise` exhibits
+    // the same `PromiseLike` leak, so the arrow's own `async`ness is not the
+    // trigger. `tsc@7.0.2 --strict --target es2017` reports nothing here.
+    //
+    // This shape carries a *second*, independent false positive that predates
+    // and survives the leak fix (`Type 'number' is not assignable to type
+    // 'Promise<number>'`, tracked separately), so this case pins the leak
+    // signature rather than full cleanliness — asserting `is_empty()` here
+    // would make the test a proxy for an unrelated defect.
+    let diags = diagnostic_summaries(
+        r#"
+/// <reference lib="es2015.promise" />
+declare function withConnection<T>(consumer: (connection: string) => Promise<T>): Promise<T>;
+
+async function run(): Promise<number> {
+    return withConnection((connection) => {
+        return Promise.resolve(connection.length);
+    });
+}
+"#,
+    );
+    assert!(
+        !diags.iter().any(|d| d.contains("PromiseLike")),
+        "the async return-context expansion must not survive as an inference \
+         candidate for the callee's type parameter; got {diags:?}"
+    );
+}
