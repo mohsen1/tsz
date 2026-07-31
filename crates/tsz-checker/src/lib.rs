@@ -1339,9 +1339,6 @@ mod keyof_mapped_constraint_key_space_tests;
 #[path = "tests/keyof_suppression_relation_routing_arch_tests.rs"]
 mod keyof_suppression_relation_routing_arch_tests;
 #[cfg(test)]
-#[path = "tests/kysely_intersection_typearg_scratch_tests.rs"]
-mod kysely_intersection_typearg_scratch_tests;
-#[cfg(test)]
 #[path = "tests/libtype_structural_name_lookup_arch_tests.rs"]
 mod libtype_structural_name_lookup_arch_tests;
 #[cfg(test)]
