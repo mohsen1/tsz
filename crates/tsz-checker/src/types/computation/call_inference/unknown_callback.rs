@@ -224,18 +224,78 @@ impl<'a> CheckerState<'a> {
         if !self.is_callback_like_argument(other_arg_idx) {
             return true;
         }
-        // Only the return position of the sibling callback's contextual
-        // signature counts as inference evidence. Parameter positions are
-        // contravariant and supply context TO the lambda's parameters from
-        // `T`, not inference FROM the lambda back to `T`.
-        self.resolved_callback_contextual_signature(other_param_type)
-            .is_some_and(|other_callback| {
+        let Some(other_callback) = self.resolved_callback_contextual_signature(other_param_type)
+        else {
+            return false;
+        };
+        // The return position of the sibling callback's contextual signature
+        // always counts as inference evidence.
+        if crate::query_boundaries::generic_instantiation::type_contains_type_parameter_binder(
+            self.ctx.types,
+            other_callback.return_type,
+            type_param,
+        ) {
+            return true;
+        }
+        // A parameter position counts only when the sibling lambda annotates
+        // that parameter itself. An *unannotated* parameter is an inference
+        // sink: its type is produced by the contextual type, so it supplies
+        // context TO the lambda from `T` rather than inference FROM the lambda
+        // back to `T`. An *annotated* parameter is the opposite — `tsc` infers
+        // the enclosing signature's type parameters contravariantly from the
+        // annotation and fixes them before contextually typing any sibling
+        // callback body. The position matters: an annotation sitting at a slot
+        // whose contextual type does not mention `T` is not evidence for `T`.
+        let annotated_positions = self.annotated_callback_parameter_positions(other_arg_idx);
+        let param_type_at = |position: usize| -> Option<TypeId> {
+            other_callback
+                .params
+                .get(position)
+                .map(|param| param.type_id)
+                .or_else(|| {
+                    let last = other_callback.params.last()?;
+                    last.rest.then_some(last.type_id)
+                })
+        };
+        annotated_positions.iter().any(|&position| {
+            param_type_at(position).is_some_and(|param_type| {
                 crate::query_boundaries::generic_instantiation::type_contains_type_parameter_binder(
                     self.ctx.types,
-                    other_callback.return_type,
+                    param_type,
                     type_param,
                 )
             })
+        })
+    }
+
+    /// Positions of a callback argument's own parameters that carry an
+    /// explicit type annotation, and are therefore inference sources rather
+    /// than sinks for the enclosing generic signature's type parameters.
+    fn annotated_callback_parameter_positions(&self, arg_idx: NodeIndex) -> Vec<usize> {
+        let Some(callback_idx) = self.callback_function_index(arg_idx) else {
+            return Vec::new();
+        };
+        let Some(func) = self
+            .ctx
+            .arena
+            .get(callback_idx)
+            .and_then(|node| self.ctx.arena.get_function(node))
+        else {
+            return Vec::new();
+        };
+        func.parameters
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|&(_, &param_idx)| {
+                self.ctx
+                    .arena
+                    .get(param_idx)
+                    .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
+                    .is_some_and(|param| param.type_annotation.is_some())
+            })
+            .map(|(position, _)| position)
+            .collect()
     }
 
     /// Resolve a callback parameter slot to its contextual `FunctionShape`,
