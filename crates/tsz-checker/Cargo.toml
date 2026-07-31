@@ -2564,3 +2564,6 @@ path = "tests/object_literal_synthetic_this_display_order_tests.rs"
 [[test]]
 name = "predicate_target_return_only_sibling_tests"
 path = "tests/predicate_target_return_only_sibling_tests.rs"
+[[test]]
+name = "getter_contextual_generic_call_typeparam_tests"
+path = "tests/getter_contextual_generic_call_typeparam_tests.rs"
