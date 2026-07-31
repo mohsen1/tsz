@@ -1394,7 +1394,7 @@ impl<'a> CheckerState<'a> {
 
         if let Some(ref prop_name_str) = property_name {
             if self.binding_pattern_direct_source_is_this(pattern_idx)
-                && self.ctx.function_depth == 0
+                && self.ctx.directly_in_class_member_body()
                 && let Some(class_info) = self.ctx.enclosing_class.as_ref()
                 && class_info.in_constructor
                 && let Some(declaring_class_name) =

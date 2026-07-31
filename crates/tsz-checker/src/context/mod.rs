@@ -1876,6 +1876,18 @@ pub struct CheckerContext<'a> {
     /// Used to detect when labeled jumps cross function boundaries.
     pub function_depth: u32,
 
+    /// The [`Self::function_depth`] at which the innermost enclosing class
+    /// member body (method, constructor, accessor, or static block) was
+    /// entered; `0` when no class member body is being checked.
+    ///
+    /// A class member body is a function boundary — it raises
+    /// `function_depth` like any other function body — but the
+    /// abstract-property-access checks (TS2715) need the narrower question
+    /// "is this statement directly in the member body, or in a function
+    /// nested inside it?". Comparing against this baseline answers that
+    /// without a second notion of "function".
+    pub(crate) class_member_body_depth: u32,
+
     /// Track whether current code path is syntactically unreachable.
     pub is_unreachable: bool,
 

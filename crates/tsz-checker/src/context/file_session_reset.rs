@@ -429,6 +429,7 @@ impl<'a> CheckerContext<'a> {
         self.iteration_depth = 0;
         self.switch_depth = 0;
         self.function_depth = 0;
+        self.class_member_body_depth = 0;
         self.is_unreachable = false;
         self.has_reported_unreachable = false;
         self.label_stack.clear();

@@ -2567,3 +2567,6 @@ path = "tests/predicate_target_return_only_sibling_tests.rs"
 [[test]]
 name = "getter_contextual_generic_call_typeparam_tests"
 path = "tests/getter_contextual_generic_call_typeparam_tests.rs"
+[[test]]
+name = "class_member_body_function_boundary_tests"
+path = "tests/class_member_body_function_boundary_tests.rs"

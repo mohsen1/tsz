@@ -183,7 +183,7 @@ impl<'a> CheckerState<'a> {
 
             if self.is_this_expression(access.expression)
                 && let Some(ref class_info) = self.ctx.enclosing_class.clone()
-                && self.ctx.function_depth == 0
+                && self.ctx.directly_in_class_member_body()
                 && (class_info.in_constructor || self.is_in_instance_property_initializer(idx))
                 && let Some(declaring_class_name) =
                     self.find_abstract_property_declaring_class(class_info.class_idx, property_name)

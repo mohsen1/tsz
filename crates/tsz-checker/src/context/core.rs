@@ -1306,6 +1306,46 @@ impl<'a> CheckerContext<'a> {
         self.async_depth > 0
     }
 
+    /// Enter the body of a class member — method, constructor, accessor, or
+    /// static block.
+    ///
+    /// `tsc` treats a class member body as a function boundary for every
+    /// grammar and name-resolution decision that asks "am I at the top level
+    /// of a file?": TS1308 / TS1103 / TS2852 for the `await` forms, TS1107 for
+    /// `break`/`continue`, and the `await(...)`-as-identifier TS2311
+    /// special case. Free function bodies already raise
+    /// [`Self::function_depth`]; member bodies used not to, so their
+    /// statements answered all of those questions as if they were top level.
+    ///
+    /// Returns the previous member-body baseline, which the caller must hand
+    /// back to [`Self::exit_class_member_body`].
+    pub const fn enter_class_member_body(&mut self) -> u32 {
+        self.function_depth += 1;
+        let saved = self.class_member_body_depth;
+        self.class_member_body_depth = self.function_depth;
+        saved
+    }
+
+    /// Leave a class member body entered by [`Self::enter_class_member_body`].
+    pub const fn exit_class_member_body(&mut self, saved: u32) {
+        self.function_depth -= 1;
+        self.class_member_body_depth = saved;
+    }
+
+    /// True when checking is running directly in the enclosing class member's
+    /// body rather than inside a function nested within it.
+    ///
+    /// The abstract-property-access checks (TS2715) need this narrower
+    /// question than [`Self::function_depth`] alone can answer: `tsc` reports
+    /// `this.abstractProp` in a constructor body but not in a function
+    /// declared inside that constructor. Outside any member body both sides
+    /// are `0`, which keeps class *property initializers* — checked at the
+    /// class body's own depth, not in a member body — answering `true` as
+    /// they did before.
+    pub const fn directly_in_class_member_body(&self) -> bool {
+        self.function_depth == self.class_member_body_depth
+    }
+
     /// Consume one unit of type resolution fuel.
     /// Returns true if fuel is still available, false if exhausted.
     /// When exhausted, type resolution should return ERROR to prevent timeout.
