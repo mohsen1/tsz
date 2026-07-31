@@ -185,6 +185,13 @@ pub struct NarrowingCache {
     /// In-progress `(source, excluded, resolver_generation)` set for
     /// `narrow_excluding_type`.
     pub(crate) narrow_excluding_visiting: RefCell<FxHashSet<NarrowExcludingKey>>,
+    /// In-progress `(source, property, present)` set for
+    /// `narrow_by_property_presence`'s nested-union recursion (the resolved
+    /// alias of one union member can itself resolve back to the enclosing
+    /// union, e.g. a `Record<string, Either<X, A>>` indexed-access element or
+    /// a 3-way discriminated union reached through a generic instantiation
+    /// path). Returning the type unchanged on a cycle prevents stack overflow.
+    pub(crate) narrow_property_presence_visiting: RefCell<FxHashSet<NarrowPropertyPresenceKey>>,
     /// Memo for the narrowing-boundary assignability check keyed by
     /// `(source, target, resolver_generation)`.
     pub(crate) narrow_assignable_cache: RefCell<GenerationMemo<NarrowExcludingStableKey, bool>>,
@@ -234,6 +241,15 @@ pub(crate) struct NarrowExcludingStableKey {
     pub(crate) excluded: TypeId,
 }
 
+/// Cache key for `NarrowingContext::narrow_by_property_presence`'s
+/// nested-union recursion guard: a `(source, property, present)` triple.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
+pub(crate) struct NarrowPropertyPresenceKey {
+    pub(crate) source: TypeId,
+    pub(crate) property: Atom,
+    pub(crate) present: bool,
+}
+
 /// RAII guard for one exclusion-narrowing recursion frame.
 pub(in crate::narrowing) struct ExclusionFrame<'b> {
     depth: &'b Cell<u32>,
@@ -274,6 +290,18 @@ impl Drop for NarrowExcludingVisitGuard<'_> {
     }
 }
 
+/// RAII guard for one in-progress `narrow_by_property_presence` key.
+pub(in crate::narrowing) struct NarrowPropertyPresenceVisitGuard<'b> {
+    visiting: &'b RefCell<FxHashSet<NarrowPropertyPresenceKey>>,
+    key: NarrowPropertyPresenceKey,
+}
+
+impl Drop for NarrowPropertyPresenceVisitGuard<'_> {
+    fn drop(&mut self) {
+        self.visiting.borrow_mut().remove(&self.key);
+    }
+}
+
 impl NarrowingCache {
     pub fn new() -> Self {
         Self {
@@ -299,6 +327,7 @@ impl NarrowingCache {
             narrow_type_cache: RefCell::new(GenerationMemo::default()),
             narrow_excluding_cache: RefCell::new(GenerationMemo::default()),
             narrow_excluding_visiting: RefCell::new(FxHashSet::default()),
+            narrow_property_presence_visiting: RefCell::new(FxHashSet::default()),
             narrow_assignable_cache: RefCell::new(GenerationMemo::default()),
             narrow_subtype_cache: RefCell::new(GenerationMemo::default()),
             narrow_relation_budget_events: Cell::new(0),
@@ -525,6 +554,23 @@ impl NarrowingCache {
         }
         Some(NarrowExcludingVisitGuard {
             visiting: &self.narrow_excluding_visiting,
+            key,
+        })
+    }
+
+    pub(in crate::narrowing) fn narrow_property_presence_visit_guard(
+        &self,
+        key: NarrowPropertyPresenceKey,
+    ) -> Option<NarrowPropertyPresenceVisitGuard<'_>> {
+        if !self
+            .narrow_property_presence_visiting
+            .borrow_mut()
+            .insert(key)
+        {
+            return None;
+        }
+        Some(NarrowPropertyPresenceVisitGuard {
+            visiting: &self.narrow_property_presence_visiting,
             key,
         })
     }
