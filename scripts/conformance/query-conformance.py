@@ -49,6 +49,7 @@ import os
 import sys
 import argparse
 import json
+import re
 from collections import Counter
 from pathlib import Path
 
@@ -66,6 +67,8 @@ from accepted_regressions import normalized_entries  # noqa: E402  (path injecte
 
 DEFAULT_TSC_CACHE_PATH = Path(__file__).with_name("tsc-cache-full.json")
 DEFAULT_CONFORMANCE_DOMAIN_PATH = Path(__file__).with_name("conformance-domain.json")
+ROOT_DIR = Path(__file__).resolve().parents[2]
+README_FILE = ROOT_DIR / "README.md"
 
 # =============================================================================
 # Failure-category definitions (used by --campaign / --campaigns).
@@ -425,6 +428,152 @@ def show_snapshot_freshness(
         f"{current_total} {unit} (delta {delta:+d})."
     )
     print("  Refresh conformance-detail.json before citing this dashboard as current public truth.")
+
+
+# =============================================================================
+# README-vs-detail freshness. Distinct from show_snapshot_freshness() above:
+# that compares conformance-detail.json against the checked TypeScript corpus
+# domain (is the detail file itself stale). This compares conformance-detail.json
+# against the number README.md publicly claims (is the public claim stale, or
+# does it disagree with what was actually measured). Mirrors
+# scripts/emit/query-emit.py's emit_freshness_status family, which performs the
+# same README-vs-detail check for the emit suite.
+# =============================================================================
+
+
+def conformance_summary_from_readme_text(text):
+    section = text.split("<!-- CONFORMANCE_START -->", 1)
+    if len(section) != 2:
+        return None
+    section = section[1].split("<!-- CONFORMANCE_END -->", 1)[0]
+    match = re.search(r"\(([\d,]+)\s*/\s*([\d,]+)", section)
+    if not match:
+        return None
+    summary = {
+        "passed": int(match.group(1).replace(",", "")),
+        "runnable": int(match.group(2).replace(",", "")),
+    }
+    partition = re.search(
+        r"Candidates:\s*([\d,]+)\s*\(([\d,]+) runnable,\s*"
+        r"([\d,]+) unsupported,\s*([\d,]+) skipped\)",
+        section,
+    )
+    if partition:
+        summary.update(
+            {
+                "candidates": int(partition.group(1).replace(",", "")),
+                "runnable": int(partition.group(2).replace(",", "")),
+                "unsupported": int(partition.group(3).replace(",", "")),
+                "skipped": int(partition.group(4).replace(",", "")),
+            }
+        )
+    return summary
+
+
+def conformance_summary_from_readme(path=README_FILE):
+    try:
+        return conformance_summary_from_readme_text(path.read_text())
+    except OSError:
+        return None
+
+
+def conformance_detail_summary(data):
+    summary = data.get("summary", {})
+    runnable = summary.get("runnable", summary.get("total"))
+    result = {"passed": summary.get("passed"), "runnable": runnable}
+    if "candidates" in summary:
+        result["candidates"] = summary.get("candidates")
+        result["unsupported"] = summary.get("unsupported", 0)
+        result["skipped"] = summary.get("skipped", 0)
+    return result
+
+
+def conformance_readme_freshness_status(detail_summary, public_summary):
+    if (
+        not detail_summary
+        or detail_summary.get("passed") is None
+        or detail_summary.get("runnable") is None
+    ):
+        return {"state": "missing-detail"}
+    if (
+        not public_summary
+        or public_summary.get("passed") is None
+        or public_summary.get("runnable") is None
+    ):
+        return {"state": "unknown-public"}
+
+    same_domain = detail_summary.get("runnable") == public_summary.get("runnable")
+    status = {
+        "passedDelta": public_summary.get("passed", 0) - detail_summary.get("passed", 0),
+        "runnableDelta": public_summary.get("runnable", 0) - detail_summary.get("runnable", 0),
+    }
+    if not same_domain:
+        return {"state": "different-domain", **status}
+    if status["passedDelta"] > 0:
+        return {"state": "stale", **status}
+    if status["passedDelta"] < 0:
+        return {"state": "detail-ahead", **status}
+    return {"state": "aggregate-match", **status}
+
+
+def conformance_readme_freshness_status_line(status):
+    state = status["state"]
+    if state == "stale":
+        return (
+            "Conformance detail freshness: stale "
+            f"(README/public aggregate ahead by +{status['passedDelta']:,} pass "
+            "over a matching runnable total)."
+        )
+    if state == "aggregate-match":
+        return (
+            "Conformance detail freshness: aggregate-match "
+            "(README/public aggregate matches checked detail; "
+            "per-test freshness is not proven)."
+        )
+    if state == "detail-ahead":
+        return (
+            "Conformance detail freshness: detail-ahead "
+            f"(checked detail exceeds README/public by {-status['passedDelta']:,} pass "
+            "over a matching runnable total)."
+        )
+    if state == "different-domain":
+        return (
+            "Conformance detail freshness: incomparable "
+            f"(README/public runnable total differs from checked detail by "
+            f"{status['runnableDelta']:+,})."
+        )
+    return f"Conformance detail freshness: {state}."
+
+
+def conformance_readme_detail_is_current(status):
+    return status.get("state") == "aggregate-match"
+
+
+def print_conformance_readme_freshness_status(data):
+    status = conformance_readme_freshness_status(
+        conformance_detail_summary(data), conformance_summary_from_readme()
+    )
+    print(conformance_readme_freshness_status_line(status))
+
+
+def print_conformance_readme_freshness_json(data):
+    detail_summary = conformance_detail_summary(data)
+    public_summary = conformance_summary_from_readme()
+    status = conformance_readme_freshness_status(detail_summary, public_summary)
+    print(
+        json.dumps(
+            {
+                "state": status["state"],
+                "detailSummary": detail_summary,
+                "publicSummary": public_summary,
+                "detailIsCurrent": conformance_readme_detail_is_current(status),
+                "passedDelta": status.get("passedDelta"),
+                "runnableDelta": status.get("runnableDelta"),
+                "message": conformance_readme_freshness_status_line(status),
+            },
+            sort_keys=True,
+        )
+    )
 
 
 def show_dashboard(
@@ -990,11 +1139,39 @@ def main():
         type=str,
         help="Legacy alias: false-positive, close, one-missing, one-extra, campaigns",
     )
+    parser.add_argument(
+        "--readme-freshness",
+        action="store_true",
+        help="Report whether README.md's conformance block matches conformance-detail.json",
+    )
+    parser.add_argument(
+        "--readme-freshness-json",
+        action="store_true",
+        help="Report conformance/README freshness as machine-readable JSON",
+    )
+    parser.add_argument(
+        "--require-current-readme",
+        action="store_true",
+        help="Exit non-zero unless README.md's conformance block matches conformance-detail.json",
+    )
     args = parser.parse_args()
 
     data = load_detail()
 
-    if args.dashboard:
+    if args.require_current_readme:
+        status = conformance_readme_freshness_status(
+            conformance_detail_summary(data), conformance_summary_from_readme()
+        )
+        print(conformance_readme_freshness_status_line(status), file=sys.stderr)
+        if not conformance_readme_detail_is_current(status):
+            return 1
+        return 0
+
+    if args.readme_freshness_json:
+        print_conformance_readme_freshness_json(data)
+    elif args.readme_freshness:
+        print_conformance_readme_freshness_status(data)
+    elif args.dashboard:
         show_dashboard(data)
     elif args.category == "false-positive":
         show_false_positives(data)
@@ -1029,6 +1206,8 @@ def main():
     else:
         show_overview(data)
 
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
