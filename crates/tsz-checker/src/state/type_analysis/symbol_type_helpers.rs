@@ -431,7 +431,12 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Whether a function/arrow node has an explicit return-type annotation and
-    /// an explicit type annotation on every parameter.
+    /// every parameter's type is computable without analyzing the body: either
+    /// an explicit annotation, or a default value (its type comes from the
+    /// default expression itself, independent of the enclosing function body —
+    /// `call_signature_from_function` already resolves such a parameter without
+    /// needing the body, unlike a parameter whose type would need contextual
+    /// inference from a call site).
     fn function_has_explicit_param_and_return_annotations(
         &self,
         func: &tsz_parser::parser::node::FunctionData,
@@ -444,7 +449,9 @@ impl<'a> CheckerState<'a> {
                 .arena
                 .get(param_idx)
                 .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
-                .is_some_and(|param| param.type_annotation != NodeIndex::NONE)
+                .is_some_and(|param| {
+                    param.type_annotation != NodeIndex::NONE || param.initializer != NodeIndex::NONE
+                })
         })
     }
 

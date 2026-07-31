@@ -1341,9 +1341,12 @@ impl CheckerState<'_> {
                     // (e.g., `typeof foo<T>` in foo's own return type). Without this sentinel, the re-entrant
                     // call finds ERROR, detects circularity, and calls provisional again → stack overflow.
                     self.ctx.symbol_types.insert(sym_id, TypeId::ANY);
-                    if let Some(provisional) =
-                        self.provisional_circular_function_symbol_type(sym_id)
-                    {
+                    let provisional = self
+                        .provisional_circular_function_symbol_type(sym_id)
+                        .or_else(|| {
+                            self.provisional_circular_variable_function_symbol_type(sym_id)
+                        });
+                    if let Some(provisional) = provisional {
                         self.ctx.symbol_types.insert(sym_id, provisional);
                         trace!(
                             sym_id = sym_id.0,
@@ -1413,6 +1416,14 @@ impl CheckerState<'_> {
                     self.ctx.symbol_types.insert(sym_id, provisional);
                     return provisional;
                 }
+
+                if flags & symbol_flags::VARIABLE != 0
+                    && let Some(provisional) =
+                        self.provisional_circular_variable_function_symbol_type(sym_id)
+                {
+                    self.ctx.symbol_types.insert(sym_id, provisional);
+                    return provisional;
+                }
             }
 
             // For non-named entities, cache ERROR to prevent repeated deep recursion
@@ -1472,6 +1483,20 @@ impl CheckerState<'_> {
                     // detection → calls provisional again → stack overflow.
                     self.ctx.symbol_types.insert(sym_id, TypeId::ANY);
                     self.provisional_circular_function_symbol_type(sym_id)
+                        .unwrap_or(TypeId::ERROR)
+                } else if flags & symbol_flags::VARIABLE != 0 {
+                    // A `const`/`let`/`var` bound to a fully-annotated arrow or
+                    // function expression that self-references inside its own
+                    // body (e.g. `const f = (x: number): T => { ... f(x) ... }`)
+                    // reaches this placeholder before its own initializer has
+                    // been checked. Without a provisional signature here, the
+                    // very first in-body reference to `f` freezes at `ERROR`
+                    // for the rest of the check (`param.map(f)` degrades to
+                    // `unknown[]`), even though the outer symbol later resolves
+                    // correctly once its initializer finishes. Same
+                    // re-entrancy guard as the FUNCTION branch above.
+                    self.ctx.symbol_types.insert(sym_id, TypeId::ANY);
+                    self.provisional_circular_variable_function_symbol_type(sym_id)
                         .unwrap_or(TypeId::ERROR)
                 } else {
                     TypeId::ERROR
