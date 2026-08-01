@@ -110,3 +110,76 @@ fn intersection_member_order_does_not_affect_identity() {
         "IfEquals should treat reordered intersection members as EQ, not just an exact-position match; got: {diags:#?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Object shape (#16095). Unlike the tuple witness above, the object members of
+// an intersection are *merged* into a single synthesized object during
+// interning, so nothing shaped like an intersection reaches the relation layer
+// and the identity guard has to recover the pre-merge members from the merge
+// provenance instead. tsc reports an intersection and its flattened object as
+// distinct types; these cases pin that, and the controls pin that two
+// intersections over the same members stay identical.
+// ---------------------------------------------------------------------------
+
+// NOT covered here, and deliberately: `{ a: 1 } & { a: 1 | number }` vs
+// `{ a: 1 }`. When the merge result is structurally equal to one of the
+// members it *is* that member's interned type, so no distinguishing origin can
+// be recorded without making every plain `{ a: 1 }` claim an intersection
+// provenance it does not have. tsc reports TS2344 there; tsz still answers EQ.
+// Tracked as the remaining half of #16095.
+
+#[test]
+fn merged_object_intersection_is_not_identical_to_the_flattened_object() {
+    let source = format!(
+        "{IF_EQUALS_PRELUDE}\n\
+        type R = IfEquals<{{ a: 1 }} & {{ b: 2 }}, {{ a: 1; b: 2 }}, \"EQ\", \"DIFF\">;\n\
+        const r: R = \"DIFF\";\n"
+    );
+    let diags = check(&source);
+    assert!(
+        error_codes(&diags).is_empty(),
+        "An intersection and its flattened object are different type nodes to tsc's isTypeIdenticalTo; got: {diags:#?}"
+    );
+}
+
+#[test]
+fn identical_object_intersections_stay_identical() {
+    let source = format!(
+        "{IF_EQUALS_PRELUDE}\n\
+        type R = IfEquals<{{ a: 1 }} & {{ b: 2 }}, {{ a: 1 }} & {{ b: 2 }}, \"EQ\", \"DIFF\">;\n\
+        const r: R = \"EQ\";\n"
+    );
+    let diags = check(&source);
+    assert!(
+        error_codes(&diags).is_empty(),
+        "Two intersections written from the same members must stay EQ; got: {diags:#?}"
+    );
+}
+
+#[test]
+fn distinct_object_intersections_are_not_identical() {
+    let source = format!(
+        "{IF_EQUALS_PRELUDE}\n\
+        type R = IfEquals<{{ a: 1 }} & {{ b: 2 }}, {{ a: 1 }} & {{ b: 3 }}, \"EQ\", \"DIFF\">;\n\
+        const r: R = \"DIFF\";\n"
+    );
+    let diags = check(&source);
+    assert!(
+        error_codes(&diags).is_empty(),
+        "Intersections over different members must stay DIFF; got: {diags:#?}"
+    );
+}
+
+#[test]
+fn plain_objects_are_unaffected_by_the_merge_origin_lookup() {
+    let source = format!(
+        "{IF_EQUALS_PRELUDE}\n\
+        type R = IfEquals<{{ a: 1; b: 2 }}, {{ b: 2; a: 1 }}, \"EQ\", \"DIFF\">;\n\
+        const r: R = \"EQ\";\n"
+    );
+    let diags = check(&source);
+    assert!(
+        error_codes(&diags).is_empty(),
+        "Two plain objects with reordered members carry no merge origin and must stay EQ; got: {diags:#?}"
+    );
+}

@@ -125,8 +125,31 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
+    /// Member set of an intersection extends-type, seen through object merging.
+    ///
+    /// `normalize_intersection` merges the object members of an intersection
+    /// into a single synthesized `Object` (`{ a: 1 } & { a: 1 | number }`
+    /// becomes one object shape), so by the time the relation layer sees the
+    /// extends-type there is no `TypeData::Intersection` left to recognise and
+    /// the guard above would read it as an ordinary object. The interner
+    /// records the pre-merge intersection for exactly this reason
+    /// (`store_merged_intersection_origin`: "stable structural provenance for
+    /// semantic pruning and diagnostics", written once at merge time and never
+    /// repainted), so recover the original members from it.
+    ///
+    /// Comparing member *sets* keeps this order-independent, so two merged
+    /// intersections built from the same members in different orders stay
+    /// identical while a merged intersection and a plain object never are —
+    /// matching tsc, where `isTypeIdenticalTo` sees an `IntersectionType` on
+    /// one side and an anonymous object on the other.
     fn intersection_member_set(&self, id: TypeId) -> Option<FxHashSet<TypeId>> {
-        match self.interner.lookup(id) {
+        let intersection = match self.interner.lookup(id) {
+            Some(TypeData::Intersection(list_id)) => {
+                return Some(self.interner.type_list(list_id).iter().copied().collect());
+            }
+            _ => self.interner.get_merged_intersection_origin(id)?,
+        };
+        match self.interner.lookup(intersection) {
             Some(TypeData::Intersection(list_id)) => {
                 Some(self.interner.type_list(list_id).iter().copied().collect())
             }
