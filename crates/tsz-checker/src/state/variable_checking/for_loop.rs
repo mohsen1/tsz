@@ -388,7 +388,17 @@ impl<'a> CheckerState<'a> {
             // member is object-like (the raw operand above was not itself an intersection).
             || self.for_in_expr_type_is_valid_intersection(expr_type);
 
-        if !is_valid {
+        // Checked only on the error path, so an accepted operand never pays for
+        // the walk: tsc derives a for-in loop variable's type from the loop's
+        // own operand (`getIndexType(checkExpression(node.expression))` in
+        // `getTypeForVariableLikeDeclaration`), so an operand naming a variable
+        // this same loop head declares is a circular resolution —
+        // `pushTypeResolution` fails, `reportCircularityError` hands back `any`
+        // (reporting TS7022 only under `noImplicitAny`), and `any` clears this
+        // gate. tsz resolves the loop variable to its `string` key type instead,
+        // which is a primitive and tripped a false TS2407 on `for (var of in of)`
+        // and on `recursiveLetConst.ts`'s `for (let v in v)`.
+        if !is_valid && !self.for_in_operand_resolution_is_circular(expression) {
             let type_str = self.format_type(expr_type);
             let message = format_message(
                 diagnostic_messages::THE_RIGHT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_MUST_BE_OF_TYPE_ANY_AN_OBJECT_TYPE_OR,
@@ -396,6 +406,59 @@ impl<'a> CheckerState<'a> {
             );
             self.error_at_node(expression, &message, diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_MUST_BE_OF_TYPE_ANY_AN_OBJECT_TYPE_OR);
         }
+    }
+
+    /// Whether the for-in operand at `expression` resolves circularly: it
+    /// references a variable declared by the very loop head it belongs to.
+    ///
+    /// Keyed on binder symbol identity (through the same
+    /// `expression_references_symbol` walk the for-of circularity check uses),
+    /// never on the identifier's spelling — a differently-named loop variable
+    /// over an unrelated binding of any type is untouched by this.
+    fn for_in_operand_resolution_is_circular(&mut self, expression: NodeIndex) -> bool {
+        let arena = self.ctx.arena;
+        let Some(ext) = arena.get_extended(expression) else {
+            return false;
+        };
+        let statement_idx = ext.parent;
+        let Some(statement) = arena.get(statement_idx) else {
+            return false;
+        };
+        if statement.kind != syntax_kind_ext::FOR_IN_STATEMENT {
+            return false;
+        }
+        let Some(initializer) = arena.get_for_in_of(statement).map(|f| f.initializer) else {
+            return false;
+        };
+        let Some(list) = arena.get(initializer).and_then(|n| arena.get_variable(n)) else {
+            return false;
+        };
+
+        for &decl_idx in &list.declarations.nodes {
+            let Some(var_decl) = arena
+                .get(decl_idx)
+                .and_then(|node| arena.get_variable_declaration(node))
+            else {
+                continue;
+            };
+            // An annotated loop variable is not circular: tsc reads the
+            // annotation instead of the operand (and reports TS2404 for it).
+            if var_decl.type_annotation.is_some() {
+                continue;
+            }
+            let sym_id = self
+                .ctx
+                .binder
+                .get_node_symbol(decl_idx)
+                .or_else(|| self.ctx.binder.get_node_symbol(var_decl.name))
+                .or_else(|| self.ctx.binder.resolve_identifier(arena, var_decl.name));
+            if let Some(sym_id) = sym_id
+                && self.expression_references_symbol(expression, sym_id)
+            {
+                return true;
+            }
+        }
+        false
     }
 
     /// Leaf (non-union, non-intersection) validity test for a for-in operand:
@@ -409,7 +472,20 @@ impl<'a> CheckerState<'a> {
         ty == TypeId::ANY
             || ty == TypeId::UNKNOWN
             || ty == TypeId::OBJECT
+            || self.for_in_operand_is_absorbed_nullable(ty)
             || self.is_deferred_object_like_for_in(ty)
+    }
+
+    /// Without `strictNullChecks`, `null` and `undefined` are members of every
+    /// type, so `tsc`'s `allTypesAssignableToKind(rightType, NonPrimitive | ...)`
+    /// gate accepts them and `for (var a in null) {}` is silent. With the flag
+    /// on the operand is stripped to `never` and TS2407 *is* reported — so this
+    /// is a flag-dependent assignability fact, not a claim that bottom types are
+    /// acceptable operands (a declared `never` operand still reports in both
+    /// modes). Verified against `tsc` 7.0.2 both ways.
+    fn for_in_operand_is_absorbed_nullable(&self, ty: TypeId) -> bool {
+        !self.ctx.compiler_options.strict_null_checks
+            && (ty == TypeId::NULL || ty == TypeId::UNDEFINED)
     }
 
     /// Helper for TS2407: Check if a union type contains at least one valid for-in expression type.
