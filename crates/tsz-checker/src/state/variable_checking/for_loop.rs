@@ -377,9 +377,9 @@ impl<'a> CheckerState<'a> {
         // Resolve lazy/application types before checking (e.g. Record<string, any>)
         let expr_type = self.resolve_type_for_property_access(expr_type);
 
-        // Valid types: any, object (non-primitive), object types, type parameters
+        // Valid types: any, unknown, object (non-primitive), object types, type parameters
         // Invalid types: primitive types (void, null, undefined, number, string, boolean,
-        // bigint, symbol), `unknown`, and `never` (tsc reports TS2407 for all three)
+        // bigint, symbol) and `never` (tsc reports TS2407 for `never` as well)
         let is_valid = raw_intersection_is_valid
             || self.for_in_leaf_type_is_valid(expr_type)
             // Also allow union types that contain valid types
@@ -528,11 +528,12 @@ impl<'a> CheckerState<'a> {
     /// `any`, the `object` intrinsic, a type parameter, or any object-like
     /// type — including deferred index-access / generic-application forms.
     ///
-    /// `unknown` is deliberately excluded: `tsc`'s gate is
-    /// `allTypesAssignableToKind(rightType, NonPrimitive | InstantiableNonPrimitive)`,
-    /// which `unknown` does not satisfy (only `any` is exempted separately via
-    /// `isTypeAny`). `declare const u: unknown; for (const k in u) {}` reports
-    /// `TS2407` in `tsc` 7.0.2.
+    /// `unknown` is deliberately NOT accepted here: `tsc`'s
+    /// `checkForInStatement` only special-cases `any` via `isTypeAny` before
+    /// falling through to `allTypesAssignableToKind(rightType, NonPrimitive |
+    /// InstantiableNonPrimitive)`, which `unknown` fails just like any other
+    /// non-object type — `declare const u: unknown; for (const k in u) {}`
+    /// reports TS2407 (oracle-verified, `tsc` 7.0.2, both strictness modes).
     ///
     /// `is_deferred_object_like_for_in` already returns `true` for both
     /// `is_type_parameter_like` and `is_object_like_type`, so this is the single
@@ -557,10 +558,6 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Helper for TS2407: Check if a union type contains at least one valid for-in expression type.
-    ///
-    /// `unknown` is intentionally excluded here too, for the same reason as
-    /// `for_in_leaf_type_is_valid`: `tsc`'s `allTypesAssignableToKind` gate does
-    /// not exempt it.
     fn for_in_expr_type_is_valid_union(&mut self, expr_type: TypeId) -> bool {
         use crate::query_boundaries::dispatch as query;
 

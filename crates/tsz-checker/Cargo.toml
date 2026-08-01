@@ -35,6 +35,9 @@ stacker = "0.1.23"
 name = "enum_member_binding_widening_tests"
 path = "tests/enum_member_binding_widening_tests.rs"
 [[test]]
+name = "namespace_instantiation_flag_regression_tests"
+path = "tests/namespace_instantiation_flag_regression_tests.rs"
+[[test]]
 name = "base_class_construct_signature_arity_filter_tests"
 path = "tests/base_class_construct_signature_arity_filter_tests.rs"
 [[test]]
@@ -806,6 +809,9 @@ path = "tests/module_augmentation_isolation_tests.rs"
 [[test]]
 name = "ambient_module_renamed_export_ts2460_tests"
 path = "tests/ambient_module_renamed_export_ts2460_tests.rs"
+[[test]]
+name = "ambient_module_renamed_export_local_shadow_tests"
+path = "tests/ambient_module_renamed_export_local_shadow_tests.rs"
 [[test]]
 name = "ambient_module_import_alias_defid_collision_tests"
 path = "tests/ambient_module_import_alias_defid_collision_tests.rs"

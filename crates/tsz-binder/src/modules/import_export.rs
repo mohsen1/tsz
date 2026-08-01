@@ -632,18 +632,13 @@ impl BinderState {
                                         };
 
                                         if let Some(target_id) = exported_target {
-                                            if orig == exp
-                                                || exp == "default"
-                                                || current_namespace_sym_id.is_some()
-                                            {
+                                            if orig == exp || exp == "default" {
                                                 // Non-renamed exports bind a real in-module local.
                                                 // The synthetic `default` slot is also kept in
                                                 // `file_locals` because default import
-                                                // classification still consults that path, and
-                                                // namespace member exports resolve through the
-                                                // namespace's own export table.
+                                                // classification still consults that path.
                                                 self.set_scope_and_file_local(exp, target_id);
-                                            } else {
+                                            } else if current_namespace_sym_id.is_none() {
                                                 // Renamed top-level export (`export { Orig as
                                                 // Exp }`): tsc records `Exp` only on the module's
                                                 // public export surface, never as an in-module
@@ -652,6 +647,16 @@ impl BinderState {
                                                 // same-named local declaration.
                                                 self.seed_module_export(exp, target_id);
                                             }
+                                            // A renamed *member* export of a namespace/module
+                                            // container (`declare module "m" { export { Orig as
+                                            // Exp } }`) falls through deliberately: the
+                                            // container's own export table already received `Exp`
+                                            // above, which is the only place tsc records it.
+                                            // Seeding a lexical slot would clobber a same-named
+                                            // local declaration — the exact hazard
+                                            // `seed_module_export` documents — and seeding the
+                                            // file's export surface would publish a name that
+                                            // belongs to the container, not the file.
                                         }
                                         if self.in_global_augmentation {
                                             self.record_global_value_augmentation(

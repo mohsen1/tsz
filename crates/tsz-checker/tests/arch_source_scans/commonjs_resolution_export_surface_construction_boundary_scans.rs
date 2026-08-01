@@ -83,7 +83,6 @@ fn js_exports_boundary_owns_commonjs_resolution_surface_helpers() {
         "commonjs_define_property_setter_contextual_function_type",
         "commonjs_define_property_descriptor_property",
         "commonjs_type_with_define_property_members",
-        "commonjs_export_constructor_type_with_instance",
         "commonjs_export_surface_type_with_display_name",
         "commonjs_imported_module_value_type",
         "commonjs_expando_property",

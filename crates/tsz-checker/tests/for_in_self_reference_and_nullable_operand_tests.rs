@@ -198,19 +198,17 @@ for (var textKey in text) { }
 }
 
 // ---------------------------------------------------------------------------
-// Mechanism 3 — `unknown` operands are TS2407, in both strictness modes.
-//
-// tsc's for-in gate is `allTypesAssignableToKind(rightType, NonPrimitive |
-// InstantiableNonPrimitive)`; `unknown` satisfies neither disjunct (only
-// `any` is exempted separately, via `isTypeAny`). tsz previously treated
-// `unknown` the same as `any` here, by analogy rather than by the actual
-// rule, so it was silent where tsc reports. Unlike the nullable-operand
-// mechanism above, this is not `strictNullChecks`-gated: `unknown` reports
-// TS2407 the same way with the flag on or off.
+// Mechanism 3 — `unknown` is not `any`: `tsc`'s `checkForInStatement` only
+// special-cases `any` via `isTypeAny` before falling through to
+// `allTypesAssignableToKind(rightType, NonPrimitive | InstantiableNonPrimitive)`,
+// which `unknown` fails like any other non-object type. Oracle-verified,
+// `tsc` 7.0.2, `--strict` both ways: `unknown` reports TS2407 identically in
+// both modes (it is not a `strictNullChecks`-gated fact the way `null`/
+// `undefined` are).
 // ---------------------------------------------------------------------------
 
 #[test]
-fn unknown_for_in_operand_is_ts2407_in_both_modes() {
+fn declared_unknown_for_in_operand_is_ts2407_in_both_modes() {
     let source = "declare const u: unknown;\nfor (const k in u) { }\n";
     assert_has_2407(&non_strict(source), "unknown operand");
     assert_has_2407(&strict(source), "unknown operand, strict");
@@ -234,25 +232,28 @@ fn unknown_for_in_operand_var_loop_variable_is_still_ts2407() {
 }
 
 #[test]
-fn any_for_in_operand_stays_clean_next_to_the_unknown_fix() {
-    // Adjacent positive control: `any` is exempted by a separate tsc rule
-    // (`isTypeAny`) and must not regress alongside removing `unknown`.
-    let source = "declare const dyn: any;\nfor (const k in dyn) { }\n";
+fn union_collapsing_to_unknown_for_in_operand_is_still_ts2407() {
+    // `string | unknown` collapses to `unknown` itself; the union path must
+    // reject it the same way the bare leaf type does.
+    let source = "declare const su: string | unknown;\nfor (const k in su) { }\n";
+    assert_has_2407(&non_strict(source), "string | unknown operand");
+}
+
+#[test]
+fn any_for_in_operand_is_still_not_ts2407() {
+    // Negative control: `any` keeps its own, separate exemption — the
+    // `unknown` fix must not have widened the gate the other direction.
+    let source = "declare const a: any;\nfor (const k in a) { }\n";
     assert_no_2407(&non_strict(source), "any operand");
     assert_no_2407(&strict(source), "any operand, strict");
 }
 
 #[test]
-fn type_parameter_constrained_to_unknown_stays_clean() {
-    // A type parameter is `InstantiableNonPrimitive` regardless of its
-    // constraint, so this must not be swept up by the `unknown`-leaf fix:
-    // the parameter itself, not its constraint, is what tsz inspects here.
-    let source = "function f<T extends unknown>(x: T) {\n  for (const k in x) { }\n}\n";
-    assert_no_2407(&non_strict(source), "type parameter constrained to unknown");
-    assert_no_2407(
-        &strict(source),
-        "type parameter constrained to unknown, strict",
-    );
+fn type_parameter_for_in_operand_is_still_not_ts2407() {
+    // Negative control: a bare type parameter is object-like via
+    // `is_type_parameter_like`, unaffected by the `unknown` leaf change.
+    let source = "function f<T>(x: T) {\n  for (const k in x) { }\n}\n";
+    assert_no_2407(&non_strict(source), "type parameter operand");
 }
 
 // ---------------------------------------------------------------------------

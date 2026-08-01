@@ -489,6 +489,7 @@ impl<'a> CheckerState<'a> {
                     // inside class A's body). Lazy types resolve to the instance type via
                     // resolve_lazy, but typeof needs the constructor type. Fall through to
                     // create a TypeQuery(SymbolRef) which resolves correctly.
+                    let diag_count_before_expr_type = self.ctx.diagnostics.len();
                     let expr_type = query_expr_type(self, use_flow_sensitive_query);
                     let is_lazy = lazy_def_id(self.ctx.types, expr_type).is_some();
                     if expr_type != TypeId::ANY && expr_type != TypeId::ERROR && !is_lazy {
@@ -497,6 +498,31 @@ impl<'a> CheckerState<'a> {
                             expr_type,
                             &type_argument_nodes,
                         );
+                    }
+                    // The general value-position resolver above already reported
+                    // a diagnostic for this identifier (e.g. TS2708 for a
+                    // namespace used as a value) — stop here instead of falling
+                    // through to the "cannot find name" resolution below, which
+                    // would spuriously re-report the same identifier as
+                    // unresolved (TS2304) on top of the correct diagnostic.
+                    //
+                    // A bare `expr_type == ERROR` is not sufficient: for an
+                    // identifier syntactically inside a type position (which a
+                    // `typeof` operand always is), the general resolver's own
+                    // TS2693 ("only refers to a type") check intentionally
+                    // returns `ERROR` *without* reporting anything, deferring to
+                    // this function's own type-position-aware fallback below
+                    // (`resolve_type_symbol_for_lowering`, which reports TS2693
+                    // itself). Gate on a diagnostic having actually been pushed
+                    // so that deferred case still reaches its real reporter.
+                    if expr_type == TypeId::ERROR
+                        && self.ctx.diagnostics.len() > diag_count_before_expr_type
+                        && expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                        && self
+                            .resolve_identifier_symbol(type_query.expr_name)
+                            .is_some()
+                    {
+                        return TypeId::ERROR;
                     }
                 }
             }
