@@ -319,10 +319,22 @@ jobs:
           REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          # Threshold is 9h, not the 6h script default: it avoids false alarms
-          # during normal long benchmark queueing while still catching a real
-          # freeze within a few hours. --file-issue opens /
-          # updates / closes one deduplicated tracking issue; no --strict so a
-          # transient fetch blip never reds this advisory job.
-          node scripts/bench/check-latest-freshness.mjs --file-issue --max-age-hours 9 \
+          # bench.yml publishes only from its once-daily `0 3 * * *` scheduled
+          # run (bench.yml:26), whose full-suite job has a 360-minute timeout
+          # (bench.yml:48). So the *minimum* possible gap between two
+          # publishes is already 24h, and the worst case is ~24h + one run's
+          # full duration (observed up to ~8h in practice, e.g. #16066's
+          # 11:14Z publish following a 03:00Z start) before the next day's run
+          # even starts queueing. A 9h threshold is stale by construction: it
+          # fires every day for the ~15-21h between "one cadence past the last
+          # publish" and "the next run finishes" regardless of whether bench
+          # is healthy (see #16066 and its 15 predecessor sentinel issues,
+          # all false alarms — confirmed via 8 consecutive successful daily
+          # runs). 36h covers 24h cadence + double the observed worst-case
+          # run duration, while still catching a genuine multi-day freeze
+          # (the original "46-commit" incident this monitor was built for).
+          # --file-issue opens / updates / closes one deduplicated tracking
+          # issue; no --strict so a transient fetch blip never reds this
+          # advisory job.
+          node scripts/bench/check-latest-freshness.mjs --file-issue --max-age-hours 36 \
             | tee -a "${GITHUB_STEP_SUMMARY}"
