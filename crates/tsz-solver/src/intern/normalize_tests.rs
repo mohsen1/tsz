@@ -731,3 +731,60 @@ fn subtype_reduced_is_binder_name_invariant() {
         assert!(list.contains(&TypeId::NUMBER));
     }
 }
+
+/// The object members of an intersection are merged into one synthesized
+/// object, so a redundant object intersection has no `TypeData::Intersection`
+/// left for the relation layer to recognise. The merge origin is what makes
+/// the pre-merge members recoverable; conditional extends-clause identity
+/// (`intersection_member_set`) depends on it being recorded here.
+#[test]
+fn redundant_object_intersection_merges_and_records_its_origin() {
+    let interner = TypeInterner::new();
+    let a = interner.intern_string("a");
+    let one = interner.literal_number(1.0);
+    let one_or_number = interner.union(vec![one, TypeId::NUMBER]);
+    let narrow = interner.object(vec![crate::types::PropertyInfo::new(a, one)]);
+    let wide = interner.object(vec![crate::types::PropertyInfo::new(a, one_or_number)]);
+
+    let intersection = interner.intersection(vec![narrow, wide]);
+
+    assert!(
+        matches!(interner.lookup(intersection), Some(TypeData::Object(_))),
+        "object members of an intersection are merged into a single object shape"
+    );
+    assert_ne!(
+        intersection, narrow,
+        "the merged object is a distinct type, not the subsumed member itself"
+    );
+
+    let origin = interner
+        .get_merged_intersection_origin(intersection)
+        .expect("the merged object must record the intersection it came from");
+    let Some(TypeData::Intersection(list_id)) = interner.lookup(origin) else {
+        panic!("the recorded origin must still be an Intersection");
+    };
+    let members: Vec<TypeId> = interner.type_list(list_id).to_vec();
+    assert_eq!(members.len(), 2);
+    assert!(members.contains(&narrow) && members.contains(&wide));
+}
+
+/// The array sibling of the shape above takes a different path: array members
+/// are not merged, so the intersection node survives interning and the plain
+/// `TypeData::Intersection` arm of `intersection_member_set` already sees it.
+#[test]
+fn redundant_array_intersection_survives_interning() {
+    let interner = TypeInterner::new();
+    let narrow = interner.array(TypeId::STRING);
+    let wide = interner.array(interner.union(vec![TypeId::STRING, TypeId::NUMBER]));
+
+    let intersection = interner.intersection(vec![narrow, wide]);
+
+    assert!(
+        matches!(
+            interner.lookup(intersection),
+            Some(TypeData::Intersection(_))
+        ),
+        "array members are never merged, so the intersection node is preserved"
+    );
+    assert_ne!(intersection, narrow);
+}
