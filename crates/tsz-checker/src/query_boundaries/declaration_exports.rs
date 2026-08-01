@@ -97,6 +97,7 @@ pub(crate) fn namespace_merged_function_callable_type(
     db: &dyn TypeDatabase,
     shape: &CallableShape,
     properties: Vec<PropertyInfo>,
+    symbol: SymbolId,
 ) -> TypeId {
     db.callable(CallableShape {
         call_signatures: shape.call_signatures.clone(),
@@ -104,7 +105,7 @@ pub(crate) fn namespace_merged_function_callable_type(
         properties,
         string_index: shape.string_index,
         number_index: shape.number_index,
-        symbol: None,
+        symbol: Some(symbol),
         is_abstract: false,
     })
 }

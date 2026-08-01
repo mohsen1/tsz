@@ -549,10 +549,16 @@ impl<'a> CheckerState<'a> {
         self.merge_exports_into_props(sym_id, &mut props, false);
 
         let properties = props.into_values().collect();
+        // Keep the merged symbol, exactly as the constructor path above does.
+        // `function f` merged with `namespace f` carries `ValueModule` on its
+        // symbol, so tsc prints `typeof f`; without the symbol the printer has
+        // nothing to distinguish the merge from a plain expando function and
+        // falls back to the structural surface.
         let merged_type = declaration_exports::namespace_merged_function_callable_type(
             self.ctx.types,
             &shape,
             properties,
+            sym_id,
         );
 
         (merged_type, Vec::new())

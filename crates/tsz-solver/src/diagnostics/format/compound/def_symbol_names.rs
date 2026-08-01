@@ -66,6 +66,38 @@ impl<'a> TypeFormatter<'a> {
     // names in diagnostics (e.g., enum "Foo" displaying as "timeout").
     // DefId and SymbolId are independent ID spaces and must not be conflated.
 
+    /// Whether a value symbol takes `tsc`'s `typeof Name` rendering instead of
+    /// expanding to its structural surface.
+    ///
+    /// `tsc`'s `createAnonymousTypeNode` routes an anonymous object type through
+    /// `symbolToTypeNode` when the type's symbol carries `SymbolFlags.Class`,
+    /// `Enum`, or `ValueModule`, which is what prints `typeof Name`. A value
+    /// symbol that owns a namespace/module or enum declaration therefore keeps
+    /// its name; a plain function with expando assignments carries no module
+    /// flag and really does print its structural surface.
+    ///
+    /// Class and interface declarations win the name in a declaration merge —
+    /// `interface B {}` + `namespace B {}` displays as `B`, not `typeof B` —
+    /// so they are excluded here and render under their own rules.
+    pub(in crate::diagnostics::format) fn symbol_renders_as_typeof_name(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> bool {
+        use tsz_binder::symbol_flags;
+        let Some(arena) = self.symbol_arena else {
+            return false;
+        };
+        let Some(sym) = arena.get(sym_id) else {
+            return false;
+        };
+        let is_namespace =
+            sym.has_any_flags(symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE);
+        let is_enum = sym.has_any_flags(symbol_flags::ENUM);
+        let is_class = sym.has_flags(symbol_flags::CLASS);
+        let is_interface = sym.has_any_flags(symbol_flags::INTERFACE);
+        (is_namespace || is_enum) && !is_class && !is_interface
+    }
+
     /// Try to resolve a human-readable name for an object shape via symbol or def store lookup.
     pub(super) fn resolve_object_shape_name(&mut self, shape: &ObjectShape) -> Option<String> {
         // The empty object `{}` is a universally-shared shape. `find_def_by_shape`
@@ -85,21 +117,8 @@ impl<'a> TypeFormatter<'a> {
             && let Some(name) = self.format_symbol_name(sym_id)
         {
             // Namespace/module/enum value types are displayed as `typeof Name` by tsc.
-            if let Some(arena) = self.symbol_arena
-                && let Some(sym) = arena.get(sym_id)
-            {
-                use tsz_binder::symbol_flags;
-                let is_namespace =
-                    sym.has_any_flags(symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE);
-                let is_enum = sym.has_any_flags(symbol_flags::ENUM);
-                let is_class = sym.has_flags(symbol_flags::CLASS);
-                let is_interface = sym.has_any_flags(symbol_flags::INTERFACE);
-                // When a symbol is both an interface and a namespace (declaration
-                // merging), the type-space name wins — tsc displays `B`, not
-                // `typeof B`.  Similarly, classes take priority over namespaces.
-                if (is_namespace || is_enum) && !is_class && !is_interface {
-                    return Some(format!("typeof {name}"));
-                }
+            if self.symbol_renders_as_typeof_name(sym_id) {
+                return Some(format!("typeof {name}"));
             }
             return Some(name);
         }

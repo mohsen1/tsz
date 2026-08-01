@@ -161,6 +161,15 @@ impl<'a> TypeFormatter<'a> {
                     {
                         return format!("typeof {name}").into();
                     }
+                    // A function merged with a same-named namespace carries
+                    // `ValueModule` on its symbol, which tsc renders as
+                    // `typeof f` rather than the structural surface. This must
+                    // precede the expando check below: the merged namespace's
+                    // exports arrive as ordinary appended properties and are
+                    // otherwise indistinguishable from expando assignments.
+                    if self.symbol_renders_as_typeof_name(sym_id) {
+                        return format!("typeof {name}").into();
+                    }
                     // A function symbol whose callable carries appended value
                     // properties (expando assignments) renders structurally in
                     // tsc (`{ (): void; declared: number; }`), never as the
