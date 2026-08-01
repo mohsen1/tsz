@@ -11,6 +11,41 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
+/// How an `await`-grammar walk's root position relates to `tsc`'s two
+/// independent `checkAwaitExpression` axes.
+///
+/// `tsc` asks two separate questions about an `await`: whether the parser left
+/// it in await context (`NodeFlags.AwaitContext`, which an enclosing `async`
+/// function sets), and whether it sits in a top-level context
+/// (`isInTopLevelContext`, which selects the TS1375/TS1378 pair over TS1308).
+/// A root position can suppress either axis independently, so they are modelled
+/// as two orthogonal properties rather than one "is this special" flag.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AwaitContainerKind {
+    /// Ordinary position: both axes answered from the surrounding code.
+    Inherited,
+    /// Parsed outside await context, but still eligible for top-level `await`
+    /// (a type literal's computed member name).
+    OutsideAwaitContext,
+    /// Its own container for both axes: never async, never top level (an enum
+    /// member initializer).
+    OwnContainer,
+}
+
+impl AwaitContainerKind {
+    /// Whether an enclosing `async` function's await context reaches this
+    /// position.
+    const fn inherits_async_context(self) -> bool {
+        matches!(self, Self::Inherited)
+    }
+
+    /// Whether this position can be the source file's own top level, and so
+    /// answer the TS1375/TS1378 pair instead of TS1308.
+    const fn allows_top_level_await(self) -> bool {
+        matches!(self, Self::Inherited | Self::OutsideAwaitContext)
+    }
+}
+
 impl<'a> CheckerState<'a> {
     pub(crate) fn check_return_statement(&mut self, stmt_idx: NodeIndex) {
         let Some(node) = self.ctx.arena.get(stmt_idx) else {
@@ -574,7 +609,65 @@ impl<'a> CheckerState<'a> {
     /// - Emits TS1308 if await is used outside async function
     /// - Iteratively checks child expressions for await expressions (no recursion)
     pub(crate) fn check_await_expression(&mut self, expr_idx: NodeIndex) {
-        self.check_await_expression_in_container(expr_idx, /* own_container */ false);
+        self.check_await_expression_in_container(expr_idx, AwaitContainerKind::Inherited);
+    }
+
+    /// Root the `await`-grammar walk on an expression that `tsc` parses
+    /// **outside await context**, while leaving its top-level-`await`
+    /// eligibility intact.
+    ///
+    /// A type literal's computed member name is the case this exists for.
+    /// `tsc`'s `checkAwaitExpression` gates TS1308 on the parser's
+    /// `NodeFlags.AwaitContext`, and `parseType` runs under
+    /// `doOutsideOfContext(TypeExcludesFlags)` — which clears `AwaitContext`
+    /// for the whole type. So an `await` inside a type literal never inherits
+    /// the enclosing function's `async`-ness, no matter how the literal is
+    /// reached (type-alias body, a variable/parameter annotation, or nested
+    /// inside an `interface` member's type).
+    ///
+    /// This is a strictly weaker forcing than
+    /// `check_await_expression_in_own_container`: clearing `AwaitContext` does
+    /// not change `isInTopLevelContext`, so a type literal at the source
+    /// file's own top level still answers the TS1375/TS1378 pair rather than
+    /// TS1308 — verified against `tsc@7.0.2`.
+    ///
+    /// An `interface` member's computed name is deliberately *not* routed
+    /// here: `parseInterfaceDeclaration` reaches its members through
+    /// `parseObjectTypeMembers` directly rather than through `parseType`, so
+    /// it keeps the enclosing await context.
+    fn check_await_expression_outside_await_context(&mut self, expr_idx: NodeIndex) {
+        self.check_await_expression_in_container(expr_idx, AwaitContainerKind::OutsideAwaitContext);
+    }
+
+    /// Root the `await`-grammar walk on a computed property name's expression,
+    /// picking the await context its owning member implies.
+    ///
+    /// A **type literal** member's name is parsed outside await context (see
+    /// `check_await_expression_outside_await_context`); a class member, an
+    /// interface member and an object-literal property all inherit the
+    /// enclosing one. The member declaration sits between the name and its
+    /// owner (`ComputedPropertyName` -> `PropertySignature`/`MethodSignature`/
+    /// accessor -> `TypeLiteral`), so this reads exactly two levels up —
+    /// keyed on the owner rather than on the caller, so every way of reaching
+    /// a type literal answers the same way.
+    pub(crate) fn check_computed_property_name_await(
+        &mut self,
+        name_idx: NodeIndex,
+        expr_idx: NodeIndex,
+    ) {
+        let owner_is_type_literal = self
+            .ctx
+            .arena
+            .get_extended(name_idx)
+            .and_then(|name_ext| self.ctx.arena.get_extended(name_ext.parent))
+            .and_then(|member_ext| self.ctx.arena.get(member_ext.parent))
+            .is_some_and(|node| node.kind == syntax_kind_ext::TYPE_LITERAL);
+
+        if owner_is_type_literal {
+            self.check_await_expression_outside_await_context(expr_idx);
+        } else {
+            self.check_await_expression(expr_idx);
+        }
     }
 
     /// Root the `await`-grammar walk on an expression that sits inside a
@@ -592,10 +685,14 @@ impl<'a> CheckerState<'a> {
     /// never leaks into a nested function body inside the initializer
     /// (`enum E { A = (() => 1)() }`).
     pub(crate) fn check_await_expression_in_own_container(&mut self, expr_idx: NodeIndex) {
-        self.check_await_expression_in_container(expr_idx, /* own_container */ true);
+        self.check_await_expression_in_container(expr_idx, AwaitContainerKind::OwnContainer);
     }
 
-    fn check_await_expression_in_container(&mut self, expr_idx: NodeIndex, own_container: bool) {
+    fn check_await_expression_in_container(
+        &mut self,
+        expr_idx: NodeIndex,
+        container: AwaitContainerKind,
+    ) {
         // Use iterative approach with explicit stack to handle deeply nested expressions.
         // This prevents stack overflow for expressions like `0 + 0 + 0 + ... + 0` (50K+ deep).
         let mut stack = vec![expr_idx];
@@ -617,7 +714,8 @@ impl<'a> CheckerState<'a> {
                     // An own-container position never inherits the enclosing
                     // function's async-ness (see
                     // `check_await_expression_in_own_container`).
-                    let in_async_context = !own_container && self.ctx.in_async_context();
+                    let in_async_context =
+                        container.inherits_async_context() && self.ctx.in_async_context();
                     if !in_async_context && !self.ctx.has_syntax_parse_errors {
                         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
@@ -631,7 +729,7 @@ impl<'a> CheckerState<'a> {
                         // An own-container position is likewise never the source
                         // file's own top level, so it answers TS1308 rather than
                         // the TS1375/TS1378 top-level pair.
-                        let at_top_level = !own_container
+                        let at_top_level = container.allows_top_level_await()
                             && self.is_directly_at_source_file_top_level(current_idx);
 
                         if at_top_level {

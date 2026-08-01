@@ -34,6 +34,20 @@
 //!    always running the full funnel regardless of whether TS1170 fired —
 //!    `tsc` reports both, they are independent grammar/type rules.
 //!
+//! 4. **A wrong async-context rule for type literals** (#16103, fixed after
+//!    the above). (1) gave *every* computed-name position the "evaluated in
+//!    the enclosing scope, so an enclosing `async` makes `await` legal" rule.
+//!    That is right for class and interface members but wrong for a type
+//!    literal: `tsc` gates TS1308 on the parser's `NodeFlags.AwaitContext`,
+//!    and `parseType` runs under `doOutsideOfContext(TypeExcludesFlags)`,
+//!    which clears that flag for the whole type. `parseInterfaceDeclaration`
+//!    reaches its members through `parseObjectTypeMembers` instead, so an
+//!    interface keeps the flag — which is why the two disagree. Fixed via
+//!    `AwaitContainerKind::OutsideAwaitContext`, keyed structurally on the
+//!    owning member's parent being a `TypeLiteral` so it holds for every way
+//!    of reaching one (type-alias body, variable or parameter annotation,
+//!    nested inside an `interface` member's type).
+//!
 //! Every expectation below is pinned against a live `tsc@7.0.2 --noEmit
 //! --pretty false --target es2017 --module commonjs` run, not recalled, and
 //! cross-checked against the compiled `tsz` CLI (not just this unit
@@ -161,14 +175,23 @@ function outer() { type Shape2 = { [await key]: number }; }
 }
 
 #[test]
-fn async_wrapper_type_literal_computed_name_reports_only_ts1170() {
+fn async_wrapper_type_literal_computed_name_reports_ts1170_and_ts1308() {
+    // #16103. This assertion previously read `[1170]` — added in #16099 by
+    // analogy with the class and interface siblings above, never checked
+    // against a live oracle, and wrong. `tsc@7.0.2` reports **both** codes:
+    // a type literal's members are parsed under `parseType`, which runs
+    // inside `doOutsideOfContext(TypeExcludesFlags)` and clears
+    // `NodeFlags.AwaitContext`, so the enclosing `async` never reaches the
+    // computed name. The class and interface siblings really do inherit it —
+    // that asymmetry is the whole rule, and it is pinned by the two control
+    // tests directly above and below this one.
     let codes = without_missing_promise_lib(check_source_codes_with_parse_health(
         r#"
 declare const key: string;
 async function wrapper() { type Shape2 = { [await key]: number }; }
 "#,
     ));
-    assert_eq!(codes, vec![1170], "got {codes:?}");
+    assert_eq!(sorted(codes.clone()), vec![1170, 1308], "got {codes:?}");
 }
 
 #[test]
@@ -440,5 +463,116 @@ class Holder { [(() => await key)()]() {} }
     assert!(
         codes.contains(&1308),
         "an arrow body is its own container; got {codes:?}"
+    );
+}
+
+// --- #16103: a type literal is parsed outside await context, wherever it
+// --- appears. Every expectation below is pinned against a live
+// --- `tsc@7.0.2 --noEmit --pretty false --target es2017 --module commonjs`
+// --- run made for this change, not recalled.
+
+/// The rule is keyed on the *type literal*, not on the type alias that
+/// happens to be the most common way to spell one. A literal reached through
+/// an `interface` member's type annotation answers the same way — even
+/// though the enclosing `interface` member's own computed name would not
+/// (see `async_wrapper_interface_computed_name_reports_only_ts1169`).
+#[test]
+fn async_wrapper_type_literal_inside_interface_member_reports_ts1170_and_ts1308() {
+    let codes = without_missing_promise_lib(check_source_codes_with_parse_health(
+        r#"
+declare const key: string;
+async function wrapper() { interface Outer { inner: { [await key]: number } } }
+"#,
+    ));
+    assert_eq!(sorted(codes.clone()), vec![1170, 1308], "got {codes:?}");
+}
+
+/// A type literal in a variable's type annotation — no type alias involved.
+#[test]
+fn async_wrapper_type_literal_in_variable_annotation_reports_ts1170_and_ts1308() {
+    let codes = without_missing_promise_lib(check_source_codes_with_parse_health(
+        r#"
+declare const key: string;
+async function wrapper() { let slot: { [await key]: number }; }
+"#,
+    ));
+    assert_eq!(sorted(codes.clone()), vec![1170, 1308], "got {codes:?}");
+}
+
+/// A type literal nested one level deeper inside a type alias body.
+#[test]
+fn async_wrapper_nested_type_literal_reports_ts1170_and_ts1308() {
+    let codes = without_missing_promise_lib(check_source_codes_with_parse_health(
+        r#"
+declare const key: string;
+async function wrapper() { type Outer = { inner: { [await key]: number } }; }
+"#,
+    ));
+    assert_eq!(sorted(codes.clone()), vec![1170, 1308], "got {codes:?}");
+}
+
+/// A method signature is a separate arm of the type-literal member walk from
+/// the property signature every other case here exercises.
+#[test]
+fn async_wrapper_type_literal_method_signature_reports_ts1170_and_ts1308() {
+    let codes = without_missing_promise_lib(check_source_codes_with_parse_health(
+        r#"
+declare const key: string;
+async function wrapper() { type Shape3 = { [await key](): number }; }
+"#,
+    ));
+    assert_eq!(sorted(codes.clone()), vec![1170, 1308], "got {codes:?}");
+}
+
+/// Renamed-binder control: nothing here may depend on the spelling of the
+/// key, the alias, or the wrapper.
+#[test]
+fn async_wrapper_type_literal_computed_name_is_binder_name_independent() {
+    let codes = without_missing_promise_lib(check_source_codes_with_parse_health(
+        r#"
+declare const zzTag: string;
+async function qqOuter() { type MmShape = { [await zzTag]: number }; }
+"#,
+    ));
+    assert_eq!(sorted(codes.clone()), vec![1170, 1308], "got {codes:?}");
+}
+
+/// **The row that proves this is a routing fix and not a suppression.**
+/// Clearing await context does not change `isInTopLevelContext`, so a type
+/// literal at the source file's own top level must still answer the
+/// TS1375/TS1378 top-level pair — never TS1308. Only a fix that actually
+/// routes to the top-level branch can produce this; a fix that force-reports
+/// TS1308 for type literals would fail exactly here.
+#[test]
+fn script_top_level_type_literal_computed_name_reports_top_level_await_pair() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+declare const key: string;
+type Shape4 = { [await key]: number };
+"#,
+    );
+    assert_eq!(
+        sorted(codes.clone()),
+        vec![1170, 1375, 1378],
+        "got {codes:?}"
+    );
+}
+
+/// Negative control on the other side: an **object literal**'s computed name
+/// is an ordinary value position and must keep inheriting the enclosing
+/// `async`. tsc reports nothing here. This is the case a fix keyed on
+/// "computed name in a braced member list" rather than on the type literal
+/// would break.
+#[test]
+fn async_wrapper_object_literal_computed_name_stays_clean() {
+    let codes = without_missing_promise_lib(check_source_codes_with_parse_health(
+        r#"
+declare const key: string;
+async function wrapper() { const bag = { [await key]: 1 }; }
+"#,
+    ));
+    assert!(
+        codes.is_empty(),
+        "an object literal is a value position and keeps the enclosing async context; got {codes:?}"
     );
 }
