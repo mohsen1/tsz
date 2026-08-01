@@ -1,0 +1,137 @@
+name: Refresh conformance snapshot
+
+# scripts/conformance/conformance-detail.json, conformance-snapshot.json, and
+# conformance-baseline.txt are committed artifacts that only update when
+# someone runs `conformance.sh snapshot --force` by hand (#16081) — they
+# drift stale between manual refreshes, and nothing fails when they are
+# wrong. Staleness does not merely under-report: a reviewer diffing a
+# branch against a stale artifact receives the branch's real delta summed
+# with the accumulated drift, which can turn a real regression into an
+# apparent improvement (see #16081's #16076-v1 case: a -3 regression read
+# as +4 net against the stale committed detail file).
+#
+# This regenerates the three files from a fresh full-corpus run against
+# main and opens a PR when they drift (main is protected by the merge
+# queue, so a direct push is not possible). It intentionally runs the
+# single-machine `conformance.sh snapshot` path rather than reusing the
+# sharded ci.yml matrix job: that job emits per-shard ci-metrics JSON in a
+# different shape and never writes the three committed files, so
+# reassembling them from shards would be a second, riskier format
+# conversion. `conformance.sh snapshot` already materializes its own
+# TypeScript corpus and dist-fast build, so this job only needs a checkout.
+
+on:
+  schedule:
+    # Daily at 05:00 UTC, clear of ci.yml's nightly heavy lane (04:00 UTC).
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Run and diff but do not open a PR"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: conformance-snapshot-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: Refresh conformance snapshot
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - name: Run full conformance snapshot
+        run: ./scripts/conformance/conformance.sh snapshot --workers 12 --force
+
+      - name: Detect changes
+        id: diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=(
+            scripts/conformance/conformance-detail.json
+            scripts/conformance/conformance-snapshot.json
+            scripts/conformance/conformance-baseline.txt
+          )
+          if git diff --quiet -- "${files[@]}"; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Conformance snapshot already current; nothing to refresh."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git --no-pager diff --stat -- "${files[@]}"
+          fi
+
+      - name: Open refresh PR
+        if: steps.diff.outputs.changed == 'true' && (inputs.dry_run != true)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.TSZ_PR_AUTOMATION_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name "tsz-conformance-bot"
+          git config user.email "tsz-conformance-bot@users.noreply.github.com"
+
+          stamp="$(date -u +%Y%m%d)"
+          branch="automation/conformance-snapshot-refresh-${stamp}"
+          if git ls-remote --exit-code --heads origin "${branch}" >/dev/null 2>&1; then
+            echo "Branch ${branch} already exists on origin; today's refresh is already open."
+            exit 0
+          fi
+
+          git checkout -b "${branch}"
+          git add scripts/conformance/conformance-detail.json \
+                  scripts/conformance/conformance-snapshot.json \
+                  scripts/conformance/conformance-baseline.txt
+          git commit -m "chore(conformance): refresh the committed snapshot to current main"
+          git push -u origin "${branch}"
+
+          body=$(cat <<'EOF'
+          Automated refresh of the committed conformance snapshot
+          (`conformance-detail.json`, `conformance-snapshot.json`,
+          `conformance-baseline.txt`) from a fresh full-corpus run against
+          `main`.
+
+          ## Goal
+          Goal: hold
+
+          ## Invariant
+          The committed conformance snapshot tracks the latest `main` instead
+          of drifting stale between manual `conformance.sh snapshot --force`
+          runs (#16081). A stale snapshot lets a reviewer's branch-vs-snapshot
+          diff read a real regression as an apparent improvement, because the
+          drift and the branch's own delta add up.
+
+          ## Scope
+          Generated artifacts only, via `scripts/conformance/conformance.sh
+          snapshot --workers 12 --force`. No source, script, or workflow
+          changes.
+
+          ## Verification
+          - This PR's diff *is* the output of `conformance.sh snapshot
+            --force` against `main` — the numbers in the diff are the
+            verification.
+
+          ## Provenance
+          Machine: cloud
+          Assistant: bot
+          Model: github-actions
+          Effort: low
+          EOF
+          )
+
+          gh pr create \
+            --base main \
+            --head "${branch}" \
+            --title "chore(conformance): refresh the committed snapshot to current main" \
+            --body "${body}" \
+            --label chore
