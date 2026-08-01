@@ -345,7 +345,6 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
-            ty = self.upgrade_commonjs_export_constructor_type(rhs_expr, ty);
             ty = self.augment_commonjs_export_type_with_expandos(target_file_idx, expando_root, ty);
             ty = self.widen_fresh_object_literal_properties_for_display(ty);
             return crate::query_boundaries::common::widen_freshness(self.ctx.types, ty);
@@ -356,7 +355,6 @@ impl<'a> CheckerState<'a> {
                 .literal_type_from_initializer(rhs_expr)
                 .or_else(|| checker.commonjs_export_rhs_symbol_type(rhs_expr))
                 .unwrap_or_else(|| checker.get_type_of_node(rhs_expr));
-            ty = checker.upgrade_commonjs_export_constructor_type(rhs_expr, ty);
             ty = checker.augment_commonjs_export_type_with_expandos(
                 target_file_idx,
                 expando_root,

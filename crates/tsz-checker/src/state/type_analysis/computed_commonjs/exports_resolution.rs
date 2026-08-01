@@ -564,26 +564,6 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    pub(super) fn upgrade_commonjs_export_constructor_type(
-        &mut self,
-        rhs_expr: NodeIndex,
-        rhs_type: TypeId,
-    ) -> TypeId {
-        let Some(instance_type) =
-            self.synthesize_js_constructor_instance_type(rhs_expr, rhs_type, &[])
-        else {
-            return rhs_type;
-        };
-
-        let symbol = self.resolve_identifier_symbol_without_tracking(rhs_expr);
-        crate::query_boundaries::js_exports::commonjs_export_constructor_type_with_instance(
-            self.ctx.types,
-            rhs_type,
-            instance_type,
-            symbol,
-        )
-    }
-
     /// Match a bare CommonJS export assignment `module.exports = <rhs>` or
     /// `exports = <rhs>` and return `(lhs, rhs)`, where `lhs` is the
     /// `module.exports` / `exports` target node (used for TS2309 positioning)
