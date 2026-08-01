@@ -100,6 +100,9 @@ pub mod test_utils;
 #[path = "tests/alias_application_display_retention_tests.rs"]
 mod alias_application_display_retention_tests;
 #[cfg(test)]
+#[path = "tests/any_parameter_never_opposite_tests.rs"]
+mod any_parameter_never_opposite_tests;
+#[cfg(test)]
 #[path = "tests/application_unknown_args_assignability_tests.rs"]
 mod application_unknown_args_assignability_tests;
 #[cfg(test)]
