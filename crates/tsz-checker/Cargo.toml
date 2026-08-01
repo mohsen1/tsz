@@ -2576,3 +2576,6 @@ path = "tests/class_member_body_function_boundary_tests.rs"
 [[test]]
 name = "conditional_extends_redundant_intersection_identity_tests"
 path = "tests/conditional_extends_redundant_intersection_identity_tests.rs"
+[[test]]
+name = "issue_16018_nested_position_evidence_tests"
+path = "tests/issue_16018_nested_position_evidence_tests.rs"

@@ -52,6 +52,22 @@ pub(crate) fn type_contains_type_parameter_binder(
     tsz_solver::visitor::contains_type_parameter_binder(db, type_id, type_param)
 }
 
+/// Infer concrete bindings for a set of type parameters by structurally
+/// matching each `(declared type, concrete type)` pair, reusing the solver's
+/// call-resolution inference engine.
+///
+/// This is the boundary used to recover a type parameter's binding when it
+/// sits nested inside a compound declared type (a generic alias or wrapper
+/// such as `Array<T>`), where a direct parameter/type-parameter identity
+/// check cannot recover it.
+pub(crate) fn infer_type_arguments_from_param_args(
+    db: &dyn QueryDatabase,
+    type_params: &[TypeParamInfo],
+    param_arg_pairs: &[(TypeId, TypeId)],
+) -> Vec<(tsz_common::Atom, TypeId)> {
+    tsz_solver::computation::infer_type_arguments_from_param_args(db, type_params, param_arg_pairs)
+}
+
 // ── FunctionShape transformation helpers ──
 
 /// Apply a `TypeSubstitution` to every type component in a `FunctionShape`.
