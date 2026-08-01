@@ -2031,6 +2031,9 @@ path = "tests/keyof_template_index_signature_tests.rs"
 name = "ts2411_pattern_index_signature_tests"
 path = "tests/ts2411_pattern_index_signature_tests.rs"
 [[test]]
+name = "ts2411_tests"
+path = "tests/ts2411_tests.rs"
+[[test]]
 name = "template_literal_generic_call_indexed_keyof_constraint_tests"
 path = "tests/template_literal_generic_call_indexed_keyof_constraint_tests.rs"
 [[test]]

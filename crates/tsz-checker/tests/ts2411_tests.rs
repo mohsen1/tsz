@@ -2,10 +2,10 @@
 //!
 //! Verifies that getter/setter accessors are checked against index signatures.
 
-use crate::test_utils::{
+use tsz_checker::context::CheckerOptions;
+use tsz_checker::test_utils::{
     check_source, check_source_code_messages as get_diagnostics, diagnostic_code_messages,
 };
-use tsz_checker::context::CheckerOptions;
 
 fn has_error_with_code(source: &str, code: u32) -> bool {
     get_diagnostics(source).iter().any(|d| d.0 == code)
@@ -443,5 +443,175 @@ export {};
     assert!(
         has_error_with_code(source, 2411),
         "Expected TS2411 regardless of the index-signature parameter name"
+    );
+}
+
+// =========================================================================
+// Unannotated parameter in a function/constructor *type node* must default
+// to `any` (not left unset), matching tsc's `getTypeOfFunctionTypeNode`. A
+// missing default previously left the parameter type-less so both the
+// TS2411 relation and the printer treated it as if it agreed with anything.
+// See #16131.
+// =========================================================================
+
+#[test]
+fn ts2411_unannotated_param_function_type_as_index_signature() {
+    // The index signature itself carries the unannotated function type.
+    let source = r#"
+interface I12 {
+    [x: string]: (x) => number;
+    foo: number;
+}
+export {};
+"#;
+    let diagnostics =
+        diagnostic_code_messages(check_source(source, "test.ts", CheckerOptions::default()));
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, msg)| *code == 2411 && msg.contains("(x: any) => number")),
+        "Expected TS2411 with the parameter defaulted to `any`, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn ts2411_explicit_any_param_function_type_as_index_signature_control() {
+    // Control: explicit `any` must keep firing exactly as before.
+    let source = r#"
+interface J12 {
+    [x: string]: (x: any) => number;
+    foo: number;
+}
+export {};
+"#;
+    assert!(
+        has_error_with_code(source, 2411),
+        "Control with explicit `any` parameter must still report TS2411"
+    );
+}
+
+#[test]
+fn ts2411_unannotated_param_function_type_as_property() {
+    // The unannotated function type is the *property*, not the index signature.
+    let source = r#"
+interface K {
+    [x: string]: number;
+    foo12: (x) => number;
+}
+export {};
+"#;
+    let diagnostics =
+        diagnostic_code_messages(check_source(source, "test.ts", CheckerOptions::default()));
+    assert!(
+        diagnostics
+            .iter()
+            .any(|(code, msg)| *code == 2411 && msg.contains("(x: any) => number")),
+        "Expected TS2411 with the property's parameter defaulted to `any`, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn ts2411_unannotated_param_function_type_alias_as_property() {
+    // The miss must survive a type alias wrapper, not just a literal function type.
+    let source = r#"
+type F = (x) => number;
+interface K {
+    [x: string]: number;
+    foo12: F;
+}
+export {};
+"#;
+    assert!(
+        has_error_with_code(source, 2411),
+        "Expected TS2411 through a type-alias-wrapped unannotated function type"
+    );
+}
+
+#[test]
+fn ts2411_unannotated_param_method_signature_as_property() {
+    // Method-signature syntax (`foo12(a): number`) shares the same parameter
+    // lowering as a property typed with a function-type literal.
+    let source = r#"
+interface MethodSig {
+    [x: string]: number;
+    foo12(a): number;
+}
+export {};
+"#;
+    assert!(
+        has_error_with_code(source, 2411),
+        "Expected TS2411 for an unannotated method-signature parameter"
+    );
+}
+
+#[test]
+fn ts2411_unannotated_param_constructor_type_as_index_signature() {
+    // Constructor types (`new (a) => T`) share `FUNCTION_TYPE`'s parameter
+    // lowering; verify the `CONSTRUCTOR_TYPE` arm is fixed too.
+    let source = r#"
+interface CtorIdx {
+    [x: string]: new (a) => object;
+    foo: number;
+}
+export {};
+"#;
+    assert!(
+        has_error_with_code(source, 2411),
+        "Expected TS2411 for an unannotated constructor-type parameter"
+    );
+}
+
+#[test]
+fn ts2411_unannotated_param_renamed_binders() {
+    // Rename both the index-signature key and the function parameter to
+    // prove the fix is structural, not name-driven.
+    let source = r#"
+interface RenamedGeneric {
+    [zzz: string]: (qqq) => number;
+    other: number;
+}
+export {};
+"#;
+    assert!(
+        has_error_with_code(source, 2411),
+        "Expected TS2411 regardless of parameter/index-signature identifier names"
+    );
+}
+
+#[test]
+fn ts2411_unannotated_param_function_type_nested_in_array() {
+    // The default must apply even when the function type is nested inside
+    // another type constructor, not just at the top level of a member.
+    // Uses the `T[]` array-type node (not `Array<T>`) because the unit-test
+    // harness runs with no lib loaded, so a `TYPE_REFERENCE` to `Array`
+    // would not resolve.
+    let source = r#"
+interface NestedArr {
+    [x: string]: ((a) => number)[];
+    foo: number;
+}
+export {};
+"#;
+    assert!(
+        has_error_with_code(source, 2411),
+        "Expected TS2411 for an unannotated parameter nested inside an array type"
+    );
+}
+
+#[test]
+fn ts2411_unannotated_param_function_type_no_false_positive_when_compatible() {
+    // Negative/fallback direction: two structurally-identical unannotated
+    // function types (both defaulted to `any`) must NOT trigger a spurious
+    // TS2411 — the fix must not overcorrect into new false positives.
+    let source = r#"
+interface Compatible {
+    [x: string]: (a) => number;
+    foo: (a) => number;
+}
+export {};
+"#;
+    assert!(
+        !has_error_with_code(source, 2411),
+        "Two structurally-identical unannotated function types must not report TS2411"
     );
 }
