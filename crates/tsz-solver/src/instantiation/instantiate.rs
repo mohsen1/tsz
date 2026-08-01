@@ -30,6 +30,13 @@ use tsz_common::interner::Atom;
 pub const MAX_INSTANTIATION_DEPTH: u32 = crate::limits::MAX_TYPE_SUBSTITUTION_DEPTH;
 const MAX_TUPLE_SPREAD_FLATTEN_ELEMENTS: usize = 8192;
 
+/// Memo epoch marking a result that no shadowing, local-binding or
+/// declaration-preservation state could have influenced.
+///
+/// Entries stamped with it match every environment. The epoch allocator starts
+/// at zero and only increments, so it can never issue this value.
+const ENVIRONMENT_INDEPENDENT_EPOCH: u64 = u64::MAX;
+
 /// Named owner for one instantiation walk's recursion-depth verdict.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct InstantiationWalkState {
@@ -61,8 +68,14 @@ enum InstantiationMemoEntry {
 }
 
 /// State restored after leaving a generic shadowing scope.
+///
+/// Only the memo entries the scope actually displaced are saved. Entries
+/// *created* inside the scope need no cleanup because epochs are allocated
+/// monotonically and never reissued, so an inner epoch can never match the
+/// restored outer one. See `advance_memo_environment`.
 struct ShadowingScopeSnapshot {
-    visiting: FxHashMap<TypeId, InstantiationMemoEntry>,
+    /// Type-parameter entries removed on entry, restored verbatim on exit.
+    displaced_type_params: Vec<(TypeId, InstantiationMemoEntry)>,
     environment_epoch: u64,
 }
 
@@ -154,7 +167,21 @@ pub struct TypeInstantiator<'a> {
     /// Version of the semantic environment that affects per-walk memo results.
     /// Incrementing this is O(1); completed entries from older versions are
     /// recomputed lazily, while active entries continue to break cycles.
+    ///
+    /// Restored to its enclosing value when a shadowing scope exits.
     memo_environment_epoch: u64,
+    /// Highest environment version ever issued for this walk.
+    ///
+    /// Never rewound, so every version is unique for the walk's lifetime even
+    /// though `memo_environment_epoch` moves back on scope exit.
+    memo_environment_next_epoch: u64,
+    /// Count of environment-sensitive decisions taken so far in this walk.
+    ///
+    /// A subtree whose walk leaves this unchanged consulted no type-parameter
+    /// binder and broke no cycle, so its result cannot depend on the shadowing,
+    /// local-binding or declaration-preservation environment. Such results are
+    /// memoized under [`ENVIRONMENT_INDEPENDENT_EPOCH`] and survive epoch churn.
+    environment_observations: u64,
     substitute_infer: bool,
     preserve_meta_types: bool,
     preserve_unsubstituted_type_params: bool,
@@ -202,6 +229,8 @@ impl<'a> TypeInstantiator<'a> {
             shadowed: Vec::new(),
             local_type_params: Vec::new(),
             memo_environment_epoch: 0,
+            memo_environment_next_epoch: 0,
+            environment_observations: 0,
             substitute_infer: false,
             preserve_meta_types: false,
             preserve_unsubstituted_type_params: false,
@@ -650,23 +679,20 @@ impl<'a> TypeInstantiator<'a> {
         let shadowed_len = self.shadowed.len();
         let saved_visiting = if type_params.is_empty() {
             None
-        } else if self.visiting.is_empty() {
-            // PERF: When visiting map is empty (common for top-level generic
-            // instantiation), no clone needed — just remove the type params
-            // (which are no-ops on an empty map) and return an empty map
-            // as the "saved" state.
-            Some(ShadowingScopeSnapshot {
-                visiting: FxHashMap::default(),
-                environment_epoch: self.memo_environment_epoch,
-            })
         } else {
-            let saved = self.visiting.clone();
+            // Displace only the shadowed binders' own memo entries. Composite
+            // entries mentioning them are handled by the epoch bump below, and
+            // entries created inside the scope are left in place because a
+            // monotonic epoch can never hand their stamp back out.
+            let mut displaced_type_params = Vec::new();
             for tp in type_params {
                 let tp_id = self.interner.type_param(*tp);
-                self.visiting.remove(&tp_id);
+                if let Some(entry) = self.visiting.remove(&tp_id) {
+                    displaced_type_params.push((tp_id, entry));
+                }
             }
             Some(ShadowingScopeSnapshot {
-                visiting: saved,
+                displaced_type_params,
                 environment_epoch: self.memo_environment_epoch,
             })
         };
@@ -689,16 +715,38 @@ impl<'a> TypeInstantiator<'a> {
     ) {
         self.shadowed.truncate(shadowed_len);
         if let Some(saved) = saved_visiting {
-            self.visiting = saved.visiting;
+            for (tp_id, entry) in saved.displaced_type_params {
+                self.visiting.insert(tp_id, entry);
+            }
             self.memo_environment_epoch = saved.environment_epoch;
         }
     }
 
     /// Advance the semantic environment used by completed per-walk memo
-    /// entries. A single walk cannot approach 2^64 transitions, so wrapping
-    /// cannot alias a live epoch.
+    /// entries.
+    ///
+    /// Epochs are drawn from a monotonic allocator that
+    /// [`exit_shadowing_scope`] never rewinds — it restores the *current*
+    /// epoch, not the allocator. So a value issued inside a shadowing scope is
+    /// never issued again to a sibling scope, and completed entries left
+    /// behind by an exited scope are permanently unreadable instead of needing
+    /// to be discarded. Rewinding the allocator would make a sibling scope
+    /// with a different binding environment read them as live.
+    ///
+    /// A single walk cannot approach 2^64 transitions, so wrapping cannot
+    /// alias a live epoch.
+    /// Record that the walk consulted the binding environment.
+    ///
+    /// Propagates outward by construction: every enclosing `instantiate_inner`
+    /// frame compares the counter across its own child walk, so one observation
+    /// deep in a subtree marks the whole enclosing chain sensitive.
+    const fn observe_environment(&mut self) {
+        self.environment_observations = self.environment_observations.wrapping_add(1);
+    }
+
     const fn advance_memo_environment(&mut self) {
-        self.memo_environment_epoch = self.memo_environment_epoch.wrapping_add(1);
+        self.memo_environment_next_epoch = self.memo_environment_next_epoch.wrapping_add(1);
+        self.memo_environment_epoch = self.memo_environment_next_epoch;
     }
 
     /// Set declaration-preservation mode and invalidate completed memo entries
@@ -809,11 +857,21 @@ impl<'a> TypeInstantiator<'a> {
         // Check if we're already processing this type (cycle detection)
         if let Some(entry) = self.visiting.get(&type_id).copied() {
             let cached = match entry {
-                InstantiationMemoEntry::Active => Some(type_id),
+                InstantiationMemoEntry::Active => {
+                    // A cycle break returns a provisional identity, not a
+                    // settled result. Mark the enclosing subtree sensitive so
+                    // it is never promoted to environment-independent.
+                    self.observe_environment();
+                    Some(type_id)
+                }
                 InstantiationMemoEntry::Completed {
                     result,
                     environment_epoch,
-                } if environment_epoch == self.memo_environment_epoch => Some(result),
+                } if environment_epoch == self.memo_environment_epoch
+                    || environment_epoch == ENVIRONMENT_INDEPENDENT_EPOCH =>
+                {
+                    Some(result)
+                }
                 InstantiationMemoEntry::Completed { .. } => None,
             };
             if let Some(cached) = cached {
@@ -854,14 +912,22 @@ impl<'a> TypeInstantiator<'a> {
         self.visiting
             .insert(type_id, InstantiationMemoEntry::Active);
 
+        let observations_before = self.environment_observations;
         let result = self.instantiate_key(type_id, &key);
 
-        // Update the cache with the actual result
+        // Update the cache with the actual result. A walk that consulted no
+        // binder and broke no cycle is valid under every environment, so it is
+        // stamped to outlive the epoch churn a nested generic signature causes.
+        let environment_epoch = if self.environment_observations == observations_before {
+            ENVIRONMENT_INDEPENDENT_EPOCH
+        } else {
+            self.memo_environment_epoch
+        };
         self.visiting.insert(
             type_id,
             InstantiationMemoEntry::Completed {
                 result,
-                environment_epoch: self.memo_environment_epoch,
+                environment_epoch,
             },
         );
 
@@ -901,6 +967,7 @@ impl<'a> TypeInstantiator<'a> {
         match key {
             // Type parameters get substituted
             TypeData::TypeParameter(info) => {
+                self.observe_environment();
                 if let Some(local_type_param) = self.lookup_local_type_param(info) {
                     return local_type_param;
                 }
@@ -1217,7 +1284,12 @@ impl<'a> TypeInstantiator<'a> {
             TypeData::Conditional(cond_id) => self.instantiate_conditional(type_id, cond_id),
 
             // Mapped: instantiate constraint and template
-            TypeData::Mapped(mapped_id) => self.instantiate_mapped(mapped_id),
+            TypeData::Mapped(mapped_id) => {
+                // `rewrite_single_key_self_indexed_template` consults the
+                // shadow stack for the homomorphic iteration variable.
+                self.observe_environment();
+                self.instantiate_mapped(mapped_id)
+            }
 
             // Index access: instantiate both parts and evaluate immediately
             // Task #46: Meta-type reduction for O(1) equality
@@ -1277,6 +1349,7 @@ impl<'a> TypeInstantiator<'a> {
 
             // Infer: keep as-is unless explicitly substituting inference variables
             TypeData::Infer(info) => {
+                self.observe_environment();
                 if self.substitute_infer
                     && !self.is_shadowed(info)
                     && let Some(substituted) = self
