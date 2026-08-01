@@ -33,6 +33,23 @@
 //!    unrooted even after (1) and (2). Fixed in `type_alias_checking.rs` by
 //!    always running the full funnel regardless of whether TS1170 fired —
 //!    `tsc` reports both, they are independent grammar/type rules.
+//! 4. **A `TypeLiteral`-specific async-inheritance defect**, found once (1)
+//!    made the walk reachable for type literals too: unlike a class or
+//!    interface member, a `TypeLiteral` member's computed name does NOT
+//!    inherit the enclosing function's async-ness in `tsc` — verified
+//!    against a live `tsc@7.0.2` oracle, `async function w() { type S = {
+//!    [await k]: number } }` still reports TS1308, while the interface
+//!    analog reports only TS1169. It still correctly answers the
+//!    TS1375/TS1378 top-level pair when genuinely at the source file's top
+//!    level, so this is neither the ordinary inheriting case nor an enum
+//!    initializer's fully-own-container case — a third
+//!    `AwaitContainerMode::TypeLiteralMember` in
+//!    `core_statement_checks.rs::check_await_expression_in_container`,
+//!    reached via `check_computed_property_name_type_literal_member`
+//!    (`property_checker.rs`) from all three `type_alias_checking.rs`
+//!    `TypeLiteral`-member call sites (property, method/call signature,
+//!    accessor). Holds regardless of nesting depth — a `TypeLiteral` nested
+//!    inside an `interface` member's type annotation behaves identically.
 //!
 //! Every expectation below is pinned against a live `tsc@7.0.2 --noEmit
 //! --pretty false --target es2017 --module commonjs` run, not recalled, and
@@ -161,14 +178,89 @@ function outer() { type Shape2 = { [await key]: number }; }
 }
 
 #[test]
-fn async_wrapper_type_literal_computed_name_reports_only_ts1170() {
+fn async_wrapper_type_literal_computed_name_reports_ts1170_and_ts1308() {
+    // Unlike the class/interface siblings above, a `TypeLiteral` member's
+    // computed name does NOT inherit the enclosing function's async-ness —
+    // verified against a live `tsc@7.0.2` oracle, which reports both TS1170
+    // and TS1308 here (the interface analog reports only TS1169: no TS1308).
     let codes = without_missing_promise_lib(check_source_codes_with_parse_health(
         r#"
 declare const key: string;
 async function wrapper() { type Shape2 = { [await key]: number }; }
 "#,
     ));
-    assert_eq!(codes, vec![1170], "got {codes:?}");
+    assert_eq!(sorted(codes.clone()), vec![1170, 1308], "got {codes:?}");
+}
+
+#[test]
+fn async_wrapper_type_literal_method_computed_name_reports_ts1170_and_ts1308() {
+    // Adjacent member form: a call/method signature member, not a property.
+    let codes = without_missing_promise_lib(check_source_codes_with_parse_health(
+        r#"
+declare const key: string;
+async function wrapper() { type Shape2 = { [await key](): number }; }
+"#,
+    ));
+    assert_eq!(sorted(codes.clone()), vec![1170, 1308], "got {codes:?}");
+}
+
+#[test]
+fn async_wrapper_type_literal_accessor_computed_name_reports_ts1308() {
+    // Adjacent member form: an accessor. No TS1170 pairing here — a
+    // `get`/`set` computed name isn't gated by the literal-form check the
+    // way property/method members are (mirrors the pre-existing accessor
+    // funnel, which never called `check_computed_property_requires_literal`).
+    let codes = without_missing_promise_lib(check_source_codes_with_parse_health(
+        r#"
+declare const key: string;
+async function wrapper() { type Shape2 = { get [await key](): number }; }
+"#,
+    ));
+    assert_eq!(codes, vec![1308], "got {codes:?}");
+}
+
+#[test]
+fn async_wrapper_type_literal_nested_in_interface_property_reports_ts1170_and_ts1308() {
+    // A `TypeLiteral` nested inside an `interface` member's type annotation
+    // behaves identically to one nested inside a type alias's body — the
+    // rule is keyed to the `TypeLiteral` node, not its enclosing declaration.
+    let codes = without_missing_promise_lib(check_source_codes_with_parse_health(
+        r#"
+declare const key: string;
+async function wrapper() { interface Shape { bar: { [await key]: number } } }
+"#,
+    ));
+    assert_eq!(sorted(codes.clone()), vec![1170, 1308], "got {codes:?}");
+}
+
+#[test]
+fn renamed_binder_async_wrapper_type_literal_computed_name_reports_ts1170_and_ts1308() {
+    // Adjacent case: no identifier-spelling predicate drives the rule.
+    let codes = without_missing_promise_lib(check_source_codes_with_parse_health(
+        r#"
+declare const propertyToken: string;
+async function makeContainer() { type Container = { [await propertyToken]: number }; }
+"#,
+    ));
+    assert_eq!(sorted(codes.clone()), vec![1170, 1308], "got {codes:?}");
+}
+
+#[test]
+fn top_level_type_literal_computed_name_await_unaffected() {
+    // Regression control: a `TypeLiteral` that really is at the source
+    // file's top level still gets the TS1375/TS1378 top-level pair, not
+    // TS1308 — only the async-inheritance half changed, not the top-level
+    // walk. (No `--module`/`--target` flags in this harness, so only TS1375
+    // fires; TS1378 is a separate module/target gate covered elsewhere.)
+    let codes = check_source_codes_with_parse_health(
+        r#"
+declare const key: string;
+type Shape2 = { [await key]: number };
+"#,
+    );
+    assert!(codes.contains(&1170), "got {codes:?}");
+    assert!(codes.contains(&1375), "got {codes:?}");
+    assert!(!codes.contains(&1308), "got {codes:?}");
 }
 
 #[test]

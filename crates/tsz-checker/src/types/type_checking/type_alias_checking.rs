@@ -1494,7 +1494,7 @@ impl<'a> CheckerState<'a> {
                                     diagnostic_messages::A_COMPUTED_PROPERTY_NAME_IN_A_TYPE_LITERAL_MUST_REFER_TO_AN_EXPRESSION_WHOSE_TYP,
                                     diagnostic_codes::A_COMPUTED_PROPERTY_NAME_IN_A_TYPE_LITERAL_MUST_REFER_TO_AN_EXPRESSION_WHOSE_TYP,
                                 );
-                                self.check_computed_property_name(sig.name);
+                                self.check_computed_property_name_type_literal_member(sig.name);
                             }
                             let (_type_params, type_param_updates) =
                                 self.push_type_parameters(&sig.type_parameters);
@@ -1528,7 +1528,7 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
                         if let Some(accessor) = self.ctx.arena.get_accessor(member_node) {
-                            self.check_computed_property_name(accessor.name);
+                            self.check_computed_property_name_type_literal_member(accessor.name);
                             if accessor.type_annotation != NodeIndex::NONE {
                                 check_child_type_node!(self, accessor.type_annotation);
                             }
@@ -1561,7 +1561,7 @@ impl<'a> CheckerState<'a> {
                                     diagnostic_messages::A_COMPUTED_PROPERTY_NAME_IN_A_TYPE_LITERAL_MUST_REFER_TO_AN_EXPRESSION_WHOSE_TYP,
                                     diagnostic_codes::A_COMPUTED_PROPERTY_NAME_IN_A_TYPE_LITERAL_MUST_REFER_TO_AN_EXPRESSION_WHOSE_TYP,
                                 );
-                                self.check_computed_property_name(prop.name);
+                                self.check_computed_property_name_type_literal_member(prop.name);
                             }
                             if prop.type_annotation != NodeIndex::NONE {
                                 check_child_type_node!(self, prop.type_annotation);

@@ -1050,15 +1050,29 @@ impl<'a> CheckerState<'a> {
 
     /// Check a computed property name for type errors (TS2464).
     ///
-    /// Validates that the expression used for a computed property name
-    /// has a type that is string, number, symbol, or any (including literals).
-    /// This check is independent of strictNullChecks. Also roots the
-    /// await-grammar walk (TS1308) — independent of TS1166/1169/1170's
-    /// literal-form check, so every caller runs this in full regardless of
-    /// whether that check already fired (`error_at_node` dedups by
-    /// `(start, code)`, so a position an existing root already reaches is
-    /// never double-reported).
+    /// Validates that the expression used for a computed property name has a
+    /// type that is string, number, symbol, or any (including literals).
+    /// Independent of strictNullChecks. Also roots the await-grammar walk
+    /// (TS1308) — independent of TS1166/1169/1170's literal-form check, so
+    /// every caller runs this in full regardless of whether that check
+    /// already fired (`error_at_node` dedups by `(start, code)`, so a
+    /// position an existing root already reaches is never double-reported).
     pub(crate) fn check_computed_property_name(&mut self, name_idx: NodeIndex) {
+        self.check_computed_property_name_impl(name_idx, /* type_literal_member */ false);
+    }
+
+    /// Same as `check_computed_property_name`, but for a `TypeLiteral`
+    /// member: its `await`-grammar walk does not inherit the enclosing
+    /// function's async-ness. See `check_await_expression_type_literal_member`.
+    pub(crate) fn check_computed_property_name_type_literal_member(&mut self, name_idx: NodeIndex) {
+        self.check_computed_property_name_impl(name_idx, /* type_literal_member */ true);
+    }
+
+    fn check_computed_property_name_impl(
+        &mut self,
+        name_idx: NodeIndex,
+        type_literal_member: bool,
+    ) {
         let Some(name_node) = self.ctx.arena.get(name_idx) else {
             return;
         };
@@ -1072,7 +1086,11 @@ impl<'a> CheckerState<'a> {
         };
 
         // TS1308: independent of TS1166/1169/1170 — see the doc comment above.
-        self.check_await_expression(computed.expression);
+        if type_literal_member {
+            self.check_await_expression_type_literal_member(computed.expression);
+        } else {
+            self.check_await_expression(computed.expression);
+        }
 
         // TS1212/TS1213: Check if the computed expression is a strict mode reserved word.
         // E.g., `{ [public]: 0 }` should emit TS1212 in strict mode.
