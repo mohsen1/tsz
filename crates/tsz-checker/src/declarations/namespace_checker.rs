@@ -548,11 +548,31 @@ impl<'a> CheckerState<'a> {
 
         self.merge_exports_into_props(sym_id, &mut props, false);
 
+        // Keep the merged symbol, as the constructor path above does, but only
+        // when the namespace actually contributed a member.
+        //
+        // tsc takes the `typeof f` rendering for an *instantiated* module
+        // (`SymbolFlags.ValueModule`); an empty namespace, or one exporting only
+        // types, is uninstantiated and keeps printing `() => void`. tsz's binder
+        // does not yet model that distinction — `modules/binding.rs` sets
+        // `VALUE_MODULE | NAMESPACE_MODULE` on every namespace — so the flag
+        // cannot separate the two here. Contributing a member is the part of the
+        // rule that is observable at this site, and it covers every merge that
+        // reaches the printer with appended properties.
+        //
+        // The residual gap is a namespace whose only value is *unexported*
+        // (`namespace f { var hidden = 1; }`): tsc prints `typeof f`, and this
+        // still renders structurally. That case is unchanged from before this
+        // fix rather than regressed, and closing it needs the binder to model
+        // instantiation. Withholding the symbol keeps every non-contributing
+        // merge byte-identical to the previous structural rendering.
+        let namespace_contributed_member = props.len() > shape.properties.len();
         let properties = props.into_values().collect();
         let merged_type = declaration_exports::namespace_merged_function_callable_type(
             self.ctx.types,
             &shape,
             properties,
+            namespace_contributed_member.then_some(sym_id),
         );
 
         (merged_type, Vec::new())

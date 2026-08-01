@@ -942,3 +942,277 @@ const consumer: { mu: number; xi: boolean; omicron: number } = parcel;
         missing.message_text
     );
 }
+
+/// A `function` merged with a same-named `namespace` carries `ValueModule` on
+/// its symbol, so tsc renders it as `typeof f` rather than expanding the
+/// structural surface. A plain function with *expando* assignments carries no
+/// module flag, and there tsc really does print `{ (): void; declared: number; }`
+/// — that distinction is the whole rule.
+///
+/// Every expectation below is pinned to `tsc` 7.0.2 run on the same source
+/// (`--noEmit --target es2015 --strict false --pretty false`).
+#[test]
+fn ts2322_merged_function_namespace_renders_typeof_name() {
+    let source = r#"
+function fnMerged() {}
+namespace fnMerged { export var bar = 1; }
+const t: number = fnMerged;
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let d = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .unwrap_or_else(|| panic!("expected TS2322, got: {diagnostics:?}"));
+    assert!(
+        d.message_text.contains("'typeof fnMerged'"),
+        "function+namespace merge should render as `typeof fnMerged`, got: {}",
+        d.message_text
+    );
+    assert!(
+        !d.message_text.contains("(): void"),
+        "merged function must not expand to its structural surface, got: {}",
+        d.message_text
+    );
+}
+
+/// Anti-hardcoding control: the rule is keyed on the symbol's module flag, not
+/// on any particular identifier, so a renamed binder behaves identically.
+#[test]
+fn ts2322_merged_function_namespace_typeof_survives_renamed_binders() {
+    let source = r#"
+function zzQuux() {}
+namespace zzQuux { export var whatever = 1; }
+const t: number = zzQuux;
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let d = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .unwrap_or_else(|| panic!("expected TS2322, got: {diagnostics:?}"));
+    assert!(
+        d.message_text.contains("'typeof zzQuux'"),
+        "renamed binder should render as `typeof zzQuux`, got: {}",
+        d.message_text
+    );
+}
+
+/// Negative control, and the reason the module-flag gate cannot simply be
+/// "callable with appended properties": an expando function with **no**
+/// namespace merge keeps tsc's structural rendering.
+#[test]
+fn ts2322_expando_function_without_namespace_stays_structural() {
+    let source = r#"
+function expandoFn() {}
+expandoFn.declared = 1;
+const t: number = expandoFn;
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let d = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .unwrap_or_else(|| panic!("expected TS2322, got: {diagnostics:?}"));
+    assert!(
+        d.message_text.contains("{ (): void; declared: number; }"),
+        "expando function without a namespace merge must stay structural, got: {}",
+        d.message_text
+    );
+    assert!(
+        !d.message_text.contains("typeof expandoFn"),
+        "expando function without a namespace merge must not render as typeof, got: {}",
+        d.message_text
+    );
+}
+
+/// Ordering control: when a function carries *both* expando assignments and a
+/// namespace merge, the module flag wins and tsc prints `typeof bothFn`. This
+/// pins the module-flag check ahead of the expando check in the printer.
+#[test]
+fn ts2322_expando_function_merged_with_namespace_prefers_typeof() {
+    let source = r#"
+function bothFn() {}
+bothFn.expandoProp = 1;
+namespace bothFn { export var nsProp = 2; }
+const t: number = bothFn;
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let d = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .unwrap_or_else(|| panic!("expected TS2322, got: {diagnostics:?}"));
+    assert!(
+        d.message_text.contains("'typeof bothFn'"),
+        "namespace merge outranks expando assignments, got: {}",
+        d.message_text
+    );
+}
+
+/// Generic and overloaded functions reach the printer through the same merged
+/// callable shape; both render under the merged name.
+#[test]
+fn ts2322_merged_generic_and_overloaded_functions_render_typeof_name() {
+    let generic = r#"
+function genFn<T>(x: T): T { return x; }
+namespace genFn { export var g = 1; }
+const t: number = genFn;
+"#;
+    let diagnostics = check_source_diagnostics(generic);
+    let d = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .unwrap_or_else(|| panic!("expected TS2322 for generic merge, got: {diagnostics:?}"));
+    assert!(
+        d.message_text.contains("'typeof genFn'"),
+        "generic function+namespace merge should render as `typeof genFn`, got: {}",
+        d.message_text
+    );
+
+    let overloaded = r#"
+function ovl(x: number): number;
+function ovl(x: string): string;
+function ovl(x: any): any { return x; }
+namespace ovl { export var o = 1; }
+const t: number = ovl;
+"#;
+    let diagnostics = check_source_diagnostics(overloaded);
+    let d = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .unwrap_or_else(|| panic!("expected TS2322 for overloaded merge, got: {diagnostics:?}"));
+    assert!(
+        d.message_text.contains("'typeof ovl'"),
+        "overloaded function+namespace merge should render as `typeof ovl`, got: {}",
+        d.message_text
+    );
+}
+
+/// Fallback controls: a plain function keeps its call-signature rendering, and
+/// the already-correct pure-namespace and class+namespace forms are unchanged.
+#[test]
+fn ts2322_plain_function_and_existing_typeof_forms_are_unchanged() {
+    let plain = r#"
+function plainFn() {}
+const t: number = plainFn;
+"#;
+    let diagnostics = check_source_diagnostics(plain);
+    let d = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .unwrap_or_else(|| panic!("expected TS2322 for plain function, got: {diagnostics:?}"));
+    assert!(
+        d.message_text.contains("() => void"),
+        "a plain function should still render as `() => void`, got: {}",
+        d.message_text
+    );
+
+    let pure_namespace = r#"
+namespace nsOnly { export var z = 1; }
+const t: number = nsOnly;
+"#;
+    let diagnostics = check_source_diagnostics(pure_namespace);
+    let d = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .unwrap_or_else(|| panic!("expected TS2322 for pure namespace, got: {diagnostics:?}"));
+    assert!(
+        d.message_text.contains("'typeof nsOnly'"),
+        "pure namespace rendering should be unchanged, got: {}",
+        d.message_text
+    );
+
+    let class_merge = r#"
+class clsMerged {}
+namespace clsMerged { export var baz = 1; }
+const t: number = clsMerged;
+"#;
+    let diagnostics = check_source_diagnostics(class_merge);
+    let d = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .unwrap_or_else(|| panic!("expected TS2322 for class merge, got: {diagnostics:?}"));
+    assert!(
+        d.message_text.contains("'typeof clsMerged'"),
+        "class+namespace rendering should be unchanged, got: {}",
+        d.message_text
+    );
+}
+
+/// Regression control for the `esModuleInteropPrettyErrorRelatedInformation.ts`
+/// conformance row: only an *instantiated* module merge takes the name.
+///
+/// `ValueModule` (a namespace containing at least one value) is the operative
+/// flag, not `NamespaceModule`. An empty namespace, or one exporting only
+/// types, adds nothing to the value's observable surface and tsc keeps printing
+/// the call signature. Verified against tsc 7.0.2.
+#[test]
+fn ts2322_empty_or_type_only_namespace_merge_stays_structural() {
+    let empty = r#"
+declare function fa(): void;
+declare namespace fa {}
+const t: number = fa;
+"#;
+    let diagnostics = check_source_diagnostics(empty);
+    let d = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .unwrap_or_else(|| {
+            panic!("expected TS2322 for empty namespace merge, got: {diagnostics:?}")
+        });
+    assert!(
+        d.message_text.contains("() => void"),
+        "an empty namespace merge is not instantiated and must stay structural, got: {}",
+        d.message_text
+    );
+    assert!(
+        !d.message_text.contains("typeof fa"),
+        "an empty namespace merge must not render as typeof, got: {}",
+        d.message_text
+    );
+
+    let type_only = r#"
+declare function fc(): void;
+declare namespace fc { interface Options {} }
+const t: number = fc;
+"#;
+    let diagnostics = check_source_diagnostics(type_only);
+    let d = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .unwrap_or_else(|| {
+            panic!("expected TS2322 for type-only namespace merge, got: {diagnostics:?}")
+        });
+    assert!(
+        d.message_text.contains("() => void"),
+        "a type-only namespace merge is not instantiated and must stay structural, got: {}",
+        d.message_text
+    );
+}
+
+/// Known gap, pinned deliberately: tsc's real test is the module flag, *not*
+/// "does the merge append a visible property". A namespace whose only value is
+/// **not exported** contributes no member yet still instantiates the module,
+/// and tsc prints `typeof fg`.
+///
+/// tsz cannot express that here yet: `crates/tsz-binder/src/modules/binding.rs`
+/// sets `VALUE_MODULE | NAMESPACE_MODULE` on *every* namespace, so the flag
+/// cannot distinguish an instantiated module from an empty or type-only one.
+/// This case renders structurally — unchanged from before the merged-namespace
+/// fix, not regressed by it. Un-ignore once the binder models instantiation.
+#[ignore = "needs binder to model instantiated vs uninstantiated modules; see PR #16133"]
+#[test]
+fn ts2322_namespace_with_only_unexported_value_still_renders_typeof() {
+    let source = r#"
+function fg() {}
+namespace fg { var hidden = 1; }
+const t: number = fg;
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let d = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .unwrap_or_else(|| panic!("expected TS2322, got: {diagnostics:?}"));
+    assert!(
+        d.message_text.contains("'typeof fg'"),
+        "an unexported value still instantiates the module, got: {}",
+        d.message_text
+    );
+}
