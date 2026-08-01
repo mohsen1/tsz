@@ -86,6 +86,28 @@ jobs:
               )
               sys.exit(1)
           print(f"Accounting OK: {failed} failed == {recorded} detail entries.")
+
+          # The check above only catches a dropped result that still shows up
+          # as a *failure* miscount. A test that hangs/crashes and is dropped
+          # from BOTH the passing set and the failures dict shifts
+          # summary.runnable down without disturbing failed == recorded at
+          # all, so it needs its own witness: conformance-baseline.txt carries
+          # one PASS/FAIL line per runnable test, independent of how
+          # conformance-detail.json tallies failures.
+          runnable = snapshot["summary"]["runnable"]
+          with open("scripts/conformance/conformance-baseline.txt") as f:
+              baseline_lines = sum(1 for _ in f)
+          if baseline_lines != runnable:
+              print(
+                  f"::error::accounting mismatch: summary.runnable={runnable} "
+                  f"but conformance-baseline.txt has {baseline_lines} lines. "
+                  "A per-test result was likely dropped (hang or crash) "
+                  "during this run rather than a genuine pass/fail change. "
+                  "Refusing to open/update the refresh PR with a snapshot "
+                  "that does not account for every runnable test."
+              )
+              sys.exit(1)
+          print(f"Accounting OK: {runnable} runnable == {baseline_lines} baseline lines.")
           PY
 
       - name: Detect changes
