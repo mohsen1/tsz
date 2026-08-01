@@ -1048,34 +1048,16 @@ impl<'a> CheckerState<'a> {
         true
     }
 
-    /// Root the await-grammar walk (TS1308) on a computed member name's
-    /// expression only — for a caller that already ran the literal-type
-    /// check (TS1166/1169/1170, mutually exclusive with TS2464 in tsc) and
-    /// wants the independent await diagnostic without re-running
-    /// [`Self::check_computed_property_name`]'s TS2464 branch too.
-    /// `error_at_node` dedups by `(start, code)`, so calling this from a
-    /// position an existing root already reaches is safe.
-    pub(crate) fn check_computed_property_name_await_only(&mut self, name_idx: NodeIndex) {
-        let Some(name_node) = self.ctx.arena.get(name_idx) else {
-            return;
-        };
-        if name_node.kind != tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-            return;
-        }
-        let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
-            return;
-        };
-        self.check_await_expression(computed.expression);
-    }
-
     /// Check a computed property name for type errors (TS2464).
     ///
     /// Validates that the expression used for a computed property name
     /// has a type that is string, number, symbol, or any (including literals).
     /// This check is independent of strictNullChecks. Also roots the
-    /// await-grammar walk (TS1308) — see
-    /// [`Self::check_computed_property_name_await_only`] for callers that
-    /// need only that part.
+    /// await-grammar walk (TS1308) — independent of TS1166/1169/1170's
+    /// literal-form check, so every caller runs this in full regardless of
+    /// whether that check already fired (`error_at_node` dedups by
+    /// `(start, code)`, so a position an existing root already reaches is
+    /// never double-reported).
     pub(crate) fn check_computed_property_name(&mut self, name_idx: NodeIndex) {
         let Some(name_node) = self.ctx.arena.get(name_idx) else {
             return;
@@ -1089,7 +1071,7 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        // TS1308: see `check_computed_property_name_await_only`'s doc comment.
+        // TS1308: independent of TS1166/1169/1170 — see the doc comment above.
         self.check_await_expression(computed.expression);
 
         // TS1212/TS1213: Check if the computed expression is a strict mode reserved word.

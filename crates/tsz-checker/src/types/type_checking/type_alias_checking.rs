@@ -1481,24 +1481,20 @@ impl<'a> CheckerState<'a> {
                         if let Some(sig) = self.ctx.arena.get_signature(member_node) {
                             {
                                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                                let emitted_literal_diagnostic =
-                                    self.check_computed_property_requires_literal(
-                                        sig.name,
-                                        diagnostic_messages::A_COMPUTED_PROPERTY_NAME_IN_A_TYPE_LITERAL_MUST_REFER_TO_AN_EXPRESSION_WHOSE_TYP,
-                                        diagnostic_codes::A_COMPUTED_PROPERTY_NAME_IN_A_TYPE_LITERAL_MUST_REFER_TO_AN_EXPRESSION_WHOSE_TYP,
-                                    );
-                                if emitted_literal_diagnostic {
-                                    // TS1170 and TS1308 are independent
-                                    // grammar rules tsc reports together; the
-                                    // broader TS2464 type-validation branch
-                                    // in check_computed_property_name is
-                                    // mutually exclusive with TS1170 in tsc,
-                                    // so only the await-grammar root runs
-                                    // here, not the full function.
-                                    self.check_computed_property_name_await_only(sig.name);
-                                } else {
-                                    self.check_computed_property_name(sig.name);
-                                }
+                                // TS1170 (syntactic form) and check_computed_property_name's
+                                // diagnostics (TS2464 property-key-type, TS1212/1213 reserved
+                                // words, await-grammar) are independent checks in tsc — it
+                                // emits both when both conditions hold. Verified against
+                                // tsc@7.0.2: `type U = { [b as unknown as boolean]: number }`
+                                // (`b: boolean`) reports both TS1170 and TS2464 at the same
+                                // position, so the literal-form check must never gate the
+                                // shared funnel down to the await-only half.
+                                let _ = self.check_computed_property_requires_literal(
+                                    sig.name,
+                                    diagnostic_messages::A_COMPUTED_PROPERTY_NAME_IN_A_TYPE_LITERAL_MUST_REFER_TO_AN_EXPRESSION_WHOSE_TYP,
+                                    diagnostic_codes::A_COMPUTED_PROPERTY_NAME_IN_A_TYPE_LITERAL_MUST_REFER_TO_AN_EXPRESSION_WHOSE_TYP,
+                                );
+                                self.check_computed_property_name(sig.name);
                             }
                             let (_type_params, type_param_updates) =
                                 self.push_type_parameters(&sig.type_parameters);
@@ -1556,22 +1552,16 @@ impl<'a> CheckerState<'a> {
                         if let Some(prop) = self.ctx.arena.get_property_decl(member_node) {
                             {
                                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                                let emitted_literal_diagnostic = self
-                                    .check_computed_property_requires_literal(
-                                        prop.name,
-                                        diagnostic_messages::A_COMPUTED_PROPERTY_NAME_IN_A_TYPE_LITERAL_MUST_REFER_TO_AN_EXPRESSION_WHOSE_TYP,
-                                        diagnostic_codes::A_COMPUTED_PROPERTY_NAME_IN_A_TYPE_LITERAL_MUST_REFER_TO_AN_EXPRESSION_WHOSE_TYP,
-                                    );
-                                if emitted_literal_diagnostic {
-                                    // See the METHOD_SIGNATURE arm above:
-                                    // TS1170 and TS1308 are independent and
-                                    // tsc reports both, but its TS2464
-                                    // branch is mutually exclusive with
-                                    // TS1170, so only the await root runs.
-                                    self.check_computed_property_name_await_only(prop.name);
-                                } else {
-                                    self.check_computed_property_name(prop.name);
-                                }
+                                // See the signature-member arm above: TS1170 and
+                                // check_computed_property_name's diagnostics are
+                                // independent checks, so the literal-form check must
+                                // never gate the shared funnel down to the await-only half.
+                                let _ = self.check_computed_property_requires_literal(
+                                    prop.name,
+                                    diagnostic_messages::A_COMPUTED_PROPERTY_NAME_IN_A_TYPE_LITERAL_MUST_REFER_TO_AN_EXPRESSION_WHOSE_TYP,
+                                    diagnostic_codes::A_COMPUTED_PROPERTY_NAME_IN_A_TYPE_LITERAL_MUST_REFER_TO_AN_EXPRESSION_WHOSE_TYP,
+                                );
+                                self.check_computed_property_name(prop.name);
                             }
                             if prop.type_annotation != NodeIndex::NONE {
                                 check_child_type_node!(self, prop.type_annotation);
