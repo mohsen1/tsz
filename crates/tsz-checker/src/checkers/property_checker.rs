@@ -1072,7 +1072,7 @@ impl<'a> CheckerState<'a> {
         };
 
         // TS1308: independent of TS1166/1169/1170 — see the doc comment above.
-        self.check_await_expression(computed.expression);
+        self.check_computed_property_name_await(name_idx, computed.expression);
 
         // TS1212/TS1213: Check if the computed expression is a strict mode reserved word.
         // E.g., `{ [public]: 0 }` should emit TS1212 in strict mode.
