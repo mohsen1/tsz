@@ -752,9 +752,18 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Report error if there are missing implementations
-        let is_ambient = self.has_declare_modifier(&class_data.modifiers);
-        if !is_ambient && !missing_members.is_empty() {
+        // Report error if there are missing implementations.
+        //
+        // Ambient-ness does NOT exempt the class. `tsc` decides this in
+        // `checkKindsOfPropertyMemberOverrides`, whose only escape hatch is the
+        // `abstract` modifier on the derived declaration — already handled by the
+        // early return in `check_abstract_member_implementations`. A `declare
+        // class` that leaves an inherited abstract member unimplemented is
+        // reported exactly like a non-ambient one, which also keeps this path
+        // consistent with the implicitly-ambient forms (a class inside `declare
+        // module` / `declare namespace`, or any class in a `.d.ts`) that carry no
+        // `declare` modifier of their own and were always checked.
+        if !missing_members.is_empty() {
             let derived_class_name = if class_data.name.is_some() {
                 if let Some(name_node) = self.ctx.arena.get(class_data.name) {
                     if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
