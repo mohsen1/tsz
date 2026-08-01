@@ -371,6 +371,20 @@ pub trait TypeResolver {
         None
     }
 
+    /// Get the name-resolved parent `DefId` for an interface heritage clause.
+    ///
+    /// Unlike `get_class_extends`, this is kind-agnostic binder/solver
+    /// heritage data (`DefinitionInfo::extends`, populated for both `Class`
+    /// and `Interface` defs at semantic-construction time) rather than the
+    /// checker-verified, generics-aware `class_extends` map. It records only
+    /// the first `extends` clause, so it is a correct but incomplete parent
+    /// for a multi-parent `interface B extends A, C {}` — callers must treat
+    /// a miss as "unknown", not as "no relationship", and fall back to a
+    /// structural check.
+    fn get_interface_extends(&self, _def_id: DefId) -> Option<DefId> {
+        None
+    }
+
     /// Resolve the concrete class/interface instance type for the current polymorphic `this`.
     ///
     /// When the caller is inside a class or interface member, this lets the solver
@@ -636,6 +650,10 @@ impl<T: TypeResolver + ?Sized> TypeResolver for &T {
 
     fn get_class_extends(&self, def_id: DefId) -> Option<DefId> {
         (**self).get_class_extends(def_id)
+    }
+
+    fn get_interface_extends(&self, def_id: DefId) -> Option<DefId> {
+        (**self).get_interface_extends(def_id)
     }
 
     fn class_def_for_instance_type(&self, type_id: TypeId) -> Option<DefId> {
@@ -1780,6 +1798,12 @@ impl TypeResolver for TypeEnvironment {
 
     fn get_class_extends(&self, def_id: DefId) -> Option<DefId> {
         self.get_class_extends_def(def_id)
+    }
+
+    fn get_interface_extends(&self, def_id: DefId) -> Option<DefId> {
+        self.definition_store
+            .as_ref()
+            .and_then(|store| store.get_extends(def_id))
     }
 
     fn class_def_for_instance_type(&self, type_id: TypeId) -> Option<DefId> {
