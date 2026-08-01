@@ -319,6 +319,9 @@ mod function_type_return_node_tests;
 #[path = "tests/generator_declaration_yield_star_inference_tests.rs"]
 mod generator_declaration_yield_star_inference_tests;
 #[cfg(test)]
+#[path = "tests/generator_default_type_argument_relation_tests.rs"]
+mod generator_default_type_argument_relation_tests;
+#[cfg(test)]
 #[path = "../tests/generator_union_return_type_tests.rs"]
 mod generator_union_return_type_tests;
 #[cfg(test)]
