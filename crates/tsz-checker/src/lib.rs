@@ -322,6 +322,9 @@ mod generator_declaration_yield_star_inference_tests;
 #[path = "tests/generator_default_type_argument_relation_tests.rs"]
 mod generator_default_type_argument_relation_tests;
 #[cfg(test)]
+#[path = "tests/generator_inferred_yield_star_array_generic_call_tests.rs"]
+mod generator_inferred_yield_star_array_generic_call_tests;
+#[cfg(test)]
 #[path = "../tests/generator_union_return_type_tests.rs"]
 mod generator_union_return_type_tests;
 #[cfg(test)]

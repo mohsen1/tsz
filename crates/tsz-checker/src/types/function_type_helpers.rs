@@ -1026,11 +1026,27 @@ impl<'a> CheckerState<'a> {
             .unwrap_or(TypeId::VOID);
         let next_t = ctx.early_gen_next_type.unwrap_or(TypeId::UNKNOWN);
 
-        return_type_construction::function_return_application(
+        let application = return_type_construction::function_return_application(
             self.ctx.types,
             base,
             vec![yield_t, return_t, next_t],
-        )
+        );
+        // Warm the solver's application-eval cache for this exact (def, args)
+        // pair while the checker's env-aware resolver is live. Without this,
+        // a later raw-solver re-evaluation of the same Application — e.g. a
+        // generic call's constraint/finalize passes over an argument that IS
+        // this call's own return type — can run through a resolver context
+        // that cannot re-derive `AsyncGenerator`/`Generator`'s type params
+        // from the bare `Lazy(DefId)` base on its own, and falls back to the
+        // interface's unsubstituted structural shape (dropping our `yield_t`/
+        // `return_t`/`next_t` args): the printer then shows a bare
+        // `AsyncGenerator` and a spurious TS2345 fires even though a
+        // concrete assignment against the identical type args succeeds.
+        // Reachable only via `AsyncGenerator`/`Generator` return-type
+        // inference — an explicit annotation lowers through the ordinary
+        // type-node path and never hits this gap. See #16119.
+        let _ = self.evaluate_type_with_env(application);
+        application
     }
 
     fn unannotated_generator_body_return_type(
