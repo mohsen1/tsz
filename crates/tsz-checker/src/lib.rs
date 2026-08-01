@@ -136,6 +136,9 @@ mod assignability_type_comparability_relation_routing_arch_tests;
 #[path = "tests/assignment_ops_relation_routing_arch_tests.rs"]
 mod assignment_ops_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/async_generator_yieldstar_contribution_tests.rs"]
+mod async_generator_yieldstar_contribution_tests;
+#[cfg(test)]
 #[path = "../tests/async_imported_promise_tests.rs"]
 mod async_imported_promise_tests;
 #[cfg(test)]

@@ -427,19 +427,22 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         expression_type,
                         true,
                     );
-                    // Unlike the sync path below, this does not yet fall back to the
-                    // checker's env-aware property-access chain when `async_info` is
-                    // `None` — `get_async_iterable_element_type` is itself just
-                    // `get_iterator_info` retried sync-then-async, so it shares the
-                    // same `TypeData::Lazy(DefId)` blind spot rather than escaping it
-                    // (see #16030's module doc). Widening this arm the same way the
-                    // sync arm was widened surfaced a real, separate gap: an
+                    // `element` is deliberately still solver-only. It is the `yield*`
+                    // expression's own result type, which flows into the TS2322 check
+                    // against an *annotated* container's declared yield type below —
+                    // and that is exactly where widening this arm to the checker's
+                    // env-aware chain regressed `asyncYieldStarContextualType.ts`: an
                     // uninstantiated generic delegate (`yield* g()` for a bare
-                    // `<T>() => AsyncGenerator<T>`) resolved to its structural `T`
+                    // `<T>() => AsyncGenerator<T>`) resolves structurally to its `T`
                     // (defaulting to `unknown`) instead of the contextual yield type
-                    // the containing annotated generator provides, regressing
-                    // `asyncYieldStarContextualType.ts`. Left as solver-only pending a
-                    // fix that also threads contextual typing into the delegate call.
+                    // `tsc` threads into the delegate call from the container's
+                    // annotation. Until that contextual typing is threaded, a
+                    // structural answer here is worse than none.
+                    //
+                    // The *contribution* below is a separate question with a separate
+                    // consumer, which is why it can be fixed independently: it is only
+                    // ever read to infer an **unannotated** generator's yield type, so
+                    // the annotated container in that witness never sees it.
                     let element = async_info.as_ref().map_or_else(
                         || {
                             tsz_solver::operations::get_async_iterable_element_type(
@@ -472,14 +475,40 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     // Always collect regardless of contextual yield type — the final
                     // generator yield type must come from actual body yields, not context
                     // (see function_type.rs comment on final_generator_yield_type).
-                    if async_info.is_some() {
+                    if let Some(ref i) = async_info {
                         self.checker
                             .ctx
-                            .push_generator_yield_contribution(element, false);
+                            .push_generator_yield_contribution(i.yield_type, false);
                         // When yield* delegates to an async iterable with `any` element
                         // type, suppress TS7055 at the function level (see sync path).
-                        if element == TypeId::ANY {
+                        if i.yield_type == TypeId::ANY {
                             self.checker.ctx.generator_had_ts7057 = true;
+                        }
+                    } else {
+                        // `get_iterator_info` is a pure structural solver query: its
+                        // `[Symbol.asyncIterator]` lookup cannot evaluate through the
+                        // `TypeData::Lazy(DefId)` alias body that every non-array/tuple
+                        // lib iterable (`AsyncGenerator<T>`, `AsyncIterable<T>`,
+                        // `Generator<T>`, `Set<T>`, `string`) exposes its iterator
+                        // member behind, so it answers `None` and the aggregated yield
+                        // type silently collapsed to `any`. This is the same blind spot
+                        // #16030 fixed on the sync arm; `for await..of` already escapes
+                        // it through the checker's env-aware property-access chain
+                        // (async protocol first, then sync + `Awaited`), which is the
+                        // same iteration semantics `tsc` uses for an async `yield*`
+                        // (`IterationUse.AsyncYieldStar`). Reuse that query rather than
+                        // defaulting the aggregate to `any`.
+                        //
+                        // `ANY` is this chain's unresolved sentinel as well as a real
+                        // answer, so it keeps the pre-existing behaviour exactly —
+                        // contribute nothing, set no flag — rather than widening the
+                        // aggregate or newly suppressing TS7055 on a shape this arm
+                        // has never spoken for.
+                        let resolved = self.checker.for_of_element_type(expression_type, true);
+                        if resolved != TypeId::ANY {
+                            self.checker
+                                .ctx
+                                .push_generator_yield_contribution(resolved, false);
                         }
                     }
                     element
