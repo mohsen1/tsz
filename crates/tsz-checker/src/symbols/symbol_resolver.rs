@@ -1950,7 +1950,13 @@ impl<'a> CheckerState<'a> {
         if symbol.is_type_only {
             return None;
         }
-        if (symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0 {
+        // An uninstantiated namespace (`NAMESPACE_MODULE`, no `VALUE_MODULE`)
+        // still occupies `typeof X`'s value namespace in tsc; excluding it makes
+        // every caller here report a spurious TS2304 instead of TS2708.
+        if (symbol.flags
+            & (symbol_flags::VALUE | symbol_flags::ALIAS | symbol_flags::NAMESPACE_MODULE))
+            != 0
+        {
             return Some(sym_id.0);
         }
 
