@@ -1374,7 +1374,7 @@ impl<'a> CheckerState<'a> {
             // function/method declarations are checked by statement_callback_bridge.rs.
             // Without this guard, function declarations get duplicate diagnostics.
             if is_closure {
-                self.check_parameter_initializers(&parameters.nodes);
+                self.check_parameter_initializers(&parameters.nodes, function_is_async);
                 // Top-level destructuring iterability/nullish checks for closures.
                 // Function declarations get this from `check_parameter_binding_pattern_defaults`
                 // via the statement-callback bridge; closures need it here so that

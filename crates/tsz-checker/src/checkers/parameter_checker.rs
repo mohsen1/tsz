@@ -7,10 +7,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_solver::TypeId;
 
-// =============================================================================
 // Parameter Checking Methods
-// =============================================================================
-
 impl<'a> CheckerState<'a> {
     fn parameter_pattern_has_concrete_type(
         &self,
@@ -895,12 +892,11 @@ impl<'a> CheckerState<'a> {
     /// Check for parameter initializers that are not allowed by signature shape (TS2371).
     ///
     /// Parameter initializers are only valid in function/constructor implementations.
-    /// This emits TS2371 when a signature has parameter initializers in either case:
+    /// This emits TS2371 ("A parameter initializer is only allowed in a
+    /// function or constructor implementation.") when a signature has
+    /// parameter initializers in either case:
     /// - Ambient/declaration contexts (`declare`)
     /// - Non-implementation signatures (no body), such as overloads and function types
-    ///
-    /// ## Error TS2371:
-    /// "A parameter initializer is only allowed in a function or constructor implementation."
     pub(crate) fn check_non_impl_parameter_initializers(
         &mut self,
         parameters: &[NodeIndex],
@@ -949,14 +945,13 @@ impl<'a> CheckerState<'a> {
 
     /// - Emits TS2322 when the default value type doesn't match the parameter type
     /// - Checks for undefined identifiers in default expressions (TS2304)
-    /// - Checks for self-referential parameter defaults (TS2372)
-    ///
-    /// ## Error TS2322:
-    /// "Type X is not assignable to type Y."
-    ///
-    /// ## Error TS2372:
-    /// "Parameter 'x' cannot reference itself."
-    pub(crate) fn check_parameter_initializers(&mut self, parameters: &[NodeIndex]) {
+    /// - Checks for self-referential parameter defaults (TS2372:
+    ///   "Parameter 'x' cannot reference itself.")
+    pub(crate) fn check_parameter_initializers(
+        &mut self,
+        parameters: &[NodeIndex],
+        owner_is_async: bool,
+    ) {
         self.check_parameter_downlevel_body_capture(parameters);
         for (param_pos, &param_idx) in parameters.iter().enumerate() {
             let Some(param_node) = self.ctx.arena.get(param_idx) else {
@@ -981,8 +976,11 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            // TS1308: a parameter initializer is never top-level (#16072).
+            // TS1308 (#16072): gate on the owning function's async-ness, not
+            // ambient state — the signature checks before the body pushes it.
+            let saved_async_depth = self.ctx.enter_function_async_context(owner_is_async);
             self.check_await_expression(param.initializer);
+            self.ctx.restore_async_context(saved_async_depth);
 
             // TS2372: Check if the initializer references the parameter itself
             // e.g., function f(x = x) { }, function f(x = x + 1) { }, or

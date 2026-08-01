@@ -570,7 +570,7 @@ impl<'a> CheckerState<'a> {
         self.infer_parameter_types_from_context(&func.parameters.nodes);
 
         // Check that parameter default values are assignable to declared types (TS2322)
-        self.check_parameter_initializers(&func.parameters.nodes);
+        self.check_parameter_initializers(&func.parameters.nodes, func.is_async);
 
         // Check binding element defaults in destructuring parameters (TS2322)
         // e.g., function f({ show: x = v => v }: Show) — validate x's default

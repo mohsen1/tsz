@@ -217,3 +217,59 @@ fn async_context_reports_no_ts1308_for_property_or_namespace_shapes() {
         "an `await` inside an async method body must not report TS1308; got {diags:?}"
     );
 }
+
+// --- async-owner parameter defaults: TS2524 only, never TS1308 ---
+//
+// `check_parameter_initializers` runs during signature checking, before the
+// owning function's body pushes its own async context, so it cannot read
+// the owner's async-ness off ambient state — it must be told explicitly.
+// tsc: TS2524 unconditionally, TS1308 only when the *owning* function is not
+// async. All three rows below are async owners, so TS1308 must not appear.
+
+#[test]
+fn async_function_parameter_default_await_reports_only_ts2524() {
+    let source = "async function f(a = await 1) {}";
+    let diags = codes(source);
+    assert!(diags.contains(&2524), "got {diags:?}");
+    assert!(
+        !diags.contains(&1308),
+        "an async free function's own parameter default must not report TS1308; got {diags:?}"
+    );
+}
+
+#[test]
+fn async_generator_function_parameter_default_await_reports_only_ts2524() {
+    let source = "async function* f(a = await 1) {}";
+    let diags = codes(source);
+    assert!(diags.contains(&2524), "got {diags:?}");
+    assert!(
+        !diags.contains(&1308),
+        "an async generator's own parameter default must not report TS1308; got {diags:?}"
+    );
+}
+
+#[test]
+fn async_method_parameter_default_await_reports_only_ts2524() {
+    let source = "class K { async m(a = await 1) {} }";
+    let diags = codes(source);
+    assert!(diags.contains(&2524), "got {diags:?}");
+    assert!(
+        !diags.contains(&1308),
+        "an async method's own parameter default must not report TS1308; got {diags:?}"
+    );
+}
+
+/// Renamed-binder control, plus confirming a *nested* non-async function's
+/// own parameter default still correctly reports TS1308 even though its
+/// enclosing function is async — async-ness is the immediately owning
+/// function's own, never inherited (mirrors `in_async_context`'s doc
+/// comment on `enter_function_async_context`).
+#[test]
+fn non_async_function_nested_in_async_function_parameter_default_reports_ts1308() {
+    let source = "async function outer() { function inner(a = await 1) {} }";
+    let diags = codes(source);
+    assert!(
+        diags.contains(&1308),
+        "a non-async function nested in an async one still reports TS1308 for its own parameter default; got {diags:?}"
+    );
+}
