@@ -1135,3 +1135,84 @@ const t: number = clsMerged;
         d.message_text
     );
 }
+
+/// Regression control for the `esModuleInteropPrettyErrorRelatedInformation.ts`
+/// conformance row: only an *instantiated* module merge takes the name.
+///
+/// `ValueModule` (a namespace containing at least one value) is the operative
+/// flag, not `NamespaceModule`. An empty namespace, or one exporting only
+/// types, adds nothing to the value's observable surface and tsc keeps printing
+/// the call signature. Verified against tsc 7.0.2.
+#[test]
+fn ts2322_empty_or_type_only_namespace_merge_stays_structural() {
+    let empty = r#"
+declare function fa(): void;
+declare namespace fa {}
+const t: number = fa;
+"#;
+    let diagnostics = check_source_diagnostics(empty);
+    let d = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .unwrap_or_else(|| {
+            panic!("expected TS2322 for empty namespace merge, got: {diagnostics:?}")
+        });
+    assert!(
+        d.message_text.contains("() => void"),
+        "an empty namespace merge is not instantiated and must stay structural, got: {}",
+        d.message_text
+    );
+    assert!(
+        !d.message_text.contains("typeof fa"),
+        "an empty namespace merge must not render as typeof, got: {}",
+        d.message_text
+    );
+
+    let type_only = r#"
+declare function fc(): void;
+declare namespace fc { interface Options {} }
+const t: number = fc;
+"#;
+    let diagnostics = check_source_diagnostics(type_only);
+    let d = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .unwrap_or_else(|| {
+            panic!("expected TS2322 for type-only namespace merge, got: {diagnostics:?}")
+        });
+    assert!(
+        d.message_text.contains("() => void"),
+        "a type-only namespace merge is not instantiated and must stay structural, got: {}",
+        d.message_text
+    );
+}
+
+/// Known gap, pinned deliberately: tsc's real test is the module flag, *not*
+/// "does the merge append a visible property". A namespace whose only value is
+/// **not exported** contributes no member yet still instantiates the module,
+/// and tsc prints `typeof fg`.
+///
+/// tsz cannot express that here yet: `crates/tsz-binder/src/modules/binding.rs`
+/// sets `VALUE_MODULE | NAMESPACE_MODULE` on *every* namespace, so the flag
+/// cannot distinguish an instantiated module from an empty or type-only one.
+/// This case renders structurally — unchanged from before the merged-namespace
+/// fix, not regressed by it. Un-ignore once the binder models instantiation.
+#[ignore = "needs binder to model instantiated vs uninstantiated modules; see PR #16133"]
+#[test]
+fn ts2322_namespace_with_only_unexported_value_still_renders_typeof() {
+    let source = r#"
+function fg() {}
+namespace fg { var hidden = 1; }
+const t: number = fg;
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let d = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .unwrap_or_else(|| panic!("expected TS2322, got: {diagnostics:?}"));
+    assert!(
+        d.message_text.contains("'typeof fg'"),
+        "an unexported value still instantiates the module, got: {}",
+        d.message_text
+    );
+}

@@ -71,10 +71,24 @@ impl<'a> TypeFormatter<'a> {
     ///
     /// `tsc`'s `createAnonymousTypeNode` routes an anonymous object type through
     /// `symbolToTypeNode` when the type's symbol carries `SymbolFlags.Class`,
-    /// `Enum`, or `ValueModule`, which is what prints `typeof Name`. A value
-    /// symbol that owns a namespace/module or enum declaration therefore keeps
-    /// its name; a plain function with expando assignments carries no module
-    /// flag and really does print its structural surface.
+    /// `Enum`, or `ValueModule`, which is what prints `typeof Name`.
+    ///
+    /// `ValueModule` is `tsc`'s operative flag: only an *instantiated* namespace
+    /// (one containing at least one value, exported or not) carries it, and an
+    /// empty or type-only namespace prints structurally instead:
+    ///
+    /// ```text
+    /// declare function f(): void; declare namespace f {}                 -> () => void
+    /// declare function f(): void; declare namespace f { interface O {} } -> () => void
+    /// function f() {} namespace f { export var v = 1; }                  -> typeof f
+    /// ```
+    ///
+    /// Note that tsz's binder does not model that distinction — every namespace
+    /// gets `VALUE_MODULE | NAMESPACE_MODULE` — so this predicate cannot be the
+    /// thing that separates those rows. Callers that need the distinction gate
+    /// it at their construction site instead (see
+    /// `merge_namespace_exports_into_function`); this helper answers only "does
+    /// this symbol take a name-based rendering at all".
     ///
     /// Class and interface declarations win the name in a declaration merge —
     /// `interface B {}` + `namespace B {}` displays as `B`, not `typeof B` —
@@ -90,12 +104,11 @@ impl<'a> TypeFormatter<'a> {
         let Some(sym) = arena.get(sym_id) else {
             return false;
         };
-        let is_namespace =
-            sym.has_any_flags(symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE);
+        let is_value_module = sym.has_any_flags(symbol_flags::VALUE_MODULE);
         let is_enum = sym.has_any_flags(symbol_flags::ENUM);
         let is_class = sym.has_flags(symbol_flags::CLASS);
         let is_interface = sym.has_any_flags(symbol_flags::INTERFACE);
-        (is_namespace || is_enum) && !is_class && !is_interface
+        (is_value_module || is_enum) && !is_class && !is_interface
     }
 
     /// Try to resolve a human-readable name for an object shape via symbol or def store lookup.

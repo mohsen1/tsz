@@ -93,11 +93,14 @@ pub(crate) fn namespace_merged_constructor_callable_type(
     })
 }
 
+/// `symbol` is `Some` only for an *instantiated* module merge (`ValueModule`),
+/// which is what `tsc` renders as `typeof f`; an empty or type-only namespace
+/// passes `None` and keeps the structural rendering.
 pub(crate) fn namespace_merged_function_callable_type(
     db: &dyn TypeDatabase,
     shape: &CallableShape,
     properties: Vec<PropertyInfo>,
-    symbol: SymbolId,
+    symbol: Option<SymbolId>,
 ) -> TypeId {
     db.callable(CallableShape {
         call_signatures: shape.call_signatures.clone(),
@@ -105,7 +108,7 @@ pub(crate) fn namespace_merged_function_callable_type(
         properties,
         string_index: shape.string_index,
         number_index: shape.number_index,
-        symbol: Some(symbol),
+        symbol,
         is_abstract: false,
     })
 }
