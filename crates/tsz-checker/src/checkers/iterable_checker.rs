@@ -357,6 +357,20 @@ impl<'a> CheckerState<'a> {
         use crate::query_boundaries::common::PropertyAccessResult;
 
         let type_id = self.resolve_lazy_type(type_id);
+
+        // Distribute over union delegates: `tsc` accepts a union `yield*`
+        // delegate as long as every member's async iterator has a valid
+        // `next()` result, so the union as a whole is invalid only if some
+        // member is. Resolving `[Symbol.asyncIterator]`/`next()` on the union
+        // `type_id` as a single receiver (the pre-fix behavior) reads an
+        // inconsistent cross-member result and reports a spurious TS1320 even
+        // when each member alone is clean.
+        if let Some(members) = union_members_for_type(self.ctx.types, type_id) {
+            return members
+                .iter()
+                .any(|&member| self.async_iterator_has_invalid_thenable_next_result(member));
+        }
+
         let iterator_fn = self.resolve_property_access_with_env(type_id, "[Symbol.asyncIterator]");
         let iterator_fn_type = match iterator_fn {
             PropertyAccessResult::Success { type_id, .. } => type_id,

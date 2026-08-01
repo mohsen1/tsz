@@ -139,6 +139,9 @@ mod assignment_ops_relation_routing_arch_tests;
 #[path = "tests/async_generator_yieldstar_contribution_tests.rs"]
 mod async_generator_yieldstar_contribution_tests;
 #[cfg(test)]
+#[path = "tests/async_generator_yieldstar_union_delegate_tests.rs"]
+mod async_generator_yieldstar_union_delegate_tests;
+#[cfg(test)]
 #[path = "../tests/async_imported_promise_tests.rs"]
 mod async_imported_promise_tests;
 #[cfg(test)]
