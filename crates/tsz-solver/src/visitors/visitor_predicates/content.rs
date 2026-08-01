@@ -59,11 +59,17 @@ pub fn contains_infer_types(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// This variant is used by `should_suppress_assignability_diagnostic` to avoid
 /// suppressing real errors like TS2322 when the only `infer` types are in
 /// type parameter constraint chains.
+///
+/// The deep walk is memoized per node in the project-wide free-`infer` cache
+/// (the answer is immutable per `TypeId` within one interner), so repeated
+/// checks over shared closed subtrees stay O(1) instead of re-walking on every
+/// call (#15729).
 pub fn contains_free_infer_types(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    DeepContainsChecker::new(types, ChildPolicy::FREE_INFER, |key| {
-        matches!(key, TypeData::Infer(_))
-    })
-    .check_from_root(type_id)
+    // Fast path: intrinsic types never contain a free `infer`.
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    crate::type_queries::contains_free_infer_types_db(types, type_id)
 }
 
 /// Check if a type contains the `any` intrinsic anywhere.

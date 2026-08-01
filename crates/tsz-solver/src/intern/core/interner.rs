@@ -210,6 +210,22 @@ pub(crate) enum PredicateCacheKind {
     /// [`ChildPolicy::CONTENT_PREDICATE`]:
     ///     crate::visitors::child_policy::ChildPolicy::CONTENT_PREDICATE
     ContainsExtractableTypeParams = 18,
+    /// `type_id` contains a *free* `infer` type anywhere on its
+    /// [`ChildPolicy::FREE_INFER`] surface — an inference placeholder not
+    /// buried inside a `TypeParameter`'s constraint/default, a generic
+    /// signature body, or the operand of a deferred conditional/mapped/
+    /// indexed-access/keyof operation. Freeness under this policy is a purely
+    /// structural, resolver-independent property of the `TypeId` within one
+    /// interner, so the deep walk is memoized per node like the sibling
+    /// `Contains*` predicates. Distinct from [`Self::ContainsFreeTypeParams`],
+    /// which walks the wider `FREE_TYPE_PARAMS` policy and also matches
+    /// `TypeParameter`/`ThisType`/`BoundParameter`. Backs
+    /// `should_suppress_assignability_diagnostic`'s free-`infer` gate
+    /// (#15729).
+    ///
+    /// [`ChildPolicy::FREE_INFER`]:
+    ///     crate::visitors::child_policy::ChildPolicy::FREE_INFER
+    ContainsFreeInfer = 19,
 }
 
 impl PredicateCacheKind {
