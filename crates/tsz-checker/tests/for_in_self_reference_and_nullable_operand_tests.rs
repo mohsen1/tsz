@@ -198,6 +198,48 @@ for (var textKey in text) { }
 }
 
 // ---------------------------------------------------------------------------
+// Mechanism 3 — `unknown` is not `any`: `tsc`'s `checkForInStatement` only
+// special-cases `any` via `isTypeAny` before falling through to
+// `allTypesAssignableToKind(rightType, NonPrimitive | InstantiableNonPrimitive)`,
+// which `unknown` fails like any other non-object type. Oracle-verified,
+// `tsc` 7.0.2, `--strict` both ways: `unknown` reports TS2407 identically in
+// both modes (it is not a `strictNullChecks`-gated fact the way `null`/
+// `undefined` are).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn declared_unknown_for_in_operand_is_ts2407_in_both_modes() {
+    let source = "declare const u: unknown;\nfor (const k in u) { }\n";
+    assert_has_2407(&non_strict(source), "unknown operand");
+    assert_has_2407(&strict(source), "unknown operand, strict");
+}
+
+#[test]
+fn union_collapsing_to_unknown_for_in_operand_is_still_ts2407() {
+    // `string | unknown` collapses to `unknown` itself; the union path must
+    // reject it the same way the bare leaf type does.
+    let source = "declare const su: string | unknown;\nfor (const k in su) { }\n";
+    assert_has_2407(&non_strict(source), "string | unknown operand");
+}
+
+#[test]
+fn any_for_in_operand_is_still_not_ts2407() {
+    // Negative control: `any` keeps its own, separate exemption — the
+    // `unknown` fix must not have widened the gate the other direction.
+    let source = "declare const a: any;\nfor (const k in a) { }\n";
+    assert_no_2407(&non_strict(source), "any operand");
+    assert_no_2407(&strict(source), "any operand, strict");
+}
+
+#[test]
+fn type_parameter_for_in_operand_is_still_not_ts2407() {
+    // Negative control: a bare type parameter is object-like via
+    // `is_type_parameter_like`, unaffected by the `unknown` leaf change.
+    let source = "function f<T>(x: T) {\n  for (const k in x) { }\n}\n";
+    assert_no_2407(&non_strict(source), "type parameter operand");
+}
+
+// ---------------------------------------------------------------------------
 // Mechanism 1, reporting half — the same circular loop head that clears the
 // TS2407 gate is what `tsc` reports TS7022 on.
 //

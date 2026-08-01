@@ -525,15 +525,21 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Leaf (non-union, non-intersection) validity test for a for-in operand:
-    /// `any`, `unknown`, the `object` intrinsic, a type parameter, or any object-like
+    /// `any`, the `object` intrinsic, a type parameter, or any object-like
     /// type — including deferred index-access / generic-application forms.
+    ///
+    /// `unknown` is deliberately NOT accepted here: `tsc`'s
+    /// `checkForInStatement` only special-cases `any` via `isTypeAny` before
+    /// falling through to `allTypesAssignableToKind(rightType, NonPrimitive |
+    /// InstantiableNonPrimitive)`, which `unknown` fails just like any other
+    /// non-object type — `declare const u: unknown; for (const k in u) {}`
+    /// reports TS2407 (oracle-verified, `tsc` 7.0.2, both strictness modes).
     ///
     /// `is_deferred_object_like_for_in` already returns `true` for both
     /// `is_type_parameter_like` and `is_object_like_type`, so this is the single
     /// predicate shared by the scalar and intersection-member checks.
     fn for_in_leaf_type_is_valid(&mut self, ty: TypeId) -> bool {
         ty == TypeId::ANY
-            || ty == TypeId::UNKNOWN
             || ty == TypeId::OBJECT
             || self.for_in_operand_is_absorbed_nullable(ty)
             || self.is_deferred_object_like_for_in(ty)
@@ -558,7 +564,6 @@ impl<'a> CheckerState<'a> {
         if let Some(members) = query::union_members(self.ctx.types, expr_type) {
             for &member in &members {
                 if member == TypeId::ANY
-                    || member == TypeId::UNKNOWN
                     || query::is_type_parameter_like(self.ctx.types, member)
                     || query::is_object_like_type(self.ctx.types, member)
                     || self.is_deferred_object_like_for_in(member)
