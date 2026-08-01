@@ -1652,9 +1652,20 @@ impl<'a> TypeLowering<'a> {
                 }
             }
 
-            let type_id = self.with_typeof_param_bindings(&lowered, || {
-                self.lower_type(param_data.type_annotation)
-            });
+            // An unannotated parameter in a function/constructor *type* (as opposed
+            // to a function declaration/expression, which infers from context) has
+            // no contextual source to infer from, so tsc gives it the implicit `any`
+            // type unconditionally. `lower_type` returns `TypeId::ERROR` for a
+            // missing node to prevent "any poisoning" elsewhere; that guard is wrong
+            // here specifically because a signature-type parameter position always
+            // needs *some* type, and `any` (not `ERROR`) is the one tsc assigns.
+            let type_id = if param_data.type_annotation.is_none() {
+                TypeId::ANY
+            } else {
+                self.with_typeof_param_bindings(&lowered, || {
+                    self.lower_type(param_data.type_annotation)
+                })
+            };
             let optional = param_data.question_token || param_data.initializer != NodeIndex::NONE;
             // For `?`-optional params, tsc includes `| undefined` in the
             // signature type unconditionally (for display). Default-value
