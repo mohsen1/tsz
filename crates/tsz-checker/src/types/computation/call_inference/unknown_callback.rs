@@ -34,6 +34,7 @@ impl<'a> CheckerState<'a> {
             shape,
             args,
             arg_types,
+            finalized_contextual_param_types,
             check_excess_properties,
             callable_ctx,
         );
@@ -45,6 +46,7 @@ impl<'a> CheckerState<'a> {
         shape: Option<&FunctionShape>,
         args: &[NodeIndex],
         arg_types: &[TypeId],
+        finalized_contextual_param_types: Option<&[Option<TypeId>]>,
         check_excess_properties: bool,
         callable_ctx: CallableContext,
     ) {
@@ -55,6 +57,7 @@ impl<'a> CheckerState<'a> {
             shape,
             args,
             arg_types,
+            finalized_contextual_param_types,
             check_excess_properties,
             callable_ctx,
         );
@@ -65,6 +68,7 @@ impl<'a> CheckerState<'a> {
         shape: &FunctionShape,
         args: &[NodeIndex],
         arg_types: &[TypeId],
+        finalized_contextual_param_types: Option<&[Option<TypeId>]>,
         check_excess_properties: bool,
         callable_ctx: CallableContext,
     ) {
@@ -105,8 +109,16 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                let has_other_evidence =
-                    args.iter()
+                let has_other_evidence = self
+                    .bare_type_param_position_resolved_by_round1(
+                        shape,
+                        finalized_contextual_param_types,
+                        index,
+                        *tp,
+                    )
+                    .is_some()
+                    || args
+                        .iter()
                         .enumerate()
                         .any(|(other_index, &other_arg_idx)| {
                             self.argument_provides_type_param_evidence(
@@ -274,6 +286,58 @@ impl<'a> CheckerState<'a> {
                 )
             })
         })
+    }
+
+    /// Whether the call's own already-computed generic solve (threaded down
+    /// as `finalized_contextual_param_types`, the callee's parameter types
+    /// after substituting the real inferred type arguments) resolved
+    /// `type_param` to a concrete type through some OTHER bare-typed
+    /// parameter position.
+    ///
+    /// This complements `argument_provides_type_param_evidence`'s
+    /// argument-shape heuristic rather than replacing it (#16018): for a
+    /// parameter slot declared as a bare type-parameter reference (`x: T`,
+    /// no nesting), substituting the solver's real answer into that slot
+    /// yields `type_param`'s own resolved value directly, with no need to
+    /// re-derive "was there evidence" from the sibling argument's shape.
+    /// That answer can be more informed than the raw per-argument
+    /// `arg_types` the heuristic reads — e.g. a sibling argument that itself
+    /// failed to check cleanly still leaves the OTHER, correctly computed
+    /// parameter substitution behind. Only bare positions are handled: a
+    /// type parameter nested inside a compound parameter type (`Array<T>`)
+    /// cannot be recovered from the substituted slot without structural
+    /// unification, so those sibling positions still fall through to the
+    /// heuristic below.
+    fn bare_type_param_position_resolved_by_round1(
+        &self,
+        shape: &FunctionShape,
+        finalized_contextual_param_types: Option<&[Option<TypeId>]>,
+        current_index: usize,
+        type_param: tsz_solver::TypeParamInfo,
+    ) -> Option<TypeId> {
+        let finalized = finalized_contextual_param_types?;
+        shape
+            .params
+            .iter()
+            .enumerate()
+            .find_map(|(position, param)| {
+                if position == current_index {
+                    return None;
+                }
+                let bare_type_param = common::type_param_info(self.ctx.types, param.type_id)?;
+                if !bare_type_param.is_same_binder(type_param) {
+                    return None;
+                }
+                let resolved = finalized.get(position).copied().flatten()?;
+                if resolved == TypeId::UNKNOWN
+                    || resolved == TypeId::ERROR
+                    || common::contains_infer_types(self.ctx.types, resolved)
+                    || common::contains_type_parameters(self.ctx.types, resolved)
+                {
+                    return None;
+                }
+                Some(resolved)
+            })
     }
 
     /// Positions of a callback argument's own parameters that carry an

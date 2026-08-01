@@ -1323,6 +1323,9 @@ path = "tests/issue_16012_any_argument_type_param_evidence_tests.rs"
 name = "issue_16018_annotated_sibling_callback_evidence_tests"
 path = "tests/issue_16018_annotated_sibling_callback_evidence_tests.rs"
 [[test]]
+name = "issue_16018_round1_bare_position_trust_tests"
+path = "tests/issue_16018_round1_bare_position_trust_tests.rs"
+[[test]]
 name = "issue_9692_function_candidate_inference"
 path = "tests/issue_9692_function_candidate_inference.rs"
 [[test]]
