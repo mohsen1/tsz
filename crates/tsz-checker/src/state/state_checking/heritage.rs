@@ -196,6 +196,12 @@ impl<'a> CheckerState<'a> {
                 // `extends` because classes can have expression-based heritage (mixins).
                 // For interface `extends`, the expression is always a type reference, not a value.
                 if is_extends_clause && is_class_declaration {
+                    // A class heritage expression is evaluated in the enclosing
+                    // container, not inside the class, so it carries the
+                    // `await`-grammar walk (TS1308/TS1375/TS1378). The statement
+                    // dispatcher's walk stops at `CLASS_DECLARATION` /
+                    // `CLASS_EXPRESSION`, so this is the only root that reaches it.
+                    self.check_await_expression(expr_idx);
                     let _ = self.get_type_of_node(expr_idx);
                 }
 

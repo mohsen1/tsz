@@ -123,6 +123,12 @@ pub trait StatementCheckCallbacks {
     /// Check an await expression (TS1359: await outside async).
     fn check_await_expression(&mut self, expr_idx: NodeIndex);
 
+    /// Check an await expression that sits inside a construct which is its own
+    /// container for the grammar check — the enclosing async-ness and the
+    /// source file's top-level allowance do not reach it, so the answer is
+    /// always TS1308. Used for enum member initializers.
+    fn check_await_expression_in_own_container(&mut self, expr_idx: NodeIndex);
+
     /// Check a for-await statement (TS1103/TS1432: for-await outside async or without proper module/target).
     fn check_for_await_statement(&mut self, stmt_idx: NodeIndex);
 
@@ -1078,6 +1084,13 @@ impl StatementChecker {
                     }
                 };
                 for init_idx in initializers {
+                    // An enum member initializer carries the `await`-grammar walk
+                    // (`ENUM_DECLARATION` owns this arm, so it never reaches the
+                    // catch-all root below), and the enum declaration is its own
+                    // container for that check: tsc answers TS1308 whether or not
+                    // the enclosing function is `async`, and at the top level of a
+                    // module where a bare `await` would be legal.
+                    state.check_await_expression_in_own_container(init_idx);
                     state.get_type_of_node_with_request(init_idx, &non_contextual_request);
                 }
             }

@@ -148,6 +148,9 @@ mod await_concise_arrow_body_grammar_tests;
 #[path = "tests/await_grammar_computed_property_name_tests.rs"]
 mod await_grammar_computed_property_name_tests;
 #[cfg(test)]
+#[path = "tests/await_grammar_expression_position_tests.rs"]
+mod await_grammar_expression_position_tests;
+#[cfg(test)]
 #[path = "tests/await_grammar_statement_position_tests.rs"]
 mod await_grammar_statement_position_tests;
 #[cfg(test)]
