@@ -324,7 +324,13 @@ impl<'a> CheckerState<'a> {
                 }
             }
             NameLookupKind::Namespace => {
-                let is_namespace = (flags & symbol_flags::NAMESPACE_MODULE) != 0;
+                // `MODULE` (not `NAMESPACE_MODULE` alone) — an *instantiated*
+                // namespace (`VALUE_MODULE`) is still a namespace for qualified
+                // lookup purposes (`Outer.member`, `typeof Outer`); only the
+                // uninstantiated/type-only half of the pair used to be excluded
+                // here, and excluding both halves misclassifies a value-bearing
+                // namespace as not-a-namespace.
+                let is_namespace = (flags & symbol_flags::MODULE) != 0;
                 let has_type = (flags & symbol_flags::TYPE) != 0;
                 if !is_namespace && !has_type {
                     return Err(ResolutionFailure::wrong_meaning(

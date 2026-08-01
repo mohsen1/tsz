@@ -1187,17 +1187,12 @@ const t: number = fc;
     );
 }
 
-/// Known gap, pinned deliberately: tsc's real test is the module flag, *not*
-/// "does the merge append a visible property". A namespace whose only value is
-/// **not exported** contributes no member yet still instantiates the module,
-/// and tsc prints `typeof fg`.
-///
-/// tsz cannot express that here yet: `crates/tsz-binder/src/modules/binding.rs`
-/// sets `VALUE_MODULE | NAMESPACE_MODULE` on *every* namespace, so the flag
-/// cannot distinguish an instantiated module from an empty or type-only one.
-/// This case renders structurally — unchanged from before the merged-namespace
-/// fix, not regressed by it. Un-ignore once the binder models instantiation.
-#[ignore = "needs binder to model instantiated vs uninstantiated modules; see PR #16133"]
+/// tsc's real test is the module flag, *not* "does the merge append a visible
+/// property". A namespace whose only value is **not exported** contributes no
+/// member yet still instantiates the module, and tsc prints `typeof fg`.
+/// `crates/tsz-binder/src/modules/binding.rs` now sets `VALUE_MODULE` only for
+/// an instantiated namespace (see #16136), so the merged symbol's flag alone
+/// distinguishes this case from an empty or type-only namespace.
 #[test]
 fn ts2322_namespace_with_only_unexported_value_still_renders_typeof() {
     let source = r#"

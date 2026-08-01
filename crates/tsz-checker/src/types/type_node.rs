@@ -1832,20 +1832,29 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     ) -> Option<tsz_binder::SymbolId> {
         use tsz_binder::symbol_flags;
 
+        // A `typeof X` type query resolves `X` in the value namespace, and an
+        // uninstantiated namespace (`NAMESPACE_MODULE`, no `VALUE_MODULE`) still
+        // occupies that namespace in tsc — it just cannot be *used* as a value,
+        // which `type_of_resolved_value_symbol` reports separately as TS2708.
+        // Excluding `NAMESPACE_MODULE` here would make an uninstantiated
+        // namespace's name unresolvable at all, reporting a spurious TS2304
+        // ahead of (or instead of) the correct TS2708.
+        let resolvable = symbol_flags::VALUE | symbol_flags::NAMESPACE_MODULE | symbol_flags::ALIAS;
+
         let ident = self.ctx.arena.get_identifier_at(node_idx)?;
         let name = ident.escaped_text.as_str();
 
         if let Some(sym_id) = self.ctx.binder.resolve_identifier(self.ctx.arena, node_idx)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
             && symbol.escaped_name == name
-            && (symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0
+            && (symbol.flags & resolvable) != 0
         {
             return Some(sym_id);
         }
 
         if let Some(sym_id) = self.ctx.binder.file_locals.get(name) {
             let symbol = self.ctx.binder.get_symbol(sym_id)?;
-            if (symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS)) != 0 {
+            if (symbol.flags & resolvable) != 0 {
                 return Some(sym_id);
             }
         }

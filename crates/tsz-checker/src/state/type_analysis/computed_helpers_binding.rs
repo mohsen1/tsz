@@ -897,15 +897,17 @@ impl<'a> CheckerState<'a> {
             if member_symbol.has_any_flags(value_flags_except_module) {
                 return true;
             }
-            // Namespace-only members: check if instantiated
-            if member_symbol.has_any_flags(symbol_flags::VALUE_MODULE)
-                && member_symbol.has_any_flags(symbol_flags::NAMESPACE_MODULE)
-            {
-                for &decl_idx in &member_symbol.declarations {
-                    if self.is_namespace_declaration_instantiated(decl_idx) {
-                        return true;
-                    }
-                }
+            // Namespace-only members: a nested namespace member provides runtime
+            // value exactly when it is itself instantiated. The binder now
+            // encodes that directly via `VALUE_MODULE` (set only for
+            // instantiated namespace declarations, mutually exclusive per
+            // declaration with `NAMESPACE_MODULE` — though a symbol merged
+            // across multiple declaration sites can still carry both if only
+            // some of its declarations are instantiated). Requiring both flags
+            // together relied on the binder's old behavior of setting them
+            // unconditionally on every namespace and never matches now.
+            if member_symbol.has_any_flags(symbol_flags::VALUE_MODULE) {
+                return true;
             }
         }
         false

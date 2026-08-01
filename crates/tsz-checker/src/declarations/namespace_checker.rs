@@ -549,30 +549,28 @@ impl<'a> CheckerState<'a> {
         self.merge_exports_into_props(sym_id, &mut props, false);
 
         // Keep the merged symbol, as the constructor path above does, but only
-        // when the namespace actually contributed a member.
+        // when the merged namespace is *instantiated*.
         //
-        // tsc takes the `typeof f` rendering for an *instantiated* module
-        // (`SymbolFlags.ValueModule`); an empty namespace, or one exporting only
-        // types, is uninstantiated and keeps printing `() => void`. tsz's binder
-        // does not yet model that distinction — `modules/binding.rs` sets
-        // `VALUE_MODULE | NAMESPACE_MODULE` on every namespace — so the flag
-        // cannot separate the two here. Contributing a member is the part of the
-        // rule that is observable at this site, and it covers every merge that
-        // reaches the printer with appended properties.
-        //
-        // The residual gap is a namespace whose only value is *unexported*
-        // (`namespace f { var hidden = 1; }`): tsc prints `typeof f`, and this
-        // still renders structurally. That case is unchanged from before this
-        // fix rather than regressed, and closing it needs the binder to model
-        // instantiation. Withholding the symbol keeps every non-contributing
-        // merge byte-identical to the previous structural rendering.
-        let namespace_contributed_member = props.len() > shape.properties.len();
+        // tsc takes the `typeof f` rendering for an instantiated module
+        // (`SymbolFlags.ValueModule`, set on the merged symbol by the binder —
+        // `modules/binding.rs` — via the same syntactic `is_namespace_instantiated`
+        // classifier tsc's `getModuleInstanceState` implements); an empty
+        // namespace, or one exporting only types, is uninstantiated
+        // (`SymbolFlags.NamespaceModule`) and keeps printing `() => void`. This
+        // correctly covers a namespace whose only value is unexported
+        // (`namespace f { var hidden = 1; }`) — it still instantiates the module
+        // and prints `typeof f`, even though it contributes no visible property.
+        let namespace_is_instantiated = self
+            .ctx
+            .binder
+            .get_symbol(sym_id)
+            .is_some_and(|symbol| symbol.flags & tsz_binder::symbol_flags::VALUE_MODULE != 0);
         let properties = props.into_values().collect();
         let merged_type = declaration_exports::namespace_merged_function_callable_type(
             self.ctx.types,
             &shape,
             properties,
-            namespace_contributed_member.then_some(sym_id),
+            namespace_is_instantiated.then_some(sym_id),
         );
 
         (merged_type, Vec::new())
