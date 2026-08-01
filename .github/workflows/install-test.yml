@@ -40,6 +40,10 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y shellcheck
       - name: shellcheck install.sh
         run: shellcheck -S warning scripts/install.sh
+      - name: shellcheck release publish helpers
+        run: shellcheck -S warning -x scripts/build/npm-publish-lib.sh scripts/build/test-npm-publish-lib.sh
+      - name: npm publish helper unit tests
+        run: bash scripts/build/test-npm-publish-lib.sh
       - name: powershell parse install.ps1
         shell: pwsh
         run: |

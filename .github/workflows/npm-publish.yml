@@ -187,6 +187,9 @@ jobs:
       - name: Assemble package manifests
         run: scripts/build/build-npm-packages.sh --all --native-only --skip-build
 
+      # A dry run never performs the PUT that actually fails, so this step can
+      # confirm the tarballs are well-formed but cannot confirm we may publish
+      # them. The preflight below covers the half it structurally cannot.
       - name: Pack-check packages
         shell: bash
         run: |
@@ -195,24 +198,38 @@ jobs:
             (cd "$pkg" && npm publish --dry-run --access public)
           done
 
-      - name: Publish packages
+      - name: Preflight npm auth
         shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          publish_if_needed() {
-            local pkg_dir="$1"
-            local name version
-            name="$(node -p "require('./${pkg_dir}/package.json').name")"
-            version="$(node -p "require('./${pkg_dir}/package.json').version")"
-            if npm view "${name}@${version}" version >/dev/null 2>&1; then
-              echo "${name}@${version} already exists; skipping"
-              return 0
-            fi
-            echo "Publishing ${name}@${version}"
-            (cd "$pkg_dir" && npm publish --access public --provenance)
-          }
+          source scripts/build/npm-publish-lib.sh
+          npm_clear_placeholder_auth
+          npm_auth_preflight
+
+      - name: Publish packages
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          source scripts/build/npm-publish-lib.sh
+          npm_clear_placeholder_auth
 
           for pkg in npm/@mohsen-azimi/try-tsz-*; do
-            publish_if_needed "$pkg"
+            npm_publish_if_needed "$pkg"
           done
-          publish_if_needed npm/try-tsz
+          npm_publish_if_needed npm/try-tsz
+
+      # The guard that would have caught #16126 on its first occurrence rather
+      # than 43 versions later: assert every package is readable at its own
+      # version before this job is allowed to report success.
+      - name: Verify published versions
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          source scripts/build/npm-publish-lib.sh
+          npm_verify_published npm/@mohsen-azimi/try-tsz-* npm/try-tsz

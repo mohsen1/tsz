@@ -336,8 +336,20 @@ jobs:
           # Belt-and-braces: even when the PAT is configured, explicit dispatch
           # makes the trigger source legible and avoids the GITHUB_TOKEN
           # cascade-suppression edge case. Both workflows accept a `tag` input.
-          gh workflow run release.yml --ref "${TAG}" -f tag="${TAG}" || true
-          gh workflow run npm-publish.yml --ref "${TAG}" -f tag="${TAG}" || true
+          #
+          # A failed dispatch stays non-fatal on purpose -- pushing the tag above
+          # already triggers both workflows via their `on: push: tags:` filter,
+          # so this is redundancy, not the only path. It must not be *silent*
+          # though (#16126): record the outcome so a release that dispatched
+          # nothing is legible from the run summary instead of reporting green.
+          for wf in release.yml npm-publish.yml; do
+            if gh workflow run "$wf" --ref "${TAG}" -f tag="${TAG}"; then
+              echo "- dispatched \`${wf}\`" >> "${GITHUB_STEP_SUMMARY}"
+            else
+              echo "- :warning: dispatch of \`${wf}\` FAILED (tag-push trigger is the fallback)" \
+                >> "${GITHUB_STEP_SUMMARY}"
+            fi
+          done
 
       - name: Summary
         if: always()
