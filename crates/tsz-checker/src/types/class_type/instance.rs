@@ -957,6 +957,7 @@ impl<'a> CheckerState<'a> {
             type_param_names: class_type_param_names,
             class_type_parameters: b.class_type_params.clone(),
             class_type_parameter_ids: b.class_type_param_ids.clone(),
+            enclosing_async_depth: self.ctx.async_depth,
         });
         b.restore_enclosing_class = RestoreEnclosingClass::To(prev_enclosing_class);
     }

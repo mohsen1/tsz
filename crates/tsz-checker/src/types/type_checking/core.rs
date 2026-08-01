@@ -203,7 +203,26 @@ impl<'a> CheckerState<'a> {
 
         // Use helper to get member name node
         if let Some(name_idx) = self.get_member_name_node(node) {
-            self.check_computed_property_name(name_idx);
+            // A computed member name is evaluated once, when the class itself
+            // is defined, in the *enclosing* scope — not inside the class
+            // body's own async-context reset (see `enclosing_async_depth`'s
+            // doc comment). Swap in the depth captured before that reset for
+            // the duration of this check only, so `await` grammar and TS2464
+            // type checks on the name see the surrounding function's
+            // async-ness instead of the reset-to-`false` class-body value.
+            let outer_async_depth = self
+                .ctx
+                .enclosing_class
+                .as_ref()
+                .map(|c| c.enclosing_async_depth);
+            if let Some(outer_async_depth) = outer_async_depth {
+                let saved_async_depth = self.ctx.async_depth;
+                self.ctx.async_depth = outer_async_depth;
+                self.check_computed_property_name(name_idx);
+                self.ctx.async_depth = saved_async_depth;
+            } else {
+                self.check_computed_property_name(name_idx);
+            }
 
             // Check constructor-name restrictions for class members
             if let Some(name_text) = self.get_identifier_text_from_idx(name_idx)

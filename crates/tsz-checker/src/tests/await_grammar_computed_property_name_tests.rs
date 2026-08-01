@@ -1,0 +1,252 @@
+//! Regression coverage for #16094: `await` in a computed member name
+//! (`class`/`interface`/type-literal) is a fourth unrooted `await`-grammar
+//! position, and rooting it naively exposed two independent defects.
+//!
+//! 1. **Async-context defect.** `state/state_checking/class.rs` resets
+//!    `async_depth` to `0` before checking a class's members — correct for
+//!    field initializers and static blocks, which really don't inherit
+//!    `async` from the enclosing function, but wrong for a member's
+//!    *computed name*, which `tsc` evaluates once, in the enclosing scope,
+//!    when the class itself is defined. Fixed via
+//!    `EnclosingClassInfo::enclosing_async_depth`, captured before the reset
+//!    and swapped in for the duration of the computed-name check only
+//!    (`types/type_checking/core.rs::check_class_member_name`).
+//! 2. **A parser-level defect**, found while building this suite: the
+//!    computed-name parser (`state_expressions_literals/object_members.rs::
+//!    parse_property_name`) unconditionally flagged `await` in a class
+//!    member's computed name as an illegal binding identifier (TS1213),
+//!    pre-empting `parse_await_expression`'s own (pre-existing, and already
+//!    tsc-correct) identifier-vs-`AwaitExpression` disambiguation before it
+//!    ever ran. Oracle evidence (`tsc@7.0.2`) confirmed `tsc` never treats
+//!    `await` this way here — not even a bare `[await]`, which just resolves
+//!    as an ordinary (possibly-undefined) identifier reference (TS2304).
+//!    Fixed via `is_computed_class_member_await_expression`, which
+//!    unconditionally excludes `await` from the illegal-binding check in
+//!    computed-name position and lets `parse_await_expression` decide, as it
+//!    already correctly does for object-literal computed names.
+//! 3. **A TS1170 routing gap** (Blocker B, already named in #16094): a
+//!    type-literal member whose computed name failed the literal-type check
+//!    (TS1170) never got the shared `check_computed_property_name` funnel at
+//!    all, so `await` inside it was silently unrooted even after (1) and (2).
+//!    Fixed by always running the await-only half of that funnel
+//!    (`check_computed_property_name_await_only`) regardless of whether
+//!    TS1170 fired — `tsc` reports both, they are independent grammar rules.
+//!
+//! Every expectation below is pinned against a live `tsc@7.0.2 --noEmit
+//! --pretty false --target es2017 --module commonjs` run, not recalled, and
+//! cross-checked against the compiled `tsz` CLI (not just this unit
+//! harness) for every case that involves parser recovery or identifier
+//! resolution, per the two harness gaps noted inline below.
+
+use crate::test_utils::check_source_codes_with_parse_health;
+
+/// The harness has no lib, so an `async function` always adds TS2318
+/// ("Global type 'Promise' does not exist") independent of anything this
+/// suite is testing (the compiled CLI, which does have a lib, does not
+/// produce it — verified directly). Strip it so assertions read the
+/// await-grammar codes only.
+fn without_missing_promise_lib(mut codes: Vec<u32>) -> Vec<u32> {
+    codes.retain(|&c| c != 2318);
+    codes
+}
+
+fn sorted(mut codes: Vec<u32>) -> Vec<u32> {
+    codes.sort_unstable();
+    codes
+}
+
+#[test]
+fn class_method_computed_name_await_reports_ts1308() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+declare const key: string;
+function outer() { class Holder { [await key]() {} } }
+"#,
+    );
+    assert_eq!(codes, vec![1308], "got {codes:?}");
+}
+
+#[test]
+fn class_expression_method_computed_name_await_reports_ts1308() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+declare const key: string;
+function outer() { const Holder = class { [await key]() {} }; }
+"#,
+    );
+    assert_eq!(codes, vec![1308], "got {codes:?}");
+}
+
+#[test]
+fn class_property_computed_name_await_reports_ts1166_and_ts1308() {
+    // tsc pairs TS1166 (class-property literal-name requirement) with
+    // TS1308, exactly like the TS1169/TS1170 interface/type-literal siblings
+    // below.
+    let codes = check_source_codes_with_parse_health(
+        r#"
+declare const key: string;
+function outer() { class Holder { [await key] = 1; } }
+"#,
+    );
+    assert_eq!(sorted(codes.clone()), vec![1166, 1308], "got {codes:?}");
+}
+
+#[test]
+fn async_wrapper_class_method_computed_name_await_is_clean() {
+    let codes = without_missing_promise_lib(check_source_codes_with_parse_health(
+        r#"
+declare const key: string;
+async function wrapper() { class Bag { [await key]() {} } }
+"#,
+    ));
+    assert!(
+        codes.is_empty(),
+        "the name is evaluated in wrapper's async scope, not the class body's own reset; got {codes:?}"
+    );
+}
+
+#[test]
+fn async_method_alongside_async_wrapper_computed_name_is_clean() {
+    let codes = without_missing_promise_lib(check_source_codes_with_parse_health(
+        r#"
+declare const key: string;
+async function wrapper() {
+  class Bag {
+    [key]() {}
+    async [await key]() {}
+  }
+}
+"#,
+    ));
+    assert!(codes.is_empty(), "got {codes:?}");
+}
+
+#[test]
+fn interface_computed_name_await_reports_ts1169_and_ts1308() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+declare const key: string;
+function outer() { interface Shape { [await key]: number } }
+"#,
+    );
+    assert_eq!(sorted(codes.clone()), vec![1169, 1308], "got {codes:?}");
+}
+
+#[test]
+fn async_wrapper_interface_computed_name_reports_only_ts1169() {
+    let codes = without_missing_promise_lib(check_source_codes_with_parse_health(
+        r#"
+declare const key: string;
+async function wrapper() { interface Shape { [await key]: number } }
+"#,
+    ));
+    assert_eq!(
+        codes,
+        vec![1169],
+        "the interface member name is evaluated in wrapper's async scope; got {codes:?}"
+    );
+}
+
+#[test]
+fn type_literal_computed_name_await_reports_ts1170_and_ts1308() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+declare const key: string;
+function outer() { type Shape2 = { [await key]: number }; }
+"#,
+    );
+    assert_eq!(sorted(codes.clone()), vec![1170, 1308], "got {codes:?}");
+}
+
+#[test]
+fn async_wrapper_type_literal_computed_name_reports_only_ts1170() {
+    let codes = without_missing_promise_lib(check_source_codes_with_parse_health(
+        r#"
+declare const key: string;
+async function wrapper() { type Shape2 = { [await key]: number }; }
+"#,
+    ));
+    assert_eq!(codes, vec![1170], "got {codes:?}");
+}
+
+#[test]
+fn bare_await_class_computed_name_never_reports_ts1213() {
+    // tsc: `class K { [await]() {} }` never reports the reserved-word
+    // TS1213, resolved or not — verified on both an unresolved bare
+    // `[await]` (tsc: TS2304, "Cannot find name") and one bound to an outer
+    // const (tsc: clean). This harness's identifier resolution does not
+    // reach a verdict on a bare `await` reference the way the compiled CLI
+    // does (no TS2304 here either), so this test pins the invariant that
+    // matters to #16094 — no false TS1213 — and the TS2304-vs-clean split is
+    // separately confirmed against the compiled CLI + a live tsc oracle.
+    let unresolved = check_source_codes_with_parse_health(
+        r#"
+class K { [await]() {} }
+"#,
+    );
+    assert!(
+        !unresolved.contains(&1213),
+        "an unresolved bare `await` must not be the reserved-word TS1213; got {unresolved:?}"
+    );
+
+    let bound = check_source_codes_with_parse_health(
+        r#"
+declare const await: number;
+class K { [await]() {} }
+"#,
+    );
+    assert!(
+        !bound.contains(&1213),
+        "a bound `await` used as a bare computed name is an ordinary identifier reference; got {bound:?}"
+    );
+}
+
+#[test]
+fn plain_identifier_member_named_await_is_unaffected() {
+    // Not a computed name at all — `await` used directly as a method name.
+    // Must stay clean; this exercises a different parser path entirely.
+    let codes = check_source_codes_with_parse_health(
+        r#"
+class K { await() {} }
+"#,
+    );
+    assert!(codes.is_empty(), "got {codes:?}");
+}
+
+#[test]
+fn generator_method_computed_yield_name_still_reports_ts1213() {
+    // Negative control: `yield`'s own illegal-binding-identifier
+    // disambiguation (a sibling mechanism to the one this PR adds for
+    // `await`) must be unaffected by the new `await`-specific exclusion.
+    let codes = check_source_codes_with_parse_health(
+        r#"
+class K { * [yield]() {} }
+"#,
+    );
+    assert!(codes.contains(&1213), "got {codes:?}");
+}
+
+#[test]
+fn class_method_computed_name_no_await_stays_clean() {
+    // Negative control: the new root must not fire when there is no `await`
+    // anywhere in the computed name.
+    let codes = check_source_codes_with_parse_health(
+        r#"
+declare const key: string;
+class Holder { [key]() {} }
+"#,
+    );
+    assert!(codes.is_empty(), "got {codes:?}");
+}
+
+#[test]
+fn renamed_binder_class_method_computed_name_await_reports_ts1308() {
+    // Adjacent case: no identifier-spelling predicate drives the rule.
+    let codes = check_source_codes_with_parse_health(
+        r#"
+declare const propertyToken: string;
+function makeContainer() { class ConnectionPool { [await propertyToken]() {} } }
+"#,
+    );
+    assert_eq!(codes, vec![1308], "got {codes:?}");
+}
