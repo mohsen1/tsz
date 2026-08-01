@@ -685,6 +685,9 @@ mod ts2469_symbol_operator_tests;
 #[path = "../tests/ts2498_tests.rs"]
 mod ts2498_tests;
 #[cfg(test)]
+#[path = "tests/ts2515_ambient_class_abstract_member_tests.rs"]
+mod ts2515_ambient_class_abstract_member_tests;
+#[cfg(test)]
 #[path = "tests/ts2536_deferred_conditional_indexed_access_tests.rs"]
 mod ts2536_deferred_conditional_indexed_access_tests;
 #[cfg(test)]

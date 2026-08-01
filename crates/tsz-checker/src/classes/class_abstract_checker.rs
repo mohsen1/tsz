@@ -60,10 +60,11 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let is_ambient = self.has_declare_modifier(&class_data.modifiers);
-        if is_ambient {
-            return;
-        }
+        // No ambient exemption here either — see the equivalent site in
+        // `class_implements_checker::core`. The `abstract`-modifier escape hatch is
+        // applied by `check_abstract_member_implementations` before it delegates to
+        // this type-level fallback, so reaching this point already means the derived
+        // class is non-abstract.
 
         let derived_class_name = if class_data.name.is_some() {
             if let Some(name_node) = self.ctx.arena.get(class_data.name)
