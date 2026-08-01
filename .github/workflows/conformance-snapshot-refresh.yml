@@ -53,6 +53,41 @@ jobs:
       - name: Run full conformance snapshot
         run: ./scripts/conformance/conformance.sh snapshot --workers 12 --force
 
+      # A per-test result can go missing from the structured output (observed
+      # on #16086: a specific test hung and its result never made it into
+      # conformance-detail.json's `failures` dict) while still being tallied
+      # in the aggregate `summary.failed` count, so `passed = runnable -
+      # failed` keeps looking internally consistent even though the file it
+      # is derived from is short one entry. `conformance.sh`'s own
+      # completeness retry only checks the runner's self-reported counts,
+      # not this cross-check, so verify it here before anything gets
+      # committed: a hang/drop must block the refresh, not silently become
+      # tomorrow's "truth".
+      - name: Verify snapshot accounting integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import sys
+
+          snapshot = json.load(open("scripts/conformance/conformance-snapshot.json"))
+          detail = json.load(open("scripts/conformance/conformance-detail.json"))
+          failed = snapshot["summary"]["failed"]
+          recorded = len(detail.get("failures", {}))
+          if failed != recorded:
+              print(
+                  f"::error::accounting mismatch: summary.failed={failed} but "
+                  f"conformance-detail.json's failures dict has {recorded} "
+                  "entries. A per-test result was likely dropped (hang or "
+                  "crash) during this run rather than a genuine pass/fail "
+                  "change. Refusing to open/update the refresh PR with a "
+                  "snapshot that does not account for every runnable test."
+              )
+              sys.exit(1)
+          print(f"Accounting OK: {failed} failed == {recorded} detail entries.")
+          PY
+
       - name: Detect changes
         id: diff
         shell: bash
