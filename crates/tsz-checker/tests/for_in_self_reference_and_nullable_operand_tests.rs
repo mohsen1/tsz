@@ -198,6 +198,64 @@ for (var textKey in text) { }
 }
 
 // ---------------------------------------------------------------------------
+// Mechanism 3 — `unknown` operands are TS2407, in both strictness modes.
+//
+// tsc's for-in gate is `allTypesAssignableToKind(rightType, NonPrimitive |
+// InstantiableNonPrimitive)`; `unknown` satisfies neither disjunct (only
+// `any` is exempted separately, via `isTypeAny`). tsz previously treated
+// `unknown` the same as `any` here, by analogy rather than by the actual
+// rule, so it was silent where tsc reports. Unlike the nullable-operand
+// mechanism above, this is not `strictNullChecks`-gated: `unknown` reports
+// TS2407 the same way with the flag on or off.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn unknown_for_in_operand_is_ts2407_in_both_modes() {
+    let source = "declare const u: unknown;\nfor (const k in u) { }\n";
+    assert_has_2407(&non_strict(source), "unknown operand");
+    assert_has_2407(&strict(source), "unknown operand, strict");
+}
+
+#[test]
+fn unknown_for_in_operand_via_type_alias_is_still_ts2407() {
+    // The gate must see through an alias to the same `unknown` leaf type, not
+    // just a literal `unknown` annotation.
+    let source =
+        "type Maybe = unknown;\ndeclare const item: Maybe;\nfor (const prop in item) { }\n";
+    assert_has_2407(&non_strict(source), "unknown via type alias");
+    assert_has_2407(&strict(source), "unknown via type alias, strict");
+}
+
+#[test]
+fn unknown_for_in_operand_var_loop_variable_is_still_ts2407() {
+    // Renamed binder / `var` form control, distinct from the `const` case above.
+    let source = "declare const payload: unknown;\nfor (var field in payload) { }\n";
+    assert_has_2407(&non_strict(source), "unknown operand, var loop variable");
+}
+
+#[test]
+fn any_for_in_operand_stays_clean_next_to_the_unknown_fix() {
+    // Adjacent positive control: `any` is exempted by a separate tsc rule
+    // (`isTypeAny`) and must not regress alongside removing `unknown`.
+    let source = "declare const dyn: any;\nfor (const k in dyn) { }\n";
+    assert_no_2407(&non_strict(source), "any operand");
+    assert_no_2407(&strict(source), "any operand, strict");
+}
+
+#[test]
+fn type_parameter_constrained_to_unknown_stays_clean() {
+    // A type parameter is `InstantiableNonPrimitive` regardless of its
+    // constraint, so this must not be swept up by the `unknown`-leaf fix:
+    // the parameter itself, not its constraint, is what tsz inspects here.
+    let source = "function f<T extends unknown>(x: T) {\n  for (const k in x) { }\n}\n";
+    assert_no_2407(&non_strict(source), "type parameter constrained to unknown");
+    assert_no_2407(
+        &strict(source),
+        "type parameter constrained to unknown, strict",
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Mechanism 1, reporting half — the same circular loop head that clears the
 // TS2407 gate is what `tsc` reports TS7022 on.
 //
