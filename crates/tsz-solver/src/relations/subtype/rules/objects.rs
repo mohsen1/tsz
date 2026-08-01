@@ -769,9 +769,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         else {
             return false;
         };
+        let source_kind = self.resolver.get_def_kind(source_def);
         if !matches!(
-            self.resolver.get_def_kind(source_def),
-            Some(crate::def::DefKind::Class)
+            source_kind,
+            Some(crate::def::DefKind::Class | crate::def::DefKind::Interface)
         ) {
             return false;
         }
@@ -791,7 +792,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         let mut current = source_def;
         for _ in 0..50 {
-            let Some(parent) = self.resolver.get_class_extends(current) else {
+            // Classes use the checker-verified, generics-aware `class_extends`
+            // map. Interfaces never populate it, so they fall back to the
+            // name-resolved, single-parent heritage edge — sound because tsc
+            // requires a heritage clause to already be a structurally
+            // compatible override at declaration time, but incomplete for a
+            // multi-parent `interface B extends A, C {}` (a miss there just
+            // returns `false` here, which re-runs the always-correct
+            // structural walk in the caller).
+            let parent = match self.resolver.get_def_kind(current) {
+                Some(crate::def::DefKind::Class) => self.resolver.get_class_extends(current),
+                Some(crate::def::DefKind::Interface) => {
+                    self.resolver.get_interface_extends(current)
+                }
+                _ => None,
+            };
+            let Some(parent) = parent else {
                 return false;
             };
             if self.resolver.defs_are_equivalent(parent, target_def) {
@@ -1965,3 +1981,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         SubtypeResult::True
     }
 }
+
+#[cfg(test)]
+#[path = "../../../../tests/objects_interface_nominal_fastpath_tests.rs"]
+mod objects_interface_nominal_fastpath_tests;

@@ -1531,6 +1531,10 @@ impl<'a> TypeResolver for CheckerContext<'a> {
             })
     }
 
+    fn get_interface_extends(&self, def_id: DefId) -> Option<DefId> {
+        self.definition_store.get_extends(def_id)
+    }
+
     fn class_def_for_instance_type(&self, type_id: TypeId) -> Option<DefId> {
         self.type_env
             .try_borrow()

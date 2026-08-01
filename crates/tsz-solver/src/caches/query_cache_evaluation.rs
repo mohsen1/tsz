@@ -324,6 +324,10 @@ impl TypeResolver for DelegatingHktResolver<'_> {
         self.inner.get_class_extends(def_id)
     }
 
+    fn get_interface_extends(&self, def_id: DefId) -> Option<DefId> {
+        self.inner.get_interface_extends(def_id)
+    }
+
     fn resolve_this_type(&self, interner: &dyn TypeDatabase) -> Option<TypeId> {
         self.inner.resolve_this_type(interner)
     }
