@@ -130,5 +130,4 @@ tsz-cli::driver::core::check::check_tests::cross_file_class_namespace_merge_valu
 tsz-cli::driver::core::check::check_tests::default_lib_validation_normalizes_cross_arena_method_members_after_global_merge
 tsz-cli::driver_tests::cross_file_dependent_operand_aliases_accept_scalars_and_literal_arrays
 tsz-cli::driver_tests::declaration_emit_reports_ts7056_for_private_import_type_alias
-tsz-cli::evaluator_cache_agreement_tests::branch_filter_agrees_with_conditional_branch_cache_disabled
 tsz-emitter::declaration_emitter::tests::simple_declarations::test_overloaded_call_initializer_does_not_use_first_signature_return_type

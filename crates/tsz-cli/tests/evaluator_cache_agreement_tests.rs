@@ -138,17 +138,44 @@ fn assert_cache_modes_agree(
     tsconfig: &str,
     disabled_switches: &[&str],
 ) {
+    assert_cache_modes_agree_impl(name, files, tsconfig, disabled_switches, true);
+}
+
+/// Like `assert_cache_modes_agree`, but does not require the baseline run to
+/// compile cleanly first. Agreement between cache modes is the only thing
+/// under test here; a fixture that legitimately reports diagnostics under
+/// every cache configuration still proves the caches agree.
+fn assert_cache_modes_agree_regardless_of_diagnostics(
+    name: &str,
+    files: &[(&str, &str)],
+    tsconfig: &str,
+    disabled_switches: &[&str],
+) {
+    assert_cache_modes_agree_impl(name, files, tsconfig, disabled_switches, false);
+}
+
+fn assert_cache_modes_agree_impl(
+    name: &str,
+    files: &[(&str, &str)],
+    tsconfig: &str,
+    disabled_switches: &[&str],
+    require_clean: bool,
+) {
     let Some(tsz_bin) = find_tsz_binary() else {
         println!("skipping evaluator cache agreement test: tsz binary not found");
         return;
     };
     let temp = stage_project(name, files, tsconfig);
     let baseline = run_tsz(&tsz_bin, &temp.path, None);
-    assert_clean_success(name, &baseline);
+    if require_clean {
+        assert_clean_success(name, &baseline);
+    }
 
     for switch in disabled_switches {
         let disabled = run_tsz(&tsz_bin, &temp.path, Some(switch));
-        assert_clean_success(name, &disabled);
+        if require_clean {
+            assert_clean_success(name, &disabled);
+        }
         assert_eq!(disabled, baseline, "{name} output changed when {switch}=1");
     }
 }
@@ -172,7 +199,12 @@ fn branch_filter_agrees_with_conditional_branch_cache_disabled() {
     // Structural rule: a repeated conditional branch verdict for the same
     // structural `(check, extends)` pair may be reused, but disabling that reuse
     // must still select the same true/false branches.
-    assert_cache_modes_agree(
+    //
+    // The fixture's two `Assert<Equal<...>>` checks genuinely evaluate to
+    // `false` under a live `tsc@7.0.2` oracle (confirmed #15983), so the
+    // baseline run was never clean; requiring exit 0 here tested a
+    // precondition that could never hold, not cache agreement.
+    assert_cache_modes_agree_regardless_of_diagnostics(
         "branch_filters",
         BRANCH_FILTERS_FILES,
         BRANCH_FILTERS_TSCONFIG,
