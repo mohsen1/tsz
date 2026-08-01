@@ -1109,6 +1109,9 @@ mod for_in_lhs_relation_routing_arch_tests;
 #[path = "../tests/for_in_narrowing_tests.rs"]
 mod for_in_narrowing_tests;
 #[cfg(test)]
+#[path = "../tests/for_in_self_reference_and_nullable_operand_tests.rs"]
+mod for_in_self_reference_and_nullable_operand_tests;
+#[cfg(test)]
 #[path = "tests/fresh_const_array_mutable_assignment_tests.rs"]
 mod fresh_const_array_mutable_assignment_tests;
 #[cfg(test)]
