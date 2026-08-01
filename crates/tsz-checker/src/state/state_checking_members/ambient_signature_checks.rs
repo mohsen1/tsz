@@ -840,8 +840,12 @@ impl<'a> CheckerState<'a> {
         // Check that rest parameters have array types (TS2370)
         self.check_rest_parameter_types(&method.parameters.nodes);
 
-        // Check that parameter default values are assignable to declared types (TS2322)
-        self.check_parameter_initializers(&method.parameters.nodes);
+        // Check that parameter default values are assignable to declared types
+        // (TS2322). is_async is needed here for TS1308 (#16072); computed
+        // early since the signature is checked before the body's own async
+        // context is pushed (see the later "async modifier" block below).
+        let is_async = self.has_async_modifier(&method.modifiers);
+        self.check_parameter_initializers(&method.parameters.nodes, is_async);
         self.check_non_impl_parameter_initializers(
             &method.parameters.nodes,
             self.has_declare_modifier(&method.modifiers),
@@ -897,8 +901,7 @@ impl<'a> CheckerState<'a> {
             self.check_type_for_parameter_properties(method.type_annotation);
         }
 
-        // Check for async modifier (needed for both abstract and concrete methods)
-        let is_async = self.has_async_modifier(&method.modifiers);
+        // is_async computed above, before parameter checking.
         let is_generator = method.asterisk_token;
 
         // TS1064/TS1055/TS2705: parity with fn declarations (issue #4762).
@@ -1406,8 +1409,9 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Check that parameter default values are assignable to declared types (TS2322)
-        self.check_parameter_initializers(&accessor.parameters.nodes);
+        // Check that parameter default values are assignable to declared types
+        // (TS2322). Accessors can never carry the `async` modifier.
+        self.check_parameter_initializers(&accessor.parameters.nodes, false);
 
         // Check for parameter properties (error 2369)
         // Parameter properties are only allowed in constructors, not in accessors

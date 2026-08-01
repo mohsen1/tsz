@@ -249,8 +249,9 @@ impl<'a> CheckerState<'a> {
         // Check that rest parameters have array types (TS2370)
         self.check_rest_parameter_types(&ctor.parameters.nodes);
 
-        // Check that parameter default values are assignable to declared types (TS2322)
-        self.check_parameter_initializers(&ctor.parameters.nodes);
+        // Check that parameter default values are assignable to declared types (TS2322).
+        // Constructors can never carry the `async` modifier.
+        self.check_parameter_initializers(&ctor.parameters.nodes, false);
         self.check_non_impl_parameter_initializers(
             &ctor.parameters.nodes,
             self.has_declare_modifier(&ctor.modifiers),

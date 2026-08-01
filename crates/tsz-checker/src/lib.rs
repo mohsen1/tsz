@@ -1695,6 +1695,9 @@ mod this_source_inference_tests;
 #[path = "tests/this_void_method_call_tests.rs"]
 mod this_void_method_call_tests;
 #[cfg(test)]
+#[path = "tests/top_level_await_boundary_tests.rs"]
+mod top_level_await_boundary_tests;
+#[cfg(test)]
 #[path = "tests/truthiness_promise_coercion_tests.rs"]
 mod truthiness_promise_coercion_tests;
 #[cfg(test)]
