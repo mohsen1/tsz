@@ -253,6 +253,7 @@ class Box<Element extends MissingConstraint> {
         type_param_names: vec!["Element".to_string()],
         class_type_parameters,
         class_type_parameter_ids,
+        enclosing_async_depth: 0,
     });
 
     let enclosing_updates = checker.push_enclosing_type_parameters(method_idx);

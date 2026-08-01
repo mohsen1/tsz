@@ -1487,7 +1487,16 @@ impl<'a> CheckerState<'a> {
                                         diagnostic_messages::A_COMPUTED_PROPERTY_NAME_IN_A_TYPE_LITERAL_MUST_REFER_TO_AN_EXPRESSION_WHOSE_TYP,
                                         diagnostic_codes::A_COMPUTED_PROPERTY_NAME_IN_A_TYPE_LITERAL_MUST_REFER_TO_AN_EXPRESSION_WHOSE_TYP,
                                     );
-                                if !emitted_literal_diagnostic {
+                                if emitted_literal_diagnostic {
+                                    // TS1170 and TS1308 are independent
+                                    // grammar rules tsc reports together; the
+                                    // broader TS2464 type-validation branch
+                                    // in check_computed_property_name is
+                                    // mutually exclusive with TS1170 in tsc,
+                                    // so only the await-grammar root runs
+                                    // here, not the full function.
+                                    self.check_computed_property_name_await_only(sig.name);
+                                } else {
                                     self.check_computed_property_name(sig.name);
                                 }
                             }
@@ -1553,7 +1562,14 @@ impl<'a> CheckerState<'a> {
                                         diagnostic_messages::A_COMPUTED_PROPERTY_NAME_IN_A_TYPE_LITERAL_MUST_REFER_TO_AN_EXPRESSION_WHOSE_TYP,
                                         diagnostic_codes::A_COMPUTED_PROPERTY_NAME_IN_A_TYPE_LITERAL_MUST_REFER_TO_AN_EXPRESSION_WHOSE_TYP,
                                     );
-                                if !emitted_literal_diagnostic {
+                                if emitted_literal_diagnostic {
+                                    // See the METHOD_SIGNATURE arm above:
+                                    // TS1170 and TS1308 are independent and
+                                    // tsc reports both, but its TS2464
+                                    // branch is mutually exclusive with
+                                    // TS1170, so only the await root runs.
+                                    self.check_computed_property_name_await_only(prop.name);
+                                } else {
                                     self.check_computed_property_name(prop.name);
                                 }
                             }

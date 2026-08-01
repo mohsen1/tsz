@@ -783,6 +783,7 @@ impl<'a> CheckerState<'a> {
             type_param_names: class_type_param_names,
             class_type_parameters,
             class_type_parameter_ids,
+            enclosing_async_depth: self.ctx.async_depth,
         });
 
         let preserve_stable_class_shape_cache = self.class_shape_cache_is_stable(stmt_idx, class);
@@ -1183,6 +1184,7 @@ impl<'a> CheckerState<'a> {
             type_param_names: class_type_param_names,
             class_type_parameters,
             class_type_parameter_ids,
+            enclosing_async_depth: self.ctx.async_depth,
         });
 
         // Class bodies reset the async context — field initializers don't

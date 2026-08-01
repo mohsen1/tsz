@@ -19,9 +19,11 @@
 //!   `async`, and at the top level of a module where a bare `await` would be
 //!   legal (#16097)
 //!
-//! Computed property names are a fourth unrooted position and are **not**
-//! covered here: rooting them surfaces a separate pre-existing defect in the
-//! async-context tracking for class members, tracked separately.
+//! Computed property names were a fourth unrooted position, tracked and
+//! fixed separately in #16094's PR (`await_grammar_computed_property_name_tests.rs`)
+//! once the async-context defect it surfaced (class-member computed names
+//! were checked under the class body's reset-to-non-async context, not the
+//! enclosing function's) was fixed alongside it.
 //!
 //! Every expectation here is pinned against a live
 //! `tsc@7.0.2 --noEmit --pretty false --target es2017 --module commonjs` run,

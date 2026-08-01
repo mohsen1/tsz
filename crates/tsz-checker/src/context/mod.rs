@@ -182,6 +182,14 @@ pub struct EnclosingClassInfo {
     /// declaration order. Kept separately from the name-keyed active scope so
     /// method-level shadowing cannot hide the enclosing class binders.
     pub class_type_parameter_ids: Vec<TypeId>,
+    /// `async_depth` as it was immediately before member checking resets it
+    /// to `0` for the class body (field initializers and static blocks don't
+    /// inherit `async` from the enclosing function). A member's *computed
+    /// name* is evaluated once, when the class itself is defined, in this
+    /// enclosing scope — not inside that reset — so `await` grammar checks on
+    /// a computed name must consult this value instead of the live
+    /// `async_depth`.
+    pub enclosing_async_depth: u32,
 }
 
 /// Info about a label in scope for break/continue validation.

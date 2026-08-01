@@ -1075,9 +1075,15 @@ impl ParserState {
                 // and `yield` should emit TS1213.
                 // Skip the check for generator method names (`* [yield]()`) — tsc does
                 // not emit TS1213 for `yield` in computed property names of generators.
+                // Skip it too when `await` is followed by something that can start an
+                // expression (`[await x]`) — tsc parses that as a genuine AwaitExpression,
+                // grammar-checked later by the checker (TS1308), not as an illegal binding
+                // identifier. A bare `[await]` (nothing that could be its operand) still
+                // falls through to the identifier check below.
                 if self.in_class_member_name()
                     && !self.in_generator_context()
                     && !self.is_computed_class_member_yield_expression()
+                    && !self.is_computed_class_member_await_expression()
                     && (self.context_flags & CONTEXT_FLAG_GENERATOR_MEMBER_NAME) == 0
                 {
                     self.check_illegal_binding_identifier();
@@ -1230,6 +1236,23 @@ impl ParserState {
                 | SyntaxKind::SemicolonToken
                 | SyntaxKind::EndOfFileToken
         )
+    }
+
+    /// Whether the current token is `await` at the start of a class member's
+    /// computed name (`[await ...]`).
+    ///
+    /// Unlike the modifier-like keywords (`public`, `static`, ...) and unlike
+    /// `yield`, `tsc` never treats `await` here as an illegal binding
+    /// identifier — not even a *bare* `[await]` with nothing that could be
+    /// its operand. Oracle-verified (`tsc@7.0.2`): `class K { [await]() {} }`
+    /// reports only TS2304 ("Cannot find name 'await'"), the same as any
+    /// other unresolved identifier reference; `class K { [await key]() {}
+    /// }` parses `await key` as a genuine `AwaitExpression`, grammar-checked
+    /// later by the checker (TS1308). So this is unconditional, unlike
+    /// [`Self::is_computed_class_member_yield_expression`]'s next-token
+    /// lookahead.
+    pub(crate) fn is_computed_class_member_await_expression(&self) -> bool {
+        self.in_class_member_name() && self.is_token(SyntaxKind::AwaitKeyword)
     }
 
     /// Check whether an expression node is a computed property name that uses a top-level
