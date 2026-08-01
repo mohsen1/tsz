@@ -296,6 +296,12 @@ impl<'a> CheckerState<'a> {
             .get(stmt_idx)
             .and_then(|node| self.ctx.arena.get_with_statement(node))
             .map(|with_data| {
+                // The with-expression is an ordinary expression position in the
+                // enclosing container, so it carries the `await`-grammar walk
+                // (TS1308/TS1375/TS1378) like every other statement's own
+                // expression children. `WITH_STATEMENT` owns a dispatcher arm, so
+                // it never reaches the catch-all root in `statements.rs`.
+                self.check_await_expression(with_data.expression);
                 self.get_type_of_node(with_data.expression);
                 with_data.then_statement
             });

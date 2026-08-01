@@ -1078,6 +1078,11 @@ impl StatementChecker {
                     }
                 };
                 for init_idx in initializers {
+                    // An enum member initializer is an expression position in the
+                    // enclosing container, so it carries the `await`-grammar walk
+                    // (TS1308/TS1375/TS1378). `ENUM_DECLARATION` owns this arm, so
+                    // it never reaches the catch-all root below.
+                    state.check_await_expression(init_idx);
                     state.get_type_of_node_with_request(init_idx, &non_contextual_request);
                 }
             }
