@@ -11,7 +11,6 @@ FAIL TypeScript/tests/cases/compiler/arrowFunctionErrorSpan.ts | expected:[TS120
 FAIL TypeScript/tests/cases/compiler/assignLambdaToNominalSubtypeOfFunction.ts | expected:[TS2345] actual:[]
 FAIL TypeScript/tests/cases/compiler/assigningFromObjectToAnythingElse.ts | expected:[TS2322,TS2558] actual:[TS2558,TS2696]
 FAIL TypeScript/tests/cases/compiler/assignmentToObjectAndFunction.ts | expected:[TS2322,TS2740] actual:[TS2322,TS2740]
-FAIL TypeScript/tests/cases/compiler/awaitInNonAsyncFunction.ts | expected:[TS1103,TS1308] actual:[TS1308]
 FAIL TypeScript/tests/cases/compiler/awaitedType.ts | expected:[TS2493,TS2589,TS7010] actual:[TS2589,TS7010]
 FAIL TypeScript/tests/cases/compiler/baseConstraintOfDecorator.ts | expected:[TS2322,TS2507,TS2545] actual:[TS2507,TS2545]
 FAIL TypeScript/tests/cases/compiler/bigintIndex.ts | expected:[TS1268,TS2322,TS2538] actual:[TS1268,TS2322,TS2538]
@@ -126,7 +125,6 @@ FAIL TypeScript/tests/cases/compiler/isolatedModulesShadowGlobalTypeNotValue.ts 
 FAIL TypeScript/tests/cases/compiler/isolatedModulesSketchyAliasLocalMerge.ts | expected:[TS1295,TS1484,TS2865] actual:[TS1295,TS2865]
 FAIL TypeScript/tests/cases/compiler/javascriptThisAssignmentInStaticBlock.ts | expected:[] actual:[TS2339]
 FAIL TypeScript/tests/cases/compiler/jsDeclarationsGlobalFileConstFunctionNamed.ts | expected:[TS2683,TS7009] actual:[TS2683]
-FAIL TypeScript/tests/cases/compiler/jsDocDeclarationEmitDoesNotUseNodeModulesPathWithoutError.ts | expected:[TS2551] actual:[]
 FAIL TypeScript/tests/cases/compiler/jsElementAccessNoContextualTypeCrash.ts | expected:[] actual:[TS2741]
 FAIL TypeScript/tests/cases/compiler/jsEnumCrossFileExport.ts | expected:[TS1003] actual:[TS1003,TS2503]
 FAIL TypeScript/tests/cases/compiler/jsExportMemberMergedWithModuleAugmentation.ts | expected:[TS2564,TS2671,TS2749] actual:[TS2564,TS2741]
@@ -267,7 +265,6 @@ FAIL TypeScript/tests/cases/conformance/ambient/ambientDeclarationsPatterns_merg
 FAIL TypeScript/tests/cases/conformance/ambient/ambientDeclarationsPatterns_merging3.ts | expected:[TS2339] actual:[]
 FAIL TypeScript/tests/cases/conformance/ambient/ambientDeclarationsPatterns_tooManyAsterisks.ts | expected:[TS5061] actual:[]
 FAIL TypeScript/tests/cases/conformance/async/asyncFunctionDeclarationParameterEvaluation.ts | expected:[TS2304,TS2538] actual:[TS2304]
-FAIL TypeScript/tests/cases/conformance/async/es2017/await_incorrectThisType.ts | expected:[TS1320,TS2684] actual:[TS1320,TS2322,TS2684]
 FAIL TypeScript/tests/cases/conformance/async/es5/functionDeclarations/asyncFunctionDeclaration15_es5.ts | expected:[TS1058,TS1064,TS1320,TS2355] actual:[TS1064,TS2355]
 FAIL TypeScript/tests/cases/conformance/async/es5/functionDeclarations/asyncFunctionDeclaration16_es5.ts | expected:[TS1064,TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/async/es6/functionDeclarations/asyncFunctionDeclaration15_es6.ts | expected:[TS1058,TS1064,TS1320,TS2355] actual:[TS1064,TS2355]
@@ -340,7 +337,6 @@ FAIL TypeScript/tests/cases/conformance/es6/templates/taggedTemplateStringsWithO
 FAIL TypeScript/tests/cases/conformance/es6/unicodeExtendedEscapes/unicodeExtendedEscapesInRegularExpressions14.ts | expected:[TS1125,TS1508] actual:[]
 FAIL TypeScript/tests/cases/conformance/es6/unicodeExtendedEscapes/unicodeExtendedEscapesInRegularExpressions17.ts | expected:[TS1125,TS1508] actual:[]
 FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck31.ts | expected:[TS2322] actual:[TS2322]
-FAIL TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck46.ts | expected:[] actual:[TS2339]
 FAIL TypeScript/tests/cases/conformance/es7/exponentiationOperator/emitExponentiationOperator4.ts | expected:[TS2532] actual:[TS2352,TS2365,TS2532]
 FAIL TypeScript/tests/cases/conformance/esDecorators/esDecorators-privateFieldAccess.ts | expected:[TS18013,TS18016] actual:[TS18016]
 FAIL TypeScript/tests/cases/conformance/expressions/binaryOperators/inOperator/inOperatorWithInvalidOperands.ts | expected:[TS2322,TS18050] actual:[TS2322]
@@ -387,7 +383,6 @@ FAIL TypeScript/tests/cases/conformance/jsdoc/checkJsdocTypeTag1.ts | expected:[
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkJsdocTypeTag5.ts | expected:[TS2322,TS8030] actual:[TS2322,TS2345,TS8030]
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkJsdocTypeTag6.ts | expected:[TS2322,TS8030] actual:[TS2322,TS8030]
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkJsdocTypedefOnlySourceFile.ts | expected:[TS1003] actual:[TS1003,TS2503]
-FAIL TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsClassMethod.ts | expected:[TS2551,TS2683] actual:[TS2683]
 FAIL TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsClasses.ts | expected:[TS2564] actual:[TS7008]
 FAIL TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsDefaultsErr.ts | expected:[TS2300] actual:[]
 FAIL TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsExportAssignedClassExpressionAnonymousWithSub.ts | expected:[TS2309,TS2339] actual:[TS2309,TS2339]
@@ -514,7 +509,6 @@ FAIL TypeScript/tests/cases/conformance/salsa/thisPropertyAssignment.ts | expect
 FAIL TypeScript/tests/cases/conformance/salsa/thisTypeOfConstructorFunctions.ts | expected:[TS2339,TS2526,TS2683,TS2749,TS7009] actual:[TS2339,TS2683,TS2749,TS7009]
 FAIL TypeScript/tests/cases/conformance/salsa/typeFromContextualThisType.ts | expected:[TS7006] actual:[TS8030]
 FAIL TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment12.ts | expected:[TS2339] actual:[]
-FAIL TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment23.ts | expected:[TS2339] actual:[TS2339]
 FAIL TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment24.ts | expected:[TS2339,TS2503] actual:[TS2339,TS2503]
 FAIL TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment29.ts | expected:[TS2339] actual:[TS2339]
 FAIL TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment31.ts | expected:[TS2322] actual:[]
@@ -523,9 +517,8 @@ FAIL TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment33.ts | 
 FAIL TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment35.ts | expected:[TS2503] actual:[TS2339]
 FAIL TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment5.ts | expected:[TS2503] actual:[]
 FAIL TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment6.ts | expected:[TS2339,TS2702] actual:[TS2339]
-FAIL TypeScript/tests/cases/conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.1.ts | expected:[TS2854] actual:[TS2854]
-FAIL TypeScript/tests/cases/conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.14.ts | expected:[TS18054] actual:[TS2852]
-FAIL TypeScript/tests/cases/conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.16.ts | expected:[TS1546] actual:[TS2853]
+FAIL TypeScript/tests/cases/conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.14.ts | expected:[TS18054] actual:[TS2853]
+FAIL TypeScript/tests/cases/conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.16.ts | expected:[TS1546] actual:[TS2852]
 FAIL TypeScript/tests/cases/conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.17.ts | expected:[TS1548] actual:[]
 FAIL TypeScript/tests/cases/conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarationsInForAwaitOf.3.ts | expected:[TS1123] actual:[TS2304,TS2487]
 FAIL TypeScript/tests/cases/conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarationsInForOf.5.ts | expected:[TS1123] actual:[TS2304,TS2487]
@@ -996,6 +989,7 @@ PASS TypeScript/tests/cases/compiler/avoidNarrowingUsingConstVariableFromBinding
 PASS TypeScript/tests/cases/compiler/awaitCallExpressionInSyncFunction.ts
 PASS TypeScript/tests/cases/compiler/awaitExpressionInnerCommentEmit.ts
 PASS TypeScript/tests/cases/compiler/awaitInClassInAsyncFunction.ts
+PASS TypeScript/tests/cases/compiler/awaitInNonAsyncFunction.ts
 PASS TypeScript/tests/cases/compiler/awaitLiteralValues.ts
 PASS TypeScript/tests/cases/compiler/awaitUnionPromise.ts
 PASS TypeScript/tests/cases/compiler/awaitedTypeCrash.ts
@@ -3951,6 +3945,7 @@ PASS TypeScript/tests/cases/compiler/jsDeclarationEmitExportedClassWithExtends.t
 PASS TypeScript/tests/cases/compiler/jsDeclarationsGlobalFileConstFunction.ts
 PASS TypeScript/tests/cases/compiler/jsDeclarationsInheritedTypes.ts
 PASS TypeScript/tests/cases/compiler/jsDeclarationsWithDefaultAsNamespaceLikeMerge.ts
+PASS TypeScript/tests/cases/compiler/jsDocDeclarationEmitDoesNotUseNodeModulesPathWithoutError.ts
 PASS TypeScript/tests/cases/compiler/jsEmitIntersectionProperty.ts
 PASS TypeScript/tests/cases/compiler/jsEnumFunctionLocalNoCrash.ts
 PASS TypeScript/tests/cases/compiler/jsEnumTagOnObjectFrozen.ts
@@ -6549,6 +6544,7 @@ PASS TypeScript/tests/cases/conformance/async/es2017/awaitCallExpression/awaitCa
 PASS TypeScript/tests/cases/conformance/async/es2017/awaitCallExpression/awaitCallExpression8_es2017.ts
 PASS TypeScript/tests/cases/conformance/async/es2017/awaitClassExpression_es2017.ts
 PASS TypeScript/tests/cases/conformance/async/es2017/awaitInheritedPromise_es2017.ts
+PASS TypeScript/tests/cases/conformance/async/es2017/await_incorrectThisType.ts
 PASS TypeScript/tests/cases/conformance/async/es2017/await_unaryExpression_es2017.ts
 PASS TypeScript/tests/cases/conformance/async/es2017/await_unaryExpression_es2017_1.ts
 PASS TypeScript/tests/cases/conformance/async/es2017/await_unaryExpression_es2017_2.ts
@@ -8406,6 +8402,7 @@ PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck4
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck43.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck44.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck45.ts
+PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck46.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck47.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck48.ts
 PASS TypeScript/tests/cases/conformance/es6/yieldExpressions/generatorTypeCheck49.ts
@@ -9344,6 +9341,7 @@ PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsClassEx
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsClassImplementsGenericsSerialization.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsClassLeadingOptional.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsClassLikeHeuristic.ts
+PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsClassMethod.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsClassStatic.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsClassStatic2.ts
 PASS TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsClassStaticMethodAugmentation.ts
@@ -10819,6 +10817,7 @@ PASS TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment2.ts
 PASS TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment20.ts
 PASS TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment21.ts
 PASS TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment22.ts
+PASS TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment23.ts
 PASS TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment25.ts
 PASS TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment26.ts
 PASS TypeScript/tests/cases/conformance/salsa/typeFromPropertyAssignment27.ts
@@ -10888,6 +10887,7 @@ PASS TypeScript/tests/cases/conformance/statements/VariableStatements/everyTypeW
 PASS TypeScript/tests/cases/conformance/statements/VariableStatements/everyTypeWithInitializer.ts
 PASS TypeScript/tests/cases/conformance/statements/VariableStatements/invalidMultipleVariableDeclarations.ts
 PASS TypeScript/tests/cases/conformance/statements/VariableStatements/recursiveInitializer.ts
+PASS TypeScript/tests/cases/conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.1.ts
 PASS TypeScript/tests/cases/conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.10.ts
 PASS TypeScript/tests/cases/conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.11.ts
 PASS TypeScript/tests/cases/conformance/statements/VariableStatements/usingDeclarations/awaitUsingDeclarations.12.ts
