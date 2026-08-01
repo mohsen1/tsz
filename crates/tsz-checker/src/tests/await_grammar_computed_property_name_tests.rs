@@ -27,10 +27,12 @@
 //! 3. **A TS1170 routing gap** (Blocker B, already named in #16094): a
 //!    type-literal member whose computed name failed the literal-type check
 //!    (TS1170) never got the shared `check_computed_property_name` funnel at
-//!    all, so `await` inside it was silently unrooted even after (1) and (2).
-//!    Fixed by always running the await-only half of that funnel
-//!    (`check_computed_property_name_await_only`) regardless of whether
-//!    TS1170 fired — `tsc` reports both, they are independent grammar rules.
+//!    all, so `await` inside it (and separately, TS2464's property-key-type
+//!    check — verified against `tsc@7.0.2`: `type U = { [b as unknown as
+//!    boolean]: number }` reports both TS1170 and TS2464) was silently
+//!    unrooted even after (1) and (2). Fixed in `type_alias_checking.rs` by
+//!    always running the full funnel regardless of whether TS1170 fired —
+//!    `tsc` reports both, they are independent grammar/type rules.
 //!
 //! Every expectation below is pinned against a live `tsc@7.0.2 --noEmit
 //! --pretty false --target es2017 --module commonjs` run, not recalled, and

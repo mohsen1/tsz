@@ -113,3 +113,66 @@ type X = {
         "TS1170 must fire for parenthesized access regardless of identifier names. Got: {codes:?}"
     );
 }
+
+/// tsc's `checkComputedPropertyName` (TS1170, "must be a literal or unique
+/// symbol type") and its type-of-property-key check (TS2464, "must be of
+/// type string/number/symbol/any") are independent: both fire together when
+/// a type-literal property's computed name is neither a literal/entity-name
+/// expression NOR of a valid property-key type. Verified against
+/// `tsc@7.0.2`: `type U = { [b as unknown as boolean]: number }` (`b:
+/// boolean`) reports both TS1170 and TS2464 at the same position.
+#[test]
+fn ts2464_fires_alongside_ts1170_type_literal_property() {
+    let codes = diag_codes(
+        r#"
+declare const b: boolean;
+type U = { [b as unknown as boolean]: number };
+"#,
+    );
+    assert!(
+        codes.contains(&1170),
+        "Expected TS1170 for non-literal computed name in type literal. Got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&2464),
+        "Expected TS2464 alongside TS1170 — the type-literal literal-form gate must not \
+         suppress the independent property-key-type check. Got: {codes:?}"
+    );
+}
+
+/// Same independence, for a type literal's computed *method* name (the
+/// signature-member arm, a separate code path from the property-member arm
+/// above).
+#[test]
+fn ts2464_fires_alongside_ts1170_type_literal_method() {
+    let codes = diag_codes(
+        r#"
+declare const b: boolean;
+type U = { [b as unknown as boolean](): number };
+"#,
+    );
+    assert!(
+        codes.contains(&1170),
+        "Expected TS1170 for non-literal computed method name in type literal. Got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&2464),
+        "Expected TS2464 alongside TS1170 for a type-literal method's computed name. Got: {codes:?}"
+    );
+}
+
+/// Anti-regression: a genuinely valid (literal-or-entity-name, valid-key-type)
+/// computed name in a type literal must still emit neither code.
+#[test]
+fn ts1170_and_ts2464_absent_for_valid_type_literal_computed_name() {
+    let codes = diag_codes(
+        r#"
+declare const k: unique symbol;
+type X = { [k]: number };
+"#,
+    );
+    assert!(
+        !codes.contains(&1170) && !codes.contains(&2464),
+        "Valid unique-symbol computed name must not trigger TS1170/TS2464. Got: {codes:?}"
+    );
+}
