@@ -71,7 +71,7 @@ jobs:
             git --no-pager diff --stat -- "${files[@]}"
           fi
 
-      - name: Open refresh PR
+      - name: Open or update refresh PR
         if: steps.diff.outputs.changed == 'true' && (inputs.dry_run != true)
         shell: bash
         env:
@@ -81,57 +81,110 @@ jobs:
           git config user.name "tsz-conformance-bot"
           git config user.email "tsz-conformance-bot@users.noreply.github.com"
 
-          stamp="$(date -u +%Y%m%d)"
-          branch="automation/conformance-snapshot-refresh-${stamp}"
-          if git ls-remote --exit-code --heads origin "${branch}" >/dev/null 2>&1; then
-            echo "Branch ${branch} already exists on origin; today's refresh is already open."
-            exit 0
-          fi
+          # base_ref is the commit this checkout started from, i.e. the
+          # currently-committed snapshot, before the run above overwrote it
+          # in the working tree. check-snapshot-regression.py needs it as a
+          # git ref to diff against once the new state is committed below.
+          base_ref="$(git rev-parse HEAD)"
 
-          git checkout -b "${branch}"
+          # One standing branch, force-pushed, not one-per-day: a stale
+          # unmerged refresh PR would otherwise keep comparing against an
+          # ever-older base while new dated branches pile up beside it, each
+          # conflicting with the last (#16081 asked for "opens or updates a
+          # single standing PR", not a new one every day).
+          branch="automation/conformance-snapshot-refresh"
+          git checkout -B "${branch}"
           git add scripts/conformance/conformance-detail.json \
                   scripts/conformance/conformance-snapshot.json \
                   scripts/conformance/conformance-baseline.txt
           git commit -m "chore(conformance): refresh the committed snapshot to current main"
-          git push -u origin "${branch}"
 
-          body=$(cat <<'EOF'
-          Automated refresh of the committed conformance snapshot
-          (`conformance-detail.json`, `conformance-snapshot.json`,
-          `conformance-baseline.txt`) from a fresh full-corpus run against
-          `main`.
+          # Compare the new commit against the base it just displaced so the
+          # PR states the direction, not just the fact that something
+          # changed. This must never fail the job, even on a real regression
+          # (that's a report, not a gate) — --allow-new-failures alone does
+          # NOT guarantee that: has_blocking_regression() still returns exit
+          # 1 whenever pass_delta < 0 regardless of that flag, so capture the
+          # report with errexit suspended rather than trust the exit code.
+          set +e
+          report="$(python3 scripts/conformance/check-snapshot-regression.py \
+            --base-ref "${base_ref}" --head-ref HEAD --allow-new-failures)"
+          set -e
+          echo "${report}"
+          # Drop the script's "::error::" Actions annotations from the copy
+          # that goes into the PR body — meaningful in this step's log,
+          # meaningless (and confusing) as literal text in a PR description.
+          report_for_body="$(printf '%s\n' "${report}" | grep -v '^::error::' || true)"
+
+          passed_line="$(printf '%s\n' "${report}" | grep '^- passed:' || true)"
+          new_failures="$(printf '%s\n' "${report}" | grep -oE '^- new failures: [0-9]+' | grep -oE '[0-9]+' || echo 0)"
+          fixed_failures="$(printf '%s\n' "${report}" | grep -oE '^- fixed failures: [0-9]+' | grep -oE '[0-9]+' || echo 0)"
+
+          title="chore(conformance): refresh the committed snapshot to current main"
+          regression_banner=""
+          if [ "${new_failures:-0}" -gt 0 ]; then
+            # A refresh that silently accepts a regression as the new
+            # baseline is worse than the staleness it fixes: once merged, the
+            # newly-failing tests can never show up as "newly failing" again
+            # in any future diff against this file. Make that impossible to
+            # miss rather than gating on it — a legitimate baselined
+            # regression is sometimes the right call, but it must never look
+            # like a routine chore.
+            title="⚠️ conformance regression: refresh introduces ${new_failures} newly-failing test(s)"
+            regression_banner="**⚠️ This refresh does not just remove stale rows — it introduces ${new_failures} newly-failing test(s) that were not failing at \`${base_ref}\`. That means a real regression landed on \`main\` since the last refresh. Do NOT merge this on sight: find and fix (or consciously accept) the regression first, the same as any other conformance regression.**"$'\n\n'
+          fi
+
+          body="${regression_banner}Automated refresh of the committed conformance snapshot
+          (\`conformance-detail.json\`, \`conformance-snapshot.json\`,
+          \`conformance-baseline.txt\`) from a fresh full-corpus run against
+          \`main\` (\`${base_ref}\`).
+
+          ${passed_line} (fixed: ${fixed_failures}, new: ${new_failures})
 
           ## Goal
           Goal: hold
 
           ## Invariant
-          The committed conformance snapshot tracks the latest `main` instead
-          of drifting stale between manual `conformance.sh snapshot --force`
+          The committed conformance snapshot tracks the latest \`main\` instead
+          of drifting stale between manual \`conformance.sh snapshot --force\`
           runs (#16081). A stale snapshot lets a reviewer's branch-vs-snapshot
           diff read a real regression as an apparent improvement, because the
           drift and the branch's own delta add up.
 
           ## Scope
-          Generated artifacts only, via `scripts/conformance/conformance.sh
-          snapshot --workers 12 --force`. No source, script, or workflow
+          Generated artifacts only, via \`scripts/conformance/conformance.sh
+          snapshot --workers 12 --force\`. No source, script, or workflow
           changes.
 
           ## Verification
-          - This PR's diff *is* the output of `conformance.sh snapshot
-            --force` against `main` — the numbers in the diff are the
-            verification.
+          \`scripts/conformance/check-snapshot-regression.py --base-ref ${base_ref} --head-ref HEAD\`:
+
+          \`\`\`
+          ${report_for_body}
+          \`\`\`
 
           ## Provenance
           Machine: cloud
           Assistant: bot
           Model: github-actions
           Effort: low
-          EOF
-          )
+          "
 
-          gh pr create \
-            --base main \
-            --head "${branch}" \
-            --title "chore(conformance): refresh the committed snapshot to current main" \
-            --body "${body}" \
-            --label chore
+          # Plain --force, not --force-with-lease: this branch only this
+          # workflow ever writes, so there is no concurrent-push scenario
+          # for a lease to guard against, and a fresh checkout has no
+          # existing remote-tracking ref for --force-with-lease to compare
+          # against anyway.
+          git push --force -u origin "${branch}"
+
+          existing_pr="$(gh pr list --state open --head "${branch}" --json number --jq '.[0].number' 2>/dev/null || true)"
+          if [ -n "${existing_pr}" ]; then
+            gh pr edit "${existing_pr}" --title "${title}" --body "${body}"
+          else
+            gh pr create \
+              --base main \
+              --head "${branch}" \
+              --title "${title}" \
+              --body "${body}" \
+              --label chore
+          fi
