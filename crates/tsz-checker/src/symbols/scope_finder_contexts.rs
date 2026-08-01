@@ -1661,17 +1661,14 @@ impl<'a> CheckerState<'a> {
                 k if k == syntax_kind_ext::INTERFACE_DECLARATION => return true,
                 k if k == syntax_kind_ext::TYPE_LITERAL => return true,
 
-                // Ambient class: `declare class C { [x]: any; }`
-                k if k == syntax_kind_ext::CLASS_DECLARATION
-                    || k == syntax_kind_ext::CLASS_EXPRESSION =>
-                {
-                    if let Some(class) = self.ctx.arena.get_class(parent_node)
-                        && self.has_declare_modifier(&class.modifiers)
-                    {
-                        return true;
-                    }
-                    return false;
+                // Ambient class: `declare class C { [x]: any; }`, a class inside
+                // `declare namespace`/`declare module`, or any class in a `.d.ts`.
+                // Class expressions are never ambient (`declare` only attaches to
+                // class declarations).
+                k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                    return self.is_ambient_class_declaration(parent_idx);
                 }
+                k if k == syntax_kind_ext::CLASS_EXPRESSION => return false,
 
                 // Property/method declarations may have abstract or declare modifiers
                 k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
