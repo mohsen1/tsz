@@ -1523,6 +1523,16 @@ DEBUG_PRINT_MACRO_CHECKS = [
     ),
 ]
 
+CFG_TEST_GATED_PATH_MOD_CHECKS = [
+    (
+        "Test-module gate: every `#[path = \"…tests/…\"] mod x;` declaration "
+        "must be immediately preceded by #[cfg(test)] (#16121 — a same-point "
+        "merge conflict can silently drop the gate and compile a test-only "
+        "module into non-test builds)",
+        tuple(sorted((ROOT / "crates").glob("*/src/lib.rs"))),
+    ),
+]
+
 # Pin Track 10's diagnostic-debt ratchets in the shared architecture guard.
 # These are count metrics, not new semantic bans: the current baselines still
 # contain legacy fingerprint rewrites, source-text snippets, and rendered-type

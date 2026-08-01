@@ -112,6 +112,75 @@ class ArchGuardDebugPrintMacroTests(unittest.TestCase):
         )
 
 
+class ArchGuardCfgTestGatedPathModTests(unittest.TestCase):
+    """Cover #16121's cfg(test) gate for `#[path = "…tests/…"] mod x;`."""
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def test_flags_ungated_test_path_mod(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            lib_rs = root / "lib.rs"
+            lib_rs.write_text(
+                "\n".join(
+                    [
+                        "#[cfg(test)]",
+                        '#[path = "tests/gated_tests.rs"]',
+                        "mod gated_tests;",
+                        '#[path = "tests/ungated_tests.rs"]',
+                        "mod ungated_tests;",
+                        "#[cfg(test)]",
+                        '#[path = "../tests/other_gated_tests.rs"]',
+                        "mod other_gated_tests;",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            hits = self.arch_guard.scan_cfg_test_gated_path_mod([lib_rs])
+
+        self.assertEqual(len(hits), 1)
+        self.assertIn("ungated_tests", hits[0])
+        self.assertIn("lib.rs:4", hits[0])
+
+    def test_accepts_a_fully_gated_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            lib_rs = root / "lib.rs"
+            lib_rs.write_text(
+                "\n".join(
+                    [
+                        "#[cfg(test)]",
+                        '#[path = "tests/a_tests.rs"]',
+                        "mod a_tests;",
+                        "#[cfg(test)]",
+                        '#[path = "../tests/b_tests.rs"]',
+                        "mod b_tests;",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            hits = self.arch_guard.scan_cfg_test_gated_path_mod([lib_rs])
+
+        self.assertEqual(hits, [])
+
+    def test_real_crate_lib_rs_files_are_fully_gated(self):
+        for name, paths in self.arch_guard.CFG_TEST_GATED_PATH_MOD_CHECKS:
+            hits = self.arch_guard.scan_cfg_test_gated_path_mod(paths)
+            self.assertEqual(hits, [], f"{name}: {hits[:5]}")
+
+    def test_check_is_registered(self):
+        names = [entry[0] for entry in self.arch_guard.CFG_TEST_GATED_PATH_MOD_CHECKS]
+        self.assertTrue(
+            any("cfg(test)" in name for name in names),
+            "cfg(test) gate check missing from CFG_TEST_GATED_PATH_MOD_CHECKS",
+        )
+
+
 class ArchGuardVisitedCloneTests(unittest.TestCase):
     """Cover Track 10 branch-local `visited.clone()` traversal guardrails."""
 

@@ -75,6 +75,43 @@ def relative_path(path: pathlib.Path) -> str:
         return path.as_posix()
 
 
+_CFG_TEST_PATH_ATTR = re.compile(r'^\s*#\[path\s*=\s*"(?:\.\./)*tests/[^"]+\.rs"\]\s*$')
+_CFG_TEST_MOD_DECL = re.compile(r"^\s*mod\s+[A-Za-z_][A-Za-z0-9_]*\s*;\s*$")
+_CFG_TEST_ATTR = re.compile(r"^\s*#\[cfg\(test\)\]\s*$")
+
+
+def scan_cfg_test_gated_path_mod(paths) -> list[str]:
+    """Flag a `#[path = "…tests/…"] mod x;` pair not gated by #[cfg(test)].
+
+    The three lines (`#[cfg(test)]`, `#[path = "…"]`, `mod x;`) are written as
+    one declaration, but a git merge that inserts two such declarations at the
+    same point can align the shared `#[cfg(test)]` line as common context and
+    conflict only the `#[path]`/`mod` pair — the naive "keep both" resolution
+    then leaves one declaration's module compiling outside `#[cfg(test)]`
+    without the diff looking wrong (#16121). This scans for that end state:
+    a test-fixture `#[path]` immediately followed by `mod x;` with no
+    `#[cfg(test)]` immediately above it.
+    """
+    hits = []
+    for path in paths:
+        if not path.exists():
+            continue
+        lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        for i, line in enumerate(lines):
+            if not _CFG_TEST_PATH_ATTR.match(line):
+                continue
+            if i + 1 >= len(lines) or not _CFG_TEST_MOD_DECL.match(lines[i + 1]):
+                continue
+            prev = lines[i - 1] if i > 0 else ""
+            if not _CFG_TEST_ATTR.match(prev):
+                rel = relative_path(path)
+                hits.append(
+                    f"{rel}:{i + 1}: {lines[i + 1].strip()} — "
+                    "#[path] into tests/ not immediately gated by #[cfg(test)]"
+                )
+    return hits
+
+
 def find_struct_body(path: pathlib.Path, struct_name: str):
     text = path.read_text(encoding="utf-8", errors="ignore")
     stripped = strip_rust_comments(text)

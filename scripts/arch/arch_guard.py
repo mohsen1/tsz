@@ -374,6 +374,12 @@ def main() -> int:
         if hits:
             failures.append((name, hits))
 
+    for name, lib_rs_paths in CFG_TEST_GATED_PATH_MOD_CHECKS:
+        hits = scan_cfg_test_gated_path_mod(lib_rs_paths)
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
     for name, file_path in PROJECT_DASHBOARD_ROW_CHECKS:
         hits = scan_project_dashboard_rows(file_path)
         total_hits += len(hits)
