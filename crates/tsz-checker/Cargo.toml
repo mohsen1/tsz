@@ -2573,3 +2573,6 @@ path = "tests/getter_contextual_generic_call_typeparam_tests.rs"
 [[test]]
 name = "class_member_body_function_boundary_tests"
 path = "tests/class_member_body_function_boundary_tests.rs"
+[[test]]
+name = "conditional_extends_redundant_intersection_identity_tests"
+path = "tests/conditional_extends_redundant_intersection_identity_tests.rs"
