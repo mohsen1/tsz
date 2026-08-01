@@ -220,7 +220,35 @@ impl<'a> CheckerState<'a> {
             } else {
                 // Setter: type-check the function body to track variable usage
                 // (especially for noUnusedParameters/noUnusedLocals checking),
-                // but use the parameter type annotation for the property type
+                // but use the parameter type annotation for the property type.
+                //
+                // Cache the paired getter's type onto an unannotated parameter
+                // first, so the body sees the pair's shared declared type rather
+                // than implicit `any`. `get_type_of_function_impl` prefers an
+                // already-cached parameter type, which is the same lever the
+                // class-member path uses via `cache_parameter_types`.
+                if let Some(contextual_param_types) =
+                    self.contextual_setter_parameter_types_in_members(obj_elements, accessor)
+                {
+                    self.cache_parameter_types(
+                        &accessor.parameters.nodes,
+                        Some(&contextual_param_types),
+                    );
+                    for (&param_idx, contextual) in accessor
+                        .parameters
+                        .nodes
+                        .iter()
+                        .zip(contextual_param_types.iter().copied())
+                    {
+                        let Some(contextual) = contextual else {
+                            continue;
+                        };
+                        self.ctx.node_types.insert(param_idx.0, contextual);
+                        if let Some(param) = self.ctx.arena.get_parameter_at(param_idx) {
+                            self.ctx.node_types.insert(param.name.0, contextual);
+                        }
+                    }
+                }
                 self.get_type_of_function(elem_idx);
 
                 // Extract setter write type from first parameter.

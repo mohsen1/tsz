@@ -16,9 +16,23 @@ impl<'a> CheckerState<'a> {
         setter_accessor: &tsz_parser::parser::node::AccessorData,
     ) -> Option<NodeIndex> {
         let class_info = self.ctx.enclosing_class.as_ref()?;
+        self.paired_getter_in_members(&class_info.member_nodes, setter_accessor)
+    }
 
+    /// Find the `get` accessor paired with `setter_accessor` among `members`.
+    ///
+    /// The class path passes the enclosing class's member nodes; the
+    /// object-literal path passes the literal's elements. Pairing is by
+    /// property name (so `get 'a'()` pairs with `set a()`, and `get 0x20()`
+    /// with `set 3.2e1()`, exactly as `tsc` pairs them), falling back to
+    /// computed-name symbol identity when the name is not a literal.
+    pub(crate) fn paired_getter_in_members(
+        &self,
+        members: &[NodeIndex],
+        setter_accessor: &tsz_parser::parser::node::AccessorData,
+    ) -> Option<NodeIndex> {
         if let Some(setter_name) = self.get_property_name(setter_accessor.name) {
-            for &member_idx in &class_info.member_nodes {
+            for &member_idx in members {
                 let Some(member_node) = self.ctx.arena.get(member_idx) else {
                     continue;
                 };
@@ -36,7 +50,7 @@ impl<'a> CheckerState<'a> {
         let setter_sym = self.resolve_computed_name_symbol(setter_accessor.name);
         setter_sym?;
 
-        for &member_idx in &class_info.member_nodes {
+        for &member_idx in members {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
                 continue;
             };
@@ -55,13 +69,31 @@ impl<'a> CheckerState<'a> {
         &mut self,
         setter_accessor: &tsz_parser::parser::node::AccessorData,
     ) -> Option<Vec<Option<tsz_solver::TypeId>>> {
+        let class_info = self.ctx.enclosing_class.as_ref()?;
+        let members = class_info.member_nodes.clone();
+        self.contextual_setter_parameter_types_in_members(&members, setter_accessor)
+    }
+
+    /// The contextual types of `setter_accessor`'s parameters, given the
+    /// accessor's sibling `members`.
+    ///
+    /// An unannotated `set` accessor parameter takes the paired `get`
+    /// accessor's type — its return annotation when it has one, otherwise the
+    /// type inferred from its body. Returns `None` when the parameter is
+    /// annotated (the annotation wins) or when there is no paired getter (the
+    /// parameter stays implicitly `any` and keeps its `TS7006`/`TS7032`).
+    pub(crate) fn contextual_setter_parameter_types_in_members(
+        &mut self,
+        members: &[NodeIndex],
+        setter_accessor: &tsz_parser::parser::node::AccessorData,
+    ) -> Option<Vec<Option<tsz_solver::TypeId>>> {
         let &first_param_idx = setter_accessor.parameters.nodes.first()?;
         let param = self.ctx.arena.get_parameter_at(first_param_idx)?;
         if param.type_annotation.is_some() && !self.ctx.is_js_file() {
             return None;
         }
 
-        let getter_member_idx = self.paired_getter_member_for_setter(setter_accessor)?;
+        let getter_member_idx = self.paired_getter_in_members(members, setter_accessor)?;
         let getter_node = self.ctx.arena.get(getter_member_idx)?;
         let getter = self.ctx.arena.get_accessor(getter_node)?;
 
