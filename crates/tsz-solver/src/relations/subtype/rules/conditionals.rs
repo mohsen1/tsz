@@ -7,6 +7,8 @@
 
 use std::sync::Arc;
 
+use rustc_hash::FxHashSet;
+
 use crate::type_queries::type_includes_undefined;
 use crate::types::{ConditionalType, IntrinsicKind, TypeData, TypeId};
 use crate::visitor::{
@@ -56,15 +58,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         }
 
-        if self.with_extends_clause_identity_mode(|sub| {
-            sub.check_subtype(left, right).is_true() && sub.check_subtype(right, left).is_true()
-        }) {
+        if self.intersection_identity_compatible(left, right)
+            && self.with_extends_clause_identity_mode(|sub| {
+                sub.check_subtype(left, right).is_true() && sub.check_subtype(right, left).is_true()
+            })
+        {
             return true;
         }
 
         let left_eval = self.evaluate_type(left);
         let right_eval = self.evaluate_type(right);
         if (left_eval != left || right_eval != right)
+            && self.intersection_identity_compatible(left_eval, right_eval)
             && self.with_extends_clause_identity_mode(|sub| {
                 sub.check_subtype(left_eval, right_eval).is_true()
                     && sub.check_subtype(right_eval, left_eval).is_true()
@@ -74,6 +79,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         if !self.identity_fallback_property_modifiers_match(left_eval, right_eval) {
+            return false;
+        }
+
+        if !self.intersection_identity_compatible(left_eval, right_eval) {
             return false;
         }
 
@@ -90,6 +99,39 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         );
         self.absorb_relation_limit_events_from(&fallback, fallback_limits_at_entry);
         equivalent
+    }
+
+    /// Bidirectional subtyping approximates tsc's `isTypeIdenticalTo` for most
+    /// extends-type shapes, but it is unsound whenever one side is an
+    /// `Intersection` containing a member that already subsumes the whole
+    /// comparison: `A & M` is mutually assignable with `A` alone whenever
+    /// `A <: M` (the intersection contributes no extra constraint), even
+    /// though `A & M` and `A` are different type nodes and tsc's real
+    /// `isTypeIdenticalTo` does not conflate a redundant intersection with
+    /// one of its own members. Gate every bidirectional-subtype acceptance in
+    /// `conditional_extends_types_equivalent` on this: when either side is an
+    /// `Intersection`, require an exact (order-independent) member-set match
+    /// — matching tsc, which does not sort intersection members but does
+    /// treat differently-ordered intersections of the same members as
+    /// identical — rather than falling back to mutual assignability.
+    fn intersection_identity_compatible(&self, left: TypeId, right: TypeId) -> bool {
+        match (
+            self.intersection_member_set(left),
+            self.intersection_member_set(right),
+        ) {
+            (None, None) => true,
+            (Some(left_members), Some(right_members)) => left_members == right_members,
+            _ => false,
+        }
+    }
+
+    fn intersection_member_set(&self, id: TypeId) -> Option<FxHashSet<TypeId>> {
+        match self.interner.lookup(id) {
+            Some(TypeData::Intersection(list_id)) => {
+                Some(self.interner.type_list(list_id).iter().copied().collect())
+            }
+            _ => None,
+        }
     }
 
     fn identity_fallback_property_modifiers_match(&self, left: TypeId, right: TypeId) -> bool {
