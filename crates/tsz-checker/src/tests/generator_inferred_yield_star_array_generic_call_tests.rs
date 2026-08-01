@@ -2,8 +2,8 @@
 //! contribution is `yield*` over an array reported a spurious `TS2345` when
 //! its inferred return type was passed to a *generic* parameter (`want<T>(x:
 //! AsyncGenerator<T, any, any>): T`) — the source rendered with no type
-//! arguments at all ("Argument of type 'AsyncGenerator' is not assignable to
-//! parameter of type 'AsyncGenerator<number, any, any>'") even though a
+//! arguments at all ("Argument of type '`AsyncGenerator`' is not assignable to
+//! parameter of type '`AsyncGenerator<number, any, any>`'") even though a
 //! concrete, non-generic target (`AsyncGenerator<number, any, any>`) accepted
 //! the identical value.
 //!
