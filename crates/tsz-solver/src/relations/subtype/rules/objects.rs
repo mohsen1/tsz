@@ -769,11 +769,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         else {
             return false;
         };
+        // Classes only. The interface widening (#16137) was reverted here:
+        // its premise — that tsc's declaration-time override check guarantees
+        // the interface is a structural subtype of its heritage parent — holds
+        // only when that check PASSED. `class_extends` is a map the checker
+        // *registers*, so a class whose `extends` was rejected is simply absent
+        // from it; `interface_extends` has no registration site and resolves by
+        // name, reporting the edge as written regardless of TS2430. `lib.dom.d.ts`
+        // contains such an edge (`HTMLTrackElement extends HTMLElement`, TS2430),
+        // so the shortcut wrongly accepted it and TS2344 was lost on 3 conformance
+        // rows. See #16142 for the durable fix (register verified interface
+        // heritage the way `register_class_extends` does).
         let source_kind = self.resolver.get_def_kind(source_def);
-        if !matches!(
-            source_kind,
-            Some(crate::def::DefKind::Class | crate::def::DefKind::Interface)
-        ) {
+        if !matches!(source_kind, Some(crate::def::DefKind::Class)) {
             return false;
         }
         let Some(target_def) = target_def else {
