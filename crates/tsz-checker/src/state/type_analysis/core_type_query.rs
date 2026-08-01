@@ -498,6 +498,22 @@ impl<'a> CheckerState<'a> {
                             &type_argument_nodes,
                         );
                     }
+                    // The identifier resolves to *some* symbol but the general
+                    // value-position resolver above reported it as an error
+                    // (e.g. TS2708 for a namespace used as a value, TS2693 for a
+                    // type-only symbol) — that diagnostic has already been
+                    // emitted. Stop here instead of falling through to the
+                    // "cannot find name" resolution below, which would
+                    // spuriously re-report the same identifier as unresolved
+                    // (TS2304) on top of the correct diagnostic.
+                    if expr_type == TypeId::ERROR
+                        && expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                        && self
+                            .resolve_identifier_symbol(type_query.expr_name)
+                            .is_some()
+                    {
+                        return TypeId::ERROR;
+                    }
                 }
             }
         }
