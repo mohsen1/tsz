@@ -264,17 +264,19 @@ function h() { const holder = { emit() { throw await 1; } }; }
 /// And in a function expression, the third enclosing-function form. tsc:
 /// `(1,35): error TS1308`.
 ///
-/// Two enclosing forms are deliberately *not* asserted here, both
-/// pre-existing wrong-diagnostic defects independent of these roots:
-/// - a class method, constructor, or accessor body, where tsz answers
-///   `[TS1375, TS1378]` (the top-level-await pair) because
-///   `ctx.function_depth` is still 0 inside them — it reproduces on the plain
-///   `class K { m() { await 1; } }` expression-statement witness, rooted long
-///   before this suite;
-/// - a class static block, where tsc reports TS18037 (`'await' expression
-///   cannot be used inside a class static block`) and tsz reports TS1308.
+/// A class method, constructor, or accessor body was once wrong here and is
+/// now correct and pinned below (`class_member_body_await_reports_ts1308`):
+/// #16070 made a class member body a `ctx.function_depth` boundary.
 ///
-/// Both are tracked on their own issue rather than pinned red here.
+/// A class static block is deliberately *not* asserted, and the reason is
+/// narrower than it looks. `class K { static { await 1; } }` is correct
+/// through the CLI on any target — tsc and tsz both answer TS18037 — but
+/// through this suite's `check_source_codes` (which uses
+/// `CheckerOptions::default()`) tsz answers `[TS1375, TS1378]`, the
+/// top-level-await pair, i.e. it treats the static block as the top level of
+/// the file. That is a real defect, visible only under the unit harness's
+/// default options, and it is tracked on its own issue rather than pinned
+/// red here.
 #[test]
 fn while_condition_await_in_function_expression_reports_ts1308() {
     let source = r"
@@ -365,4 +367,42 @@ async function outer(p: Promise<number>) {
         "a non-async function nested in an async one still reports TS1308 for its own `await`; got {:?}",
         check_source_codes(source)
     );
+}
+
+// --- enclosing forms the header once listed as unasserted defects ---
+
+/// A class method, constructor, or accessor body is a `ctx.function_depth`
+/// boundary (#16070), so a non-async one answers TS1308 rather than the
+/// top-level-await pair. tsc on each of the three, `--target es2017`:
+/// `TS1308`, once.
+#[test]
+fn class_member_body_await_reports_ts1308() {
+    for source in [
+        "class K { m() { await 1; } }",
+        "class K { constructor() { await 1; } }",
+        "class K { get g() { await 1; return 1; } }",
+    ] {
+        assert_eq!(
+            count_ts1308(source),
+            1,
+            "a non-async class member body must report exactly one TS1308: {source}"
+        );
+        assert!(
+            !check_source_codes(source).contains(&1375),
+            "a class member body is not the top level of the file: {source}"
+        );
+    }
+}
+
+/// Renamed binders for the same three forms — the boundary is structural, not
+/// keyed on any member or class name.
+#[test]
+fn class_member_body_await_is_name_agnostic() {
+    for source in [
+        "class Widget { render() { await 1; } }",
+        "class Widget { constructor() { await 1; } }",
+        "class Widget { get label() { await 1; return 1; } }",
+    ] {
+        assert_eq!(count_ts1308(source), 1, "renamed binders: {source}");
+    }
 }
