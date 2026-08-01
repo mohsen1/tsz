@@ -416,24 +416,55 @@ impl<'a> CheckerState<'a> {
     /// never on the identifier's spelling — a differently-named loop variable
     /// over an unrelated binding of any type is untouched by this.
     fn for_in_operand_resolution_is_circular(&mut self, expression: NodeIndex) -> bool {
+        let Some(decl_list_idx) = self.for_in_statement_declaration_list(expression) else {
+            return false;
+        };
+        !self
+            .for_in_circular_loop_head_declarations(decl_list_idx, expression)
+            .is_empty()
+    }
+
+    /// The `VariableDeclarationList` of the for-in statement whose operand is
+    /// `expression`, when the loop head declares its variables inline.
+    fn for_in_statement_declaration_list(&self, expression: NodeIndex) -> Option<NodeIndex> {
         let arena = self.ctx.arena;
-        let Some(ext) = arena.get_extended(expression) else {
-            return false;
-        };
-        let statement_idx = ext.parent;
-        let Some(statement) = arena.get(statement_idx) else {
-            return false;
-        };
+        let statement_idx = arena.get_extended(expression)?.parent;
+        let statement = arena.get(statement_idx)?;
         if statement.kind != syntax_kind_ext::FOR_IN_STATEMENT {
-            return false;
+            return None;
         }
-        let Some(initializer) = arena.get_for_in_of(statement).map(|f| f.initializer) else {
-            return false;
-        };
-        let Some(list) = arena.get(initializer).and_then(|n| arena.get_variable(n)) else {
-            return false;
+        let initializer = arena.get_for_in_of(statement).map(|f| f.initializer)?;
+        arena.get(initializer)?;
+        Some(initializer)
+    }
+
+    /// Name nodes of the loop-head declarations that the for-in operand itself
+    /// references — the declarations whose type resolution is circular.
+    ///
+    /// tsc derives a for-in loop variable's type from the loop's own operand
+    /// (`getIndexType(checkExpression(node.expression))` in
+    /// `getTypeForVariableLikeDeclaration`), so an operand naming a variable
+    /// this same loop head declares cannot be resolved: `pushTypeResolution`
+    /// fails, `reportCircularityError` hands back `any`, and reports TS7022
+    /// under `noImplicitAny`.
+    ///
+    /// Returning the declarations rather than a bare flag keeps the TS2407
+    /// suppression and the TS7022 report driven by one predicate, so a circular
+    /// operand can never be both silently accepted by the object-type gate and
+    /// left unreported.
+    ///
+    /// Keyed on binder symbol identity, never on the identifier's spelling.
+    fn for_in_circular_loop_head_declarations(
+        &mut self,
+        decl_list_idx: NodeIndex,
+        expression: NodeIndex,
+    ) -> Vec<NodeIndex> {
+        let arena = self.ctx.arena;
+        let Some(list) = arena.get(decl_list_idx).and_then(|n| arena.get_variable(n)) else {
+            return Vec::new();
         };
 
+        let mut circular = Vec::new();
         for &decl_idx in &list.declarations.nodes {
             let Some(var_decl) = arena
                 .get(decl_idx)
@@ -455,10 +486,42 @@ impl<'a> CheckerState<'a> {
             if let Some(sym_id) = sym_id
                 && self.expression_references_symbol(expression, sym_id)
             {
-                return true;
+                circular.push(var_decl.name);
             }
         }
-        false
+        circular
+    }
+
+    /// TS7022: report a for-in loop variable whose own operand references it.
+    ///
+    /// The for-of twin (`check_for_of_self_reference_circularity`) additionally
+    /// walks iterator-protocol return sites and falls back to an identifier-name
+    /// match; neither applies here. for-in has no iterator protocol, and the
+    /// name fallback would misfire on a member name that merely spells the loop
+    /// variable — `for (const v in o.v) {}` is clean in tsc — so this path is
+    /// symbol-identity only.
+    pub(crate) fn check_for_in_self_reference_circularity(
+        &mut self,
+        decl_list_idx: NodeIndex,
+        expression_idx: NodeIndex,
+    ) {
+        // TS7022 is an implicit-any diagnostic: tsc's `reportCircularityError`
+        // reports it only `if (noImplicitAny && ...)`. With the flag off the
+        // circular loop variable is silently `any`.
+        if !self.ctx.no_implicit_any() {
+            return;
+        }
+        for name_idx in self.for_in_circular_loop_head_declarations(decl_list_idx, expression_idx) {
+            let Some(name) = self.get_identifier_text_from_idx(name_idx) else {
+                continue;
+            };
+            use crate::diagnostics::diagnostic_codes;
+            self.error_at_node_msg(
+                name_idx,
+                diagnostic_codes::IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION_AND_IS_REFERE,
+                &[&name],
+            );
+        }
     }
 
     /// Leaf (non-union, non-intersection) validity test for a for-in operand:
@@ -1519,6 +1582,18 @@ impl<'a> CheckerState<'a> {
                 | syntax_kind_ext::CLASS_EXPRESSION
         ) {
             return false;
+        }
+
+        // The member name of a property access is not a reference to any value
+        // binding, so `o.v` must not count as a reference to a variable named
+        // `v` that happens to be in scope (`for (const v in o.v) {}` is clean in
+        // tsc). Walk only the object side. An *element* access is different —
+        // `o[v]` really does read `v` — so only `PropertyAccessExpression` is
+        // narrowed here, and its `name_or_argument` is the sole skipped child.
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.ctx.arena.get_access_expr(node)
+        {
+            return self.expression_references_symbol(access.expression, target_sym);
         }
 
         // Recurse into children

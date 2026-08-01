@@ -229,6 +229,15 @@ pub trait StatementCheckCallbacks {
         // Default: no check
     }
 
+    /// TS7022: Detect self-referencing for-in loop variables under noImplicitAny.
+    fn check_for_in_self_reference_circularity(
+        &mut self,
+        _decl_list_idx: NodeIndex,
+        _expression_idx: NodeIndex,
+    ) {
+        // Default: no check
+    }
+
     /// Recursively check a nested statement (callback to `check_statement`).
     fn check_statement(&mut self, stmt_idx: NodeIndex);
 
@@ -832,11 +841,15 @@ impl StatementChecker {
                         if !is_for_of {
                             state.check_for_in_destructuring_pattern(initializer);
                         }
-                        // TS7022/TS7023: Detect self-referencing for-of variables.
-                        // This covers both direct `for (var v of v)` cycles and
-                        // iterator-protocol methods whose return expressions read `v`.
+                        // TS7022/TS7023: Detect self-referencing loop variables.
+                        // for-of covers both direct `for (var v of v)` cycles and
+                        // iterator-protocol methods whose return expressions read
+                        // `v`; for-in has no iterator protocol, so only the direct
+                        // `for (var v in v)` cycle applies there.
                         if is_for_of {
                             state.check_for_of_self_reference_circularity(initializer, expression);
+                        } else {
+                            state.check_for_in_self_reference_circularity(initializer, expression);
                         }
                         state.assign_for_in_of_initializer_types(
                             initializer,
