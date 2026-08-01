@@ -70,6 +70,14 @@ impl TypePredicateCache for QueryCache<'_> {
             .set_contains_extractable_type_params_cache(type_id, result);
     }
 
+    fn contains_free_infer_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.interner.contains_free_infer_cached(type_id)
+    }
+
+    fn set_contains_free_infer_cache(&self, type_id: TypeId, result: bool) {
+        self.interner.set_contains_free_infer_cache(type_id, result);
+    }
+
     fn contains_type_params_cached(&self, type_id: TypeId) -> Option<bool> {
         self.interner.contains_type_params_cached(type_id)
     }

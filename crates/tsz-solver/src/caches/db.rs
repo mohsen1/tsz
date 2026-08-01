@@ -760,6 +760,14 @@ impl TypePredicateCache for TypeInterner {
         );
     }
 
+    fn contains_free_infer_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.predicate_cache_get(type_id, PredicateCacheKind::ContainsFreeInfer)
+    }
+
+    fn set_contains_free_infer_cache(&self, type_id: TypeId, result: bool) {
+        self.predicate_cache_set(type_id, PredicateCacheKind::ContainsFreeInfer, result);
+    }
+
     fn contains_generic_params_root_cached(&self, type_id: TypeId) -> Option<bool> {
         self.predicate_cache_get(type_id, PredicateCacheKind::ContainsGenericParamsRoot)
     }

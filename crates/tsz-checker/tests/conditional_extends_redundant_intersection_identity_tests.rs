@@ -170,6 +170,157 @@ fn distinct_object_intersections_are_not_identical() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Array shape (#16095). Array members of an intersection are never merged at
+// intern time, so unlike the object rows above the intersection itself survives
+// interning here (pinned by `redundant_array_intersection_survives_interning`
+// in the solver's `intern/normalize_tests.rs`). What goes wrong is
+// downstream of interning: something subtype-reduces `string[] & (string |
+// number)[]` to plain `string[]` — the element relation is a simple covariant
+// check, which is exactly why the tuple witness at the top of this file is
+// unaffected — and once both sides of the `IfEquals` trick hold the same
+// TypeId, `check_subtype`'s identity fast path answers before the extends
+// clause identity guard in `relations::subtype::rules::conditionals` runs.
+// tsc does not subtype-reduce intersections at all, and compares extends
+// clauses with `isTypeIdenticalTo`, so the two stay distinct there.
+//
+// The two rows below are `#[ignore]`d rather than deleted so they go live the
+// moment the reduction is fixed. Everything else in this section passes today
+// and is a live control: the identity guard is doing its job wherever the
+// operands still reach it, which is what makes the two ignored rows a
+// statement about *where* the operands are lost rather than about the guard.
+// ---------------------------------------------------------------------------
+
+#[test]
+#[ignore = "#16095: tsz answers EQ, tsc TS2344. The extends clause is subtype-reduced \
+     to plain `string[]` before the identity guard can see it, so both sides of the \
+     IfEquals trick become the same TypeId. See the module comment above."]
+fn redundant_array_intersection_is_not_identical_to_its_subsumed_member() {
+    let source = format!(
+        "{IF_EQUALS_PRELUDE}\n\
+        type R = IfEquals<string[] & (string | number)[], string[], \"EQ\", \"DIFF\">;\n\
+        const r: R = \"DIFF\";\n"
+    );
+    let diags = check(&source);
+    assert!(
+        error_codes(&diags).is_empty(),
+        "A redundant array intersection and its subsumed member are different types to tsc's isTypeIdenticalTo; got: {diags:#?}"
+    );
+}
+
+#[test]
+#[ignore = "#16095: same defect as the row above, renamed binders. Pinned so the \
+     renamed-binder control goes live with the fix rather than after it."]
+fn redundant_array_intersection_under_alpha_renamed_type_parameters() {
+    let source = r#"
+type Equal<L, R, T = "EQ", F = "DIFF"> =
+  (<U>() => U extends L ? 1 : 2) extends
+  (<U>() => U extends R ? 1 : 2) ? T : F;
+type R = Equal<number[] & (number | boolean)[], number[]>;
+const r: R = "DIFF";
+"#;
+    let diags = check(source);
+    assert!(
+        error_codes(&diags).is_empty(),
+        "Renamed binders must not change the array-intersection identity answer; got: {diags:#?}"
+    );
+}
+
+#[test]
+fn redundant_array_intersection_is_not_identical_to_the_wider_member_either() {
+    let source = format!(
+        "{IF_EQUALS_PRELUDE}\n\
+        type R = IfEquals<string[] & (string | number)[], (string | number)[], \"EQ\", \"DIFF\">;\n\
+        const r: R = \"DIFF\";\n"
+    );
+    let diags = check(&source);
+    assert!(
+        error_codes(&diags).is_empty(),
+        "The reduction dropped the wider member, so pin that side too; got: {diags:#?}"
+    );
+}
+
+#[test]
+fn identical_array_intersections_stay_identical() {
+    let source = format!(
+        "{IF_EQUALS_PRELUDE}\n\
+        type R = IfEquals<\n\
+          string[] & (string | number)[],\n\
+          string[] & (string | number)[],\n\
+          \"EQ\",\n\
+          \"DIFF\"\n\
+        >;\n\
+        const r: R = \"EQ\";\n"
+    );
+    let diags = check(&source);
+    assert!(
+        error_codes(&diags).is_empty(),
+        "Two array intersections written from the same members must stay EQ; got: {diags:#?}"
+    );
+}
+
+#[test]
+fn aliased_array_intersection_is_identical_to_its_spelled_out_form() {
+    let source = format!(
+        "{IF_EQUALS_PRELUDE}\n\
+        type Both = string[] & (string | number)[];\n\
+        type R = IfEquals<string[] & (string | number)[], Both, \"EQ\", \"DIFF\">;\n\
+        const r: R = \"EQ\";\n"
+    );
+    let diags = check(&source);
+    assert!(
+        error_codes(&diags).is_empty(),
+        "An alias for an intersection must stay identical to the intersection it names; got: {diags:#?}"
+    );
+}
+
+#[test]
+fn array_intersection_member_order_does_not_affect_identity() {
+    let source = format!(
+        "{IF_EQUALS_PRELUDE}\n\
+        type R = IfEquals<\n\
+          string[] & (string | number)[],\n\
+          (string | number)[] & string[],\n\
+          \"EQ\",\n\
+          \"DIFF\"\n\
+        >;\n\
+        const r: R = \"EQ\";\n"
+    );
+    let diags = check(&source);
+    assert!(
+        error_codes(&diags).is_empty(),
+        "Reordered array-intersection members must stay EQ; got: {diags:#?}"
+    );
+}
+
+#[test]
+fn plain_arrays_are_unaffected() {
+    let source = format!(
+        "{IF_EQUALS_PRELUDE}\n\
+        type R = IfEquals<string[], string[], \"EQ\", \"DIFF\">;\n\
+        const r: R = \"EQ\";\n"
+    );
+    let diags = check(&source);
+    assert!(
+        error_codes(&diags).is_empty(),
+        "Two plain arrays carry no intersection member set and must stay EQ; got: {diags:#?}"
+    );
+}
+
+#[test]
+fn distinct_arrays_are_not_identical() {
+    let source = format!(
+        "{IF_EQUALS_PRELUDE}\n\
+        type R = IfEquals<string[], number[], \"EQ\", \"DIFF\">;\n\
+        const r: R = \"DIFF\";\n"
+    );
+    let diags = check(&source);
+    assert!(
+        error_codes(&diags).is_empty(),
+        "Arrays over different elements must stay DIFF; got: {diags:#?}"
+    );
+}
+
 #[test]
 fn plain_objects_are_unaffected_by_the_merge_origin_lookup() {
     let source = format!(
