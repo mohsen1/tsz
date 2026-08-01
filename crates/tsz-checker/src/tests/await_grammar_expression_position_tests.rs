@@ -13,7 +13,11 @@
 //! - a class heritage expression (`class C extends (await b()) {}`) — the
 //!   dispatcher's walk stops at `CLASS_DECLARATION`/`CLASS_EXPRESSION` before
 //!   reaching it
-//! - an enum member initializer — `ENUM_DECLARATION` owns a dispatcher arm
+//! - an enum member initializer — `ENUM_DECLARATION` owns a dispatcher arm,
+//!   and the enum declaration is additionally its **own container** for the
+//!   check: tsc answers TS1308 there whether or not the enclosing function is
+//!   `async`, and at the top level of a module where a bare `await` would be
+//!   legal (#16097)
 //!
 //! Computed property names are a fourth unrooted position and are **not**
 //! covered here: rooting them surfaces a separate pre-existing defect in the
@@ -207,6 +211,90 @@ function outer() {
         count_ts1308(source),
         0,
         "an enum with no `await` must report no TS1308; got {:?}",
+        check_source_codes(source)
+    );
+}
+
+/// An enum member initializer is its own container for the grammar check, so
+/// an enclosing `async` function does **not** make the `await` legal. tsc:
+/// `(1,35): error TS1308` for `async function f() { enum E { A = await 1 } }`.
+/// This is the half #16093 shipped without — it routed through the ordinary
+/// async-context check, so it only fired for a non-async enclosing function.
+#[test]
+fn enum_member_initializer_await_reports_ts1308_inside_async_function() {
+    let source = r"
+async function wrapper() {
+  enum Flags { First = await 1 }
+}
+";
+    assert_eq!(
+        count_ts1308(source),
+        1,
+        "an enum initializer `await` must report TS1308 even inside an async function; got {:?}",
+        check_source_codes(source)
+    );
+}
+
+/// The same rule stated at its clearest: at the top level of a module a bare
+/// `await` is allowed under a top-level-await-capable module/target, and tsc
+/// *still* answers TS1308 inside an enum member initializer — TS1308, not the
+/// TS1375/TS1378 top-level pair. So the enum is not the source-file top level
+/// either.
+#[test]
+fn enum_member_initializer_await_reports_ts1308_at_module_top_level() {
+    let source = r"
+enum Flags { First = await 1 }
+export { };
+";
+    let codes = check_source_codes(source);
+    assert_eq!(
+        count_ts1308(source),
+        1,
+        "a top-level enum initializer `await` must report TS1308; got {codes:?}"
+    );
+    assert!(
+        !codes.contains(&1375) && !codes.contains(&1378),
+        "an enum initializer is not the source-file top level, so the TS1375/TS1378 top-level pair must not fire; got {codes:?}"
+    );
+}
+
+/// A nested expression inside the initializer is reached by the same walk, and
+/// a `const enum` takes the same path. tsc reports TS1308 for both (plus
+/// TS2474 for the const-enum non-constant initializer, which is a different
+/// check and not asserted here).
+#[test]
+fn enum_member_initializer_await_reports_ts1308_when_nested_and_for_const_enum() {
+    let source = r"
+declare function mk(): number;
+async function wrapper() {
+  enum Flags { First = (await mk()) + 2 }
+  const enum Frozen { Second = await mk() }
+}
+";
+    assert_eq!(
+        count_ts1308(source),
+        2,
+        "a nested and a const-enum initializer `await` must each report one TS1308; got {:?}",
+        check_source_codes(source)
+    );
+}
+
+/// The own-container forcing must stop at a function boundary like every other
+/// part of the walk: an `await` inside an arrow function nested in an enum
+/// initializer belongs to that arrow, not to the enum. Here the arrow is
+/// `async`, so tsc reports nothing.
+#[test]
+fn enum_member_initializer_own_container_does_not_leak_into_a_nested_async_arrow() {
+    let source = r"
+declare function mk(): Promise<number>;
+function outer() {
+  enum Flags { First = (async () => await mk()) as any }
+}
+";
+    assert_eq!(
+        count_ts1308(source),
+        0,
+        "an `await` inside an async arrow nested in an enum initializer must not report TS1308; got {:?}",
         check_source_codes(source)
     );
 }

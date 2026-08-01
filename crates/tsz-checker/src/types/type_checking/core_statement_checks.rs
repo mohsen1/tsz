@@ -574,6 +574,28 @@ impl<'a> CheckerState<'a> {
     /// - Emits TS1308 if await is used outside async function
     /// - Iteratively checks child expressions for await expressions (no recursion)
     pub(crate) fn check_await_expression(&mut self, expr_idx: NodeIndex) {
+        self.check_await_expression_in_container(expr_idx, /* own_container */ false);
+    }
+
+    /// Root the `await`-grammar walk on an expression that sits inside a
+    /// construct which is **its own container** for tsc's `checkAwaitExpression`
+    /// — the enclosing function's async-ness does not reach it, and neither does
+    /// the source file's top-level-`await` allowance.
+    ///
+    /// The enum member initializer is the case this exists for. tsc answers
+    /// TS1308 for `enum E { A = await 1 }` unconditionally: inside an `async`
+    /// function, and at the top level of a module under `--module esnext` where
+    /// a bare `await` is otherwise legal — and it answers TS1308 there rather
+    /// than the TS1375/TS1378 top-level pair.
+    ///
+    /// The walk still stops at function and class boundaries, so the forcing
+    /// never leaks into a nested function body inside the initializer
+    /// (`enum E { A = (() => 1)() }`).
+    pub(crate) fn check_await_expression_in_own_container(&mut self, expr_idx: NodeIndex) {
+        self.check_await_expression_in_container(expr_idx, /* own_container */ true);
+    }
+
+    fn check_await_expression_in_container(&mut self, expr_idx: NodeIndex, own_container: bool) {
         // Use iterative approach with explicit stack to handle deeply nested expressions.
         // This prevents stack overflow for expressions like `0 + 0 + 0 + ... + 0` (50K+ deep).
         let mut stack = vec![expr_idx];
@@ -592,7 +614,11 @@ impl<'a> CheckerState<'a> {
                     // Validate await expression context.
                     // tsc suppresses these grammar checks when the file has parse errors
                     // (e.g., `@dec await 1` — the decorator error suppresses TS1378).
-                    if !self.ctx.in_async_context() && !self.ctx.has_syntax_parse_errors {
+                    // An own-container position never inherits the enclosing
+                    // function's async-ness (see
+                    // `check_await_expression_in_own_container`).
+                    let in_async_context = !own_container && self.ctx.in_async_context();
+                    if !in_async_context && !self.ctx.has_syntax_parse_errors {
                         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
                         // Check if we're directly at the top level of the
@@ -602,7 +628,11 @@ impl<'a> CheckerState<'a> {
                         // all disqualify top-level-await eligibility without
                         // being function-like (see
                         // `is_directly_at_source_file_top_level`).
-                        let at_top_level = self.is_directly_at_source_file_top_level(current_idx);
+                        // An own-container position is likewise never the source
+                        // file's own top level, so it answers TS1308 rather than
+                        // the TS1375/TS1378 top-level pair.
+                        let at_top_level = !own_container
+                            && self.is_directly_at_source_file_top_level(current_idx);
 
                         if at_top_level {
                             // tsc's `checkAwaitExpression` emits these two
