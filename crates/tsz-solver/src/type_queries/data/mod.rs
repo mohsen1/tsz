@@ -13,6 +13,9 @@ mod content_predicate_guards;
 mod content_predicates;
 mod exact_property_keys;
 #[cfg(test)]
+mod free_infer_cache_tests;
+mod free_infer_predicate;
+#[cfg(test)]
 mod free_param_cache_tests;
 mod nominal_and_base;
 mod rest_binder_queries;
@@ -26,6 +29,7 @@ pub use conditional_constraint::*;
 pub use conditional_distribution::*;
 pub use content_predicates::*;
 pub use exact_property_keys::*;
+pub use free_infer_predicate::*;
 pub use nominal_and_base::*;
 pub use rest_binder_queries::*;
 pub use signatures_and_advanced::*;

@@ -597,7 +597,7 @@ pub fn is_substitution_dependent_type(db: &dyn TypeDatabase, type_id: TypeId) ->
 /// only written to the persistent cache when its computation did NOT touch an
 /// in-progress (cycle) node — the `cycle_tainted` flag tracks this so a
 /// provisional cycle-break answer is never cached as if it were final.
-fn contains_content_cached<P: ContentPredicate>(
+pub(super) fn contains_content_cached<P: ContentPredicate>(
     db: &dyn TypeDatabase,
     type_id: TypeId,
     predicate: &P,

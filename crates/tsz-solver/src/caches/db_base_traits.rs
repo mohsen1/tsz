@@ -94,6 +94,17 @@ pub trait TypePredicateCache {
     /// interner cache. Default impl is a no-op.
     fn set_contains_extractable_type_params_cache(&self, _type_id: TypeId, _result: bool) {}
 
+    /// Look up a cached free-`infer` containment result (the `FREE_INFER`
+    /// policy walk backing `contains_free_infer_types`) if available. Default
+    /// impl returns `None` (no caching).
+    fn contains_free_infer_cached(&self, _type_id: TypeId) -> Option<bool> {
+        None
+    }
+
+    /// Record a free-`infer` containment result in the shared interner cache.
+    /// Default impl is a no-op.
+    fn set_contains_free_infer_cache(&self, _type_id: TypeId, _result: bool) {}
+
     /// Look up a cached `contains_type_parameters_db(type_id)` result if
     /// available. Default impl returns `None` (no caching).
     fn contains_type_params_cached(&self, _type_id: TypeId) -> Option<bool> {
