@@ -802,6 +802,7 @@ mod window_self_globalthis_resolution_tests;
 #[path = "../tests/yield_star_return_type_tests.rs"]
 mod yield_star_return_type_tests;
 // Tests kept in root test harness where shared fixtures live.
+#[cfg(test)]
 #[path = "tests/application_arg_concrete_index_access_display_tests.rs"]
 mod application_arg_concrete_index_access_display_tests;
 #[cfg(test)]
@@ -1104,6 +1105,7 @@ mod for_in_narrowing_tests;
 #[cfg(test)]
 #[path = "tests/fresh_const_array_mutable_assignment_tests.rs"]
 mod fresh_const_array_mutable_assignment_tests;
+#[cfg(test)]
 #[path = "tests/fresh_object_literal_array_like_union_drill_gate_tests.rs"]
 mod fresh_object_literal_array_like_union_drill_gate_tests;
 #[cfg(test)]
@@ -1530,6 +1532,7 @@ mod overlap_relation_helper_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/overload_anchor_at_argument_tests.rs"]
 mod overload_anchor_at_argument_tests;
+#[cfg(test)]
 #[path = "tests/overload_argument_reason_chain_tests.rs"]
 mod overload_argument_reason_chain_tests;
 #[cfg(test)]
