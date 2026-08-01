@@ -403,11 +403,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return true;
         }
 
+        // `never` opposite an `any` parameter is the one pair the permissive
+        // shortcut below must not answer. `tsc`'s `isSimpleTypeRelatedTo`
+        // rejects `any -> never` outright (`if (t & TypeFlags.Never) return
+        // false`) before any `any` allowance applies, so under
+        // `strictFunctionTypes` the contravariant parameter check
+        // `target <: source` rejects `(u: never) => R` against
+        // `(u: any) => R2`, while the reverse pair stays compatible through
+        // `never <: any`. Both answers already fall out of the ordinary
+        // variance-directed check below (the same one that gets
+        // `ReadonlyArray<any>` vs `ReadonlyArray<never>` right), so skip the
+        // shortcut and let the direction decide instead of encoding it here.
+        let never_opposite_any = (source_type.is_any() && target_type == TypeId::NEVER)
+            || (target_type.is_any() && source_type == TypeId::NEVER);
+
         // Fast path: `any` in either parameter position is always compatible
         // in permissive mode. In strict mode (TopLevelOnly), we require structural
         // compatibility unless both are ANY.
         // NOTE: North Star mandate #3.3 - any should not silence structural mismatches.
-        if source_type.is_any() || target_type.is_any() {
+        if !never_opposite_any && (source_type.is_any() || target_type.is_any()) {
             use crate::relations::subtype::AnyPropagationMode;
             if matches!(self.any_propagation, AnyPropagationMode::All) {
                 return true;
