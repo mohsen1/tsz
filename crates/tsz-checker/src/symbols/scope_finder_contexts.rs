@@ -1034,6 +1034,52 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// True when `idx`'s nearest enclosing container is the source file
+    /// itself — the predicate `tsc`'s grammar checks use to choose between
+    /// the top-level `await`/`await using` diagnostics (TS1375/TS1378,
+    /// TS2853/TS2854) and the non-top-level ones (TS1308, TS2852).
+    ///
+    /// This is a narrower and distinct question from
+    /// [`crate::context::CheckerContext::function_depth`], which tracks the
+    /// jump-statement (`break`/`continue`) boundary: a namespace body, a
+    /// class property initializer, and a parameter default value each
+    /// disqualify a node from being top-level without being function-like,
+    /// so `function_depth` alone (which only rises at function-like body
+    /// entry) cannot answer this. Do not widen `function_depth` to cover
+    /// these — that would re-break the TS2715 family, which relies on
+    /// property initializers and parameter defaults being checked at the
+    /// class body's own depth.
+    pub(crate) fn is_directly_at_source_file_top_level(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        let mut iterations = 0;
+        loop {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return false;
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent = ext.parent;
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return false;
+            };
+            if parent_node.kind == syntax_kind_ext::SOURCE_FILE {
+                return true;
+            }
+            if parent_node.is_function_like()
+                || parent_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
+                || parent_node.kind == syntax_kind_ext::MODULE_BLOCK
+                || parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                || parent_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                || parent_node.kind == syntax_kind_ext::PARAMETER
+            {
+                return false;
+            }
+            current = parent;
+        }
+    }
+
     // =========================================================================
     // Class Field / Static Block Arguments Check (TS2815)
     // =========================================================================

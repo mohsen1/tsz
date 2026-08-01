@@ -595,8 +595,13 @@ impl<'a> CheckerState<'a> {
                     if !self.ctx.in_async_context() && !self.ctx.has_syntax_parse_errors {
                         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
-                        // Check if we're at top level of a module
-                        let at_top_level = self.ctx.function_depth == 0;
+                        // Check if we're directly at the top level of the
+                        // source file. This is a distinct question from
+                        // `function_depth == 0`: a namespace body, a class
+                        // property initializer, and a parameter default
+                        // value all disqualify a node from being top-level
+                        // without being function-like.
+                        let at_top_level = self.is_directly_at_source_file_top_level(current_idx);
 
                         if at_top_level {
                             // tsc's `checkAwaitExpression` emits these two

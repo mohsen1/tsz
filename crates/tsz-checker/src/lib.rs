@@ -589,6 +589,9 @@ mod this_prop_nullish_operand_code_tests;
 #[path = "../tests/this_type_tests.rs"]
 mod this_type_tests;
 #[cfg(test)]
+#[path = "tests/top_level_await_boundary_tests.rs"]
+mod top_level_await_boundary_tests;
+#[cfg(test)]
 #[path = "../tests/ts1214_let_strict_mode_tests.rs"]
 mod ts1214_let_strict_mode_tests;
 #[cfg(test)]
