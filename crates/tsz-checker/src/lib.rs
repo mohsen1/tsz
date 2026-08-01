@@ -502,6 +502,9 @@ mod name_resolution_boundary_tests;
 #[path = "../tests/no_filename_based_behavior_tests.rs"]
 mod no_filename_based_behavior_tests;
 #[cfg(test)]
+#[path = "tests/no_implicit_override_ambient_context_tests.rs"]
+mod no_implicit_override_ambient_context_tests;
+#[cfg(test)]
 #[path = "tests/no_index_element_implicit_any_tests.rs"]
 mod no_index_element_implicit_any_tests;
 #[cfg(test)]

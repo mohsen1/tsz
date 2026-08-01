@@ -305,6 +305,20 @@ impl<'a> CheckerState<'a> {
     ) {
         use crate::query_boundaries::common::{TypeSubstitution, instantiate_type};
 
+        // tsc does not require an `override` modifier on members of an ambient class.
+        // `checkMemberForOverrideModifier` gates the `noImplicitOverride` requirement on
+        // `nodeInAmbientContext` (`node.flags & NodeFlags.Ambient`), which covers a
+        // `declare class`, any class inside `declare namespace`/`declare module`, and
+        // every class in a `.d.ts` — not merely a `declare` modifier spelled on the class
+        // node itself. Computed once here so both the heritage path and the base-less
+        // fallback below answer the ambient question identically.
+        //
+        // Only the *implicit* requirement is ambient gated. The explicit-`override`
+        // diagnostics (TS4112/TS4113) are reported in ambient contexts too, and they do
+        // not consult this flag.
+        let no_implicit_override =
+            self.ctx.no_implicit_override() && !self.ctx.is_ambient_declaration(class_idx);
+
         // Find base class from heritage clauses (extends, not implements)
         // If there are no heritage clauses, we still need to check for
         // invalid `override` members (TS4112) since override requires extends.
@@ -327,7 +341,7 @@ impl<'a> CheckerState<'a> {
                 self.report_overrides_without_base(
                     class_data,
                     &derived_class_name,
-                    self.ctx.no_implicit_override(),
+                    no_implicit_override,
                 );
                 return;
             }
@@ -477,10 +491,6 @@ impl<'a> CheckerState<'a> {
         } else {
             String::from("(Anonymous class)")
         };
-        // tsc does not enforce noImplicitOverride in ambient/declare class declarations.
-        let is_ambient_class = self.has_declare_modifier(&class_data.modifiers);
-        let no_implicit_override = self.ctx.no_implicit_override() && !is_ambient_class;
-
         let Some(base_idx) = base_class_idx else {
             // No AST-level class declaration found. Try type-level fallback for complex
             // heritage expressions (function calls, intersection types, etc.).
