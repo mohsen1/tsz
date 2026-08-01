@@ -713,6 +713,19 @@ impl<'a> CheckerState<'a> {
     /// Property/parameter initializers are deliberately `function_depth`-flat
     /// (the TS2715 abstract-property family relies on that), so widening
     /// `function_depth` to cover them would silently re-break it.
+    ///
+    /// A computed member name of a class is the one position that does *not*
+    /// take its container from its immediately enclosing declaration: the name
+    /// is evaluated once, where the class itself is defined. `tsc` models that
+    /// by resolving the container of a class computed property name to the
+    /// container of the *class* (`getThisContainer` with
+    /// `includeClassComputedPropertyName: false`), skipping the member
+    /// declaration entirely — so the member being function-like, or being a
+    /// property declaration, never disqualifies the name. This walk does the
+    /// same jump; see `skip_class_computed_property_name_container`. It is the
+    /// top-level twin of the async-context swap `check_class_member_name`
+    /// performs with `EnclosingClassInfo::enclosing_async_depth`: the two axes
+    /// of `await` legality are independent and each has to be answered here.
     pub(crate) fn is_directly_at_source_file_top_level(&self, idx: NodeIndex) -> bool {
         let mut current = idx;
         let mut iterations = 0;
@@ -720,6 +733,10 @@ impl<'a> CheckerState<'a> {
             iterations += 1;
             if iterations > crate::state::MAX_TREE_WALK_ITERATIONS {
                 return false;
+            }
+            if let Some(class_idx) = self.skip_class_computed_property_name_container(current) {
+                current = class_idx;
+                continue;
             }
             let Some(ext) = self.ctx.arena.get_extended(current) else {
                 return false;
@@ -746,6 +763,32 @@ impl<'a> CheckerState<'a> {
             }
             current = parent_idx;
         }
+    }
+
+    /// If `idx` is a computed property name belonging to a member of a
+    /// class, return the class node itself so a container walk can resume
+    /// from there, skipping the member declaration.
+    ///
+    /// This is the structural condition behind `tsc`'s
+    /// `includeClassComputedPropertyName: false` container resolution. Only a
+    /// *class* member qualifies: an interface or type-literal member's
+    /// computed name has no disqualifying container between it and the
+    /// enclosing statement, so the ordinary walk already answers those
+    /// correctly and no jump is needed. An object-literal computed name is
+    /// likewise already correct, and must not jump — an object literal is an
+    /// expression, so its own position is the one that matters.
+    fn skip_class_computed_property_name_container(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return None;
+        }
+        let member_idx = self.ctx.arena.get_extended(idx)?.parent;
+        let class_idx = self.ctx.arena.get_extended(member_idx)?.parent;
+        self.ctx
+            .arena
+            .get(class_idx)
+            .is_some_and(|class_node| class_node.is_class_like())
+            .then_some(class_idx)
     }
 
     // --- Variable Statement Validation ---

@@ -252,3 +252,193 @@ function makeContainer() { class ConnectionPool { [await propertyToken]() {} } }
     );
     assert_eq!(codes, vec![1308], "got {codes:?}");
 }
+
+// --- #16100: the top-level axis of the same two-axis split ---
+//
+// `await` legality has two independent axes: "am I inside an `async`
+// function?" and "am I at the top level of the source file?". #16099 (above)
+// threaded the first through `EnclosingClassInfo::enclosing_async_depth` and
+// left the second answering from the `await` node's own position, where the
+// class member declaration disqualifies it. `tsc` resolves a class computed
+// property name's container to the container of the *class*, skipping the
+// member — so at the top level of a file the name is top level, and gets the
+// TS1375/TS1378 top-level pair rather than TS1308.
+//
+// This harness has no lib and no module setting, so a genuinely top-level
+// `await` reports both TS1375 (file is not a module) and TS1378 (module
+// option does not support top-level await). Every case below is pinned
+// against a live `tsc@7.0.2 --noEmit --strict --pretty false --target es2022`
+// run: under `--module esnext` in a module file the four positive rows are
+// CLEAN, and in a script file the same class-method row reports TS1375 —
+// which is what identifies it as a top-level position at all.
+
+/// The witness from #16100. Not TS1308: a class method's computed name at the
+/// top level of the file inherits the file's own top-level `await` allowance.
+#[test]
+fn class_method_computed_name_at_file_top_level_answers_top_level_pair() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+declare const key: string;
+class Holder { [await key]() {} }
+"#,
+    );
+    assert_eq!(sorted(codes), vec![1375, 1378], "got top-level pair");
+}
+
+/// Getter sibling — `tsc` clean under `--module esnext`.
+#[test]
+fn class_getter_computed_name_at_file_top_level_answers_top_level_pair() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+declare const key: string;
+class Holder { get [await key]() { return 1; } }
+"#,
+    );
+    assert_eq!(sorted(codes), vec![1375, 1378], "got top-level pair");
+}
+
+/// Setter sibling.
+#[test]
+fn class_setter_computed_name_at_file_top_level_answers_top_level_pair() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+declare const key: string;
+class Holder { set [await key](value: number) {} }
+"#,
+    );
+    assert_eq!(sorted(codes), vec![1375, 1378], "got top-level pair");
+}
+
+/// `static` does not change the container question.
+#[test]
+fn static_member_computed_name_at_file_top_level_answers_top_level_pair() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+declare const key: string;
+class Holder { static [await key]() {} }
+"#,
+    );
+    assert_eq!(sorted(codes), vec![1375, 1378], "got top-level pair");
+}
+
+/// A class *expression* is class-like too, so the same jump applies.
+#[test]
+fn class_expression_computed_name_at_file_top_level_answers_top_level_pair() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+declare const key: string;
+const Holder = class { [await key]() {} };
+"#,
+    );
+    assert_eq!(sorted(codes), vec![1375, 1378], "got top-level pair");
+}
+
+/// Renamed-binder control (anti-hardcoding): nothing about this decision may
+/// depend on the identifiers chosen.
+#[test]
+fn renamed_binders_computed_name_at_file_top_level_answers_top_level_pair() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+declare const connectionToken: string;
+class ConnectionPool { [await connectionToken]() {} }
+"#,
+    );
+    assert_eq!(sorted(codes), vec![1375, 1378], "got top-level pair");
+}
+
+/// A property declaration's computed *name* takes the same jump, even though
+/// `PROPERTY_DECLARATION` is a disqualifying container for the initializer
+/// position. `tsc` reports only the TS1166 literal-form error here, no
+/// TS1308 — the name-vs-initializer split is the point.
+#[test]
+fn property_declaration_computed_name_at_file_top_level_is_not_ts1308() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+declare const key: string;
+class Holder { [await key] = 1; }
+"#,
+    );
+    assert!(
+        !codes.contains(&1308),
+        "a computed property *name* at file top level is top level; got {codes:?}"
+    );
+}
+
+/// The negative half of that split, and the reason the jump must be keyed on
+/// the computed-name position rather than on the class member: a property
+/// *initializer* is genuinely not top level and must keep reporting TS1308.
+#[test]
+fn property_initializer_await_at_file_top_level_still_reports_ts1308() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+declare const key: string;
+class Holder { value = await key; }
+"#,
+    );
+    assert!(
+        codes.contains(&1308),
+        "a property initializer is not top level; got {codes:?}"
+    );
+    assert!(
+        !codes.contains(&1375) && !codes.contains(&1378),
+        "and must not answer the top-level pair; got {codes:?}"
+    );
+}
+
+/// An object-literal computed name at file top level was already correct
+/// (an object literal is an expression, so no container intervenes) and must
+/// stay that way — the jump is class-only.
+#[test]
+fn object_literal_computed_name_at_file_top_level_is_unchanged() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+declare const key: string;
+const holder = { [await key]: 1 };
+"#,
+    );
+    assert_eq!(sorted(codes), vec![1375, 1378], "got top-level pair");
+}
+
+/// Negative control: a namespace body is not the file's top level, so the
+/// jump lands on the class and the walk still finds the module block.
+#[test]
+fn class_computed_name_inside_namespace_still_reports_ts1308() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+declare const key: string;
+namespace Registry { class Holder { [await key]() {} } }
+"#,
+    );
+    assert_eq!(codes, vec![1308], "got {codes:?}");
+}
+
+/// Negative control: a class nested inside a method body is not top level
+/// either — the jump lands on the inner class, and the walk then hits the
+/// enclosing method.
+#[test]
+fn class_computed_name_nested_in_method_still_reports_ts1308() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+declare const key: string;
+class Outer { build() { class Holder { [await key]() {} } } }
+"#,
+    );
+    assert_eq!(codes, vec![1308], "got {codes:?}");
+}
+
+/// Negative control: an `await` inside an arrow *within* the computed name
+/// has the arrow as its container, not the class. The walk's function-like
+/// boundary still stops it.
+#[test]
+fn await_inside_arrow_within_computed_name_still_reports_ts1308() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+declare const key: string;
+class Holder { [(() => await key)()]() {} }
+"#,
+    );
+    assert!(
+        codes.contains(&1308),
+        "an arrow body is its own container; got {codes:?}"
+    );
+}
