@@ -997,7 +997,11 @@ fn run_instantiator(
     instantiator.shallow_this_only = options.shallow_this_only();
     instantiator.this_type = request.this_type();
     let result = instantiator.instantiate(request.type_id());
-    InstantiationResult::from_walk(result, instantiator.termination())
+    InstantiationResult::from_walk_with_ambient_limit(
+        result,
+        instantiator.termination(),
+        instantiator.ambient_frame_exhausted(),
+    )
 }
 
 /// Convenience function for instantiating a type with a substitution.
