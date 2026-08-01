@@ -161,6 +161,71 @@ type U = { [b as unknown as boolean](): number };
     );
 }
 
+/// Anti-hardcoding cover: same TS1170+TS2464 co-occurrence with a renamed
+/// binder and a type alias name — the fix must not depend on identifier
+/// spelling.
+#[test]
+fn ts2464_fires_alongside_ts1170_renamed_binder() {
+    let codes = diag_codes(
+        r#"
+declare const flag: boolean;
+type Renamed = { [flag as unknown as boolean]: number };
+"#,
+    );
+    assert!(
+        codes.contains(&1170) && codes.contains(&2464),
+        "Renamed binders must not change the TS1170+TS2464 co-occurrence rule. Got: {codes:?}"
+    );
+}
+
+/// Negative control: TS1170 can fire alone when the syntactic form is
+/// invalid (parenthesized entity-name access breaks the entity-name chain)
+/// but the computed type is still a genuinely valid property key (`string`).
+/// TS2464 must NOT fire spuriously just because TS1170 did — these are two
+/// independently-gated checks, not a package deal in either direction.
+/// Covers both the property and method member shapes.
+#[test]
+fn ts1170_alone_when_type_is_valid_property() {
+    let codes = diag_codes(
+        r#"
+declare const ns: { sym: string };
+type X = {
+    [(ns).sym]: number,
+};
+"#,
+    );
+    assert!(
+        codes.contains(&1170),
+        "Expected TS1170 for parenthesized property access. Got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2464),
+        "TS2464 must not fire when the computed name's type is a valid property key (string). \
+         Got: {codes:?}"
+    );
+}
+
+#[test]
+fn ts1170_alone_when_type_is_valid_method() {
+    let codes = diag_codes(
+        r#"
+declare const ns: { sym: string };
+type X = {
+    [(ns).sym](): number,
+};
+"#,
+    );
+    assert!(
+        codes.contains(&1170),
+        "Expected TS1170 for parenthesized method access. Got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2464),
+        "TS2464 must not fire when the computed name's type is a valid property key (string). \
+         Got: {codes:?}"
+    );
+}
+
 /// Anti-regression: a genuinely valid (literal-or-entity-name, valid-key-type)
 /// computed name in a type literal must still emit neither code.
 #[test]
