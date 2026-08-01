@@ -250,7 +250,26 @@ impl BinderState {
                     self.push_global_augmentation(&name, idx, aug_flags);
                 }
 
-                let flags = symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE;
+                // `SymbolFlags.ValueModule` / `SymbolFlags.NamespaceModule` are mutually
+                // exclusive in tsc: a named (identifier) namespace is a value module only
+                // when it is *instantiated* (contains at least one runtime value
+                // declaration, exported or not — tsc's `getModuleInstanceState`), and a
+                // namespace module otherwise (empty, or only interfaces/type aliases/
+                // non-exported imports). An ambient module (string-literal name, e.g.
+                // `declare module "foo" {}`) is always treated as instantiated by tsc
+                // regardless of its body, so it keeps both bits here.
+                let is_identifier_named = arena
+                    .get(module.name)
+                    .is_some_and(|name_node| name_node.kind == SyntaxKind::Identifier as u16);
+                let flags = if is_identifier_named {
+                    if arena.is_namespace_instantiated(idx) {
+                        symbol_flags::VALUE_MODULE
+                    } else {
+                        symbol_flags::NAMESPACE_MODULE
+                    }
+                } else {
+                    symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE
+                };
                 module_symbol_id = self.declare_symbol(arena, &name, flags, idx, is_exported);
                 let is_declare = Self::has_declare_modifier(arena, module.modifiers.as_ref());
                 self.record_semantic_def_with_declare(
