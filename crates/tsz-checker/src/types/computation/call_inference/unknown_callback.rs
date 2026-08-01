@@ -303,11 +303,13 @@ impl<'a> CheckerState<'a> {
     /// That answer can be more informed than the raw per-argument
     /// `arg_types` the heuristic reads — e.g. a sibling argument that itself
     /// failed to check cleanly still leaves the OTHER, correctly computed
-    /// parameter substitution behind. Only bare positions are handled: a
-    /// type parameter nested inside a compound parameter type (`Array<T>`)
-    /// cannot be recovered from the substituted slot without structural
-    /// unification, so those sibling positions still fall through to the
-    /// heuristic below.
+    /// parameter substitution behind. A parameter slot declared as a
+    /// compound type mentioning `type_param` (`Array<T>`, a generic alias or
+    /// wrapper) is handled the same way, structurally: `type_param` cannot
+    /// be read off the slot by identity, so it is recovered by matching the
+    /// declared type against the finalized concrete type through the same
+    /// structural-unification primitive `predicate_resolution.rs` already
+    /// uses to instantiate a nested type-predicate target.
     fn bare_type_param_position_resolved_by_round1(
         &self,
         shape: &FunctionShape,
@@ -324,10 +326,6 @@ impl<'a> CheckerState<'a> {
                 if position == current_index {
                     return None;
                 }
-                let bare_type_param = common::type_param_info(self.ctx.types, param.type_id)?;
-                if !bare_type_param.is_same_binder(type_param) {
-                    return None;
-                }
                 let resolved = finalized.get(position).copied().flatten()?;
                 if resolved == TypeId::UNKNOWN
                     || resolved == TypeId::ERROR
@@ -336,8 +334,55 @@ impl<'a> CheckerState<'a> {
                 {
                     return None;
                 }
-                Some(resolved)
+                if let Some(bare_type_param) =
+                    common::type_param_info(self.ctx.types, param.type_id)
+                {
+                    return bare_type_param
+                        .is_same_binder(type_param)
+                        .then_some(resolved);
+                }
+                self.nested_type_param_resolved_by_structural_match(
+                    param.type_id,
+                    resolved,
+                    type_param,
+                )
             })
+    }
+
+    /// Recover `type_param`'s binding from a compound declared parameter
+    /// type (e.g. `Array<T>`) by structurally matching it against the
+    /// corresponding finalized concrete type (e.g. `Array<string>`) Round 1
+    /// already computed. Returns `None` when `declared` does not mention
+    /// `type_param` at all, or when the structural match yields nothing
+    /// usable (still a type parameter, `unknown`, `error`, or unresolved
+    /// `infer`).
+    fn nested_type_param_resolved_by_structural_match(
+        &self,
+        declared: TypeId,
+        resolved: TypeId,
+        type_param: tsz_solver::TypeParamInfo,
+    ) -> Option<TypeId> {
+        if !crate::query_boundaries::generic_instantiation::type_contains_type_parameter_binder(
+            self.ctx.types,
+            declared,
+            type_param,
+        ) {
+            return None;
+        }
+        let bindings =
+            crate::query_boundaries::generic_instantiation::infer_type_arguments_from_param_args(
+                self.ctx.types,
+                std::slice::from_ref(&type_param),
+                &[(declared, resolved)],
+            );
+        bindings.into_iter().find_map(|(name, inferred)| {
+            (name == type_param.name
+                && inferred != TypeId::UNKNOWN
+                && inferred != TypeId::ERROR
+                && !common::contains_infer_types(self.ctx.types, inferred)
+                && !common::contains_type_parameters(self.ctx.types, inferred))
+            .then_some(inferred)
+        })
     }
 
     /// Positions of a callback argument's own parameters that carry an
