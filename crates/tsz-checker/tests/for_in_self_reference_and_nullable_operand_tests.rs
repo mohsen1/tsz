@@ -238,3 +238,159 @@ fn type_parameter_for_in_operand_is_still_not_ts2407() {
     let source = "function f<T>(x: T) {\n  for (const k in x) { }\n}\n";
     assert_no_2407(&non_strict(source), "type parameter operand");
 }
+
+// ---------------------------------------------------------------------------
+// Mechanism 1, reporting half — the same circular loop head that clears the
+// TS2407 gate is what `tsc` reports TS7022 on.
+//
+// #16138 removed the wrong TS2407 for this shape; `tsz` then said nothing at
+// all, where `tsc` reports TS7022 (plus a TDZ TS2448 for `let`/`const`, which
+// is a separate owner and deliberately not asserted here). Every expectation
+// below is oracle-pinned against `tsc` 7.0.2, `--noEmit --pretty false`, run
+// under `--strict`, `--strict false`, and `--strict --noImplicitAny false`.
+// ---------------------------------------------------------------------------
+
+const TS7022: u32 = 7022;
+
+fn assert_has_7022(codes: &[u32], label: &str) {
+    assert!(
+        codes.contains(&TS7022),
+        "{label}: expected TS7022 (tsc reports the circular loop variable), got codes: {codes:?}"
+    );
+}
+
+fn assert_no_7022(codes: &[u32], label: &str) {
+    assert!(
+        !codes.contains(&TS7022),
+        "{label}: expected no TS7022, got codes: {codes:?}"
+    );
+}
+
+#[test]
+fn for_in_operand_naming_its_own_var_loop_variable_reports_ts7022() {
+    // Oracle: `for (var v in v) {}` under --strict is exactly `TS7022` — no
+    // TS2448, because `var` is hoisted and has no TDZ.
+    let source = "for (var scratch in scratch) { }\n";
+    assert_has_7022(&strict(source), "var self-reference");
+    // And the TS2407 half stays suppressed: one predicate drives both.
+    assert_no_2407(&strict(source), "var self-reference keeps no TS2407");
+}
+
+#[test]
+fn for_in_operand_naming_its_own_const_loop_variable_reports_ts7022() {
+    // Oracle for `for (const k in k) {}` is `TS2448 + TS7022`. tsz does not yet
+    // report the TDZ half (tracked separately in #16141); the implicit-any half
+    // is what this path owns.
+    let source = "for (const entry in entry) { }\n";
+    assert_has_7022(&strict(source), "const self-reference");
+}
+
+#[test]
+fn for_in_operand_naming_its_own_let_loop_variable_reports_ts7022() {
+    let source = "for (let cursor in cursor) { }\n";
+    assert_has_7022(&strict(source), "let self-reference");
+}
+
+#[test]
+fn for_in_operand_reaching_its_own_loop_variable_through_a_property_reports_ts7022() {
+    // Oracle: `for (var w in w.k) {}` is `TS7022`. The cycle is indirect — the
+    // operand is a property access whose *object* is the loop variable.
+    let source = "for (var holder in holder.inner) { }\n";
+    assert_has_7022(&strict(source), "indirect self-reference through property");
+}
+
+#[test]
+fn for_in_operand_reaching_its_own_loop_variable_through_a_call_reports_ts7022() {
+    // Oracle: `for (const k in id(k)) {}` is `TS2448 + TS7022`.
+    let source = "\
+declare function passthrough(value: any): any;
+for (const item in passthrough(item)) { }
+";
+    assert_has_7022(&strict(source), "indirect self-reference through call");
+}
+
+#[test]
+fn a_loop_variable_shadowing_an_outer_object_binding_still_reports_ts7022() {
+    // Oracle: an outer `k: object` does NOT rescue the inner loop head —
+    // `declare const k: object; function f() { for (const k in k) {} }` is
+    // still `TS2448 + TS7022`. The inner declaration shadows, so the operand
+    // resolves to the loop variable and the cycle stands.
+    let source = "\
+declare const shadowed: object;
+function walk() {
+    for (const shadowed in shadowed) { }
+}
+";
+    assert_has_7022(&strict(source), "loop variable shadowing an outer object");
+}
+
+#[test]
+fn a_member_name_that_merely_spells_the_loop_variable_is_not_a_self_reference() {
+    // Oracle: `declare const o: { v: object }; for (const v in o.v) {}` is
+    // CLEAN. `v` occurs in the operand only as a *member name*, which is not a
+    // reference to the loop variable — this is exactly the case an
+    // identifier-spelling match would get wrong, and why this path resolves
+    // binder symbols instead.
+    let source = "\
+declare const bag: { field: object };
+for (const field in bag.field) { }
+";
+    assert_no_7022(&strict(source), "member name spelling the loop variable");
+    assert_no_2407(&strict(source), "member name spelling the loop variable");
+}
+
+#[test]
+fn an_unrelated_loop_variable_over_an_object_operand_reports_nothing() {
+    // Negative control: no cycle, no diagnostic on either half.
+    let source = "\
+declare const source: object;
+for (const key in source) { }
+";
+    assert_no_7022(&strict(source), "unrelated loop variable");
+    assert_no_2407(&strict(source), "unrelated loop variable");
+}
+
+#[test]
+fn an_annotated_circular_loop_variable_does_not_report_ts7022() {
+    // Oracle: `for (const v: string in o) {}` reports only `TS2404` (a for-in
+    // variable may not have a type annotation). An annotation means tsc reads
+    // it instead of the operand, so there is no circular resolution to report.
+    let source = "for (var labeled: string in labeled) { }\n";
+    assert_no_7022(&strict(source), "annotated loop variable");
+}
+
+#[test]
+fn for_in_self_reference_is_silent_without_no_implicit_any() {
+    // Oracle: with `--noImplicitAny false`, `tsc`'s `reportCircularityError`
+    // stays silent and the variable is quietly `any` — the same gating the
+    // for-of twin already implements. Both `--strict false` and
+    // `--strict --noImplicitAny false` drop TS7022 in the oracle; the
+    // non-strict projection is the one the corpus rows carry.
+    let source = "for (var scratch in scratch) { }\n";
+    assert_no_7022(&non_strict(source), "var self-reference, noImplicitAny off");
+    assert_no_2407(&non_strict(source), "var self-reference, noImplicitAny off");
+}
+
+#[test]
+fn the_for_of_twin_is_unchanged_by_the_for_in_path() {
+    // for-of already reported TS7022 for its own self-reference; the for-in
+    // arm must not disturb it.
+    let source = "for (var stream of stream) { }\n";
+    assert_has_7022(&strict(source), "for-of self-reference still reports");
+}
+
+#[test]
+fn an_element_access_indexed_by_the_loop_variable_is_a_self_reference() {
+    // The mirror of the member-name case, and the reason the narrowing above is
+    // property-access-only. Oracle: `declare const o: { [k: string]: object };
+    // for (const v in o[v]) {}` is `TS2448 + TS7022` — an element access really
+    // does read the loop variable.
+    let source = "\
+declare const table: { [k: string]: object };
+for (const slot in table[slot]) { }
+";
+    assert_has_7022(
+        &strict(source),
+        "element access indexed by the loop variable",
+    );
+}
