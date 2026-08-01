@@ -265,57 +265,6 @@ pub(crate) fn commonjs_type_with_define_property_members(
     }
 }
 
-pub(crate) fn commonjs_export_constructor_type_with_instance(
-    db: &dyn TypeDatabase,
-    rhs_type: TypeId,
-    instance_type: TypeId,
-    symbol: Option<SymbolId>,
-) -> TypeId {
-    if let Some(func) = crate::query_boundaries::common::function_shape_for_type(db, rhs_type) {
-        if func.is_constructor {
-            return rhs_type;
-        }
-
-        let call_sig = CallSignature {
-            type_params: func.type_params.clone(),
-            params: func.params.clone(),
-            this_type: func.this_type,
-            return_type: func.return_type,
-            type_predicate: func.type_predicate,
-            is_method: func.is_method,
-        };
-        let construct_sig = CallSignature {
-            return_type: instance_type,
-            ..call_sig.clone()
-        };
-        return db.callable(CallableShape {
-            call_signatures: vec![call_sig],
-            construct_signatures: vec![construct_sig],
-            properties: Vec::new(),
-            string_index: None,
-            number_index: None,
-            symbol,
-            is_abstract: false,
-        });
-    }
-
-    let Some(shape) = crate::query_boundaries::common::callable_shape_for_type(db, rhs_type) else {
-        return rhs_type;
-    };
-    if !shape.construct_signatures.is_empty() || shape.call_signatures.is_empty() {
-        return rhs_type;
-    }
-
-    let mut new_shape = shape.as_ref().clone();
-    let mut construct_sig = new_shape.call_signatures[0].clone();
-    construct_sig.return_type = instance_type;
-    new_shape.construct_signatures.push(construct_sig);
-    if new_shape.symbol.is_none() {
-        new_shape.symbol = symbol;
-    }
-    db.callable(new_shape)
-}
-
 pub(crate) struct CommonJsExpandoMember {
     pub(crate) name: String,
     pub(crate) type_id: TypeId,
