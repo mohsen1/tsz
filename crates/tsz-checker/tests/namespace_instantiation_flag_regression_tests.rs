@@ -17,6 +17,18 @@
 //!    exclusive flags can no longer satisfy, so every namespace with a
 //!    nested instantiated namespace lost its structural `typeof` object type
 //!    and fell back to `Lazy(DefId)`.
+//!
+//! A first version of fix (1) over-corrected: it treated *any* `ERROR` result
+//! from the general identifier resolver as "a diagnostic was already
+//! reported," but `resolved.rs`'s `is_identifier_in_type_position` check
+//! returns `ERROR` *silently* for an identifier inside a type position (which
+//! a `typeof` operand always is) — deliberately deferring to this same
+//! function's own `resolve_type_symbol_for_lowering` fallback, which is where
+//! TS2693 ("only refers to a type") actually gets reported for `typeof
+//! <interface>` / `typeof <type alias>`. The early-return skipped past that
+//! fallback, silently swallowing TS2693 entirely. Fixed by gating on whether
+//! a diagnostic was actually pushed (`ctx.diagnostics.len()` before/after),
+//! not just on the return value being `ERROR`.
 
 use tsz_checker::context::CheckerOptions;
 
@@ -51,6 +63,31 @@ fn uninstantiated_namespace_via_renamed_binder_reports_ts2708_only() {
     ",
     );
     assert_eq!(codes(&diags), vec![2708], "diags: {diags:?}");
+}
+
+#[test]
+fn typeof_interface_reports_ts2693() {
+    // A plain interface is never a namespace at all (no `MODULE` flags), so
+    // `typeof J` must still report TS2693 ("only refers to a type"), not
+    // silently resolve.
+    let diags = check(
+        "\
+        interface J {}\n\
+        declare var x: typeof J;\n\
+    ",
+    );
+    assert_eq!(codes(&diags), vec![2693], "diags: {diags:?}");
+}
+
+#[test]
+fn typeof_type_alias_reports_ts2693() {
+    let diags = check(
+        "\
+        type Renamed = number;\n\
+        declare var y: typeof Renamed;\n\
+    ",
+    );
+    assert_eq!(codes(&diags), vec![2693], "diags: {diags:?}");
 }
 
 #[test]
