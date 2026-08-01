@@ -660,6 +660,10 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         CheckerState::check_await_expression(self, expr_idx);
     }
 
+    fn check_await_expression_in_own_container(&mut self, expr_idx: NodeIndex) {
+        CheckerState::check_await_expression_in_own_container(self, expr_idx);
+    }
+
     fn check_for_await_statement(&mut self, stmt_idx: NodeIndex) {
         CheckerState::check_for_await_statement(self, stmt_idx);
     }
