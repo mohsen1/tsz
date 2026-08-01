@@ -42,6 +42,17 @@ impl InstantiationTermination {
 pub struct InstantiationResult {
     type_id: TypeId,
     termination: InstantiationTermination,
+    /// Set when `termination` is `DepthExceeded` *because* the walk bailed
+    /// through the shared cross-operation solver-frame budget rather than
+    /// only its own local depth cap. See
+    /// `TypeInstantiator::ambient_frame_exhausted` for why the project-wide
+    /// instantiation cache must gate on this narrower signal instead of on
+    /// `depth_exceeded()` alone: the local cap always starts at 0 per walk,
+    /// so a local-only depth-exceeded verdict is a pure, reproducible
+    /// function of the request and safe to memoize, while the shared budget
+    /// is ambient state that can make the same request bail or succeed
+    /// depending on unrelated concurrent recursion.
+    ambient_limited: bool,
 }
 
 /// Instantiation result plus the verdict for project-wide cache publication.
@@ -66,8 +77,15 @@ pub(crate) enum InstantiationMemoStability {
 }
 
 impl InstantiationMemoStability {
+    /// A local depth-exceeded verdict (the per-walk cap, always starting
+    /// fresh at depth 0) is a pure function of the request and stays
+    /// eligible for the project-wide cache; only an ambient-budget bail
+    /// (`InstantiationResult::is_ambient_limited`) or tainted surrounding
+    /// request state makes a result unsafe to memoize. See the field docs on
+    /// `InstantiationResult::ambient_limited` and
+    /// `TypeInstantiator::ambient_frame_exhausted` for the full rationale.
     const fn from_result(result: InstantiationResult, request_state_stable: bool) -> Self {
-        if result.depth_exceeded() || !request_state_stable {
+        if result.is_ambient_limited() || !request_state_stable {
             Self::Unstable
         } else {
             Self::Stable
@@ -85,6 +103,7 @@ impl InstantiationResult {
         Self {
             type_id,
             termination: InstantiationTermination::Complete,
+            ambient_limited: false,
         }
     }
 
@@ -112,6 +131,7 @@ impl InstantiationResult {
         Self {
             type_id,
             termination: InstantiationTermination::DepthExceeded,
+            ambient_limited: false,
         }
     }
 
@@ -124,12 +144,37 @@ impl InstantiationResult {
         }
     }
 
+    /// Construct from a walk's partial type, termination verdict, and whether
+    /// the walk ever bailed through the shared cross-operation solver-frame
+    /// budget (see the `ambient_limited` field doc). Callers that feed the
+    /// project-wide instantiation cache must use this over
+    /// [`Self::from_walk`] so a purely-local depth-exceeded verdict — which
+    /// always starts fresh at depth 0 per walk and is a pure function of the
+    /// request — stays eligible for memoization, while an ambient-budget bail
+    /// does not.
+    pub(crate) const fn from_walk_with_ambient_limit(
+        type_id: TypeId,
+        termination: InstantiationTermination,
+        ambient_frame_exhausted: bool,
+    ) -> Self {
+        let mut result = Self::from_walk(type_id, termination);
+        result.ambient_limited = ambient_frame_exhausted;
+        result
+    }
+
     pub const fn type_id(self) -> TypeId {
         self.type_id
     }
 
     pub const fn depth_exceeded(self) -> bool {
         self.termination.depth_exceeded()
+    }
+
+    /// Whether this result is unsafe to memoize in the project-wide
+    /// instantiation cache: it hit the shared cross-operation solver-frame
+    /// budget rather than only its own local, request-pure depth cap.
+    pub(crate) const fn is_ambient_limited(self) -> bool {
+        self.ambient_limited
     }
 
     pub const fn termination(self) -> InstantiationTermination {
@@ -264,15 +309,39 @@ mod tests {
             TypeId::NUMBER
         );
 
-        let overflowed = InstantiationMemoResult::for_project_cache(
+        // A plain (local-only) depth-exceeded result is a pure function of
+        // the request — the walk-local depth cap always starts fresh at 0
+        // (see `TypeInstantiator::ambient_frame_exhausted`'s doc) — so with
+        // clean surrounding request state it stays eligible for the
+        // project-wide cache instead of being treated as unstable.
+        let locally_overflowed = InstantiationMemoResult::for_project_cache(
             InstantiationResult::overflow_with(TypeId::BOOLEAN),
             true,
         );
         assert_eq!(
-            overflowed.cache_stability,
+            locally_overflowed.cache_stability,
+            InstantiationMemoStability::Stable
+        );
+        assert!(locally_overflowed.is_stable_for_project_cache());
+        assert_eq!(locally_overflowed.into_result().type_id(), TypeId::BOOLEAN);
+
+        // A depth-exceeded result that bailed through the SHARED
+        // cross-operation solver-frame budget is ambient state, not a pure
+        // function of the request, so it must stay unstable even with clean
+        // request state.
+        let ambient_overflowed = InstantiationMemoResult::for_project_cache(
+            InstantiationResult::from_walk_with_ambient_limit(
+                TypeId::BOOLEAN,
+                InstantiationTermination::DepthExceeded,
+                true,
+            ),
+            true,
+        );
+        assert_eq!(
+            ambient_overflowed.cache_stability,
             InstantiationMemoStability::Unstable
         );
-        assert!(!overflowed.is_stable_for_project_cache());
-        assert_eq!(overflowed.into_result().type_id(), TypeId::BOOLEAN);
+        assert!(!ambient_overflowed.is_stable_for_project_cache());
+        assert_eq!(ambient_overflowed.into_result().type_id(), TypeId::BOOLEAN);
     }
 }

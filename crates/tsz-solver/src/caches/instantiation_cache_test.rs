@@ -12,7 +12,13 @@
 //!    cached — they remain allocation-free.
 //! 4. The empty / concrete-identity short-circuit runs BEFORE cache-key
 //!    construction, leaving the cache untouched on no-op substitutions.
-//! 5. Results from a `depth_exceeded` walk are NOT cached.
+//! 5. A `depth_exceeded` walk's result is never cached in the PER-FILE
+//!    `InstantiationCache` (`query_db=Some`'s own gate reads the raw
+//!    termination flag). The PROJECT-WIDE proto cache is more precise: a
+//!    depth-exceeded verdict from the per-walk local depth cap (which always
+//!    starts fresh at 0, so it is a pure function of the request) IS cached
+//!    there; only a bail through the ambient cross-operation solver-frame
+//!    budget is excluded (see `InstantiationResult::is_ambient_limited`).
 //! 6. Semantically equal substitutions hit the same cache slot even if their
 //!    `FxHashMap` insertion order differs.
 //!
@@ -566,11 +572,16 @@ fn mode_bits_isolate_preserving_from_default() {
 }
 
 #[test]
-fn depth_exceeded_result_is_not_cached() {
+fn depth_exceeded_result_is_not_cached_per_file_but_short_circuits_project_wide() {
     // A depth-overflow walk returns a relation-preserving partial type (no
-    // longer the `TypeId::ERROR` sentinel; see #13652), but that recovery
-    // value must not poison the cross-call cache. Repeating the same request
-    // should miss again and recompute instead of hitting a cached result.
+    // longer the `TypeId::ERROR` sentinel; see #13652). The PER-FILE
+    // `InstantiationCache` never stores it (`query_db=Some`'s own gate reads
+    // the raw `depth_exceeded()` termination flag, unconditionally). But the
+    // walk's local depth cap always starts fresh at 0 per instance, so its
+    // depth-exceeded verdict is a pure function of `(type_id, subst,
+    // mode_bits, this_type)` and IS stored in the project-wide proto cache
+    // (#14345) — so the second call short-circuits there, before ever
+    // reaching (and re-missing) the per-file cache the first call probed.
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
 
@@ -591,23 +602,27 @@ fn depth_exceeded_result_is_not_cached() {
     let r1 = instantiate_type_cached(&interner, Some(&db), body, &subst);
     let r2 = instantiate_type_cached(&interner, Some(&db), body, &subst);
 
-    // The bail no longer surfaces the ERROR sentinel.
+    // The bail no longer surfaces the ERROR sentinel, and repeating the
+    // request is deterministic.
     assert_ne!(r1, TypeId::ERROR);
     assert_eq!(r1, r2);
 
     let stats1 = db.statistics();
     assert_eq!(
         stats1.instantiation_cache_entries, stats0.instantiation_cache_entries,
-        "depth-overflow results must not populate the instantiation cache"
+        "depth-overflow results must not populate the PER-FILE instantiation cache"
     );
     assert_eq!(
         stats1.instantiation_cache_hits, stats0.instantiation_cache_hits,
-        "a repeated depth-overflow request must not hit a cached ERROR"
+        "the second request never reaches the per-file cache to hit it — \
+         it short-circuits at the project-wide proto cache first"
     );
     assert_eq!(
         stats1.instantiation_cache_misses,
-        stats0.instantiation_cache_misses + 2,
-        "both depth-overflow requests should probe and miss independently"
+        stats0.instantiation_cache_misses + 1,
+        "only the FIRST depth-overflow request probes and misses the \
+         per-file cache; the second is served by the project-wide proto \
+         cache before the per-file cache is ever consulted"
     );
 }
 
@@ -867,14 +882,22 @@ fn clean_instantiation_is_cached_project_wide() {
     );
 }
 
-/// #14345 limit gate: a depth-exceeded walk produces a bounded result that must
-/// NOT enter the project-wide cache — a later hit would lock the alias to the
-/// truncated value (the construction-layer analog of
-/// `instantiate_generic_cached_depth_overflow_not_cached`'s per-file guard).
-/// This exercises the `result.depth_exceeded()` arm of the store-gate through a
-/// real walk (the recursion-limit analog of `closed_eval`'s `recursion_limit_hit`).
+/// #14345 limit gate (refined): a depth-exceeded walk from the per-instance
+/// LOCAL depth cap DOES enter the project-wide cache. That cap always starts
+/// fresh at 0 for every `TypeInstantiator` (`run_instantiator` builds a new
+/// one per call), so its verdict is a pure, reproducible function of
+/// `(type_id, subst, mode_bits, this_type)` alone — caching it is sound, and
+/// necessary: without it, a self-referential/deeply-nested shape (e.g. DOM
+/// lib interfaces, #16089) that legitimately overflows the walk on every
+/// request recomputes the same bounded-but-expensive walk from scratch every
+/// single time, since a truncated result was never memoized to short-circuit
+/// the repeat. Only a bail through the AMBIENT cross-operation solver-frame
+/// budget stays excluded (`InstantiationResult::is_ambient_limited`), because
+/// that budget is shared state that can make the identical request bail or
+/// succeed depending on unrelated concurrent recursion — see the unit tests
+/// on `InstantiationMemoStability` in `instantiation::result` for that half.
 #[test]
-fn depth_exceeded_instantiation_not_cached_project_wide() {
+fn locally_depth_exceeded_instantiation_is_cached_project_wide() {
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
 
@@ -887,16 +910,19 @@ fn depth_exceeded_instantiation_not_cached_project_wide() {
     }
     let key = proto_key_for(&interner, body, &param, TypeId::STRING);
 
-    let _ = instantiate_generic_cached(
+    let r = instantiate_generic_cached(
         &interner,
         Some(&db),
         body,
         std::slice::from_ref(&param),
         &[TypeId::STRING],
     );
-    assert!(
-        interner.proto_instantiation_memo(&key).is_none(),
-        "a depth-exceeded instantiation must not be stored project-wide"
+    assert_eq!(
+        interner.proto_instantiation_memo(&key),
+        Some(r),
+        "a purely-local depth-exceeded instantiation is a pure function of \
+         the request and must be stored project-wide so a repeat short-\
+         circuits instead of re-walking the same bounded-but-expensive shape"
     );
 }
 
@@ -935,12 +961,15 @@ fn pre_existing_limit_flag_does_not_block_clean_instantiation() {
 }
 
 #[test]
-fn instantiate_generic_cached_depth_overflow_not_cached() {
+fn instantiate_generic_cached_depth_overflow_short_circuits_project_wide_on_repeat() {
     // A depth-overflow walk returns a relation-preserving partial type (no
-    // longer the `TypeId::ERROR` sentinel; see #13652) but must not poison the
-    // cache: re-requesting the same (body, args) must miss again. Otherwise a
-    // single spurious overflow would lock the alias to that value for the
-    // lifetime of the QueryCache.
+    // longer the `TypeId::ERROR` sentinel; see #13652). The PER-FILE
+    // `InstantiationCache` never stores it, matching
+    // `depth_exceeded_result_is_not_cached_per_file_but_short_circuits_project_wide`
+    // above. But the local depth cap's verdict is a pure function of the
+    // request (see `locally_depth_exceeded_instantiation_is_cached_project_wide`),
+    // so the second identical request is served by the project-wide proto
+    // cache and never reaches (or re-misses) the per-file cache at all.
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
 
@@ -964,16 +993,19 @@ fn instantiate_generic_cached_depth_overflow_not_cached() {
     let stats1 = db.statistics();
     assert_eq!(
         stats1.instantiation_cache_entries, stats0.instantiation_cache_entries,
-        "depth-overflow results must not populate the cache"
+        "depth-overflow results must not populate the PER-FILE cache"
     );
     assert_eq!(
         stats1.instantiation_cache_hits, stats0.instantiation_cache_hits,
-        "a repeated depth-overflow request must not hit a cached ERROR"
+        "the second request never reaches the per-file cache to hit it — \
+         it short-circuits at the project-wide proto cache first"
     );
     assert_eq!(
         stats1.instantiation_cache_misses,
-        stats0.instantiation_cache_misses + 2,
-        "both depth-overflow requests should probe and miss independently"
+        stats0.instantiation_cache_misses + 1,
+        "only the FIRST depth-overflow request probes and misses the \
+         per-file cache; the second is served by the project-wide proto \
+         cache before the per-file cache is ever consulted"
     );
 }
 

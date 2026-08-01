@@ -181,6 +181,20 @@ pub struct TypeInstantiator<'a> {
     /// inference variable (`__infer_*`). The substitution is immutable for the
     /// lifetime of the instantiator, so this is computed once at construction.
     substitution_is_inference_only: bool,
+    /// Set when this walk ever bailed through the SHARED cross-operation
+    /// solver-frame budget (see [`crate::recursion::with_solver_frame`]),
+    /// as opposed to this instance's own local `walk_state` depth cap.
+    ///
+    /// The distinction matters for the project-wide instantiation cache
+    /// (#14345): the local depth cap is a per-instance counter that always
+    /// starts at 0 (`InstantiationWalkState::new`), so a local depth-exceeded
+    /// verdict is a pure, reproducible function of this request's
+    /// `(type_id, this_type, subst, options)` and is safe to memoize. The
+    /// shared frame budget is ambient state shared with every other
+    /// concurrently-nested solver operation, so the SAME request could
+    /// legitimately succeed or bail depending on unrelated call-stack depth
+    /// at the time it runs — memoizing that verdict would be unsound.
+    ambient_frame_exhausted: bool,
 }
 
 impl<'a> TypeInstantiator<'a> {
@@ -209,6 +223,7 @@ impl<'a> TypeInstantiator<'a> {
             shallow_this_only: false,
             walk_state: InstantiationWalkState::new(MAX_INSTANTIATION_DEPTH),
             substitution_is_inference_only,
+            ambient_frame_exhausted: false,
         }
     }
 
@@ -279,6 +294,15 @@ impl<'a> TypeInstantiator<'a> {
 
     pub(crate) const fn has_depth_exceeded(&self) -> bool {
         self.walk_state.has_depth_exceeded()
+    }
+
+    /// Whether this walk ever bailed through the SHARED cross-operation
+    /// solver-frame budget rather than only its own local depth cap. See the
+    /// field doc on [`Self::ambient_frame_exhausted`] for why the project-wide
+    /// instantiation cache must gate on this instead of on
+    /// [`Self::has_depth_exceeded`] alone.
+    pub(crate) const fn ambient_frame_exhausted(&self) -> bool {
+        self.ambient_frame_exhausted
     }
 
     pub(crate) const fn termination(&self) -> InstantiationTermination {
@@ -756,6 +780,7 @@ impl<'a> TypeInstantiator<'a> {
         .unwrap_or_else(|| {
             self.walk_state.leave_frame();
             self.mark_depth_exceeded();
+            self.ambient_frame_exhausted = true;
             self.bail_value(type_id)
         })
     }
