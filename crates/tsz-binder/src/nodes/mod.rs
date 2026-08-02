@@ -10,3 +10,4 @@ mod flow_statements;
 mod hoisting;
 mod merge_flags;
 mod names;
+mod namespace_body_merge;
