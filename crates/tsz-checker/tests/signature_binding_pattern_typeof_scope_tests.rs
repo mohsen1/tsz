@@ -14,6 +14,7 @@
 use tsz_checker::test_utils::check_source_non_strict_codes;
 
 const TS2304_CANNOT_FIND_NAME: u32 = 2304;
+const TS2693_TYPE_ONLY_VALUE: u32 = 2693;
 const TS2842_UNUSED_RENAMING: u32 = 2842;
 
 // ---------------------------------------------------------------------------
@@ -151,5 +152,65 @@ fn an_inner_signatures_binding_does_not_leak_outward() {
     assert!(
         codes.contains(&TS2304_CANNOT_FIND_NAME),
         "an inner signature's binding is not in the outer signature's scope; got {codes:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The binding can shadow a primitive-type keyword: no TS2693 (issue #16242)
+//
+// `error_cannot_find_name_at` has an early-return branch for names that spell
+// a primitive type keyword (`string`, `number`, ...) that reported TS2693
+// before ever reaching the `signature_parameter_declares_binding` guard the
+// TS2304 path already had — so a query that resolved fine for `typeof mine`
+// still reported TS2693 for the byte-identical shape `typeof string`.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn primitive_named_rename_referenced_by_return_type_query_reports_nothing() {
+    let codes = check_source_non_strict_codes("type F = ({ a: string }) => typeof string;");
+    assert!(
+        codes.is_empty(),
+        "`string` is a real binding here, not the primitive keyword; got {codes:?}"
+    );
+}
+
+#[test]
+fn primitive_named_rename_referenced_reports_only_ts2842_for_the_other_unused_one() {
+    let codes =
+        check_source_non_strict_codes("type F = ({ a: string, b: number }) => typeof number;");
+    assert_eq!(
+        codes,
+        vec![TS2842_UNUSED_RENAMING],
+        "`number` is referenced (no TS2693/TS2842 for it); `string` is unused (TS2842 only, no TS2693); got {codes:?}"
+    );
+}
+
+#[test]
+fn primitive_named_rename_in_a_method_signature_reports_nothing() {
+    let codes = check_source_non_strict_codes("interface I { m({ a: string }): typeof string; }");
+    assert!(
+        codes.is_empty(),
+        "a method signature scopes its bindings the same way a function type does; got {codes:?}"
+    );
+}
+
+#[test]
+fn primitive_keyword_as_a_plain_value_still_reports_ts2693() {
+    // Negative control: no signature binding is in play at all.
+    let codes = check_source_non_strict_codes("let x = string;");
+    assert!(
+        codes.contains(&TS2693_TYPE_ONLY_VALUE),
+        "a bare value use of the `string` keyword must still report TS2693; got {codes:?}"
+    );
+}
+
+#[test]
+fn primitive_named_binding_does_not_leak_into_a_sibling_signature() {
+    let codes = check_source_non_strict_codes(
+        "type A = ({ a: string }: any) => typeof string;\ntype B = (x: number) => typeof string;",
+    );
+    assert!(
+        codes.contains(&TS2693_TYPE_ONLY_VALUE),
+        "`string` belongs to A's signature and must not resolve inside B; got {codes:?}"
     );
 }

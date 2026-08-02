@@ -712,6 +712,17 @@ impl<'a> CheckerState<'a> {
             });
 
         if is_primitive_type_keyword && !is_import_equals_module_specifier {
+            // A `typeof` query naming a binding declared by a parameter binding
+            // pattern of the enclosing signature is resolved, not type-only —
+            // even when the binding's name shadows a primitive keyword such as
+            // `string`. See `signature_parameter_declares_binding`'s doc for the
+            // full rule; this mirrors the identical guard the TS2304 path below
+            // already has, which this early return bypasses.
+            if crate::types_domain::signature_binding_scope::signature_parameter_declares_binding(
+                &self.ctx, idx, name,
+            ) {
+                return;
+            }
             self.error_type_only_value_at(name, idx);
             return;
         }
