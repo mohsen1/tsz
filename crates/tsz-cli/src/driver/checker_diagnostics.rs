@@ -51,9 +51,14 @@ pub(super) fn keep_checker_diagnostic_when_program_has_real_syntax_errors(code: 
     // program has a real syntax error, but it still reports declaration-name
     // diagnostics such as TS2427/TS2457 alongside parse errors because the parser
     // accepts those names and defers validation to the checker.
-    // TS1064 and TS1315 are semantic checker diagnostics despite occupying the
-    // parser/grammar numeric range, so they follow the semantic suppression rule.
-    if matches!(code, 1064 | 1315) {
+    //
+    // `code < 2000` is only a proxy for "the parser emitted this". It is wrong
+    // for every `TS1xxx` code that tsz emits from the checker's or binder's
+    // grammar phase: tsc routes those through `getSemanticDiagnostics`, so the
+    // syntactic phase short-circuits them program-wide. Both this gate and the
+    // JS-only (`TS8xxx`) gate model that same tsc short-circuit, so they share
+    // one list.
+    if check_utils::is_checker_routed_ts1xxx_grammar(code) {
         return false;
     }
     code < 2000

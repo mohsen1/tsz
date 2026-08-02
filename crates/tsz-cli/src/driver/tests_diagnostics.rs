@@ -1016,3 +1016,118 @@ export type * from "./does-not-exist-g";
         result.diagnostics
     );
 }
+
+/// tsc's `emitFilesAndReportErrors` runs `getSyntacticDiagnostics` first and
+/// only computes `getSemanticDiagnostics` when the syntactic phase produced
+/// nothing. Several `TS1xxx` codes are emitted by tsc's *binder* (the
+/// `checkStrictMode*` family pushes onto `file.bindDiagnostics`) or its
+/// *checker* (`checkBreakOrContinueStatement`), so tsc surfaces them through
+/// the semantic phase and drops them program-wide as soon as any file has a
+/// real parse error.
+///
+/// tsz's gate used `code < 2000` as a proxy for "the parser emitted this",
+/// which wrongly retained every one of them. Verified against the pinned tsc
+/// oracle: each construct alone reports its code (the control below), and the
+/// same construct in a program that also contains a parse error reports
+/// nothing but the parse error.
+#[test]
+fn real_syntax_error_suppresses_checker_routed_ts1xxx_grammar_program_wide() {
+    // (file body, code it reports on its own)
+    let subjects: &[(&str, u32)] = &[
+        ("export {}\nlbl: var v = 1;\n", 1344), // A label is not allowed here.
+        (
+            "export {}\nfunction f() { var eval = 1; return eval; }\n",
+            1215,
+        ), // Invalid use of 'eval'.
+        ("export {}\ncontinue;\n", 1104),       // 'continue' outside an iteration statement.
+        ("export {}\nbreak;\n", 1105),          // 'break' outside an iteration/switch statement.
+        ("export {}\nfunction f() { continue; }\n", 1107), // Jump target crosses function boundary.
+    ];
+
+    for (source, code) in subjects {
+        // Control: on its own, the construct still reports its diagnostic.
+        // Without this the assertion below would pass for a gate that simply
+        // deleted the check outright.
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let base = dir.path();
+        fs::write(base.join("a.ts"), source).expect("write a.ts");
+        fs::write(
+            base.join("tsconfig.json"),
+            r#"{"compilerOptions":{"strict":true,"target":"es2015","noEmit":true},"files":["a.ts"]}"#,
+        )
+        .expect("write tsconfig");
+        let args =
+            CliArgs::try_parse_from(["tsz", "--project", "tsconfig.json"]).expect("parse args");
+        let result = compile(&args, base).expect("compile should succeed");
+        let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(code),
+            "control: TS{code} should still be reported when the program parses cleanly, got: {:?}",
+            result.diagnostics,
+        );
+
+        // Gate: a real parse error anywhere in the program drops it.
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let base = dir.path();
+        fs::write(base.join("a.ts"), source).expect("write a.ts");
+        fs::write(base.join("bad.ts"), "export function broken( {\n").expect("write bad.ts");
+        fs::write(
+            base.join("tsconfig.json"),
+            r#"{"compilerOptions":{"strict":true,"target":"es2015","noEmit":true},"files":["a.ts","bad.ts"]}"#,
+        )
+        .expect("write tsconfig");
+        let args =
+            CliArgs::try_parse_from(["tsz", "--project", "tsconfig.json"]).expect("parse args");
+        let result = compile(&args, base).expect("compile should succeed");
+        let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&1005),
+            "the TS1005 parse error itself must survive the gate, got: {:?}",
+            result.diagnostics,
+        );
+        assert!(
+            !codes.contains(code),
+            "TS{code} is emitted from tsc's binder/checker, so a real parse error anywhere in the program must suppress it; got: {:?}",
+            result.diagnostics,
+        );
+    }
+}
+
+/// The `labeledStatementDeclarationListInLoopNoCrash3/4` corpus rows: an
+/// unterminated template literal makes the scanner re-lex the remaining
+/// template text as source, and the recovered token stream contains
+/// `height: var(...)` — an identifier, a colon and a `var` keyword, which both
+/// tsc and tsz parse as a labeled statement wrapping a variable statement.
+/// tsc never reports the resulting TS1344 because the file's parse errors
+/// already short-circuited its semantic phase.
+#[test]
+fn unterminated_template_recovery_does_not_report_label_grammar_error() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let base = dir.path();
+
+    fs::write(
+        base.join("a.ts"),
+        "export class C {\n  m(size: any) {\n    this.f(`${size});\n    for (const item of size) {\n      this.f(\n        [\n          `height: var(--x-${item}-h)`,\n        ].join(';')\n      );\n    }\n  }\n  f(x: any) { return x; }\n}\n",
+    )
+    .expect("write a.ts");
+    fs::write(
+        base.join("tsconfig.json"),
+        r#"{"compilerOptions":{"strict":true,"target":"es2015","noEmit":true},"files":["a.ts"]}"#,
+    )
+    .expect("write tsconfig");
+
+    let args = CliArgs::try_parse_from(["tsz", "--project", "tsconfig.json"]).expect("parse args");
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&1160),
+        "expected the unterminated-template parse error to be reported, got: {:?}",
+        result.diagnostics,
+    );
+    assert!(
+        !codes.contains(&1344),
+        "TS1344 must not survive the program's parse errors, got: {:?}",
+        result.diagnostics,
+    );
+}
