@@ -284,25 +284,16 @@ pub fn parse_tsconfig_with_diagnostics_deferred(
             compiler_opts.remove(key);
         }
 
-        // Check ignoreDeprecations value (TS5103)
-        // TypeScript 7 still accepts the historical "5.0" and "6.0"
-        // literals plus its own "7.0", but none of the three suppresses TS7
-        // removal diagnostics (#16217).
-        if let Some(serde_json::Value::String(id_value)) = compiler_opts.get("ignoreDeprecations")
-            && id_value != "5.0"
-            && id_value != "6.0"
-            && id_value != "7.0"
-        {
-            let start = find_value_offset_in_source(&stripped, "ignoreDeprecations");
-            let value_len = id_value.len() as u32 + 2; // include quotes
-            diagnostics.push(Diagnostic::error(
-                file_path,
-                start,
-                value_len,
-                diagnostic_messages::INVALID_VALUE_FOR_IGNOREDEPRECATIONS.to_string(),
-                diagnostic_codes::INVALID_VALUE_FOR_IGNOREDEPRECATIONS,
-            ));
-        }
+        // No `ignoreDeprecations` VALUE validation (TS5103) — see #16228.
+        // TypeScript 7 dropped the check entirely rather than narrowing it:
+        // the option is still parsed and still type-checked as a string
+        // (TS5024 above), but no value is rejected. Probed on the pinned 7.0.2
+        // oracle across the `--ignoreDeprecations` CLI flag, `tsconfig.json`,
+        // an `extends` base, and a `--build` solution config, each with and
+        // without a coexisting deprecated feature (`assert` import attributes,
+        // TS2880) or removed option (TS5102/TS5108/TS5023): no probe produced
+        // TS5103. The historical "5.0"/"6.0"/"7.0" allow-list is therefore not
+        // narrower than tsc — it is a check tsc no longer performs at all.
 
         // TypeScript 7 turns the complete 6.0 deprecation wave into
         // unsuppressible removals. Keep the policy in deprecation_helpers so
