@@ -2606,3 +2606,6 @@ path = "tests/issue_16018_nested_position_evidence_tests.rs"
 [[test]]
 name = "namespace_body_local_declaration_merge_tests"
 path = "tests/namespace_body_local_declaration_merge_tests.rs"
+[[test]]
+name = "noimplicitany_type_member_accessor_tests"
+path = "tests/noimplicitany_type_member_accessor_tests.rs"
