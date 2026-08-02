@@ -1,6 +1,81 @@
 //! JSDoc `@typedef` name-syntax diagnostics for `CheckerState`.
 
 use crate::state::CheckerState;
+use tsz_parser::parser::node::SourceFileData;
+
+fn balanced_close(s: &str) -> Option<usize> {
+    let mut depth: i32 = 1;
+    for (i, ch) in s.char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+// Whether a typedef name follows the type expression. Continuation
+// whitespace and leading `*` line markers are skipped; a name may be a
+// plain or dotted identifier, both of which begin with an identifier
+// start character.
+fn name_follows(after: &str) -> bool {
+    for ch in after.chars() {
+        if ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n' || ch == '*' {
+            continue;
+        }
+        return ch == '_' || ch == '$' || ch.is_ascii_alphabetic();
+    }
+    false
+}
+
+/// Byte offsets (into `source_file.text`) of every JSDoc `@typedef {Type}` tag
+/// that ends with no name following the type expression's closing brace.
+///
+/// tsc parses JSDoc comments as part of the file's syntax tree, so this is a
+/// genuine parse-time "Identifier expected" (`TS1003`) in tsc even though tsz
+/// discovers it during the checker's JSDoc pass — a non-empty result here
+/// means tsc would treat the file as having a real syntax error and suppress
+/// the whole program's semantic diagnostics. [`CheckerState::check_jsdoc_typedef_missing_name`]
+/// and the CLI's real-syntax-error gate (`tsz_checker::diagnostics::jsdoc_typedef_missing_name_anchors`)
+/// both consume this one scan so the two stay in lockstep.
+pub fn jsdoc_typedef_missing_name_anchors(source_file: &SourceFileData) -> Vec<u32> {
+    use tsz_common::comments::is_jsdoc_comment;
+
+    let source_text: &str = &source_file.text;
+    let mut anchors: Vec<u32> = Vec::new();
+    for comment in &source_file.comments {
+        if !is_jsdoc_comment(comment, source_text) {
+            continue;
+        }
+        let text = comment.get_text(source_text);
+        let base = comment.pos;
+        for tag_off in CheckerState::jsdoc_tag_offsets(text, "typedef") {
+            let after_tag = tag_off + "@typedef".len();
+            let rest = &text[after_tag..];
+            let trimmed = rest.trim_start();
+            if !trimmed.starts_with('{') {
+                continue;
+            }
+            let leading = rest.len() - trimmed.len();
+            let brace_off = after_tag + leading;
+            let Some(close_rel) = balanced_close(&text[brace_off + 1..]) else {
+                continue;
+            };
+            let close_off = brace_off + 1 + close_rel;
+            if name_follows(&text[close_off + 1..]) {
+                continue;
+            }
+            anchors.push(base + close_off as u32);
+        }
+    }
+    anchors
+}
 
 impl<'a> CheckerState<'a> {
     /// TS1003: `@typedef {Type}` with no name after the type expression.
@@ -14,38 +89,6 @@ impl<'a> CheckerState<'a> {
     /// distinct type-expression parse concern and are left to their owners.
     pub(crate) fn check_jsdoc_typedef_missing_name(&mut self) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-        use tsz_common::comments::is_jsdoc_comment;
-
-        fn balanced_close(s: &str) -> Option<usize> {
-            let mut depth: i32 = 1;
-            for (i, ch) in s.char_indices() {
-                match ch {
-                    '{' => depth += 1,
-                    '}' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            return Some(i);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            None
-        }
-
-        // Whether a typedef name follows the type expression. Continuation
-        // whitespace and leading `*` line markers are skipped; a name may be a
-        // plain or dotted identifier, both of which begin with an identifier
-        // start character.
-        fn name_follows(after: &str) -> bool {
-            for ch in after.chars() {
-                if ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n' || ch == '*' {
-                    continue;
-                }
-                return ch == '_' || ch == '$' || ch.is_ascii_alphabetic();
-            }
-            false
-        }
 
         if !self.is_js_file() {
             return;
@@ -53,36 +96,8 @@ impl<'a> CheckerState<'a> {
         let Some(sf) = self.ctx.arena.source_files.first() else {
             return;
         };
-        let source_text: &str = &sf.text;
 
-        let mut anchors: Vec<u32> = Vec::new();
-        for comment in &sf.comments {
-            if !is_jsdoc_comment(comment, source_text) {
-                continue;
-            }
-            let text = comment.get_text(source_text);
-            let base = comment.pos;
-            for tag_off in Self::jsdoc_tag_offsets(text, "typedef") {
-                let after_tag = tag_off + "@typedef".len();
-                let rest = &text[after_tag..];
-                let trimmed = rest.trim_start();
-                if !trimmed.starts_with('{') {
-                    continue;
-                }
-                let leading = rest.len() - trimmed.len();
-                let brace_off = after_tag + leading;
-                let Some(close_rel) = balanced_close(&text[brace_off + 1..]) else {
-                    continue;
-                };
-                let close_off = brace_off + 1 + close_rel;
-                if name_follows(&text[close_off + 1..]) {
-                    continue;
-                }
-                anchors.push(base + close_off as u32);
-            }
-        }
-
-        for anchor in anchors {
+        for anchor in jsdoc_typedef_missing_name_anchors(sf) {
             self.ctx.error(
                 anchor,
                 1,
