@@ -1155,14 +1155,14 @@ impl<'a> CheckerState<'a> {
             };
             if name == "assert" {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                // For import type expressions, tsc positions TS2880 at the attributes
-                // value object (the inner `{ ... }`) to match the ImportAttributes
-                // node position in tsc's AST.
-                let Some(val_node) = self.ctx.arena.get(prop.initializer) else {
+                // tsc anchors TS2880 at the `assert` property name token itself
+                // (`grammarErrorOnFirstToken` on the attributes container), not
+                // the attribute's value object.
+                let Some(name_node) = self.ctx.arena.get(prop.name) else {
                     continue;
                 };
                 self.error_at_position(
-                    val_node.pos,
+                    name_node.pos,
                     6, // length of "assert"
                     diagnostic_messages::IMPORT_ASSERTIONS_HAVE_BEEN_REPLACED_BY_IMPORT_ATTRIBUTES_USE_WITH_INSTEAD_OF_AS,
                     diagnostic_codes::IMPORT_ASSERTIONS_HAVE_BEEN_REPLACED_BY_IMPORT_ATTRIBUTES_USE_WITH_INSTEAD_OF_AS,

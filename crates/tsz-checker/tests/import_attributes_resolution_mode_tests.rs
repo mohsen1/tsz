@@ -761,3 +761,66 @@ fn import_attribute_grammar_matrix_matches_tsc() {
         );
     }
 }
+
+/// TS2880 for an *import type expression* (`import("mod", { assert: ... })`,
+/// as opposed to an import/export declaration's attributes clause) must
+/// anchor on the `assert` property name token, matching tsc's
+/// `grammarErrorOnFirstToken` on the attributes node — not on the property's
+/// value object, which sits several tokens later.
+#[test]
+fn import_type_expression_deprecated_assert_anchors_at_property_name() {
+    let source = r#"type T = import("./config.json", { assert: { type: "json" } });"#;
+    let diagnostics = check_json_module_import("main.ts", source, ModuleKind::Node18, Some(true));
+
+    let ts2880 = diagnostics
+        .iter()
+        .find(|d| d.code == 2880)
+        .unwrap_or_else(|| panic!("Expected TS2880, got: {diagnostics:?}"));
+
+    let expected_start = source.find("assert").unwrap() as u32;
+    assert_eq!(
+        ts2880.start, expected_start,
+        "Expected TS2880 anchored at the `assert` property name (not its value object), \
+         got start={} in {source:?}",
+        ts2880.start
+    );
+    assert_eq!(
+        ts2880.length, 6,
+        "Expected TS2880 to span exactly the `assert` keyword"
+    );
+}
+
+/// Adjacent case: renaming the type alias binder and reordering unrelated
+/// object-literal properties around `assert` must not move the anchor.
+#[test]
+fn import_type_expression_deprecated_assert_anchors_at_property_name_with_sibling_props() {
+    let source =
+        r#"type ImportedShape = import("./config.json", { with: {}, assert: { type: "json" } });"#;
+    let diagnostics = check_json_module_import("main.ts", source, ModuleKind::Node18, Some(true));
+
+    let ts2880 = diagnostics
+        .iter()
+        .find(|d| d.code == 2880)
+        .unwrap_or_else(|| panic!("Expected TS2880, got: {diagnostics:?}"));
+
+    let expected_start = source.rfind("assert").unwrap() as u32;
+    assert_eq!(
+        ts2880.start, expected_start,
+        "Expected TS2880 anchored at the `assert` property name even with sibling properties, \
+         got start={} in {source:?}",
+        ts2880.start
+    );
+}
+
+/// Negative control: a bare import type expression that only uses `with`
+/// (never `assert`) must not report TS2880 at all.
+#[test]
+fn import_type_expression_with_keyword_does_not_report_deprecated_assert() {
+    let source = r#"type T = import("./config.json", { with: { type: "json" } });"#;
+    let diagnostics = check_json_module_import("main.ts", source, ModuleKind::Node18, Some(true));
+
+    assert!(
+        diagnostics.iter().all(|d| d.code != 2880),
+        "Did not expect TS2880 for an import type expression using `with`, got: {diagnostics:?}"
+    );
+}
