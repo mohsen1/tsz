@@ -247,6 +247,21 @@ impl<'a> CheckerState<'a> {
         self.has_modifier_kind(modifiers, SyntaxKind::AbstractKeyword)
     }
 
+    /// Whether the class currently being checked (`self.ctx.enclosing_class`)
+    /// itself carries the `abstract` modifier.
+    pub(crate) fn enclosing_class_is_abstract(&self) -> bool {
+        let Some(class_idx) = self.ctx.enclosing_class.as_ref().map(|c| c.class_idx) else {
+            return false;
+        };
+        let Some(node) = self.ctx.arena.get(class_idx) else {
+            return false;
+        };
+        let Some(class_data) = self.ctx.arena.get_class(node) else {
+            return false;
+        };
+        self.has_abstract_modifier(&class_data.modifiers)
+    }
+
     /// Check if modifiers include the 'static' keyword.
     pub(crate) fn has_static_modifier(
         &self,

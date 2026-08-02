@@ -100,7 +100,7 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
-        self.check_modifier_combinations(&prop.modifiers);
+        self.check_modifier_combinations(&prop.modifiers, prop.name, node.kind);
 
         // TS8009/TS8010: Check for TypeScript-only features in JavaScript files
         let is_js_file = self.is_js_file();
@@ -728,7 +728,7 @@ impl<'a> CheckerState<'a> {
             Vec::new()
         };
 
-        self.check_modifier_combinations(&method.modifiers);
+        self.check_modifier_combinations(&method.modifiers, method.name, node.kind);
 
         // Check for unused type parameters (TS6133)
         self.check_unused_type_params(&method.type_parameters, member_idx);
@@ -1284,7 +1284,7 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        self.check_modifier_combinations(&accessor.modifiers);
+        self.check_modifier_combinations(&accessor.modifiers, accessor.name, node.kind);
 
         // Error 1183: An implementation cannot be declared in ambient contexts
         // Check if we're in a declared class and the accessor has a body.

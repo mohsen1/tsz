@@ -75,6 +75,28 @@ impl CheckerState<'_> {
         }
     }
 
+    /// Whether the private-identifier modifier walk above (`TS18010`/`TS18019`)
+    /// already reports a diagnostic for this member — i.e. whether tsc's
+    /// ordered walk reaches the private-identifier check before it would
+    /// reach some other, order-blind modifier-pair rule (such as the
+    /// `abstract` + `static`/`private`/`async` incompatibility in
+    /// `check_modifier_combinations`), which must yield to it instead of
+    /// co-emitting.
+    pub(crate) fn private_name_modifier_walk_claims(
+        &self,
+        member_kind: u16,
+        modifiers: &Option<NodeList>,
+        is_abstract_class: bool,
+    ) -> bool {
+        matches!(
+            self.walk_private_name_modifiers(member_kind, modifiers, is_abstract_class),
+            Some(
+                PrivateNameModifierError::Accessibility(_)
+                    | PrivateNameModifierError::Incompatible(_, _)
+            )
+        )
+    }
+
     /// The walk itself: returns the first modifier outcome, or `None` when no
     /// modifier in the list interacts with the private identifier.
     fn walk_private_name_modifiers(
