@@ -25,13 +25,21 @@ impl<'a> CheckerState<'a> {
     /// Returns true if the JSDoc contains a `@param` tag for `param_name` that
     /// makes the parameter required (not optional).
     ///
+    /// A name-only `@param name` tag carries no type, so it does not override
+    /// the "untyped JS parameter is implicitly optional" leniency — tsc treats
+    /// it the same as no tag at all for arity purposes (verified against the
+    /// pinned oracle: `jsFileFunctionParametersAsOptional2.ts` calls a JS
+    /// function documented only with bare `@param` names using fewer
+    /// arguments than parameters, and reports no TS2554). Only a tag with an
+    /// explicit `{type}` pins the parameter's type and makes it required.
+    ///
     /// JSDoc optional param syntax (returns false for these):
+    /// - `@param name` — name-only, no type
     /// - `@param {Type=} name` — optional type suffix
     /// - `@param {Type} [name]` — brackets around name
     /// - `@param {Type} [name=default]` — brackets with default
     ///
     /// Non-optional `@param` tags (returns true):
-    /// - `@param name` — name-only, no type
     /// - `@param {Type} name` — standard typed param
     pub(crate) fn jsdoc_has_required_param_tag(jsdoc: &str, param_name: &str) -> bool {
         for chunk in jsdoc.split_inclusive('\n') {
@@ -43,6 +51,7 @@ impl<'a> CheckerState<'a> {
                 && let Some(param) = Self::parse_jsdoc_param_tag(rest)
                 && param.name == param_name
                 && !param.optional
+                && param.type_expr.is_some()
             {
                 return true;
             }

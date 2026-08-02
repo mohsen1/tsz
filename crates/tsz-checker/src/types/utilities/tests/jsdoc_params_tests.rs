@@ -302,11 +302,40 @@ fn jsdoc_has_required_param_tag_standard() {
 
 #[test]
 fn jsdoc_has_required_param_tag_name_only() {
-    // @param name (no type) is considered required
+    // @param name (no type) carries no type, so it does not make the
+    // parameter required — tsc still applies the untyped-JS-optional
+    // leniency (verified against the pinned oracle).
     let jsdoc = r#"
  * @param name
         "#;
-    assert!(CheckerState::jsdoc_has_required_param_tag(jsdoc, "name"));
+    assert!(!CheckerState::jsdoc_has_required_param_tag(jsdoc, "name"));
+}
+
+#[test]
+fn jsdoc_has_required_param_tag_name_only_multiple_params() {
+    // Same rule holds when several bare-name tags are present.
+    let jsdoc = r#"
+ * @param a
+ * @param b
+ * @param c
+        "#;
+    assert!(!CheckerState::jsdoc_has_required_param_tag(jsdoc, "a"));
+    assert!(!CheckerState::jsdoc_has_required_param_tag(jsdoc, "b"));
+    assert!(!CheckerState::jsdoc_has_required_param_tag(jsdoc, "c"));
+}
+
+#[test]
+fn jsdoc_has_required_param_tag_mixed_typed_and_name_only() {
+    // A typed tag still pins its own parameter as required even when a
+    // sibling parameter's tag is name-only.
+    let jsdoc = r#"
+ * @param {string} typed
+ * @param untyped
+        "#;
+    assert!(CheckerState::jsdoc_has_required_param_tag(jsdoc, "typed"));
+    assert!(!CheckerState::jsdoc_has_required_param_tag(
+        jsdoc, "untyped"
+    ));
 }
 
 #[test]
