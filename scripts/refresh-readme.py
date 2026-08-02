@@ -399,7 +399,13 @@ def load_benchmark_json(args):
         if not path.is_absolute():
             path = ROOT / path
         if not path.exists():
-            raise SystemExit(f"Error: benchmark artifact not found: {path}")
+            print(
+                f"warning: skipping README performance chart because the "
+                f"benchmark artifact was not found: {path} (re-run the "
+                "benchmark, e.g. scripts/bench/bench-vs-tsgo.sh --json)",
+                file=sys.stderr,
+            )
+            return None, None
         return path, None
 
     try:
@@ -434,6 +440,13 @@ def write_performance_png(benchmark_json):
         (PERFORMANCE_PNG_LIGHT, "light"),
         (PERFORMANCE_PNG_DARK, "dark"),
     ]:
+        if not benchmark_json.exists():
+            # The artifact can be deleted concurrently between this check and
+            # load_benchmark_json's own check (e.g. a concurrent clean.sh run).
+            # Only this specific race is safe to downgrade to a warning below;
+            # any other subprocess failure (e.g. a missing `sharp` dependency)
+            # must keep failing loudly.
+            raise FileNotFoundError(benchmark_json)
         subprocess.run(
             [
                 "node",
@@ -515,9 +528,16 @@ def main():
 
         if write:
             if benchmark_json is not None:
-                write_performance_png(benchmark_json)
-                print(f"{PERFORMANCE_PNG_LIGHT.relative_to(ROOT)} updated.")
-                print(f"{PERFORMANCE_PNG_DARK.relative_to(ROOT)} updated.")
+                try:
+                    write_performance_png(benchmark_json)
+                    print(f"{PERFORMANCE_PNG_LIGHT.relative_to(ROOT)} updated.")
+                    print(f"{PERFORMANCE_PNG_DARK.relative_to(ROOT)} updated.")
+                except FileNotFoundError as exc:
+                    print(
+                        "warning: skipping README performance chart because the "
+                        f"benchmark artifact vanished before it could be read: {exc}",
+                        file=sys.stderr,
+                    )
             if text != original:
                 README.write_text(text)
                 print("README.md updated.")

@@ -505,6 +505,10 @@ if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
     process.exit(2);
   }
 
+  if (!fs.existsSync(inputPath)) {
+    console.error(`benchmark artifact not found: ${inputPath} (re-run the benchmark, e.g. scripts/bench/bench-vs-tsgo.sh --json)`);
+    process.exit(2);
+  }
   const data = JSON.parse(fs.readFileSync(inputPath, "utf8"));
   if (outputPath.toLowerCase().endsWith(".png")) {
     fs.writeFileSync(outputPath, await renderReadmePerfPng(data, { theme }));
