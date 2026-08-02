@@ -1634,7 +1634,8 @@ impl<'a> CheckerState<'a> {
             // The member is named through `member_name_for_diagnostic`, which
             // picks the renderer by the name node's kind so a computed name
             // keeps its brackets whether or not `get_property_name` can resolve
-            // it to a key. Deliberately not `property_name_for_error`: its
+            // it to a key, and a string-literal name keeps its source quote
+            // character. Deliberately not `property_name_for_error`: its
             // further fallback to a raw source-text slice would also fire on a
             // genuinely malformed computed name (`get [](); `, a parse error),
             // where tsc reports only the syntax error and stays silent on

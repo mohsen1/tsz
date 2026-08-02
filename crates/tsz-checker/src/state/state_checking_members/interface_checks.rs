@@ -1469,11 +1469,16 @@ impl<'a> CheckerState<'a> {
 
     /// Get the display text for a class member name, matching TSC's `declarationNameToString`.
     ///
-    /// Unlike `get_member_name_text` which canonicalizes numeric names for dedup keys,
-    /// this preserves the original source representation for diagnostic messages.
+    /// `declarationNameToString` is `getTextOfNode` — the name node's verbatim
+    /// **source spelling**, with no quote convention of its own. Callers whose
+    /// message template already wraps `{0}` in a literal `'...'` (TS7008,
+    /// TS7010, TS7032, TS7033) get that quoting for free from the template;
+    /// this function must not add a second layer, and must not normalize which
+    /// quote character the author typed.
     /// - Identifiers: `foo` → `"foo"`
     /// - Numeric literals: `0.0` → `"0.0"` (NOT canonicalized to `"0"`)
-    /// - String literals: `'0'` → `"'0'"` (wrapped in single quotes)
+    /// - String literals: `"foo"` → `"\"foo\""`, `'foo'` → `"'foo'"` (the
+    ///   source's own quote character, not a fixed one)
     pub(crate) fn get_member_name_display_text(&self, name_idx: NodeIndex) -> Option<String> {
         if name_idx.is_none() {
             return None;
@@ -1486,11 +1491,9 @@ impl<'a> CheckerState<'a> {
             return Some(ident.escaped_text.to_string());
         }
 
-        // String literal — wrap in single quotes like TSC's declarationNameToString
-        if name_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
-            && let Some(lit) = self.ctx.arena.get_literal(name_node)
-        {
-            return Some(format!("'{}'", lit.text));
+        // String literal — verbatim source spelling, quote character and all.
+        if name_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16 {
+            return self.node_text(name_idx);
         }
 
         // Numeric literal — preserve source text (no canonicalization)
@@ -1550,14 +1553,14 @@ impl<'a> CheckerState<'a> {
     /// the syntactic wrapper, so a first-success chain silently renders half
     /// the computed names as bare keys and the other half — the ones
     /// `get_property_name` declines, like `[k]` and `[Symbol.iterator]` — with
-    /// their brackets intact.
+    /// their brackets intact. A non-computed string-literal name has the same
+    /// disease: the key resolver returns it unquoted, dropping whichever quote
+    /// character the author wrote.
     pub(crate) fn member_name_for_diagnostic(&self, name_idx: NodeIndex) -> Option<String> {
-        if self
-            .ctx
-            .arena
-            .get(name_idx)
-            .is_some_and(|node| node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
-        {
+        if self.ctx.arena.get(name_idx).is_some_and(|node| {
+            node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                || node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
+        }) {
             return self.get_member_name_display_text(name_idx);
         }
         self.get_property_name(name_idx)
