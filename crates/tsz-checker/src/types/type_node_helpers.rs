@@ -3,6 +3,7 @@
 //! Extracted from `type_node.rs` to keep module size manageable.
 
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -183,11 +184,20 @@ fn collect_names_in_type(
                     continue;
                 }
                 if let Some(elem) = ctx.arena.get_binding_element(elem_node) {
+                    // TS2842 reports a renaming that is *unused*. The renamed
+                    // local is in scope for the signature's own type
+                    // positions, so a `typeof` query naming it makes the
+                    // renaming used and `tsc` stays silent.
                     if elem.property_name.is_some()
                         && let Some(prop_node) = ctx.arena.get(elem.property_name)
                         && prop_node.kind == SyntaxKind::Identifier as u16
                         && let Some(name_node) = ctx.arena.get(elem.name)
                         && name_node.kind == SyntaxKind::Identifier as u16
+                        && !ctx.arena.get_identifier_text(elem.name).is_some_and(|n| {
+                            crate::types_domain::signature_binding_scope::binding_is_referenced_by_type_query(
+                                ctx, elem_idx, n,
+                            )
+                        })
                     {
                         let prop_name = ctx
                             .arena
