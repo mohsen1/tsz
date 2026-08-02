@@ -305,6 +305,15 @@ pub type GlobalAugmentationTargetsIndex = Arc<FxHashMap<String, Vec<(SymbolId, u
 
 pub type ResolvedModulePathMap = FxHashMap<(usize, String), usize>;
 pub type ResolvedModuleErrorMap = FxHashMap<(usize, String), ResolutionError>;
+
+/// (`source_file_idx`, specifier) -> absolute path of the JavaScript file the
+/// specifier resolved to when that resolution carried no declaration file.
+///
+/// Structured counterpart to the TS7016 message text: `noImplicitAny` decides
+/// whether the *import site* is diagnosed, while the augmentation-site TS2665
+/// check applies either way, so this map is populated independently of
+/// [`ResolvedModuleErrorMap`].
+pub type UntypedModulePathMap = FxHashMap<(usize, String), String>;
 pub type ResolvedModuleRequestPathMap = FxHashMap<
     (
         usize,

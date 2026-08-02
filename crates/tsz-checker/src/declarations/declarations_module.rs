@@ -445,6 +445,37 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                 diagnostic_codes::AMBIENT_MODULE_DECLARATION_CANNOT_SPECIFY_RELATIVE_MODULE_NAME,
                             );
             }
+            // TS2665: the augmentation target resolves, but to an untyped
+            // JavaScript module, which cannot be augmented.
+            //
+            // Ordered before TS2664 because the two are mutually exclusive in
+            // tsc and tsz can reach TS2664 for this shape: under
+            // `noImplicitAny` the driver records a TS7016 resolution error, so
+            // the specifier never enters `resolved_module_specifiers` and
+            // `module_augmentation_target_exists` answers false — a *wrong*
+            // TS2664 where tsc reports TS2665.
+            //
+            // Unlike TS2664 this arm is deliberately NOT gated on
+            // `!is_declaration_file()`: tsc reports TS2665 for an augmentation
+            // written in a `.d.ts` just as it does in a `.ts` (verified against
+            // the pinned 7.0.2 oracle). It is gated on `is_external_module()`
+            // for the same reason TS2664 is — in a script file
+            // `declare module "foo" { }` declares an ambient external module
+            // rather than augmenting anything, and tsc stays silent.
+            else if self.is_external_module()
+                && let Some(untyped_path) = self.ctx.untyped_module_path_for(&lit.text)
+            {
+                let message = format_message(
+                    diagnostic_messages::INVALID_MODULE_NAME_IN_AUGMENTATION_MODULE_RESOLVES_TO_AN_UNTYPED_MODULE_AT_WHIC,
+                    &[&lit.text, untyped_path],
+                );
+                self.ctx.error(
+                    name_node.pos,
+                    name_node.end - name_node.pos,
+                    message,
+                    diagnostic_codes::INVALID_MODULE_NAME_IN_AUGMENTATION_MODULE_RESOLVES_TO_AN_UNTYPED_MODULE_AT_WHIC,
+                );
+            }
             // TS2664: Check if the module being augmented exists
             // declare module "nonexistent" { } -> Error if module doesn't exist
             // Only emit TS2664 if:

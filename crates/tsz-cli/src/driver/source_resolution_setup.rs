@@ -9,6 +9,13 @@ pub(super) struct SourceResolutionSetup {
         Arc<FxHashMap<(usize, String), tsz::checker::context::ResolutionError>>,
     pub(super) resolved_module_request_errors:
         Arc<FxHashMap<ResolutionRequestMapKey, tsz::checker::context::ResolutionError>>,
+    /// (`source_file_idx`, specifier) -> absolute path of the JavaScript file a
+    /// specifier resolved to when the resolution carried no declaration file.
+    ///
+    /// Recorded independently of `resolved_module_errors`: TS7016 is only
+    /// produced under `noImplicitAny`, but the augmentation-site TS2665 check
+    /// applies regardless, so it cannot be derived from the error map.
+    pub(super) untyped_module_paths: Arc<FxHashMap<(usize, String), String>>,
     pub(super) resolved_modules_per_file: Arc<Vec<Arc<rustc_hash::FxHashSet<String>>>>,
     /// Pre-computed per-file TS7016 diagnostics for CJS `require()` calls.
     ///
@@ -114,6 +121,7 @@ pub(super) fn prepare_source_resolution_setup(
         ResolutionRequestMapKey,
         tsz::checker::context::ResolutionError,
     > = FxHashMap::default();
+    let mut untyped_module_paths: FxHashMap<(usize, String), String> = FxHashMap::default();
     // Phase 2 step 1: route the module-resolver's ambient-module check through
     // `SkeletonIndex` when present. The skeleton already captured both
     // `declared_modules` and `shorthand_ambient_modules` during the parallel
@@ -394,6 +402,16 @@ pub(super) fn prepare_source_resolution_setup(
                     }
                 }
 
+                // Record the untyped-JS resolution target for the checker's
+                // augmentation-site TS2665 check. Independent of `outcome.error`:
+                // the same resolution produces TS7016 only under `noImplicitAny`.
+                if let Some(ref untyped_path) = outcome.untyped_module_path {
+                    untyped_module_paths.insert(
+                        (file_idx, specifier.clone()),
+                        untyped_path.to_string_lossy().into_owned(),
+                    );
+                }
+
                 // Record error for the checker
                 if let Some(ref error) = outcome.error {
                     resolved_module_errors.insert(
@@ -454,6 +472,7 @@ pub(super) fn prepare_source_resolution_setup(
 
     let resolved_module_errors = Arc::new(resolved_module_errors);
     let resolved_module_request_errors = Arc::new(resolved_module_request_errors);
+    let untyped_module_paths = Arc::new(untyped_module_paths);
 
     // Pre-compute per-file TS7016 diagnostics for CJS require() calls.
     // The driver's resolution pass detects untyped JS modules (TS7016) but the
@@ -604,6 +623,7 @@ pub(super) fn prepare_source_resolution_setup(
         resolved_module_ts_extension_flags: Arc::new(resolved_module_ts_extension_flags),
         resolved_module_errors,
         resolved_module_request_errors,
+        untyped_module_paths,
         resolved_modules_per_file,
         per_file_ts7016_diagnostics,
         file_is_esm_map,

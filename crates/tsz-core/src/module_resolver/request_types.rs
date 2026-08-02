@@ -73,6 +73,16 @@ pub struct ModuleLookupResult {
     pub treat_as_resolved: bool,
     /// Error to record for the checker, if any.
     pub error: Option<ModuleLookupError>,
+    /// Absolute path of the JavaScript file this specifier resolved to when the
+    /// resolution produced **no** declaration file.
+    ///
+    /// This is structured data, deliberately independent of whether a TS7016
+    /// error was also produced: `noImplicitAny` decides whether the *import
+    /// site* is diagnosed, but the augmentation-site check (TS2665) applies
+    /// either way, so the path cannot be carried inside the TS7016 message.
+    /// `None` whenever the specifier resolved to a TypeScript, declaration, or
+    /// JSON file, or did not resolve at all.
+    pub untyped_module_path: Option<PathBuf>,
 }
 
 /// Structured error from module lookup.
@@ -91,6 +101,7 @@ impl ModuleLookupResult {
             resolved_path: Some(path),
             resolved_using_ts_extension: false,
             treat_as_resolved: false,
+            untyped_module_path: None,
             error: None,
         }
     }
@@ -101,6 +112,7 @@ impl ModuleLookupResult {
             resolved_path: None,
             resolved_using_ts_extension: false,
             treat_as_resolved: false,
+            untyped_module_path: None,
             error: Some(ModuleLookupError { code, message }),
         }
     }
@@ -111,6 +123,7 @@ impl ModuleLookupResult {
             resolved_path: None,
             resolved_using_ts_extension: false,
             treat_as_resolved: true,
+            untyped_module_path: None,
             error: None,
         }
     }
@@ -121,6 +134,7 @@ impl ModuleLookupResult {
             resolved_path: None,
             resolved_using_ts_extension: false,
             treat_as_resolved: true,
+            untyped_module_path: None,
             error: Some(ModuleLookupError { code, message }),
         }
     }
@@ -139,6 +153,7 @@ impl ModuleLookupResult {
             resolved_path: None,
             resolved_using_ts_extension: false,
             treat_as_resolved: true,
+            untyped_module_path: Some(normalize_display_path(&js_path)),
             error: if no_implicit_any {
                 Some(ModuleLookupError {
                     code: COULD_NOT_FIND_DECLARATION_FILE,
@@ -174,6 +189,7 @@ impl ModuleLookupResult {
             } else {
                 None
             },
+            untyped_module_path: Some(normalize_display_path(&resolved_path)),
             resolved_path: Some(resolved_path),
             resolved_using_ts_extension: false,
             treat_as_resolved: false,
@@ -182,6 +198,21 @@ impl ModuleLookupResult {
 
     pub const fn with_resolved_using_ts_extension(mut self, value: bool) -> Self {
         self.resolved_using_ts_extension = value;
+        self
+    }
+
+    /// Record that this specifier resolved to a JavaScript file carrying no
+    /// declarations, whatever result shape the resolver chose for it.
+    ///
+    /// tsc keys the augmentation-site TS2665 check on the *resolution
+    /// extension* — a specifier whose resolved extension is not TypeScript,
+    /// declaration, or JSON is an untyped module — not on whether the import
+    /// site was also diagnosed. `allowJs` therefore does not suppress it: with
+    /// `allowJs` the file is type-checked as JS and no TS7016 is produced, yet
+    /// the module still cannot be augmented.
+    #[must_use]
+    pub fn with_untyped_module_path(mut self, path: PathBuf) -> Self {
+        self.untyped_module_path = Some(normalize_display_path(&path));
         self
     }
 
@@ -202,6 +233,7 @@ impl ModuleLookupResult {
             resolved_using_ts_extension: self.resolved_using_ts_extension,
             is_resolved,
             error: self.error,
+            untyped_module_path: self.untyped_module_path,
         }
     }
 }
@@ -246,6 +278,12 @@ pub struct ModuleLookupOutcome {
     pub is_resolved: bool,
     /// Error to report to the checker, if any.
     pub error: Option<ModuleLookupError>,
+    /// Absolute path of the JavaScript file this specifier resolved to when the
+    /// resolution produced no declaration file; `None` otherwise. Drivers record
+    /// this so the checker can answer "does this augmentation target resolve to
+    /// an untyped module, and to which file?" (TS2665) without reading rendered
+    /// diagnostic text.
+    pub untyped_module_path: Option<PathBuf>,
 }
 
 /// Result of module resolution

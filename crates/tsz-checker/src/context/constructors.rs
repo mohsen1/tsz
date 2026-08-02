@@ -471,6 +471,7 @@ impl<'a> CheckerContext<'a> {
             module_augmentation_application_set: RefCell::new(FxHashSet::default()),
             is_external_module_by_file: None,
             resolved_module_errors: None,
+            untyped_module_paths: None,
             resolved_module_request_errors: None,
             import_resolution_stack: Vec::new(),
             type_only_nodes: FxHashSet::default(),

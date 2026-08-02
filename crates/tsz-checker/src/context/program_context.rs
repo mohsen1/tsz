@@ -143,6 +143,8 @@ pub struct ProgramContext {
     pub resolved_module_errors: Arc<ResolvedModuleErrorMap>,
     /// Resolved module errors keyed by (`source_file_idx`, specifier, resolution-mode override).
     pub resolved_module_request_errors: Arc<ResolvedModuleRequestErrorMap>,
+    /// Untyped-JS resolution targets: (`source_file_idx`, specifier) -> `.js` path.
+    pub untyped_module_paths: Arc<UntypedModulePathMap>,
     /// Per-file external module status.
     pub is_external_module_by_file: Arc<FxHashMap<String, bool>>,
     /// Per-file ESM/CJS determination.
@@ -207,6 +209,7 @@ impl Default for ProgramContext {
             resolved_module_request_paths: Arc::new(FxHashMap::default()),
             resolved_module_ts_extension_flags: Arc::new(FxHashMap::default()),
             resolved_module_errors: Arc::new(FxHashMap::default()),
+            untyped_module_paths: Arc::new(FxHashMap::default()),
             resolved_module_request_errors: Arc::new(FxHashMap::default()),
             is_external_module_by_file: Arc::new(FxHashMap::default()),
             file_is_esm_map: Arc::new(FxHashMap::default()),
@@ -357,6 +360,7 @@ impl ProgramContext {
         ));
         ctx.set_resolved_module_errors(Arc::clone(&self.resolved_module_errors));
         ctx.set_resolved_module_request_errors(Arc::clone(&self.resolved_module_request_errors));
+        ctx.set_untyped_module_paths(Arc::clone(&self.untyped_module_paths));
         ctx.is_external_module_by_file = Some(Arc::clone(&self.is_external_module_by_file));
         ctx.file_is_esm_map = Some(Arc::clone(&self.file_is_esm_map));
         // Warm local caches from the already-installed shared DefinitionStore.

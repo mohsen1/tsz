@@ -1771,6 +1771,9 @@ pub struct CheckerContext<'a> {
     /// Resolution errors keyed by the full driver request, including any
     /// explicit `resolution-mode` override from import attributes / import types.
     pub resolved_module_request_errors: Option<Arc<ResolvedModuleRequestErrorMap>>,
+    /// Untyped-JavaScript resolution targets: (`source_file_idx`, specifier) ->
+    /// resolved `.js` path. Consulted by the module-augmentation TS2665 gate.
+    pub untyped_module_paths: Option<Arc<UntypedModulePathMap>>,
 
     /// Import resolution stack for circular import detection.
     /// Tracks the chain of modules being resolved to detect circular dependencies.

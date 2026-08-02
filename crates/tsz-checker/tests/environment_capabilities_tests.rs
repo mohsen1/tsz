@@ -1039,9 +1039,13 @@ fn test_import_assert_deprecated_fires_by_default() {
 }
 
 #[test]
-fn test_import_assert_deprecated_suppressed_only_by_ignore_deprecations_6_0() {
+fn test_import_assert_deprecated_not_suppressed_by_ignore_deprecations_6_0() {
     use tsz_checker::query_boundaries::capabilities::EnvironmentCapabilities;
+    use tsz_checker::query_boundaries::environment::CapabilityDiagnostic;
 
+    // On the pinned 7.0.2 oracle the "6.0" grace window a 6.x tsc build
+    // granted has closed: TS2880 is unconditional and no ignoreDeprecations
+    // value silences it (#16217).
     let opts = CheckerOptions {
         ignore_deprecations: true,
         ignore_deprecations_6_0: true,
@@ -1050,8 +1054,8 @@ fn test_import_assert_deprecated_suppressed_only_by_ignore_deprecations_6_0() {
     let caps = EnvironmentCapabilities::from_options(&opts, true);
     assert_eq!(
         caps.check_import_assert_deprecated(),
-        None,
-        "TS2880 should NOT fire when ignoreDeprecations is \"6.0\""
+        Some(CapabilityDiagnostic::ImportAssertDeprecated),
+        "TS2880 should still fire even when ignoreDeprecations is \"6.0\""
     );
 }
 
@@ -1099,7 +1103,7 @@ fn test_import_assert_deprecated_checker_integration_ts2880() {
 }
 
 #[test]
-fn test_import_assert_deprecated_suppressed_checker_integration() {
+fn test_import_assert_deprecated_not_suppressed_by_6_0_checker_integration() {
     let diags = check_with_options(
         r#"import payload from './payload.json' assert { type: "json" };"#,
         CheckerOptions {
@@ -1111,8 +1115,8 @@ fn test_import_assert_deprecated_suppressed_checker_integration() {
     );
     let ts2880: Vec<_> = diags.iter().filter(|d| d.code == 2880).collect();
     assert!(
-        ts2880.is_empty(),
-        "Expected NO TS2880 with ignoreDeprecations=\"6.0\", got: {ts2880:?}"
+        !ts2880.is_empty(),
+        "Expected TS2880 even with ignoreDeprecations=\"6.0\" (#16217), got: {diags:?}"
     );
 }
 

@@ -41,6 +41,7 @@ fn empty_program_context() -> ProgramContext {
         program_module_exports: None,
         program_cross_file_node_symbols: None,
         program_alias_partners: None,
+        untyped_module_paths: Arc::new(FxHashMap::default()),
         resolved_module_paths: Arc::new(FxHashMap::default()),
         resolved_module_request_paths: Arc::new(FxHashMap::default()),
         resolved_module_ts_extension_flags: Arc::new(FxHashMap::default()),

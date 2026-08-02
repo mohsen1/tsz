@@ -834,6 +834,7 @@ impl ModuleResolver {
                         resolved_path: Some(resolved_module.resolved_path),
                         resolved_using_ts_extension: false,
                         treat_as_resolved: false,
+                        untyped_module_path: None,
                         error: Some(ModuleLookupError {
                             code: MODULE_WAS_RESOLVED_TO_BUT_ALLOW_ARBITRARY_EXTENSIONS_IS_NOT_SET,
                             message: format!(
@@ -872,7 +873,18 @@ impl ModuleResolver {
                     resolved_module.extension.is_javascript() && request.no_implicit_any;
                 let is_external_cjs_require =
                     resolved_module.is_external && matches!(import_kind, ImportKind::CjsRequire);
-                if is_imported_js && is_external_cjs_require {
+                // tsc's augmentation-target check (TS2665) keys on the
+                // *resolution extension*, not on whether the import site was
+                // diagnosed: a specifier resolving to a `.js`/`.jsx` file is an
+                // untyped module whether or not `noImplicitAny` produced TS7016
+                // and whether or not `allowJs` let the file into the program.
+                // Capture the path for every JS-extension resolution so the
+                // driver can answer that question structurally.
+                let untyped_js_target = resolved_module
+                    .extension
+                    .is_javascript()
+                    .then(|| resolved_module.resolved_path.clone());
+                let result = if is_imported_js && is_external_cjs_require {
                     ModuleLookupResult::resolved_untyped_js(
                         resolved_module.resolved_path,
                         request.no_implicit_any,
@@ -892,6 +904,10 @@ impl ModuleResolver {
                         .with_resolved_using_ts_extension(
                             resolved_module.resolved_using_ts_extension,
                         )
+                };
+                match untyped_js_target {
+                    Some(path) => result.with_untyped_module_path(path),
+                    None => result,
                 }
             }
             Err(failure) => {
