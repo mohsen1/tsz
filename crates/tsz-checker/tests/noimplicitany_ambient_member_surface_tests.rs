@@ -218,6 +218,91 @@ fn ts7033_is_reported_once_per_getter() {
 }
 
 // ---------------------------------------------------------------------------
+// (1b) Computed names — the class arm did not resolve a display name for a
+// computed getter/setter whose expression is not a literal, so the TS7033
+// site's `get_property_name` returned `None` and silently suppressed the
+// diagnostic. Issue #16186 (the residual left by #16188, which fixed the
+// interface/type-literal arm the same way). tsc still reports, using the
+// raw `[expr]` source text as the display name (`declarationNameToString`).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn computed_unique_symbol_getter_reports_ts7033() {
+    let codes =
+        check_source_strict_codes("declare const k: unique symbol; declare class C { get [k](); }");
+    assert!(has(&codes, TS7033), "expected TS7033: {codes:?}");
+}
+
+#[test]
+fn computed_unique_symbol_pair_still_blames_the_setter() {
+    // Control: the TS7032 sibling site already used the computed-aware
+    // helper, so this direction must be unaffected by the TS7033 fix.
+    let codes = check_source_strict_codes(
+        "declare const k: unique symbol; declare class C { get [k](); set [k](v); }",
+    );
+    assert!(has(&codes, TS7032), "expected TS7032: {codes:?}");
+    assert!(!has(&codes, TS7033), "setter is the blame site: {codes:?}");
+}
+
+#[test]
+fn computed_non_literal_typed_getter_reports_ts7033() {
+    // `k`'s type is plain `string`, not a literal or unique symbol — tsc
+    // cannot resolve a concrete property key either, and still reports
+    // using the raw source text as the display name.
+    let codes =
+        check_source_strict_codes("declare const k: string; declare class C { get [k](); }");
+    assert!(has(&codes, TS7033), "expected TS7033: {codes:?}");
+}
+
+#[test]
+fn computed_well_known_symbol_getter_reports_ts7033() {
+    let codes = check_source_strict_codes("declare class C { get [Symbol.iterator](); }");
+    assert!(has(&codes, TS7033), "expected TS7033: {codes:?}");
+}
+
+#[test]
+fn computed_getter_in_abstract_class_reports_ts7033() {
+    let codes = check_source_strict_codes(
+        "declare const k: unique symbol; abstract class C { abstract get [k](); }",
+    );
+    assert!(has(&codes, TS7033), "expected TS7033: {codes:?}");
+}
+
+#[test]
+fn computed_string_literal_getter_still_reports_ts7033() {
+    // Control: a computed name whose expression IS a string literal already
+    // resolved through `get_property_name`'s literal fast path before this
+    // fix — must keep working unchanged.
+    let codes = check_source_strict_codes("declare class C { get [\"foo\"](); }");
+    assert!(has(&codes, TS7033), "expected TS7033: {codes:?}");
+}
+
+#[test]
+fn computed_private_hidden_getter_stays_clean() {
+    // The surface rule (private/`.d.ts`-hidden) must still win over the
+    // computed-name display fix — a hidden member reports nothing at all,
+    // so the computed-name display fallback must never be reached for it.
+    let codes = check_source_strict_codes(
+        "declare const k: unique symbol; declare class C { private get [k](); }",
+    );
+    assert!(!has(&codes, TS7033), "hidden from the surface: {codes:?}");
+}
+
+#[test]
+fn malformed_computed_getter_name_does_not_report_ts7033() {
+    // `[]` and `[1+]` are parse errors (empty / incomplete computed-name
+    // expression) — tsc reports only the syntax error and stays silent on
+    // `TS7033`. The fix must resolve computed names through the *structured*
+    // display helper (identifier / property-access / literal), not through a
+    // raw source-text slice — a slice would render `[]`/`[1+]` as a "name"
+    // and start reporting a semantic diagnostic tsc never emits here.
+    let codes = check_source_strict_codes("declare class C { get [](); }");
+    assert!(!has(&codes, TS7033), "parse-error name: {codes:?}");
+    let codes = check_source_strict_codes("declare class C { get [1+](); }");
+    assert!(!has(&codes, TS7033), "parse-error name: {codes:?}");
+}
+
+// ---------------------------------------------------------------------------
 // (2) The surface rule. Issue #16178 — TS7010 fired where tsc is silent.
 // ---------------------------------------------------------------------------
 
