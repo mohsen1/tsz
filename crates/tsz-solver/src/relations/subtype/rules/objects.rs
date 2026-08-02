@@ -769,6 +769,65 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         else {
             return false;
         };
+        let Some(target_def) = target_def else {
+            return false;
+        };
+        self.def_nominally_extends_target_def(source_def, target_def)
+    }
+
+    /// O(1) check for `Intersection <: ObjectLikeTarget`: does a single
+    /// intersection MEMBER's checker-verified class/interface heritage chain
+    /// reach `target_def`? This is sound as an unconditional early accept
+    /// regardless of the intersection's other members: subtyping is
+    /// transitive, so `Member <: Target` implies `(Member & Other) <: Target`
+    /// for any `Other`, whatever `Other` contributes. Lets a source like
+    /// `Window & { extra: number }` skip `Window`'s full DOM-lib structural
+    /// walk the same way a plain `interface W extends Window {}` source
+    /// already does via `class_instance_extends_target_def` (#16089).
+    ///
+    /// Unlike `class_instance_extends_target_def`, `member` is a bare type
+    /// reference (as stored in the intersection's member list), not a
+    /// receiver/`this` instance type, so it resolves through the same chain
+    /// `class_relation_target_def` uses for the target side rather than
+    /// through `class_def_for_instance_type` alone.
+    pub(crate) fn intersection_member_nominally_extends_target(
+        &self,
+        member: TypeId,
+        target_receiver: TypeId,
+        target_shape: Option<&ObjectShape>,
+    ) -> bool {
+        // Prefer a bare `Lazy(DefId)` receiver derived straight from the
+        // evaluated shape's symbol over the raw `target_receiver` as stored:
+        // a plain interface *reference* like `Window` used as a type
+        // annotation is commonly interned as an `Application(def, args)`
+        // even with an empty `args` (this is exactly what `check_object_subtype`
+        // sidesteps by resolving its own `target_receiver` through
+        // `receiver_type_from_shape_symbol` before ever calling
+        // `class_relation_target_def`). `class_relation_target_def` bails
+        // outright on an `Application` receiver, so passing the raw form
+        // through unconditionally would silently defeat this fast path for
+        // exactly the DOM-lib targets it exists for.
+        let target_receiver = target_shape
+            .and_then(|shape| self.receiver_type_from_shape_symbol(shape))
+            .unwrap_or(target_receiver);
+        let Some(target_def) = self.class_relation_target_def(Some(target_receiver), target_shape)
+        else {
+            return false;
+        };
+        let Some(member_def) = self.def_id_for_type_reference(member) else {
+            return false;
+        };
+        self.def_nominally_extends_target_def(member_def, target_def)
+    }
+
+    /// Shared heritage-chain walk behind both `class_instance_extends_target_def`
+    /// and `intersection_member_nominally_extends_target`, once each has
+    /// resolved its own `source_def`/`target_def`.
+    fn def_nominally_extends_target_def(
+        &self,
+        source_def: crate::def::DefId,
+        target_def: crate::def::DefId,
+    ) -> bool {
         // #16137 widened this to interfaces; #16142 found the widening unsound
         // (an interface's heritage edge was trusted even when TS2430 rejected
         // it) and #16148 reverted to classes-only as a stopgap. This restores
@@ -782,9 +841,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         ) {
             return false;
         }
-        let Some(target_def) = target_def else {
-            return false;
-        };
         if self.def_has_type_params(target_def) {
             return false;
         }
@@ -842,12 +898,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         target_receiver
-            .and_then(|type_id| {
-                lazy_def_id(self.interner, type_id)
-                    .or_else(|| self.resolver.def_for_type(type_id))
-                    .or_else(|| self.resolver.class_def_for_instance_type(type_id))
-                    .or_else(|| self.def_for_receiver_shape_symbol(type_id))
-            })
+            .and_then(|type_id| self.def_id_for_type_reference(type_id))
             .or_else(|| {
                 target.and_then(|shape| {
                     shape
@@ -855,6 +906,31 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         .and_then(|symbol| self.resolver.symbol_to_def_id(SymbolRef(symbol.0)))
                 })
             })
+    }
+
+    /// Resolve a `DefId` for a type used as a bare type reference (e.g. an
+    /// intersection member, or the type checked against as a relation
+    /// target) rather than a receiver/`this` instance type. Extracted from
+    /// `class_relation_target_def` so `intersection_member_nominally_extends_target`
+    /// can apply the same resolution to intersection members.
+    fn def_id_for_type_reference(&self, type_id: TypeId) -> Option<crate::def::DefId> {
+        lazy_def_id(self.interner, type_id)
+            .or_else(|| {
+                // A plain interface/class reference is commonly interned as
+                // `Application(def, args)` even when `args` is empty. The
+                // args are irrelevant to whether the *base* def's own
+                // (arg-independent) heritage chain reaches a target def with
+                // no type parameters of its own — `def_nominally_extends_target_def`
+                // already requires that of the target — so unwrapping to the
+                // base's `DefId` here is sound for the nominal-heritage walk
+                // regardless of what the args are.
+                application_id(self.interner, type_id).and_then(|app_id| {
+                    lazy_def_id(self.interner, self.interner.type_application(app_id).base)
+                })
+            })
+            .or_else(|| self.resolver.def_for_type(type_id))
+            .or_else(|| self.resolver.class_def_for_instance_type(type_id))
+            .or_else(|| self.def_for_receiver_shape_symbol(type_id))
     }
 
     fn receiver_is_application(&self, type_id: TypeId) -> bool {
@@ -1993,3 +2069,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 #[cfg(test)]
 #[path = "../../../../tests/objects_interface_nominal_fastpath_tests.rs"]
 mod objects_interface_nominal_fastpath_tests;
+
+#[cfg(test)]
+#[path = "../../../../tests/intersection_nominal_fastpath_tests.rs"]
+mod intersection_nominal_fastpath_tests;
