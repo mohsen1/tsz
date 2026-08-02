@@ -1,7 +1,7 @@
 //! Module and module-resolution diagnostic tests
 //! (TS6046 enum options, module + resolution defaults, TS5095 bundler
-//! compatibility, TS5098 `package.json` resolution, TS5102 / TS5103
-//! `ignoreDeprecations` validation, TS5108 removed options, TS5110,
+//! compatibility, TS5098 `package.json` resolution, TS5102 removed options,
+//! the absence of TS5103 `ignoreDeprecations` value validation, TS5110,
 //! inherited `extends` anchoring).
 //!
 //! Split from `config/mod.rs` to keep each file under the 2000-line limit
@@ -371,7 +371,8 @@ fn test_ts5023_not_suppressed_with_ignore_deprecations() {
 
 #[test]
 fn test_ts5023_not_suppressed_with_invalid_ignore_deprecations() {
-    // Invalid ignoreDeprecations reports TS5103 alongside the dropped-name TS5023.
+    // An unrecognized ignoreDeprecations value neither suppresses the
+    // dropped-name TS5023 nor adds a TS5103 of its own (#16228).
     let source = r#"{"compilerOptions":{"ignoreDeprecations":"8.0","noImplicitUseStrict":true}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
@@ -380,8 +381,8 @@ fn test_ts5023_not_suppressed_with_invalid_ignore_deprecations() {
         "Expected TS5023 when ignoreDeprecations is invalid, got: {codes:?}"
     );
     assert!(
-        codes.contains(&5103),
-        "Should also emit TS5103 for invalid ignoreDeprecations, got: {codes:?}"
+        !codes.contains(&5103),
+        "Should NOT emit TS5103 for an unrecognized ignoreDeprecations, got: {codes:?}"
     );
 }
 
@@ -887,18 +888,41 @@ fn test_ts5095_not_emitted_for_node16_resolution() {
     );
 }
 
+/// TypeScript 7 performs no `ignoreDeprecations` VALUE validation at all
+/// (#16228): the option is parsed and type-checked as a string, but no value
+/// is rejected. Probed on the pinned 7.0.2 oracle — version-shaped values,
+/// non-version words, and the empty string are all silently accepted.
 #[test]
-fn test_ts5103_emitted_for_invalid_ignore_deprecations() {
-    // tsz conservatively emits TS5103 whenever ignoreDeprecations is set to an invalid value.
-    // tsc only emits TS5103 when deprecated features are also present, but since tsz cannot
-    // detect all deprecated features (e.g. deprecated source syntax like import assertions),
-    // it conservatively emits TS5103 for any invalid ignoreDeprecations value.
-    let source = r#"{"compilerOptions":{"ignoreDeprecations":"8.0"}}"#;
+fn test_ts5103_never_emitted_for_any_value() {
+    for value in [
+        "8.0", "5.5", "5.1", "4.9", "banana", "", "0", "7.0.2", "next",
+    ] {
+        let source = format!(r#"{{"compilerOptions":{{"ignoreDeprecations":"{value}"}}}}"#);
+        let parsed = parse_tsconfig_with_diagnostics(&source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&5103),
+            "TS5103 has no trigger on the 7.0.2 oracle; \
+             ignoreDeprecations={value:?} produced: {codes:?}"
+        );
+    }
+}
+
+/// The one validation TypeScript 7 DOES still apply to `ignoreDeprecations` is
+/// the generic option-type check. Negative control for the test above: dropping
+/// TS5103 must not take TS5024 with it.
+#[test]
+fn test_ts5024_still_fires_for_non_string_ignore_deprecations() {
+    let source = r#"{"compilerOptions":{"ignoreDeprecations":8}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
     let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&5103),
-        "Expected TS5103 for invalid ignoreDeprecations='8.0', got: {codes:?}"
+        codes.contains(&5024),
+        "Expected TS5024 for a numeric ignoreDeprecations, got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&5103),
+        "A type-invalid value must not resurrect TS5103, got: {codes:?}"
     );
 }
 
@@ -916,45 +940,34 @@ fn test_ts5103_not_emitted_for_valid_7_0() {
     );
 }
 
+/// An unrecognized `ignoreDeprecations` value does not become reportable by
+/// sitting next to something tsc DOES complain about. Each row below is a
+/// distinct companion-diagnostic family, and on the 7.0.2 oracle each reports
+/// its own code and nothing else: an unknown option (TS5023), a removed option
+/// KEY (TS5102), a removed option VALUE (TS5108), and a clean non-deprecated
+/// target (no companion at all).
 #[test]
-fn test_ts5103_emitted_for_invalid_ignore_deprecations_with_deprecated_option() {
-    // tsc emits TS5103 when an invalid ignoreDeprecations value is used alongside
-    // a removed/deprecated option (the invalid value can't suppress the warning).
-    let source = r#"{"compilerOptions":{"ignoreDeprecations":"5.1","noImplicitUseStrict":true}}"#;
-    let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
-    let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
-    assert!(
-        codes.contains(&5103),
-        "Expected TS5103 for ignoreDeprecations='5.1' with deprecated option, got: {codes:?}"
-    );
-}
-
-#[test]
-fn test_ts5103_emitted_for_invalid_ignore_deprecations_with_deprecated_target_alias() {
-    // tsc emits TS5103 when an invalid ignoreDeprecations value is used alongside
-    // a deprecated target alias like "es6" (deprecated in favor of "es2015").
-    // This matches the arrowFunction conformance test pattern.
-    let source = r#"{"compilerOptions":{"ignoreDeprecations":"8.0","target":"es6"}}"#;
-    let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
-    let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
-    assert!(
-        codes.contains(&5103),
-        "Expected TS5103 for ignoreDeprecations='8.0' with deprecated target='es6', got: {codes:?}"
-    );
-}
-
-#[test]
-fn test_ts5103_emitted_for_invalid_ignore_deprecations_with_any_target() {
-    // tsz emits TS5103 conservatively for any invalid ignoreDeprecations value,
-    // regardless of target. Even non-deprecated targets like "es2018" will trigger
-    // TS5103 in tsz (conservative approach since we can't detect all deprecated syntax).
-    let source = r#"{"compilerOptions":{"ignoreDeprecations":"8.0","target":"es2018"}}"#;
-    let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
-    let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
-    assert!(
-        codes.contains(&5103),
-        "Expected TS5103 (conservative) for ignoreDeprecations='8.0' with target='es2018', got: {codes:?}"
-    );
+fn test_ts5103_never_emitted_alongside_a_companion_diagnostic() {
+    for (companion, expected_companion_code) in [
+        (r#""noImplicitUseStrict":true"#, Some(5023)),
+        (r#""baseUrl":".""#, Some(5102)),
+        (r#""moduleResolution":"node10""#, Some(5108)),
+        (r#""target":"es2018""#, None),
+    ] {
+        let source = format!(r#"{{"compilerOptions":{{"ignoreDeprecations":"8.0",{companion}}}}}"#);
+        let parsed = parse_tsconfig_with_diagnostics(&source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&5103),
+            "TS5103 must stay off next to {companion}, got: {codes:?}"
+        );
+        if let Some(code) = expected_companion_code {
+            assert!(
+                codes.contains(&code),
+                "Companion TS{code} must still fire for {companion}, got: {codes:?}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -997,15 +1010,16 @@ fn test_ts5103_not_emitted_for_6_0_with_dropped_options() {
     );
 }
 
+/// An unrecognized value inherited through `extends` is no more reportable
+/// than one written locally — the third path #16228 called out as untested.
 #[test]
-fn test_ts5103_emitted_for_invalid_5_5() {
-    // TypeScript 7 accepts "5.0" and "6.0", but not "5.5".
+fn test_ts5103_never_emitted_for_inherited_value() {
     let source = r#"{"compilerOptions":{"ignoreDeprecations":"5.5"}}"#;
-    let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+    let parsed = parse_tsconfig_with_diagnostics(source, "base.json").unwrap();
     let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&5103),
-        "Should emit TS5103 for invalid ignoreDeprecations='5.5', got: {codes:?}"
+        !codes.contains(&5103),
+        "Should NOT emit TS5103 for ignoreDeprecations='5.5', got: {codes:?}"
     );
 }
 

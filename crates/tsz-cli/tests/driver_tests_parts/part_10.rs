@@ -1531,7 +1531,7 @@ fn cli_parse_diagnostics_outrank_later_option_config_and_source_diagnostics() {
 }
 
 #[test]
-fn cli_invalid_ignore_deprecations_emits_ts5103() {
+fn cli_unrecognized_ignore_deprecations_does_not_emit_ts5103() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
     write_file(&base.join("main.ts"), "const ok = 1;\n");
@@ -1552,9 +1552,20 @@ fn cli_invalid_ignore_deprecations_emits_ts5103() {
     let result = compile(&args, base).expect("compile should succeed");
     let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
 
+    // The direct `--ignoreDeprecations` CLI flag routes through the same
+    // tsconfig-shaped validator as the config path, so it inherits the
+    // no-value-validation rule (#16228). Source checking must also still run:
+    // TS5103 used to be classified as a fatal config diagnostic that stopped
+    // the compile before the program was checked.
     assert!(
-        codes.contains(&5103),
-        "Expected TS5103 for direct invalid --ignoreDeprecations, got: {:#?}",
+        !codes.contains(&5103),
+        "Expected no TS5103 for direct --ignoreDeprecations, got: {:#?}",
+        result.diagnostics
+    );
+    assert!(
+        codes.is_empty(),
+        "An unrecognized --ignoreDeprecations must not stop or perturb the \
+         compile of a clean program, got: {:#?}",
         result.diagnostics
     );
 }

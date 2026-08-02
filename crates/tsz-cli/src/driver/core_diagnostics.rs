@@ -329,14 +329,14 @@ fn compile_inner_impl(
 
     // Direct CLI TS6046 and TS5108 (removed option value) stop before source
     // checking. Config-file TS6046 remains an option diagnostic that can
-    // coexist with source diagnostics. TS5103 (invalid ignoreDeprecations) and
-    // TS5102 (removed option) are fatal when they come from configuration.
-    // Direct CLI TS5102 remains reportable without forcing no-emit so emit
-    // baselines can still compare output for parsed legacy flags.
+    // coexist with source diagnostics. TS5102 (removed option) is fatal when it
+    // comes from configuration. Direct CLI TS5102 remains reportable without
+    // forcing no-emit so emit baselines can still compare output for parsed
+    // legacy flags. TS5103 is deliberately absent: TypeScript 7 performs no
+    // `ignoreDeprecations` value validation, so tsz has no emission site for it
+    // to classify (#16228).
     let has_fatal_config_diagnostic = config_diagnostics.iter().any(|d| {
-        d.code == diagnostic_codes::INVALID_VALUE_FOR_IGNOREDEPRECATIONS
-            || d.code
-                == diagnostic_codes::INVALID_VALUE_FOR_REACTNAMESPACE_IS_NOT_A_VALID_IDENTIFIER
+        d.code == diagnostic_codes::INVALID_VALUE_FOR_REACTNAMESPACE_IS_NOT_A_VALID_IDENTIFIER
             || (config_has_removed_option_diagnostic && is_removed_option_diagnostic_code(d.code))
     });
     if has_fatal_cli_enum_diagnostic
@@ -381,8 +381,8 @@ fn compile_inner_impl(
     ) {
         Ok(r) => r,
         Err(e) => {
-            // If config has errors (e.g., TS5103 for invalid ignoreDeprecations),
-            // return them even if compiler options resolution fails.
+            // If config has errors (e.g., TS5024 for a type-invalid option
+            // value), return them even if compiler options resolution fails.
             // This ensures any existing config diagnostics are reported to the user.
             if !config_diagnostics.is_empty() {
                 return Ok(CompilationResult {
