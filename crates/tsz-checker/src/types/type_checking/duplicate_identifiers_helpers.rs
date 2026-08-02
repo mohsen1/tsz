@@ -398,9 +398,13 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let has_ambient_value_default_export =
-            self.ambient_external_module_default_export_has_value_sibling_named(name);
-
+        // A declaration and its own `export default <same name>` inside one
+        // ambient module block (`declare module "x" { const V; export
+        // default V; }`) is not a conflict on its own — an ordinary consumer
+        // `import V from "x"` elsewhere does not collide with it either. Only
+        // an *uninstantiated* alias (a type-only symbol, or an alias that
+        // resolves to a non-instantiated namespace) can still require the
+        // cross-file alias-conflict scan below.
         let sym_id = self.ctx.binder.file_locals.get(name).or_else(|| {
             self.ctx
                 .binder
@@ -409,28 +413,11 @@ impl<'a> CheckerState<'a> {
                 .find_map(|exports| exports.get(name))
         });
         let Some(sym_id) = sym_id else {
-            return has_ambient_value_default_export;
-        };
-
-        if self.symbol_is_type_only(sym_id, Some(name))
-            || self.alias_resolves_to_uninstantiated_namespace(sym_id)
-        {
-            return true;
-        }
-
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return false;
         };
-        let concrete_value = symbol_flags::VARIABLE
-            | symbol_flags::FUNCTION
-            | symbol_flags::CLASS
-            | symbol_flags::ENUM;
-        if symbol.has_any_flags(concrete_value) {
-            return has_ambient_value_default_export;
-        }
 
-        (symbol.flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) != 0
-            && !self.symbol_has_runtime_value_in_binder(self.ctx.binder, sym_id)
+        self.symbol_is_type_only(sym_id, Some(name))
+            || self.alias_resolves_to_uninstantiated_namespace(sym_id)
     }
 
     pub(super) fn current_file_default_export_identifier_named(
