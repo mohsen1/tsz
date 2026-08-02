@@ -1473,7 +1473,9 @@ impl<'a> CheckerState<'a> {
     /// this preserves the original source representation for diagnostic messages.
     /// - Identifiers: `foo` → `"foo"`
     /// - Numeric literals: `0.0` → `"0.0"` (NOT canonicalized to `"0"`)
-    /// - String literals: `'0'` → `"'0'"` (wrapped in single quotes)
+    /// - String literals: verbatim source spelling, quote character and all
+    ///   (`'foo'` → `"'foo'"`, `"foo"` → `"\"foo\""`) — `declarationNameToString`
+    ///   is `getTextOfNode`, so it never imposes a quote convention of its own.
     pub(crate) fn get_member_name_display_text(&self, name_idx: NodeIndex) -> Option<String> {
         if name_idx.is_none() {
             return None;
@@ -1486,11 +1488,15 @@ impl<'a> CheckerState<'a> {
             return Some(ident.escaped_text.to_string());
         }
 
-        // String literal — wrap in single quotes like TSC's declarationNameToString
-        if name_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
-            && let Some(lit) = self.ctx.arena.get_literal(name_node)
-        {
-            return Some(format!("'{}'", lit.text));
+        // String literal — the node's own source text already carries
+        // whichever quote character the author wrote; do not re-quote it.
+        if name_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16 {
+            if let Some(text) = self.node_text(name_idx) {
+                return Some(text);
+            }
+            if let Some(lit) = self.ctx.arena.get_literal(name_node) {
+                return Some(format!("'{}'", lit.text));
+            }
         }
 
         // Numeric literal — preserve source text (no canonicalization)

@@ -737,6 +737,8 @@ mod state_type_environment_relation_routing_arch_tests;
 mod strict_callback_param_method_tests;
 #[path = "tests/strict_mode_class_context_name_tests.rs"]
 mod strict_mode_class_context_name_tests;
+#[path = "tests/string_literal_member_name_display_quote_fidelity_tests.rs"]
+mod string_literal_member_name_display_quote_fidelity_tests;
 #[path = "tests/string_literal_union_display_order_tests.rs"]
 mod string_literal_union_display_order_tests;
 #[path = "tests/suggestion_scan_discarded_tests.rs"]

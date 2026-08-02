@@ -8,7 +8,7 @@ use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::NodeAccess;
+use tsz_parser::parser::node::{NodeAccess, SourceFileData};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -523,10 +523,29 @@ impl<'a> CheckerState<'a> {
     // Section 40: Node and Name Utilities
     // ------------------------------------
 
+    /// Resolve the `SourceFileData` a node actually belongs to by walking up
+    /// to its enclosing `SOURCE_FILE` node, rather than assuming file 0 — the
+    /// only sound approach in a multi-file program.
+    fn source_file_for_node(&self, node_idx: NodeIndex) -> Option<&SourceFileData> {
+        let mut current = node_idx;
+        while current.is_some() {
+            let node = self.ctx.arena.get(current)?;
+            if node.kind == syntax_kind_ext::SOURCE_FILE {
+                return self.ctx.arena.get_source_file(node);
+            }
+            let info = self.ctx.arena.node_info(current)?;
+            if info.parent.is_none() {
+                return None;
+            }
+            current = info.parent;
+        }
+        None
+    }
+
     /// Get the text content of a node from the source file.
     pub(crate) fn node_text(&self, node_idx: NodeIndex) -> Option<String> {
         let (start, end) = self.get_node_span(node_idx)?;
-        let source = self.ctx.arena.source_files.first()?.text.as_ref();
+        let source = self.source_file_for_node(node_idx)?.text.as_ref();
         let start = start as usize;
         let end = end as usize;
         if start >= end || end > source.len() {
@@ -550,6 +569,16 @@ impl<'a> CheckerState<'a> {
                 return ident.escaped_text.to_string();
             }
             if let Some(lit) = self.ctx.arena.get_literal(name_node) {
+                // A string-literal name's diagnostic spelling is its verbatim
+                // source text (quote character included) — a real parameter
+                // can never be named a string literal, so this arm exists
+                // only to serve callers (e.g. a setter's property name) that
+                // reuse this helper for a non-parameter name node.
+                if name_node.kind == SyntaxKind::StringLiteral as u16
+                    && let Some(text) = self.node_text(name_idx)
+                {
+                    return text;
+                }
                 return lit.text.clone();
             }
         }
@@ -560,18 +589,48 @@ impl<'a> CheckerState<'a> {
             .unwrap_or_else(|| "parameter".to_string())
     }
 
+    /// `get_property_name`, except a string-literal name renders as its
+    /// verbatim source spelling (quote character included) instead of the
+    /// bare semantic key — `declarationNameToString` is `getTextOfNode`, so
+    /// it never imposes a quote convention of its own, unlike the key
+    /// resolver, which is correct for identity but wrong for a message.
+    /// Leaves computed-name and every other kind's resolution unchanged.
+    pub(crate) fn get_property_name_for_diagnostic(&self, name_idx: NodeIndex) -> Option<String> {
+        if self
+            .ctx
+            .arena
+            .get(name_idx)
+            .is_some_and(|n| n.kind == SyntaxKind::StringLiteral as u16)
+        {
+            return self.get_member_name_display_text(name_idx);
+        }
+        self.get_property_name(name_idx)
+    }
+
+    /// Resolve a member name for a diagnostic message: prefer the verbatim
+    /// string-literal source spelling over `get_property_name`'s bare
+    /// semantic key (see [`Self::get_property_name_for_diagnostic`]);
+    /// otherwise fall back to the key, and then to the structured
+    /// computed-name display for a computed name whose expression
+    /// `get_property_name` declines (an identifier reference, e.g. `[k]` for
+    /// a `unique symbol` const).
+    ///
+    /// Deliberately does **not** fall back further to a raw source-text
+    /// slice: that would also fire on a genuinely malformed computed name
+    /// (`get [](); `, a parse error), where tsc reports only the syntax
+    /// error and stays silent on the caller's diagnostic. Callers that want
+    /// that last-resort slice use [`Self::property_name_for_error`] instead.
+    pub(crate) fn member_name_display_or_key(&self, name_idx: NodeIndex) -> Option<String> {
+        if let Some(name) = self.get_property_name_for_diagnostic(name_idx) {
+            return Some(name);
+        }
+        self.get_property_name(name_idx)
+            .or_else(|| self.get_member_name_display_text(name_idx))
+    }
+
     /// Get the name of a property for error messages.
     pub(crate) fn property_name_for_error(&self, name_idx: NodeIndex) -> Option<String> {
-        self.get_property_name(name_idx).or_else(|| {
-            if self
-                .ctx
-                .arena
-                .get(name_idx)
-                .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
-                && let Some(display_name) = self.get_member_name_display_text(name_idx)
-            {
-                return Some(display_name);
-            }
+        self.member_name_display_or_key(name_idx).or_else(|| {
             self.node_text(name_idx)
                 .map(|text| text.trim().to_string())
                 .filter(|text| !text.is_empty())

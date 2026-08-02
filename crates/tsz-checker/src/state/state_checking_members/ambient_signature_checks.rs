@@ -965,7 +965,7 @@ impl<'a> CheckerState<'a> {
             let is_ambient_file = self.ctx.is_declaration_file();
 
             if (is_ambient_class || is_ambient_file) && !is_async && !skip_implicit_any {
-                let method_name = self.get_property_name(method.name);
+                let method_name = self.get_property_name_for_diagnostic(method.name);
                 self.maybe_report_implicit_any_return(
                     method_name,
                     Some(method.name),
@@ -1134,7 +1134,7 @@ impl<'a> CheckerState<'a> {
             // Async methods infer Promise<void>, not 'any', so they should NOT trigger TS7010
             // Private members in ambient classes are excluded (not visible in .d.ts)
             if !is_async && !skip_implicit_any {
-                let method_name = self.get_property_name(method.name);
+                let method_name = self.get_property_name_for_diagnostic(method.name);
                 self.maybe_report_implicit_any_return(
                     method_name,
                     Some(method.name),
@@ -1631,22 +1631,21 @@ impl<'a> CheckerState<'a> {
             // (tsc's `isGetAccessorWithAnnotatedSetAccessor`); an unannotated one
             // becomes the blame site itself and is reported there by
             // `check_setter_parameter`. Either way the getter stays clean.
-            // `get_property_name` alone cannot name a computed key whose
-            // expression is a plain identifier reference (`get [k]()` for a
-            // `unique symbol` const, `get [Symbol.iterator]()`) — it
-            // deliberately skips those to avoid returning the identifier's
-            // own text. Fall back to the structured computed-name display
-            // (`declarationNameToString`-equivalent) for that case, but stop
-            // there: `property_name_for_error`'s further fallback to a raw
-            // source-text slice would also fire on a genuinely malformed
-            // computed name (`get [](); `, a parse error), where tsc reports
-            // only the syntax error and stays silent on `TS7033`.
+            // `member_name_display_or_key` prefers a string-literal name's
+            // verbatim source spelling, falls back to `get_property_name`'s
+            // bare key otherwise, and further falls back to the structured
+            // computed-name display when the key resolver declines a
+            // computed name whose expression is a plain identifier reference
+            // (`get [k]()` for a `unique symbol` const, `get [Symbol.iterator]()`).
+            // It deliberately stops there: `property_name_for_error`'s further
+            // fallback to a raw source-text slice would also fire on a
+            // genuinely malformed computed name (`get [](); `, a parse
+            // error), where tsc reports only the syntax error and stays
+            // silent on `TS7033`.
             if self.ctx.no_implicit_any()
                 && !self.is_js_file()
                 && self.paired_setter_member_for_getter(accessor).is_none()
-                && let Some(accessor_name) = self
-                    .get_property_name(accessor.name)
-                    .or_else(|| self.get_member_name_display_text(accessor.name))
+                && let Some(accessor_name) = self.member_name_display_or_key(accessor.name)
             {
                 use crate::diagnostics::diagnostic_codes;
                 self.error_at_node_msg(
