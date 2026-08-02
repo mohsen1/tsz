@@ -1770,6 +1770,9 @@ mod ts2322_readonly_array_element_elaboration_tests;
 #[path = "tests/ts2322_same_generic_type_argument_elaboration_tests.rs"]
 mod ts2322_same_generic_type_argument_elaboration_tests;
 #[cfg(test)]
+#[path = "tests/ts2323_block_scoped_conflict_message_tests.rs"]
+mod ts2323_block_scoped_conflict_message_tests;
+#[cfg(test)]
 #[path = "tests/ts2323_export_var_namespace_merge_tests.rs"]
 mod ts2323_export_var_namespace_merge_tests;
 #[cfg(test)]
