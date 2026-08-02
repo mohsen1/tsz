@@ -1074,7 +1074,15 @@ pub fn compute_best_common_type_cached<R: TypeResolver>(
     //
     // OPTIMIZATION: Tournament-style O(N) reduction instead of O(N²) brute-force.
     // Pass 1 (O(N)): Find the "tournament winner" — iterate through candidates,
-    //   replacing `best` whenever we find a candidate that is a supertype of it.
+    //   replacing `best` whenever we find a candidate that STRICTLY dominates
+    //   it (is a supertype but not also a subtype). Two candidates can be
+    //   MUTUALLY related only through `any`'s absorption (e.g. `any[]` and
+    //   `any[][]` are each a subtype of the other, since `any` is compatible
+    //   with any element type); a plain "replace on any relation" tournament
+    //   would then drift to whichever candidate appears LAST, but tsc keeps
+    //   the first: `[[[null]],[undefined]]`'s sibling elements widen to
+    //   `any[][]` and `any[]`, and tsc's `arrayLiteralWidened.ts` witness
+    //   keeps `any[][]` (the first-declared element), not `any[]`.
     // Pass 2 (O(N)): Verify the winner is truly a supertype of ALL types.
     // Total: O(2N) instead of O(N²). For 50 candidates: 100 checks vs 2,500.
     //
@@ -1101,7 +1109,7 @@ pub fn compute_best_common_type_cached<R: TypeResolver>(
         // Pass 1: Tournament to find potential best candidate
         let mut best = widened[0];
         for &candidate in &widened[1..] {
-            if related(&mut checker, best, candidate) {
+            if related(&mut checker, best, candidate) && !related(&mut checker, candidate, best) {
                 best = candidate;
             }
         }
@@ -1116,7 +1124,10 @@ pub fn compute_best_common_type_cached<R: TypeResolver>(
         let mut best = widened[0];
         for &candidate in &widened[1..] {
             checker.guard.reset();
-            if checker.is_subtype_of(best, candidate) {
+            let best_to_candidate = checker.is_subtype_of(best, candidate);
+            checker.guard.reset();
+            let candidate_to_best = checker.is_subtype_of(candidate, best);
+            if best_to_candidate && !candidate_to_best {
                 best = candidate;
             }
         }

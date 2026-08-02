@@ -1416,10 +1416,44 @@ impl<'a> CheckerState<'a> {
         {
             array_surfaces::element_union(self.ctx.types, element_types.clone())
         } else {
+            // A nested array/tuple literal element (e.g. `[[null]]` inside
+            // `[[[null]],[undefined]]`) resolves its own `null`/`undefined`
+            // leaves only at the enclosing `var`/`let` binding's widening seam
+            // (`widen_initializer_type_for_mutable_binding`) — this array's own
+            // BCT still sees the sibling's PRE-widening shape. Two siblings that
+            // widen to structurally different-but-`any`-absorbed-compatible
+            // shapes (`any[][]` and `any[]`) can look pairwise unrelated before
+            // widening (`Array<null-sentinel>` vs `Array<undefined>` isn't a
+            // subtype pair the way the post-widening `any[]`/`any[][]` pair is),
+            // producing a spurious `any[] | any[][]` instead of collapsing like
+            // tsc does. Widen each COMPOUND element eagerly before BCT so
+            // siblings compare in their final (post-widening) shape. A bare
+            // scalar `null`/`undefined` element is left untouched here — it is
+            // never itself `Array`/`Tuple`/fresh-`Object` shaped, so it cannot
+            // exhibit this specific pre-widening pairwise-mismatch, and its own
+            // (pre-existing, separately owned) resolution already happens where
+            // it always has: unaffected by this change either way.
+            let bct_element_types: Vec<TypeId> = if self.ctx.strict_null_checks() {
+                element_types.clone()
+            } else {
+                element_types
+                    .iter()
+                    .map(|&t| {
+                        if t == TypeId::NULL || t == TypeId::UNDEFINED {
+                            t
+                        } else {
+                            crate::query_boundaries::widening::widen_nullish_to_any_deep(
+                                self.ctx.types,
+                                t,
+                            )
+                        }
+                    })
+                    .collect()
+            };
             expr_ops::compute_best_common_type_cached(
                 self.ctx.types,
                 Some(self.ctx.types),
-                &element_types,
+                &bct_element_types,
                 Some(&self.ctx), // Pass TypeResolver for class hierarchy BCT
             )
         };

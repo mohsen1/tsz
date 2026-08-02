@@ -345,6 +345,9 @@ path = "tests/method_inference_bivariance_tests.rs"
 name = "conditional_branch_array_literal_widening_tests"
 path = "tests/conditional_branch_array_literal_widening_tests.rs"
 [[test]]
+name = "nested_array_literal_any_widening_bct_tie_break_tests"
+path = "tests/nested_array_literal_any_widening_bct_tie_break_tests.rs"
+[[test]]
 name = "extract_alias_distributive_mapped_tests"
 path = "tests/extract_alias_distributive_mapped_tests.rs"
 [[test]]
