@@ -615,3 +615,141 @@ export {};
         "Two structurally-identical unannotated function types must not report TS2411"
     );
 }
+
+// ---------------------------------------------------------------------------
+// A computed member name that is not an entity name contributes no index
+// signature to the class type.
+//
+// `tsc` only lets an entity-name key (`[s]`, `[o.p]`) contribute an index
+// signature. An arbitrary expression key (`["" + ""]`, `[+s]`, `[f()]`)
+// contributes nothing and is only ever *checked* against index signatures
+// contributed by others. tsz used to synthesize a signature from any computed
+// name whose key type was `string`/`number`/`any`, so such a member
+// manufactured the very signature it was then measured against.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn non_entity_computed_method_name_contributes_no_index_signature() {
+    // The conformance shape: computedPropertyNamesDeclarationEmit1_ES5/ES6.
+    let source = r#"
+class C {
+    ["" + ""]() { }
+    get ["" + ""]() { return 0; }
+    set ["" + ""](x) { }
+}
+"#;
+    assert!(
+        !has_error_with_code(source, 2411),
+        "a class whose only members have non-entity computed names has no index \
+         signature at all, so nothing can be checked against one: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn non_entity_computed_method_name_contributes_nothing_under_renamed_binders() {
+    // Same structure, different key text and member names -- the rule is about
+    // the shape of the key expression, never the spelling of any binder.
+    let source = r#"
+class Renamed {
+    ["alpha" + "beta"]() { }
+    get ["gamma" + "delta"]() { return 0; }
+}
+"#;
+    assert!(
+        !has_error_with_code(source, 2411),
+        "renaming the class and the key operands must not change the outcome: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn non_entity_computed_name_wrapper_forms_contribute_no_index_signature() {
+    // Wrapper/nesting forms of a non-entity key: parenthesized identifier,
+    // unary operator, and a call expression all fail the entity-name test.
+    let source = r#"
+declare var s: string;
+declare function f(): string;
+class C {
+    [(s)]() { }
+    [+s]() { }
+    [f()]() { }
+    get [(s)]() { return 0; }
+}
+"#;
+    assert!(
+        !has_error_with_code(source, 2411),
+        "parenthesized, unary and call-expression keys are not entity names: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn non_entity_computed_static_method_name_contributes_no_index_signature() {
+    let source = r#"
+class C {
+    static ["" + ""]() { }
+    static get ["" + ""]() { return 0; }
+}
+"#;
+    assert!(
+        !has_error_with_code(source, 2411),
+        "the static side follows the same rule as the instance side: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn declared_index_signature_still_checks_a_non_entity_computed_member() {
+    // Positive control, and the direction the gate must NOT suppress: a member
+    // with a non-entity computed name contributes no signature, but it is still
+    // *checked* against a signature that was really declared.
+    let source = r#"
+class C {
+    [k: string]: number;
+    ["" + ""]() { }
+}
+"#;
+    assert!(
+        has_error_with_code(source, 2411),
+        "a declared string index signature still constrains a non-entity \
+         computed member: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn declared_index_signature_still_checks_a_literal_computed_member() {
+    // Adjacent concrete form: a computed name with a literal type resolves to a
+    // real named property and is checked exactly like one.
+    let source = r#"
+class C {
+    [k: string]: number;
+    ["lit"]() { }
+}
+"#;
+    assert!(
+        has_error_with_code(source, 2411),
+        "a literal computed name is a named property and is still checked: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn entity_computed_name_still_contributes_an_index_signature() {
+    // The gate must not over-apply: an entity-name key still contributes, and a
+    // sibling non-entity computed member is still measured against it.
+    let source = r#"
+declare var s: string;
+class C {
+    [s]: number;
+    [+s]: typeof s;
+}
+"#;
+    assert!(
+        has_error_with_code(source, 2411),
+        "an entity-name key still contributes a string index signature that \
+         constrains other computed members: {:?}",
+        get_diagnostics(source)
+    );
+}

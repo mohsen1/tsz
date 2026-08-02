@@ -472,6 +472,16 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // Only an entity-name key (`[s]`, `[o.p]`) contributes an index
+        // signature to the class type. `tsc` gives an arbitrary expression key
+        // (`["" + ""]`, `[+s]`, `[f()]`) no index signature at all -- such a
+        // member is only ever *checked* against index signatures contributed by
+        // others. Without this gate the member manufactures the very signature
+        // it is then measured against, producing a spurious `TS2411`.
+        if !self.computed_name_uses_entity_expression(computed.expression) {
+            return;
+        }
+
         let prev = self.ctx.preserve_literal_types;
         self.ctx.preserve_literal_types = true;
         let key_type = self.get_type_of_node(computed.expression);
