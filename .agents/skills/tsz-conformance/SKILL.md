@@ -28,6 +28,28 @@ python3 scripts/conformance/query-conformance.py --code TS2322 --paths-only
 Artifacts: `conformance-detail.json`, `conformance-snapshot.json`,
 `conformance-accepted-regressions.txt`, `conformance-shard-weights.json`.
 
+## Oracle
+
+Semantics come from the **pinned** compiler, not from any other copy on the box:
+
+```bash
+node scripts/node_modules/typescript/lib/tsc.js --version   # Version 7.0.2
+```
+
+- `TypeScript/` (submodule) and any container-global
+  `/opt/**/node_modules/typescript` are the **6.0** line. They are corpus and
+  test *cases* only — never the source of a semantic rule.
+- Reading a rule out of 6.0 source and pinning it with tests lands the wrong
+  behaviour: #16215 encoded `ignoreDeprecations !== "6.0"` from a 6.0.2
+  `typescript.js`, but 7.0 removed that grace window entirely (#16217).
+- 7.0 traps when hand-oracling: **`--target es5` was removed** — it answers
+  `error TS5108` and emits nothing else, and that line carries no `file.ts(l,c):`
+  prefix, so a row filter drops it and every row reads clean. `strict` also
+  defaults to true.
+
+Check raw output once before trusting a filtered sweep: an invalid invocation and
+a clean compile are indistinguishable after filtering.
+
 ## Focused Run
 
 ```bash
