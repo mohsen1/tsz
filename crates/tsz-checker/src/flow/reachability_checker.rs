@@ -1,7 +1,8 @@
 //! Code reachability and fall-through analysis.
 
 use crate::query_boundaries::flow_analysis as query;
-use crate::state::CheckerState;
+use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
+use crate::statements::{StatementCheckCallbacks, StatementChecker};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -573,10 +574,18 @@ impl<'a> CheckerState<'a> {
         };
 
         match node.kind {
-            syntax_kind_ext::RETURN_STATEMENT
-            | syntax_kind_ext::THROW_STATEMENT
-            | syntax_kind_ext::BREAK_STATEMENT
-            | syntax_kind_ext::CONTINUE_STATEMENT => false,
+            syntax_kind_ext::RETURN_STATEMENT | syntax_kind_ext::THROW_STATEMENT => false,
+            syntax_kind_ext::BREAK_STATEMENT | syntax_kind_ext::CONTINUE_STATEMENT => {
+                // A break/continue whose target lies outside its innermost
+                // enclosing function-like draws tsc's TS1107 ("Jump target
+                // cannot cross function boundary") — a grammar error that is
+                // independent of the return-path analysis. tsc still runs
+                // TS2355/TS2378 on the enclosing function in that case, so
+                // this must NOT be treated as an unconditional exit from the
+                // body. A break/continue with a legal target, by contrast,
+                // really does exit this control-flow region.
+                !self.jump_statement_has_legal_target(stmt_idx)
+            }
             syntax_kind_ext::BLOCK => self
                 .ctx
                 .arena
@@ -620,6 +629,91 @@ impl<'a> CheckerState<'a> {
                 .is_none_or(|labeled| self.statement_falls_through(labeled.statement)),
             _ => true,
         }
+    }
+
+    /// Returns whether the `BREAK_STATEMENT`/`CONTINUE_STATEMENT` at `stmt_idx`
+    /// has a legal jump target inside its innermost enclosing function-like —
+    /// i.e. it is NOT the shape that draws tsc's TS1107 ("Jump target cannot
+    /// cross function boundary"). A structural ancestor walk: unlike
+    /// `check_break_statement`/`check_continue_statement`,
+    /// `check_function_return_paths` runs after the ambient
+    /// `iteration_depth`/`switch_depth`/label-stack counters have already
+    /// been restored to the outer scope, so this cannot reuse them and
+    /// re-derives the same rule from the AST directly.
+    fn jump_statement_has_legal_target(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(jump_node) = self.ctx.arena.get(stmt_idx) else {
+            return true;
+        };
+        let is_continue = jump_node.kind == syntax_kind_ext::CONTINUE_STATEMENT;
+        let label_name = self
+            .ctx
+            .arena
+            .get_jump_data(jump_node)
+            .filter(|jump_data| jump_data.label.is_some())
+            .and_then(|jump_data| self.get_node_text(jump_data.label));
+
+        let mut current = stmt_idx;
+        let mut iterations = 0;
+        while current.is_some() {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return true;
+            }
+            let Some(node) = self.ctx.arena.get(current) else {
+                return true;
+            };
+            if let Some(label) = &label_name {
+                if node.kind == syntax_kind_ext::LABELED_STATEMENT
+                    && let Some(labeled) = self.ctx.arena.get_labeled_statement(node)
+                    && self.get_node_text(labeled.label).as_deref() == Some(label.as_str())
+                {
+                    // A labeled break can target any enclosing label; a
+                    // labeled continue additionally requires that label to
+                    // (eventually, through nested labels) wrap an iteration
+                    // statement — the same TS1115 rule
+                    // `check_continue_statement` enforces.
+                    return !is_continue
+                        || StatementChecker::is_iteration_or_nested_iteration(
+                            self.ctx.arena,
+                            labeled.statement,
+                        );
+                }
+            } else {
+                match node.kind {
+                    syntax_kind_ext::WHILE_STATEMENT
+                    | syntax_kind_ext::DO_STATEMENT
+                    | syntax_kind_ext::FOR_STATEMENT
+                    | syntax_kind_ext::FOR_IN_STATEMENT
+                    | syntax_kind_ext::FOR_OF_STATEMENT => return true,
+                    syntax_kind_ext::SWITCH_STATEMENT if !is_continue => return true,
+                    _ => {}
+                }
+            }
+            if matches!(
+                node.kind,
+                syntax_kind_ext::FUNCTION_DECLARATION
+                    | syntax_kind_ext::FUNCTION_EXPRESSION
+                    | syntax_kind_ext::ARROW_FUNCTION
+                    | syntax_kind_ext::METHOD_DECLARATION
+                    | syntax_kind_ext::CONSTRUCTOR
+                    | syntax_kind_ext::GET_ACCESSOR
+                    | syntax_kind_ext::SET_ACCESSOR
+                    | syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
+            ) {
+                // Reached the innermost enclosing function-like without
+                // finding a matching loop/switch/label: this is the TS1107
+                // shape.
+                return false;
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return true;
+            };
+            if ext.parent.is_none() {
+                return true;
+            }
+            current = ext.parent;
+        }
+        true
     }
 
     // =========================================================================

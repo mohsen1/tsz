@@ -1190,7 +1190,7 @@ impl StatementChecker {
     /// Check if a statement is an iteration statement, either directly or through nested labels.
     /// This handles cases like `target1: target2: while(true)` where both target1 and target2
     /// should be considered as wrapping an iteration statement.
-    fn is_iteration_or_nested_iteration(
+    pub(crate) fn is_iteration_or_nested_iteration(
         arena: &tsz_parser::parser::node::NodeArena,
         stmt_idx: tsz_parser::parser::NodeIndex,
     ) -> bool {
