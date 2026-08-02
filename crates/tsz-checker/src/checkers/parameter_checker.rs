@@ -109,6 +109,17 @@ impl<'a> CheckerState<'a> {
         // runs before the strict-mode early return.
         self.check_use_strict_non_simple_parameter_list(params, strict_context_node);
 
+        // tsc picks the class-context message from the identifier's own ancestor
+        // chain (`getContainingClass`), not from whichever member walk happens to
+        // be running: a parameter of a nested function declaration, of a
+        // property-initializer arrow, or of a function inside a static block is
+        // still "code contained in a class". Callers can only report the ambient
+        // `enclosing_class`, which is `None` on every one of those paths, so
+        // recover the class context structurally. Being inside a class also
+        // *implies* strict mode, which is why this feeds the early return below.
+        let use_class_strict_message =
+            use_class_strict_message || self.nearest_enclosing_class(strict_context_node).is_some();
+
         if !use_class_strict_message && !self.is_strict_mode_for_node(strict_context_node) {
             return;
         }
@@ -303,7 +314,10 @@ impl<'a> CheckerState<'a> {
         let Some(type_params) = type_parameters else {
             return;
         };
-        if !self.is_strict_mode_for_node(strict_context_node) {
+        // Same structural class-context rule as the value-parameter path above.
+        let use_class_strict_message =
+            use_class_strict_message || self.nearest_enclosing_class(strict_context_node).is_some();
+        if !use_class_strict_message && !self.is_strict_mode_for_node(strict_context_node) {
             return;
         }
 

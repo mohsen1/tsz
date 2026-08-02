@@ -1292,6 +1292,7 @@ mod jsdoc_overload_call_resolution_tests;
 #[cfg(test)]
 #[path = "tests/class_member_modifier_grammar_first_error_wins_tests.rs"]
 mod class_member_modifier_grammar_first_error_wins_tests;
+
 #[cfg(test)]
 #[path = "../tests/jsdoc_readonly_tests.rs"]
 mod jsdoc_readonly_tests;
@@ -1709,6 +1710,9 @@ mod state_type_environment_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/strict_callback_param_method_tests.rs"]
 mod strict_callback_param_method_tests;
+#[cfg(test)]
+#[path = "tests/strict_mode_class_context_name_tests.rs"]
+mod strict_mode_class_context_name_tests;
 #[cfg(test)]
 #[path = "../tests/strict_null_manual.rs"]
 mod strict_null_manual;
