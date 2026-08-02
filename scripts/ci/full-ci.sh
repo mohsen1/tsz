@@ -402,6 +402,7 @@ run_lint() {
   python3 scripts/ci/test_full_ci_conformance_artifacts.py || return $?
   python3 scripts/ci/test_full_ci_summary.py || return $?
   python3 scripts/ci/test_full_ci_emit_metrics.py || return $?
+  python3 scripts/ci/test_check_emit_regression_set.py || return $?
   # Known-failures baseline contract + gate-wiring tests (#15646). The
   # command list lives in one script shared with the ci.yml cheap-guards
   # step so the two tiers cannot drift.
@@ -723,6 +724,31 @@ validate_emit_aggregate_counts() {
   echo "Emit OK: JS ${js_passed}/${js_total}, DTS ${dts_passed}/${dts_total}"
 }
 
+# Direction check for emit (#16171). The count comparison above is the whole
+# emit gate today, and it cannot see two things:
+#
+#   * a swap — one row fixed and another broken leaves jsPass unchanged;
+#   * a ratchet-down — cap_positive_baseline is min(baseline, floor), so
+#     TSZ_CI_JS_ACCEPTED_FLOOR is a ceiling (an anti-unsatisfiability valve),
+#     not a floor. A hand-refreshed emit-snapshot.json that lands while emit is
+#     regressed takes the count bar down with it.
+#
+# emit-snapshot.json's detailFingerprint only proves emit-detail.json matches
+# its own summary: internal consistency, not direction. So diff the named
+# failing-row set out of the committed emit-detail.json, the way conformance
+# diffs its failure set. Fails closed — if the per-shard detail JSON is missing
+# there is no direction evidence, and a gate that silently skips when its data
+# is absent is the same bug class this closes.
+validate_emit_regression_set() {
+  if [[ "$#" -eq 0 ]]; then
+    echo "error: emit regression set check received no per-test detail JSON" >&2
+    echo "hint: emit shards write ci-metrics/emit-detail-N.json via run.sh --json-out" >&2
+    return 1
+  fi
+  python3 scripts/ci/check-emit-regression-set.py \
+    --baseline scripts/emit/emit-detail.json "$@" || return 1
+}
+
 run_emit_shard() {
   ci_section "Emit shard"
   local shard_index shard_count
@@ -778,6 +804,7 @@ run_emit_shard() {
   if [[ "$shard_count" -eq 1 ]]; then
     ci_section "Emit aggregate"
     validate_emit_aggregate_counts "$js_p" "$js_t" "$js_s" "$js_to" "$dts_p" "$dts_t" "$dts_s" 1 1 || return 1
+    validate_emit_regression_set "$detail_json" || return 1
     write_emit_metric "$METRICS_DIR/emit.json" \
       "$js_p" "$js_t" "$js_s" "$js_to" \
       "$dts_p" "$dts_t" "$dts_s"
@@ -811,6 +838,14 @@ run_emit_aggregate() {
       local shard_name
       shard_name="$(basename "$shard_dir")"
       cp "$json" "$tmp_dir/shard-${shard_name#emit-shard-}.json"
+      # The same artifact carries the per-test detail (ci.yml uploads
+      # emit-detail-N.json alongside emit-shard-N.json). It feeds the
+      # failing-row direction check below.
+      local detail
+      detail="$(find "$shard_dir" -name "emit-detail-*.json" -maxdepth 4 2>/dev/null | head -1)"
+      if [[ -f "$detail" ]]; then
+        cp "$detail" "$tmp_dir/detail-${shard_name#emit-shard-}.json"
+      fi
       found=$(( found + 1 ))
     done
     if [[ "$found" -gt 0 ]]; then
@@ -849,6 +884,12 @@ run_emit_aggregate() {
   fi
 
   validate_emit_aggregate_counts "$js_p" "$js_t" "$js_s" "$js_to" "$dts_p" "$dts_t" "$dts_s" "$shard_count" "$expected_shards" || return 1
+  if compgen -G "$tmp_dir/detail-*.json" >/dev/null; then
+    validate_emit_regression_set "$tmp_dir"/detail-*.json || return 1
+  else
+    # No detail in the artifacts: fail closed rather than pass on counts alone.
+    validate_emit_regression_set || return 1
+  fi
   write_emit_metric "$METRICS_DIR/emit.json" \
     "$js_p" "$js_t" "$js_s" "$js_to" \
     "$dts_p" "$dts_t" "$dts_s"
