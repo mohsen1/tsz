@@ -196,6 +196,115 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// The `noImplicitAny` accessor family (`TS7033`/`TS7032`/`TS7006`) for
+    /// *type members* — the members of an `interface` or of a type literal.
+    ///
+    /// Structural rule, identical to the class arm in
+    /// `state_checking_members/ambient_signature_checks.rs`: a `get`/`set` pair
+    /// shares **one** property type. It comes from the getter's return type —
+    /// annotated, or inferred from a body — if there is one, else from the
+    /// setter's parameter annotation. When nothing supplies it, `tsc` reports
+    /// `TS7032` on the **setter**; the getter is the blame site (`TS7033`) only
+    /// when it has no paired setter at all. tsz does this through the accessor
+    /// checker, which already owns the same rule for class members and for
+    /// object-literal accessor elements.
+    ///
+    /// Class members reach that rule as *declarations*
+    /// (`check_accessor_declaration_with_request`, which also reasons about
+    /// bodies, modifiers and enclosing-class ambientness). Interface and
+    /// type-literal members are never declaration-checked, so they need this
+    /// separate entry point — but they must not re-derive the rule, only the
+    /// container-specific parts of it.
+    ///
+    /// Three properties of the rule that a matrix built one axis at a time
+    /// misses, all of them load-bearing here:
+    ///
+    /// 1. The getter supplies the property type when it has an annotation
+    ///    **or a body**. A type member can never have a body (`TS1183` claims
+    ///    it), but the condition is written out rather than assumed away so the
+    ///    two arms stay the same rule.
+    /// 2. `TS7006` and `TS7032` need **separate** suppression flags. Any paired
+    ///    getter contextually types the setter's *parameter* (suppressing
+    ///    `TS7006`), but only an annotated-or-bodied one supplies the
+    ///    *property's* type (gating `TS7032`). `interface I { get g(); set g(v); }`
+    ///    is exactly the shape that separates them: `TS7032` alone, no `TS7006`.
+    /// 3. It is the annotation's **presence**, not its type — `set g(v: any)`
+    ///    is clean.
+    pub(crate) fn check_type_member_accessor_implicit_any(
+        &mut self,
+        member_idx: NodeIndex,
+        siblings: &[NodeIndex],
+    ) {
+        if !self.ctx.no_implicit_any() || self.is_js_file() {
+            return;
+        }
+        let Some(member_node) = self.ctx.arena.get(member_idx) else {
+            return;
+        };
+        let kind = member_node.kind;
+        if kind != syntax_kind_ext::GET_ACCESSOR && kind != syntax_kind_ext::SET_ACCESSOR {
+            return;
+        }
+        let Some(accessor) = self.ctx.arena.get_accessor(member_node) else {
+            return;
+        };
+
+        if kind == syntax_kind_ext::GET_ACCESSOR {
+            // TS7033: an unannotated, bodyless getter resolves to `any`. Any
+            // paired setter moves the blame to the setter (see above), whether
+            // or not that setter is itself annotated.
+            if accessor.type_annotation.is_none()
+                && accessor.body.is_none()
+                && self.paired_setter_in_members(siblings, accessor).is_none()
+                && let Some(accessor_name) = self.property_name_for_error(accessor.name)
+            {
+                self.error_at_node_msg(
+                    accessor.name,
+                    diagnostic_codes::PROPERTY_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_ITS_GET_ACCESSOR_LACKS_A_RETURN_TYPE_AN,
+                    &[&accessor_name],
+                );
+            }
+            return;
+        }
+
+        let paired_getter = self.paired_getter_in_members(siblings, accessor);
+        // Property (2): the *property* type comes from the getter only when the
+        // getter names one. Reusing `paired_getter.is_some()` here would silence
+        // TS7032 on every pair, which is the shape the issue reported.
+        let paired_getter_supplies_type = paired_getter
+            .and_then(|getter_idx| self.ctx.arena.get(getter_idx))
+            .and_then(|getter_node| self.ctx.arena.get_accessor(getter_node))
+            .is_some_and(|getter| getter.type_annotation.is_some() || getter.body.is_some());
+        let accessor_name = accessor.name;
+
+        for (param_index, &param_idx) in accessor.parameters.nodes.iter().enumerate() {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+
+            // TS7006 on the parameter: a paired getter contextually types it.
+            self.maybe_report_implicit_any_parameter(param, paired_getter.is_some(), param_index);
+
+            // TS7032 on the setter name: nothing gave the property a type.
+            if param.type_annotation.is_none()
+                && !paired_getter_supplies_type
+                && let Some(prop_name) = self.property_name_for_error(accessor_name)
+            {
+                let message = format!(
+                    "Property '{prop_name}' implicitly has type 'any', because its set accessor lacks a parameter type annotation."
+                );
+                self.error_at_node(
+                    accessor_name,
+                    &message,
+                    diagnostic_codes::PROPERTY_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_ITS_SET_ACCESSOR_LACKS_A_PARAMETER_TYPE,
+                );
+            }
+        }
+    }
+
     pub(crate) fn contextual_getter_return_type_for_class_accessor(
         &mut self,
         getter_accessor: &tsz_parser::parser::node::AccessorData,

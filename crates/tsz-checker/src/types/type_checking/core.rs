@@ -936,6 +936,12 @@ impl<'a> CheckerState<'a> {
                 self.check_type_literal_overload_optionality(&type_lit.members.nodes);
                 for &member_idx in &type_lit.members.nodes {
                     self.check_type_member_for_parameter_properties(member_idx);
+                    // The noImplicitAny accessor family (TS7033/TS7032/TS7006).
+                    // Needs the sibling members to resolve the get/set pair.
+                    self.check_type_member_accessor_implicit_any(
+                        member_idx,
+                        &type_lit.members.nodes,
+                    );
                     // TS1170: Computed property in type literal must have literal/unique symbol type
                     if let Some(member_node) = self.ctx.arena.get(member_idx) {
                         if let Some(sig) = self.ctx.arena.get_signature(member_node) {

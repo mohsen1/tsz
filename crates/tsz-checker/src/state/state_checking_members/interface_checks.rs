@@ -290,6 +290,10 @@ impl<'a> CheckerState<'a> {
             self.check_styled_component_inner_component_constraint(member_idx);
             self.check_type_member_for_missing_names(member_idx);
             self.check_type_member_for_parameter_properties(member_idx);
+            // The noImplicitAny accessor family (TS7033/TS7032/TS7006). Needs
+            // the sibling members to resolve the get/set pair, so it cannot ride
+            // the per-member walk above.
+            self.check_type_member_accessor_implicit_any(member_idx, &iface.members.nodes);
             // TS1268: Check index signature parameter types
             self.check_index_signature_parameter_type(member_idx);
             // TS1169: Computed property in interface must have literal/unique symbol type
