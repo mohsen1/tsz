@@ -24,6 +24,19 @@
 //! and `computation::call::inner`'s optional-call callee resolution) stripped
 //! unconditionally, so both reported the strict-mode answer in every mode.
 //!
+//! A third chain-root call site, `computation::access`'s element-access path
+//! (`on?.[0]`, `on?.["foo"]`, `on?.[i]`), needs a further split on top of the
+//! strict/non-strict one above: in STRICT mode, `never`'s bracket-notation
+//! lookup (`getIndexedAccessType`, which distributes `never` over any index
+//! type) answers `never` silently for every key shape, while dot-notation
+//! property lookup (`getPropertyOfType`) explicitly reports TS2339 for a
+//! named member `never` doesn't have. So `on?.foo` (dot) keeps TS2339 in
+//! strict mode, but `on?.["foo"]` / `on?.[0]` / `on?.[i]` (bracket, any key)
+//! report NOTHING in strict mode — matching plain `(x: never)["foo"]` /
+//! `(x: never)[0]` reporting nothing outside a chain too. In non-strict
+//! mode, every access kind (dot and bracket alike) reports the ordinary
+//! TS18047/18048 family uniformly, same as the property case above.
+//!
 //! Oracle: `tsc` 7.0.2, `--noEmit --strictNullChecks <bool> --pretty false`.
 //! Every expectation below is pinned against a real run, in both modes.
 
@@ -68,12 +81,14 @@ fn null_receiver_optional_property_access_reports_ts18047_without_strict_null_ch
 #[test]
 fn null_receiver_optional_string_literal_element_access_reports_ts18047_without_strict_null_checks()
 {
-    // Uses a string-literal key (`on?.["foo"]`): the chain-root short
-    // circuit this test targets lives on the `literal_string` arm of
-    // `get_type_of_element_access_with_request`. A *numeric*-literal key
-    // (`on?.[0]`) does not reach that arm at all and reports nothing in
-    // either mode — a separate, pre-existing false-negative, not part of
-    // this gate's scope (see the NOTE this PR leaves on the board).
+    // Uses a string-literal key (`on?.["foo"]`). Element access (bracket
+    // notation) on `never` is NOT the same tsc code path as dot-notation
+    // property access: `getIndexedAccessType` distributes `never` over the
+    // index type and answers `never` silently for ANY key shape, while
+    // `getPropertyOfType` (dot access only) explicitly reports TS2339 for a
+    // named lookup `never` has no member for. Confirmed on the pinned
+    // oracle: `(n: never)["foo"]` and `(n: never).foo` disagree in BOTH
+    // strict and non-strict mode — only the dot form reports TS2339.
     let source = "declare const on: null;\non?.[\"foo\"];";
     let lax = non_strict(source);
     assert_eq!(
@@ -88,10 +103,85 @@ fn null_receiver_optional_string_literal_element_access_reports_ts18047_without_
     );
 
     let strict_codes = strict(source);
+    assert!(
+        strict_codes.is_empty(),
+        "strict mode must NOT report TS2339 for bracket access `on?.[\"foo\"]` — only dot \
+         access hits `never`'s named-property lookup; bracket access resolves silently \
+         through indexed-access distribution over `never`, got: {strict_codes:?}"
+    );
+}
+
+#[test]
+fn null_receiver_optional_numeric_literal_element_access_reports_ts18047_without_strict_null_checks()
+ {
+    // The false-negative this test file's numeric-key TODO pointed at
+    // (`on?.[0]` reported nothing in either mode): fixed alongside the
+    // string-literal-bracket correction above, since both are the same
+    // "element access on a wholly-nullish chain root" gate.
+    for binder in ["on", "probe", "receiver"] {
+        let source = format!("declare const {binder}: null;\n{binder}?.[0];");
+        let lax = non_strict(&source);
+        assert_eq!(
+            count(&lax, TS18047),
+            1,
+            "expected TS18047 for `{binder}?.[0]` without strictNullChecks, got: {lax:?}"
+        );
+
+        let strict_codes = strict(&source);
+        assert!(
+            strict_codes.is_empty(),
+            "strict mode must report nothing for `{binder}?.[0]` (matches `(x: never)[0]`), \
+             got: {strict_codes:?}"
+        );
+    }
+}
+
+#[test]
+fn null_receiver_optional_computed_element_access_reports_ts18047_without_strict_null_checks() {
+    // Non-literal keys (identifier index expressions), both a `number`- and
+    // a `string`-typed index. Neither is `literal_string` nor `literal_index`
+    // in the checker's own terms, so this exercises the general element-
+    // access branch rather than either literal fast path.
+    let numeric_index = "declare const on: null;\ndeclare const i: number;\non?.[i];";
+    let lax = non_strict(numeric_index);
     assert_eq!(
-        count(&strict_codes, TS2339),
+        count(&lax, TS18047),
         1,
-        "strict mode must keep TS2339 for `on?.[\"foo\"]`, got: {strict_codes:?}"
+        "expected TS18047 for `on?.[i]` (number index) without strictNullChecks, got: {lax:?}"
+    );
+    let strict_codes = strict(numeric_index);
+    assert!(
+        strict_codes.is_empty(),
+        "strict mode must report nothing for `on?.[i]`, got: {strict_codes:?}"
+    );
+
+    let string_index = "declare const on: null;\ndeclare const s: string;\non?.[s];";
+    let lax = non_strict(string_index);
+    assert_eq!(
+        count(&lax, TS18047),
+        1,
+        "expected TS18047 for `on?.[s]` (string index) without strictNullChecks, got: {lax:?}"
+    );
+    let strict_codes = strict(string_index);
+    assert!(
+        strict_codes.is_empty(),
+        "strict mode must report nothing for `on?.[s]`, got: {strict_codes:?}"
+    );
+}
+
+#[test]
+fn undefined_receiver_optional_element_access_reports_ts18048_without_strict_null_checks() {
+    let source = "declare const ou: undefined;\nou?.[0];";
+    let lax = non_strict(source);
+    assert_eq!(
+        count(&lax, TS18048),
+        1,
+        "expected TS18048 for `ou?.[0]` without strictNullChecks, got: {lax:?}"
+    );
+    let strict_codes = strict(source);
+    assert!(
+        strict_codes.is_empty(),
+        "strict mode must report nothing for `ou?.[0]`, got: {strict_codes:?}"
     );
 }
 
@@ -211,5 +301,21 @@ fn partial_union_optional_chain_stays_clean_in_both_modes() {
             .iter()
             .all(|c| ![TS18047, TS2339, TS2721, TS2349].contains(c)),
         "`(() => void | null)?.()` must stay clean without strictNullChecks, got: {lax_call:?}"
+    );
+
+    let element_source = "declare const arr: number[] | null;\narr?.[0];";
+    let lax_element = non_strict(element_source);
+    assert!(
+        lax_element
+            .iter()
+            .all(|c| ![TS18047, TS18048, TS2339, TS2721, TS2722, TS2349].contains(c)),
+        "`(number[] | null)?.[0]` must stay clean without strictNullChecks, got: {lax_element:?}"
+    );
+    let strict_element = strict(element_source);
+    assert!(
+        strict_element
+            .iter()
+            .all(|c| ![TS18047, TS18048, TS2339, TS2721, TS2722, TS2349].contains(c)),
+        "`(number[] | null)?.[0]` must stay clean under strictNullChecks, got: {strict_element:?}"
     );
 }
