@@ -220,6 +220,10 @@ name = "qualified_type_namespace_shadow_tests"
 path = "tests/qualified_type_namespace_shadow_tests.rs"
 
 [[test]]
+name = "jsdoc_nameless_typedef_namespace_root_tests"
+path = "tests/jsdoc_nameless_typedef_namespace_root_tests.rs"
+
+[[test]]
 name = "imported_infer_readonly_alias_cli_tests"
 path = "tests/imported_infer_readonly_alias_cli_tests.rs"
 
