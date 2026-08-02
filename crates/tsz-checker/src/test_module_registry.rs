@@ -165,6 +165,8 @@ mod commonjs_reentrant_surface_tests;
 mod commonjs_require_binding_type_meaning_tests;
 #[path = "tests/computed_alias_source_display_tests.rs"]
 mod computed_alias_source_display_tests;
+#[path = "tests/computed_member_name_diagnostic_display_tests.rs"]
+mod computed_member_name_diagnostic_display_tests;
 #[path = "tests/computed_symbol_name_unification_tests.rs"]
 mod computed_symbol_name_unification_tests;
 #[path = "tests/concise_body_return_excess_property_tests.rs"]
