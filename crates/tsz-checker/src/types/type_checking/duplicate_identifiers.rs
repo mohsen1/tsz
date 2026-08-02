@@ -829,14 +829,35 @@ impl<'a> CheckerState<'a> {
                         declarations[i];
                     let (other_idx, other_flags, other_is_local, other_is_exported, other_origin) =
                         declarations[j];
-                    let decl_arena =
+                    // `arena_for_declaration_or` falls back to the per-symbol
+                    // `symbol_arenas` map (the last arena the binder touched
+                    // for this symbol) when no precise per-declaration entry
+                    // exists. That legacy map goes stale the moment a local
+                    // declaration merges into a lib-derived symbol without
+                    // registering its own `declaration_arenas` entry (e.g. a
+                    // module-scoped `var` shadowing-disabled merge into a lib
+                    // global): the lookup then silently resolves the local
+                    // declaration to the lib's arena instead of the current
+                    // file, corrupting `same_source_file` and the flag
+                    // normalization below. `decl_is_local`/`other_is_local`
+                    // are already derived from the authoritative
+                    // `declaration_arenas` walk (or the "no entry means
+                    // local" default) that built `declarations`, so trust
+                    // them directly instead of re-deriving the arena.
+                    let decl_arena = if decl_is_local {
+                        self.ctx.arena
+                    } else {
                         self.ctx
                             .binder
-                            .arena_for_declaration_or(sym_id, decl_idx, self.ctx.arena);
-                    let other_arena =
+                            .arena_for_declaration_or(sym_id, decl_idx, self.ctx.arena)
+                    };
+                    let other_arena = if other_is_local {
+                        self.ctx.arena
+                    } else {
                         self.ctx
                             .binder
-                            .arena_for_declaration_or(sym_id, other_idx, self.ctx.arena);
+                            .arena_for_declaration_or(sym_id, other_idx, self.ctx.arena)
+                    };
                     let decl_conflict_flags =
                         self.normalize_duplicate_conflict_flags(decl_arena, decl_idx, decl_flags);
                     let other_conflict_flags = self.normalize_duplicate_conflict_flags(
