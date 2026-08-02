@@ -417,7 +417,17 @@ impl<'a> CheckerState<'a> {
             return TypeId::NEVER;
         }
 
-        let (object_type_for_access, nullish_cause) = self.split_nullish_type(object_type);
+        // `void` is `TypeFlags.Void`, never `TypeFlags.Nullable`, so tsc's
+        // `checkNonNullType` never treats a `void` receiver as nullish — it falls
+        // through to the element-access check itself. `split_nullish_type`
+        // normalizes `void` to `undefined` because narrowing needs that, so the
+        // non-null check has to exclude it here, the way the unary `+`/`-`/`~`
+        // arm (`check_nullish_unary_operand`) already does.
+        let (object_type_for_access, nullish_cause) = if object_type == TypeId::VOID {
+            (Some(object_type), None)
+        } else {
+            self.split_nullish_type(object_type)
+        };
         let Some(object_type_for_access) = object_type_for_access else {
             if access.question_dot_token {
                 return TypeId::UNDEFINED;

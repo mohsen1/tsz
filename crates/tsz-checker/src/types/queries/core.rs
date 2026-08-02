@@ -1545,10 +1545,21 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Without strictNullChecks, null/undefined are in every type's domain,
-        // so TS18047/TS18048/TS18049 are never emitted (matches tsc behavior).
+        // tsc's `checkNonNullTypeWithReporter` is not suppressed without
+        // `strictNullChecks`; its trigger narrows:
+        //
+        //   kind = (strictNullChecks ? getFalsyFlags(type) : type.flags) & TypeFlags.Nullable
+        //
+        // So in that mode only an operand whose OWN type is `null`/`undefined`
+        // reports, and a merely-nullable union does not. `is_definitely_nullish`
+        // is the caller's `non_nullish.is_none()` — the whole operand type is the
+        // nullish cause — and `cause` is restricted to the two `TypeFlags.Nullable`
+        // members, which excludes a `null | undefined` union exactly as testing
+        // `type.flags` (`TypeFlags.Union`) does.
         // Note: TS18050 for literal null/undefined is handled above.
-        if !self.ctx.compiler_options.strict_null_checks {
+        let reports_without_strict_null_checks = is_definitely_nullish
+            && crate::query_boundaries::type_predicates::has_ts_nullable_flag(cause);
+        if !self.ctx.compiler_options.strict_null_checks && !reports_without_strict_null_checks {
             return;
         }
 

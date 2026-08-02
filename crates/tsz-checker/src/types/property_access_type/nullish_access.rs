@@ -189,7 +189,11 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        if !self.ctx.compiler_options.strict_null_checks {
+        // `is_type_nullish` above is tsc's non-strict trigger
+        // (`type.flags & TypeFlags.Nullable`), so a receiver that *is*
+        // `null`/`undefined` keeps reporting here without `strictNullChecks` —
+        // only the falsy-facts arm is strict-only.
+        if !self.ctx.compiler_options.strict_null_checks && !is_type_nullish {
             return self.finalize_property_access_result(
                 idx,
                 property_type.unwrap_or(TypeId::ERROR),

@@ -949,7 +949,19 @@ impl<'a> CheckerState<'a> {
                     self.error_class_constructor_without_new_at(callee_type, callee_expr);
                 } else if self.is_get_accessor_call(callee_expr) {
                     self.error_get_accessor_not_callable_at(callee_expr);
-                } else if self.ctx.compiler_options.strict_null_checks {
+                } else if callee_type != TypeId::VOID
+                    && (self.ctx.compiler_options.strict_null_checks
+                        || crate::query_boundaries::type_predicates::has_ts_nullable_flag(
+                            callee_type,
+                        ))
+                {
+                    // tsc routes the callee through the same
+                    // `checkNonNullTypeWithReporter` as every other non-null
+                    // check, with `reportCannotInvokePossiblyNullOrUndefinedError`
+                    // as the reporter. Without `strictNullChecks` the trigger
+                    // narrows to `type.flags & TypeFlags.Nullable`, so a callee
+                    // that *is* `null`/`undefined` still reports TS2721/2722 —
+                    // it is not "not callable".
                     let (_non_nullish, nullish_cause) = self.split_nullish_type(callee_type);
                     if let Some(cause) = nullish_cause {
                         self.error_cannot_invoke_possibly_nullish_at(cause, callee_expr);

@@ -1104,12 +1104,19 @@ impl CheckerState<'_> {
         if matches!(ty, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN) {
             return Some(ty);
         }
+        // `void` is `TypeFlags.Void`, never `TypeFlags.Nullable`, so tsc's
+        // `checkNonNullType` leaves it to the structural object check below —
+        // the same exclusion `check_nullish_unary_operand` already makes.
+        if ty == TypeId::VOID {
+            return Some(ty);
+        }
         let (non_nullish, nullish_cause) = self.split_nullish_type(ty);
         let Some(cause) = nullish_cause else {
             return Some(ty);
         };
         if !self.ctx.compiler_options.strict_null_checks
             && !self.is_literal_null_or_undefined_node(idx)
+            && !crate::query_boundaries::type_predicates::has_ts_nullable_flag(ty)
         {
             return Some(ty);
         }

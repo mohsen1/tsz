@@ -364,7 +364,10 @@ impl<'a> CheckerState<'a> {
         }
         let (_non_nullish, nullish_cause) = self.split_nullish_type(operand_type);
         let Some(cause) = nullish_cause else { return };
-        if !self.ctx.strict_null_checks() && !self.is_literal_null_or_undefined_node(operand) {
+        if !self.ctx.strict_null_checks()
+            && !self.is_literal_null_or_undefined_node(operand)
+            && !crate::query_boundaries::type_predicates::has_ts_nullable_flag(operand_type)
+        {
             return;
         }
         self.emit_nullish_operand_error(operand, cause);

@@ -179,7 +179,9 @@ impl<'a> CheckerState<'a> {
                 let elements_empty = pattern_data
                     .map(|p| p.elements.nodes.is_empty())
                     .unwrap_or(false);
-                if elements_empty {
+                // Same `checkNonNullNonVoidType` arm as the binding-pattern
+                // statement path: strict-only in tsc, so the gate stays here.
+                if elements_empty && self.ctx.compiler_options.strict_null_checks {
                     let (non_nullish_type, nullish_cause) = self.split_nullish_type(effective_type);
                     if let Some(cause) = nullish_cause {
                         self.report_nullish_object(param.name, cause, non_nullish_type.is_none());
