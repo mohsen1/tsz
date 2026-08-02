@@ -379,9 +379,33 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         // determine compatibility (avoids accepting conflicting intersections).
         let member_list = self.checker.interner.type_list(TypeListId(list_id));
         let evaluated_target = self.checker.evaluate_type(self.target);
-        let target_is_object_like = object_shape_id(self.checker.interner, evaluated_target)
-            .is_some()
-            || object_with_index_shape_id(self.checker.interner, evaluated_target).is_some();
+        let target_shape = object_shape_id(self.checker.interner, evaluated_target)
+            .map(|id| self.checker.interner.object_shape(id))
+            .or_else(|| {
+                object_with_index_shape_id(self.checker.interner, evaluated_target)
+                    .map(|id| self.checker.interner.object_shape(id))
+            });
+        let target_is_object_like = target_shape.is_some();
+        if target_is_object_like {
+            // O(1) nominal short-circuit before paying for the merged-property
+            // structural walk below: if any single member's verified heritage
+            // chain already reaches the target's def, the whole intersection
+            // is a subtype regardless of the other members (subtyping is
+            // transitive through nominal inheritance). This is what lets a
+            // source like `Window & { extra: number }` avoid re-walking
+            // `Window`'s full DOM-lib structural shape on every relation
+            // (#16089) the way a plain `interface W extends Window {}` source
+            // already does.
+            for &member in member_list.iter() {
+                if self.checker.intersection_member_nominally_extends_target(
+                    member,
+                    self.target,
+                    target_shape.as_deref(),
+                ) {
+                    return SubtypeResult::True;
+                }
+            }
+        }
         if !target_is_object_like {
             for &member in member_list.iter() {
                 if self.checker.check_subtype(member, self.target).is_true() {
