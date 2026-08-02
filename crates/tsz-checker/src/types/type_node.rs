@@ -310,6 +310,15 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 return TypeId::NEVER;
             }
 
+            if let Some(collapsed) =
+                crate::query_boundaries::type_predicates::collapse_pure_nullish_union_nonstrict(
+                    self.ctx.compiler_options.strict_null_checks,
+                    &member_types,
+                )
+            {
+                return collapsed;
+            }
+
             return type_construction::type_node_annotation_union_with_origin(
                 self.ctx.types,
                 member_types,

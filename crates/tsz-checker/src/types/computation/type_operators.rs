@@ -44,6 +44,15 @@ impl<'a> CheckerState<'a> {
                 return member_types[0];
             }
 
+            if let Some(collapsed) =
+                crate::query_boundaries::type_predicates::collapse_pure_nullish_union_nonstrict(
+                    self.ctx.compiler_options.strict_null_checks,
+                    &member_types,
+                )
+            {
+                return collapsed;
+            }
+
             let result = tsz_solver::utils::union_or_single_literal_reduce(
                 self.ctx.types,
                 member_types.clone(),
