@@ -1532,7 +1532,16 @@ impl<'a> TypeResolver for CheckerContext<'a> {
     }
 
     fn get_interface_extends(&self, def_id: DefId) -> Option<DefId> {
-        self.definition_store.get_extends(def_id)
+        self.type_env
+            .try_borrow()
+            .ok()
+            .and_then(|env| env.get_interface_extends_def(def_id))
+            .or_else(|| {
+                self.type_environment
+                    .try_borrow()
+                    .ok()
+                    .and_then(|env| env.get_interface_extends_def(def_id))
+            })
     }
 
     fn class_def_for_instance_type(&self, type_id: TypeId) -> Option<DefId> {

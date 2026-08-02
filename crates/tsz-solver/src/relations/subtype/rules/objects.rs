@@ -769,19 +769,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         else {
             return false;
         };
-        // Classes only. The interface widening (#16137) was reverted here:
-        // its premise — that tsc's declaration-time override check guarantees
-        // the interface is a structural subtype of its heritage parent — holds
-        // only when that check PASSED. `class_extends` is a map the checker
-        // *registers*, so a class whose `extends` was rejected is simply absent
-        // from it; `interface_extends` has no registration site and resolves by
-        // name, reporting the edge as written regardless of TS2430. `lib.dom.d.ts`
-        // contains such an edge (`HTMLTrackElement extends HTMLElement`, TS2430),
-        // so the shortcut wrongly accepted it and TS2344 was lost on 3 conformance
-        // rows. See #16142 for the durable fix (register verified interface
-        // heritage the way `register_class_extends` does).
+        // #16137 widened this to interfaces; #16142 found the widening unsound
+        // (an interface's heritage edge was trusted even when TS2430 rejected
+        // it) and #16148 reverted to classes-only as a stopgap. This restores
+        // the widening on the durable fix: `verified_interface_extends` below
+        // is populated only when the checker's own TS2430 check passed, so an
+        // interface source is now exactly as trustworthy as a class source.
         let source_kind = self.resolver.get_def_kind(source_def);
-        if !matches!(source_kind, Some(crate::def::DefKind::Class)) {
+        if !matches!(
+            source_kind,
+            Some(crate::def::DefKind::Class | crate::def::DefKind::Interface)
+        ) {
             return false;
         }
         let Some(target_def) = target_def else {
@@ -801,13 +799,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let mut current = source_def;
         for _ in 0..50 {
             // Classes use the checker-verified, generics-aware `class_extends`
-            // map. Interfaces never populate it, so they fall back to the
-            // name-resolved, single-parent heritage edge — sound because tsc
-            // requires a heritage clause to already be a structurally
-            // compatible override at declaration time, but incomplete for a
-            // multi-parent `interface B extends A, C {}` (a miss there just
-            // returns `false` here, which re-runs the always-correct
-            // structural walk in the caller).
+            // map. Interfaces use `verified_interface_extends`, a single-parent
+            // edge the checker registers only when
+            // `check_interface_extension_compatibility` found no TS2430
+            // ("incorrectly extends") for this declaration — trusting the raw
+            // name-resolved heritage edge instead is unsound, since tsc's own
+            // override check can reject a declared `extends` (#16142). Both
+            // maps miss on a multi-parent `interface B extends A, C {}` (only
+            // the first parent is tracked); a miss just returns `false` here,
+            // which re-runs the always-correct structural walk in the caller.
             let parent = match self.resolver.get_def_kind(current) {
                 Some(crate::def::DefKind::Class) => self.resolver.get_class_extends(current),
                 Some(crate::def::DefKind::Interface) => {

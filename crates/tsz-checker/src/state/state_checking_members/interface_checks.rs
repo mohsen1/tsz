@@ -9,8 +9,10 @@ use crate::symbols_domain::name_text::{
 };
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::NodeAccess;
+use tsz_parser::parser::node::{InterfaceData, NodeAccess};
 use tsz_parser::parser::{NodeList, syntax_kind_ext};
+use tsz_scanner::SyntaxKind;
+use tsz_solver::def::DefId;
 use tsz_solver::{TypeId, TypeParamInfo};
 
 type TypeParameterScopeUpdates = Vec<(String, Option<TypeId>, bool)>;
@@ -522,12 +524,75 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check that interface correctly extends base interfaces (error 2430)
+        let ts2430_diag_start = self.ctx.diagnostics.len();
         self.check_interface_extension_compatibility(stmt_idx, iface);
+        self.register_verified_interface_extends_if_clean(stmt_idx, iface, ts2430_diag_start);
 
         // Check variance annotations match actual usage (TS2636)
         self.check_variance_annotations(stmt_idx, &iface.type_parameters);
 
         self.pop_type_parameters(type_param_updates);
+    }
+
+    /// Register the interface's first `extends` heritage edge as
+    /// checker-verified, but only when `check_interface_extension_compatibility`
+    /// did not fire TS2430 ("incorrectly extends") for this declaration.
+    ///
+    /// The solver's nominal fast path (`class_instance_extends_target_def`)
+    /// trusts this edge to skip the structural member walk against a lib
+    /// target. Trusting the raw name-resolved heritage edge
+    /// (`DefinitionStore::get_extends`, populated unconditionally at
+    /// semantic-construction time) instead is unsound: it also holds for a
+    /// declared-but-rejected `extends`, e.g. `HTMLTrackElement extends
+    /// HTMLElement` in `lib.dom.d.ts`, whose property override tsc itself
+    /// rejects with TS2430 (#16142).
+    fn register_verified_interface_extends_if_clean(
+        &mut self,
+        stmt_idx: NodeIndex,
+        iface: &InterfaceData,
+        ts2430_diag_start: usize,
+    ) {
+        let fired = self.ctx.diagnostics[ts2430_diag_start..].iter().any(|d| {
+            d.code == crate::diagnostics::diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE
+        });
+        if fired {
+            return;
+        }
+        let Some(iface_sym_id) = self.ctx.binder.get_node_symbol(stmt_idx) else {
+            return;
+        };
+        let Some(parent_def_id) = self.first_interface_extends_def_id(iface) else {
+            return;
+        };
+        let child_def_id = self.ctx.get_or_create_def_id(iface_sym_id);
+        if child_def_id != parent_def_id {
+            self.ctx
+                .register_interface_extends_in_envs(child_def_id, parent_def_id);
+        }
+    }
+
+    /// Resolve the `DefId` of the first type in the interface's (single)
+    /// `extends` heritage clause, mirroring the "only the first extends name"
+    /// semantics of the unconditional name-resolved edge in
+    /// `DefinitionStore::get_extends`.
+    fn first_interface_extends_def_id(&mut self, iface: &InterfaceData) -> Option<DefId> {
+        let heritage_clauses = iface.heritage_clauses.as_ref()?;
+        let &clause_idx = heritage_clauses.nodes.first()?;
+        let clause_node = self.ctx.arena.get(clause_idx)?;
+        let heritage = self.ctx.arena.get_heritage_clause(clause_node)?;
+        if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+            return None;
+        }
+        let &type_idx = heritage.types.nodes.first()?;
+        let type_node = self.ctx.arena.get(type_idx)?;
+        let expr_idx = self
+            .ctx
+            .arena
+            .get_expr_type_args(type_node)
+            .map(|expr_type_args| expr_type_args.expression)
+            .unwrap_or(type_idx);
+        let base_sym_id = self.resolve_heritage_symbol(expr_idx)?;
+        Some(self.ctx.get_or_create_def_id(base_sym_id))
     }
 
     fn interface_member_is_mapped_type(&self, member_idx: NodeIndex) -> bool {

@@ -55,6 +55,9 @@ pub enum DeferredFlowEnvWrite {
     /// `register_class_extends` when absent — merge a child env snapshot
     /// without overwriting a parent edge.
     RegisterClassExtendsIfMissing { def_id: DefId, parent_def_id: DefId },
+    /// `register_interface_extends` — register a checker-verified (no TS2430)
+    /// interface `extends` parent.
+    RegisterInterfaceExtends { def_id: DefId, parent_def_id: DefId },
     /// `register_def_symbol_mapping` — register the `DefId` <-> `SymbolId` bridge.
     RegisterDefSymbolMapping { def_id: DefId, sym_id: SymbolId },
     /// `register_augmented_def` — re-apply an augmentation merge.
@@ -197,6 +200,10 @@ impl DeferredFlowEnvWrite {
                     env.register_class_extends(*def_id, *parent_def_id);
                 }
             }
+            Self::RegisterInterfaceExtends {
+                def_id,
+                parent_def_id,
+            } => env.register_interface_extends(*def_id, *parent_def_id),
             Self::RegisterDefSymbolMapping { def_id, sym_id } => {
                 env.register_def_symbol_mapping(*def_id, *sym_id);
             }

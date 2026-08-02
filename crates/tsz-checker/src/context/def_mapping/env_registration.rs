@@ -153,6 +153,16 @@ impl CheckerContext<'_> {
         });
     }
 
+    /// Register a checker-verified (no TS2430) interface `extends` relationship
+    /// in **both** type environments. See `TypeEnvironment::verified_interface_extends`
+    /// for why this is gated on verification rather than raw name resolution.
+    pub fn register_interface_extends_in_envs(&self, def_id: DefId, parent_def_id: DefId) {
+        self.register_in_envs(DeferredFlowEnvWrite::RegisterInterfaceExtends {
+            def_id,
+            parent_def_id,
+        });
+    }
+
     /// Register a `DefId` ↔ `SymbolId` bridge in **both** type environments.
     ///
     /// This keeps evaluator and flow-analyzer resolution paths aligned for

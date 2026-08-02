@@ -107,8 +107,6 @@ fn shape_with_symbol(symbol: SymbolId) -> ObjectShape {
 /// `W2 extends Window {}` against a lib-def `Window` target: the new
 /// `DefKind::Interface` arm must consult `get_interface_extends` (the
 /// class-only map is empty) and return `true` in one hop.
-#[ignore = "#16142: the interface fast path is disabled until verified heritage is registered; \
-            its premise fails when the `extends` was itself rejected (TS2430)"]
 #[test]
 fn interface_source_uses_interface_extends_map() {
     let interner = TypeInterner::new();
@@ -224,8 +222,6 @@ fn interface_source_ignores_class_extends_map() {
 /// Multi-hop chain: `C extends B {}`, `B extends A {}`, target `A`. Proves the
 /// walk re-checks `get_def_kind` at every hop rather than only the source's
 /// own kind, and follows more than one edge.
-#[ignore = "#16142: the interface fast path is disabled until verified heritage is registered; \
-            its premise fails when the `extends` was itself rejected (TS2430)"]
 #[test]
 fn interface_multi_hop_chain_walks_to_target() {
     let interner = TypeInterner::new();
