@@ -541,6 +541,8 @@ mod member_assignment_narrowing_join_tests;
 mod merged_interface_constraint_relation_routing_arch_tests;
 #[path = "tests/method_return_type_elaboration_tests.rs"]
 mod method_return_type_elaboration_tests;
+#[path = "tests/module_scoped_var_shadows_lib_global_ts2300_tests.rs"]
+mod module_scoped_var_shadows_lib_global_ts2300_tests;
 #[path = "tests/multi_overload_infer_capture_tests.rs"]
 mod multi_overload_infer_capture_tests;
 #[path = "tests/mutable_binding_widening_from_const_literal_tests.rs"]
