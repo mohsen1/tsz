@@ -27,6 +27,8 @@ use tsz_checker::test_utils::check_source_strict_codes;
 const TS7008: u32 = 7008; // Member implicitly has an 'any' type.
 const TS7010: u32 = 7010; // Lacks return-type annotation, implicitly 'any' return.
 const TS7033: u32 = 7033; // Property implicitly 'any', get accessor lacks return type.
+const TS7006: u32 = 7006; // Parameter implicitly has an 'any' type.
+const TS7032: u32 = 7032; // Property implicitly 'any', set accessor lacks a param type.
 
 fn has(codes: &[u32], code: u32) -> bool {
     codes.contains(&code)
@@ -90,6 +92,106 @@ fn getter_paired_with_annotated_setter_is_clean() {
         !has(&codes, TS7033),
         "paired annotated setter supplies the getter's type: {codes:?}"
     );
+}
+
+// --- the pairing rule: who gets blamed when neither side names a type -------
+//
+// A get/set pair shares ONE property type. It comes from the getter's return
+// type (annotation, or inferred from a body) if there is one, else from the
+// setter's parameter annotation. When nothing supplies it, `tsc` blames the
+// *setter* with TS7032 — the getter is only the blame site when it has no
+// paired setter at all. Issue #16183.
+
+#[test]
+fn unannotated_pair_blames_the_setter_not_the_getter() {
+    // tsc: TS7032 on the setter name, and no TS7033.
+    let codes = check_source_strict_codes("declare class A { get g(); set g(v); }");
+    assert!(
+        has(&codes, TS7032),
+        "expected TS7032 on the setter: {codes:?}"
+    );
+    assert!(
+        !has(&codes, TS7033),
+        "a getter with any paired setter is never the blame site: {codes:?}"
+    );
+}
+
+#[test]
+fn unannotated_pair_blames_the_setter_in_declaration_order_too() {
+    // Same pair, setter declared first — pairing is by name, not by order.
+    let codes = check_source_strict_codes("declare class A { set g(v); get g(); }");
+    assert!(has(&codes, TS7032), "expected TS7032: {codes:?}");
+    assert!(
+        !has(&codes, TS7033),
+        "no TS7033 on the paired getter: {codes:?}"
+    );
+}
+
+#[test]
+fn unannotated_static_pair_blames_the_setter() {
+    let codes = check_source_strict_codes("declare class A { static get g(); static set g(v); }");
+    assert!(has(&codes, TS7032), "expected TS7032: {codes:?}");
+    assert!(!has(&codes, TS7033), "no TS7033: {codes:?}");
+}
+
+#[test]
+fn unannotated_pair_does_not_report_ts7006_on_the_parameter() {
+    // The paired getter still contextually types the parameter, so TS7006 stays
+    // suppressed even though TS7032 fires. These two suppressions are different
+    // questions and a single flag cannot answer both.
+    let codes = check_source_strict_codes("declare class A { get g(); set g(v); }");
+    assert!(
+        !has(&codes, TS7006),
+        "paired getter contextually types the param: {codes:?}"
+    );
+}
+
+#[test]
+fn annotated_getter_supplies_the_pair_type() {
+    let codes = check_source_strict_codes("declare class A { get g(): number; set g(v); }");
+    assert!(
+        !has(&codes, TS7032),
+        "getter annotation supplies it: {codes:?}"
+    );
+    assert!(
+        !has(&codes, TS7033),
+        "getter annotation supplies it: {codes:?}"
+    );
+}
+
+#[test]
+fn getter_with_a_body_supplies_the_pair_type() {
+    // The common non-ambient shape. The getter's body infers `number`, so the
+    // pair has a type and neither side reports — this is the row a naive
+    // "any paired getter without an annotation means TS7032" rule would break.
+    let codes = check_source_strict_codes("class B { get g() { return 1; } set g(v) {} }");
+    assert!(!has(&codes, TS7032), "inferred from the body: {codes:?}");
+    assert!(!has(&codes, TS7033), "inferred from the body: {codes:?}");
+}
+
+#[test]
+fn lone_unannotated_setter_reports_both_ts7032_and_ts7006() {
+    // No getter to contextually type the parameter, so both fire.
+    let codes = check_source_strict_codes("declare class A { set s(v); }");
+    assert!(has(&codes, TS7032), "expected TS7032: {codes:?}");
+    assert!(has(&codes, TS7006), "expected TS7006: {codes:?}");
+}
+
+#[test]
+fn any_annotation_on_the_setter_supplies_the_pair_type() {
+    // It is the annotation's *presence* that matters, not its type — `any`
+    // written explicitly is not an implicit any.
+    let codes = check_source_strict_codes("declare class A { get g(); set g(v: any); }");
+    assert!(!has(&codes, TS7032), "explicit annotation: {codes:?}");
+    assert!(!has(&codes, TS7033), "explicit annotation: {codes:?}");
+}
+
+#[test]
+fn hidden_ambient_pair_stays_clean_through_the_pairing_rule() {
+    // The surface rule from #16178 still wins over the pairing rule.
+    let codes = check_source_strict_codes("declare class A { get #g(); set #g(v); }");
+    assert!(!has(&codes, TS7032), "hidden from the surface: {codes:?}");
+    assert!(!has(&codes, TS7033), "hidden from the surface: {codes:?}");
 }
 
 #[test]

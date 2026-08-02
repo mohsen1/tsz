@@ -115,6 +115,48 @@ impl<'a> CheckerState<'a> {
     /// The mirror of `paired_getter_in_members`: given a getter, find its
     /// setter by property name, falling back to computed-name symbol
     /// identity when the name is not a literal.
+    /// The `set` accessor paired with `getter_accessor` in the enclosing class.
+    ///
+    /// Distinct from `contextual_getter_return_type_for_class_accessor`, which
+    /// answers only for an *annotated* setter because it is looking for a type.
+    /// This answers whether the pair exists at all, which is what decides where
+    /// `tsc` anchors a missing property type: a getter with any paired setter is
+    /// never the blame site.
+    pub(crate) fn paired_setter_member_for_getter(
+        &self,
+        getter_accessor: &tsz_parser::parser::node::AccessorData,
+    ) -> Option<NodeIndex> {
+        let class_info = self.ctx.enclosing_class.as_ref()?;
+        let members = class_info.member_nodes.clone();
+        self.paired_setter_in_members(&members, getter_accessor)
+    }
+
+    /// Whether the `get` accessor paired with `setter_accessor` supplies the
+    /// property's type — by a return-type annotation, or by a body to infer one
+    /// from.
+    ///
+    /// This is deliberately *not* the same question as "does a paired getter
+    /// exist". A paired getter always contextually types the setter's parameter
+    /// (so it always suppresses TS7006), but it only supplies the *property's*
+    /// type when it has an annotation or a body. A bodyless, unannotated getter
+    /// — the ordinary shape in a `declare class` — supplies nothing, and `tsc`
+    /// then reports TS7032 on the setter.
+    pub(crate) fn paired_getter_supplies_property_type(
+        &self,
+        setter_accessor: &tsz_parser::parser::node::AccessorData,
+    ) -> bool {
+        let Some(getter_idx) = self.paired_getter_member_for_setter(setter_accessor) else {
+            return false;
+        };
+        let Some(getter_node) = self.ctx.arena.get(getter_idx) else {
+            return false;
+        };
+        let Some(getter) = self.ctx.arena.get_accessor(getter_node) else {
+            return false;
+        };
+        getter.type_annotation.is_some() || getter.body.is_some()
+    }
+
     pub(crate) fn paired_setter_in_members(
         &self,
         members: &[NodeIndex],
@@ -313,10 +355,16 @@ impl<'a> CheckerState<'a> {
     /// ## Error Messages:
     /// - TS1052: "A 'set' accessor parameter cannot have an initializer."
     /// - TS1053: "A 'set' accessor cannot have rest parameter."
+    ///
+    /// `paired_getter_supplies_type` is the TS7032 half of `has_paired_getter`:
+    /// a paired getter always contextually types the parameter (TS7006), but
+    /// only one with an annotation or a body gives the *property* a type
+    /// (TS7032). See `paired_getter_supplies_property_type`.
     pub(crate) fn check_setter_parameter(
         &mut self,
         parameters: &[NodeIndex],
         has_paired_getter: bool,
+        paired_getter_supplies_type: bool,
         accessor_jsdoc: Option<&str>,
         accessor_name: Option<NodeIndex>,
     ) {
@@ -367,18 +415,29 @@ impl<'a> CheckerState<'a> {
             // the getter return type, so it's contextually typed (suppress TS7006).
             // Also check for inline JSDoc @param/@type annotations and accessor-level
             // JSDoc @param annotations (e.g., `/** @param {string} value */ set p(value)`).
-            let has_jsdoc = has_paired_getter
-                || self.param_has_inline_jsdoc_type(param_idx)
+            let jsdoc_declares_type = self.param_has_inline_jsdoc_type(param_idx)
                 || accessor_jsdoc.is_some_and(|jsdoc| {
                     let pname = self.parameter_name_for_error(param.name);
                     Self::jsdoc_has_param_type(jsdoc, &pname)
                         || Self::jsdoc_type_tag_declares_callable(jsdoc)
                 });
+            let has_jsdoc = has_paired_getter || jsdoc_declares_type;
             self.maybe_report_implicit_any_parameter(param, has_jsdoc, 0);
 
             // Also report TS7032 on the setter name if the parameter implicitly has type any.
+            //
+            // A paired getter suppresses this only when it actually supplies the
+            // property's type. `declare class A { get g(); set g(v); }` has a
+            // paired getter and still reports TS7032 on the setter, because
+            // neither accessor names a type — the pair shares one property type
+            // and nothing provides it. The TS7006 flag above cannot be reused
+            // here: it folds in `has_paired_getter` unconditionally, which is
+            // right for contextually typing the parameter and wrong for deciding
+            // whether the property has a type at all.
+            let property_type_supplied =
+                jsdoc_declares_type || (has_paired_getter && paired_getter_supplies_type);
             if param.type_annotation.is_none()
-                && !has_jsdoc
+                && !property_type_supplied
                 && self.ctx.no_implicit_any()
                 && let Some(name_idx) = accessor_name
             {
