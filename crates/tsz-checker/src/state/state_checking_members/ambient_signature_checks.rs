@@ -1542,22 +1542,35 @@ impl<'a> CheckerState<'a> {
                 let falls_through = self.function_body_falls_through(accessor.body);
 
                 // TS2378: A 'get' accessor must return a value (regardless of type annotation)
-                // Get accessors ALWAYS require a return value, even without type annotation
+                // Get accessors ALWAYS require a return value, even without type annotation.
+                // tsc computes this from binder-set HasImplicitReturn/HasExplicitReturn flags
+                // in `checkAccessorDeclarationDiagnostics`, entirely independently of the
+                // code-path completeness check below (`checkAllCodePathsInNonVoidFunctionReturnOrThrow`).
+                // The two are separate passes and are not mutually exclusive.
                 if !has_return && falls_through {
-                    // Use TS2378 for getters without return statements
                     self.error_at_node(
                         accessor.name,
                         "A 'get' accessor must return a value.",
                         diagnostic_codes::A_GET_ACCESSOR_MUST_RETURN_A_VALUE,
                     );
-                } else if has_type_annotation && requires_return && falls_through {
-                    // TS2366: always emit when return type doesn't include undefined
-                    use crate::diagnostics::diagnostic_messages;
-                    self.error_at_node(
-                        accessor.type_annotation,
-                        diagnostic_messages::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
-                        diagnostic_codes::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
-                    );
+                }
+                if has_type_annotation && requires_return && falls_through {
+                    if !has_return {
+                        // TS2355: no return statements at all.
+                        self.error_at_node(
+                            accessor.type_annotation,
+                            "A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.",
+                            diagnostic_codes::A_FUNCTION_WHOSE_DECLARED_TYPE_IS_NEITHER_UNDEFINED_VOID_NOR_ANY_MUST_RETURN_A_V,
+                        );
+                    } else {
+                        // TS2366: some return statements exist, but not every path returns.
+                        use crate::diagnostics::diagnostic_messages;
+                        self.error_at_node(
+                            accessor.type_annotation,
+                            diagnostic_messages::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
+                            diagnostic_codes::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
+                        );
+                    }
                 } else if self.ctx.no_implicit_returns()
                     && has_return
                     && falls_through

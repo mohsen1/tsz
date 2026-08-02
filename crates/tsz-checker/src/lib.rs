@@ -481,6 +481,9 @@ mod jsdoc_typedef_bare_import_tests;
 #[path = "../tests/jsx_component_attribute_tests.rs"]
 mod jsx_component_attribute_tests;
 #[cfg(test)]
+#[path = "tests/jump_statement_return_path_analysis_tests.rs"]
+mod jump_statement_return_path_analysis_tests;
+#[cfg(test)]
 #[path = "tests/keyof_type_parameter_deferred_heritage_tests.rs"]
 mod keyof_type_parameter_deferred_heritage_tests;
 #[cfg(test)]
