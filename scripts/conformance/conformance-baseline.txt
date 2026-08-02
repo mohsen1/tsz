@@ -129,7 +129,7 @@ FAIL TypeScript/tests/cases/compiler/jsExportMemberMergedWithModuleAugmentation.
 FAIL TypeScript/tests/cases/compiler/jsExportMemberMergedWithModuleAugmentation2.ts | expected:[TS2551,TS2671] actual:[TS2300,TS2551]
 FAIL TypeScript/tests/cases/compiler/jsExtendsImplicitAny.ts | expected:[TS8026] actual:[TS2314,TS8026]
 FAIL TypeScript/tests/cases/compiler/jsFileCompilationBindDeepExportsAssignment.ts | expected:[TS2304] actual:[TS2339]
-FAIL TypeScript/tests/cases/compiler/jsFileCompilationBindStrictModeErrors.ts | expected:[TS1489] actual:[TS1100,TS1101,TS1102,TS1214,TS1215,TS1489,TS2300,TS2410,TS2703]
+FAIL TypeScript/tests/cases/compiler/jsFileCompilationBindStrictModeErrors.ts | expected:[TS1489] actual:[TS1100,TS1101,TS1102,TS1214,TS1215,TS1489,TS2410,TS2703]
 FAIL TypeScript/tests/cases/compiler/jsFileFunctionParametersAsOptional2.ts | expected:[] actual:[TS2554]
 FAIL TypeScript/tests/cases/compiler/jsFunctionWithPrototypeNoErrorTruncationNoCrash.ts | expected:[TS2339,TS2683,TS7006] actual:[TS2339,TS2683,TS7006]
 FAIL TypeScript/tests/cases/compiler/jsdocImportTypeNodeNamespace.ts | expected:[TS2694] actual:[TS2352]
@@ -160,7 +160,7 @@ FAIL TypeScript/tests/cases/compiler/namedImportNonExistentName.ts | expected:[T
 FAIL TypeScript/tests/cases/compiler/narrowingUnionToNeverAssigment.ts | expected:[TS2322] actual:[TS2322]
 FAIL TypeScript/tests/cases/compiler/noCrashOnParameterNamedRequire.ts | expected:[TS2307] actual:[TS2721,TS18047]
 FAIL TypeScript/tests/cases/compiler/noImplicitAnyLoopCrash.ts | expected:[TS2488,TS2556] actual:[TS2488]
-FAIL TypeScript/tests/cases/compiler/noImplicitAnyMissingSetAccessor.ts | expected:[TS7033] actual:[TS2416]
+FAIL TypeScript/tests/cases/compiler/noImplicitAnyMissingSetAccessor.ts | expected:[TS7033] actual:[TS2416,TS7033]
 FAIL TypeScript/tests/cases/compiler/noImplicitReturnsWithoutReturnExpression.ts | expected:[TS7030] actual:[]
 FAIL TypeScript/tests/cases/compiler/noInferUnionExcessPropertyCheck1.ts | expected:[TS2353] actual:[TS2353]
 FAIL TypeScript/tests/cases/compiler/noParameterReassignmentIIFEAnnotated.ts | expected:[TS2683,TS2740] actual:[TS2345,TS2683,TS8029]
@@ -442,7 +442,6 @@ FAIL TypeScript/tests/cases/conformance/moduleResolution/bundler/bundlerDirector
 FAIL TypeScript/tests/cases/conformance/moduleResolution/bundler/bundlerImportTsExtensions.ts | expected:[TS2846,TS5097,TS6142] actual:[TS2846,TS5096,TS5097,TS6142]
 FAIL TypeScript/tests/cases/conformance/moduleResolution/packageJsonExportsOptionsCompat.ts | expected:[TS5108] actual:[TS5098,TS5108]
 FAIL TypeScript/tests/cases/conformance/moduleResolution/resolvesWithoutExportsDiagnostic1.ts | expected:[TS5110] actual:[TS5110]
-FAIL TypeScript/tests/cases/conformance/moduleResolution/untypedModuleImport.ts | expected:[] actual:[TS2307]
 FAIL TypeScript/tests/cases/conformance/moduleResolution/untypedModuleImport_allowJs.ts | expected:[TS2339] actual:[]
 FAIL TypeScript/tests/cases/conformance/moduleResolution/untypedModuleImport_withAugmentation.ts | expected:[TS2665] actual:[]
 FAIL TypeScript/tests/cases/conformance/node/allowJs/nodeModulesAllowJsTopLevelAwait.ts | expected:[TS1309] actual:[]
@@ -9775,6 +9774,7 @@ PASS TypeScript/tests/cases/conformance/moduleResolution/scopedPackages.ts
 PASS TypeScript/tests/cases/conformance/moduleResolution/selfNameModuleAugmentation.ts
 PASS TypeScript/tests/cases/conformance/moduleResolution/typesVersions.ambientModules.ts
 PASS TypeScript/tests/cases/conformance/moduleResolution/typesVersions.multiFile.ts
+PASS TypeScript/tests/cases/conformance/moduleResolution/untypedModuleImport.ts
 PASS TypeScript/tests/cases/conformance/moduleResolution/untypedModuleImport_noImplicitAny.ts
 PASS TypeScript/tests/cases/conformance/moduleResolution/untypedModuleImport_noImplicitAny_relativePath.ts
 PASS TypeScript/tests/cases/conformance/moduleResolution/untypedModuleImport_noImplicitAny_scoped.ts
