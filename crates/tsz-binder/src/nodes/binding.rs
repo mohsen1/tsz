@@ -1337,37 +1337,17 @@ impl BinderState {
                 self.declare_in_persistent_scope_with_atom(owned_name, name_atom_key, sym_id);
                 return sym_id;
             }
-            // In merged namespace blocks, a non-exported variable must not merge with an
-            // exported variable of the same name from a prior block. In tsc, these are
-            // distinct symbols: `export var Origin: Point` in block 1 and `var Origin: string`
-            // in block 2 are separate — the non-exported one is a local variable that shadows
-            // the exported member within that block's scope, without affecting the namespace's
-            // exported type.
-            let is_in_module_scope = self
-                .current_persistent_scope()
-                .is_some_and(|scope| scope.kind == ContainerKind::Module);
-            let existing_is_exported = self.symbols.get(existing_id).is_some_and(|s| s.is_exported);
-            if is_in_module_scope
-                && existing_is_exported
-                && !is_exported
-                && (flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0
-            {
-                let owned_name = name.to_string();
-                let sym_id = self.symbols.alloc(flags, owned_name.clone());
-                let container_sym = self.current_container_symbol();
-                if let Some(sym) = self.symbols.get_mut(sym_id) {
-                    let span = Self::declaration_span(arena, declaration);
-                    sym.add_declaration(declaration, span);
-                    if (flags & symbol_flags::VALUE) != 0 {
-                        sym.set_value_declaration(declaration, span);
-                    }
-                    sym.is_exported = false;
-                    if let Some(parent_id) = container_sym {
-                        sym.parent = parent_id;
-                    }
-                }
-                Arc::make_mut(&mut self.node_symbols).insert(declaration.0, sym_id);
-                self.declare_in_persistent_scope_with_atom(owned_name, name_atom_key, sym_id);
+            // A non-exported declaration in one body of a merged namespace is a
+            // local of that body, not a contribution to the namespace's exports.
+            if let Some(sym_id) = self.try_declare_namespace_body_local(
+                arena,
+                name,
+                flags,
+                declaration,
+                is_exported,
+                existing_id,
+                name_atom_key,
+            ) {
                 return sym_id;
             }
 
