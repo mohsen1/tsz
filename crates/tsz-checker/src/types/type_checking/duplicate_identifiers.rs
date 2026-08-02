@@ -1631,8 +1631,22 @@ impl<'a> CheckerState<'a> {
                     && (flags & (symbol_flags::GET_ACCESSOR | symbol_flags::SET_ACCESSOR)) != 0
             });
 
+            // TS2323 only covers a pure `var`-vs-`var` exported redeclaration.
+            // When a block-scoped (`let`/`const`) declaration is part of the
+            // conflict, tsc's binder never reaches the exported-variable
+            // message: `symbol.flags & SymbolFlags.BlockScopedVariable` is
+            // already set by the time the second declaration binds, so the
+            // ordinary TS2300/TS2451 mixed-kind selection below applies
+            // instead, independent of `export`.
+            let has_block_scoped_variable_conflict =
+                declarations.iter().any(|(decl_idx, flags, _, _, _)| {
+                    conflicts.contains(decl_idx)
+                        && (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
+                });
+
             // TS2323: Check exported variable conflict using symbol.is_exported
-            let has_exported_variable_conflict = symbol.is_exported && has_variable_conflict;
+            let has_exported_variable_conflict =
+                symbol.is_exported && has_variable_conflict && !has_block_scoped_variable_conflict;
 
             let (message, code) = if !has_non_block_scoped && !force2300
                 || has_umd_global_value_conflict
