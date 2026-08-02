@@ -1541,6 +1541,20 @@ impl<'a> CheckerState<'a> {
             return Some(lit.text.clone());
         }
 
+        // Template expression with substitutions (`` `a${x}` ``) — a
+        // no-substitution template literal is already a literal key handled by
+        // `get_property_name` upstream and never reaches this fallback. A
+        // substituted one has no static key, but `tsc` still names it in
+        // messages using its own source spelling (`declarationNameToString`
+        // falls through to `getTextOfNode` for anything past the literal/
+        // identifier cases). Verbatim source text is safe here specifically
+        // because the node is a well-formed `TemplateExpression`, not a
+        // parse-error recovery node — unlike a raw-source fallback keyed on
+        // node kind in general, this can't misrender a malformed computed name.
+        if expr_node.kind == syntax_kind_ext::TEMPLATE_EXPRESSION {
+            return self.node_text(expr_idx);
+        }
+
         self.get_simple_computed_name_expr_text(expr_idx)
     }
 

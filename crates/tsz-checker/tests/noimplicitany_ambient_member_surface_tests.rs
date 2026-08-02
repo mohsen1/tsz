@@ -22,7 +22,7 @@
 //! Every expectation here was recorded from `typescript@7.0.2` under
 //! `--noEmit --strict --lib es2022 --target es2022`.
 
-use tsz_checker::test_utils::check_source_strict_codes;
+use tsz_checker::test_utils::{check_source_codes_named, check_source_strict_codes};
 
 const TS7008: u32 = 7008; // Member implicitly has an 'any' type.
 const TS7010: u32 = 7010; // Lacks return-type annotation, implicitly 'any' return.
@@ -300,6 +300,92 @@ fn malformed_computed_getter_name_does_not_report_ts7033() {
     assert!(!has(&codes, TS7033), "parse-error name: {codes:?}");
     let codes = check_source_strict_codes("declare class C { get [1+](); }");
     assert!(!has(&codes, TS7033), "parse-error name: {codes:?}");
+}
+
+// ---------------------------------------------------------------------------
+// (1c) Adjacent-case matrix for issue #16190 (the residual #16201 left
+// unverified): `static`, a real `.d.ts` container, and a substituted template
+// literal computed name all reached the same `check_accessor_declaration_with_request`
+// bodyless-getter arm — none of them gate on the name's *kind*, so the first
+// two already passed before this change (pinned here as controls). The
+// template-literal case did not: a `TemplateExpression` computed name is not
+// a literal `get_property_name` can resolve, and — unlike `[k]` or
+// `[Symbol.iterator]` — `computed_name_expression_display_text` had no arm
+// for it either, so the whole `member_name_for_diagnostic` call failed and
+// silently suppressed TS7033. Fixed by rendering the template expression's
+// verbatim source text, matching tsc's `declarationNameToString` fallback.
+// Verified against the pinned `typescript@7.0.2` oracle.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn static_computed_unique_symbol_getter_reports_ts7033() {
+    let codes = check_source_strict_codes(
+        "declare const k: unique symbol; declare class C { static get [k](); }",
+    );
+    assert!(has(&codes, TS7033), "expected TS7033: {codes:?}");
+}
+
+#[test]
+fn dts_container_computed_unique_symbol_getter_reports_ts7033() {
+    // A real `.d.ts` file is implicitly ambient — no `declare` keyword needed
+    // on the class — exercising the `is_declaration_file()` half of the
+    // ambient-context check rather than `enclosing_class.is_declared`.
+    let codes = check_source_codes_named(
+        "declare const k: unique symbol; class C { get [k](); }",
+        "test.d.ts",
+    );
+    assert!(has(&codes, TS7033), "expected TS7033: {codes:?}");
+}
+
+#[test]
+fn computed_template_expression_getter_reports_ts7033() {
+    let codes =
+        check_source_strict_codes("declare const x: string; declare class C { get [`a${x}`](); }");
+    assert!(has(&codes, TS7033), "expected TS7033: {codes:?}");
+}
+
+#[test]
+fn computed_template_expression_getter_and_setter_both_report_independently() {
+    // Unlike `[k]` (a `unique symbol` reference, paired by resolved symbol
+    // identity) or a string literal (paired by resolved key), tsc's binder
+    // does not pair two computed accessors whose name is a *non-constant*
+    // template expression — each is bound as its own unrelated member, so
+    // both the getter's TS7033 and the setter's TS7032/TS7006 fire together,
+    // confirmed against the `typescript@7.0.2` oracle. This is the inverse
+    // control of `computed_unique_symbol_pair_still_blames_the_setter`: the
+    // pairing helpers (`paired_setter_in_members`/`paired_getter_in_members`)
+    // correctly fail to match here since neither `get_property_name` nor
+    // `resolve_computed_name_symbol` can key a template expression, and that
+    // failure is the *correct* answer, not a gap this fix needs to close.
+    let codes = check_source_strict_codes(
+        "declare const x: string; declare class C { get [`a${x}`](); set [`a${x}`](v); }",
+    );
+    assert!(
+        has(&codes, TS7033),
+        "expected TS7033 on the getter: {codes:?}"
+    );
+    assert!(
+        has(&codes, TS7032),
+        "expected TS7032 on the setter: {codes:?}"
+    );
+    assert!(
+        has(&codes, TS7006),
+        "expected TS7006 on the parameter: {codes:?}"
+    );
+}
+
+#[test]
+fn computed_template_expression_property_reports_ts7008() {
+    // Bonus reach of the same shared display-name fix: `check_class_property`'s
+    // TS7008 site (line ~550 in ambient_signature_checks.rs) uses the same
+    // `get_member_name_display_text` helper for the identical reason — a
+    // template-expression computed name is not a `get_property_name` literal.
+    // Confirmed against the `typescript@7.0.2` oracle: tsc reports both TS1166
+    // (computed class-property name needs a literal/`unique symbol` type) and
+    // TS7008 here; this test pins only the noImplicitAny half this fix owns.
+    let codes =
+        check_source_strict_codes("declare const x: string; declare class C { [`a${x}`]; }");
+    assert!(has(&codes, TS7008), "expected TS7008: {codes:?}");
 }
 
 // ---------------------------------------------------------------------------
