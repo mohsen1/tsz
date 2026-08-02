@@ -3,6 +3,7 @@
 pub(crate) mod class;
 mod class_decorators;
 mod class_heritage_diagnostics;
+mod class_private_name_modifiers;
 #[cfg(test)]
 mod class_tests;
 mod core;
