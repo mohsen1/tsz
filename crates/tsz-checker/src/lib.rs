@@ -1755,6 +1755,9 @@ mod ts18010_jsdoc_tag_anchor_tests;
 #[path = "../tests/ts18048_unary_arithmetic_nullish_tests.rs"]
 mod ts18048_unary_arithmetic_nullish_tests;
 #[cfg(test)]
+#[path = "tests/ts18050_nullish_keyword_without_strict_null_checks_tests.rs"]
+mod ts18050_nullish_keyword_without_strict_null_checks_tests;
+#[cfg(test)]
 #[path = "tests/ts2322_private_field_narrowing_write_tests.rs"]
 mod ts2322_private_field_narrowing_write_tests;
 #[cfg(test)]
