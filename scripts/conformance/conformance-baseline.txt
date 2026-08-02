@@ -158,7 +158,7 @@ FAIL TypeScript/tests/cases/compiler/multipleExports.ts | expected:[TS1194,TS248
 FAIL TypeScript/tests/cases/compiler/multivar.ts | expected:[TS2395] actual:[]
 FAIL TypeScript/tests/cases/compiler/namedImportNonExistentName.ts | expected:[TS2305] actual:[]
 FAIL TypeScript/tests/cases/compiler/narrowingUnionToNeverAssigment.ts | expected:[TS2322] actual:[TS2322]
-FAIL TypeScript/tests/cases/compiler/noCrashOnParameterNamedRequire.ts | expected:[TS2307] actual:[TS2349]
+FAIL TypeScript/tests/cases/compiler/noCrashOnParameterNamedRequire.ts | expected:[TS2307] actual:[TS2721,TS18047]
 FAIL TypeScript/tests/cases/compiler/noImplicitAnyLoopCrash.ts | expected:[TS2488,TS2556] actual:[TS2488]
 FAIL TypeScript/tests/cases/compiler/noImplicitAnyMissingSetAccessor.ts | expected:[TS7033] actual:[TS2416]
 FAIL TypeScript/tests/cases/compiler/noImplicitReturnsWithoutReturnExpression.ts | expected:[TS7030] actual:[]
@@ -578,7 +578,6 @@ FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/ge
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericCallWithGenericSignatureArguments3.ts | expected:[TS2345] actual:[TS2345]
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericCallWithOverloadedFunctionTypedArguments.ts | expected:[] actual:[TS2322]
 FAIL TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericCallWithOverloadedFunctionTypedArguments2.ts | expected:[TS2345] actual:[TS2345]
-FAIL TypeScript/tests/cases/conformance/types/typeRelationships/widenedTypes/arrayLiteralWidened.ts | expected:[] actual:[TS2403]
 FAIL TypeScript/tests/cases/conformance/types/uniqueSymbol/uniqueSymbolsErrors.ts | expected:[TS1005,TS1330,TS1331,TS1332,TS1333,TS1335,TS2322] actual:[TS1005,TS1330,TS1331,TS1332,TS1333,TS1335,TS2322]
 FAIL TypeScript/tests/cases/conformance/types/uniqueSymbol/uniqueSymbolsPropertyNames.ts | expected:[TS1117,TS1166,TS2300] actual:[TS1117,TS1166,TS2300]
 FAIL TypeScript/tests/cases/conformance/types/witness/witness.ts | expected:[TS2372,TS2403,TS2695,TS2729,TS2873] actual:[TS2372,TS2403,TS2695,TS2873]
@@ -11810,6 +11809,7 @@ PASS TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/un
 PASS TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/unionAndIntersectionInference2.ts
 PASS TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/unionAndIntersectionInference3.ts
 PASS TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/unionTypeInference.ts
+PASS TypeScript/tests/cases/conformance/types/typeRelationships/widenedTypes/arrayLiteralWidened.ts
 PASS TypeScript/tests/cases/conformance/types/typeRelationships/widenedTypes/initializersWidened.ts
 PASS TypeScript/tests/cases/conformance/types/typeRelationships/widenedTypes/objectLiteralWidened.ts
 PASS TypeScript/tests/cases/conformance/types/typeRelationships/widenedTypes/strictNullChecksNoWidening.ts
