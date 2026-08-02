@@ -185,15 +185,23 @@ fn emits_ts2723_for_calling_null_or_undefined() {
 }
 
 #[test]
-fn emits_ts2349_without_strict_null_checks() {
-    // Without strictNullChecks, null/undefined are in every type's domain,
-    // so we should get TS2349 (not callable) instead of TS2721/2722/2723.
+fn emits_ts2721_for_a_null_callee_without_strict_null_checks() {
+    // Oracle, tsc 7.0.2 `--noEmit --strict false --target es2015`:
+    //   null();  ->  error TS2721: Cannot invoke an object which is possibly 'null'.
+    //
+    // This test previously asserted TS2349 on the rationale that "without
+    // strictNullChecks, null/undefined are in every type's domain". tsc does not
+    // follow that rule here: `resolveCallExpression` routes the callee through
+    // `checkNonNullTypeWithReporter`, which without `strictNullChecks` tests the
+    // callee's OWN flags (`type.flags & TypeFlags.Nullable`) rather than its
+    // falsy facts — and a `null` callee is in that set, so the TS272x family
+    // still fires. The expectation was never run against tsc.
     let diagnostics = check_source_without_strict_null("null();");
     let has_2349 = diagnostics.iter().any(|d| d.code == 2349);
-    let has_272x = diagnostics.iter().any(|d| (2721..=2723).contains(&d.code));
+    let has_2721 = diagnostics.iter().any(|d| d.code == 2721);
     assert!(
-        has_2349 && !has_272x,
-        "Expected TS2349 (not TS272x) without strictNullChecks, got: {:?}",
+        has_2721 && !has_2349,
+        "Expected TS2721 (not TS2349) without strictNullChecks, got: {:?}",
         diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
     );
 }

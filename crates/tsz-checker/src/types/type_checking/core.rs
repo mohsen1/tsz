@@ -1232,7 +1232,19 @@ impl<'a> CheckerState<'a> {
         // TS2531/TS2532/TS2533: Destructuring from a possibly-nullish value is an error.
         // TypeScript only emits this directly on the pattern when the pattern is empty.
         // For non-empty patterns, errors are emitted when accessing the individual properties/elements.
-        if elements_len == 0 && pattern_type != TypeId::ANY && pattern_type != TypeId::ERROR {
+        //
+        // This arm mirrors tsc's `checkNonNullNonVoidType`, not
+        // `checkNonNullTypeWithReporter`, and its reporting is observably
+        // strict-only: without `strictNullChecks` both `const {} = v` (`v: void`,
+        // which `checkNonNullNonVoidType` adds on top of the `Nullable` set) and
+        // `const {} = n` (`n: null`) are clean in tsc 7.0.2, while under strict
+        // they report TS2532 and TS2531. So the `strictNullChecks` gate stays
+        // here even though the shared reporter's own gate has narrowed.
+        if elements_len == 0
+            && pattern_type != TypeId::ANY
+            && pattern_type != TypeId::ERROR
+            && self.ctx.compiler_options.strict_null_checks
+        {
             let (non_nullish_type, nullish_cause) = self.split_nullish_type(pattern_type);
             if let Some(cause) = nullish_cause {
                 self.report_nullish_object(pattern_idx, cause, non_nullish_type.is_none());

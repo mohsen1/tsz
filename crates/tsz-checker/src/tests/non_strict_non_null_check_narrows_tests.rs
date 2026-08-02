@@ -258,6 +258,38 @@ fn void_operands_stay_clean_in_both_modes() {
 }
 
 #[test]
+fn empty_destructuring_patterns_stay_strict_only() {
+    // The empty-binding-pattern check is tsc's `checkNonNullNonVoidType`, a
+    // different function from the `checkNonNullTypeWithReporter` mirror this
+    // change narrows — and its reporting is observably strict-only. Oracle, tsc
+    // 7.0.2: `declare const v: void; const {} = v;` and
+    // `declare const n: null; const {} = n;` are BOTH clean without
+    // `strictNullChecks` (`void` is not even in `TypeFlags.Nullable`, and
+    // `checkNonNullNonVoidType` adds it back on top), and report TS2532 / TS2531
+    // under strict. Narrowing the shared reporter's gate must not reach here.
+    let source = "declare const v: void;\nconst {} = v;\ndeclare const n: null;\nconst {} = n;\nfunction f({}: void) {}";
+
+    let lax = non_strict(source);
+    assert_eq!(
+        lax.iter().filter(|c| **c == 2531 || **c == 2532).count(),
+        0,
+        "empty destructuring must stay clean without strictNullChecks, got: {lax:?}"
+    );
+
+    let strict = check_source_strict_codes(source);
+    assert_eq!(
+        count(&strict, 2532),
+        2,
+        "strict mode must keep TS2532 for the two `void` patterns, got: {strict:?}"
+    );
+    assert_eq!(
+        count(&strict, 2531),
+        1,
+        "strict mode must keep TS2531 for the `null` pattern, got: {strict:?}"
+    );
+}
+
+#[test]
 fn uninitialized_and_any_and_plain_operands_stay_clean_without_strict_null_checks() {
     let codes = non_strict(
         "let uninit;\nuninit.foo;\ndeclare const anyv: any;\nanyv.foo;\nanyv();\ndeclare const s: string;\ns.length;",
