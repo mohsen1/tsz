@@ -228,6 +228,99 @@ impl<'a> CheckerState<'a> {
         result
     }
 
+    /// The qualified name a *nameless* JSDoc `@typedef {T}` tag declares, read
+    /// from the declaration the comment annotates.
+    ///
+    /// A `@typedef` tag with no name after its braced type is a grammar error
+    /// (TS1003) but still declares a type alias: tsc names it after the host
+    /// declaration, so `/** @typedef {string} */ a.b.C;` declares the type
+    /// `a.b.C` and thereby makes `a` a legitimate type-space namespace root.
+    /// Returns the dotted identifier chain written immediately after the
+    /// comment, or `None` when the comment is not followed by one.
+    fn jsdoc_nameless_typedef_host_name(source_text: &str, comment_end: u32) -> Option<String> {
+        let after = source_text.get(comment_end as usize..)?;
+        let after = after.trim_start_matches([' ', '\t', '\r', '\n']);
+        let mut end = 0usize;
+        let mut expect_segment_start = true;
+        for (offset, ch) in after.char_indices() {
+            if expect_segment_start {
+                if ch == '_' || ch == '$' || ch.is_ascii_alphabetic() {
+                    expect_segment_start = false;
+                    end = offset + ch.len_utf8();
+                    continue;
+                }
+                break;
+            }
+            if ch == '_' || ch == '$' || ch.is_ascii_alphanumeric() {
+                end = offset + ch.len_utf8();
+                continue;
+            }
+            if ch == '.' {
+                expect_segment_start = true;
+                continue;
+            }
+            break;
+        }
+        // A bare (undotted) host name declares a plain type alias, not a
+        // namespace; only qualified hosts are of interest to callers asking
+        // about namespace roots, but returning both keeps the query honest and
+        // lets each caller apply its own shape rule.
+        (end > 0).then(|| after[..end].to_string())
+    }
+
+    /// Whether `source_file` declares the qualified type `name` through a
+    /// nameless JSDoc `@typedef` attached to a matching host declaration.
+    ///
+    /// The named form (`@typedef {string} a.b.C`) is already covered by
+    /// `source_file_has_jsdoc_typedef_named`; this is its nameless sibling.
+    pub(crate) fn source_file_has_jsdoc_nameless_typedef_named(
+        source_file: &SourceFileData,
+        name: &str,
+    ) -> bool {
+        use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
+
+        if name.is_empty() || source_file.comments.is_empty() {
+            return false;
+        }
+        let text = &source_file.text;
+        if !text.contains("@typedef") || !text.contains(name) {
+            return false;
+        }
+
+        source_file.comments.iter().any(|comment| {
+            if !is_jsdoc_comment(comment, text) {
+                return false;
+            }
+            let content = get_jsdoc_content(comment, text);
+            if Self::jsdoc_nameless_typedef_close_offsets(&content).is_empty() {
+                return false;
+            }
+            Self::jsdoc_nameless_typedef_host_name(text, comment.end)
+                .is_some_and(|host| host == name)
+        })
+    }
+
+    /// Whether a nameless JSDoc `@typedef` declaring the qualified type `name`
+    /// is visible from the current file's resolution context. Mirrors
+    /// `jsdoc_typedef_named_visible`'s file sweep so the nameless and named
+    /// forms are reachable from the same places.
+    pub(crate) fn jsdoc_nameless_typedef_named_visible(&self, name: &str) -> bool {
+        if let Some(arenas) = self.ctx.all_arenas.as_ref() {
+            for arena in arenas.iter() {
+                for sf in arena.source_files.iter() {
+                    if Self::source_file_has_jsdoc_nameless_typedef_named(sf, name) {
+                        return true;
+                    }
+                }
+            }
+        }
+        self.ctx
+            .arena
+            .source_files
+            .iter()
+            .any(|sf| Self::source_file_has_jsdoc_nameless_typedef_named(sf, name))
+    }
+
     pub(crate) fn source_file_has_jsdoc_typedef_namespace_root(
         source_file: &SourceFileData,
         name: &str,
@@ -909,6 +1002,13 @@ impl<'a> CheckerState<'a> {
         // plain value; tsc resolves it with no error. Only a value-space expando
         // member (`A.B = class {}`) is the "used as a namespace" case.
         if self.resolve_global_jsdoc_typedef_info(trimmed).is_some() {
+            return false;
+        }
+        // Same fact, nameless spelling. `/** @typedef {string} */ A.B.C;` (or
+        // `A.B.C = {...}`) declares the type `A.B.C` named after its host
+        // declaration; the tag's missing name is a separate grammar error
+        // (TS1003), not a reason to deny `A` its type-space namespace meaning.
+        if self.jsdoc_nameless_typedef_named_visible(trimmed) {
             return false;
         }
 

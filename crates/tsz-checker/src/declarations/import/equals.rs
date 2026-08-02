@@ -39,64 +39,6 @@ impl<'a> CheckerState<'a> {
         Some((arg_node.pos, arg_node.end.saturating_sub(arg_node.pos)))
     }
 
-    /// TS2300: `export default N` inside an ambient external module conflicts
-    /// with a sibling type-only namespace declaration named `N`.
-    ///
-    /// TypeScript reports the duplicate on the namespace declaration name. This
-    /// is separate from normal symbol duplicate checking because the binder
-    /// synthesizes the default export under the name `default`, while the source
-    /// identifier still occupies the namespace's declaration name.
-    ///
-    /// Skip this case when a sibling value declaration (function/var/class)
-    /// shares the same name. tsc treats that as the merge being rejected by
-    /// TS2395 ("Individual declarations in merged declaration must be all
-    /// exported or all local"), and emits TS2395 alone — TS2300 here would
-    /// double-anchor the diagnostic onto the value reference. See
-    /// `namespaceNotMergedWithFunctionDefaultExport.ts`.
-    pub(crate) fn check_ambient_default_namespace_export_duplicates(
-        &mut self,
-        statements: &[NodeIndex],
-    ) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-        use std::collections::{HashMap, HashSet};
-
-        let mut namespaces = HashMap::new();
-        let mut default_export_names = Vec::new();
-        let mut sibling_value_names: HashSet<String> = HashSet::new();
-
-        // Walk top-level statements, then recurse into EXPORT_DECLARATION wrappers
-        // when the export clause is itself a value declaration (function/class/var).
-        // `export function foo(){}` is parsed as an EXPORT_DECLARATION whose
-        // `export_clause` is the inner FUNCTION_DECLARATION.
-        for &stmt_idx in statements {
-            self.collect_ambient_default_export_dup_targets(
-                stmt_idx,
-                &mut namespaces,
-                &mut default_export_names,
-                &mut sibling_value_names,
-            );
-        }
-
-        for (name, export_name_node) in default_export_names {
-            if !namespaces.contains_key(&name) {
-                continue;
-            }
-            // Skip when a sibling value declaration shares the name — tsc
-            // emits TS2395 instead of TS2300 in that configuration (the
-            // exported function/var/class plus the local namespace fail to
-            // merge for export-visibility reasons, not symbol duplication).
-            if sibling_value_names.contains(&name) {
-                continue;
-            }
-            let message = format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&name]);
-            self.error_at_node(
-                export_name_node,
-                &message,
-                diagnostic_codes::DUPLICATE_IDENTIFIER,
-            );
-        }
-    }
-
     // =========================================================================
     // Import Equals Declaration Validation
     // =========================================================================
