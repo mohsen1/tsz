@@ -1,5 +1,6 @@
 use super::sources::SourceEntry;
 use super::*;
+use tsz_common::options::module_detection::ModuleDetectionKind;
 
 fn make_source(path: &str, text: &str) -> SourceEntry {
     SourceEntry {
@@ -27,7 +28,13 @@ fn merge_skipped_on_unchanged_inputs_and_reruns_on_change() {
         make_source("/a.ts", "export const a = 1;"),
         make_source("/b.ts", "export const b = 2;"),
     ];
-    let r1 = build_program_with_cache(sources, &mut cache, &libs, ScriptTarget::ES2020);
+    let r1 = build_program_with_cache(
+        sources,
+        &mut cache,
+        &libs,
+        ScriptTarget::ES2020,
+        ModuleDetectionKind::default(),
+    );
     let ptr1 = Arc::as_ptr(&r1.program);
     assert!(
         !r1.dirty_paths.is_empty(),
@@ -39,7 +46,13 @@ fn merge_skipped_on_unchanged_inputs_and_reruns_on_change() {
         make_source("/a.ts", "export const a = 1;"),
         make_source("/b.ts", "export const b = 2;"),
     ];
-    let r2 = build_program_with_cache(sources, &mut cache, &libs, ScriptTarget::ES2020);
+    let r2 = build_program_with_cache(
+        sources,
+        &mut cache,
+        &libs,
+        ScriptTarget::ES2020,
+        ModuleDetectionKind::default(),
+    );
     let ptr2 = Arc::as_ptr(&r2.program);
     assert!(
         r2.dirty_paths.is_empty(),
@@ -55,7 +68,13 @@ fn merge_skipped_on_unchanged_inputs_and_reruns_on_change() {
         make_source("/a.ts", "export const a = 99;"), // changed
         make_source("/b.ts", "export const b = 2;"),
     ];
-    let r3 = build_program_with_cache(sources, &mut cache, &libs, ScriptTarget::ES2020);
+    let r3 = build_program_with_cache(
+        sources,
+        &mut cache,
+        &libs,
+        ScriptTarget::ES2020,
+        ModuleDetectionKind::default(),
+    );
     let ptr3 = Arc::as_ptr(&r3.program);
     assert!(
         !r3.dirty_paths.is_empty(),
@@ -71,7 +90,13 @@ fn merge_skipped_on_unchanged_inputs_and_reruns_on_change() {
         make_source("/a.ts", "export const a = 99;"),
         make_source("/b.ts", "export const b = 2;"),
     ];
-    let r4 = build_program_with_cache(sources, &mut cache, &libs, ScriptTarget::ES2020);
+    let r4 = build_program_with_cache(
+        sources,
+        &mut cache,
+        &libs,
+        ScriptTarget::ES2020,
+        ModuleDetectionKind::default(),
+    );
     assert!(
         r4.dirty_paths.is_empty(),
         "fourth build (re-stable) should have no dirty paths"
@@ -92,19 +117,37 @@ fn merge_invalidated_on_file_removal() {
         make_source("/a.ts", "export const a = 1;"),
         make_source("/b.ts", "export const b = 2;"),
     ];
-    let r1 = build_program_with_cache(sources, &mut cache, &libs, ScriptTarget::ES2020);
+    let r1 = build_program_with_cache(
+        sources,
+        &mut cache,
+        &libs,
+        ScriptTarget::ES2020,
+        ModuleDetectionKind::default(),
+    );
 
     // Warm the cache with a no-op second pass.
     let sources = vec![
         make_source("/a.ts", "export const a = 1;"),
         make_source("/b.ts", "export const b = 2;"),
     ];
-    let r2 = build_program_with_cache(sources, &mut cache, &libs, ScriptTarget::ES2020);
+    let r2 = build_program_with_cache(
+        sources,
+        &mut cache,
+        &libs,
+        ScriptTarget::ES2020,
+        ModuleDetectionKind::default(),
+    );
     assert_eq!(Arc::as_ptr(&r1.program), Arc::as_ptr(&r2.program));
 
     // Now remove one file.
     let sources = vec![make_source("/a.ts", "export const a = 1;")];
-    let r3 = build_program_with_cache(sources, &mut cache, &libs, ScriptTarget::ES2020);
+    let r3 = build_program_with_cache(
+        sources,
+        &mut cache,
+        &libs,
+        ScriptTarget::ES2020,
+        ModuleDetectionKind::default(),
+    );
     assert_ne!(
         Arc::as_ptr(&r2.program),
         Arc::as_ptr(&r3.program),
@@ -118,11 +161,23 @@ fn merge_invalidated_on_file_addition() {
     let (mut cache, libs) = fresh_cache();
 
     let sources = vec![make_source("/a.ts", "export const a = 1;")];
-    let r1 = build_program_with_cache(sources, &mut cache, &libs, ScriptTarget::ES2020);
+    let r1 = build_program_with_cache(
+        sources,
+        &mut cache,
+        &libs,
+        ScriptTarget::ES2020,
+        ModuleDetectionKind::default(),
+    );
 
     // Warm the cache.
     let sources = vec![make_source("/a.ts", "export const a = 1;")];
-    let r2 = build_program_with_cache(sources, &mut cache, &libs, ScriptTarget::ES2020);
+    let r2 = build_program_with_cache(
+        sources,
+        &mut cache,
+        &libs,
+        ScriptTarget::ES2020,
+        ModuleDetectionKind::default(),
+    );
     assert_eq!(Arc::as_ptr(&r1.program), Arc::as_ptr(&r2.program));
 
     // Add a new file.
@@ -130,7 +185,13 @@ fn merge_invalidated_on_file_addition() {
         make_source("/a.ts", "export const a = 1;"),
         make_source("/c.ts", "export const c = 3;"),
     ];
-    let r3 = build_program_with_cache(sources, &mut cache, &libs, ScriptTarget::ES2020);
+    let r3 = build_program_with_cache(
+        sources,
+        &mut cache,
+        &libs,
+        ScriptTarget::ES2020,
+        ModuleDetectionKind::default(),
+    );
     assert_ne!(
         Arc::as_ptr(&r2.program),
         Arc::as_ptr(&r3.program),
@@ -144,18 +205,36 @@ fn clear_invalidates_merge_cache() {
     let (mut cache, libs) = fresh_cache();
 
     let sources = vec![make_source("/a.ts", "export const a = 1;")];
-    build_program_with_cache(sources, &mut cache, &libs, ScriptTarget::ES2020);
+    build_program_with_cache(
+        sources,
+        &mut cache,
+        &libs,
+        ScriptTarget::ES2020,
+        ModuleDetectionKind::default(),
+    );
 
     // Warm the merge cache.
     let sources = vec![make_source("/a.ts", "export const a = 1;")];
-    let r2 = build_program_with_cache(sources, &mut cache, &libs, ScriptTarget::ES2020);
+    let r2 = build_program_with_cache(
+        sources,
+        &mut cache,
+        &libs,
+        ScriptTarget::ES2020,
+        ModuleDetectionKind::default(),
+    );
     assert!(r2.dirty_paths.is_empty());
 
     cache.clear();
 
     // After clear, next build must re-merge.
     let sources = vec![make_source("/a.ts", "export const a = 1;")];
-    let r3 = build_program_with_cache(sources, &mut cache, &libs, ScriptTarget::ES2020);
+    let r3 = build_program_with_cache(
+        sources,
+        &mut cache,
+        &libs,
+        ScriptTarget::ES2020,
+        ModuleDetectionKind::default(),
+    );
     assert!(
         !r3.dirty_paths.is_empty(),
         "first build after clear must re-parse and re-merge"
@@ -181,10 +260,22 @@ fn merge_call_count_is_zero_on_unchanged_inputs() {
         make_source("/b.ts", "export const b = 2;"),
     ];
 
-    let r1 = build_program_with_cache(sources.clone(), &mut cache, &libs, ScriptTarget::ES2020);
+    let r1 = build_program_with_cache(
+        sources.clone(),
+        &mut cache,
+        &libs,
+        ScriptTarget::ES2020,
+        ModuleDetectionKind::default(),
+    );
     assert_eq!(r1.merge_calls, 1, "cold build must call merge exactly once");
 
-    let r2 = build_program_with_cache(sources, &mut cache, &libs, ScriptTarget::ES2020);
+    let r2 = build_program_with_cache(
+        sources,
+        &mut cache,
+        &libs,
+        ScriptTarget::ES2020,
+        ModuleDetectionKind::default(),
+    );
     assert_eq!(
         r2.merge_calls, 0,
         "unchanged build must skip merge (fast path: merge_calls == 0)"
@@ -195,14 +286,26 @@ fn merge_call_count_is_zero_on_unchanged_inputs() {
         make_source("/a.ts", "export const a = 99;"),
         make_source("/b.ts", "export const b = 2;"),
     ];
-    let r3 = build_program_with_cache(changed.clone(), &mut cache, &libs, ScriptTarget::ES2020);
+    let r3 = build_program_with_cache(
+        changed.clone(),
+        &mut cache,
+        &libs,
+        ScriptTarget::ES2020,
+        ModuleDetectionKind::default(),
+    );
     assert_eq!(
         r3.merge_calls, 1,
         "changed-file build must call merge exactly once"
     );
 
     // Back to unchanged → fast path fires again.
-    let r4 = build_program_with_cache(changed, &mut cache, &libs, ScriptTarget::ES2020);
+    let r4 = build_program_with_cache(
+        changed,
+        &mut cache,
+        &libs,
+        ScriptTarget::ES2020,
+        ModuleDetectionKind::default(),
+    );
     assert_eq!(
         r4.merge_calls, 0,
         "re-stable (unchanged after change) build must skip merge"

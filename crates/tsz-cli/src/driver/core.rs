@@ -29,6 +29,7 @@ use tsz_common::common::ScriptTarget;
 use tsz_common::file_extensions::{
     JS_FAMILY_EXTENSIONS, JSON_EXTENSION, TS_FAMILY_EXTENSIONS, is_default_lib_file, is_json_file,
 };
+use tsz_common::options::module_detection::ModuleDetectionKind;
 // Re-export functions that other modules (e.g. watch) access via `driver::`.
 use super::emit::{
     EmitOutputsContext, OutputFile, emit_outputs, normalize_root_dirs, normalize_type_roots,
@@ -1278,6 +1279,7 @@ fn build_program_with_cache(
     cache: &mut CompilationCache,
     lib_files: &[Arc<LibFile>],
     language_version: ScriptTarget,
+    module_detection: ModuleDetectionKind,
 ) -> BuildProgramResult {
     let mut meta = Vec::with_capacity(sources.len());
     let mut to_parse = Vec::new();
@@ -1322,10 +1324,11 @@ fn build_program_with_cache(
         // This ensures global symbols like console, Array, Promise are available
         // during binding, which prevents "Any poisoning" where unresolved symbols
         // default to Any type instead of emitting TS2304 errors.
-        parallel::parse_and_bind_parallel_with_libs_and_target(
+        parallel::parse_and_bind_parallel_with_libs_and_options(
             to_parse,
             lib_files,
             language_version,
+            module_detection,
         )
     };
 

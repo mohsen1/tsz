@@ -4,6 +4,7 @@
 //! can reference `CheckerOptions` without creating a circular dependency.
 
 use crate::common::{ModuleKind, ScriptTarget};
+use crate::options::module_detection::ModuleDetectionKind;
 
 /// Compiler options for type checking.
 #[derive(Debug, Clone)]
@@ -47,6 +48,13 @@ pub struct CheckerOptions {
     /// Module kind (None, `CommonJS`, ES2015, ES2020, ES2022, `ESNext`, etc.)
     /// Controls which module system is being targeted (affects import/export syntax validity)
     pub module: ModuleKind,
+    /// Resolved `moduleDetection`, i.e. `tsc`'s `getEmitModuleDetectionKind`.
+    ///
+    /// Decides which files are external modules, which in turn drives strict
+    /// mode, global-vs-module symbol contribution and module resolution. The
+    /// binder owns the predicate itself; this is the resolved setting handed to
+    /// it (`BinderOptions::module_detection`).
+    pub module_detection: ModuleDetectionKind,
     /// `useDefineForClassFields`: `None` means the target-derived default
     /// (`true` for ES2022+). `getEmitStandardClassFields` semantics:
     /// standard emit iff this is not `Some(false)` and target >= ES2022.
@@ -248,6 +256,7 @@ impl Default for CheckerOptions {
             types_has_wildcard: false,
             target: ScriptTarget::default(),
             module: ModuleKind::default(),
+            module_detection: ModuleDetectionKind::default(),
             use_define_for_class_fields: None,
             es_module_interop: false,
             allow_synthetic_default_imports: false,

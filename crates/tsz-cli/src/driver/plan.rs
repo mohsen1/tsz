@@ -11,11 +11,12 @@ use std::path::{Path, PathBuf};
 use crate::args::{CliArgs, Module, ModuleDetection, ModuleResolution, NewLine, Target};
 use crate::config::{
     CompilerOptions, ModuleResolutionKind, ResolvedCompilerOptions, TsConfig,
-    checker_target_from_emitter, derive_default_module_kind, parse_tsconfig_with_diagnostics,
-    resolve_default_lib_files, resolve_lib_files, strict_family,
+    apply_module_detection, checker_target_from_emitter, derive_default_module_kind,
+    parse_tsconfig_with_diagnostics, resolve_default_lib_files, resolve_lib_files, strict_family,
 };
 use tsz::checker::diagnostics::{Diagnostic, diagnostic_codes};
 use tsz_common::common::NewLineKind;
+use tsz_common::options::module_detection::ModuleDetectionKind;
 
 use super::{canonicalize_or_owned, is_declaration_file};
 
@@ -393,17 +394,14 @@ pub(super) fn apply_cli_overrides_with_config_options(
     // - Not set -> preserve config-level default
     match args.module_detection {
         Some(ModuleDetection::Force) => {
-            options.printer.module_detection_force = true;
-            options.printer.module_detection_legacy = false;
+            apply_module_detection(options, ModuleDetectionKind::Force);
         }
         Some(ModuleDetection::Legacy) => {
-            options.printer.module_detection_force = false;
-            options.printer.module_detection_legacy = true;
+            apply_module_detection(options, ModuleDetectionKind::Legacy);
         }
         Some(ModuleDetection::Auto) => {
             // Explicitly opting out of force mode
-            options.printer.module_detection_force = false;
-            options.printer.module_detection_legacy = false;
+            apply_module_detection(options, ModuleDetectionKind::Auto);
         }
         None => {
             // When module detection is not set via CLI, check if the CLI also overrides
@@ -414,7 +412,7 @@ pub(super) fn apply_cli_overrides_with_config_options(
                     Module::Node16 | Module::Node18 | Module::Node20 | Module::NodeNext
                 )
             {
-                options.printer.module_detection_force = true;
+                apply_module_detection(options, ModuleDetectionKind::Force);
             }
         }
     }

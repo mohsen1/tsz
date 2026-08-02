@@ -1605,10 +1605,33 @@ pub fn parse_and_bind_parallel_with_libs(
 }
 
 /// Parse and bind multiple files in parallel with lib contexts and a compiler target.
+///
+/// Uses the default `moduleDetection` (`auto`); see
+/// [`parse_and_bind_parallel_with_libs_and_options`] to pass a resolved one.
 pub fn parse_and_bind_parallel_with_libs_and_target(
     files: Vec<(String, String)>,
     lib_files: &[Arc<lib_loader::LibFile>],
     language_version: ScriptTarget,
+) -> Vec<BindResult> {
+    parse_and_bind_parallel_with_libs_and_options(
+        files,
+        lib_files,
+        language_version,
+        ModuleDetectionKind::default(),
+    )
+}
+
+/// Parse and bind multiple files in parallel with lib contexts, a compiler
+/// target and a resolved `moduleDetection` setting.
+///
+/// `module_detection` decides which files the binder marks as external modules
+/// (`tsc`'s `getSetExternalModuleIndicator`), which in turn drives strict mode,
+/// global-vs-module symbol contribution and module resolution.
+pub fn parse_and_bind_parallel_with_libs_and_options(
+    files: Vec<(String, String)>,
+    lib_files: &[Arc<lib_loader::LibFile>],
+    language_version: ScriptTarget,
+    module_detection: ModuleDetectionKind,
 ) -> Vec<BindResult> {
     let premerged_lib_binder = if files.len() > 1 && !lib_files.is_empty() {
         let mut binder = BinderState::new();
@@ -1627,6 +1650,7 @@ pub fn parse_and_bind_parallel_with_libs_and_target(
                     source_text,
                     lib_files,
                     language_version,
+                    module_detection,
                     premerged_lib_binder.as_deref(),
                 )
             })
@@ -1643,6 +1667,7 @@ pub fn parse_and_bind_parallel_with_libs_and_target(
                 source_text,
                 lib_files,
                 language_version,
+                module_detection,
                 premerged_lib_binder.as_deref(),
             )
         })
@@ -1654,6 +1679,7 @@ fn bind_file_with_libs_with_language_version(
     source_text: String,
     lib_files: &[Arc<lib_loader::LibFile>],
     language_version: ScriptTarget,
+    module_detection: ModuleDetectionKind,
     premerged_lib_binder: Option<&BinderState>,
 ) -> BindResult {
     // Skip parsing .json files - they should not be parsed as TypeScript.
@@ -1674,6 +1700,7 @@ fn bind_file_with_libs_with_language_version(
     let mut binder = premerged_lib_binder
         .cloned()
         .unwrap_or_else(BinderState::new);
+    binder.options.module_detection = module_detection;
     binder.set_debug_file(&file_name);
     if premerged_lib_binder.is_some() {
         binder.symbols.share_current_symbols_for_append();

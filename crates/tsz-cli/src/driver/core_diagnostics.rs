@@ -1016,7 +1016,13 @@ fn compile_inner_impl(
 
     let build_program_start = Instant::now();
     let (program, dirty_paths) = if let Some(ref mut c) = effective_cache {
-        let result = build_program_with_cache(sources, c, &lib_files, resolved.checker.target);
+        let result = build_program_with_cache(
+            sources,
+            c,
+            &lib_files,
+            resolved.checker.target,
+            resolved.checker.module_detection,
+        );
         (result.program, Some(result.dirty_paths))
     } else {
         let compile_inputs: Vec<(String, String)> = sources
@@ -1030,10 +1036,11 @@ fn compile_inner_impl(
                 (source.path.to_string_lossy().into_owned(), text)
             })
             .collect();
-        let bind_results = parallel::parse_and_bind_parallel_with_libs_and_target(
+        let bind_results = parallel::parse_and_bind_parallel_with_libs_and_options(
             compile_inputs,
             &lib_files,
             resolved.checker.target,
+            resolved.checker.module_detection,
         );
         (Arc::new(parallel::merge_bind_results(bind_results)), None)
     };

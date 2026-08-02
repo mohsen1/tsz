@@ -168,6 +168,7 @@ fn function_body_declarations_hoist_even_in_strict_es2015() {
     let options = BinderOptions {
         target: ScriptTarget::ES2015,
         always_strict: true,
+        ..BinderOptions::default()
     };
     let (binder, _parser) = parse_and_bind_with_options(
         r#"
@@ -201,6 +202,7 @@ fn function_in_block_not_hoisted_in_strict_mode() {
     let options = BinderOptions {
         target: ScriptTarget::ES2015,
         always_strict: true,
+        ..BinderOptions::default()
     };
     let (binder, _parser) = parse_and_bind_with_options(
         r#"
@@ -229,6 +231,7 @@ fn function_in_block_hoisted_in_non_strict_es5() {
     let options = BinderOptions {
         target: ScriptTarget::ES5,
         always_strict: false,
+        ..BinderOptions::default()
     };
     let (binder, _parser) = parse_and_bind_with_options(
         r"
