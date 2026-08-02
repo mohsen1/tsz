@@ -1448,9 +1448,12 @@ impl<'a> CheckerState<'a> {
             } else {
                 None
             };
+            let paired_getter_supplies_type =
+                self.paired_getter_supplies_property_type(accessor) || skip_implicit_any_accessor;
             self.check_setter_parameter(
                 &accessor.parameters.nodes,
                 has_paired_getter || skip_implicit_any_accessor,
+                paired_getter_supplies_type,
                 accessor_jsdoc.as_deref(),
                 accessor_name,
             );
@@ -1591,16 +1594,17 @@ impl<'a> CheckerState<'a> {
             // plain class too, where tsc emits it alongside the syntax error.
             //
             // This is the accessor analogue of the bodyless-method TS7010 arm above,
-            // and it carries one exemption that arm does not need: a getter paired
-            // with an annotated setter takes its type from the setter
-            // (tsc's `isGetAccessorWithAnnotatedSetAccessor`), so it is not implicitly
-            // `any` and must stay clean. `get g(); set g(v: number);` is ordinary in
-            // real declaration files.
+            // and it carries one exemption that arm does not need: a get/set pair
+            // shares a single property type, and when it is missing tsc blames the
+            // *setter* (TS7032 on the setter name), never the getter. So ANY paired
+            // setter takes the getter out of TS7033 — not just an annotated one.
+            // An annotated setter supplies the type outright
+            // (tsc's `isGetAccessorWithAnnotatedSetAccessor`); an unannotated one
+            // becomes the blame site itself and is reported there by
+            // `check_setter_parameter`. Either way the getter stays clean.
             if self.ctx.no_implicit_any()
                 && !self.is_js_file()
-                && self
-                    .contextual_getter_return_type_for_class_accessor(accessor)
-                    .is_none()
+                && self.paired_setter_member_for_getter(accessor).is_none()
                 && let Some(accessor_name) = self.get_property_name(accessor.name)
             {
                 use crate::diagnostics::diagnostic_codes;
