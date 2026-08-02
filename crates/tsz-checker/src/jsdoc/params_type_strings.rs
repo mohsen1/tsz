@@ -30,8 +30,11 @@ impl<'a> CheckerState<'a> {
     /// - `@param {Type} [name]` — brackets around name
     /// - `@param {Type} [name=default]` — brackets with default
     ///
+    /// A name-only tag (`@param name`, no `{Type}`) supplies no type information,
+    /// so it does not override the untyped-JS-parameter implicit-optional rule —
+    /// tsc treats it exactly as if there were no `@param` tag at all (returns false).
+    ///
     /// Non-optional `@param` tags (returns true):
-    /// - `@param name` — name-only, no type
     /// - `@param {Type} name` — standard typed param
     pub(crate) fn jsdoc_has_required_param_tag(jsdoc: &str, param_name: &str) -> bool {
         for chunk in jsdoc.split_inclusive('\n') {
@@ -42,6 +45,7 @@ impl<'a> CheckerState<'a> {
             if let Some((_tag, rest)) = Self::strip_jsdoc_param_tag_prefix(effective)
                 && let Some(param) = Self::parse_jsdoc_param_tag(rest)
                 && param.name == param_name
+                && param.type_expr.is_some()
                 && !param.optional
             {
                 return true;

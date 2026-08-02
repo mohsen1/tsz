@@ -302,11 +302,38 @@ fn jsdoc_has_required_param_tag_standard() {
 
 #[test]
 fn jsdoc_has_required_param_tag_name_only() {
-    // @param name (no type) is considered required
+    // @param name (no type) supplies no type info, so it is NOT considered
+    // required — it must behave exactly like having no @param tag at all
+    // (verified against the pinned tsc@7.0.2 oracle: `function f(a,b,c){}`
+    // with only name-only @param tags in an allowJs file leaves all three
+    // params implicitly optional).
     let jsdoc = r#"
  * @param name
         "#;
-    assert!(CheckerState::jsdoc_has_required_param_tag(jsdoc, "name"));
+    assert!(!CheckerState::jsdoc_has_required_param_tag(jsdoc, "name"));
+}
+
+#[test]
+fn jsdoc_has_required_param_tag_name_only_renamed_binder() {
+    // Same shape, different parameter name — the rule is about tag shape,
+    // never spelling.
+    let jsdoc = r#"
+ * @param count
+        "#;
+    assert!(!CheckerState::jsdoc_has_required_param_tag(jsdoc, "count"));
+}
+
+#[test]
+fn jsdoc_has_required_param_tag_name_only_multiple_params() {
+    // Multiple name-only tags on separate lines — none should be required.
+    let jsdoc = r#"
+ * @param a
+ * @param b
+ * @param c
+        "#;
+    assert!(!CheckerState::jsdoc_has_required_param_tag(jsdoc, "a"));
+    assert!(!CheckerState::jsdoc_has_required_param_tag(jsdoc, "b"));
+    assert!(!CheckerState::jsdoc_has_required_param_tag(jsdoc, "c"));
 }
 
 #[test]
@@ -334,6 +361,18 @@ fn jsdoc_has_required_param_tag_optional_type_suffix() {
  * @param {string=} name
         "#;
     assert!(!CheckerState::jsdoc_has_required_param_tag(jsdoc, "name"));
+}
+
+#[test]
+fn jsdoc_has_required_param_tag_mixed_typed_and_name_only() {
+    // A typed tag for one param and a name-only tag for another: each
+    // param's requiredness is judged independently by its own tag shape.
+    let jsdoc = r#"
+ * @param {string} a
+ * @param b
+        "#;
+    assert!(CheckerState::jsdoc_has_required_param_tag(jsdoc, "a"));
+    assert!(!CheckerState::jsdoc_has_required_param_tag(jsdoc, "b"));
 }
 
 #[test]
