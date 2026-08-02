@@ -338,8 +338,8 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Under `strictNullChecks`, emit the "possibly null/undefined" operand
-    /// diagnostic when the operand of a unary `+`/`-`/`~` is nullable.
+    /// Emit the "possibly null/undefined" operand diagnostic when the operand of
+    /// a unary `+`/`-`/`~` is nullable.
     ///
     /// tsc's `checkPrefixUnaryExpression` runs `checkNonNullType(operandType, operand)`
     /// **unconditionally** for `+`/`-`/`~` — there is no arithmetic-operand check for
@@ -349,17 +349,24 @@ impl<'a> CheckerState<'a> {
     /// alone, `string | undefined`, `object | null`, `symbol | null` (alongside the
     /// separate TS2469), and type parameters whose constraint is nullable all report.
     ///
+    /// `checkNonNullType` is not gated on `strictNullChecks` either: the strictness
+    /// policy lives in tsc's `reportObjectPossiblyNullOrUndefinedError`, which reports
+    /// the literal `null`/`undefined` KEYWORD as TS18050 under both settings and the
+    /// type-driven family only under `strictNullChecks`. `emit_nullish_operand_error`
+    /// already implements that routing, so only the keyword needs to reach it without
+    /// `strictNullChecks`.
+    ///
     /// `void` is not in tsc's `Nullable` flag set, so a `void` operand never triggers
     /// this (it is handled by the operator-specific paths instead).
     pub(crate) fn check_nullish_unary_operand(&mut self, operand: NodeIndex, operand_type: TypeId) {
-        if !self.ctx.strict_null_checks() {
-            return;
-        }
         if operand_type == TypeId::VOID {
             return;
         }
         let (_non_nullish, nullish_cause) = self.split_nullish_type(operand_type);
         let Some(cause) = nullish_cause else { return };
+        if !self.ctx.strict_null_checks() && !self.is_literal_null_or_undefined_node(operand) {
+            return;
+        }
         self.emit_nullish_operand_error(operand, cause);
     }
 

@@ -1083,26 +1083,36 @@ impl CheckerState<'_> {
 
     /// Mirror tsc's `checkNonNullType` for an `in`-operator operand.
     ///
-    /// Under `strictNullChecks`, a nullable operand is reported as
-    /// TS18047/18048/18049 for a named entity (identifier, property access,
-    /// `this`), TS2531/2532/2533 for an unnamed expression (call result,
-    /// parenthesized expression, …), or TS18050 for the literal
-    /// `null`/`undefined` keyword — exactly the routing `report_nullish_object`
-    /// already implements. The non-nullish remainder is returned so the caller's
-    /// structural check (key type for the LHS, object shape for the RHS) runs on
-    /// the stripped type; `None` means the operand was purely nullish, so no
-    /// structural check applies. `any`/`error`/`unknown` carry no nullish part
-    /// and pass through unchanged.
+    /// A nullable operand is reported as TS18047/18048/18049 for a named entity
+    /// (identifier, property access, `this`), TS2531/2532/2533 for an unnamed
+    /// expression (call result, parenthesized expression, …), or TS18050 for the
+    /// literal `null`/`undefined` keyword — exactly the routing
+    /// `report_nullish_object` already implements. The non-nullish remainder is
+    /// returned so the caller's structural check (key type for the LHS, object
+    /// shape for the RHS) runs on the stripped type; `None` means the operand was
+    /// purely nullish, so no structural check applies. `any`/`error`/`unknown`
+    /// carry no nullish part and pass through unchanged.
+    ///
+    /// `checkNonNullType` itself is not gated on `strictNullChecks`: the
+    /// strictness policy lives one level down, in tsc's
+    /// `reportObjectPossiblyNullOrUndefinedError`, which reports the literal
+    /// `null`/`undefined` KEYWORD as TS18050 under both settings and the
+    /// type-driven family only under `strictNullChecks`. Without
+    /// `strictNullChecks` a non-keyword operand therefore keeps its unstripped
+    /// type, so the structural key/object check below is unchanged for it.
     fn check_in_operand_non_null(&mut self, idx: NodeIndex, ty: TypeId) -> Option<TypeId> {
-        if !self.ctx.compiler_options.strict_null_checks
-            || matches!(ty, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN)
-        {
+        if matches!(ty, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN) {
             return Some(ty);
         }
         let (non_nullish, nullish_cause) = self.split_nullish_type(ty);
         let Some(cause) = nullish_cause else {
             return Some(ty);
         };
+        if !self.ctx.compiler_options.strict_null_checks
+            && !self.is_literal_null_or_undefined_node(idx)
+        {
+            return Some(ty);
+        }
         self.report_nullish_object(idx, cause, non_nullish.is_none());
         non_nullish
     }
