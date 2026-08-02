@@ -441,6 +441,8 @@ mod issue_9762_literal_init_callback_inference;
 mod iterable_next_relation_routing_arch_tests;
 #[path = "tests/js_expando_order_sensitivity_tests.rs"]
 mod js_expando_order_sensitivity_tests;
+#[path = "tests/js_file_function_parameters_as_optional_tests.rs"]
+mod js_file_function_parameters_as_optional_tests;
 #[path = "tests/js_open_object_property_access_tests.rs"]
 mod js_open_object_property_access_tests;
 #[path = "tests/jsdoc_bare_import_type_tests.rs"]
