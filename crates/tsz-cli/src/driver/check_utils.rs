@@ -317,19 +317,26 @@ pub(super) fn filtered_parse_diagnostics(
     // tsc emits these codes via grammarErrorOnNode in the checker, which checks
     // hasParseDiagnostics(sourceFile) and suppresses when any parse error exists.
     // In tsz, these are emitted by the parser. We post-filter them here to match
-    // tsc's suppression behavior. Only a genuine structural parse failure
-    // (`is_real_syntax_error`, already the authoritative classification used
-    // above for `has_real_syntax_error`) counts as "this file has parse
-    // diagnostics" for hasParseDiagnostics purposes: codes tsz emits from the
-    // parser that are themselves grammar/strict-mode checks (not AST-corrupting,
-    // e.g. TS1214/TS1262/TS1359/TS18012) must not trigger suppression of their
-    // siblings in the same file. plainJSBinderErrors.ts reports TS1101 alongside
-    // several of those together, with no structural parse error at all, per the
-    // pinned tsc oracle — an ad-hoc exemption tuple here previously had to
-    // enumerate each such code individually and kept missing entries; reusing
-    // `has_real_syntax_error` covers the whole family by construction (it is
-    // disjoint from `is_parser_grammar_code` by design — a diagnostic is either
-    // a structural failure or a grammar check, never both).
+    // tsc's suppression behavior. We only suppress grammar codes when there's a
+    // non-grammar parse error present (e.g., TS1005, TS1109) to avoid suppressing
+    // grammar codes that are the file's only diagnostic.
+    //
+    // `is_real_syntax_error` is NOT a substitute for this exemption tuple: TS1260
+    // (keyword containing an escape character, e.g. `default:`) is neither a
+    // structural failure nor a listed grammar code, yet per the pinned tsc oracle
+    // it DOES trigger file-wide suppression of sibling grammar codes
+    // (switchStatementsWithMultipleDefaults.ts reports only TS1260, dropping every
+    // TS1113 duplicate-default diagnostic) — so "not exempted" must stay the
+    // default for anything not proven to need exemption, not "not a real syntax
+    // error". 1009/1185/1214/1262/1359/18012 are themselves parser-emitted
+    // strict-mode/grammar checks (not structural failures) that must NOT count as
+    // the trigger: e.g. plainJSBinderErrors.ts reports TS1101, TS1359, and TS18012
+    // ('#constructor' is a reserved word) all together with no structural parse
+    // error at all, per the same oracle.
+    let has_non_grammar_parse_error = parse_diagnostics.iter().any(|d| {
+        !matches!(d.code, 1009 | 1185 | 1214 | 1262 | 1359 | 18012)
+            && !is_parser_grammar_code(d.code)
+    });
 
     // TS1359 for `await` is parser-emitted in tsz. Keep it alongside unrelated
     // parse diagnostics (tsc does this in plain JS binder errors), but suppress
@@ -351,7 +358,7 @@ pub(super) fn filtered_parse_diagnostics(
             // and program-wide (when any file in the program has real syntax errors).
             // tsc's grammarErrorOnNode calls hasParseDiagnostics(sourceFile) which
             // covers program-level parse errors; we mirror that behavior here.
-            if (has_real_syntax_error || program_has_real_syntax_errors)
+            if (has_non_grammar_parse_error || program_has_real_syntax_errors)
                 && is_parser_grammar_code(diagnostic.code)
             {
                 return false;
