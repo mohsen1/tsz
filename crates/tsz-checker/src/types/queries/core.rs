@@ -333,6 +333,33 @@ impl<'a> CheckerState<'a> {
                 .has_modifier(modifiers, SyntaxKind::OverrideKeyword)
     }
 
+    /// Whether a class member is hidden from the observable surface of an ambient
+    /// declaration, which suppresses the whole `noImplicitAny` member family
+    /// (TS7006/TS7008/TS7010/TS7033) for it.
+    ///
+    /// `tsc` reports those diagnostics on ambient members because an ambient
+    /// declaration *is* the public API — an implicit `any` there is consumed by
+    /// everyone importing it. That reasoning does not apply to a member no consumer
+    /// can observe, and `tsc` reports nothing for one. Two independent things hide a
+    /// member: the `private` modifier, and a private-identifier (`#x`) name. Neither
+    /// condition suppresses anything on its own — a `#x` member of a *non-ambient*
+    /// class still reports normally, because its implicit `any` still affects the
+    /// inferred type of the enclosing class body.
+    pub(crate) fn member_hidden_from_ambient_declaration_surface(
+        &self,
+        modifiers: &Option<tsz_parser::parser::NodeList>,
+        name_idx: NodeIndex,
+    ) -> bool {
+        let in_ambient_context = self
+            .ctx
+            .enclosing_class
+            .as_ref()
+            .is_some_and(|c| c.is_declared)
+            || self.ctx.is_declaration_file();
+        in_ambient_context
+            && (self.has_private_modifier(modifiers) || self.is_private_identifier_name(name_idx))
+    }
+
     /// Check if a node is a private identifier.
     pub(crate) fn is_private_identifier_name(&self, name_idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(name_idx) else {
