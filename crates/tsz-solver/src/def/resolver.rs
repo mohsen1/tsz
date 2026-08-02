@@ -736,6 +736,17 @@ pub struct TypeEnvironment {
     boxed_def_ids: FxHashMap<IntrinsicKind, Vec<DefId>>,
     /// Maps class `DefIds` to their parent class `DefId` (for class hierarchy checks).
     class_extends: FxHashMap<u32, DefId>,
+    /// Maps interface `DefIds` to their parent interface `DefId`, registered by
+    /// the checker only after `check_interface_extension_compatibility` confirms
+    /// the heritage edge did not fire TS2430 ("incorrectly extends"). Unlike
+    /// `class_extends`, this is deliberately NOT the raw name-resolved heritage
+    /// edge from `DefinitionStore::get_extends` (populated unconditionally at
+    /// semantic-construction time) — that edge reports the declared `extends`
+    /// even when tsc's own override check rejected it (e.g. a lib interface
+    /// like `HTMLTrackElement extends HTMLElement` where a property override is
+    /// incompatible), which made the nominal fast path in
+    /// `class_instance_extends_target_def` unsound (#16142).
+    verified_interface_extends: FxHashMap<u32, DefId>,
     /// Reverse map: instance `TypeId` → class `DefId` (for nominal instanceof narrowing).
     instance_type_to_class: FxHashMap<u32, DefId>,
     /// Shared `DefinitionStore` for fallback lookups (e.g., `DefKind` when `def_kinds`
@@ -796,6 +807,7 @@ impl TypeEnvironment {
             class_instance_types: FxHashMap::default(),
             boxed_def_ids: FxHashMap::default(),
             class_extends: FxHashMap::default(),
+            verified_interface_extends: FxHashMap::default(),
             instance_type_to_class: FxHashMap::default(),
             definition_store: None,
             this_type: None,
@@ -1561,9 +1573,25 @@ impl TypeEnvironment {
         self.bump_generation();
     }
 
+    /// Register an interface's parent interface `DefId` once the checker has
+    /// verified the heritage edge did not fire TS2430. See
+    /// `verified_interface_extends` for why this differs from the raw
+    /// name-resolved edge.
+    pub fn register_interface_extends(&mut self, child_def_id: DefId, parent_def_id: DefId) {
+        self.verified_interface_extends
+            .insert(child_def_id.0, parent_def_id);
+        self.bump_generation();
+    }
+
     /// Get the parent class `DefId` for a class.
     pub fn get_class_extends_def(&self, def_id: DefId) -> Option<DefId> {
         self.class_extends.get(&def_id.0).copied()
+    }
+
+    /// Get the checker-verified parent interface `DefId` for an interface. See
+    /// `verified_interface_extends`.
+    pub fn get_interface_extends_def(&self, def_id: DefId) -> Option<DefId> {
+        self.verified_interface_extends.get(&def_id.0).copied()
     }
 
     /// Reverse-lookup: get the class `DefId` for a resolved instance `TypeId`.
@@ -1801,9 +1829,7 @@ impl TypeResolver for TypeEnvironment {
     }
 
     fn get_interface_extends(&self, def_id: DefId) -> Option<DefId> {
-        self.definition_store
-            .as_ref()
-            .and_then(|store| store.get_extends(def_id))
+        self.get_interface_extends_def(def_id)
     }
 
     fn class_def_for_instance_type(&self, type_id: TypeId) -> Option<DefId> {
