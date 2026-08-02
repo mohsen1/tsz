@@ -165,6 +165,8 @@ mod commonjs_reentrant_surface_tests;
 mod commonjs_require_binding_type_meaning_tests;
 #[path = "tests/computed_alias_source_display_tests.rs"]
 mod computed_alias_source_display_tests;
+#[path = "tests/computed_member_name_diagnostic_display_tests.rs"]
+mod computed_member_name_diagnostic_display_tests;
 #[path = "tests/computed_symbol_name_unification_tests.rs"]
 mod computed_symbol_name_unification_tests;
 #[path = "tests/concise_body_return_excess_property_tests.rs"]
@@ -545,6 +547,8 @@ mod member_name_source_quote_fidelity_tests;
 mod merged_interface_constraint_relation_routing_arch_tests;
 #[path = "tests/method_return_type_elaboration_tests.rs"]
 mod method_return_type_elaboration_tests;
+#[path = "tests/module_scoped_var_shadows_lib_global_ts2300_tests.rs"]
+mod module_scoped_var_shadows_lib_global_ts2300_tests;
 #[path = "tests/multi_overload_infer_capture_tests.rs"]
 mod multi_overload_infer_capture_tests;
 #[path = "tests/mutable_binding_widening_from_const_literal_tests.rs"]

@@ -1503,8 +1503,68 @@ impl<'a> CheckerState<'a> {
             return Some(lit.text.clone());
         }
 
+        // Computed name — `declarationNameToString` renders the *syntax*, so the
+        // brackets survive and the expression keeps its own spelling: `["a"]`,
+        // `[1.0]` and `[0x10]` (never canonicalized to `[1]` / `[16]`), `[k]`,
+        // `[Symbol.iterator]`. `get_member_name_text` cannot serve this: it is a
+        // key-shaped helper whose numeric arm both drops the brackets and
+        // canonicalizes the digits, which is right for a dedup key and wrong for
+        // a message.
+        if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+            && let Some(computed) = self.ctx.arena.get_computed_property(name_node)
+            && let Some(inner) = self.computed_name_expression_display_text(computed.expression)
+        {
+            return Some(format!("[{inner}]"));
+        }
+
         // Fall back to get_member_name_text for computed properties, etc.
         self.get_member_name_text(name_idx)
+    }
+
+    /// The inner spelling of a computed member name, for
+    /// `get_member_name_display_text`. Returns `None` when the expression is
+    /// absent or too complex to render, which keeps a malformed computed name
+    /// (`get [](); `, a parse-error shape) unnamed rather than rendering it as
+    /// an empty `[]` — tsc reports only the syntax error there.
+    fn computed_name_expression_display_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_node = self.ctx.arena.get(expr_idx)?;
+
+        if expr_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
+            && let Some(lit) = self.ctx.arena.get_literal(expr_node)
+        {
+            return Some(format!("\"{}\"", lit.text));
+        }
+
+        if expr_node.kind == tsz_scanner::SyntaxKind::NumericLiteral as u16
+            && let Some(lit) = self.ctx.arena.get_literal(expr_node)
+        {
+            return Some(lit.text.clone());
+        }
+
+        self.get_simple_computed_name_expr_text(expr_idx)
+    }
+
+    /// The name tsc puts in a member diagnostic, via `declarationNameToString`.
+    ///
+    /// The renderer is chosen by the name node's **kind**, not by whichever
+    /// helper happens to succeed first. That distinction is the whole point:
+    /// `get_property_name` resolves a computed name whose expression is a
+    /// literal (`["foo"]`, `[0]`) to its property *key* and returns it without
+    /// the syntactic wrapper, so a first-success chain silently renders half
+    /// the computed names as bare keys and the other half — the ones
+    /// `get_property_name` declines, like `[k]` and `[Symbol.iterator]` — with
+    /// their brackets intact. A non-computed string-literal name has the same
+    /// disease: the key resolver returns it unquoted, dropping whichever quote
+    /// character the author wrote.
+    pub(crate) fn member_name_for_diagnostic(&self, name_idx: NodeIndex) -> Option<String> {
+        if self.ctx.arena.get(name_idx).is_some_and(|node| {
+            node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                || node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
+        }) {
+            return self.get_member_name_display_text(name_idx);
+        }
+        self.get_property_name(name_idx)
+            .or_else(|| self.get_member_name_display_text(name_idx))
     }
 
     /// Check if an interface property type annotation circularly references

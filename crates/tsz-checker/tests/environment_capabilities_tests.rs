@@ -1039,18 +1039,42 @@ fn test_import_assert_deprecated_fires_by_default() {
 }
 
 #[test]
-fn test_import_assert_deprecated_suppressed_by_ignore_deprecations() {
+fn test_import_assert_deprecated_suppressed_only_by_ignore_deprecations_6_0() {
     use tsz_checker::query_boundaries::capabilities::EnvironmentCapabilities;
 
     let opts = CheckerOptions {
         ignore_deprecations: true,
+        ignore_deprecations_6_0: true,
         ..CheckerOptions::default()
     };
     let caps = EnvironmentCapabilities::from_options(&opts, true);
     assert_eq!(
         caps.check_import_assert_deprecated(),
         None,
-        "TS2880 should NOT fire when ignore_deprecations is true"
+        "TS2880 should NOT fire when ignoreDeprecations is \"6.0\""
+    );
+}
+
+#[test]
+fn test_import_assert_deprecated_not_suppressed_by_ignore_deprecations_5_0() {
+    use tsz_checker::query_boundaries::capabilities::EnvironmentCapabilities;
+    use tsz_checker::query_boundaries::environment::CapabilityDiagnostic;
+
+    // `ignoreDeprecations: "5.0"` is a legal value and sets the presence flag,
+    // but it names an older grace window than the release that removed the
+    // `assert` keyword, so tsc still reports TS2880. Verified against tsc at
+    // all four emission sites (import/export declaration, import type,
+    // dynamic import).
+    let opts = CheckerOptions {
+        ignore_deprecations: true,
+        ignore_deprecations_6_0: false,
+        ..CheckerOptions::default()
+    };
+    let caps = EnvironmentCapabilities::from_options(&opts, true);
+    assert_eq!(
+        caps.check_import_assert_deprecated(),
+        Some(CapabilityDiagnostic::ImportAssertDeprecated),
+        "TS2880 should still fire when ignoreDeprecations is \"5.0\""
     );
 }
 
@@ -1077,18 +1101,63 @@ fn test_import_assert_deprecated_checker_integration_ts2880() {
 #[test]
 fn test_import_assert_deprecated_suppressed_checker_integration() {
     let diags = check_with_options(
-        r#"import data from './data.json' assert { type: "json" };"#,
+        r#"import payload from './payload.json' assert { type: "json" };"#,
         CheckerOptions {
             module: ModuleKind::ESNext,
             ignore_deprecations: true,
+            ignore_deprecations_6_0: true,
             ..CheckerOptions::default()
         },
     );
     let ts2880: Vec<_> = diags.iter().filter(|d| d.code == 2880).collect();
     assert!(
         ts2880.is_empty(),
-        "Expected NO TS2880 with ignore_deprecations=true, got: {ts2880:?}"
+        "Expected NO TS2880 with ignoreDeprecations=\"6.0\", got: {ts2880:?}"
     );
+}
+
+#[test]
+fn test_import_assert_deprecated_not_suppressed_by_5_0_checker_integration() {
+    let diags = check_with_options(
+        r#"import records from './records.json' assert { type: "json" };"#,
+        CheckerOptions {
+            module: ModuleKind::ESNext,
+            ignore_deprecations: true,
+            ignore_deprecations_6_0: false,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2880: Vec<_> = diags.iter().filter(|d| d.code == 2880).collect();
+    assert!(
+        !ts2880.is_empty(),
+        "Expected TS2880 with ignoreDeprecations=\"5.0\", got: {diags:?}"
+    );
+}
+
+/// The `with` keyword is the replacement spelling and must stay silent under
+/// every `ignoreDeprecations` value — the negative control for the gate above.
+#[test]
+fn test_import_with_attributes_never_reports_ts2880() {
+    for (ignore_deprecations, ignore_deprecations_6_0) in
+        [(false, false), (true, false), (true, true)]
+    {
+        let diags = check_with_options(
+            r#"import entries from './entries.json' with { type: "json" };"#,
+            CheckerOptions {
+                module: ModuleKind::ESNext,
+                ignore_deprecations,
+                ignore_deprecations_6_0,
+                ..CheckerOptions::default()
+            },
+        );
+        let ts2880: Vec<_> = diags.iter().filter(|d| d.code == 2880).collect();
+        assert!(
+            ts2880.is_empty(),
+            "`with` must never report TS2880 \
+             (ignore_deprecations={ignore_deprecations}, 6_0={ignore_deprecations_6_0}), \
+             got: {ts2880:?}"
+        );
+    }
 }
 
 // =============================================================================
