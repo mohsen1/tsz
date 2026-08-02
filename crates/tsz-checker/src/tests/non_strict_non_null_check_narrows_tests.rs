@@ -350,6 +350,120 @@ fn strict_mode_keeps_reporting_the_union_and_widened_rows() {
     );
 }
 
+// -------------------------------------------------------------------------
+// A `null | undefined` union ANNOTATION is a distinct case from a union with
+// a non-nullish member: tsc's type-node resolution collapses it to a bare
+// `null` type without `strictNullChecks` (not a suppression, and not the
+// `T | null` narrowing above), so it reports the same single-cause family
+// TS18047/TS2721 as a plain `null` annotation. Oracle: `tsc` 7.0.2,
+// `--strict false`, order-independent — `undefined | null` collapses the
+// same way as `null | undefined`.
+// -------------------------------------------------------------------------
+
+#[test]
+fn null_or_undefined_union_annotation_collapses_to_null_without_strict_null_checks() {
+    for binder in ["onu", "probe", "receiver"] {
+        let source =
+            format!("declare const {binder}: null | undefined;\n{binder}.foo;\n{binder}();");
+        let codes = non_strict(&source);
+        assert_eq!(
+            count(&codes, TS18047),
+            1,
+            "a `null | undefined` receiver (binder {binder}) must report TS18047, got: {codes:?}"
+        );
+        assert_eq!(
+            count(&codes, TS2721),
+            1,
+            "a `null | undefined` callee (binder {binder}) must report TS2721, got: {codes:?}"
+        );
+        assert_eq!(
+            count(&codes, 18049),
+            0,
+            "the non-strict answer must not be the strict two-cause TS18049 (binder {binder}), got: {codes:?}"
+        );
+    }
+}
+
+#[test]
+fn undefined_or_null_union_annotation_collapses_the_same_way_regardless_of_order() {
+    let codes = non_strict("declare const a: undefined | null;\na.foo;");
+    assert_eq!(
+        count(&codes, TS18047),
+        1,
+        "`undefined | null` must collapse to `null` exactly like `null | undefined`, got: {codes:?}"
+    );
+}
+
+#[test]
+fn uniform_undefined_union_annotation_stays_undefined_not_null() {
+    // A regression the naive "all members are null/undefined -> null" rule
+    // would introduce: `undefined | undefined` has no `null` member at all,
+    // so it must resolve to `undefined`, not be dragged to `null`.
+    let codes = non_strict("declare const un2: undefined | undefined;\nun2.foo;");
+    assert_eq!(
+        count(&codes, TS18048),
+        1,
+        "a uniform `undefined | undefined` annotation must report TS18048, got: {codes:?}"
+    );
+    assert_eq!(
+        count(&codes, TS18047),
+        0,
+        "a uniform `undefined | undefined` annotation must not report TS18047, got: {codes:?}"
+    );
+}
+
+#[test]
+fn null_or_undefined_union_parameter_and_type_alias_collapse_the_same_way() {
+    let param = non_strict("function f(p: null | undefined) { p.foo; }");
+    assert_eq!(
+        count(&param, TS18047),
+        1,
+        "a `null | undefined` parameter annotation must report TS18047, got: {param:?}"
+    );
+
+    let alias = non_strict(
+        "type NullOrUndefined = null | undefined;\ndeclare const y: NullOrUndefined;\ny.foo;",
+    );
+    assert_eq!(
+        count(&alias, TS18047),
+        1,
+        "a `null | undefined` type alias must report TS18047, got: {alias:?}"
+    );
+}
+
+#[test]
+fn null_or_undefined_union_with_a_non_nullish_member_stays_clean() {
+    // The collapse is specific to a PURE null/undefined union — a union that
+    // also carries a real member is the already-correct `T | null` narrowing
+    // (its own flags are `TypeFlags.Union`), unaffected by this change.
+    let codes = non_strict("declare const un: { a: number } | null | undefined;\nun.a;\nun;");
+    assert!(
+        nullish_codes(&codes).is_empty(),
+        "a `T | null | undefined` annotation must stay clean without strictNullChecks, got: {codes:?}"
+    );
+}
+
+#[test]
+fn strict_mode_keeps_the_two_cause_answer_for_a_null_or_undefined_union() {
+    let source = "declare const onu: null | undefined;\nonu.foo;\nonu();";
+    let strict = check_source_strict_codes(source);
+    assert_eq!(
+        count(&strict, 18049),
+        1,
+        "strict mode must keep the two-cause TS18049 for `null | undefined`, got: {strict:?}"
+    );
+    assert_eq!(
+        count(&strict, 2723),
+        1,
+        "strict mode must keep the two-cause TS2723 for a `null | undefined` callee, got: {strict:?}"
+    );
+    assert_eq!(
+        count(&strict, TS18047),
+        0,
+        "strict mode must not collapse to the single-cause TS18047, got: {strict:?}"
+    );
+}
+
 #[test]
 fn strict_mode_rows_are_unchanged_for_the_directly_nullish_operands() {
     let source = "declare const on: null;\non.foo;\non();\non[0];\n\"\" in on;\n~on;";
