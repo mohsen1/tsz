@@ -104,5 +104,8 @@ mod tuple_interface_extends_array_numeric_member_cli_tests;
 #[path = "../tests/unresolved_import_type_application_cli_tests.rs"]
 mod unresolved_import_type_application_cli_tests;
 #[cfg(test)]
+#[path = "../tests/untyped_module_resolution_tests.rs"]
+mod untyped_module_resolution_tests;
+#[cfg(test)]
 #[path = "../tests/watch_tests.rs"]
 mod watch_tests;

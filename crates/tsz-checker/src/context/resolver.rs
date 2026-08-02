@@ -233,6 +233,44 @@ impl<'a> CheckerContext<'a> {
         self.get_resolution_error(specifier)
     }
 
+    /// Whether this request resolved to a module that has no program file.
+    ///
+    /// Some specifiers resolve successfully without ever producing a file the
+    /// program can index: an ambient `declare module "x"` target, and an
+    /// untyped JavaScript module under `node_modules` picked up by the
+    /// resolver's JS probe (`ModuleLookupResult::untyped_js`). The driver
+    /// records those in the mode-agnostic `resolved_modules` set, because
+    /// `resolved_module_request_paths` is keyed by a program file index it
+    /// does not have for them.
+    ///
+    /// Request-scoped consumers therefore cannot simply ignore
+    /// `resolved_modules` whenever the driver supplied request-keyed paths —
+    /// that makes path-less resolution invisible and reports a spurious
+    /// TS2307. They must instead ask whether *this* request produced a
+    /// resolution error of its own; a request that failed always records one,
+    /// so its absence plus membership in the set means the specifier resolved
+    /// path-lessly here.
+    pub fn module_resolved_without_program_file_for_request(
+        &self,
+        specifier: &str,
+        resolution_mode_override: Option<ResolutionModeOverride>,
+        request_kind: ResolutionRequestKind,
+    ) -> bool {
+        let Some(resolved) = self.resolved_modules.as_ref() else {
+            return false;
+        };
+        if !resolved.contains(specifier) {
+            return false;
+        }
+        if self.resolved_module_request_paths.is_none() {
+            // No request-keyed data at all: the mode-agnostic set is the only
+            // signal the driver produced, so it is authoritative.
+            return true;
+        }
+        self.get_resolution_error_for_request(specifier, resolution_mode_override, request_kind)
+            .is_none()
+    }
+
     /// Get the resolution error for a specifier under the exact driver request.
     pub fn get_resolution_error_for_request(
         &self,

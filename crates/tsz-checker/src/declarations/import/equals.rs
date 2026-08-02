@@ -947,10 +947,11 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if self.ctx.resolved_module_request_paths.is_none()
-            && let Some(ref resolved) = self.ctx.resolved_modules
-            && resolved.contains(module_name)
-        {
+        if self.ctx.module_resolved_without_program_file_for_request(
+            module_name,
+            request_resolution_mode,
+            request_kind,
+        ) {
             return;
         }
 

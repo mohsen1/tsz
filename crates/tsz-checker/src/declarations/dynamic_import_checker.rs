@@ -464,13 +464,17 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Fall back to the legacy resolved set only when the driver did not provide
-        // request-keyed paths. Otherwise a successful require/static lookup for the
-        // same specifier can hide a dynamic-import resolution error.
-        if self.ctx.resolved_module_request_paths.is_none()
-            && let Some(ref resolved) = self.ctx.resolved_modules
-            && resolved.contains(module_name)
-        {
+        // A specifier can resolve without a program file (ambient module, untyped
+        // JS module under `node_modules`); the request-keyed path map cannot
+        // represent that, so consult the mode-agnostic set — but only when this
+        // request recorded no error of its own, so a successful require/static
+        // lookup for the same specifier still cannot hide a dynamic-import
+        // resolution error.
+        if self.ctx.module_resolved_without_program_file_for_request(
+            module_name,
+            request_resolution_mode,
+            request_kind,
+        ) {
             return; // Module exists
         }
 
