@@ -320,9 +320,15 @@ pub(super) fn filtered_parse_diagnostics(
     // tsc's suppression behavior. We only suppress grammar codes when there's a
     // non-grammar parse error present (e.g., TS1005, TS1109) to avoid suppressing
     // grammar codes that are the file's only diagnostic.
-    let has_non_grammar_parse_error = parse_diagnostics
-        .iter()
-        .any(|d| !matches!(d.code, 1009 | 1185 | 1214 | 1262) && !is_parser_grammar_code(d.code));
+    //
+    // 1009/1185/1214/1262/1359 are themselves parser-emitted strict-mode/grammar
+    // checks (not structural parse failures), so their presence must not count as
+    // the "real" trigger that suppresses sibling grammar codes in the same file —
+    // e.g. plainJSBinderErrors.ts reports TS1101 and TS1359 together with no
+    // structural parse error at all, per the pinned tsc oracle.
+    let has_non_grammar_parse_error = parse_diagnostics.iter().any(|d| {
+        !matches!(d.code, 1009 | 1185 | 1214 | 1262 | 1359) && !is_parser_grammar_code(d.code)
+    });
 
     // TS1359 for `await` is parser-emitted in tsz. Keep it alongside unrelated
     // parse diagnostics (tsc does this in plain JS binder errors), but suppress
