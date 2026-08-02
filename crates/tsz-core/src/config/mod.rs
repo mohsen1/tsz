@@ -418,7 +418,7 @@ pub struct CompilerOptions {
     /// Control what method is used to detect module-format JS files.
     #[serde(default)]
     pub module_detection: Option<String>,
-    /// Suppress deprecation warnings. Valid values: "5.0", "6.0".
+    /// Suppress deprecation warnings. Valid values: "5.0", "6.0", "7.0".
     #[serde(default)]
     pub ignore_deprecations: Option<String>,
     /// Allow accessing UMD globals from modules.

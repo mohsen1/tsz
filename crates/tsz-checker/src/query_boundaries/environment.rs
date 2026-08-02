@@ -236,22 +236,18 @@ impl EnvironmentCapabilities {
     /// Check whether the deprecated `assert` keyword for import attributes
     /// should produce a diagnostic (TS2880).
     ///
-    /// Returns `Some(ImportAssertDeprecated)` unless `ignoreDeprecations` is
-    /// exactly `"6.0"`.
-    ///
-    /// The gate is the *value*, not the presence of the option. `tsc` spells
-    /// this as `compilerOptions.ignoreDeprecations !== "6.0"` at all three of
-    /// its emission sites (`checkImportCallExpression`,
-    /// `checkImportDeclaration`, `checkImportType`), which this boundary is the
-    /// single counterpart to. `ignoreDeprecations: "5.0"` is accepted by the
-    /// option validator and still reports TS2880: it names an older grace
-    /// window than the release that removed the `assert` keyword.
+    /// Always returns `Some(ImportAssertDeprecated)`: on the pinned 7.0.2
+    /// oracle TS2880 is unconditional, and no `ignoreDeprecations` value
+    /// silences it. The `"6.0"` grace window a 6.x `tsc` build granted at its
+    /// three emission sites (`checkImportCallExpression`,
+    /// `checkImportDeclaration`, `checkImportType`) closed in 7.0 — verified
+    /// against `scripts/node_modules/typescript/lib/tsc.js`, where
+    /// `ignoreDeprecations: "6.0"` produces neither a config error nor a
+    /// suppression, only an unconditional TS2880 (#16217). `ignore_deprecations_6_0`
+    /// (`CheckerOptions::ignore_deprecations_6_0`) is not read here; it stays
+    /// threaded for any deprecation whose grace window has not closed.
     pub(crate) const fn check_import_assert_deprecated(&self) -> Option<CapabilityDiagnostic> {
-        if !self.ignore_deprecations_6_0 {
-            Some(CapabilityDiagnostic::ImportAssertDeprecated)
-        } else {
-            None
-        }
+        Some(CapabilityDiagnostic::ImportAssertDeprecated)
     }
 
     /// Whether the deprecated `assert` import-attribute keyword is a *hard*
