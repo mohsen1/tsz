@@ -1287,6 +1287,94 @@ fn filtered_parse_diagnostics_keeps_ts1028_when_alone() {
 }
 
 #[test]
+fn filtered_parse_diagnostics_suppresses_ts1101_when_real_parse_error_present() {
+    use tsz::parser::ParseDiagnostic;
+
+    // `with` inside a class body or module top level is parser-emitted TS1101
+    // in tsz (the parser knows the syntactic auto-strict context without the
+    // checker). tsc's checkStrictModeWithStatement is a binder check
+    // (file.bindDiagnostics), suppressed program-wide by hasParseDiagnostics
+    // whenever a real structural parse error exists — verified against the
+    // pinned tsc oracle: `with (o) { ... }` plus an unrelated `function f( {}`
+    // reports only TS1005, dropping both TS1101 and the checker's TS2410.
+    let diagnostics = vec![
+        ParseDiagnostic {
+            start: 30,
+            length: 4,
+            message: "'with' statements are not allowed in strict mode.".to_string(),
+            code: 1101,
+        },
+        ParseDiagnostic {
+            start: 80,
+            length: 1,
+            message: "')' expected.".to_string(),
+            code: 1005,
+        },
+    ];
+
+    let filtered = filtered_parse_diagnostics(&diagnostics, false);
+    let codes: Vec<u32> = filtered.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&1101),
+        "TS1101 should be suppressed when a real parse error (TS1005) is present, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&1005),
+        "TS1005 (real parse error) should survive, got: {codes:?}"
+    );
+}
+
+#[test]
+fn filtered_parse_diagnostics_keeps_ts1101_when_alone() {
+    use tsz::parser::ParseDiagnostic;
+
+    let diagnostics = vec![ParseDiagnostic {
+        start: 30,
+        length: 4,
+        message: "'with' statements are not allowed in strict mode.".to_string(),
+        code: 1101,
+    }];
+
+    let filtered = filtered_parse_diagnostics(&diagnostics, false);
+    let codes: Vec<u32> = filtered.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&1101),
+        "TS1101 should be kept when it is the only diagnostic, got: {codes:?}"
+    );
+}
+
+#[test]
+fn filtered_parse_diagnostics_keeps_ts1101_with_non_real_parse_error() {
+    use tsz::parser::ParseDiagnostic;
+
+    // TS1014 (rest parameter must be last) does not corrupt the AST and is
+    // intentionally excluded from `is_real_syntax_error` — verified against
+    // the pinned tsc oracle: `with` plus `function f(...a, b) {}` in the same
+    // file still reports both TS1101 and TS1014/TS7019/TS7006 together.
+    let diagnostics = vec![
+        ParseDiagnostic {
+            start: 30,
+            length: 4,
+            message: "'with' statements are not allowed in strict mode.".to_string(),
+            code: 1101,
+        },
+        ParseDiagnostic {
+            start: 90,
+            length: 1,
+            message: "A rest parameter must be last in a parameter list.".to_string(),
+            code: 1014,
+        },
+    ];
+
+    let filtered = filtered_parse_diagnostics(&diagnostics, false);
+    let codes: Vec<u32> = filtered.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&1101),
+        "TS1101 should survive alongside a non-real parse error (TS1014), got: {codes:?}"
+    );
+}
+
+#[test]
 fn js_parse_allowlist_keeps_plain_js_binder_strict_codes() {
     for code in [1214, 18012] {
         assert!(
