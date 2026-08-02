@@ -1661,6 +1661,22 @@ impl<'a> CheckerState<'a> {
                 && !has_block_scoped_conflict
                 && !has_remote_block_scoped_conflict;
 
+            // A symbol whose declarations are all plain `var`/`let`/`const`
+            // goes through tsc's two independent reporting passes, which can
+            // co-emit TS2323 and TS2300 on one declaration and give the two
+            // codes different footprints over the group. The single-code
+            // selection below cannot express either, so that family is modelled
+            // directly in `duplicate_identifiers_variable_family`.
+            if self.try_emit_variable_redeclaration_family(
+                &declarations,
+                &conflicts,
+                &name,
+                is_external_module,
+                force2300 || has_umd_global_value_conflict || has_merge_visibility_diagnostic,
+            ) {
+                continue;
+            }
+
             let (message, code) = if !has_non_block_scoped && !force2300
                 || has_umd_global_value_conflict
             {
