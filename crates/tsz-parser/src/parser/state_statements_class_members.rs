@@ -87,14 +87,14 @@ impl ParserState {
                     );
                     reported_accessibility_duplicate = true;
                 }
-                // TS1029: accessibility must come after certain modifiers
-                if seen_static
-                    || seen_abstract
-                    || seen_readonly
-                    || seen_override
-                    || seen_accessor
-                    || seen_async
-                {
+                // TS1029: accessibility must come after certain modifiers.
+                // `abstract` is deliberately excluded: an accessibility
+                // modifier and `abstract` are never in a valid order (tsc
+                // reports the pairwise TS1243 "cannot be used with" instead
+                // of an ordering error, regardless of which one is written
+                // first), unlike static/readonly/override/accessor/async
+                // where accessibility genuinely has to come first.
+                if seen_static || seen_readonly || seen_override || seen_accessor || seen_async {
                     use tsz_common::diagnostics::diagnostic_codes;
                     let current_mod = match current_kind {
                         SyntaxKind::PublicKeyword => "public",
@@ -104,8 +104,6 @@ impl ParserState {
                     };
                     let conflicting_mod = if seen_static {
                         "static"
-                    } else if seen_abstract {
-                        "abstract"
                     } else if seen_readonly {
                         "readonly"
                     } else if seen_override {
@@ -260,7 +258,13 @@ impl ParserState {
                         diagnostic_codes::MODIFIER_CANNOT_BE_USED_WITH_MODIFIER,
                     );
                 }
-                if seen_declare {
+                // A private-named member's `declare`/`accessor` pairing is
+                // reported as TS18019 ("modifier cannot be used with a
+                // private identifier") by the checker's source-ordered
+                // private-identifier modifier walk instead — tsc's single
+                // ordered walk reaches that check before it would reach this
+                // pairwise incompatibility. See `upcoming_member_name_is_private`.
+                if seen_declare && !self.upcoming_member_name_is_private() {
                     use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "'accessor' modifier cannot be used with 'declare' modifier.",
@@ -348,8 +352,11 @@ impl ParserState {
                     }
                     // Auto-accessor properties cannot be `declare`d. When
                     // `accessor` precedes `declare`, tsc emits TS1243 on the
-                    // declare keyword.
-                    if seen_accessor {
+                    // declare keyword — unless the member name is private, in
+                    // which case the checker's private-identifier modifier
+                    // walk reports TS18019 instead (see the accessor arm's
+                    // mirror check above).
+                    if seen_accessor && !self.upcoming_member_name_is_private() {
                         use tsz_common::diagnostics::diagnostic_codes;
                         self.parse_error_at_current_token(
                             "'declare' modifier cannot be used with 'accessor' modifier.",
@@ -531,6 +538,45 @@ impl ParserState {
         } else {
             Some(Self::make_node_list(modifiers))
         }
+    }
+
+    /// Peeks past any remaining modifier keywords, without consuming them,
+    /// to see whether the class member's name (parsed after all modifiers)
+    /// will be a private identifier (`#name`).
+    ///
+    /// The modifier list is parsed before the name, so a check that needs to
+    /// know whether the member is private-named — because tsc's own ordered
+    /// modifier walk would reach the private-identifier check
+    /// (TS18010/TS18019) before a later pairwise modifier check — has to look
+    /// ahead for it.
+    fn upcoming_member_name_is_private(&mut self) -> bool {
+        let snapshot = self.scanner.save_state();
+        let saved_token = self.current_token;
+        let mut is_private = false;
+        loop {
+            match self.current_token {
+                SyntaxKind::StaticKeyword
+                | SyntaxKind::PublicKeyword
+                | SyntaxKind::PrivateKeyword
+                | SyntaxKind::ProtectedKeyword
+                | SyntaxKind::ReadonlyKeyword
+                | SyntaxKind::AbstractKeyword
+                | SyntaxKind::OverrideKeyword
+                | SyntaxKind::AsyncKeyword
+                | SyntaxKind::DeclareKeyword
+                | SyntaxKind::AccessorKeyword => {
+                    self.next_token();
+                }
+                SyntaxKind::PrivateIdentifier => {
+                    is_private = true;
+                    break;
+                }
+                _ => break,
+            }
+        }
+        self.scanner.restore_state(snapshot);
+        self.current_token = saved_token;
+        is_private
     }
 
     pub(crate) fn should_stop_class_member_modifier(&mut self) -> bool {

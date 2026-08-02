@@ -1290,6 +1290,9 @@ mod jsdoc_function_return_type_anchor_tests;
 mod jsdoc_overload_call_resolution_tests;
 
 #[cfg(test)]
+#[path = "tests/class_member_modifier_grammar_first_error_wins_tests.rs"]
+mod class_member_modifier_grammar_first_error_wins_tests;
+#[cfg(test)]
 #[path = "../tests/jsdoc_readonly_tests.rs"]
 mod jsdoc_readonly_tests;
 #[cfg(test)]

@@ -1140,6 +1140,8 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn check_modifier_combinations(
         &mut self,
         modifiers: &Option<tsz_parser::parser::NodeList>,
+        name_idx: NodeIndex,
+        member_kind: u16,
     ) {
         let Some(mods) = modifiers else {
             return;
@@ -1162,6 +1164,31 @@ impl<'a> CheckerState<'a> {
                     conflicting_nodes.push((m_idx, "async"));
                 }
             }
+        }
+
+        if abstract_node.is_none() {
+            return;
+        }
+
+        // tsc's ordered, first-error-wins modifier walk (see
+        // `class_private_name_modifiers`) reaches container-abstractness
+        // (TS1244/TS1253) before it would reach this pairwise
+        // incompatibility check — `abstract` outside an abstract class
+        // reports only the container error, reported elsewhere in `class.rs`.
+        if !self.enclosing_class_is_abstract() {
+            return;
+        }
+
+        // Likewise, for a private-named member, tsc's walk reaches the
+        // accessibility/private-identifier check (TS18010/TS18019) before
+        // this one — but only when that walk actually claims the member;
+        // when it yields instead (e.g. `static` precedes `abstract`, so the
+        // walk's own `abstract` arm is preempted), this check is still the
+        // true owner of the single diagnostic tsc reports.
+        if self.is_private_identifier_name(name_idx)
+            && self.private_name_modifier_walk_claims(member_kind, modifiers, true)
+        {
+            return;
         }
 
         if let Some(abs_node) = abstract_node {
