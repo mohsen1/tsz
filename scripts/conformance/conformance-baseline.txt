@@ -59,7 +59,6 @@ FAIL TypeScript/tests/cases/compiler/downlevelLetConst16.ts | expected:[TS2339,T
 FAIL TypeScript/tests/cases/compiler/duplicateIdentifierBindingElementInParameterDeclaration1.ts | expected:[TS2300,TS7006,TS7019,TS7031] actual:[TS2300,TS7006,TS7019,TS7031]
 FAIL TypeScript/tests/cases/compiler/duplicateIdentifierBindingElementInParameterDeclaration2.ts | expected:[TS2300,TS7006,TS7019,TS7031] actual:[TS2300,TS7006,TS7019,TS7031]
 FAIL TypeScript/tests/cases/compiler/duplicateIdentifierDifferentModifiers.ts | expected:[TS2687] actual:[TS2687]
-FAIL TypeScript/tests/cases/compiler/duplicateIdentifiersAcrossContainerBoundaries.ts | expected:[TS2300,TS2813,TS2814] actual:[TS2300,TS2813,TS2814]
 FAIL TypeScript/tests/cases/compiler/duplicateIdentifiersAcrossFileBoundaries.ts | expected:[TS2300,TS2433,TS2813,TS2814] actual:[TS2300,TS2433,TS2813,TS2814]
 FAIL TypeScript/tests/cases/compiler/duplicateObjectLiteralProperty.ts | expected:[TS1117,TS1118,TS2300] actual:[TS1117,TS1118,TS2300]
 FAIL TypeScript/tests/cases/compiler/dynamicNamesErrors.ts | expected:[TS2300,TS2322,TS2564,TS2717] actual:[TS2322,TS2564,TS2717]
@@ -258,7 +257,7 @@ FAIL TypeScript/tests/cases/compiler/unusedPrivateMembers.ts | expected:[TS6133]
 FAIL TypeScript/tests/cases/compiler/unusedVariablesWithUnderscoreInBindingElement.ts | expected:[TS6133,TS6198] actual:[TS6133,TS6198]
 FAIL TypeScript/tests/cases/compiler/unusedVariablesWithUnderscoreInForOfLoop.ts | expected:[TS6133,TS6198] actual:[TS6133]
 FAIL TypeScript/tests/cases/compiler/varianceCantBeStrictWhileStructureIsnt.ts | expected:[] actual:[TS2322]
-FAIL TypeScript/tests/cases/compiler/widenedTypes.ts | expected:[TS2322,TS2358,TS2695,TS18050] actual:[TS2322,TS2358,TS2695]
+FAIL TypeScript/tests/cases/compiler/widenedTypes.ts | expected:[TS2322,TS2358,TS2695,TS18050] actual:[TS2322,TS2358,TS2695,TS18050]
 FAIL TypeScript/tests/cases/conformance/ambient/ambientDeclarationsPatterns_merging1.ts | expected:[TS2305] actual:[TS2305]
 FAIL TypeScript/tests/cases/conformance/ambient/ambientDeclarationsPatterns_merging2.ts | expected:[TS2305] actual:[TS2305]
 FAIL TypeScript/tests/cases/conformance/ambient/ambientDeclarationsPatterns_merging3.ts | expected:[TS2339] actual:[]
@@ -337,7 +336,7 @@ FAIL TypeScript/tests/cases/conformance/es6/unicodeExtendedEscapes/unicodeExtend
 FAIL TypeScript/tests/cases/conformance/es6/unicodeExtendedEscapes/unicodeExtendedEscapesInRegularExpressions17.ts | expected:[TS1125,TS1508] actual:[]
 FAIL TypeScript/tests/cases/conformance/es7/exponentiationOperator/emitExponentiationOperator4.ts | expected:[TS2532] actual:[TS2352,TS2365,TS2532]
 FAIL TypeScript/tests/cases/conformance/esDecorators/esDecorators-privateFieldAccess.ts | expected:[TS18013,TS18016] actual:[TS18016]
-FAIL TypeScript/tests/cases/conformance/expressions/binaryOperators/inOperator/inOperatorWithInvalidOperands.ts | expected:[TS2322,TS18050] actual:[TS2322]
+FAIL TypeScript/tests/cases/conformance/expressions/binaryOperators/inOperator/inOperatorWithInvalidOperands.ts | expected:[TS2322,TS18050] actual:[TS2322,TS18050]
 FAIL TypeScript/tests/cases/conformance/expressions/binaryOperators/logicalAndOperator/logicalAndOperatorWithEveryType.ts | expected:[TS1345,TS2873] actual:[TS2873]
 FAIL TypeScript/tests/cases/conformance/expressions/binaryOperators/logicalOrOperator/logicalOrOperatorWithEveryType.ts | expected:[TS1345,TS2873] actual:[TS2873]
 FAIL TypeScript/tests/cases/conformance/expressions/functionCalls/overloadResolution.ts | expected:[TS2344,TS2345,TS2403,TS2551,TS2558,TS2769] actual:[TS2345,TS2403,TS2558,TS2769]
@@ -346,7 +345,6 @@ FAIL TypeScript/tests/cases/conformance/expressions/functionCalls/overloadResolu
 FAIL TypeScript/tests/cases/conformance/expressions/functionCalls/typeArgumentInferenceConstructSignatures.ts | expected:[TS2345,TS2353,TS2403] actual:[TS2322,TS2345,TS2353,TS2403]
 FAIL TypeScript/tests/cases/conformance/expressions/functionCalls/typeArgumentInferenceWithObjectLiteral.ts | expected:[TS2345] actual:[TS2403]
 FAIL TypeScript/tests/cases/conformance/expressions/functions/contextuallyTypedIife.ts | expected:[] actual:[TS2365]
-FAIL TypeScript/tests/cases/conformance/expressions/objectLiterals/objectLiteralGettersAndSetters.ts | expected:[] actual:[TS2403]
 FAIL TypeScript/tests/cases/conformance/expressions/propertyAccess/propertyAccess.ts | expected:[TS2339,TS2353,TS2403,TS2538] actual:[TS2339,TS2353,TS2403,TS2538]
 FAIL TypeScript/tests/cases/conformance/expressions/superPropertyAccess/errorSuperPropertyAccess.ts | expected:[TS2335,TS2341,TS2660,TS2855] actual:[TS2335,TS2340,TS2660,TS2855]
 FAIL TypeScript/tests/cases/conformance/expressions/superPropertyAccess/superPropertyAccessNoError.ts | expected:[] actual:[TS2339]
@@ -354,7 +352,6 @@ FAIL TypeScript/tests/cases/conformance/expressions/thisKeyword/thisInInvalidCon
 FAIL TypeScript/tests/cases/conformance/expressions/thisKeyword/thisInInvalidContextsExternalModule.ts | expected:[TS2331,TS2332,TS2507,TS2526,TS17009] actual:[TS2331,TS2332,TS2526,TS17009]
 FAIL TypeScript/tests/cases/conformance/expressions/thisKeyword/typeOfThisGeneral.ts | expected:[TS2403] actual:[TS2403,TS2739]
 FAIL TypeScript/tests/cases/conformance/expressions/typeSatisfaction/typeSatisfaction_errorLocations1.ts | expected:[TS1360,TS2322,TS2345,TS2741,TS4104] actual:[TS1360,TS2322,TS2345,TS2741]
-FAIL TypeScript/tests/cases/conformance/expressions/unaryOperators/bitwiseNotOperator/bitwiseNotOperatorWithAnyOtherType.ts | expected:[TS2365,TS18050] actual:[TS2365]
 FAIL TypeScript/tests/cases/conformance/externalModules/topLevelAwait.1.ts | expected:[TS1378,TS1432] actual:[TS1378,TS1432]
 FAIL TypeScript/tests/cases/conformance/externalModules/topLevelAwait.2.ts | expected:[] actual:[TS1262]
 FAIL TypeScript/tests/cases/conformance/externalModules/typeOnly/circular3.ts | expected:[TS2303] actual:[TS2303]
@@ -371,7 +368,6 @@ FAIL TypeScript/tests/cases/conformance/importAssertion/importAssertion1.ts | ex
 FAIL TypeScript/tests/cases/conformance/importAttributes/importAttributes1.ts | expected:[TS1009,TS1323,TS1324,TS1450,TS2823] actual:[TS1323,TS1324,TS2823]
 FAIL TypeScript/tests/cases/conformance/importDefer/dynamicImportDefer.ts | expected:[TS18060] actual:[TS1323,TS1343,TS1470]
 FAIL TypeScript/tests/cases/conformance/importDefer/importDeferNamespace.ts | expected:[TS18060] actual:[]
-FAIL TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/TwoInternalModulesThatMergeEachWithExportedAndNonExportedInterfacesOfTheSameName.ts | expected:[] actual:[TS2403]
 FAIL TypeScript/tests/cases/conformance/jsdoc/callbackTag4.ts | expected:[] actual:[TS2683]
 FAIL TypeScript/tests/cases/conformance/jsdoc/callbackTagVariadicType.ts | expected:[TS2345,TS2370] actual:[]
 FAIL TypeScript/tests/cases/conformance/jsdoc/checkJsdocSatisfiesTag11.ts | expected:[] actual:[TS1223]
@@ -2469,6 +2465,7 @@ PASS TypeScript/tests/cases/compiler/duplicateIdentifierRelatedSpans5.ts
 PASS TypeScript/tests/cases/compiler/duplicateIdentifierRelatedSpans6.ts
 PASS TypeScript/tests/cases/compiler/duplicateIdentifierRelatedSpans7.ts
 PASS TypeScript/tests/cases/compiler/duplicateIdentifierRelatedSpans_moduleAugmentation.ts
+PASS TypeScript/tests/cases/compiler/duplicateIdentifiersAcrossContainerBoundaries.ts
 PASS TypeScript/tests/cases/compiler/duplicateInterfaceMembers1.ts
 PASS TypeScript/tests/cases/compiler/duplicateLabel1.ts
 PASS TypeScript/tests/cases/compiler/duplicateLabel2.ts
@@ -8713,6 +8710,7 @@ PASS TypeScript/tests/cases/conformance/expressions/nullishCoalescingOperator/nu
 PASS TypeScript/tests/cases/conformance/expressions/nullishCoalescingOperator/nullishCoalescingOperator_es2020.ts
 PASS TypeScript/tests/cases/conformance/expressions/nullishCoalescingOperator/nullishCoalescingOperator_not_strict.ts
 PASS TypeScript/tests/cases/conformance/expressions/objectLiterals/objectLiteralErrors.ts
+PASS TypeScript/tests/cases/conformance/expressions/objectLiterals/objectLiteralGettersAndSetters.ts
 PASS TypeScript/tests/cases/conformance/expressions/objectLiterals/objectLiteralNormalization.ts
 PASS TypeScript/tests/cases/conformance/expressions/operators/incrementAndDecrement.ts
 PASS TypeScript/tests/cases/conformance/expressions/optionalChaining/callChain/callChain.2.ts
@@ -8836,6 +8834,7 @@ PASS TypeScript/tests/cases/conformance/expressions/typeSatisfaction/typeSatisfa
 PASS TypeScript/tests/cases/conformance/expressions/typeSatisfaction/typeSatisfaction_propertyValueConformance3.ts
 PASS TypeScript/tests/cases/conformance/expressions/typeSatisfaction/typeSatisfaction_vacuousIntersectionOfContextualTypes.ts
 PASS TypeScript/tests/cases/conformance/expressions/unaryOperators/bitwiseNotOperator/bitwiseNotOperatorInvalidOperations.ts
+PASS TypeScript/tests/cases/conformance/expressions/unaryOperators/bitwiseNotOperator/bitwiseNotOperatorWithAnyOtherType.ts
 PASS TypeScript/tests/cases/conformance/expressions/unaryOperators/bitwiseNotOperator/bitwiseNotOperatorWithBooleanType.ts
 PASS TypeScript/tests/cases/conformance/expressions/unaryOperators/bitwiseNotOperator/bitwiseNotOperatorWithEnumType.ts
 PASS TypeScript/tests/cases/conformance/expressions/unaryOperators/bitwiseNotOperator/bitwiseNotOperatorWithNumberType.ts
@@ -9233,6 +9232,7 @@ PASS TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/Modul
 PASS TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/ModuleAndEnumWithSameNameAndCommonRoot.ts
 PASS TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/ModuleAndFunctionWithSameNameAndCommonRoot.ts
 PASS TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/TwoInternalModulesThatMergeEachWithExportedAndNonExportedClassesOfTheSameName.ts
+PASS TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/TwoInternalModulesThatMergeEachWithExportedAndNonExportedInterfacesOfTheSameName.ts
 PASS TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/TwoInternalModulesThatMergeEachWithExportedAndNonExportedLocalVarsOfTheSameName.ts
 PASS TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/TwoInternalModulesThatMergeEachWithExportedClassesOfTheSameName.ts
 PASS TypeScript/tests/cases/conformance/internalModules/DeclarationMerging/TwoInternalModulesThatMergeEachWithExportedInterfacesOfTheSameName.ts
