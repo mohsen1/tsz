@@ -1778,23 +1778,9 @@ impl<'a> CheckerState<'a> {
             // Skip body checking for function declarations — they are checked via
             // check_function_declaration which maintains the full type param scope chain.
             if !is_function_declaration {
-                // Save and reset control flow context (function body creates new context)
-                let saved_cf_context = (
-                    self.ctx.iteration_depth,
-                    self.ctx.switch_depth,
-                    self.ctx.label_stack.len(),
-                    self.ctx.had_outer_loop,
-                );
-                // If we were in a loop/switch, or already had an outer loop, mark it
-                if self.ctx.iteration_depth > 0
-                    || self.ctx.switch_depth > 0
-                    || self.ctx.had_outer_loop
-                {
-                    self.ctx.had_outer_loop = true;
-                }
-                self.ctx.iteration_depth = 0;
-                self.ctx.switch_depth = 0;
-                // Note: function_depth was already incremented at body entry
+                // Save and reset control flow context (function body creates new context).
+                // Note: function_depth was already incremented at body entry.
+                let saved_cf_context = self.ctx.enter_function_like_control_flow();
                 // Propagate contextual return type for expression-bodied arrows.
                 // Compute the effective body context as a local variable instead of
                 // modifying the ambient ctx.contextual_type.
@@ -1901,10 +1887,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.generator_yield_operand_types = saved_yield_collection;
                 self.ctx.generator_had_ts7057 = saved_had_ts7057;
 
-                self.ctx.iteration_depth = saved_cf_context.0;
-                self.ctx.switch_depth = saved_cf_context.1;
-                self.ctx.label_stack.truncate(saved_cf_context.2);
-                self.ctx.had_outer_loop = saved_cf_context.3;
+                self.ctx.exit_function_like_control_flow(saved_cf_context);
             }
 
             if is_function_declaration

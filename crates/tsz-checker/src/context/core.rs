@@ -18,7 +18,10 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_solver::TypeId;
 
-use super::{CheckerContext, LibContext, ResolutionError, TypeCache};
+use super::{
+    CheckerContext, ClassMemberBodyScope, FunctionLikeControlFlow, LibContext, ResolutionError,
+    TypeCache,
+};
 
 /// Build the union of every name declared in any lib context's `file_locals`.
 ///
@@ -1319,17 +1322,65 @@ impl<'a> CheckerContext<'a> {
     ///
     /// Returns the previous member-body baseline, which the caller must hand
     /// back to [`Self::exit_class_member_body`].
-    pub const fn enter_class_member_body(&mut self) -> u32 {
+    pub const fn enter_class_member_body(&mut self) -> ClassMemberBodyScope {
         self.function_depth += 1;
-        let saved = self.class_member_body_depth;
+        let member_body_depth = self.class_member_body_depth;
         self.class_member_body_depth = self.function_depth;
-        saved
+        ClassMemberBodyScope {
+            member_body_depth,
+            control_flow: self.enter_function_like_control_flow(),
+        }
     }
 
     /// Leave a class member body entered by [`Self::enter_class_member_body`].
-    pub const fn exit_class_member_body(&mut self, saved: u32) {
+    pub fn exit_class_member_body(&mut self, saved: ClassMemberBodyScope) {
+        self.exit_function_like_control_flow(saved.control_flow);
         self.function_depth -= 1;
-        self.class_member_body_depth = saved;
+        self.class_member_body_depth = saved.member_body_depth;
+    }
+
+    /// Enter the control-flow scope of a function-like boundary.
+    ///
+    /// `tsc`'s `checkGrammarBreakOrContinueStatement` is a single upward walk
+    /// from the jump node that stops at the first function-like ancestor, so an
+    /// unlabeled `break`/`continue` can only see iteration and `switch`
+    /// statements declared *inside its own innermost function-like*. tsz models
+    /// that walk as the ambient [`Self::iteration_depth`] and
+    /// [`Self::switch_depth`] counters, which therefore have to be zeroed
+    /// whenever checking descends across such a boundary — otherwise a jump in a
+    /// nested body still sees the enclosing loop and reports nothing.
+    ///
+    /// Labels are deliberately *not* hidden for the duration of the body: only
+    /// the stack length is saved, so labels declared outside stay resolvable and
+    /// the labeled paths keep deciding TS1107 by comparing
+    /// [`LabelInfo::function_depth`] against [`Self::function_depth`]. The
+    /// truncation on exit just drops labels the body itself pushed.
+    ///
+    /// Callers that also raise `function_depth` (free function bodies, class
+    /// member bodies) do so around this call; this guard owns the loop/switch
+    /// and label state only. Returns the saved scope, which the caller must hand
+    /// back to [`Self::exit_function_like_control_flow`].
+    pub(crate) const fn enter_function_like_control_flow(&mut self) -> FunctionLikeControlFlow {
+        let saved = FunctionLikeControlFlow {
+            iteration_depth: self.iteration_depth,
+            switch_depth: self.switch_depth,
+            label_stack_len: self.label_stack.len(),
+            had_outer_loop: self.had_outer_loop,
+        };
+        if self.iteration_depth > 0 || self.switch_depth > 0 || self.had_outer_loop {
+            self.had_outer_loop = true;
+        }
+        self.iteration_depth = 0;
+        self.switch_depth = 0;
+        saved
+    }
+
+    /// Leave a scope entered by [`Self::enter_function_like_control_flow`].
+    pub(crate) fn exit_function_like_control_flow(&mut self, saved: FunctionLikeControlFlow) {
+        self.iteration_depth = saved.iteration_depth;
+        self.switch_depth = saved.switch_depth;
+        self.label_stack.truncate(saved.label_stack_len);
+        self.had_outer_loop = saved.had_outer_loop;
     }
 
     /// True when checking is running directly in the enclosing class member's
