@@ -1226,6 +1226,23 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// The value of a key/value directive, with any surrounding quotes
+    /// stripped so `@opt: 6.0` and `@opt: "6.0"` read alike.
+    ///
+    /// Directives whose value is a version string rather than a boolean
+    /// (`@ignoreDeprecations`) need the text, which `bool_pragma` discards.
+    fn value_pragma<'d>(
+        directives: &[tsz_common::test_directives::DirectiveLine<'d>],
+        key: &str,
+    ) -> Option<&'d str> {
+        let name = key.strip_prefix('@').unwrap_or(key);
+        directives.iter().find_map(|directive| {
+            directive
+                .key_is(name)
+                .then(|| directive.value.trim_matches(['"', '\'']))
+        })
+    }
+
     /// The leading comment block of a source file: non-empty lines from the
     /// top of the file up to the first non-comment line, capped at 32 lines.
     /// Test pragmas are only honored in this region so a directive-shaped
@@ -1344,11 +1361,16 @@ impl<'a> CheckerState<'a> {
             .unwrap_or(defaults.allow_unused_labels);
 
         // @ignoreDeprecations: "5.0"/"6.0" carries a version string, and the
-        // flag form also counts as present, so it is a presence check over
-        // the leading comment block rather than a `pragmas` lookup (the
+        // flag form also counts as present, so presence is a scan over the
+        // leading comment block rather than a `pragmas` lookup (the
         // pre-parsed slice only holds key/value directives).
         if Self::source_has_pragma(text, "@ignoredeprecations") {
             opts.ignore_deprecations = true;
+            // The *value* is a separate question from presence: only "6.0"
+            // silences TS2880. The flag form carries no version, so it cannot
+            // reach the "6.0" threshold.
+            opts.ignore_deprecations_6_0 =
+                Self::value_pragma(&pragmas, "@ignoredeprecations") == Some("6.0");
         }
     }
 

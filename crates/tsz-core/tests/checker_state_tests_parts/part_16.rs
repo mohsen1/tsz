@@ -401,6 +401,7 @@ fn test_tier_2_type_checker_accuracy_fixes() {
             verbatim_module_syntax: false,
             isolated_modules_from_verbatim: false,
             ignore_deprecations: false,
+            ignore_deprecations_6_0: false,
             allow_umd_global_access: false,
             preserve_const_enums: false,
             strict_builtin_iterator_return: true,

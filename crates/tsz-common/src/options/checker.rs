@@ -193,9 +193,30 @@ pub struct CheckerOptions {
     /// verbatim-only cases at the import statement. Recover the raw flag as
     /// `isolated_modules && !isolated_modules_from_verbatim`.
     pub isolated_modules_from_verbatim: bool,
-    /// When true, suppress deprecation warnings (e.g., TS2880 for `assert` import assertions).
+    /// When true, a valid `ignoreDeprecations` version was supplied.
     /// Set when `ignoreDeprecations` is "5.0" or "6.0".
+    ///
+    /// This records *presence*, not what the value silences. `ignoreDeprecations`
+    /// is a version string naming the release whose deprecations the user is
+    /// opting out of, so each deprecation has its own threshold and a single
+    /// bool cannot answer for all of them. Consumers that need a specific
+    /// threshold must ask for it: the deprecated `assert` import-attribute
+    /// keyword (TS2880) is silenced by `"6.0"` *only*, which is
+    /// `ignore_deprecations_6_0` below.
     pub ignore_deprecations: bool,
+    /// When true, `ignoreDeprecations` was set to exactly `"6.0"`.
+    ///
+    /// `tsc` gates the deprecated-`assert` diagnostic (TS2880) on the literal
+    /// value rather than on presence — `checkImportCallExpression`,
+    /// `checkImportDeclaration` and `checkImportType` each test
+    /// `compilerOptions.ignoreDeprecations !== "6.0"`. `"5.0"` is a legal value
+    /// that does *not* silence it, because it names a strictly older grace
+    /// window than the release that removed `assert`.
+    ///
+    /// Same shape as `isolated_modules_from_verbatim` above: the coarse flag
+    /// stays for the consumers that want presence, and this one recovers the
+    /// distinction the coarse flag erases.
+    pub ignore_deprecations_6_0: bool,
     /// When true, allow accessing UMD globals from modules without importing them.
     /// Suppresses TS2686 ("refers to a UMD global, but the current file is a module").
     pub allow_umd_global_access: bool,
@@ -300,6 +321,7 @@ impl Default for CheckerOptions {
             verbatim_module_syntax: false,
             isolated_modules_from_verbatim: false,
             ignore_deprecations: false,
+            ignore_deprecations_6_0: false,
             allow_umd_global_access: false,
             preserve_const_enums: false,
             strict_builtin_iterator_return: true,
