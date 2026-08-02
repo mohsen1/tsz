@@ -7,7 +7,12 @@
 //! > `undefined`, or `null | undefined` (i.e. no non-nullish slice
 //! > remains after splitting), the chain always short-circuits. tsc
 //! > emits TS2339 ("Property 'X' does not exist on type 'never'.") at
-//! > the property name, because the property access is unreachable.
+//! > the property name, because the property access is unreachable —
+//! > for DOT-NOTATION property access only. Bracket-notation element
+//! > access (`null?.["foo"]`, `null?.[0]`) distributes `never` over the
+//! > index type instead and resolves silently in every mode; see
+//! > `element_access_on_literal_null` below and the fuller matrix in
+//! > `optional_chain_root_nullish_strict_only_tests.rs`.
 //!
 //! The fix lives in `handle_possibly_null_or_undefined_access`
 //! (`crates/tsz-checker/src/types/property_access_type/nullish_access.rs`):
@@ -81,15 +86,20 @@ fn null_or_undefined_union_optional_chain() {
 
 #[test]
 fn element_access_on_literal_null() {
-    // Indexed (element) access form: `null?.["valueOf"]`. The fix uses
-    // `name_or_argument` so this position should also trigger TS2339.
+    // Indexed (element) access form: `null?.["valueOf"]`. Unlike dot-notation
+    // property access, `never`'s bracket-notation lookup
+    // (`getIndexedAccessType`) distributes `never` over any index type and
+    // answers `never` silently, so tsc reports NOTHING here — confirmed on
+    // the pinned oracle (`tsc` 7.0.2, `--strict`). Element (bracket) access
+    // never hits the TS2339-on-`never` rule this file's other cases exercise
+    // for dot access; see `optional_chain_root_nullish_strict_only_tests.rs`
+    // for the fuller matrix (property vs. bracket, literal vs. computed key).
     let source = "const z = null?.[\"valueOf\"];\n";
     let diags = diags_strict(source);
     assert!(
-        diags
-            .iter()
-            .any(|(c, m)| *c == 2339 && m.contains("'never'")),
-        "expected TS2339 / 'never' for `null?.[...]`, got: {diags:?}",
+        diags.is_empty(),
+        "expected no diagnostics for `null?.[\"valueOf\"]` under strictNullChecks \
+         (bracket access on `never` resolves silently, unlike dot access), got: {diags:?}",
     );
 }
 

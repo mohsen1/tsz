@@ -228,26 +228,31 @@ impl<'a> CheckerState<'a> {
 
         // The chain root's nullish stripping is tsc's `getNonNullableType`,
         // the identity function without `strictNullChecks` — so a
-        // wholly-nullish receiver only narrows to `never` (and reports
-        // TS2339 here) in strict mode. Without it, the receiver's own
+        // wholly-nullish receiver only narrows to `never` in strict mode.
+        // What that narrowing then does is NOT uniform across access kinds:
+        // `never`'s named-property lookup (`getPropertyOfType`, dot access
+        // like `on?.foo`) reports TS2339, but `never`'s index lookup
+        // (element access with ANY key — string literal, numeric literal,
+        // or computed — like `on?.["foo"]`/`on?.[0]`/`on?.[i]`) resolves
+        // silently, matching plain `(x: never)["foo"]`/`x[0]` reporting
+        // nothing in either mode. Without strict mode, the receiver's own
         // (unstripped) type drives the same `checkNonNullTypeWithReporter`
-        // own-flags trigger as a non-chain access: an operand that IS
-        // `null`/`undefined` still reports TS18047/18048, while a genuine
-        // `null | undefined` union's own flags are `TypeFlags.Union` and do
-        // not trigger, so it falls through unchanged.
-        if access.question_dot_token
-            && let Some(property_name) = literal_string.as_deref()
-            && self.split_nullish_type(object_type).0.is_none()
-        {
+        // own-flags trigger as a non-chain access, for every access kind
+        // alike: an operand that IS `null`/`undefined` still reports
+        // TS18047/18048, while a genuine `null | undefined` union's own
+        // flags are `TypeFlags.Union` and do not trigger, so it falls
+        // through unchanged.
+        if access.question_dot_token && self.split_nullish_type(object_type).0.is_none() {
             if self.ctx.compiler_options.strict_null_checks {
-                self.error_property_not_exist_at(
-                    property_name,
-                    TypeId::NEVER,
-                    access.name_or_argument,
-                );
-                return TypeId::UNDEFINED;
-            }
-            if crate::query_boundaries::type_predicates::has_ts_nullable_flag(object_type) {
+                if !is_value_element_access && let Some(property_name) = literal_string.as_deref() {
+                    self.error_property_not_exist_at(
+                        property_name,
+                        TypeId::NEVER,
+                        access.name_or_argument,
+                    );
+                    return TypeId::UNDEFINED;
+                }
+            } else if crate::query_boundaries::type_predicates::has_ts_nullable_flag(object_type) {
                 if !self.report_literal_nullish_value_error(access.expression, object_type) {
                     self.report_named_possibly_nullish_expression(access.expression, object_type);
                 }
