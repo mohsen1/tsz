@@ -301,21 +301,25 @@ fn uninitialized_and_any_and_plain_operands_stay_clean_without_strict_null_check
 }
 
 #[test]
-fn optional_chain_on_a_null_receiver_is_unchanged_by_this_gate() {
-    // Not a tsc-parity pin: `on?.foo` / `on?.()` on a `null` receiver is a
-    // separate pre-existing divergence (tsz reports TS2339 on `never`, tsc
-    // reports TS18047/TS2721) that this gate does not reach. Pinned as
-    // "identical in both modes" so a later widening of the gate cannot quietly
-    // start routing optional chains through it.
+fn optional_chain_on_a_null_receiver_now_reports_the_non_strict_family() {
+    // `on?.foo` / `on?.()` on a `null` receiver used to report TS2339 on
+    // `never` in both modes, because tsz's chain-root nullish stripping
+    // (mirroring tsc's `getNonNullableType`) fired unconditionally. That
+    // strip is strict-only in tsc, so without `strictNullChecks` this now
+    // falls through to the same TS18047/TS2721 family as `on.foo` / `on()`.
+    // Full matrix (property/element/call, undefined, nesting, unions) lives
+    // in `optional_chain_root_nullish_strict_only_tests.rs`; this row stays
+    // here as the one this gate's docstring used to call out as unreached.
     let source = "declare const on: null;\non?.foo;\non?.();";
+    let lax = nullish_codes(&non_strict(source));
     assert_eq!(
-        nullish_codes(&non_strict(source)),
-        nullish_codes(&check_source_strict_codes(source)),
-        "the optional-chain rows must not become mode-dependent"
+        lax,
+        vec![TS18047, TS2721],
+        "the optional-chain rows must report the non-strict nullish family, got: {lax:?}"
     );
     assert!(
-        nullish_codes(&non_strict(source)).is_empty(),
-        "the optional-chain rows are not routed through this gate today"
+        nullish_codes(&check_source_strict_codes(source)).is_empty(),
+        "strict mode keeps reporting TS2339/TS2349 (outside this family), not TS18047/TS2721"
     );
 }
 

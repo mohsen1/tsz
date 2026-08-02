@@ -478,11 +478,23 @@ impl<'a> CheckerState<'a> {
             let callee_for_split = self.evaluate_type_with_env(callee_type);
             if call.question_dot_token || !callee_expr_is_chain {
                 // The `?.` guards the invoked value itself (`f?.()`,
-                // `o.m?.()`, `o?.f?.()`): strip all of its nullishness,
-                // mirroring tsc's chain-root `getNonNullableType`.
+                // `o.m?.()`, `o?.f?.()`). When the callee has a non-nullish
+                // slice (`(() => void) | null`), tsc's call-signature
+                // resolution always uses that slice regardless of
+                // `strictNullChecks` — this split is unconditional. It is
+                // only the *diagnostic* for a callee with NO non-nullish
+                // slice at all that is strict-only: tsc's chain-root
+                // `getNonNullableType` is the identity function without
+                // `strictNullChecks`, so only strict mode narrows such a
+                // callee to `never`. Without it, the callee's own
+                // (unstripped) type drives the ordinary
+                // `checkNonNullTypeWithReporter`-style own-flags trigger and
+                // reports TS2721/2722/2723 instead of TS2349-on-`never`.
                 let (non_nullish, cause) = self.split_nullish_type(callee_for_split);
-                nullish_cause = cause;
-                let Some(non_nullish) = non_nullish else {
+                if let Some(non_nullish) = non_nullish {
+                    nullish_cause = cause;
+                    callee_type = non_nullish;
+                } else if self.ctx.compiler_options.strict_null_checks {
                     // The callee is entirely nullish (`null`, `undefined`, or
                     // `null | undefined`). The chain short-circuits to `undefined`,
                     // but tsc still computes the non-nullish slice as `never`, which
@@ -494,8 +506,18 @@ impl<'a> CheckerState<'a> {
                         self.error_not_callable_at(TypeId::NEVER, call.expression);
                     }
                     return TypeId::UNDEFINED;
-                };
-                callee_type = non_nullish;
+                } else if crate::query_boundaries::type_predicates::has_ts_nullable_flag(
+                    callee_for_split,
+                ) {
+                    self.error_cannot_invoke_possibly_nullish_at(callee_for_split, call.expression);
+                    return TypeId::ERROR;
+                } else {
+                    // A genuine `null | undefined` union's own flags are
+                    // `TypeFlags.Union`, never `Nullable`, so the non-strict
+                    // trigger does not fire here either; flow the
+                    // un-stripped type through unchanged.
+                    callee_type = callee_for_split;
+                }
             } else {
                 // The call continues a chain without its own `?.` (`o?.f()`):
                 // tsc's `getOptionalExpressionType` removes only the

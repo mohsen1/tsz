@@ -226,12 +226,33 @@ impl<'a> CheckerState<'a> {
             object_type
         };
 
+        // The chain root's nullish stripping is tsc's `getNonNullableType`,
+        // the identity function without `strictNullChecks` — so a
+        // wholly-nullish receiver only narrows to `never` (and reports
+        // TS2339 here) in strict mode. Without it, the receiver's own
+        // (unstripped) type drives the same `checkNonNullTypeWithReporter`
+        // own-flags trigger as a non-chain access: an operand that IS
+        // `null`/`undefined` still reports TS18047/18048, while a genuine
+        // `null | undefined` union's own flags are `TypeFlags.Union` and do
+        // not trigger, so it falls through unchanged.
         if access.question_dot_token
             && let Some(property_name) = literal_string.as_deref()
             && self.split_nullish_type(object_type).0.is_none()
         {
-            self.error_property_not_exist_at(property_name, TypeId::NEVER, access.name_or_argument);
-            return TypeId::UNDEFINED;
+            if self.ctx.compiler_options.strict_null_checks {
+                self.error_property_not_exist_at(
+                    property_name,
+                    TypeId::NEVER,
+                    access.name_or_argument,
+                );
+                return TypeId::UNDEFINED;
+            }
+            if crate::query_boundaries::type_predicates::has_ts_nullable_flag(object_type) {
+                if !self.report_literal_nullish_value_error(access.expression, object_type) {
+                    self.report_named_possibly_nullish_expression(access.expression, object_type);
+                }
+                return TypeId::ERROR;
+            }
         }
 
         let effective_write_result = |type_id: TypeId, write_type: Option<TypeId>| -> TypeId {
