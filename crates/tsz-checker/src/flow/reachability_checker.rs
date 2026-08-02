@@ -1,7 +1,9 @@
 //! Code reachability and fall-through analysis.
 
 use crate::query_boundaries::flow_analysis as query;
-use crate::state::CheckerState;
+use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
+use crate::statements::StatementCheckCallbacks;
+use crate::statements::StatementChecker;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -573,10 +575,18 @@ impl<'a> CheckerState<'a> {
         };
 
         match node.kind {
-            syntax_kind_ext::RETURN_STATEMENT
-            | syntax_kind_ext::THROW_STATEMENT
-            | syntax_kind_ext::BREAK_STATEMENT
-            | syntax_kind_ext::CONTINUE_STATEMENT => false,
+            syntax_kind_ext::RETURN_STATEMENT | syntax_kind_ext::THROW_STATEMENT => false,
+            syntax_kind_ext::BREAK_STATEMENT | syntax_kind_ext::CONTINUE_STATEMENT => {
+                // An illegal jump (TS1104/TS1105/TS1107/TS1115/TS1116 — no
+                // enclosing loop/switch/label, or one on the far side of a
+                // function boundary) does not transfer control anywhere, so it
+                // does not terminate flow either: tsc's binder only marks a
+                // break/continue as unreachable-after when it has a resolved
+                // flow target (`bindBreakOrContinueFlow`, which no-ops when
+                // `breakTarget`/`continueTarget` is unset). Only a jump with a
+                // legal target makes the following code unreachable.
+                !self.jump_statement_has_legal_target(stmt_idx, node)
+            }
             syntax_kind_ext::BLOCK => self
                 .ctx
                 .arena
@@ -619,6 +629,88 @@ impl<'a> CheckerState<'a> {
                 .get_labeled_statement(node)
                 .is_none_or(|labeled| self.statement_falls_through(labeled.statement)),
             _ => true,
+        }
+    }
+
+    /// Whether a `break`/`continue` statement has a resolvable target: an
+    /// enclosing iteration statement (both) or switch statement (break only)
+    /// for an unlabeled jump, or a matching enclosing label for a labeled one
+    /// (further requiring that label to wrap an iteration statement, for
+    /// `continue`) — walked structurally from the jump node itself, the same
+    /// way tsc's own grammar check does, rather than from ambient
+    /// depth/label-stack state that is only valid while that node is
+    /// currently being visited. A function-like boundary (or class static
+    /// block, which is its own jump boundary) crossed before any match means
+    /// the jump is illegal (TS1104/TS1105/TS1107/TS1115/TS1116) and has no
+    /// target.
+    fn jump_statement_has_legal_target(
+        &self,
+        stmt_idx: NodeIndex,
+        node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        let is_break = node.kind == syntax_kind_ext::BREAK_STATEMENT;
+        let label_name = self.ctx.arena.get_jump_data(node).and_then(|jump_data| {
+            if jump_data.label.is_none() {
+                None
+            } else {
+                self.get_node_text(jump_data.label)
+            }
+        });
+
+        let mut current = stmt_idx;
+        let mut iterations = 0;
+        loop {
+            iterations += 1;
+            if iterations > MAX_TREE_WALK_ITERATIONS {
+                return true;
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return true;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            let parent_idx = ext.parent;
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                return true;
+            };
+
+            if parent_node.is_function_like()
+                || parent_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
+            {
+                return false;
+            }
+
+            match &label_name {
+                None => {
+                    let is_iteration = matches!(
+                        parent_node.kind,
+                        syntax_kind_ext::WHILE_STATEMENT
+                            | syntax_kind_ext::DO_STATEMENT
+                            | syntax_kind_ext::FOR_STATEMENT
+                            | syntax_kind_ext::FOR_IN_STATEMENT
+                            | syntax_kind_ext::FOR_OF_STATEMENT
+                    );
+                    if is_iteration
+                        || (is_break && parent_node.kind == syntax_kind_ext::SWITCH_STATEMENT)
+                    {
+                        return true;
+                    }
+                }
+                Some(name) => {
+                    if parent_node.kind == syntax_kind_ext::LABELED_STATEMENT
+                        && let Some(labeled) = self.ctx.arena.get_labeled_statement(parent_node)
+                        && self.get_node_text(labeled.label).as_deref() == Some(name.as_str())
+                    {
+                        return is_break
+                            || StatementChecker::is_iteration_or_nested_iteration(
+                                self.ctx.arena,
+                                labeled.statement,
+                            );
+                    }
+                }
+            }
+            current = parent_idx;
         }
     }
 

@@ -503,6 +503,8 @@ mod jsx_type_arg_arity_suppresses_ts2604_tests;
 mod jsx_union_props_relation_routing_arch_tests;
 #[path = "tests/jump_statement_class_member_boundary_tests.rs"]
 mod jump_statement_class_member_boundary_tests;
+#[path = "tests/jump_statement_return_path_analysis_tests.rs"]
+mod jump_statement_return_path_analysis_tests;
 #[path = "tests/keyof_alias_composite_display_tests.rs"]
 mod keyof_alias_composite_display_tests;
 #[path = "tests/keyof_suppression_relation_routing_arch_tests.rs"]
