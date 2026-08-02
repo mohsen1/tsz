@@ -829,6 +829,10 @@ pub fn resolve_compiler_options(
         && (id == "5.0" || id == "6.0")
     {
         resolved.checker.ignore_deprecations = true;
+        // Only "6.0" silences the deprecated-`assert` diagnostic (TS2880);
+        // "5.0" is a legal value that leaves it reporting. Mirrors the CLI
+        // override path in `tsz-cli`'s `driver::plan`.
+        resolved.checker.ignore_deprecations_6_0 = id == "6.0";
     }
 
     if let Some(allow_umd) = options.allow_umd_global_access {

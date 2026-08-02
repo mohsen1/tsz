@@ -100,6 +100,9 @@ pub struct EnvironmentCapabilities {
     pub resolve_json_module: bool,
     pub experimental_decorators: bool,
     pub ignore_deprecations: bool,
+    /// `ignoreDeprecations` was set to exactly `"6.0"` — the only value that
+    /// silences TS2880. See `CheckerOptions::ignore_deprecations_6_0`.
+    pub ignore_deprecations_6_0: bool,
     pub verbatim_module_syntax: bool,
     pub types_explicitly_set: bool,
 
@@ -160,6 +163,7 @@ impl EnvironmentCapabilities {
             resolve_json_module: options.resolve_json_module,
             experimental_decorators: options.experimental_decorators,
             ignore_deprecations: options.ignore_deprecations,
+            ignore_deprecations_6_0: options.ignore_deprecations_6_0,
             verbatim_module_syntax: options.verbatim_module_syntax,
             types_explicitly_set: options.types_explicitly_set,
             has_deprecation_diagnostics: false, // set by driver after config parsing
