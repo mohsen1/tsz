@@ -470,7 +470,11 @@ impl<'a> CheckerState<'a> {
                         );
                     }
 
-                    // Get member modifiers for TS18010/TS18019 checks
+                    // Get member modifiers for the TS18010/TS18019 walk. Every
+                    // class element that can be named by a private identifier
+                    // and can carry modifiers belongs here — a private-named
+                    // method or accessor is as capable of carrying `abstract`
+                    // as a property is.
                     let member_modifiers: Option<&Option<tsz_parser::parser::NodeList>> =
                         match member_node.kind {
                             syntax_kind_ext::PROPERTY_DECLARATION => self
@@ -492,84 +496,15 @@ impl<'a> CheckerState<'a> {
                         };
 
                     if let Some(modifiers) = member_modifiers {
-                        // TS18010: An accessibility modifier cannot be used with a private identifier.
-                        // tsc points the error at the modifier node, not the member.
-                        let accessibility_modifier = self
-                            .ctx
-                            .arena
-                            .find_modifier(modifiers, tsz_scanner::SyntaxKind::PublicKeyword)
-                            .or_else(|| {
-                                self.ctx.arena.find_modifier(
-                                    modifiers,
-                                    tsz_scanner::SyntaxKind::PrivateKeyword,
-                                )
-                            })
-                            .or_else(|| {
-                                self.ctx.arena.find_modifier(
-                                    modifiers,
-                                    tsz_scanner::SyntaxKind::ProtectedKeyword,
-                                )
-                            });
-                        // In JS files, accessibility modifiers come from JSDoc tags
-                        // (@public, @private, @protected) rather than AST modifiers.
-                        let has_jsdoc_accessibility = accessibility_modifier.is_none()
-                            && self.is_js_file()
-                            && self.has_jsdoc_accessibility_modifier(member_idx);
-                        if let Some(mod_idx) = accessibility_modifier {
-                            self.error_at_node(
-                                mod_idx,
-                                diagnostic_messages::AN_ACCESSIBILITY_MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,
-                                diagnostic_codes::AN_ACCESSIBILITY_MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,
-                            );
-                        } else if has_jsdoc_accessibility {
-                            // tsc anchors TS18010 at the `@public`/`@private`/
-                            // `@protected` tag inside the JSDoc comment for JS
-                            // files. Recover that span if present; fall back
-                            // to the member node otherwise.
-                            if let Some((start, len)) =
-                                self.jsdoc_accessibility_tag_span(member_idx)
-                            {
-                                self.error_at_position(
-                                    start,
-                                    len,
-                                    diagnostic_messages::AN_ACCESSIBILITY_MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,
-                                    diagnostic_codes::AN_ACCESSIBILITY_MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,
-                                );
-                            } else {
-                                self.error_at_node(
-                                    member_idx,
-                                    diagnostic_messages::AN_ACCESSIBILITY_MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,
-                                    diagnostic_codes::AN_ACCESSIBILITY_MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,
-                                );
-                            }
-                        }
-
-                        // TS18019: 'declare'/'abstract' modifier cannot be used with a private identifier.
-                        // Only applies to property declarations. tsc points at the modifier node.
-                        if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
-                            if let Some(mod_idx) = self
-                                .ctx
-                                .arena
-                                .find_modifier(modifiers, tsz_scanner::SyntaxKind::DeclareKeyword)
-                            {
-                                self.error_at_node_msg(
-                                    mod_idx,
-                                    diagnostic_codes::MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,
-                                    &["declare"],
-                                );
-                            }
-                            if let Some(mod_idx) = self
-                                .ctx
-                                .arena
-                                .find_modifier(modifiers, tsz_scanner::SyntaxKind::AbstractKeyword)
-                            {
-                                self.error_at_node_msg(
-                                    mod_idx,
-                                    diagnostic_codes::MODIFIER_CANNOT_BE_USED_WITH_A_PRIVATE_IDENTIFIER,
-                                    &["abstract"],
-                                );
-                            }
-                        }
+                        // TS18010/TS18019 follow tsc's source-ordered,
+                        // first-error-wins modifier walk; see
+                        // `class_private_name_modifiers`.
+                        self.check_private_name_modifier_grammar(
+                            member_idx,
+                            member_node.kind,
+                            modifiers,
+                            is_abstract_class,
+                        );
                     }
                 }
 

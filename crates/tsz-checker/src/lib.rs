@@ -1596,6 +1596,9 @@ mod private_brands;
 #[path = "tests/private_member_relation_routing_arch_tests.rs"]
 mod private_member_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/private_name_modifier_grammar_order_tests.rs"]
+mod private_name_modifier_grammar_order_tests;
+#[cfg(test)]
 #[path = "tests/private_optional_field_undefined_tests.rs"]
 mod private_optional_field_undefined_tests;
 #[cfg(test)]
@@ -1754,6 +1757,7 @@ mod ts1170_computed_property_syntactic_form_tests;
 #[cfg(test)]
 #[path = "tests/ts1361_ambient_computed_property_name_tests.rs"]
 mod ts1361_ambient_computed_property_name_tests;
+
 #[cfg(test)]
 #[path = "tests/ts18010_jsdoc_tag_anchor_tests.rs"]
 mod ts18010_jsdoc_tag_anchor_tests;
