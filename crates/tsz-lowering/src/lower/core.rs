@@ -1263,6 +1263,17 @@ impl<'a> TypeLowering<'a> {
             .iter()
             .map(|&idx| self.lower_type(idx))
             .collect();
+        // NOTE: the non-strict pure-nullish-union collapse
+        // (`collapse_pure_nullish_union_nonstrict`) deliberately does NOT
+        // live here. `self.strict_null_checks` is not reliably the real
+        // compiler option on this path — the 37 `TypeLowering` construction
+        // sites across `tsz-checker` mostly never call
+        // `with_strict_null_checks`, so it silently defaults to `false` and
+        // would collapse the union even under `--strict`. The interface
+        // fast-path caller in `simple_local_interface.rs` routes a pure
+        // `null | undefined` member through `tsz-checker`'s own
+        // `get_type_from_type_node_in_type_literal`, which reads the real
+        // `compiler_options.strict_null_checks` — see #16180's review.
         // Mirror tsc's `UnionType.origin`: record the as-written input
         // member list so the printer can render `0 | 1 | 2` in source
         // order even when the canonical sort uses non-deterministic

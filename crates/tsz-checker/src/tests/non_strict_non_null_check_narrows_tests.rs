@@ -432,6 +432,133 @@ fn null_or_undefined_union_parameter_and_type_alias_collapse_the_same_way() {
 }
 
 #[test]
+fn null_or_undefined_union_interface_member_collapses_the_same_way() {
+    // Third sibling of the type-node-resolution collapse. An interface
+    // property signature's type node resolves through the interface
+    // fast-path (`simple_local_interface.rs`'s
+    // `try_lower_simple_local_interface_object`) into
+    // `get_type_from_type_node_in_type_literal` — a call path distinct from
+    // both the direct variable/param annotation path (`type_operators.rs`)
+    // and the type-alias/type-literal path (`type_node.rs`), which the
+    // class-field/type-literal control test confirms were already correct.
+    // The `UNION_TYPE` branch there already had the collapse (this file's
+    // earlier tests exercise it directly); the reason it never fired for an
+    // interface member is that `null` in type position lowers to a
+    // `TYPE_REFERENCE` node (identifier text `"null"`, same shape as
+    // `undefined`), and the fast-path's own eligibility gate
+    // (`is_simple_local_interface_primitive_type_reference`) allowed
+    // `"undefined"` but not `"null"` — so a `null | undefined` member never
+    // reached the fast path at all and fell through to `tsz-lowering`'s
+    // `TypeLowering`, whose independent union-lowering has no such gate on
+    // this shape (see the strict-mode control below for why that path
+    // cannot host this fix). Adding `"null"` alongside `"undefined"` routes
+    // the member through the already-correct checker path.
+    let codes =
+        non_strict("interface I { m: null | undefined }\ndeclare const i: I;\ni.m.foo;\ni.m();");
+    assert_eq!(
+        count(&codes, TS18047),
+        1,
+        "an interface member typed `null | undefined` must report TS18047, got: {codes:?}"
+    );
+    assert_eq!(
+        count(&codes, TS2721),
+        1,
+        "an interface member typed `null | undefined` callee must report TS2721, got: {codes:?}"
+    );
+    assert_eq!(
+        count(&codes, 18049),
+        0,
+        "the non-strict answer must not be the strict two-cause TS18049, got: {codes:?}"
+    );
+}
+
+#[test]
+fn strict_mode_keeps_the_two_cause_answer_for_an_interface_member() {
+    // Regression control (caught by review on the first revision of this
+    // fix): `strictNullChecks` must NOT collapse the union — an earlier
+    // draft added the collapse to `tsz-lowering`'s `TypeLowering`, whose
+    // `strict_null_checks` field is not reliably wired to the real compiler
+    // option across its ~37 construction sites in `tsz-checker` and so
+    // silently defaulted to `false`, collapsing the union even under
+    // `--strict`. The fix now stays entirely inside `tsz-checker`, which
+    // does have the real option.
+    let source = "interface I { m: null | undefined }\ndeclare const i: I;\ni.m.foo;\ni.m();";
+    let strict = check_source_strict_codes(source);
+    assert_eq!(
+        count(&strict, 18049),
+        1,
+        "strict mode must keep the two-cause TS18049 for an interface member, got: {strict:?}"
+    );
+    assert_eq!(
+        count(&strict, 2723),
+        1,
+        "strict mode must keep the two-cause TS2723 for an interface member callee, got: {strict:?}"
+    );
+    assert_eq!(
+        count(&strict, TS18047),
+        0,
+        "strict mode must not collapse to the single-cause TS18047, got: {strict:?}"
+    );
+}
+
+#[test]
+fn interface_index_signature_value_is_a_known_unfixed_residual() {
+    // NOT fixed here — documented so a future fix has a red test to turn
+    // green, and so this stays visibly a residual rather than silently
+    // regressing further. An index-signature member never reaches the
+    // interface fast path at all (`try_lower_simple_local_interface_object`
+    // rejects any non-`PROPERTY_SIGNATURE` member outright), so it always
+    // falls through to `tsz-lowering`'s `TypeLowering`, whose
+    // `strict_null_checks` field is not reliably wired to the real compiler
+    // option — see the strict-mode control above and this PR's review
+    // discussion. Fixing this either needs fast-path support for index
+    // signatures (mirroring the property-signature handling) or properly
+    // plumbing the option through `tsz-lowering`; both are out of scope for
+    // this fix. Behavior is unchanged from before this PR in both modes.
+    let source = "interface I { [k: string]: null | undefined }\ndeclare const i: I;\ni.m.foo;";
+    let lax = nullish_codes(&non_strict(source));
+    assert!(
+        lax.is_empty(),
+        "index-signature value nullish collapse remains unfixed (non-strict), got: {lax:?}"
+    );
+    let strict = check_source_strict_codes(source);
+    assert_eq!(
+        count(&strict, 18049),
+        1,
+        "strict mode already reports the two-cause TS18049 for an interface index signature, got: {strict:?}"
+    );
+}
+
+#[test]
+fn null_or_undefined_union_class_field_and_object_literal_type_already_collapsed() {
+    // Controls: these two sibling paths were already correct before this fix
+    // (a class field's own type-node resolution and an object type literal
+    // used via a type alias both already routed through the patched
+    // `type_operators.rs` / `type_node.rs` union constructors) — confirming
+    // the interface-member path above was the one genuinely missing arm, not
+    // a symptom visible everywhere member types are declared.
+    // `c` is a plain identifier so the property access stays a "dotted name"
+    // reference, matching the other TS18047 rows above; a `new C().m` base
+    // (not a simple identifier) instead reports the generic TS2531 "Object is
+    // possibly 'null'" — that is tsc's own real divergence, not a bug.
+    let class_field =
+        non_strict("class C { m: null | undefined = null; }\nconst c = new C();\nc.m.foo;");
+    assert_eq!(
+        count(&class_field, TS18047),
+        1,
+        "a class field typed `null | undefined` must report TS18047, got: {class_field:?}"
+    );
+
+    let type_literal =
+        non_strict("type T = { m: null | undefined };\ndeclare const t: T;\nt.m.foo;");
+    assert_eq!(
+        count(&type_literal, TS18047),
+        1,
+        "an object-type-literal member typed `null | undefined` must report TS18047, got: {type_literal:?}"
+    );
+}
+
+#[test]
 fn null_or_undefined_union_with_a_non_nullish_member_stays_clean() {
     // The collapse is specific to a PURE null/undefined union — a union that
     // also carries a real member is the already-correct `T | null` narrowing

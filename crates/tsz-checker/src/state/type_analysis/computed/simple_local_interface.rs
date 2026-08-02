@@ -387,6 +387,7 @@ impl<'a> CheckerState<'a> {
                 | "bigint"
                 | "boolean"
                 | "never"
+                | "null"
                 | "number"
                 | "object"
                 | "string"

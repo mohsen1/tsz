@@ -272,18 +272,7 @@ pub(crate) fn collapse_pure_nullish_union_nonstrict(
     strict_null_checks: bool,
     member_types: &[TypeId],
 ) -> Option<TypeId> {
-    if strict_null_checks
-        || !member_types
-            .iter()
-            .all(|&m| m == TypeId::NULL || m == TypeId::UNDEFINED)
-    {
-        return None;
-    }
-    if member_types.contains(&TypeId::NULL) {
-        Some(TypeId::NULL)
-    } else {
-        Some(TypeId::UNDEFINED)
-    }
+    tsz_solver::narrowing::collapse_pure_nullish_union_nonstrict(strict_null_checks, member_types)
 }
 
 #[cfg(test)]
