@@ -1528,12 +1528,27 @@ fn test_duplicate_identifier_const_var_2451() {
 
 #[test]
 fn test_duplicate_identifier_three_way_var_let_var_2300() {
-    // The first conflicting declaration is `var`, so tsc reports TS2300 on
-    // each declaration in this same-file mixed set.
+    // Two, not three. `tsc`'s binder collision walk reports on the surviving
+    // symbol's declarations plus the colliding one, then attaches the collider
+    // to a throwaway symbol; the trailing `var` never collides with the
+    // function-scoped survivor, so it rejoins it and draws nothing. Modelled in
+    // `duplicate_identifiers_variable_family` by #16169.
+    //
+    // Contrast `test_duplicate_identifier_let_var_function_stays_2300` below,
+    // where a `function` joins the conflict and all three declarations do
+    // report — that row is 3 and stays 3.
+    //
+    // Pinned `typescript@7.0.2`, `--noEmit --strict --lib es2015 --target es2015`:
+    //   vlv.ts(1,5): error TS2300: Duplicate identifier 'q'.
+    //   vlv.ts(2,5): error TS2300: Duplicate identifier 'q'.
     let (ts2451, ts2300) =
         count_redeclaration_diagnostics("var q = 1;\nlet q = 2;\nvar q = 3;\n");
     assert_eq!(ts2451, 0, "Expected no TS2451 for var/let/var redeclaration");
-    assert_eq!(ts2300, 3, "Expected 3 TS2300 for var/let/var redeclaration");
+    assert_eq!(
+        ts2300, 2,
+        "Expected 2 TS2300 for var/let/var redeclaration: the trailing `var` \
+         rejoins the function-scoped survivor instead of colliding"
+    );
 }
 
 #[test]
