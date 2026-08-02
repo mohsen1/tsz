@@ -1134,7 +1134,7 @@ impl<'a> CheckerState<'a> {
             // Async methods infer Promise<void>, not 'any', so they should NOT trigger TS7010
             // Private members in ambient classes are excluded (not visible in .d.ts)
             if !is_async && !skip_implicit_any {
-                let method_name = self.get_property_name(method.name);
+                let method_name = self.property_name_for_error(method.name);
                 self.maybe_report_implicit_any_return(
                     method_name,
                     Some(method.name),
@@ -1641,12 +1641,25 @@ impl<'a> CheckerState<'a> {
             // source-text slice would also fire on a genuinely malformed
             // computed name (`get [](); `, a parse error), where tsc reports
             // only the syntax error and stays silent on `TS7033`.
+            //
+            // A string-literal name goes through the display renderer first,
+            // ahead of `get_property_name`: the key resolver returns the
+            // unquoted key (`foo`), but `declarationNameToString` keeps the
+            // source's own quote character (`"foo"` / `'foo'`).
             if self.ctx.no_implicit_any()
                 && !self.is_js_file()
                 && self.paired_setter_member_for_getter(accessor).is_none()
-                && let Some(accessor_name) = self
-                    .get_property_name(accessor.name)
-                    .or_else(|| self.get_member_name_display_text(accessor.name))
+                && let Some(accessor_name) = if self
+                    .ctx
+                    .arena
+                    .get(accessor.name)
+                    .is_some_and(|n| n.kind == tsz_scanner::SyntaxKind::StringLiteral as u16)
+                {
+                    self.get_member_name_display_text(accessor.name)
+                } else {
+                    self.get_property_name(accessor.name)
+                        .or_else(|| self.get_member_name_display_text(accessor.name))
+                }
             {
                 use crate::diagnostics::diagnostic_codes;
                 self.error_at_node_msg(

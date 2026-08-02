@@ -8,7 +8,7 @@ use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::NodeAccess;
+use tsz_parser::parser::node::{NodeAccess, SourceFileData};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -523,10 +523,13 @@ impl<'a> CheckerState<'a> {
     // Section 40: Node and Name Utilities
     // ------------------------------------
 
-    /// Get the text content of a node from the source file.
+    /// Get the text content of a node from the source file that actually owns
+    /// it, not the arena's first source file — an arena can hold more than one
+    /// file (e.g. a lib-merged declaration), so `.first()` silently slices the
+    /// wrong file's text whenever `node_idx` isn't in it.
     pub(crate) fn node_text(&self, node_idx: NodeIndex) -> Option<String> {
         let (start, end) = self.get_node_span(node_idx)?;
-        let source = self.ctx.arena.source_files.first()?.text.as_ref();
+        let source = self.owning_source_file(node_idx)?.text.as_ref();
         let start = start as usize;
         let end = end as usize;
         if start >= end || end > source.len() {
@@ -535,13 +538,36 @@ impl<'a> CheckerState<'a> {
         Some(source[start..end].to_string())
     }
 
+    /// Walk up from `node_idx` to its enclosing `SOURCE_FILE` node and return
+    /// that file's data.
+    fn owning_source_file(&self, node_idx: NodeIndex) -> Option<&SourceFileData> {
+        let mut current = node_idx;
+        while current.is_some() {
+            let node = self.ctx.arena.get(current)?;
+            if node.kind == syntax_kind_ext::SOURCE_FILE {
+                return self.ctx.arena.get_source_file(node);
+            }
+            let info = self.ctx.arena.node_info(current)?;
+            if info.parent.is_none() {
+                return None;
+            }
+            current = info.parent;
+        }
+        None
+    }
+
     /// Get the name of a parameter for error messages.
+    ///
+    /// Also reused by callers that pass an accessor's *property* name
+    /// (`set "foo"(v)`'s TS7032 site), so a string-literal name must keep its
+    /// source quote character rather than the raw unquoted `lit.text`.
     pub(crate) fn parameter_name_for_error(&self, name_idx: NodeIndex) -> String {
         if let Some(name_node) = self.ctx.arena.get(name_idx) {
             if name_node.kind == SyntaxKind::ThisKeyword as u16 {
                 return "this".to_string();
             }
-            if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+            if (name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                || name_node.kind == SyntaxKind::StringLiteral as u16)
                 && let Some(display_name) = self.get_member_name_display_text(name_idx)
             {
                 return display_name;
@@ -561,7 +587,22 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Get the name of a property for error messages.
+    ///
+    /// A non-computed string-literal name goes through the *display* renderer
+    /// first, ahead of `get_property_name`'s semantic key: the key resolver
+    /// intentionally drops the source's quote character (right for a dedup
+    /// key, wrong for a message — `declarationNameToString` keeps it).
     pub(crate) fn property_name_for_error(&self, name_idx: NodeIndex) -> Option<String> {
+        if self
+            .ctx
+            .arena
+            .get(name_idx)
+            .is_some_and(|n| n.kind == SyntaxKind::StringLiteral as u16)
+            && let Some(display_name) = self.get_member_name_display_text(name_idx)
+        {
+            return Some(display_name);
+        }
+
         self.get_property_name(name_idx).or_else(|| {
             if self
                 .ctx

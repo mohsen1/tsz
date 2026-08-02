@@ -1469,11 +1469,16 @@ impl<'a> CheckerState<'a> {
 
     /// Get the display text for a class member name, matching TSC's `declarationNameToString`.
     ///
-    /// Unlike `get_member_name_text` which canonicalizes numeric names for dedup keys,
-    /// this preserves the original source representation for diagnostic messages.
+    /// `declarationNameToString` is `getTextOfNode` — the name node's verbatim
+    /// **source spelling**, with no quote convention of its own. Callers whose
+    /// message template already wraps `{0}` in a literal `'...'` (TS7008,
+    /// TS7010, TS7032, TS7033) get that quoting for free from the template;
+    /// this function must not add a second layer, and must not normalize which
+    /// quote character the author typed.
     /// - Identifiers: `foo` → `"foo"`
     /// - Numeric literals: `0.0` → `"0.0"` (NOT canonicalized to `"0"`)
-    /// - String literals: `'0'` → `"'0'"` (wrapped in single quotes)
+    /// - String literals: `"foo"` → `"\"foo\""`, `'foo'` → `"'foo'"` (the
+    ///   source's own quote character, not a fixed one)
     pub(crate) fn get_member_name_display_text(&self, name_idx: NodeIndex) -> Option<String> {
         if name_idx.is_none() {
             return None;
@@ -1486,11 +1491,9 @@ impl<'a> CheckerState<'a> {
             return Some(ident.escaped_text.to_string());
         }
 
-        // String literal — wrap in single quotes like TSC's declarationNameToString
-        if name_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
-            && let Some(lit) = self.ctx.arena.get_literal(name_node)
-        {
-            return Some(format!("'{}'", lit.text));
+        // String literal — verbatim source spelling, quote character and all.
+        if name_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16 {
+            return self.node_text(name_idx);
         }
 
         // Numeric literal — preserve source text (no canonicalization)
