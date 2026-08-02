@@ -107,9 +107,8 @@ fn every_reserved_word_takes_the_class_variant_in_a_nested_function() {
 /// function and the file all carry different names than the rows above.
 #[test]
 fn reserved_word_class_variant_survives_renamed_binders() {
-    let codes = diag_codes(
-        "class ReportBuilder { renderSection() { function formatRow(package) {} } }",
-    );
+    let codes =
+        diag_codes("class ReportBuilder { renderSection() { function formatRow(package) {} } }");
     assert_only_class_variant(&codes, 1213, 1212, "renamed binders");
 }
 
