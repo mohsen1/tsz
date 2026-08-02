@@ -43,7 +43,7 @@ pub use parse::{
     parse_tsconfig_with_diagnostics_deferred,
 };
 pub use resolved_options::{
-    JsxEmit, ModuleResolutionKind, PathMapping, ResolvedCompilerOptions,
+    JsxEmit, ModuleResolutionKind, PathMapping, ResolvedCompilerOptions, apply_module_detection,
     default_module_detection_for_module, default_module_kind_for_target,
     default_module_resolution_for_module, derive_default_module_kind, resolve_compiler_options,
 };

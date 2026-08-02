@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use crate::checker::context::CheckerOptions;
 use crate::emitter::{ModuleKind, PrinterOptions, ScriptTarget};
 use crate::module_resolver_helpers::match_prefix_suffix;
+use tsz_common::options::module_detection::ModuleDetectionKind;
 use tsz_common::options::strict_family::{StrictFamilyOverrides, apply_strict_family};
 
 use super::{
@@ -241,6 +242,20 @@ pub const fn default_module_resolution_for_module(module: ModuleKind) -> ModuleR
         | ModuleKind::ESNext
         | ModuleKind::Preserve => ModuleResolutionKind::Bundler,
     }
+}
+
+/// Record a resolved `moduleDetection` in every consumer's view of it.
+///
+/// `tsc` resolves the setting once (`getEmitModuleDetectionKind`) and hands the
+/// same kind to the file-level module-ness predicate and to emit. tsz has two
+/// representations — `checker.module_detection`, which the binder reads to
+/// decide `is_external_module`, and the emitter's `module_detection_force` /
+/// `module_detection_legacy` pair — so both are written here and can never
+/// disagree.
+pub fn apply_module_detection(resolved: &mut ResolvedCompilerOptions, kind: ModuleDetectionKind) {
+    resolved.checker.module_detection = kind;
+    resolved.printer.module_detection_force = kind == ModuleDetectionKind::Force;
+    resolved.printer.module_detection_legacy = kind == ModuleDetectionKind::Legacy;
 }
 
 /// Default `moduleDetection` shown by tsc-style config output for a module kind.
@@ -940,15 +955,12 @@ pub fn resolve_compiler_options(
     // - If moduleDetection is NOT set and module is Node16-NodeNext, default to "force".
     // - If moduleDetection is NOT set and module is anything else, default to "auto".
     if let Some(ref module_detection) = options.module_detection {
-        if module_detection.eq_ignore_ascii_case("force") {
-            resolved.printer.module_detection_force = true;
-        } else if module_detection.eq_ignore_ascii_case("legacy") {
-            resolved.printer.module_detection_legacy = true;
-        }
-        // "auto" leaves both detection flags as false
+        // An unrecognized value keeps tsc's own fallback of `auto`.
+        let kind = ModuleDetectionKind::from_option_str(module_detection).unwrap_or_default();
+        apply_module_detection(&mut resolved, kind);
     } else if resolved.printer.module.is_node_module() {
         // tsc defaults to Force for Node16/Node18/Node20/NodeNext
-        resolved.printer.module_detection_force = true;
+        apply_module_detection(&mut resolved, ModuleDetectionKind::Force);
     }
 
     Ok(resolved)

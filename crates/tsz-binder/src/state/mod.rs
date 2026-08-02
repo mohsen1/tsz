@@ -19,6 +19,7 @@ use std::mem::size_of;
 use std::sync::Arc;
 use std::sync::RwLock;
 use tsz_common::common::ScriptTarget;
+use tsz_common::options::module_detection::ModuleDetectionKind;
 use tsz_parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 
@@ -178,6 +179,11 @@ pub struct BinderOptions {
     /// When true, parse in strict mode and emit "use strict" for each source file.
     /// This mirrors the `--alwaysStrict` compiler option.
     pub always_strict: bool,
+    /// Resolved `moduleDetection`, i.e. `tsc`'s `getEmitModuleDetectionKind`.
+    ///
+    /// Selects which rule `detect_external_module` applies when deciding
+    /// whether a source file is an external module.
+    pub module_detection: ModuleDetectionKind,
 }
 
 /// Lib file context for global type resolution.

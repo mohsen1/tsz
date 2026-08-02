@@ -11,6 +11,7 @@ mod exports_jsdoc;
 mod hoisting_scopes_flow;
 mod loop_flow;
 mod module_augments;
+mod module_detection;
 mod semantic_defs_core;
 mod semantic_defs_cross_file;
 mod semantic_defs_extended;

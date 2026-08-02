@@ -18,19 +18,35 @@ use tsz_parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 use super::{BinderOptions, FileFeatures};
+use tsz_common::options::module_detection::ModuleDetectionKind;
 
-/// Returns true if the file extension implies module semantics (.mts, .cts, .mjs, .cjs).
-/// In TypeScript, these extensions always indicate module files regardless of content
-/// or moduleDetection settings. This matches tsc behavior where .mts files are ES modules
-/// and .cts files are CommonJS modules.
+/// Returns true if the file extension forces module semantics (.mts, .cts,
+/// .mjs, .cjs) under `moduleDetection: auto`.
+///
+/// Mirrors `tsc`'s `isFileForcedToBeModuleByFormat`, which is explicitly
+/// declaration-file-aware: `.d.mts` and `.d.cts` are *not* forced, because a
+/// declaration file with no module syntax still declares globals. Callers that
+/// want the format-blind rule want `file_has_module_syntax_indicator` instead.
 fn is_module_file_extension(file_name: &str) -> bool {
+    if is_declaration_file_name(file_name) {
+        return false;
+    }
     // Check for .mts, .cts (TypeScript module extensions)
     // and .mjs, .cjs (JavaScript module extensions)
-    // Also handle declaration variants: .d.mts, .d.cts
     file_name.ends_with(".mts")
         || file_name.ends_with(".cts")
         || file_name.ends_with(".mjs")
         || file_name.ends_with(".cjs")
+}
+
+/// Returns true for a declaration file name (`.d.ts`, `.d.mts`, `.d.cts`).
+///
+/// Mirrors `tsc`'s `SourceFile.isDeclarationFile`, which both
+/// `isFileForcedToBeModuleByFormat` and the `moduleDetection: force` rule
+/// consult: a declaration file is never made a module by its extension or by
+/// `force`, only by carrying module syntax of its own.
+fn is_declaration_file_name(file_name: &str) -> bool {
+    file_name.ends_with(".d.ts") || file_name.ends_with(".d.mts") || file_name.ends_with(".d.cts")
 }
 
 pub(super) fn is_js_like_file_name(file_name: &str) -> bool {
@@ -642,25 +658,42 @@ impl BinderState {
         }
     }
 
-    pub(crate) fn source_file_is_external_module(arena: &NodeArena, root: NodeIndex) -> bool {
-        // Note: .mts/.cts/.mjs/.cjs file extension check is handled by the caller
-        // via `is_module_file_extension()`, since this static method doesn't have
-        // access to the file name string.
+    /// Decide whether `root`'s source file is an external module under the
+    /// binder's resolved `moduleDetection` setting.
+    ///
+    /// Mirrors `tsc`'s `getSetExternalModuleIndicator`, which dispatches on
+    /// `getEmitModuleDetectionKind(options)` and installs one of three
+    /// predicates. Only the `Auto` arm consults file format; `Legacy` is module
+    /// syntax alone, and `Force` makes every non-declaration file a module.
+    pub(crate) fn detect_external_module(&self, arena: &NodeArena, root: NodeIndex) -> bool {
+        match self.options.module_detection {
+            ModuleDetectionKind::Auto => Self::source_file_is_external_module(arena, root),
+            ModuleDetectionKind::Legacy => Self::file_has_module_syntax_indicator(arena, root),
+            ModuleDetectionKind::Force => {
+                let Some(source) = arena.get_source_file_at(root) else {
+                    return false;
+                };
+                !is_declaration_file_name(&source.file_name)
+                    || Self::file_has_module_syntax_indicator(arena, root)
+            }
+        }
+    }
+
+    /// Whether module-ness may be forced by file format (`moduleDetection: auto`).
+    pub(crate) const fn auto_module_detection(&self) -> bool {
+        matches!(self.options.module_detection, ModuleDetectionKind::Auto)
+    }
+
+    /// `tsc`'s `isFileProbablyExternalModule`: does the file carry module
+    /// syntax of its own?
+    ///
+    /// An import/export declaration, an `import ... = require(...)`, an
+    /// `export =`, any exported declaration, or `import.meta`. Deliberately
+    /// format-blind — file extensions are the `Auto` arm's business.
+    fn file_has_module_syntax_indicator(arena: &NodeArena, root: NodeIndex) -> bool {
         let Some(source) = arena.get_source_file_at(root) else {
             return false;
         };
-
-        // .mts and .mjs files are always ES modules; .cts and .cjs files are
-        // always CommonJS modules.  Both are module-scoped per the TypeScript
-        // spec, regardless of their content.
-        let fname = &source.file_name;
-        if fname.ends_with(".mts")
-            || fname.ends_with(".mjs")
-            || fname.ends_with(".cts")
-            || fname.ends_with(".cjs")
-        {
-            return true;
-        }
 
         for &stmt_idx in &source.statements.nodes {
             if stmt_idx.is_none() {
@@ -684,24 +717,31 @@ impl BinderState {
             }
         }
 
-        if Self::source_file_contains_import_meta(arena, root) {
+        Self::source_file_contains_import_meta(arena, root)
+    }
+
+    /// The `moduleDetection: auto` predicate — module syntax, plus the formats
+    /// and declaration-file accommodations that force module-ness on their own.
+    pub(crate) fn source_file_is_external_module(arena: &NodeArena, root: NodeIndex) -> bool {
+        // Note: .mts/.cts/.mjs/.cjs file extension check is handled by the caller
+        // via `is_module_file_extension()`, since this static method doesn't have
+        // access to the file name string.
+        let Some(source) = arena.get_source_file_at(root) else {
+            return false;
+        };
+
+        if Self::file_has_module_syntax_indicator(arena, root) {
             return true;
         }
 
-        // .mts/.cts/.mjs/.cjs files are always modules regardless of content.
-        // In tsc's moduleDetection "auto" mode, these extensions force module
-        // scope even without import/export statements.
-        {
-            let lower = source.file_name.to_lowercase();
-            if lower.ends_with(".mts")
-                || lower.ends_with(".cts")
-                || lower.ends_with(".mjs")
-                || lower.ends_with(".cjs")
-                || lower.ends_with(".d.mts")
-                || lower.ends_with(".d.cts")
-            {
-                return true;
-            }
+        // Files with extensions that unambiguously imply a module format (Node16+
+        // CJS/ESM extensions) are modules regardless of statement content.
+        // Matches tsc's `isFileForcedToBeModuleByFormat` under `moduleDetection: auto`,
+        // including its exclusion of declaration files (`.d.mts`, `.d.cts`), which
+        // still require an explicit module indicator — otherwise their ambient
+        // declarations stop seeding the global scope.
+        if is_module_file_extension(&source.file_name) {
+            return true;
         }
 
         // Declaration files that only contain `declare global { ... }` still need
@@ -710,23 +750,6 @@ impl BinderState {
         // opting into global augmentation semantics.
         if source.file_name.ends_with(".d.ts")
             && Self::source_file_has_top_level_global_augmentation(arena, &source.statements.nodes)
-        {
-            return true;
-        }
-
-        // Files with extensions that unambiguously imply a module format (Node16+
-        // CJS/ESM extensions) are always modules, regardless of statement content.
-        // Matches tsc's `isFileForcedToBeModuleByFormat` under `moduleDetection: auto`.
-        // Excludes declaration files (`.d.cts`, `.d.mts`), which still require an
-        // explicit module indicator.
-        let fname = source.file_name.as_str();
-        let is_declaration_file =
-            fname.ends_with(".d.ts") || fname.ends_with(".d.cts") || fname.ends_with(".d.mts");
-        if !is_declaration_file
-            && (fname.ends_with(".cts")
-                || fname.ends_with(".mts")
-                || fname.ends_with(".cjs")
-                || fname.ends_with(".mjs"))
         {
             return true;
         }
@@ -1067,7 +1090,7 @@ impl BinderState {
         // Create START flow node for the file
         let start_flow = Arc::make_mut(&mut self.flow_nodes).alloc(flow_flags::START);
         self.current_flow = start_flow;
-        self.is_external_module = Self::source_file_is_external_module(arena, root);
+        self.is_external_module = self.detect_external_module(arena, root);
 
         if let Some(node) = arena.get(root)
             && let Some(sf) = arena.get_source_file(node)
@@ -1075,7 +1098,12 @@ impl BinderState {
             // .mts/.cts/.mjs/.cjs files are always modules regardless of content.
             // This must happen after source_file_is_external_module which only checks
             // for import/export statements, not file extensions.
-            if !self.is_external_module && is_module_file_extension(&sf.file_name) {
+            // Only under `moduleDetection: auto`: `legacy` never forces module-ness
+            // by format, and `force` has already decided by declaration-file-ness.
+            if self.auto_module_detection()
+                && !self.is_external_module
+                && is_module_file_extension(&sf.file_name)
+            {
                 self.is_external_module = true;
             }
             // Detect strict mode: "use strict" prologue or --alwaysStrict option
@@ -1774,13 +1802,16 @@ impl BinderState {
             return false;
         }
 
-        self.is_external_module = Self::source_file_is_external_module(arena, root);
+        self.is_external_module = self.detect_external_module(arena, root);
 
         // Detect strict mode for incremental rebinding
         if let Some(node) = arena.get(root)
             && let Some(sf) = arena.get_source_file(node)
         {
-            if !self.is_external_module && is_module_file_extension(&sf.file_name) {
+            if self.auto_module_detection()
+                && !self.is_external_module
+                && is_module_file_extension(&sf.file_name)
+            {
                 self.is_external_module = true;
             }
             self.is_strict_scope = self.options.always_strict
