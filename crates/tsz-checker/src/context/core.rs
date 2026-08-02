@@ -659,6 +659,7 @@ impl<'a> CheckerContext<'a> {
         self.resolved_module_paths = parent.resolved_module_paths.clone();
         self.resolved_module_ts_extension_flags = parent.resolved_module_ts_extension_flags.clone();
         self.resolved_module_errors = parent.resolved_module_errors.clone();
+        self.untyped_module_paths = parent.untyped_module_paths.clone();
         self.module_specifiers = parent.module_specifiers.clone();
         self.module_path_specifiers = parent.module_path_specifiers.clone();
         self.is_external_module_by_file = parent.is_external_module_by_file.clone();
@@ -956,6 +957,27 @@ impl<'a> CheckerContext<'a> {
     }
 
     /// Set resolved module errors keyed by the full driver lookup request.
+    /// Install the driver's untyped-JavaScript resolution targets.
+    pub fn set_untyped_module_paths(
+        &mut self,
+        paths: Arc<crate::context::aliases::UntypedModulePathMap>,
+    ) {
+        self.untyped_module_paths = Some(paths);
+    }
+
+    /// Absolute path of the untyped JavaScript file `specifier` resolves to
+    /// from the current file, if the resolution carried no declaration file.
+    ///
+    /// Answers the augmentation-site question structurally — the caller never
+    /// inspects a rendered TS7016 message — and returns `None` for drivers that
+    /// do not populate the map (LSP, WASM, unit harness).
+    pub fn untyped_module_path_for(&self, specifier: &str) -> Option<&str> {
+        self.untyped_module_paths
+            .as_ref()?
+            .get(&(self.current_file_idx, specifier.to_string()))
+            .map(String::as_str)
+    }
+
     pub fn set_resolved_module_request_errors(
         &mut self,
         errors: Arc<crate::context::ResolvedModuleRequestErrorMap>,
