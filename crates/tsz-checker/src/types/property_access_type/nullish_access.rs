@@ -87,19 +87,34 @@ impl<'a> CheckerState<'a> {
             }
             // When the optional-chain receiver has no non-nullish slice
             // (`property_type` is `None`, i.e. the receiver is exactly `null`,
-            // `undefined`, or `null | undefined`), tsc reports TS2339 at the
-            // property name with the receiver type narrowed to `never` — the
-            // chain always short-circuits, so the property access is
-            // unreachable. Match that diagnostic; the result type still flows
+            // `undefined`, or `null | undefined`) AND `strictNullChecks` is on,
+            // tsc reports TS2339 at the property name with the receiver type
+            // narrowed to `never` — the chain always short-circuits, so the
+            // property access is unreachable. The result type still flows
             // through as `unknown | undefined` to keep downstream typing.
-            if property_type.is_none() {
-                self.error_property_not_exist_at(property_name, TypeId::NEVER, name_or_argument);
+            //
+            // This chain-root stripping is tsc's `getNonNullableType`, which is
+            // the identity function without `strictNullChecks` — so only in
+            // strict mode does the receiver actually narrow to `never` here.
+            // Without it, the receiver's own (unstripped) type keeps flowing
+            // into the ordinary nullish reporter below, exactly as it would
+            // for a non-chain `on.foo`, producing TS18047/18048/18049 instead.
+            if property_type.is_none() && !self.ctx.compiler_options.strict_null_checks {
+                // Fall through to the shared reporter below.
+            } else {
+                if property_type.is_none() {
+                    self.error_property_not_exist_at(
+                        property_name,
+                        TypeId::NEVER,
+                        name_or_argument,
+                    );
+                }
+                let base_type = property_type.unwrap_or(TypeId::UNKNOWN);
+                // The added `| undefined` is the chain short-circuit marker; the
+                // helper tracks whether the member itself already carried
+                // `undefined` so chain continuations can strip only the marker.
+                return self.union_optional_chain_undefined(idx, base_type, true).0;
             }
-            let base_type = property_type.unwrap_or(TypeId::UNKNOWN);
-            // The added `| undefined` is the chain short-circuit marker; the
-            // helper tracks whether the member itself already carried
-            // `undefined` so chain continuations can strip only the marker.
-            return self.union_optional_chain_undefined(idx, base_type, true).0;
         }
 
         if cause == TypeId::ERROR || cause == TypeId::ANY || cause == TypeId::UNKNOWN {

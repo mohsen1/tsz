@@ -1533,6 +1533,9 @@ mod operator_chain_overload_resolution_tests;
 #[path = "tests/optional_chain_inherent_nullish_tests.rs"]
 mod optional_chain_inherent_nullish_tests;
 #[cfg(test)]
+#[path = "tests/optional_chain_root_nullish_strict_only_tests.rs"]
+mod optional_chain_root_nullish_strict_only_tests;
+#[cfg(test)]
 #[path = "tests/optional_key_extraction_tests.rs"]
 mod optional_key_extraction_tests;
 #[cfg(test)]

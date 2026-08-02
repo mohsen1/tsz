@@ -84,6 +84,15 @@ impl<'a> CheckerState<'a> {
 
         let (non_nullish_base, base_nullish) = self.split_nullish_type(object_type);
         let Some(non_nullish_base) = non_nullish_base else {
+            // The chain root's nullish stripping is tsc's `getNonNullableType`,
+            // which is the identity function without `strictNullChecks` — so a
+            // wholly-nullish receiver only narrows to `never` (and reports
+            // TS2339 here) in strict mode. Without it, fall back to the full
+            // path so the receiver's own (unstripped) type reaches the
+            // ordinary nullish reporter and produces TS18047/18048 instead.
+            if !self.ctx.compiler_options.strict_null_checks {
+                return None;
+            }
             self.error_property_not_exist_at(property_name, TypeId::NEVER, name_or_argument);
             return Some(TypeId::UNDEFINED);
         };
