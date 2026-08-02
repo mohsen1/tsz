@@ -857,14 +857,10 @@ impl<'a> CheckerState<'a> {
         self.check_parameter_properties(&method.parameters.nodes);
 
         // Check parameter type annotations for parameter properties in function types
-        // TSC suppresses TS7006 for private members in ambient (declare) classes
-        // since private members are excluded from .d.ts output.
-        let skip_implicit_any = self
-            .ctx
-            .enclosing_class
-            .as_ref()
-            .is_some_and(|c| c.is_declared)
-            && self.has_private_modifier(&method.modifiers);
+        // TSC suppresses the noImplicitAny member family for members that are not
+        // part of an ambient declaration's observable surface.
+        let skip_implicit_any =
+            self.member_hidden_from_ambient_declaration_surface(&method.modifiers, method.name);
         // Pre-extract ordered @param names for positional matching with binding patterns
         let jsdoc_param_names: Vec<String> = method_jsdoc
             .as_ref()
@@ -1417,13 +1413,10 @@ impl<'a> CheckerState<'a> {
         // Parameter properties are only allowed in constructors, not in accessors
         self.check_parameter_properties(&accessor.parameters.nodes);
 
-        // TSC suppresses TS7006/TS7010 for private accessors in ambient (declare) classes
-        let skip_implicit_any_accessor = self
-            .ctx
-            .enclosing_class
-            .as_ref()
-            .is_some_and(|c| c.is_declared)
-            && self.has_private_modifier(&accessor.modifiers);
+        // TSC suppresses the noImplicitAny member family (TS7006/TS7010/TS7033) for
+        // accessors that are not part of an ambient declaration's observable surface.
+        let skip_implicit_any_accessor =
+            self.member_hidden_from_ambient_declaration_surface(&accessor.modifiers, accessor.name);
 
         // Check getter parameters for TS7006 here.
         // Setter parameters are checked in check_setter_parameter() below, which also
@@ -1590,6 +1583,33 @@ impl<'a> CheckerState<'a> {
             }
 
             self.pop_return_type();
+        } else if is_getter && !has_type_annotation && !skip_implicit_any_accessor {
+            // TS7033. A bodyless get accessor has no body to infer a return type from,
+            // so an unannotated one resolves to `any` and tsc reports it — in every
+            // container a bodyless getter can legally appear (`declare class`, an
+            // `abstract` getter, a `.d.ts` class) and in parse-error recovery for a
+            // plain class too, where tsc emits it alongside the syntax error.
+            //
+            // This is the accessor analogue of the bodyless-method TS7010 arm above,
+            // and it carries one exemption that arm does not need: a getter paired
+            // with an annotated setter takes its type from the setter
+            // (tsc's `isGetAccessorWithAnnotatedSetAccessor`), so it is not implicitly
+            // `any` and must stay clean. `get g(); set g(v: number);` is ordinary in
+            // real declaration files.
+            if self.ctx.no_implicit_any()
+                && !self.is_js_file()
+                && self
+                    .contextual_getter_return_type_for_class_accessor(accessor)
+                    .is_none()
+                && let Some(accessor_name) = self.get_property_name(accessor.name)
+            {
+                use crate::diagnostics::diagnostic_codes;
+                self.error_at_node_msg(
+                    accessor.name,
+                    diagnostic_codes::PROPERTY_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_ITS_GET_ACCESSOR_LACKS_A_RETURN_TYPE_AN,
+                    &[&accessor_name],
+                );
+            }
         }
 
         if self.has_static_modifier(&accessor.modifiers) {
