@@ -1841,7 +1841,14 @@ impl<'a> CheckerState<'a> {
         Some((key_type, value_type, is_static))
     }
 
-    fn computed_name_uses_entity_expression(&self, expr_idx: NodeIndex) -> bool {
+    /// Whether a computed property name's key expression is an entity name --
+    /// a bare identifier or a dotted chain rooted in one.
+    ///
+    /// `tsc` only lets such a name contribute an index signature to the
+    /// containing class type. An arbitrary expression key (`["" + ""]`, `[+s]`,
+    /// `[f()]`) contributes nothing and is only ever *checked* against index
+    /// signatures contributed by other members.
+    pub(crate) fn computed_name_uses_entity_expression(&self, expr_idx: NodeIndex) -> bool {
         let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
             return false;
         };
