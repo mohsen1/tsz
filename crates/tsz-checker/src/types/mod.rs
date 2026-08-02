@@ -19,6 +19,7 @@ pub(crate) mod property_access_helpers;
 mod property_access_narrowing_skip;
 pub(crate) mod property_access_type;
 pub(crate) mod queries;
+pub(crate) mod signature_binding_scope;
 pub mod type_checking;
 pub mod type_literal_checker;
 pub mod type_node;

@@ -614,11 +614,19 @@ impl<'a> CheckerState<'a> {
 
                 // TS2842: 'b' is an unused renaming of 'a'. Did you intend to use it as a type annotation?
                 // This is emitted when both property_name and name are identifiers, and there's no body.
+                // The renaming is only *unused* when no `typeof` query in the
+                // owning signature names the renamed binding; `typeof b` keeps
+                // it used and `tsc` reports nothing.
                 if !has_body
                     && let Some(prop_node) = self.ctx.arena.get(elem.property_name)
                     && prop_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
                     && let Some(name_node) = self.ctx.arena.get(elem.name)
                     && name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                    && !self.ctx.arena.get_identifier_text(elem.name).is_some_and(|n| {
+                        crate::types_domain::signature_binding_scope::binding_is_referenced_by_type_query(
+                            &self.ctx, elem_idx, n,
+                        )
+                    })
                 {
                     let prop_name_str = self
                         .node_text(elem.property_name)

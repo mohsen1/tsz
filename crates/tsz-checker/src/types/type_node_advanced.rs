@@ -397,6 +397,27 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return param_type;
         }
 
+        // A parameter binding pattern of the enclosing signature declares real
+        // locals, and they are in scope for that signature's type positions.
+        // `typeof_param_scope` above carries their computed types when the
+        // signature's return type is being lowered; this answers the same
+        // question structurally for every other traversal, so the query
+        // resolves instead of reaching global name resolution and reporting
+        // TS2304 — or TS2693, when the binding shadows a global type name such
+        // as `string`. Without a seeded type the binding is `any`, which is
+        // what an unannotated destructuring parameter contributes anyway.
+        if let Some(name) = name_opt
+            && crate::types_domain::signature_binding_scope::signature_parameter_declares_binding(
+                self.ctx, idx, name,
+            )
+        {
+            if let Some(type_arguments) = &type_arguments {
+                return self
+                    .apply_instantiation_expression_type_arguments(TypeId::ANY, type_arguments);
+            }
+            return TypeId::ANY;
+        }
+
         if let Some(tuple_type) = self.const_asserted_array_tuple_type_query(type_query.expr_name) {
             if let Some(type_arguments) = &type_arguments {
                 return self
@@ -1143,6 +1164,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// Emit TS2693 for a type-only symbol used in a typeof type query.
     fn emit_type_query_type_only_error(&mut self, name: &str, expr_name: NodeIndex) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
         let msg = format_message(
             diagnostic_messages::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
             &[name],

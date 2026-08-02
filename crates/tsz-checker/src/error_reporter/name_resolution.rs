@@ -1003,17 +1003,15 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if let Some(original_name) =
-            self.unresolved_unused_renaming_property_in_type_query(name, idx)
-        {
-            let message = format!(
-                "'{name}' is an unused renaming of '{original_name}'. Did you intend to use it as a type annotation?"
-            );
-            self.error_at_node(
-                idx,
-                &message,
-                diagnostic_codes::IS_AN_UNUSED_RENAMING_OF_DID_YOU_INTEND_TO_USE_IT_AS_A_TYPE_ANNOTATION,
-            );
+        // A `typeof x` query naming a binding declared by a parameter binding
+        // pattern of the enclosing signature is *resolved*, not missing: the
+        // renamed local is in scope for every type position of its own
+        // signature. `tsc` reports nothing here — neither TS2304 for the query
+        // nor TS2842, which describes an *unused* renaming and is owned by the
+        // parameter-side check.
+        if crate::types_domain::signature_binding_scope::signature_parameter_declares_binding(
+            &self.ctx, idx, name,
+        ) {
             return;
         }
 
