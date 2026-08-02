@@ -263,6 +263,40 @@ pub(super) fn prepare_source_resolution_setup(
                         _ => false,
                     };
 
+                // Record the untyped-JS resolution target for the checker's
+                // augmentation-site TS2665 check on the *source-discovery*
+                // producer, mirroring the `module_resolver.lookup` producer
+                // below. Every branch under `discovered` ends in `continue`, so
+                // without this the map stays empty for any specifier discovery
+                // already mapped and the augmentation site reports nothing.
+                //
+                // tsc's `resolveExternalModule` returns the resolved file's own
+                // symbol when that file is part of the program, and only falls
+                // through to the untyped-module arm when it is not. The program
+                // membership that matters here is the one tsc computes, not the
+                // one tsz's discovery pass happens to produce: tsz records a
+                // program index for a `node_modules` JS file that tsc leaves out
+                // at the default `maxNodeModuleJsDepth` of 0. So the gate is the
+                // driver's existing model of that same tsc rule rather than the
+                // presence of a discovered target — which keeps a *local* JS
+                // file (a genuine program input, and a non-module entity that
+                // tsc diagnoses as TS2671) out of this arm.
+                if let Some(discovered) = discovered
+                    && super::super::sources::should_skip_js_in_node_modules(
+                        &discovered.canonical_path,
+                        options.max_node_module_js_depth,
+                    )
+                {
+                    untyped_module_paths.insert(
+                        (file_idx, specifier.clone()),
+                        tsz_common::module_resolution::path_identity::normalize_segments(
+                            &discovered.canonical_path,
+                        )
+                        .to_string_lossy()
+                        .into_owned(),
+                    );
+                }
+
                 if exact_name_ambient_match && !discovered_target_declares_ambient {
                     resolved_module_specifiers.insert((file_idx, specifier.clone()));
                     continue;

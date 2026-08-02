@@ -28,7 +28,7 @@ fn has_source_file_extension(path: &Path) -> bool {
 /// Check if a JS file should be skipped due to `maxNodeModuleJsDepth`.
 /// Returns true if the file is a `.js` file inside `node_modules` and its
 /// nesting depth exceeds the allowed maximum.
-fn should_skip_js_in_node_modules(path: &Path, max_depth: u32) -> bool {
+pub(super) fn should_skip_js_in_node_modules(path: &Path, max_depth: u32) -> bool {
     if !is_js_file(path) {
         return false;
     }

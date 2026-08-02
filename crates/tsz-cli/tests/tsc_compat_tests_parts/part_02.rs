@@ -1482,3 +1482,150 @@ fn ambient_module_declaration_in_script_file_is_not_an_augmentation() {
         "script-file ambient declaration is not an augmentation, got:\n{output}"
     );
 }
+
+/// Same project shape as `write_untyped_package_project`, but with `allowJs`
+/// on. `allowJs` is what makes source discovery map the specifier to the
+/// package's JS file before `module_resolver.lookup` ever runs, which is the
+/// producer this family exercises.
+fn write_untyped_package_project_allow_js(root: &std::path::Path, pkg: &str, source: &str) {
+    write_file(
+        &root.join(format!("node_modules/{pkg}/index.js")),
+        "module.exports = {};\n",
+    );
+    write_file(
+        &root.join(format!("node_modules/{pkg}/package.json")),
+        &format!("{{ \"name\": \"{pkg}\", \"version\": \"1.0.0\", \"main\": \"index.js\" }}\n"),
+    );
+    write_file(&root.join("a.ts"), source);
+    write_file(
+        &root.join("tsconfig.json"),
+        "{ \"compilerOptions\": { \"module\": \"commonjs\", \"strict\": false, \"allowJs\": true, \"types\": [] }, \"files\": [\"a.ts\"] }\n",
+    );
+}
+
+#[test]
+fn augmenting_untyped_package_under_allow_js_reports_ts2665() {
+    // `allowJs` plus a real import of the same specifier: source discovery
+    // resolves the package to its JS entry point and records a program index
+    // for it, so the driver's discovery branch `continue`s before
+    // `module_resolver.lookup` runs. Before the discovery producer populated
+    // `untyped_module_paths`, this reported nothing at all.
+    //
+    // Renamed binder relative to the sibling cases above — the rule keys on the
+    // resolution extension and `maxNodeModuleJsDepth`, never on the name.
+    let temp = TempDir::new("augment_untyped_allow_js_ts2665").expect("temp dir");
+    write_untyped_package_project_allow_js(
+        &temp.path,
+        "cogwheel",
+        "declare module \"cogwheel\" { export const c: number; }\nimport { c } from \"cogwheel\";\nc;\n",
+    );
+
+    let Some((code, output)) = run_tsz_with_exit_code(
+        &temp.path,
+        &["-p", ".", "--noEmit", "--pretty", "false"],
+    ) else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+
+    assert_ne!(
+        code, 0,
+        "augmenting an untyped module under allowJs should fail:\n{output}"
+    );
+    assert!(
+        output.contains("error TS2665: Invalid module name in augmentation. Module 'cogwheel' resolves to an untyped module at "),
+        "expected TS2665 on the allowJs discovery path, got:\n{output}"
+    );
+    assert!(
+        output.contains("node_modules/cogwheel/index.js', which cannot be augmented."),
+        "TS2665 must name the discovered JS file, got:\n{output}"
+    );
+    // `allowJs` means the import site is legal JS interop, so no TS7016 — the
+    // augmentation diagnostic is independent of it.
+    assert!(
+        !output.contains("error TS7016"),
+        "allowJs suppresses the import-site TS7016, got:\n{output}"
+    );
+}
+
+#[test]
+fn augmenting_untyped_subpath_under_allow_js_reports_ts2665() {
+    // Discovery path again, but the discovered file is a nested subpath rather
+    // than the package entry point, under a third binder name. The message must
+    // carry the subpath's own resolved file.
+    let temp = TempDir::new("augment_untyped_subpath_allow_js").expect("temp dir");
+    write_file(
+        &temp.path.join("node_modules/toolkit/lib/inner.js"),
+        "module.exports = {};\n",
+    );
+    write_file(
+        &temp.path.join("node_modules/toolkit/package.json"),
+        "{ \"name\": \"toolkit\", \"version\": \"1.0.0\", \"main\": \"index.js\" }\n",
+    );
+    write_file(
+        &temp.path.join("a.ts"),
+        "declare module \"toolkit/lib/inner\" { export const y: string; }\nimport { y } from \"toolkit/lib/inner\";\ny;\n",
+    );
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        "{ \"compilerOptions\": { \"module\": \"commonjs\", \"strict\": false, \"allowJs\": true, \"types\": [] }, \"files\": [\"a.ts\"] }\n",
+    );
+
+    let Some((code, output)) = run_tsz_with_exit_code(
+        &temp.path,
+        &["-p", ".", "--noEmit", "--pretty", "false"],
+    ) else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+
+    assert_ne!(
+        code, 0,
+        "augmenting an untyped subpath under allowJs should fail:\n{output}"
+    );
+    assert!(
+        output.contains("error TS2665: Invalid module name in augmentation. Module 'toolkit/lib/inner' resolves to an untyped module at "),
+        "expected TS2665 naming the subpath specifier, got:\n{output}"
+    );
+    assert!(
+        output.contains("node_modules/toolkit/lib/inner.js', which cannot be augmented."),
+        "TS2665 must name the discovered subpath file, got:\n{output}"
+    );
+}
+
+#[test]
+fn augmenting_local_relative_js_file_does_not_report_ts2665() {
+    // Negative control that separates "resolved to a JS file" from "resolved to
+    // an *untyped module*". A local `.js` listed in `files` is a genuine
+    // program input: tsc's `resolveExternalModule` returns that file's own
+    // symbol and never reaches the untyped-module arm, so the augmentation is
+    // diagnosed as TS2671 (non-module entity), not TS2665.
+    //
+    // Only `node_modules` JS beyond `maxNodeModuleJsDepth` (default 0) is
+    // outside the program for this purpose, which is exactly what the gate
+    // tests — a JS-extension check alone would turn this row into a false
+    // positive.
+    let temp = TempDir::new("augment_local_relative_js_no_ts2665").expect("temp dir");
+    write_file(&temp.path.join("local.js"), "module.exports = {};\n");
+    write_file(
+        &temp.path.join("a.ts"),
+        "declare module \"./local\" { export const r: number; }\nexport {};\n",
+    );
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        "{ \"compilerOptions\": { \"module\": \"commonjs\", \"strict\": false, \"allowJs\": true, \"types\": [] }, \"files\": [\"a.ts\", \"local.js\"] }\n",
+    );
+
+    let Some((_code, output)) = run_tsz_with_exit_code(
+        &temp.path,
+        &["-p", ".", "--noEmit", "--pretty", "false"],
+    ) else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+
+    assert!(
+        !output.contains("TS2665"),
+        "a local JS program input is not an untyped module, got:\n{output}"
+    );
+}
