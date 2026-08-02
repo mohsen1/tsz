@@ -237,6 +237,56 @@ fn check_json_module_import_with_resolve_json_module(
     checker.ctx.diagnostics.clone()
 }
 
+/// Like `check_json_module_import`, but the resolved target is a plain `.ts`
+/// module rather than `.json`. The JSON-module resolution path has its own,
+/// pre-existing (and separately trackable) double-resolution quirk for type
+/// references — unrelated to the file-wide TS2880 suppression fact this
+/// helper's callers exercise — so tests that need a clean single-resolution
+/// baseline use this instead of `check_json_module_import`.
+fn check_ts_module_import(
+    main_file_name: &str,
+    source: &str,
+    module: ModuleKind,
+    file_is_esm: Option<bool>,
+) -> Vec<Diagnostic> {
+    let (arena_main, binder_main, root_main) = parse_and_bind(main_file_name, source);
+    let (arena_target, binder_target, _) = parse_and_bind("mod.ts", "export interface Shape {}");
+
+    let all_arenas = Arc::new(vec![Arc::clone(&arena_main), Arc::clone(&arena_target)]);
+    let all_binders = Arc::new(vec![Arc::clone(&binder_main), Arc::clone(&binder_target)]);
+
+    let mut resolved_module_paths = FxHashMap::default();
+    resolved_module_paths.insert((0usize, "./mod".to_string()), 1usize);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        arena_main.as_ref(),
+        binder_main.as_ref(),
+        &types,
+        main_file_name.to_string(),
+        CheckerOptions {
+            module,
+            no_lib: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    checker.ctx.set_all_arenas(all_arenas);
+    checker.ctx.set_all_binders(all_binders);
+    checker.ctx.set_current_file_idx(0);
+    checker.ctx.file_is_esm = file_is_esm;
+    checker
+        .ctx
+        .set_resolved_module_paths(Arc::new(resolved_module_paths));
+    checker
+        .ctx
+        .set_resolved_modules(FxHashSet::from_iter(["./mod".to_string()]));
+    checker.ctx.report_unresolved_imports = true;
+
+    checker.check_source_file(root_main);
+    checker.ctx.diagnostics.clone()
+}
+
 #[test]
 fn preserve_plain_ts_imports_use_import_branch_without_attributes() {
     let diagnostics = check_resolution_mode(
@@ -822,5 +872,99 @@ fn import_type_expression_with_keyword_does_not_report_deprecated_assert() {
     assert!(
         diagnostics.iter().all(|d| d.code != 2880),
         "Did not expect TS2880 for an import type expression using `with`, got: {diagnostics:?}"
+    );
+}
+
+/// TS2880 file-wide dynamic-import suppression (#16220): when a source file
+/// contains both a type-position `import(...)` (a type alias here) and a
+/// value-position dynamic `import(...)` call, each independently eligible
+/// for TS2880's deprecated-`assert` diagnostic, tsc reports it only for the
+/// type-position occurrence and suppresses every dynamic-position one in
+/// that file. Verified against the pinned `typescript@7.0.2` oracle.
+#[test]
+fn dynamic_import_assert_suppressed_when_type_position_sibling_exists() {
+    let source = r#"
+const a = import("./mod", { assert: { "resolution-mode": "import" } });
+type T = import("./mod", { assert: { "resolution-mode": "import" } }).Shape;
+"#;
+    let diagnostics = check_ts_module_import("main.ts", source, ModuleKind::Node18, Some(true));
+
+    let dynamic_assert_start = source.find("assert").unwrap() as u32;
+    let type_assert_start = source.rfind("assert").unwrap() as u32;
+    let ts2880_starts: Vec<u32> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2880)
+        .map(|d| d.start)
+        .collect();
+    assert!(
+        !ts2880_starts.contains(&dynamic_assert_start),
+        "Did not expect TS2880 at the dynamic-import `assert` position when a \
+         type-position sibling exists in the file, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2880_starts.contains(&type_assert_start),
+        "Expected TS2880 to still fire for the type-position `assert`, got: {diagnostics:?}"
+    );
+}
+
+/// Adjacent case: dynamic import appears BEFORE its type-position sibling in
+/// source order — tsc's suppression is order-independent within a file.
+#[test]
+fn dynamic_import_assert_suppressed_when_type_position_sibling_follows() {
+    let source = r#"
+type T = import("./mod", { assert: { "resolution-mode": "import" } }).Shape;
+const a = import("./mod", { assert: { "resolution-mode": "import" } });
+"#;
+    let diagnostics = check_ts_module_import("main.ts", source, ModuleKind::Node18, Some(true));
+
+    let type_assert_start = source.find("assert").unwrap() as u32;
+    let dynamic_assert_start = source.rfind("assert").unwrap() as u32;
+    let ts2880_starts: Vec<u32> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2880)
+        .map(|d| d.start)
+        .collect();
+    assert!(
+        !ts2880_starts.contains(&dynamic_assert_start),
+        "Did not expect TS2880 at the dynamic-import `assert` position regardless of \
+         source order, got: {diagnostics:?}"
+    );
+    assert!(
+        ts2880_starts.contains(&type_assert_start),
+        "Expected TS2880 to still fire for the type-position `assert`, got: {diagnostics:?}"
+    );
+}
+
+/// Negative control: a lone dynamic import with no type-position sibling in
+/// the file must still report TS2880 — this is the pre-existing, already
+/// correct behavior the suppression fact must not regress.
+#[test]
+fn dynamic_import_assert_reports_without_type_position_sibling() {
+    let source = r#"const a = import("./mod", { assert: { "resolution-mode": "import" } });"#;
+    let diagnostics = check_ts_module_import("main.ts", source, ModuleKind::Node18, Some(true));
+
+    assert_eq!(
+        diagnostics.iter().filter(|d| d.code == 2880).count(),
+        1,
+        "Expected TS2880 for a dynamic import with no type-position sibling, got: {diagnostics:?}"
+    );
+}
+
+/// Negative control: a type-position sibling that uses `with` (not `assert`)
+/// is not itself TS2880-eligible, so it must not suppress a genuinely
+/// eligible dynamic-import `assert` occurrence.
+#[test]
+fn dynamic_import_assert_reports_when_type_position_sibling_uses_with() {
+    let source = r#"
+type T = import("./mod", { with: { "resolution-mode": "import" } }).Shape;
+const a = import("./mod", { assert: { "resolution-mode": "import" } });
+"#;
+    let diagnostics = check_ts_module_import("main.ts", source, ModuleKind::Node18, Some(true));
+
+    assert_eq!(
+        diagnostics.iter().filter(|d| d.code == 2880).count(),
+        1,
+        "Expected the dynamic import's TS2880 to survive since the type-position sibling \
+         uses `with`, not `assert`, got: {diagnostics:?}"
     );
 }

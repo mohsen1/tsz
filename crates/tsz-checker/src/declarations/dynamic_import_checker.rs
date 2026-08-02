@@ -339,6 +339,24 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // TS2880 file-wide dynamic-import suppression: tsc suppresses this
+        // diagnostic on every value-position (dynamic import) `assert`
+        // occurrence in a file whenever the file also contains a
+        // type-position `import(...)` whose `assert` option is itself
+        // TS2880-eligible — order-independent, specifier-independent (#16220).
+        // This function is only reached from the dynamic-import call path
+        // (`check_dynamic_import_options_type`); type-position occurrences
+        // are diagnosed separately by `check_import_type_deprecated_assert`
+        // and are never routed through here, so this suppression cannot
+        // silence a type-position diagnostic.
+        if self
+            .ctx
+            .cached_file_has_type_position_deprecated_import_assert(self.ctx.current_file_idx)
+            .unwrap_or(false)
+        {
+            return;
+        }
+
         let Some(options_node) = self.ctx.arena.get(options_idx) else {
             return;
         };
@@ -375,6 +393,96 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+    }
+
+    /// Pre-scan entry point for the TS2880 file-wide dynamic-import
+    /// suppression fact (#16220). Computes and caches, for the current file,
+    /// whether it contains a type-position `import(...)` call whose `assert`
+    /// option is itself TS2880-eligible. Called once at the start of
+    /// `check_source_file`, before any statement checking, so the fact is
+    /// available to every dynamic-import `assert` check regardless of
+    /// source order — tsc's suppression is order-independent within a file.
+    pub(crate) fn prescan_type_position_deprecated_import_assert(
+        &mut self,
+        statements: &[NodeIndex],
+    ) {
+        if self
+            .ctx
+            .cached_file_has_type_position_deprecated_import_assert(self.ctx.current_file_idx)
+            .is_some()
+        {
+            return;
+        }
+        let found = self
+            .ctx
+            .capabilities
+            .check_import_assert_deprecated()
+            .is_some()
+            && self.scan_nodes_for_type_position_deprecated_import_assert(statements);
+        self.ctx
+            .set_file_has_type_position_deprecated_import_assert(self.ctx.current_file_idx, found);
+    }
+
+    /// Iterative DFS over `roots` and their descendants looking for a
+    /// type-position `import(...)` call with a deprecated `assert` option.
+    fn scan_nodes_for_type_position_deprecated_import_assert(&self, roots: &[NodeIndex]) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let mut stack: Vec<NodeIndex> = roots.to_vec();
+        while let Some(idx) = stack.pop() {
+            let Some(node) = self.ctx.arena.get(idx) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::CALL_EXPRESSION
+                && let Some(call_data) = self.ctx.arena.get_call_expr(node)
+                && self.is_dynamic_import(call_data)
+                && self.is_import_call_in_type_context(idx)
+                && self.call_options_has_deprecated_assert(call_data)
+            {
+                return true;
+            }
+            stack.extend(self.ctx.arena.get_children(idx));
+        }
+        false
+    }
+
+    /// Detection-only counterpart of `check_import_options_deprecated_assert`'s
+    /// emission loop: true if `call`'s second argument is an object literal
+    /// with an `assert` property.
+    fn call_options_has_deprecated_assert(
+        &self,
+        call: &tsz_parser::parser::node::CallExprData,
+    ) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let args = match call.arguments.as_ref() {
+            Some(a) => a.nodes.as_slice(),
+            None => &[],
+        };
+        if args.len() < 2 {
+            return false;
+        }
+        let Some(options_node) = self.ctx.arena.get(args[1]) else {
+            return false;
+        };
+        if options_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+        for child_idx in self.ctx.arena.get_children(args[1]) {
+            let Some(child_node) = self.ctx.arena.get(child_idx) else {
+                continue;
+            };
+            if child_node.kind != syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                continue;
+            }
+            let Some(prop) = self.ctx.arena.get_property_assignment(child_node) else {
+                continue;
+            };
+            if self.get_property_name(prop.name).as_deref() == Some("assert") {
+                return true;
+            }
+        }
+        false
     }
 
     /// Check dynamic import module specifier for unresolved modules.

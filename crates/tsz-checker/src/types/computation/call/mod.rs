@@ -1520,7 +1520,7 @@ impl<'a> CheckerState<'a> {
         Some(self.get_dynamic_import_type(call))
     }
 
-    fn is_import_call_in_type_context(&self, idx: NodeIndex) -> bool {
+    pub(crate) fn is_import_call_in_type_context(&self, idx: NodeIndex) -> bool {
         let mut current = idx;
         for _ in 0..12 {
             let Some(ext) = self.ctx.arena.get_extended(current) else {
