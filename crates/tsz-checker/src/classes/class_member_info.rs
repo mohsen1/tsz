@@ -266,10 +266,17 @@ impl<'a> CheckerState<'a> {
             .collect();
 
         for info in all_members {
-            if info.name.starts_with('#') {
-                continue;
-            }
-            let base_type_for_member = if info.is_static {
+            // Private identifiers (#foo) are lexically scoped to the class body
+            // that declares them and never structurally relate to a base
+            // member, even a same-spelled one — `override`'s own legality
+            // check (TS4112/TS4113 below) still applies, but base-type
+            // resolution is skipped and `member_exists_in_base` is forced
+            // `false` so the implicit-override requirement and the
+            // TS2416/accessor-kind compat checks below never fire for it.
+            let is_private_name = info.name.starts_with('#');
+            let base_type_for_member = if is_private_name {
+                None
+            } else if info.is_static {
                 base_static_type
             } else {
                 base_instance_type
@@ -291,11 +298,12 @@ impl<'a> CheckerState<'a> {
                         if type_id != TypeId::NEVER
                 )
             });
-            let member_exists_in_base = if info.is_static {
-                base_static_member_names.contains(&info.name)
-            } else {
-                base_instance_member_names.contains(&info.name)
-            } || member_exists_via_type;
+            let member_exists_in_base = !is_private_name
+                && ((if info.is_static {
+                    base_static_member_names.contains(&info.name)
+                } else {
+                    base_instance_member_names.contains(&info.name)
+                }) || member_exists_via_type);
 
             if info.has_dynamic_name {
                 if info.has_override {
@@ -361,6 +369,13 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::THIS_MEMBER_MUST_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_OVERRIDES_A_MEMBER_IN_THE
                     },
                 );
+            }
+
+            // See the `is_private_name` comment above: a private name never
+            // structurally relates to a base member, so none of the
+            // accessor-kind or type-compatibility checks below apply to it.
+            if is_private_name {
+                continue;
             }
 
             if !info.is_static

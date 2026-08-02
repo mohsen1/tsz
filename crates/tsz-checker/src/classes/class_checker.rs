@@ -826,12 +826,14 @@ impl<'a> CheckerState<'a> {
                 info.has_computed_non_literal_name,
             );
 
-            // Skip override checking for private identifiers (#foo)
-            // Private fields are scoped to the class that declares them and
-            // do NOT participate in the inheritance hierarchy
-            if member_name.starts_with('#') {
-                continue;
-            }
+            // Private identifiers (#foo) are lexically scoped to their own
+            // class body, so a derived `#foo` never structurally relates to a
+            // same-spelled base `#foo`. `override`'s legality check
+            // (TS4112/TS4113 below) still applies — tsc always rejects
+            // `override` on a private name — but base-compat and
+            // implicit-override checks do not. `base_info` is forced `None`
+            // so validity always takes the "not declared" path.
+            let is_private_name = member_name.starts_with('#');
 
             // Detect overload signatures (method declarations without body) so we
             // can skip the type compatibility check for them later.  We do NOT
@@ -845,9 +847,13 @@ impl<'a> CheckerState<'a> {
                     .is_some_and(|m| m.body.is_none())
             };
 
-            let base_info = base_chain_summary
-                .lookup(&member_name, is_static, true)
-                .cloned();
+            let base_info = if is_private_name {
+                None
+            } else {
+                base_chain_summary
+                    .lookup(&member_name, is_static, true)
+                    .cloned()
+            };
 
             if has_override {
                 // Cannot use `override` when name is computed dynamically.
@@ -984,6 +990,12 @@ impl<'a> CheckerState<'a> {
                         },
                     );
                 }
+                continue;
+            }
+
+            // See `is_private_name` above: no branding/compat check below
+            // applies to a name a base class can never visibly declare.
+            if is_private_name {
                 continue;
             }
 
