@@ -1311,3 +1311,174 @@ export type Greater<N1 extends number, N2 extends number> =
          tsz output:\n{tsz_output}"
     );
 }
+
+/// Build a project whose `node_modules/<pkg>` has a JS entry point and no
+/// declaration file, so the specifier resolves to an *untyped* module.
+///
+/// Binder name (`pkg`) and augmented member name are parameters rather than
+/// literals so the adjacent cases below vary them: the augmentation rule is
+/// structural (resolution extension), never name-keyed.
+fn write_untyped_package_project(root: &std::path::Path, pkg: &str, source: &str) {
+    write_file(
+        &root.join(format!("node_modules/{pkg}/index.js")),
+        "module.exports = {};\n",
+    );
+    write_file(
+        &root.join(format!("node_modules/{pkg}/package.json")),
+        &format!("{{ \"name\": \"{pkg}\", \"version\": \"1.0.0\", \"main\": \"index.js\" }}\n"),
+    );
+    write_file(&root.join("a.ts"), source);
+    write_file(
+        &root.join("tsconfig.json"),
+        "{ \"compilerOptions\": { \"module\": \"commonjs\", \"strict\": true, \"types\": [] }, \"files\": [\"a.ts\"] }\n",
+    );
+}
+
+#[test]
+fn augmenting_untyped_node_modules_package_reports_ts2665_not_ts2664() {
+    let temp = TempDir::new("augment_untyped_module_ts2665").expect("temp dir");
+    write_untyped_package_project(
+        &temp.path,
+        "widgetlib",
+        "declare module \"widgetlib\" { export const x: number; }\nimport { x } from \"widgetlib\";\nx;\n",
+    );
+
+    let Some((code, output)) = run_tsz_with_exit_code(
+        &temp.path,
+        &["-p", ".", "--noEmit", "--pretty", "false"],
+    ) else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+
+    assert_ne!(code, 0, "augmenting an untyped module should fail:\n{output}");
+    assert!(
+        output.contains("error TS2665: Invalid module name in augmentation. Module 'widgetlib' resolves to an untyped module at "),
+        "expected TS2665 for an untyped augmentation target, got:\n{output}"
+    );
+    assert!(
+        output.contains("node_modules/widgetlib/index.js', which cannot be augmented."),
+        "TS2665 must name the resolved JS file, got:\n{output}"
+    );
+    // The pre-fix behaviour: `noImplicitAny` makes the driver record a TS7016
+    // resolution error, the specifier never enters `resolved_module_specifiers`,
+    // and the augmentation drew a *wrong* TS2664. tsc reports TS2665 only.
+    assert!(
+        !output.contains("error TS2664"),
+        "TS2664 and TS2665 are mutually exclusive for this shape, got:\n{output}"
+    );
+    // TS7016 at the import site is independent and must survive.
+    assert!(
+        output.contains("error TS7016"),
+        "the import site keeps its own TS7016 under noImplicitAny, got:\n{output}"
+    );
+}
+
+#[test]
+fn augmenting_untyped_node_modules_subpath_reports_ts2665() {
+    let temp = TempDir::new("augment_untyped_subpath_ts2665").expect("temp dir");
+    // Renamed binder plus a nested subpath target: the resolved file is not the
+    // package entry point, so the message must carry the subpath's own path.
+    write_file(
+        &temp.path.join("node_modules/toolkit/lib/inner.js"),
+        "module.exports = {};\n",
+    );
+    write_file(
+        &temp.path.join("node_modules/toolkit/package.json"),
+        "{ \"name\": \"toolkit\", \"version\": \"1.0.0\", \"main\": \"index.js\" }\n",
+    );
+    write_file(
+        &temp.path.join("a.ts"),
+        "declare module \"toolkit/lib/inner\" { export const y: string; }\nexport {};\n",
+    );
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        "{ \"compilerOptions\": { \"module\": \"commonjs\", \"strict\": false, \"types\": [] }, \"files\": [\"a.ts\"] }\n",
+    );
+
+    let Some((code, output)) = run_tsz_with_exit_code(
+        &temp.path,
+        &["-p", ".", "--noEmit", "--pretty", "false"],
+    ) else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+
+    assert_ne!(code, 0, "augmenting an untyped subpath should fail:\n{output}");
+    assert!(
+        output.contains("error TS2665: Invalid module name in augmentation. Module 'toolkit/lib/inner' resolves to an untyped module at "),
+        "expected TS2665 naming the subpath specifier, got:\n{output}"
+    );
+    assert!(
+        output.contains("node_modules/toolkit/lib/inner.js', which cannot be augmented."),
+        "TS2665 must name the resolved subpath file, not the package entry, got:\n{output}"
+    );
+}
+
+#[test]
+fn augmenting_typed_node_modules_package_reports_nothing() {
+    // Negative control: the same project shape with a declaration file present.
+    // Augmenting a typed module is legal, so neither TS2665 nor TS2664 fires.
+    let temp = TempDir::new("augment_typed_module_clean").expect("temp dir");
+    write_untyped_package_project(
+        &temp.path,
+        "widgetlib",
+        "declare module \"widgetlib\" { export const x: number; }\nimport { x } from \"widgetlib\";\nx;\n",
+    );
+    write_file(
+        &temp.path.join("node_modules/widgetlib/index.d.ts"),
+        "export declare const z: string;\n",
+    );
+    write_file(
+        &temp.path.join("node_modules/widgetlib/package.json"),
+        "{ \"name\": \"widgetlib\", \"version\": \"1.0.0\", \"main\": \"index.js\", \"types\": \"index.d.ts\" }\n",
+    );
+
+    let Some((code, output)) = run_tsz_with_exit_code(
+        &temp.path,
+        &["-p", ".", "--noEmit", "--pretty", "false"],
+    ) else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+
+    assert_eq!(
+        code, 0,
+        "augmenting a typed package is legal and must stay clean:\n{output}"
+    );
+    assert!(
+        !output.contains("TS2665") && !output.contains("TS2664"),
+        "no augmentation diagnostic expected for a typed target, got:\n{output}"
+    );
+}
+
+#[test]
+fn ambient_module_declaration_in_script_file_is_not_an_augmentation() {
+    // Negative control on the `is_external_module()` gate: with no top-level
+    // import/export the file is a script, so `declare module "..."` *declares*
+    // an ambient external module rather than augmenting the on-disk package.
+    // tsc stays silent even though `node_modules/widgetlib` is untyped.
+    let temp = TempDir::new("ambient_module_script_file_clean").expect("temp dir");
+    write_untyped_package_project(
+        &temp.path,
+        "widgetlib",
+        "declare module \"widgetlib\" { export const x: number; }\n",
+    );
+
+    let Some((code, output)) = run_tsz_with_exit_code(
+        &temp.path,
+        &["-p", ".", "--noEmit", "--pretty", "false"],
+    ) else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+
+    assert_eq!(
+        code, 0,
+        "an ambient module declaration in a script file must stay clean:\n{output}"
+    );
+    assert!(
+        !output.contains("TS2665"),
+        "script-file ambient declaration is not an augmentation, got:\n{output}"
+    );
+}
