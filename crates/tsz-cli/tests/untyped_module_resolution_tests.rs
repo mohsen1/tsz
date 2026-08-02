@@ -208,6 +208,151 @@ fn untyped_node_modules_package_reports_ts7016_under_no_implicit_any() {
     );
 }
 
+/// A bare side-effect import (`import "pkg";`) of an untyped `node_modules`
+/// package must stay silent under `noImplicitAny`, unlike every other import
+/// form. `noUncheckedSideEffectImports` (on by default as of the pinned
+/// 7.0.2 oracle) only controls whether a genuinely *unresolvable*
+/// side-effect import gets a diagnostic (TS2882); it says nothing about a
+/// specifier that resolved fine but lacks declarations, so TS7016 stays
+/// suppressed here regardless of the flag's value.
+#[test]
+fn untyped_node_modules_package_side_effect_import_stays_silent_under_no_implicit_any() {
+    let temp = tempfile::TempDir::new().expect("temp dir");
+    let base = temp.path();
+
+    write_untyped_package(base, "silent-pkg");
+
+    write_file(
+        &base.join("side_effect.ts"),
+        "import \"silent-pkg\";\nexport const marker = 1;\n",
+    );
+
+    write_tsconfig(
+        base,
+        ",\n                \"noImplicitAny\": true",
+        &["side_effect.ts"],
+    );
+
+    let args = parse_args(&["tsz", "--noEmit"]);
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let unresolved = diagnostics_with_code(&result.diagnostics, CANNOT_FIND_MODULE);
+    assert!(
+        unresolved.is_empty(),
+        "a side-effect import never reports TS2307 for an untyped package, got: {unresolved:#?}"
+    );
+
+    let missing_declaration =
+        diagnostics_with_code(&result.diagnostics, COULD_NOT_FIND_DECLARATION_FILE);
+    assert!(
+        missing_declaration.is_empty(),
+        "a resolved untyped package is not a side-effect-import resolution failure, so TS7016 stays suppressed, got: {missing_declaration:#?}"
+    );
+}
+
+/// Explicitly enabling `noUncheckedSideEffectImports` (redundant with the
+/// real default, but pins the behavior independent of it) must not change
+/// the previous case: TS7016 still stays suppressed for a resolved-but-
+/// untyped side-effect import target.
+#[test]
+fn untyped_node_modules_package_side_effect_import_stays_silent_with_unchecked_side_effect_imports_on()
+ {
+    let temp = tempfile::TempDir::new().expect("temp dir");
+    let base = temp.path();
+
+    write_untyped_package(base, "checked-pkg");
+
+    write_file(
+        &base.join("side_effect.ts"),
+        "import \"checked-pkg\";\nexport const marker = 1;\n",
+    );
+
+    write_tsconfig(
+        base,
+        ",\n                \"noImplicitAny\": true,\n                \"noUncheckedSideEffectImports\": true",
+        &["side_effect.ts"],
+    );
+
+    let args = parse_args(&["tsz", "--noEmit"]);
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let missing_declaration =
+        diagnostics_with_code(&result.diagnostics, COULD_NOT_FIND_DECLARATION_FILE);
+    assert!(
+        missing_declaration.is_empty(),
+        "a resolved untyped package is not a side-effect-import resolution failure, so TS7016 stays suppressed even with noUncheckedSideEffectImports on, got: {missing_declaration:#?}"
+    );
+}
+
+/// Negative direction for the TS7016-suppression fix above: a side-effect
+/// import of a specifier that does NOT resolve at all is a genuine
+/// resolution failure, which `noUncheckedSideEffectImports` (on by default)
+/// DOES gate — tsc reports TS2882, not silence and not TS7016. The fix must
+/// not conflate "resolved but untyped" with "did not resolve".
+#[test]
+fn missing_module_side_effect_import_reports_ts2882_by_default() {
+    let temp = tempfile::TempDir::new().expect("temp dir");
+    let base = temp.path();
+
+    write_file(
+        &base.join("side_effect.ts"),
+        "import \"totally-missing-pkg\";\nexport const marker = 1;\n",
+    );
+
+    write_tsconfig(base, "", &["side_effect.ts"]);
+
+    let args = parse_args(&["tsz", "--noEmit"]);
+    let result = compile(&args, base).expect("compile should succeed");
+
+    const CANNOT_FIND_MODULE_OR_TYPE_DECLARATIONS_FOR_SIDE_EFFECT_IMPORT_OF: u32 = 2882;
+    let side_effect_not_found = diagnostics_with_code(
+        &result.diagnostics,
+        CANNOT_FIND_MODULE_OR_TYPE_DECLARATIONS_FOR_SIDE_EFFECT_IMPORT_OF,
+    );
+    assert_eq!(
+        side_effect_not_found.len(),
+        1,
+        "noUncheckedSideEffectImports defaults to on, so a genuinely missing side-effect import reports TS2882, got: {:#?}",
+        result.diagnostics
+    );
+
+    let missing_declaration =
+        diagnostics_with_code(&result.diagnostics, COULD_NOT_FIND_DECLARATION_FILE);
+    assert!(
+        missing_declaration.is_empty(),
+        "a genuinely missing module reports TS2882, never TS7016, got: {missing_declaration:#?}"
+    );
+}
+
+/// Explicitly disabling `noUncheckedSideEffectImports` flips the previous
+/// case back to silence: a side-effect import of a specifier that does not
+/// resolve at all reports nothing when the flag is off.
+#[test]
+fn missing_module_side_effect_import_stays_silent_with_unchecked_side_effect_imports_off() {
+    let temp = tempfile::TempDir::new().expect("temp dir");
+    let base = temp.path();
+
+    write_file(
+        &base.join("side_effect.ts"),
+        "import \"totally-missing-pkg\";\nexport const marker = 1;\n",
+    );
+
+    write_tsconfig(
+        base,
+        ",\n                \"noUncheckedSideEffectImports\": false",
+        &["side_effect.ts"],
+    );
+
+    let args = parse_args(&["tsz", "--noEmit"]);
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "noUncheckedSideEffectImports: false silences a genuinely missing side-effect import entirely, got: {:#?}",
+        result.diagnostics
+    );
+}
+
 /// Fallback direction: a specifier with nothing behind it at all still reports
 /// TS2307 at both request-scoped sites. Nothing about the fix may make a
 /// genuinely missing module look resolved.
