@@ -1,6 +1,12 @@
-//! #16116 item 2 is **not a compiler defect**. It is an artifact of the unit
-//! harness, and this suite pins the harness gap so it cannot swallow the same
-//! class of diagnostic silently again.
+//! #16116 item 2, tracked as #16125: an unannotated generator's inferred
+//! container is silently accepted against a target that nests the **same**
+//! generator interface inside itself. This suite pins the boundary so the class
+//! cannot be swallowed silently again.
+//!
+//! This file originally headlined the divergence as "not a compiler defect, an
+//! artifact of the unit harness". That framing is retracted throughout — see
+//! the measured boundary further down. It is a real divergence that the harness
+//! is merely the cheapest place to observe.
 //!
 //! The issue reports that an unannotated generator yielding an inner generator
 //! loses the inner's type argument: `tsc` reports TS2345 and tsz reports
@@ -37,11 +43,56 @@
 //! CLI. So the gap is narrow and structural, not a blanket "the harness is
 //! weaker".
 //!
-//! The two `#[ignore]`d rows below assert the CLI's (and `tsc`'s) answer. They
-//! are red **because of the harness divergence**, not because of anything in
-//! the container's inferred yield type — fixing a checker or solver path will
-//! not turn them green. They go live when `check_source_with_libs` resolves
-//! self-similar generator applications the way a real program does.
+//! The `#[ignore]`d rows below assert the CLI's (and `tsc`'s) answer.
+//!
+//! **This suite used to claim they could not be fixed from a checker or solver
+//! path.** That claim is retracted: it was never measured, and the boundary
+//! measured since (#16125) contradicts it. Do not read the ignores as
+//! "unreachable" — read them as "open, mechanism not yet located".
+//!
+//! What has actually been measured, all on `check_source_with_libs`:
+//!
+//! | `d`'s declaration | harness |
+//! | --- | --- |
+//! | `const d = async function* () { ... }` (anonymous expression) | **silent** |
+//! | `const d = async function* named() { ... }` (named expression) | TS2345 |
+//! | `async function* d() { ... }` (declaration) | TS2345 |
+//!
+//! and the loss is not specific to the call-argument position — a plain
+//! `const forced: AsyncGenerator<AsyncGenerator<number>> = d();` loses it too.
+//!
+//! The named rows do **not** report because they are correct. Rendering the
+//! container out of the diagnostic text shows the named forms degrading to the
+//! bare, unsubstituted interface, which fails against every target including
+//! the ones it should pass:
+//!
+//! ```text
+//!                target                     tsz renders the container as
+//! anonymous   AsyncGenerator<{x:number}>    'AsyncGenerator<AsyncGenerator<string, any, any>, void, unknown>'
+//! named       AsyncGenerator<{x:number}>    'AsyncGenerator'
+//! named       AsyncGenerator<AsyncGenerator<number>>   'AsyncGenerator'
+//! anonymous   AsyncGenerator<AsyncGenerator<number>>   (no diagnostic)
+//! ```
+//!
+//! `tsc` renders the full application for both forms, so the **anonymous** form
+//! is the one holding the correct container type — it is not the broken half,
+//! it is the half where only the relation loses. Making anonymous match named
+//! would be chasing a second defect, not fixing this one. That degradation is
+//! its own row below.
+//!
+//! Three directions are measured dead, so they are not worth re-attempting
+//! without new evidence (each was built, measured on this suite, and reverted;
+//! all three left the counts byte-identical):
+//!
+//! 1. Minting the `Application` base in `unannotated_generator_return_type`
+//!    through the name-verified `get_or_create_def_id_for_symbol_name` instead
+//!    of the raw `get_or_create_def_id`. That code is reached identically for
+//!    anonymous and named forms, so it cannot explain an anonymity boundary.
+//! 2. Gating `subtype/cache.rs`'s symbol-level cycle check on `def_pair`, so it
+//!    honours the same-base-application exemption the `DefId`-level check
+//!    already has.
+//! 3. Widening `both_same_base_app` to cover two `DefId`s resolving to one
+//!    `SymbolId` when the applications' type arguments differ.
 //!
 //! Everything else here is a live control, green today, pinning the shapes the
 //! harness *does* see so the boundary of the gap stays measured. Oracle for
@@ -75,8 +126,9 @@ fn strict_codes(source: &str) -> Vec<u32> {
 /// generator expression out of the picture entirely, so a reader cannot
 /// mistake this for an inference problem.
 #[test]
-#[ignore = "unit-harness gap, NOT a checker defect: the CLI reports TS2345 here; \
-            `check_source_with_libs` loses it on self-similar generator nesting"]
+#[ignore = "#16125 open: the CLI and tsc report TS2345 here, the harness does \
+            not. Mechanism not located; see the module doc for the measured \
+            boundary and the three dead directions"]
 fn harness_sees_async_generator_operand_in_async_container() {
     let codes = strict_codes(
         r#"
@@ -99,8 +151,9 @@ wants(d());
 /// rather than anything async-specific: no `await`, no `[Symbol.asyncIterator]`,
 /// same divergence.
 #[test]
-#[ignore = "unit-harness gap, NOT a checker defect: the CLI reports TS2345 here; \
-            `check_source_with_libs` loses it on self-similar generator nesting"]
+#[ignore = "#16125 open: the CLI and tsc report TS2345 here, the harness does \
+            not. Mechanism not located; see the module doc for the measured \
+            boundary and the three dead directions"]
 fn harness_sees_sync_generator_operand_in_sync_container() {
     let codes = strict_codes(
         r#"
@@ -287,5 +340,180 @@ wants(d());
     assert!(
         codes.contains(&2345),
         "an annotated inner generator expression must stay visible: {codes:?}"
+    );
+}
+
+/// The named-expression form of the two ignored rows. Green today, and the
+/// reason the boundary is a property of the container's declaration form rather
+/// than of the target: only the binder-visible name changes between this row
+/// and `harness_sees_async_generator_operand_in_async_container`.
+#[test]
+fn named_generator_function_expression_reports_the_self_similar_mismatch() {
+    let codes = strict_codes(
+        r#"
+export {};
+declare const zzSource: AsyncGenerator<string>;
+declare function wants(h: AsyncGenerator<AsyncGenerator<number>>): void;
+const d = async function* named() {
+    yield zzSource;
+};
+wants(d());
+"#,
+    );
+    assert!(
+        codes.contains(&2345),
+        "the named-expression form must keep reporting: {codes:?}"
+    );
+}
+
+/// The function-declaration form, third row of the boundary table. Green today.
+#[test]
+fn generator_function_declaration_reports_the_self_similar_mismatch() {
+    let codes = strict_codes(
+        r#"
+export {};
+declare const zzSource: AsyncGenerator<string>;
+declare function wants(h: AsyncGenerator<AsyncGenerator<number>>): void;
+async function* d() {
+    yield zzSource;
+}
+wants(d());
+"#,
+    );
+    assert!(
+        codes.contains(&2345),
+        "the function-declaration form must keep reporting: {codes:?}"
+    );
+}
+
+/// The matching case stays clean. Without this row a "fix" that reported on
+/// every self-similar comparison would look green on the two ignored rows while
+/// trading the false negative for a false positive. `tsc` is clean here.
+#[test]
+fn self_similar_container_matching_the_target_stays_clean() {
+    let codes = strict_codes(
+        r#"
+export {};
+declare const zzSource: AsyncGenerator<string>;
+declare function wants(h: AsyncGenerator<AsyncGenerator<string>>): void;
+const d = async function* () {
+    yield zzSource;
+};
+wants(d());
+"#,
+    );
+    assert!(
+        codes.is_empty(),
+        "the matching self-similar assignment must stay clean: {codes:?}"
+    );
+}
+
+/// The same loss with every user binder renamed. Red for the same reason as the
+/// two rows above; pinned so a future fix cannot be keyed on anything in the
+/// user's naming without this row staying red.
+#[test]
+#[ignore = "#16125 open: same family as the two rows above, renamed binders"]
+fn renamed_binders_async_generator_operand_in_async_container() {
+    let codes = strict_codes(
+        r#"
+export {};
+declare const qqFeed: AsyncGenerator<string>;
+declare function accepts(pipe: AsyncGenerator<AsyncGenerator<number>>): void;
+const emit = async function* () {
+    yield qqFeed;
+};
+accepts(emit());
+"#,
+    );
+    assert!(
+        codes.contains(&2345),
+        "renamed binders must not change the answer: {codes:?}"
+    );
+}
+
+/// The loss is not specific to the call-argument path: a plain annotated
+/// variable declaration loses it too, as TS2322. Pins the finding that
+/// argument-position resolution is not the owner.
+#[test]
+#[ignore = "#16125 open: the same loss on a plain variable declaration (TS2322)"]
+fn variable_declaration_target_loses_the_self_similar_mismatch() {
+    let codes = strict_codes(
+        r#"
+export {};
+declare const zzSource: AsyncGenerator<string>;
+const d = async function* () {
+    yield zzSource;
+};
+const forceMismatch: AsyncGenerator<AsyncGenerator<number>> = d();
+"#,
+    );
+    assert!(
+        codes.contains(&2322),
+        "the variable-declaration form must report TS2322: {codes:?}"
+    );
+}
+
+/// Depth 3. Pins that a fix has to hold when the interface nests inside itself
+/// more than once, not just at the first level.
+#[test]
+#[ignore = "#16125 open: same family at nesting depth 3"]
+fn depth_three_self_similar_nesting_reports() {
+    let codes = strict_codes(
+        r#"
+export {};
+declare const zzSource: AsyncGenerator<AsyncGenerator<string>>;
+declare function wants(h: AsyncGenerator<AsyncGenerator<AsyncGenerator<number>>>): void;
+const d = async function* () {
+    yield zzSource;
+};
+wants(d());
+"#,
+    );
+    assert!(
+        codes.contains(&2345),
+        "depth-3 self-similar nesting must report: {codes:?}"
+    );
+}
+
+/// The second, separate defect this suite's investigation surfaced: the **named**
+/// forms report only because their container degraded to the bare, unsubstituted
+/// interface. `tsc` renders
+/// `AsyncGenerator<AsyncGenerator<string, any, any>, void, unknown>` here; tsz
+/// renders a bare `AsyncGenerator`, dropping every type argument.
+///
+/// This is the failure mode `unannotated_generator_return_type`'s own comment
+/// says its `evaluate_type_with_env` cache-warming exists to prevent (#16119),
+/// so the warming is not holding on the named path. Kept red rather than
+/// asserting today's wrong text, so a fix for it cannot land unnoticed.
+#[test]
+#[ignore = "#16125 open, separate defect: the named form's container degrades \
+            to a bare unsubstituted `AsyncGenerator` in the message text"]
+fn named_form_container_keeps_its_type_arguments_in_the_message() {
+    let libs = load_default_lib_files();
+    let messages = crate::test_utils::check_source_with_libs_code_messages(
+        r#"
+export {};
+declare const zzSource: AsyncGenerator<string>;
+declare function wants(h: AsyncGenerator<{ x: number }>): void;
+async function* d() {
+    yield zzSource;
+}
+wants(d());
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+    let text = messages
+        .iter()
+        .find(|(code, _)| *code == 2345)
+        .map(|(_, message)| message.clone())
+        .unwrap_or_default();
+    assert!(
+        text.contains("AsyncGenerator<AsyncGenerator<string"),
+        "the named form must keep its type arguments the way tsc renders them: {text:?}"
     );
 }
