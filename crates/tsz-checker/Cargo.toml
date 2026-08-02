@@ -942,6 +942,9 @@ path = "tests/accessor_pair_override_ts2416_tests.rs"
 name = "object_literal_set_only_accessor_type_tests"
 path = "tests/object_literal_set_only_accessor_type_tests.rs"
 [[test]]
+name = "object_literal_accessor_pair_parameter_type_tests"
+path = "tests/object_literal_accessor_pair_parameter_type_tests.rs"
+[[test]]
 name = "conditional_optional_infer_default_tests"
 path = "tests/conditional_optional_infer_default_tests.rs"
 [[test]]
