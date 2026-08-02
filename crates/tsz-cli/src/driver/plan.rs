@@ -231,11 +231,11 @@ pub(super) fn apply_cli_overrides_with_config_options(
         options.printer.always_strict = val;
     }
     if let Some(ref id) = args.ignore_deprecations
-        && (id == "5.0" || id == "6.0")
+        && (id == "5.0" || id == "6.0" || id == "7.0")
     {
         options.checker.ignore_deprecations = true;
-        // Only "6.0" silences the deprecated-`assert` diagnostic (TS2880);
-        // "5.0" is a legal value that leaves it reporting.
+        // No accepted value silences TS2880 (see #16217); this only carries
+        // the version distinction for future version-gated deprecations.
         options.checker.ignore_deprecations_6_0 = id == "6.0";
     }
     if let Some(val) = args.allow_unreachable_code {
@@ -1159,7 +1159,7 @@ fn effective_ignore_deprecations_for_cli_validation<'a>(
     config
         .and_then(|cfg| cfg.compiler_options.as_ref())
         .and_then(|compiler_options| compiler_options.ignore_deprecations.as_deref())
-        .filter(|value| *value == "5.0" || *value == "6.0")
+        .filter(|value| *value == "5.0" || *value == "6.0" || *value == "7.0")
 }
 
 pub(super) fn cli_ignore_deprecations_silences_6_0(args: &CliArgs) -> bool {

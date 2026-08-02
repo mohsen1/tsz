@@ -285,11 +285,13 @@ pub fn parse_tsconfig_with_diagnostics_deferred(
         }
 
         // Check ignoreDeprecations value (TS5103)
-        // TypeScript 7 still accepts the historical "5.0" and "6.0"
-        // literals, but neither suppresses TS7 removal diagnostics.
+        // TypeScript 7 accepts the historical "5.0" and "6.0" literals plus
+        // its own "7.0", but none of them suppresses TS7 removal diagnostics
+        // or the unconditional TS2880 (see #16217).
         if let Some(serde_json::Value::String(id_value)) = compiler_opts.get("ignoreDeprecations")
             && id_value != "5.0"
             && id_value != "6.0"
+            && id_value != "7.0"
         {
             let start = find_value_offset_in_source(&stripped, "ignoreDeprecations");
             let value_len = id_value.len() as u32 + 2; // include quotes

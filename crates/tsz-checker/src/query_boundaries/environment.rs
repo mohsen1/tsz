@@ -236,22 +236,13 @@ impl EnvironmentCapabilities {
     /// Check whether the deprecated `assert` keyword for import attributes
     /// should produce a diagnostic (TS2880).
     ///
-    /// Returns `Some(ImportAssertDeprecated)` unless `ignoreDeprecations` is
-    /// exactly `"6.0"`.
-    ///
-    /// The gate is the *value*, not the presence of the option. `tsc` spells
-    /// this as `compilerOptions.ignoreDeprecations !== "6.0"` at all three of
-    /// its emission sites (`checkImportCallExpression`,
-    /// `checkImportDeclaration`, `checkImportType`), which this boundary is the
-    /// single counterpart to. `ignoreDeprecations: "5.0"` is accepted by the
-    /// option validator and still reports TS2880: it names an older grace
-    /// window than the release that removed the `assert` keyword.
+    /// Always returns `Some(ImportAssertDeprecated)`: on the pinned 7.0.2
+    /// oracle, TS2880 is unconditional — no `ignoreDeprecations` value
+    /// silences it, including `"6.0"`. (An earlier revision of this boundary
+    /// gated on `ignoreDeprecations !== "6.0"`, derived from a 6.0.2 build of
+    /// `tsc`; 7.0 closed that grace window entirely. See #16217.)
     pub(crate) const fn check_import_assert_deprecated(&self) -> Option<CapabilityDiagnostic> {
-        if !self.ignore_deprecations_6_0 {
-            Some(CapabilityDiagnostic::ImportAssertDeprecated)
-        } else {
-            None
-        }
+        Some(CapabilityDiagnostic::ImportAssertDeprecated)
     }
 
     /// Whether the deprecated `assert` import-attribute keyword is a *hard*

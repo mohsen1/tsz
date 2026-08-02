@@ -1543,7 +1543,7 @@ fn cli_invalid_ignore_deprecations_emits_ts5103() {
         "--pretty",
         "false",
         "--ignoreDeprecations",
-        "7.0",
+        "5.5",
         "--typeRoots",
         "./empty-types",
         "main.ts",
@@ -1555,6 +1555,37 @@ fn cli_invalid_ignore_deprecations_emits_ts5103() {
     assert!(
         codes.contains(&5103),
         "Expected TS5103 for direct invalid --ignoreDeprecations, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn cli_ignore_deprecations_7_0_does_not_emit_ts5103() {
+    // "7.0" is a valid ignoreDeprecations value on the pinned 7.0.2 oracle
+    // (#16217), same as the historical "5.0"/"6.0".
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+    write_file(&base.join("main.ts"), "const ok = 1;\n");
+    std::fs::create_dir_all(base.join("empty-types")).expect("empty typeRoots");
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--noEmit",
+        "--pretty",
+        "false",
+        "--ignoreDeprecations",
+        "7.0",
+        "--typeRoots",
+        "./empty-types",
+        "main.ts",
+    ])
+    .expect("CLI args should parse");
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        !codes.contains(&5103),
+        "Expected NO TS5103 for direct --ignoreDeprecations '7.0', got: {:#?}",
         result.diagnostics
     );
 }

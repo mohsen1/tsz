@@ -194,28 +194,23 @@ pub struct CheckerOptions {
     /// `isolated_modules && !isolated_modules_from_verbatim`.
     pub isolated_modules_from_verbatim: bool,
     /// When true, a valid `ignoreDeprecations` version was supplied.
-    /// Set when `ignoreDeprecations` is "5.0" or "6.0".
+    /// Set when `ignoreDeprecations` is "5.0", "6.0", or "7.0".
     ///
     /// This records *presence*, not what the value silences. `ignoreDeprecations`
     /// is a version string naming the release whose deprecations the user is
     /// opting out of, so each deprecation has its own threshold and a single
     /// bool cannot answer for all of them. Consumers that need a specific
-    /// threshold must ask for it: the deprecated `assert` import-attribute
-    /// keyword (TS2880) is silenced by `"6.0"` *only*, which is
-    /// `ignore_deprecations_6_0` below.
+    /// threshold must ask for it via `ignore_deprecations_6_0` below.
     pub ignore_deprecations: bool,
     /// When true, `ignoreDeprecations` was set to exactly `"6.0"`.
     ///
-    /// `tsc` gates the deprecated-`assert` diagnostic (TS2880) on the literal
-    /// value rather than on presence — `checkImportCallExpression`,
-    /// `checkImportDeclaration` and `checkImportType` each test
-    /// `compilerOptions.ignoreDeprecations !== "6.0"`. `"5.0"` is a legal value
-    /// that does *not* silence it, because it names a strictly older grace
-    /// window than the release that removed `assert`.
-    ///
-    /// Same shape as `isolated_modules_from_verbatim` above: the coarse flag
-    /// stays for the consumers that want presence, and this one recovers the
-    /// distinction the coarse flag erases.
+    /// No accepted `ignoreDeprecations` value currently silences a diagnostic
+    /// in tsz: the deprecated `assert` import-attribute keyword (TS2880) was
+    /// silenced by `"6.0"` in `tsc` 6.0.2, but 7.0 closed that grace window —
+    /// TS2880 is unconditional on the pinned 7.0.2 oracle (#16217). This field
+    /// still carries the `"6.0"` distinction for a future consumer that needs
+    /// it (same shape as `isolated_modules_from_verbatim` above), but nothing
+    /// reads it today.
     pub ignore_deprecations_6_0: bool,
     /// When true, allow accessing UMD globals from modules without importing them.
     /// Suppresses TS2686 ("refers to a UMD global, but the current file is a module").

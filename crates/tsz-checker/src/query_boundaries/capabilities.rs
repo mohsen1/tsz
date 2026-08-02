@@ -100,8 +100,9 @@ pub struct EnvironmentCapabilities {
     pub resolve_json_module: bool,
     pub experimental_decorators: bool,
     pub ignore_deprecations: bool,
-    /// `ignoreDeprecations` was set to exactly `"6.0"` — the only value that
-    /// silences TS2880. See `CheckerOptions::ignore_deprecations_6_0`.
+    /// `ignoreDeprecations` was set to exactly `"6.0"`. See
+    /// `CheckerOptions::ignore_deprecations_6_0` — no accepted value silences
+    /// TS2880 today.
     pub ignore_deprecations_6_0: bool,
     pub verbatim_module_syntax: bool,
     pub types_explicitly_set: bool,
