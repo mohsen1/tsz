@@ -415,6 +415,13 @@ impl CheckerState<'_> {
             return;
         };
 
+        // TS2880 file-wide dynamic-import suppression fact (#16220): must be
+        // computed before any statement checking so it is available
+        // order-independently to every dynamic-import `assert` occurrence,
+        // regardless of whether it appears before or after the file's
+        // type-position sibling in source order.
+        self.prescan_type_position_deprecated_import_assert(&sf.statements.nodes);
+
         // Resolve (and publish to the shared `DefinitionStore`, per the
         // INTERFACE-branch publication gate) every heritage-bearing interface
         // this file declares, before statement checking. Importing files

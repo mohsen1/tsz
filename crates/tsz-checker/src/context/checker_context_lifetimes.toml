@@ -218,6 +218,7 @@ resolved_module_request_paths = { lifetime = "ProgramStable", capability = "Prog
 resolved_module_ts_extension_flags = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable program data; valid until the compilation or project version changes" }
 lib_file_local_names = { lifetime = "ProgramStable", capability = "ProgramLookupContext", reason = "shared immutable lib file-local name index; valid until the compilation or loaded lib set changes" }
 current_file_idx = { lifetime = "FileLocalReset", capability = "CheckerInputs", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+type_position_deprecated_import_assert_files = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local per-file TS2880 suppression-fact cache computed by a syntactic pre-scan; reset at file-session boundary" }
 inference_placeholder_state = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 resolved_modules = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 module_augmentation_value_decls = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }

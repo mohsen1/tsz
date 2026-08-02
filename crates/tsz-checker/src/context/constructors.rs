@@ -464,6 +464,7 @@ impl<'a> CheckerContext<'a> {
             resolved_module_request_paths: None,
             resolved_module_ts_extension_flags: None,
             current_file_idx: 0,
+            type_position_deprecated_import_assert_files: FxHashMap::default(),
             inference_placeholder_state: Cell::new(0),
             resolved_modules: None,
             module_augmentation_value_decls: FxHashMap::default(),

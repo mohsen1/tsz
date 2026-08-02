@@ -57,6 +57,7 @@ mod import_alias_resolution;
 mod import_conflicts;
 mod parse_health;
 pub use parse_health::ParseHealth;
+mod import_assert_file_scan;
 mod import_extension_flags;
 mod lib_type_resolution_caches;
 pub use lib_type_resolution_caches::LibTypeResolutionCaches;
@@ -1715,6 +1716,15 @@ pub struct CheckerContext<'a> {
     /// Current file index in multi-file mode (index into `all_arenas/all_binders`).
     /// Used with `resolved_module_paths` to look up cross-file imports.
     pub current_file_idx: usize,
+
+    /// Per-`source_file_idx` cache: does this file contain a type-position
+    /// `import(...)` call whose `assert` option is itself TS2880-eligible?
+    /// tsc suppresses TS2880 on every value-position (dynamic import) `assert`
+    /// occurrence in a file whenever a type-position sibling occurrence
+    /// exists — see the file-wide suppression gate in
+    /// `declarations/dynamic_import_checker.rs`. Computed once per file by a
+    /// syntactic pre-scan at the start of `check_source_file`.
+    pub type_position_deprecated_import_assert_files: FxHashMap<usize, bool>,
 
     /// Deterministic allocator state for inference-placeholder names, packed as
     /// `(file_namespace << 32) | next_sequence`.
