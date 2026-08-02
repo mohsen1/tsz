@@ -110,6 +110,118 @@ impl<'a> CheckerState<'a> {
         Some(contextual_types)
     }
 
+    /// Find the `set` accessor paired with `getter_accessor` among `members`.
+    ///
+    /// The mirror of `paired_getter_in_members`: given a getter, find its
+    /// setter by property name, falling back to computed-name symbol
+    /// identity when the name is not a literal.
+    pub(crate) fn paired_setter_in_members(
+        &self,
+        members: &[NodeIndex],
+        getter_accessor: &tsz_parser::parser::node::AccessorData,
+    ) -> Option<NodeIndex> {
+        if let Some(getter_name) = self.get_property_name(getter_accessor.name) {
+            for &member_idx in members {
+                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                    continue;
+                };
+                if member_node.kind == syntax_kind_ext::SET_ACCESSOR
+                    && let Some(setter) = self.ctx.arena.get_accessor(member_node)
+                    && let Some(setter_name) = self.get_property_name(setter.name)
+                    && setter_name == getter_name
+                {
+                    return Some(member_idx);
+                }
+            }
+            return None;
+        }
+
+        let getter_sym = self.resolve_computed_name_symbol(getter_accessor.name);
+        getter_sym?;
+
+        for &member_idx in members {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind == syntax_kind_ext::SET_ACCESSOR
+                && let Some(setter) = self.ctx.arena.get_accessor(member_node)
+                && self.resolve_computed_name_symbol(setter.name) == getter_sym
+            {
+                return Some(member_idx);
+            }
+        }
+
+        None
+    }
+
+    pub(crate) fn contextual_getter_return_type_for_class_accessor(
+        &mut self,
+        getter_accessor: &tsz_parser::parser::node::AccessorData,
+    ) -> Option<tsz_solver::TypeId> {
+        let class_info = self.ctx.enclosing_class.as_ref()?;
+        let members = class_info.member_nodes.clone();
+        self.contextual_getter_return_type_in_members(&members, getter_accessor)
+    }
+
+    /// The paired `set` accessor's annotated parameter type, given the
+    /// accessor's sibling `members` — mirrors tsc's
+    /// `isGetAccessorWithAnnotatedSetAccessor` → `getContextualReturnType`,
+    /// which contextually types an unannotated getter's body from its paired
+    /// setter's declared parameter type.
+    ///
+    /// Only an *annotated* setter parameter participates: an unannotated one
+    /// is itself waiting on the getter's return type (see
+    /// `contextual_setter_parameter_types_in_members`), so joining it here
+    /// would recurse the pair back through the getter it is trying to type.
+    pub(crate) fn contextual_getter_return_type_in_members(
+        &mut self,
+        members: &[NodeIndex],
+        getter_accessor: &tsz_parser::parser::node::AccessorData,
+    ) -> Option<tsz_solver::TypeId> {
+        let setter_member_idx = self.paired_setter_in_members(members, getter_accessor)?;
+        let setter_node = self.ctx.arena.get(setter_member_idx)?;
+        let setter = self.ctx.arena.get_accessor(setter_node)?;
+        let &first_param_idx = setter.parameters.nodes.first()?;
+        let param = self.ctx.arena.get_parameter_at(first_param_idx)?;
+        if param.type_annotation.is_none() {
+            return None;
+        }
+        Some(self.get_type_from_type_node(param.type_annotation))
+    }
+
+    /// The paired setter's annotated parameter type for the `get` accessor at
+    /// `getter_idx`, resolved generically from the accessor's own enclosing
+    /// container — a class (via `self.ctx.enclosing_class`) or an object
+    /// literal (via the parent node's elements). Used to contextually type an
+    /// unannotated getter's body without requiring the caller to already know
+    /// which container it is checking.
+    pub(crate) fn contextual_getter_return_type_from_pair(
+        &mut self,
+        getter_idx: NodeIndex,
+        getter_accessor: &tsz_parser::parser::node::AccessorData,
+    ) -> Option<tsz_solver::TypeId> {
+        // Check the getter's own immediate parent first (not just whether
+        // `enclosing_class` happens to be set): an object-literal getter
+        // nested inside a class method body has a non-`None` enclosing
+        // class, but its siblings are the literal's elements, not the
+        // class's members. Getting this backwards could pair the getter
+        // with an unrelated same-named setter on the surrounding class.
+        let parent_idx = self.ctx.arena.get_extended(getter_idx)?.parent;
+        let parent_node = self.ctx.arena.get(parent_idx)?;
+        if parent_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            let elements = self
+                .ctx
+                .arena
+                .get_literal_expr(parent_node)?
+                .elements
+                .nodes
+                .clone();
+            return self.contextual_getter_return_type_in_members(&elements, getter_accessor);
+        }
+
+        self.contextual_getter_return_type_for_class_accessor(getter_accessor)
+    }
+
     // =========================================================================
     // Accessor Abstract Consistency
     // =========================================================================

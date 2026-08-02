@@ -945,6 +945,9 @@ path = "tests/object_literal_set_only_accessor_type_tests.rs"
 name = "object_literal_accessor_pair_parameter_type_tests"
 path = "tests/object_literal_accessor_pair_parameter_type_tests.rs"
 [[test]]
+name = "accessor_getter_contextual_return_from_setter_tests"
+path = "tests/accessor_getter_contextual_return_from_setter_tests.rs"
+[[test]]
 name = "conditional_optional_infer_default_tests"
 path = "tests/conditional_optional_infer_default_tests.rs"
 [[test]]

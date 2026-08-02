@@ -1502,8 +1502,19 @@ impl<'a> CheckerState<'a> {
 
             // When the return type was purely inferred from the body (no annotation),
             // push ANY so check_return_statement skips the circular assignability check.
+            // Exception: an unannotated getter paired with a setter whose parameter
+            // IS annotated gets that annotation as its contextual return type (tsc's
+            // `isGetAccessorWithAnnotatedSetAccessor` -> `getContextualReturnType`).
+            // That type comes from a sibling declaration, not the getter's own
+            // inferred type, so it is not self-referential and is safe to check
+            // return statements against like a real annotation.
             let effective_return_type = if has_type_annotation {
                 return_type
+            } else if is_getter
+                && let Some(paired_setter_type) =
+                    self.contextual_getter_return_type_for_class_accessor(accessor)
+            {
+                paired_setter_type
             } else {
                 TypeId::ANY
             };

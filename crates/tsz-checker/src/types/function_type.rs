@@ -1716,6 +1716,20 @@ impl<'a> CheckerState<'a> {
                 early_gen_return_type,
             });
 
+            // An unannotated getter paired with an annotated setter parameter is
+            // contextually typed from it (tsc's `getContextualReturnType`),
+            // replacing check-time `ANY` only — not `return_type` above.
+            let body_return_type = if body_return_type == TypeId::ANY
+                && node.kind == syntax_kind_ext::GET_ACCESSOR
+                && let Some(accessor) = self.ctx.arena.get_accessor(node)
+                && let Some(paired_setter_type) =
+                    self.contextual_getter_return_type_from_pair(idx, accessor)
+            {
+                paired_setter_type
+            } else {
+                body_return_type
+            };
+
             self.push_return_type(body_return_type);
 
             // For generator functions with explicit annotations, push the yield type
