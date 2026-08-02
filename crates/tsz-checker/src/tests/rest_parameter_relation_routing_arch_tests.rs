@@ -11,12 +11,18 @@ fn rest_parameter_array_diagnostics_use_relation_outcome_boundary() {
     let function_start = source
         .find("fn check_rest_parameter_types")
         .expect("find rest parameter validation helper");
+    // The helper used to be terminated by the banner comment that introduced the
+    // module's in-file `#[cfg(test)]` blocks. Those moved to
+    // `src/tests/parameter_checker_tests.rs` when the module was split to hold the
+    // 2000-line ceiling, so the banner is gone and the helper is now the last item
+    // in the file. Fall back to end-of-file rather than pinning this contract to
+    // the presence of a comment that has nothing to do with what it asserts.
     let function_end = function_start
         + source[function_start..]
             .find(
                 "// =============================================================================",
             )
-            .expect("find end of rest parameter validation helper");
+            .unwrap_or(source.len() - function_start);
     let helper = &source[function_start..function_end];
     let compact_helper: String = helper.chars().filter(|ch| !ch.is_whitespace()).collect();
 

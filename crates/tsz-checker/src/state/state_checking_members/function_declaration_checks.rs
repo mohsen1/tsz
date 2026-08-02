@@ -676,22 +676,12 @@ impl<'a> CheckerState<'a> {
         };
         self.ctx.push_generator_next_type(contextual_next_type);
 
-        // Save and reset control flow context (function body creates new context)
-        let saved_cf_context = (
-            self.ctx.iteration_depth,
-            self.ctx.switch_depth,
-            self.ctx.label_stack.len(),
-            self.ctx.had_outer_loop,
-        );
-        // If we were in a loop/switch, or already had an outer loop, mark it
-        if self.ctx.iteration_depth > 0 || self.ctx.switch_depth > 0 || self.ctx.had_outer_loop {
-            self.ctx.had_outer_loop = true;
-        }
-        self.ctx.iteration_depth = 0;
-        self.ctx.switch_depth = 0;
+        // Save and reset control flow context (function body creates new context).
+        // Labels stay visible for the body's duration — only the stack length is
+        // saved — so a labeled jump still decides TS1107 by comparing the
+        // label's `function_depth` against the raised one.
+        let saved_cf_context = self.ctx.enter_function_like_control_flow();
         self.ctx.function_depth += 1;
-        // Note: we don't truncate label_stack here - labels remain visible
-        // but function_depth is used to detect crosses over function boundary
 
         // Save outer generator's yield collection state (for nested generators)
         let saved_yield_collection = std::mem::take(&mut self.ctx.generator_yield_operand_types);
@@ -756,11 +746,8 @@ impl<'a> CheckerState<'a> {
         self.ctx.generator_had_ts7057 = saved_had_ts7057;
 
         // Restore control flow context
-        self.ctx.iteration_depth = saved_cf_context.0;
-        self.ctx.switch_depth = saved_cf_context.1;
         self.ctx.function_depth -= 1;
-        self.ctx.label_stack.truncate(saved_cf_context.2);
-        self.ctx.had_outer_loop = saved_cf_context.3;
+        self.ctx.exit_function_like_control_flow(saved_cf_context);
 
         // Check return path analysis (TS2355/TS2366/TS2534/TS7030)
         self.check_function_return_paths(

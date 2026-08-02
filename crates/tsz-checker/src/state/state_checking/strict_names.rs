@@ -282,11 +282,20 @@ impl<'a> CheckerState<'a> {
             return;
         }
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-        let in_class = self
-            .ctx
-            .enclosing_class
-            .as_ref()
-            .is_some_and(|class| !class.is_declared);
+        // Same structural rule as `emit_strict_mode_reserved_word_error`: tsc reads
+        // the class context off the identifier's ancestor chain, so a binding in a
+        // property-initializer arrow, a nested function, or a static block is still
+        // class code even though the checker's ambient `enclosing_class` is `None`
+        // there. Without the structural fallback the same identifier can be reported
+        // twice under two different codes (TS1100 from the path that misses the
+        // class, TS1210 from the path that sees it).
+        let in_class = match self.ctx.enclosing_class.as_ref() {
+            Some(class) => !class.is_declared,
+            None => {
+                self.nearest_enclosing_class(name_idx).is_some()
+                    && !self.ctx.arena.is_in_ambient_context(name_idx)
+            }
+        };
         // tsc does not surface this strict-mode binding error in JS files
         // (allowJs / checkJs) when the only reason we are in strict mode is
         // class auto-strict — class bodies in JS are runtime-strict, but

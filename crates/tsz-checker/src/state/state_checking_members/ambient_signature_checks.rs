@@ -827,6 +827,15 @@ impl<'a> CheckerState<'a> {
                 member_idx,
                 self.ctx.enclosing_class.is_some(),
             );
+            // A method's *type* parameters carry the same reserved-word grammar as
+            // its value parameters — `class C { m[ yield ]() {} }` is TS1213 in tsc.
+            // Only free functions and the class/interface heads reached this check
+            // before, so class members were the hole.
+            self.check_strict_mode_reserved_type_parameter_names(
+                &method.type_parameters,
+                member_idx,
+                self.ctx.enclosing_class.is_some(),
+            );
         }
 
         // Check for required parameters following optional parameters (TS1016)
@@ -1378,14 +1387,21 @@ impl<'a> CheckerState<'a> {
             contextual_setter_param_types.as_deref(),
         );
 
-        // TS1346/TS1347: a `set` accessor's parameters follow the same
-        // `"use strict"` / non-simple-parameter-list grammar as other
-        // function-likes. Set-accessor parameters route through this accessor
-        // path rather than the shared per-function-like param check
-        // (`check_strict_mode_reserved_parameter_names`), so wire the check in
-        // here too. The helper is target-gated (ES2016+) and has_parse_errors-gated.
+        // A `set` accessor's parameters follow the same parameter-name grammar as
+        // every other function-like: `"use strict"` / non-simple-parameter-list
+        // (TS1346/TS1347), strict-mode reserved words (TS1212/TS1213/TS1214) and
+        // `eval`/`arguments` (TS1100/TS1210/TS1215). Set-accessor parameters route
+        // through this accessor path rather than the shared per-function-like param
+        // check, so wire the whole check in here — not just the `"use strict"` half.
+        // `check_strict_mode_reserved_parameter_names` calls
+        // `check_use_strict_non_simple_parameter_list` itself, so it subsumes the
+        // previous call rather than duplicating it.
         if node.kind == syntax_kind_ext::SET_ACCESSOR {
-            self.check_use_strict_non_simple_parameter_list(&accessor.parameters.nodes, member_idx);
+            self.check_strict_mode_reserved_parameter_names(
+                &accessor.parameters.nodes,
+                member_idx,
+                self.ctx.enclosing_class.is_some(),
+            );
         }
 
         if let Some(contextual_types) = contextual_setter_param_types.as_ref() {

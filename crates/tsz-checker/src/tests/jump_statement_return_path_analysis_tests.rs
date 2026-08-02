@@ -87,3 +87,14 @@ fn legal_labeled_break_out_of_block_terminates_flow_same_as_before() {
 fn empty_getter_body_control_unaffected_by_jump_handling() {
     assert_eq!(codes("class A { get g() { } }"), vec![2378]);
 }
+
+#[test]
+fn illegal_jump_inside_outer_loop_across_class_boundary_still_reports_jump_and_return_path() {
+    // The jump is illegal because it targets a loop outside the function-like
+    // boundary the getter creates, not because there is no loop in scope at
+    // all — this depends on #16202's class-member-body control-flow reset.
+    assert_eq!(
+        codes("while (true) { class A { get g() { continue; } } }"),
+        vec![1107, 2378]
+    );
+}
