@@ -432,6 +432,74 @@ fn null_or_undefined_union_parameter_and_type_alias_collapse_the_same_way() {
 }
 
 #[test]
+fn null_or_undefined_union_interface_member_collapses_the_same_way() {
+    // Third sibling of the type-node-resolution collapse: an interface property
+    // signature's type node resolves through `get_type_of_interface` ->
+    // `get_type_from_type_node_in_type_literal`, a call path distinct from both
+    // the direct variable/param annotation path (`type_operators.rs`) and the
+    // type-alias/type-literal path (`type_node.rs`), which the two rows below
+    // confirm were already correct. That third path built the union node's
+    // members directly without ever testing for the pure-nullish collapse.
+    let codes =
+        non_strict("interface I { m: null | undefined }\ndeclare const i: I;\ni.m.foo;\ni.m();");
+    assert_eq!(
+        count(&codes, TS18047),
+        1,
+        "an interface member typed `null | undefined` must report TS18047, got: {codes:?}"
+    );
+    assert_eq!(
+        count(&codes, TS2721),
+        1,
+        "an interface member typed `null | undefined` callee must report TS2721, got: {codes:?}"
+    );
+    assert_eq!(
+        count(&codes, 18049),
+        0,
+        "the non-strict answer must not be the strict two-cause TS18049, got: {codes:?}"
+    );
+}
+
+#[test]
+fn null_or_undefined_union_interface_index_signature_value_collapses_the_same_way() {
+    let codes =
+        non_strict("interface I { [k: string]: null | undefined }\ndeclare const i: I;\ni.m.foo;");
+    assert_eq!(
+        count(&codes, TS18047),
+        1,
+        "an interface index-signature value typed `null | undefined` must report TS18047, got: {codes:?}"
+    );
+}
+
+#[test]
+fn null_or_undefined_union_class_field_and_object_literal_type_already_collapsed() {
+    // Controls: these two sibling paths were already correct before this fix
+    // (a class field's own type-node resolution and an object type literal
+    // used via a type alias both already routed through the patched
+    // `type_operators.rs` / `type_node.rs` union constructors) — confirming
+    // the interface-member path above was the one genuinely missing arm, not
+    // a symptom visible everywhere member types are declared.
+    // `c` is a plain identifier so the property access stays a "dotted name"
+    // reference, matching the other TS18047 rows above; a `new C().m` base
+    // (not a simple identifier) instead reports the generic TS2531 "Object is
+    // possibly 'null'" — that is tsc's own real divergence, not a bug.
+    let class_field =
+        non_strict("class C { m: null | undefined = null; }\nconst c = new C();\nc.m.foo;");
+    assert_eq!(
+        count(&class_field, TS18047),
+        1,
+        "a class field typed `null | undefined` must report TS18047, got: {class_field:?}"
+    );
+
+    let type_literal =
+        non_strict("type T = { m: null | undefined };\ndeclare const t: T;\nt.m.foo;");
+    assert_eq!(
+        count(&type_literal, TS18047),
+        1,
+        "an object-type-literal member typed `null | undefined` must report TS18047, got: {type_literal:?}"
+    );
+}
+
+#[test]
 fn null_or_undefined_union_with_a_non_nullish_member_stays_clean() {
     // The collapse is specific to a PURE null/undefined union — a union that
     // also carries a real member is the already-correct `T | null` narrowing

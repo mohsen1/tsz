@@ -55,6 +55,14 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .map(|&member_idx| self.get_type_from_type_node_in_type_literal(member_idx))
                     .collect::<Vec<_>>();
+                if let Some(collapsed) =
+                    crate::query_boundaries::type_predicates::collapse_pure_nullish_union_nonstrict(
+                        self.ctx.compiler_options.strict_null_checks,
+                        &members,
+                    )
+                {
+                    return collapsed;
+                }
                 return construction_boundary::type_node_union(self.ctx.types, members);
             }
             return TypeId::ERROR;

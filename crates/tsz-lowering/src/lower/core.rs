@@ -1263,6 +1263,18 @@ impl<'a> TypeLowering<'a> {
             .iter()
             .map(|&idx| self.lower_type(idx))
             .collect();
+        // Without `strictNullChecks`, tsc collapses a syntactic union type
+        // node whose members are exclusively `null`/`undefined` to a bare
+        // nullish type rather than a `Union` (see
+        // `collapse_pure_nullish_union_nonstrict`'s doc comment for the
+        // structural rule). This is the interface/type-lowering sibling of
+        // the same collapse in `tsz-checker`'s type-node resolvers.
+        if let Some(collapsed) = tsz_solver::narrowing::collapse_pure_nullish_union_nonstrict(
+            self.strict_null_checks,
+            &members,
+        ) {
+            return collapsed;
+        }
         // Mirror tsc's `UnionType.origin`: record the as-written input
         // member list so the printer can render `0 | 1 | 2` in source
         // order even when the canonical sort uses non-deterministic

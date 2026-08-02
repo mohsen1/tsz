@@ -365,6 +365,47 @@ pub fn type_contains_undefined(types: &dyn TypeDatabase, type_id: TypeId) -> boo
     false
 }
 
+/// Collapse a union type node's resolved members to tsc's non-strict-mode
+/// answer when every member is `null`/`undefined`, or return `None` when the
+/// union has a non-nullish member (the caller's normal union construction
+/// then owns the result).
+///
+/// Without `strictNullChecks`, tsc resolves a syntactic union type node whose
+/// members are exclusively `null`/`undefined` to a *non-union* nullish type
+/// rather than building a `Union` — `checkNonNullTypeWithReporter` later tests
+/// `type.flags & TypeFlags.Nullable`, which only a bare `null`/`undefined`
+/// type (not a `Union`-flagged one) satisfies. Pinned against `tsc` 7.0.2:
+/// `null | undefined` and `undefined | null` both resolve to plain `null`
+/// (order-independent — `undefined` is absorbed into `null`, never the
+/// reverse), while a uniform `null | null` or `undefined | undefined` stays
+/// whichever single type it already is. A union that also has a non-nullish
+/// member is unaffected — that member survives the caller's ordinary
+/// subtype-based union reduction, which is what already makes `T | null`
+/// behave like `T` in this mode.
+///
+/// Solver-owned rather than duplicated per caller: every syntactic
+/// union-type-node lowering site (`tsz-checker`'s two `CheckerState`
+/// resolvers, its `TypeNodeChecker` resolver, and `tsz-lowering`'s
+/// `TypeLowering`) needs the identical rule, and only `TypeId` identity is
+/// required to state it.
+pub fn collapse_pure_nullish_union_nonstrict(
+    strict_null_checks: bool,
+    member_types: &[TypeId],
+) -> Option<TypeId> {
+    if strict_null_checks
+        || !member_types
+            .iter()
+            .all(|&m| m == TypeId::NULL || m == TypeId::UNDEFINED)
+    {
+        return None;
+    }
+    if member_types.contains(&TypeId::NULL) {
+        Some(TypeId::NULL)
+    } else {
+        Some(TypeId::UNDEFINED)
+    }
+}
+
 /// Check if a type is definitely nullish (only null/undefined/void).
 pub fn is_definitely_nullish(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id.is_nullable() {
