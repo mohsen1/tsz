@@ -232,6 +232,25 @@ where
     false
 }
 
+/// Membership in tsc's `TypeFlags.Nullable` (`Undefined | Null`), tested against
+/// a type's OWN flags rather than its falsy facts or its union members.
+///
+/// This is the second half of tsc's `checkNonNullTypeWithReporter` trigger:
+///
+/// ```text
+/// const kind = (strictNullChecks ? getFalsyFlags(type) : type.flags) & TypeFlags.Nullable;
+/// if (kind) { reportError(node, kind); ... }
+/// ```
+///
+/// Without `strictNullChecks` the non-null check therefore still runs — it just
+/// narrows to types that *are* `null` or `undefined`. Two exclusions are load
+/// bearing and both match `type.flags`: `void` is `TypeFlags.Void`, never
+/// `Nullable`, and a union's own flags are `TypeFlags.Union`, so `T | null` and
+/// even `null | undefined` do not trigger the check in that mode.
+pub(crate) const fn has_ts_nullable_flag(type_id: TypeId) -> bool {
+    matches!(type_id, TypeId::NULL | TypeId::UNDEFINED)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

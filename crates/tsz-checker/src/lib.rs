@@ -1476,6 +1476,9 @@ mod nolib_user_global_array_member_tests;
 #[path = "tests/non_generic_spread_tuple_alias_display_tests.rs"]
 mod non_generic_spread_tuple_alias_display_tests;
 #[cfg(test)]
+#[path = "tests/non_strict_non_null_check_narrows_tests.rs"]
+mod non_strict_non_null_check_narrows_tests;
+#[cfg(test)]
 #[path = "tests/nonunique_symbol_property_access_tests.rs"]
 mod nonunique_symbol_property_access_tests;
 #[cfg(test)]
