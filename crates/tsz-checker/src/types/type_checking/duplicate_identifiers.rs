@@ -915,7 +915,20 @@ impl<'a> CheckerState<'a> {
                     let decl_is_var = (decl_flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0;
                     let other_is_var = (other_flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0;
                     if decl_is_var && other_is_var {
-                        if is_external_module && decl_is_exported && other_is_exported {
+                        // A remote (non-local) declaration's index belongs to another
+                        // file's arena, so `get_enclosing_namespace` (which always reads
+                        // `self.ctx.arena`) cannot be asked about it; fall back to
+                        // module-scope (the pre-existing behavior) in that case.
+                        let decl_at_module_scope =
+                            !decl_is_local || self.get_enclosing_namespace(decl_idx).is_none();
+                        let other_at_module_scope =
+                            !other_is_local || self.get_enclosing_namespace(other_idx).is_none();
+                        if is_external_module
+                            && decl_is_exported
+                            && other_is_exported
+                            && decl_at_module_scope
+                            && other_at_module_scope
+                        {
                             if decl_is_local {
                                 conflicts.insert(decl_idx);
                             }
