@@ -549,7 +549,7 @@ pub(super) const fn is_js_only_syntactic_diagnostic(code: u32) -> bool {
 /// grammar checks tsc treats as semantic — break/continue (`TS1104`/`TS1105`)
 /// and the cross-function jump-target check (`TS1107`).
 pub(super) const fn keep_diagnostic_when_js_only_syntactic_skips_semantic(code: u32) -> bool {
-    if is_post_js_gate_suppressed_checker_grammar(code) {
+    if is_checker_routed_ts1xxx_grammar(code) {
         return false;
     }
     is_real_syntax_error(code)
@@ -558,20 +558,47 @@ pub(super) const fn keep_diagnostic_when_js_only_syntactic_skips_semantic(code: 
         || matches!(code, 2427 | 2457)
 }
 
-/// Checker/binder grammar codes that tsc routes through `getSemanticDiagnostics`
-/// rather than `getSyntacticDiagnostics` — so when the JS-only-syntactic gate
-/// fires, tsc drops them program-wide. These codes appear in
-/// `is_ts1xxx_allowed_in_js` because tsc legitimately emits them for plain JS
-/// files when no syntactic gate-trigger is present, but once a gate-trigger
-/// fires they must be suppressed even though they are `TS1xxx`.
-const fn is_post_js_gate_suppressed_checker_grammar(code: u32) -> bool {
+/// `TS1xxx` codes that tsc routes through `getSemanticDiagnostics` rather than
+/// `getSyntacticDiagnostics`, despite occupying the parser/grammar numeric
+/// range.
+///
+/// tsc's `emitFilesAndReportErrors` runs the syntactic phase first and only
+/// proceeds to the semantic phase when it produced nothing, so *whenever* a
+/// syntactic gate fires, every code in this list is dropped program-wide. Both
+/// of tsz's gates model that same single tsc fact and must therefore consult
+/// the same list:
+///
+/// - [`keep_diagnostic_when_js_only_syntactic_skips_semantic`] — the JS-only
+///   (`TS8xxx`) trigger.
+/// - `keep_checker_diagnostic_when_program_has_real_syntax_errors` (in
+///   `checker_diagnostics`) — the real-parse-failure trigger.
+///
+/// Numeric range is not a reliable proxy for which phase emits a diagnostic:
+/// tsz's emission map straddles parser and checker, so a `TS1xxx` code emitted
+/// from the checker's or binder's grammar phase would otherwise survive a gate
+/// that tsc applies to it. Every entry below is verified against the pinned
+/// `tsc` oracle — the construct alone reports the code, and the same construct
+/// in a program that also contains a parse error reports nothing but the parse
+/// error.
+pub(super) const fn is_checker_routed_ts1xxx_grammar(code: u32) -> bool {
     matches!(
         code,
+        // Binder strict-mode checks (`checkStrictModeEvalOrArguments`,
+        // `checkStrictModeWithStatement`, `checkStrictModeLabeledStatement`)
+        // push onto `file.bindDiagnostics`, which tsc surfaces through
+        // `getSemanticDiagnostics`.
+        1100  // Invalid use of '{0}' in strict mode.
+        | 1101 // 'with' statements are not allowed in strict mode.
+        | 1215 // Invalid use of '{0}'. Modules are automatically in strict mode.
+        | 1344 // A label is not allowed here.
         // The break/continue family — tsc's `checkBreakOrContinueStatement`
         // emits these from the type checker.
-        1104 // A 'continue' statement can only be used within an enclosing iteration statement.
+        | 1104 // A 'continue' statement can only be used within an enclosing iteration statement.
         | 1105 // A 'break' statement can only be used within an enclosing iteration or switch statement.
         | 1107 // Jump target cannot cross function boundary.
+        // Semantic checker diagnostics that merely occupy the grammar range.
+        | 1064 // The return type of an async function or method must be the global Promise<T> type.
+        | 1315 // '{0}' is not a valid meta-property for keyword '{1}'.
     )
 }
 
