@@ -215,6 +215,23 @@ fn declared_unknown_for_in_operand_is_ts2407_in_both_modes() {
 }
 
 #[test]
+fn unknown_for_in_operand_via_type_alias_is_still_ts2407() {
+    // The gate must see through an alias to the same `unknown` leaf type, not
+    // just a literal `unknown` annotation.
+    let source =
+        "type Maybe = unknown;\ndeclare const item: Maybe;\nfor (const prop in item) { }\n";
+    assert_has_2407(&non_strict(source), "unknown via type alias");
+    assert_has_2407(&strict(source), "unknown via type alias, strict");
+}
+
+#[test]
+fn unknown_for_in_operand_var_loop_variable_is_still_ts2407() {
+    // Renamed binder / `var` form control, distinct from the `const` case above.
+    let source = "declare const payload: unknown;\nfor (var field in payload) { }\n";
+    assert_has_2407(&non_strict(source), "unknown operand, var loop variable");
+}
+
+#[test]
 fn union_collapsing_to_unknown_for_in_operand_is_still_ts2407() {
     // `string | unknown` collapses to `unknown` itself; the union path must
     // reject it the same way the bare leaf type does.
