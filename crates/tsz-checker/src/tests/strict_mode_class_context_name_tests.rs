@@ -60,19 +60,19 @@ fn assert_only_class_variant(codes: &[u32], expected: u32, other: u32, what: &st
 
 #[test]
 fn reserved_word_param_of_nested_function_declaration_in_method_is_class_variant() {
-    let codes = diag_codes("class H { m() { function g(yield) { return yield; } } }");
+    let codes = diag_codes("class H { m() { function g(yield) {} } }");
     assert_only_class_variant(&codes, 1213, 1212, "nested function declaration parameter");
 }
 
 #[test]
 fn reserved_word_param_of_property_initializer_arrow_is_class_variant() {
-    let codes = diag_codes("class H { p = (yield) => yield; }");
+    let codes = diag_codes("class H { p = (yield) => 0; }");
     assert_only_class_variant(&codes, 1213, 1212, "property-initializer arrow parameter");
 }
 
 #[test]
 fn reserved_word_param_of_function_in_static_block_is_class_variant() {
-    let codes = diag_codes("class H { static { function g(yield) { return yield; } } }");
+    let codes = diag_codes("class H { static { function g(yield) {} } }");
     assert_only_class_variant(&codes, 1213, 1212, "static-block function parameter");
 }
 
@@ -108,7 +108,7 @@ fn every_reserved_word_takes_the_class_variant_in_a_nested_function() {
 #[test]
 fn reserved_word_class_variant_survives_renamed_binders() {
     let codes = diag_codes(
-        "class ReportBuilder { renderSection() { function formatRow(package) { return package; } } }",
+        "class ReportBuilder { renderSection() { function formatRow(package) {} } }",
     );
     assert_only_class_variant(&codes, 1213, 1212, "renamed binders");
 }

@@ -1713,6 +1713,10 @@ mod strict_callback_param_method_tests;
 #[cfg(test)]
 #[path = "tests/strict_mode_class_context_name_tests.rs"]
 mod strict_mode_class_context_name_tests;
+
+#[cfg(test)]
+#[path = "tests/parameter_checker_tests.rs"]
+mod parameter_checker_tests;
 #[cfg(test)]
 #[path = "../tests/strict_null_manual.rs"]
 mod strict_null_manual;
