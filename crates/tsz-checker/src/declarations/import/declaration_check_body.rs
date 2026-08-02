@@ -481,13 +481,25 @@ impl<'a> CheckerState<'a> {
                 self.ctx.import_resolution_stack.pop();
                 return;
             }
-            // Side-effect imports: suppress ALL resolution errors when
-            // noUncheckedSideEffectImports is disabled (the default).
-            // The check inside the CANNOT_FIND_MODULE block above handles
-            // TS2307/TS2792, but other error codes (e.g., TS2882 from the
-            // conformance runner) can bypass that path. This catch-all
-            // ensures no resolution error leaks for bare `import "module"`.
-            if is_side_effect_import && !self.ctx.compiler_options.no_unchecked_side_effect_imports
+            // Side-effect imports: suppress ALL resolution *failure* errors
+            // when noUncheckedSideEffectImports is disabled. The check inside
+            // the CANNOT_FIND_MODULE block above handles TS2307/TS2792, but
+            // other error codes (e.g., TS2882 from the conformance runner)
+            // can bypass that path. This catch-all ensures no resolution
+            // error leaks for bare `import "module"`.
+            //
+            // TS7016 is different: it fires when the specifier *resolved*
+            // successfully to an untyped JS file, not when resolution
+            // failed. `noUncheckedSideEffectImports` only controls whether an
+            // unresolvable side-effect import gets a diagnostic (TS2882) — it
+            // says nothing about a module that resolved fine but lacks
+            // declarations. tsc stays silent on TS7016 for a side-effect
+            // import regardless of the flag's value (verified against the
+            // pinned 7.0.2 oracle), so it is suppressed unconditionally here.
+            if is_side_effect_import
+                && (!self.ctx.compiler_options.no_unchecked_side_effect_imports
+                    || error_code
+                        == crate::diagnostics::diagnostic_codes::COULD_NOT_FIND_A_DECLARATION_FILE_FOR_MODULE_IMPLICITLY_HAS_AN_ANY_TYPE)
             {
                 self.ctx.import_resolution_stack.pop();
                 return;
