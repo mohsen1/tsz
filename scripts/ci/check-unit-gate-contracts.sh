@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 # Single owner of the cheap per-merge repo-hygiene contract checks: the
 # known-failures unit-gate baseline growth/integrity gate and its wiring
-# contract tests (#15646), plus the orphaned-test-file reachability guard
-# (#16013). Both the ci.yml cheap-guards step and full-ci.sh run_lint invoke
-# this script, so the two tiers cannot drift.
+# contract tests (#15646), the orphaned-test-file reachability guard (#16013),
+# and the emit failing-row direction gate's own contract tests (#16171). Both
+# the ci.yml cheap-guards step and full-ci.sh run_lint invoke this script, so
+# the two tiers cannot drift.
+#
+# The emit gate itself only runs nightly, so its wiring has to be checked on
+# every merge — otherwise a break in the gate is invisible for a day, which is
+# the failure mode #16171 is about.
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -24,3 +29,4 @@ python3 scripts/ci/test_full_ci_unit_gate.py
 node scripts/ci/test-known-failures-check.mjs
 python3 scripts/ci/check-test-file-reachability.py
 python3 scripts/ci/test_check_test_file_reachability.py
+python3 scripts/ci/test_check_emit_regression_set.py
