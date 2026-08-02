@@ -194,24 +194,23 @@ pub struct CheckerOptions {
     /// `isolated_modules && !isolated_modules_from_verbatim`.
     pub isolated_modules_from_verbatim: bool,
     /// When true, a valid `ignoreDeprecations` version was supplied.
-    /// Set when `ignoreDeprecations` is "5.0" or "6.0".
+    /// Set when `ignoreDeprecations` is "5.0", "6.0", or "7.0".
     ///
     /// This records *presence*, not what the value silences. `ignoreDeprecations`
     /// is a version string naming the release whose deprecations the user is
     /// opting out of, so each deprecation has its own threshold and a single
     /// bool cannot answer for all of them. Consumers that need a specific
-    /// threshold must ask for it: the deprecated `assert` import-attribute
-    /// keyword (TS2880) is silenced by `"6.0"` *only*, which is
-    /// `ignore_deprecations_6_0` below.
+    /// threshold must ask for it — see `ignore_deprecations_6_0` below.
     pub ignore_deprecations: bool,
     /// When true, `ignoreDeprecations` was set to exactly `"6.0"`.
     ///
-    /// `tsc` gates the deprecated-`assert` diagnostic (TS2880) on the literal
-    /// value rather than on presence — `checkImportCallExpression`,
-    /// `checkImportDeclaration` and `checkImportType` each test
-    /// `compilerOptions.ignoreDeprecations !== "6.0"`. `"5.0"` is a legal value
-    /// that does *not* silence it, because it names a strictly older grace
-    /// window than the release that removed `assert`.
+    /// On the pinned 7.0.2 oracle no `ignoreDeprecations` value silences the
+    /// deprecated `assert` import-attribute keyword (TS2880) — the `"6.0"`
+    /// grace window a 6.x `tsc` build granted at its three emission sites
+    /// (`checkImportCallExpression`, `checkImportDeclaration`,
+    /// `checkImportType`) has closed (#16217), so this flag has no current
+    /// TS2880 consumer. It stays threaded for any deprecation whose grace
+    /// window has not closed.
     ///
     /// Same shape as `isolated_modules_from_verbatim` above: the coarse flag
     /// stays for the consumers that want presence, and this one recovers the

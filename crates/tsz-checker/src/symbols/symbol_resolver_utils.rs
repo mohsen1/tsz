@@ -1360,15 +1360,14 @@ impl<'a> CheckerState<'a> {
             .map(Some)
             .unwrap_or(defaults.allow_unused_labels);
 
-        // @ignoreDeprecations: "5.0"/"6.0" carries a version string, and the
-        // flag form also counts as present, so presence is a scan over the
-        // leading comment block rather than a `pragmas` lookup (the
+        // @ignoreDeprecations: "5.0"/"6.0"/"7.0" carries a version string, and
+        // the flag form also counts as present, so presence is a scan over
+        // the leading comment block rather than a `pragmas` lookup (the
         // pre-parsed slice only holds key/value directives).
         if Self::source_has_pragma(text, "@ignoredeprecations") {
             opts.ignore_deprecations = true;
-            // The *value* is a separate question from presence: only "6.0"
-            // silences TS2880. The flag form carries no version, so it cannot
-            // reach the "6.0" threshold.
+            // `ignore_deprecations_6_0` no longer gates TS2880 (#16217); kept
+            // for any deprecation still gated on the "6.0" value specifically.
             opts.ignore_deprecations_6_0 =
                 Self::value_pragma(&pragmas, "@ignoredeprecations") == Some("6.0");
         }
