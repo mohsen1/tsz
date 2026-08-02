@@ -1631,8 +1631,35 @@ impl<'a> CheckerState<'a> {
                     && (flags & (symbol_flags::GET_ACCESSOR | symbol_flags::SET_ACCESSOR)) != 0
             });
 
-            // TS2323: Check exported variable conflict using symbol.is_exported
-            let has_exported_variable_conflict = symbol.is_exported && has_variable_conflict;
+            // Whether any declaration taking part in this conflict is block-scoped
+            // (`let`/`const`). `conflicts` only tracks local declarations, so a
+            // remote (cross-file) block-scoped declaration has to be looked up
+            // separately. Both the TS2323 arm and the TS2451-vs-TS2300 fallback
+            // below turn on this, so it is computed once here.
+            let has_block_scoped_conflict =
+                declarations.iter().any(|(decl_idx, flags, _, _, _)| {
+                    conflicts.contains(decl_idx)
+                        && (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
+                });
+            // See duplicateIdentifierRelatedSpans1.ts: a local `class Bar`
+            // conflicts with a remote `const Bar` from another file — tsc emits
+            // TS2451.
+            let has_remote_block_scoped_conflict =
+                declarations.iter().any(|(_, flags, is_local, _, _)| {
+                    !*is_local && (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
+                });
+
+            // TS2323: Check exported variable conflict using symbol.is_exported.
+            // A `let`/`const` carries `VARIABLE` alongside `BLOCK_SCOPED_VARIABLE`,
+            // so "every conflicting declaration is a variable" does not by itself
+            // mean "every conflicting declaration is a `var`". tsc only reaches
+            // `Cannot_redeclare_exported_variable_0` when no block-scoped binding
+            // takes part; the moment one does, the binder's own redeclaration
+            // message wins and the choice is TS2451-vs-TS2300 by source order.
+            let has_exported_variable_conflict = symbol.is_exported
+                && has_variable_conflict
+                && !has_block_scoped_conflict
+                && !has_remote_block_scoped_conflict;
 
             let (message, code) = if !has_non_block_scoped && !force2300
                 || has_umd_global_value_conflict
@@ -1680,21 +1707,6 @@ impl<'a> CheckerState<'a> {
                 // (e.g., var hoisted from a child block to conflict with a
                 // function at the parent level), we fall back to scope-based
                 // analysis to choose TS2451 vs TS2300.
-                let has_block_scoped_conflict =
-                    declarations.iter().any(|(decl_idx, flags, _, _, _)| {
-                        conflicts.contains(decl_idx)
-                            && (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
-                    });
-                // For cross-file scenarios, the remote block-scoped declaration is
-                // not stored in `conflicts` (which only tracks local declarations),
-                // so check `declarations` directly for any remote block-scoped
-                // variable that could be triggering the redeclaration error. See
-                // duplicateIdentifierRelatedSpans1.ts: a local `class Bar` conflicts
-                // with a remote `const Bar` from another file — tsc emits TS2451.
-                let has_remote_block_scoped_conflict =
-                    declarations.iter().any(|(_, flags, is_local, _, _)| {
-                        !*is_local && (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
-                    });
                 let has_function_conflict =
                     declarations.iter().any(|(decl_idx, flags, _, _, _)| {
                         conflicts.contains(decl_idx) && (flags & symbol_flags::FUNCTION) != 0
