@@ -1347,20 +1347,9 @@ impl<'a> CheckerState<'a> {
                 if let Some(block) = self.ctx.arena.get_block(node) {
                     let prev_unreachable = self.ctx.is_unreachable;
                     let prev_reported = self.ctx.has_reported_unreachable;
-                    let saved_cf_context = (
-                        self.ctx.iteration_depth,
-                        self.ctx.switch_depth,
-                        self.ctx.label_stack.len(),
-                        self.ctx.had_outer_loop,
-                    );
-                    if self.ctx.iteration_depth > 0
-                        || self.ctx.switch_depth > 0
-                        || self.ctx.had_outer_loop
-                    {
-                        self.ctx.had_outer_loop = true;
-                    }
-                    self.ctx.iteration_depth = 0;
-                    self.ctx.switch_depth = 0;
+                    // The loop/switch/label reset that used to be hand-copied
+                    // here now rides along with the member-body boundary, so
+                    // every member kind gets it — see `enter_class_member_body`.
                     let saved_member_body_depth = self.ctx.enter_class_member_body();
                     // Check each statement in the block
                     for &stmt_idx in &block.statements.nodes {
@@ -1370,11 +1359,7 @@ impl<'a> CheckerState<'a> {
                             self.ctx.is_unreachable = true;
                         }
                     }
-                    self.ctx.iteration_depth = saved_cf_context.0;
-                    self.ctx.switch_depth = saved_cf_context.1;
                     self.ctx.exit_class_member_body(saved_member_body_depth);
-                    self.ctx.label_stack.truncate(saved_cf_context.2);
-                    self.ctx.had_outer_loop = saved_cf_context.3;
                     self.ctx.is_unreachable = prev_unreachable;
                     self.ctx.has_reported_unreachable = prev_reported;
                 }

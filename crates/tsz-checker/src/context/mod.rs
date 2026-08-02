@@ -210,6 +210,33 @@ pub struct LabelInfo {
     pub(crate) label_node: tsz_parser::parser::NodeIndex,
 }
 
+/// The loop/`switch`/label state of the function-like a nested body is being
+/// checked inside of, saved by
+/// [`CheckerContext::enter_function_like_control_flow`].
+///
+/// Opaque on purpose: the fields are only ever produced and consumed by that
+/// enter/exit pair, so no caller can restore a partial scope.
+#[derive(Clone, Copy, Debug)]
+pub struct FunctionLikeControlFlow {
+    iteration_depth: u32,
+    switch_depth: u32,
+    label_stack_len: usize,
+    had_outer_loop: bool,
+}
+
+/// The scope of a class member body, saved by
+/// [`CheckerContext::enter_class_member_body`].
+///
+/// Bundles the member-body baseline with the [`FunctionLikeControlFlow`] scope
+/// so that every member kind — method, accessor, constructor, static block —
+/// crosses the boundary through one call and cannot acquire the function-depth
+/// half without the control-flow half.
+#[derive(Clone, Copy, Debug)]
+pub struct ClassMemberBodyScope {
+    member_body_depth: u32,
+    control_flow: FunctionLikeControlFlow,
+}
+
 /// Classification for deferred implicit-any diagnostics that are surfaced later
 /// at use sites.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

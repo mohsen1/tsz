@@ -59,14 +59,7 @@ impl CheckerState<'_> {
         }
 
         let yield_snapshot = self.ctx.snapshot_return_type();
-        let saved_cf_context = (
-            self.ctx.iteration_depth,
-            self.ctx.switch_depth,
-            self.ctx.label_stack.len(),
-            self.ctx.had_outer_loop,
-        );
-        self.ctx.iteration_depth = 0;
-        self.ctx.switch_depth = 0;
+        let saved_cf_context = self.ctx.enter_function_like_control_flow();
         let saved_yield_collection = std::mem::take(&mut self.ctx.generator_yield_operand_types);
         let saved_had_ts7057 = std::mem::replace(&mut self.ctx.generator_had_ts7057, false);
 
@@ -88,10 +81,7 @@ impl CheckerState<'_> {
 
         self.ctx.generator_yield_operand_types = saved_yield_collection;
         self.ctx.generator_had_ts7057 = saved_had_ts7057;
-        self.ctx.iteration_depth = saved_cf_context.0;
-        self.ctx.switch_depth = saved_cf_context.1;
-        self.ctx.label_stack.truncate(saved_cf_context.2);
-        self.ctx.had_outer_loop = saved_cf_context.3;
+        self.ctx.exit_function_like_control_flow(saved_cf_context);
         yield_snapshot.rollback(&mut self.ctx.speculation_state());
         final_yield
     }
