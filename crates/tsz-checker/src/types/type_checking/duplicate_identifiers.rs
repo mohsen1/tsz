@@ -480,6 +480,16 @@ impl<'a> CheckerState<'a> {
             // TS2395.
             let mut ts2652_error_nodes: Vec<NodeIndex> = Vec::new();
             let mut ts2395_error_nodes: Vec<NodeIndex> = Vec::new();
+            // A symbol whose local declarations are all plain variables is
+            // owned end to end by `try_emit_variable_redeclaration_family`
+            // below (including its own TS2395), which models `tsc`'s
+            // two-table mechanism this single-group scan cannot: a variable
+            // pair can merge exported and non-exported declarations without
+            // ever colliding (`export var a; var a;` is legal `var`
+            // redeclaration but still reports TS2395), which this scan would
+            // also catch, but not with the right footprint once a real
+            // collision is also in play (see #16170).
+            let is_pure_variable_family = self.declarations_are_pure_variable_family(&declarations);
 
             // Skip TS2395 when all local declarations are in a `declare namespace`
             // (identifier-named ambient namespace). In these contexts, the
@@ -563,43 +573,47 @@ impl<'a> CheckerState<'a> {
                 ));
             }
 
-            for group in scope_groups.values() {
-                if group.len() <= 1 {
-                    continue;
-                }
-                let all_functions = group
-                    .iter()
-                    .all(|&(_, flags, _, _, _)| (flags & symbol_flags::FUNCTION) != 0);
-                let mut default_exported_spaces: u32 = 0;
-                let mut exported_spaces: u32 = 0;
-                let mut non_exported_spaces: u32 = 0;
-                for &(_, _, space, exported, default_exported) in group {
-                    if default_exported {
-                        default_exported_spaces |= space;
-                    } else if exported {
-                        exported_spaces |= space;
-                    } else {
-                        non_exported_spaces |= space;
+            if !is_pure_variable_family {
+                for group in scope_groups.values() {
+                    if group.len() <= 1 {
+                        continue;
                     }
-                }
-                let non_default_spaces = exported_spaces | non_exported_spaces;
-                let default_conflict_spaces = default_exported_spaces & non_default_spaces;
-                let export_local_conflict_spaces = if all_functions || suppress_ts2395_for_ambient {
-                    0
-                } else {
-                    exported_spaces & non_exported_spaces
-                };
+                    let all_functions = group
+                        .iter()
+                        .all(|&(_, flags, _, _, _)| (flags & symbol_flags::FUNCTION) != 0);
+                    let mut default_exported_spaces: u32 = 0;
+                    let mut exported_spaces: u32 = 0;
+                    let mut non_exported_spaces: u32 = 0;
+                    for &(_, _, space, exported, default_exported) in group {
+                        if default_exported {
+                            default_exported_spaces |= space;
+                        } else if exported {
+                            exported_spaces |= space;
+                        } else {
+                            non_exported_spaces |= space;
+                        }
+                    }
+                    let non_default_spaces = exported_spaces | non_exported_spaces;
+                    let default_conflict_spaces = default_exported_spaces & non_default_spaces;
+                    let export_local_conflict_spaces =
+                        if all_functions || suppress_ts2395_for_ambient {
+                            0
+                        } else {
+                            exported_spaces & non_exported_spaces
+                        };
 
-                if default_conflict_spaces == 0 && export_local_conflict_spaces == 0 {
-                    continue;
-                }
+                    if default_conflict_spaces == 0 && export_local_conflict_spaces == 0 {
+                        continue;
+                    }
 
-                for &(decl_idx, _, space, _, _) in group {
-                    let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
-                    if (space & default_conflict_spaces) != 0 {
-                        ts2652_error_nodes.push(error_node);
-                    } else if (space & export_local_conflict_spaces) != 0 {
-                        ts2395_error_nodes.push(error_node);
+                    for &(decl_idx, _, space, _, _) in group {
+                        let error_node =
+                            self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                        if (space & default_conflict_spaces) != 0 {
+                            ts2652_error_nodes.push(error_node);
+                        } else if (space & export_local_conflict_spaces) != 0 {
+                            ts2395_error_nodes.push(error_node);
+                        }
                     }
                 }
             }
@@ -1365,7 +1379,13 @@ impl<'a> CheckerState<'a> {
                 self.error_at_node(error_node, &message, diagnostic_codes::A_NAMESPACE_DECLARATION_CANNOT_BE_LOCATED_PRIOR_TO_A_CLASS_OR_FUNCTION_WITH_WHIC);
             }
 
-            if conflicts.is_empty() {
+            // A pure-variable-family symbol can need reporting (TS2395) even
+            // when no pair of its declarations ever collides under this
+            // scan's pairwise `conflicts` model — `export var a; var a;` is
+            // legal `var` redeclaration (no entry in `conflicts`) but still
+            // reports TS2395 — so it must still reach
+            // `try_emit_variable_redeclaration_family` below.
+            if conflicts.is_empty() && !is_pure_variable_family {
                 continue;
             }
 
@@ -1441,7 +1461,7 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
-                if conflicts.is_empty() {
+                if conflicts.is_empty() && !is_pure_variable_family {
                     continue;
                 }
             }
@@ -1669,10 +1689,9 @@ impl<'a> CheckerState<'a> {
             // directly in `duplicate_identifiers_variable_family`.
             if self.try_emit_variable_redeclaration_family(
                 &declarations,
-                &conflicts,
                 &name,
                 is_external_module,
-                force2300 || has_umd_global_value_conflict || has_merge_visibility_diagnostic,
+                force2300 || has_umd_global_value_conflict,
             ) {
                 continue;
             }

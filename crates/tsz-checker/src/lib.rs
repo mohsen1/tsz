@@ -1786,6 +1786,9 @@ mod ts2323_block_scoped_conflict_message_tests;
 #[path = "tests/ts2323_export_var_namespace_merge_tests.rs"]
 mod ts2323_export_var_namespace_merge_tests;
 #[cfg(test)]
+#[path = "tests/ts2323_mixed_exportedness_two_table_tests.rs"]
+mod ts2323_mixed_exportedness_two_table_tests;
+#[cfg(test)]
 #[path = "tests/ts2323_variable_redeclaration_two_pass_tests.rs"]
 mod ts2323_variable_redeclaration_two_pass_tests;
 #[cfg(test)]
