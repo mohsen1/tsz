@@ -34,7 +34,7 @@ impl ModuleDetectionKind {
     /// Returns `None` for an unrecognized value so the caller can keep its own
     /// default (`tsc` reports an option diagnostic and falls back separately).
     #[must_use]
-    pub fn from_option_str(value: &str) -> Option<Self> {
+    pub const fn from_option_str(value: &str) -> Option<Self> {
         if value.eq_ignore_ascii_case("force") {
             Some(Self::Force)
         } else if value.eq_ignore_ascii_case("legacy") {
