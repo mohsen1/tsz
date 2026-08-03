@@ -27,6 +27,7 @@ mod node_modifiers;
 mod node_pools;
 mod node_view;
 pub mod parse_rules;
+mod regex_unicode_properties;
 mod speculation;
 pub mod spelling;
 pub mod state;
