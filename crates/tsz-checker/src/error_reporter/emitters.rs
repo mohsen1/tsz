@@ -69,6 +69,29 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Report an error at a raw span with its `related_information` already
+    /// attached, built as one complete `Diagnostic` value before it is pushed.
+    ///
+    /// The raw-span counterpart to [`Self::error_at_node_with_related`], for the
+    /// callers that deliberately bypass `normalized_anchor_span` because tsc
+    /// anchors on the whole node rather than its normalized sub-span (a
+    /// parameter's leading `...`, for instance). Routing through
+    /// [`CheckerContext::push_diagnostic`] keeps the same deduplication and
+    /// related-information collision reconciliation as every other emitter, so
+    /// this is not a way to smuggle a duplicate diagnostic past the buffer.
+    pub(crate) fn error_at_span_with_related(
+        &mut self,
+        start: u32,
+        length: u32,
+        message: &str,
+        code: u32,
+        related: Vec<crate::diagnostics::DiagnosticRelatedInformation>,
+    ) {
+        let mut diag = Diagnostic::error(self.ctx.file_name.clone(), start, length, message, code);
+        diag.related_information = related;
+        self.ctx.push_diagnostic(diag);
+    }
+
     /// Report an error using a shared diagnostic anchor policy.
     pub(crate) fn error_at_anchor(
         &mut self,
