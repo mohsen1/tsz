@@ -250,6 +250,10 @@ mod close_brace_node_end_position_remaining_tests;
 mod decorator_tests;
 
 #[cfg(test)]
+#[path = "../../tests/regex_octal_decimal_class_escape_tests.rs"]
+mod regex_octal_decimal_class_escape_tests;
+
+#[cfg(test)]
 #[path = "../../tests/modifier_ordering_tests.rs"]
 mod modifier_ordering_tests;
 
