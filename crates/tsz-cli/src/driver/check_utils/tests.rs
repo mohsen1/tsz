@@ -1374,6 +1374,171 @@ fn filtered_parse_diagnostics_keeps_ts1101_with_non_real_parse_error() {
     );
 }
 
+/// Build the parse-diagnostic pair a bad getter + bad setter in one member list
+/// produces. `setter_code`/`setter_message` vary the setter's grammar failure so
+/// the whole `checkGrammarAccessor` family is covered by one helper rather than
+/// four hand-copied vectors.
+fn accessor_grammar_pair(
+    setter_code: u32,
+    setter_message: &str,
+) -> Vec<tsz::parser::ParseDiagnostic> {
+    use tsz::parser::ParseDiagnostic;
+
+    vec![
+        ParseDiagnostic {
+            start: 18,
+            length: 2,
+            message: "A 'get' accessor cannot have parameters.".to_string(),
+            code: 1054,
+        },
+        ParseDiagnostic {
+            start: 52,
+            length: 2,
+            message: setter_message.to_string(),
+            code: setter_code,
+        },
+    ]
+}
+
+#[test]
+fn filtered_parse_diagnostics_keeps_getter_ts1054_alongside_setter_ts1049() {
+    // #16277. Both codes come from tsc's single `checkGrammarAccessor`, so a
+    // setter's TS1049 must not suppress a getter's TS1054 in the same member
+    // list. Pinned against tsc 7.0.2 (`--noEmit --strict --pretty false`) in all
+    // three accessor containers — class, object literal and type-member list —
+    // each of which reports TS1054 and TS1049 together.
+    let diagnostics =
+        accessor_grammar_pair(1049, "A 'set' accessor must have exactly one parameter.");
+
+    let filtered = filtered_parse_diagnostics(&diagnostics, false);
+    let codes: Vec<u32> = filtered.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&1054),
+        "TS1054 must survive alongside a sibling TS1049, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&1049),
+        "TS1049 must survive alongside a sibling TS1054, got: {codes:?}"
+    );
+}
+
+#[test]
+fn filtered_parse_diagnostics_keeps_getter_ts1054_alongside_setter_ts1051() {
+    // Same family, optional-parameter arm. tsc reports TS1054 + TS1051 together.
+    let diagnostics =
+        accessor_grammar_pair(1051, "A 'set' accessor cannot have an optional parameter.");
+
+    let filtered = filtered_parse_diagnostics(&diagnostics, false);
+    let codes: Vec<u32> = filtered.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&1054),
+        "TS1054 must survive alongside a sibling TS1051, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&1051),
+        "TS1051 must survive alongside a sibling TS1054, got: {codes:?}"
+    );
+}
+
+#[test]
+fn filtered_parse_diagnostics_keeps_getter_ts1054_alongside_setter_ts1095() {
+    // Positive control that already passed before the fix: TS1095 was the one
+    // accessor code already listed as a grammar code, so it never triggered the
+    // sibling-suppression path. It pins the arm that must NOT change.
+    let diagnostics = accessor_grammar_pair(
+        1095,
+        "A 'set' accessor cannot have a return type annotation.",
+    );
+
+    let filtered = filtered_parse_diagnostics(&diagnostics, false);
+    let codes: Vec<u32> = filtered.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&1054),
+        "TS1054 must survive alongside a sibling TS1095, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&1095),
+        "TS1095 must survive alongside a sibling TS1054, got: {codes:?}"
+    );
+}
+
+#[test]
+fn filtered_parse_diagnostics_keeps_repeated_setter_ts1049_without_a_getter() {
+    // Negative control for the fix's own risk: listing TS1049 as a grammar code
+    // must not make it suppress itself or vanish when it is the only kind of
+    // diagnostic in the file. Two bad setters alone keep both TS1049s.
+    use tsz::parser::ParseDiagnostic;
+
+    let diagnostics = vec![
+        ParseDiagnostic {
+            start: 18,
+            length: 2,
+            message: "A 'set' accessor must have exactly one parameter.".to_string(),
+            code: 1049,
+        },
+        ParseDiagnostic {
+            start: 52,
+            length: 2,
+            message: "A 'set' accessor must have exactly one parameter.".to_string(),
+            code: 1049,
+        },
+    ];
+
+    let filtered = filtered_parse_diagnostics(&diagnostics, false);
+    let codes: Vec<u32> = filtered.iter().map(|d| d.code).collect();
+    assert_eq!(
+        codes,
+        vec![1049, 1049],
+        "both TS1049s must survive when no other diagnostic kind is present, got: {codes:?}"
+    );
+}
+
+#[test]
+fn filtered_parse_diagnostics_suppresses_accessor_grammar_family_when_real_parse_error_present() {
+    // The direction the fix newly introduces, and it is tsc's, not a side
+    // effect: `checkGrammarAccessor` reports through `grammarErrorOnNode`, which
+    // returns without reporting once `hasParseDiagnostics(sourceFile)` holds.
+    // Verified against tsc 7.0.2 — a class carrying `set sd(vd: number, wd:
+    // number) {}` plus a structural parse error reports ONLY the structural
+    // errors (TS1440/TS1109/TS1128); the TS1049 is gone. Same for TS1051.
+    use tsz::parser::ParseDiagnostic;
+
+    let diagnostics = vec![
+        ParseDiagnostic {
+            start: 18,
+            length: 2,
+            message: "A 'get' accessor cannot have parameters.".to_string(),
+            code: 1054,
+        },
+        ParseDiagnostic {
+            start: 52,
+            length: 2,
+            message: "A 'set' accessor must have exactly one parameter.".to_string(),
+            code: 1049,
+        },
+        ParseDiagnostic {
+            start: 70,
+            length: 2,
+            message: "A 'set' accessor cannot have an optional parameter.".to_string(),
+            code: 1051,
+        },
+        ParseDiagnostic {
+            start: 90,
+            length: 1,
+            message: "Expression expected.".to_string(),
+            code: 1109,
+        },
+    ];
+
+    let filtered = filtered_parse_diagnostics(&diagnostics, false);
+    let codes: Vec<u32> = filtered.iter().map(|d| d.code).collect();
+    assert_eq!(
+        codes,
+        vec![1109],
+        "the whole accessor grammar family must be suppressed by a real parse error, got: {codes:?}"
+    );
+}
+
 #[test]
 fn js_parse_allowlist_keeps_plain_js_binder_strict_codes() {
     for code in [1214, 18012] {
