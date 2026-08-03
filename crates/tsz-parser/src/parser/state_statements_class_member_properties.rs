@@ -552,9 +552,10 @@ impl ParserState {
         self.context_flags |= CONTEXT_FLAG_STATIC_BLOCK;
         let statements = self.parse_statements();
         self.context_flags = saved_flags;
-        self.parse_expected(SyntaxKind::CloseBraceToken);
-
+        // Capture the `}` token's own end before `parse_expected` advances past it —
+        // `token_end()` after the call would report the end of the *next* token instead.
         let end_pos = self.token_end();
+        self.parse_expected(SyntaxKind::CloseBraceToken);
 
         self.arena.add_block(
             syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION,

@@ -1832,9 +1832,14 @@ impl ParserState {
 
         let clauses = self.parse_switch_case_clauses();
 
+        // Capture the `}` token's own end before `parse_expected` advances past it —
+        // `token_end()` after the call would report the end of the *next* token instead.
+        // The `SwitchStatement`'s own end is the same position: nothing follows the case
+        // block's `}` inside the switch statement, so reuse `case_block_end` rather than
+        // re-reading the (now advanced) scanner a second time.
         let case_block_end = self.token_end();
         self.parse_expected(SyntaxKind::CloseBraceToken);
-        let end_pos = self.token_end();
+        let end_pos = case_block_end;
 
         let case_block = self.arena.add_block(
             syntax_kind_ext::CASE_BLOCK,

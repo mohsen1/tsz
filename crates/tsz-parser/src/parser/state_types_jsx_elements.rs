@@ -1152,9 +1152,10 @@ impl ParserState {
         let expression = self.parse_expression();
         self.in_jsx_attribute_initializer_element = was_in_initializer;
         self.context_flags = saved_flags;
-        self.parse_expected(SyntaxKind::CloseBraceToken);
-
+        // Capture the `}` token's own end before `parse_expected` advances past it —
+        // `token_end()` after the call would report the end of the *next* token instead.
         let end_pos = self.token_end();
+        self.parse_expected(SyntaxKind::CloseBraceToken);
         self.arena.add_jsx_spread_attribute(
             syntax_kind_ext::JSX_SPREAD_ATTRIBUTE,
             start_pos,
@@ -1208,9 +1209,10 @@ impl ParserState {
             expr
         };
 
-        self.parse_expected(SyntaxKind::CloseBraceToken);
-
+        // Capture the `}` token's own end before `parse_expected` advances past it —
+        // `token_end()` after the call would report the end of the *next* token instead.
         let end_pos = self.token_end();
+        self.parse_expected(SyntaxKind::CloseBraceToken);
         self.arena.add_jsx_expression(
             syntax_kind_ext::JSX_EXPRESSION,
             start_pos,

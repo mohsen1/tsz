@@ -245,6 +245,8 @@ mod do_while_exit_narrowing_tests;
 mod dom_fuel_exhaustion_ts2322_tests;
 #[path = "tests/duplicate_identifier_relation_routing_arch_tests.rs"]
 mod duplicate_identifier_relation_routing_arch_tests;
+#[path = "tests/duplicate_member_computed_name_ts2300_tests.rs"]
+mod duplicate_member_computed_name_ts2300_tests;
 #[path = "tests/dynamic_import_relation_routing_arch_tests.rs"]
 mod dynamic_import_relation_routing_arch_tests;
 #[path = "tests/enclosing_type_param_default_scope_tests.rs"]
