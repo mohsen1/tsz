@@ -640,7 +640,15 @@ pub(super) const fn is_checker_routed_ts1xxx_grammar(code: u32) -> bool {
         | 1107 // Jump target cannot cross function boundary.
         // Semantic checker diagnostics that merely occupy the grammar range.
         | 1064 // The return type of an async function or method must be the global Promise<T> type.
-        | 1315 // '{0}' is not a valid meta-property for keyword '{1}'.
+        // The global-module-export family — tsc's `checkNamespaceExportDeclaration`
+        // is one function reporting three codes in an early-return chain, so all
+        // three share its routing and must be listed together. Membership was
+        // 1315-only while 1314/1316 were unwired; wiring them without extending
+        // this list makes `umd-errors.ts` report TS1314 and TS1316 in a program
+        // whose real syntax errors suppress their own sibling.
+        | 1314 // Global module exports may only appear in module files.
+        | 1315 // Global module exports may only appear in declaration files.
+        | 1316 // Global module exports may only appear at top level.
     )
 }
 
