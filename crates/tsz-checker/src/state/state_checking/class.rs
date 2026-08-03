@@ -795,6 +795,10 @@ impl<'a> CheckerState<'a> {
         // Check for duplicate-member modifier disagreements (TS2687)
         self.check_class_member_modifier_disagreements(&class.members.nodes);
 
+        // TS2784/TS2680 on accessor `this` parameters. Runs for ambient classes
+        // too, unlike the implementation walk below.
+        self.check_class_accessor_this_parameters(&class.members.nodes);
+
         // Check for missing method/constructor implementations (2389, 2390, 2391)
         // Skip for declared classes (ambient declarations don't need implementations)
         if !is_declared {
@@ -1203,6 +1207,9 @@ impl<'a> CheckerState<'a> {
 
         // Check for duplicate-member modifier disagreements (TS2687)
         self.check_class_member_modifier_disagreements(&class.members.nodes);
+
+        // TS2784/TS2680 on accessor `this` parameters.
+        self.check_class_accessor_this_parameters(&class.members.nodes);
 
         // Check for missing method/constructor implementations (2389, 2390, 2391)
         self.check_class_member_implementations(&class.members.nodes);
