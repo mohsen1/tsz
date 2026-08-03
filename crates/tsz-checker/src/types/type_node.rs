@@ -703,6 +703,16 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         // This ensures errors like "Cannot find name 'C'" are emitted for: (x: T) => C
         check_duplicate_parameters_in_type(self.ctx, &func_data.parameters);
         check_parameter_initializers_in_type(self.ctx, &func_data.parameters);
+        // TS2680/TS2681: a `this` parameter is as illegal in `new (this: T) => T`
+        // as in a `constructor`, and as position-bound in `(a, this: T) => void`
+        // as in any other signature. These type nodes do not route through
+        // `check_parameter_ordering`, so the shared placement check runs here.
+        let container_kind = self.ctx.arena.get(idx).map(|node| node.kind);
+        crate::checkers_domain::parameter_checker::check_this_parameter_placement_in_ctx(
+            self.ctx,
+            &func_data.parameters,
+            container_kind,
+        );
 
         use tsz_parser::parser::syntax_kind_ext;
 

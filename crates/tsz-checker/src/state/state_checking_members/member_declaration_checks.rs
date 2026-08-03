@@ -1035,6 +1035,31 @@ impl<'a> CheckerState<'a> {
 
     /// Check that all method/constructor overload signatures have implementations.
     /// Reports errors 2389, 2390, 2391, 1042.
+    /// TS2784/TS2680 for class accessors.
+    ///
+    /// Accessors do not route through `check_parameter_ordering` — the walks
+    /// that do are keyed on methods, constructors and signatures — so the
+    /// shared `this`-parameter placement check runs from its own member walk.
+    /// This one deliberately runs for ambient classes too: a `declare class`
+    /// getter can declare a `this` parameter just as illegally as a concrete
+    /// one, and `check_class_member_implementations` is skipped when the class
+    /// is ambient.
+    pub(crate) fn check_class_accessor_this_parameters(&mut self, members: &[NodeIndex]) {
+        for &member_idx in members {
+            let Some(node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if node.kind != syntax_kind_ext::GET_ACCESSOR
+                && node.kind != syntax_kind_ext::SET_ACCESSOR
+            {
+                continue;
+            }
+            if let Some(accessor) = self.ctx.arena.get_accessor(node) {
+                self.check_this_parameter_placement(&accessor.parameters, Some(member_idx));
+            }
+        }
+    }
+
     pub(crate) fn check_class_member_implementations(&mut self, members: &[NodeIndex]) {
         use crate::diagnostics::diagnostic_codes;
 

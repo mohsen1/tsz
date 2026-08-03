@@ -392,6 +392,19 @@ fn is_hard_keyword_interface_name_2427_parse_diagnostic(diagnostic: &ParseDiagno
 /// These should be suppressed when the file has parse errors, matching tsc behavior.
 /// Only includes codes confirmed to be checker-side grammar checks in tsc that
 /// our parser emits instead.
+///
+/// Membership is load-bearing in BOTH directions. A listed code is suppressed
+/// when a real parse error exists, and — because `has_non_grammar_parse_error`
+/// is computed as the complement of this list — an *unlisted* parser-emitted
+/// grammar code counts as a real parse error and suppresses every listed
+/// sibling. So omitting one member of a `grammarError`-family silently deletes
+/// the rest of its family: TS1049/TS1051 were missing here, and any file whose
+/// setter tripped one of them lost the getter's TS1054 entirely.
+///
+/// The accessor family (tsc's single `checkGrammarAccessor`) is therefore all
+/// in or all out: TS1049, TS1051, TS1054, TS1095. TS1052/TS1053 belong to the
+/// same tsc function but are checker-emitted in tsz, so they never reach this
+/// parse-diagnostic filter.
 const fn is_parser_grammar_code(code: u32) -> bool {
     matches!(
         code,
@@ -416,6 +429,8 @@ const fn is_parser_grammar_code(code: u32) -> bool {
         | 1040 // '{0}' modifier cannot be used in an ambient context
         | 1042 // 'async' modifier cannot be used here
         | 1044 // '{0}' modifier cannot appear on a module or namespace element
+        | 1049 // A 'set' accessor must have exactly one parameter
+        | 1051 // A 'set' accessor cannot have an optional parameter
         | 1054 // A 'get' accessor cannot have parameters
         | 1070 // '{0}' modifier cannot appear on a type member
         | 1071 // An accessor must have a body (interface/ambient)
