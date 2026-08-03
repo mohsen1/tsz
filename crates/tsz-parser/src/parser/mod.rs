@@ -309,6 +309,10 @@ mod computed_property_binding_recovery_tests;
 #[path = "../../tests/reserved_parameter_recovery_tests.rs"]
 mod reserved_parameter_recovery_tests;
 
+#[cfg(test)]
+#[path = "../../tests/ts1180_property_destructuring_pattern_expected_tests.rs"]
+mod ts1180_property_destructuring_pattern_expected_tests;
+
 // Re-export flags
 pub use flags::{modifier_flags, node_flags, transform_flags};
 

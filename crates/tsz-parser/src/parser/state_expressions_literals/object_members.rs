@@ -1065,6 +1065,19 @@ impl ParserState {
 
     /// Parse property name (identifier, string literal, numeric literal, bigint literal, computed)
     pub(crate) fn parse_property_name(&mut self) -> NodeIndex {
+        self.parse_property_name_impl(false)
+    }
+
+    /// Parse a binding-element property name: `{ propertyName: name } = ...`.
+    /// Same grammar as `parse_property_name`, but an invalid token reports
+    /// TS1180 ("Property destructuring pattern expected.") instead of
+    /// TS1136 ("Property assignment expected."), matching tsc's
+    /// `ParsingContext.ObjectBindingElements` recovery message.
+    pub(crate) fn parse_property_name_for_binding(&mut self) -> NodeIndex {
+        self.parse_property_name_impl(true)
+    }
+
+    fn parse_property_name_impl(&mut self, in_binding_pattern: bool) -> NodeIndex {
         match self.token() {
             SyntaxKind::StringLiteral => {
                 // String literal can be property name: { "key": value }
@@ -1162,10 +1175,17 @@ impl ParserState {
 
                 if !is_identifier_or_keyword {
                     use tsz_common::diagnostics::diagnostic_codes;
-                    self.parse_error_at_current_token(
-                        "Property assignment expected.",
-                        diagnostic_codes::PROPERTY_ASSIGNMENT_EXPECTED,
-                    );
+                    if in_binding_pattern {
+                        self.parse_error_at_current_token(
+                            "Property destructuring pattern expected.",
+                            diagnostic_codes::PROPERTY_DESTRUCTURING_PATTERN_EXPECTED,
+                        );
+                    } else {
+                        self.parse_error_at_current_token(
+                            "Property assignment expected.",
+                            diagnostic_codes::PROPERTY_ASSIGNMENT_EXPECTED,
+                        );
+                    }
                     // For object-literal terminators/separators (`,`, `}`, `;`, EOF), do NOT
                     // consume the token. Consuming a `,` here causes us to synthesize a
                     // SHORTHAND_PROPERTY_ASSIGNMENT with an empty name, which then prints

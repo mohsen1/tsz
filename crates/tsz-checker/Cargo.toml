@@ -2622,3 +2622,6 @@ path = "tests/noimplicitany_type_member_accessor_tests.rs"
 [[test]]
 name = "signature_binding_pattern_typeof_scope_tests"
 path = "tests/signature_binding_pattern_typeof_scope_tests.rs"
+[[test]]
+name = "ts1501_tests"
+path = "tests/ts1501_tests.rs"

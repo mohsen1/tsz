@@ -265,6 +265,8 @@ mod expando_annotated_receiver_tests;
 mod explicit_alias_constraint_relation_routing_arch_tests;
 #[path = "tests/explicit_type_arg_overload_pruning_tests.rs"]
 mod explicit_type_arg_overload_pruning_tests;
+#[path = "tests/export_declaration_module_element_context_tests.rs"]
+mod export_declaration_module_element_context_tests;
 #[path = "tests/flow_assignment_relation_routing_arch_tests.rs"]
 mod flow_assignment_relation_routing_arch_tests;
 #[path = "tests/flow_cache_policy_arch_tests.rs"]
