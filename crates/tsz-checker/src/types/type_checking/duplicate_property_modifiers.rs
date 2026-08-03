@@ -34,15 +34,10 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Track (member_idx, type_annotation) of the first declaration of each
-        // member name, for the TS2300 / TS2717 comparisons below.
-        let mut seen: rustc_hash::FxHashMap<String, (NodeIndex, NodeIndex)> =
-            rustc_hash::FxHashMap::default();
-        // Canonical name -> property-signature member nodes (source order) for
-        // names that occur more than once. Only populated on a duplicate hit, so
-        // the common (no-duplicate) type literal allocates nothing extra. Feeds
-        // the TS2687 modifier-agreement check after the duplicate scan.
-        let mut duplicate_groups: rustc_hash::FxHashMap<String, Vec<NodeIndex>> =
+        // Canonical name -> (member_idx, type_annotation, is_eagerly_bound)
+        // triples, in source order. Mirrors `check_duplicate_interface_members`
+        // (`interface_checks.rs`) — the two containers apply one rule.
+        let mut seen_properties: rustc_hash::FxHashMap<String, Vec<(NodeIndex, NodeIndex, bool)>> =
             rustc_hash::FxHashMap::default();
 
         for &member_idx in members {
@@ -80,96 +75,100 @@ impl<'a> CheckerState<'a> {
             } else {
                 continue;
             };
-            let type_ann = sig.type_annotation;
 
-            if let Some(&(prev_idx, prev_type_ann)) = seen.get(&name) {
-                let name_idx = sig.name;
+            let is_eager = self.is_eagerly_bound_member_name(sig.name);
+            seen_properties.entry(name).or_default().push((
+                member_idx,
+                sig.type_annotation,
+                is_eager,
+            ));
+        }
 
-                // Record the full duplicate group (first declaration once, then
-                // each subsequent one) for the TS2687 modifier check below.
-                duplicate_groups
-                    .entry(name.clone())
-                    .or_insert_with(|| vec![prev_idx])
-                    .push(member_idx);
+        // Report errors for duplicates — tsc reports TS2300 on ALL occurrences
+        // (both first and subsequent), not just the second+.
+        for (name, entries) in &seen_properties {
+            if entries.len() <= 1 {
+                continue;
+            }
+
+            // tsc renders the duplicate name via `declarationNameToString` of
+            // the group's first *eagerly bound* declaration's name node
+            // (verbatim source spelling), falling back to the first
+            // declaration only when every member of the group is late-bound:
+            // `{ "artist"; artist }` reports `'"artist"'` at both, `{ 0.0;
+            // '0' }` reports `'0.0'` (raw source, not the canonicalized `0`),
+            // and `{ [c0]: number; 1: number }` (where `const c0 = "1"`)
+            // reports `'1'` even though `[c0]` is written first, because a
+            // computed name over an entity reference is late-bound and the
+            // plain numeric-literal `1` is not (#16258 residual 1).
+            let render_entry = *entries.iter().find(|entry| entry.2).unwrap_or(&entries[0]);
+            let render_idx = render_entry.0;
+            let render_name_idx = self
+                .property_signature_name_node(render_idx)
+                .unwrap_or(render_idx);
+            let display_name = self
+                .declaration_name_to_string(render_name_idx)
+                .unwrap_or_else(|| name.clone());
+
+            // TS2687: duplicate property declarations must agree on
+            // `readonly` / optional modifiers. Independent of TS2300/TS2717.
+            // The comparison reference is the same eagerly-bound declaration
+            // TS2300 renders, not source-order-first — see the doc comment on
+            // `report_property_modifier_disagreements`.
+            let member_nodes: Vec<NodeIndex> = entries.iter().map(|entry| entry.0).collect();
+            self.report_property_modifier_disagreements(render_idx, &member_nodes);
+
+            // The reference type for TS2717 is the eagerly-bound
+            // declaration's own type, not source-order-first's — same
+            // reference `render_idx` as TS2300/TS2687.
+            let reference_type = if render_entry.1.is_some() {
+                self.get_type_from_type_node(render_entry.1)
+            } else {
+                TypeId::ANY
+            };
+
+            for &(idx, type_ann, _) in entries.iter() {
+                let Some(error_node) = self.property_signature_name_node(idx) else {
+                    continue;
+                };
 
                 // TS2300 on every declaration in the group. How each name was
                 // spelled does not matter — a computed name that reached this
                 // point resolved to a real member key, so it names the same
                 // member as its group siblings.
-                //
-                // tsc renders the duplicate name via `declarationNameToString`
-                // of the FIRST declaration's name node (verbatim source
-                // spelling), and reuses that spelling for every occurrence:
-                // `{ "artist"; artist }` reports `'"artist"'` at both, and
-                // `{ 0.0; '0' }` reports `'0.0'` (raw source, not the
-                // canonicalized `0`).
-                let prev_name_idx = self
-                    .ctx
-                    .arena
-                    .get(prev_idx)
-                    .and_then(|prev_node| self.ctx.arena.get_signature(prev_node))
-                    .map(|prev_sig| prev_sig.name)
-                    .unwrap_or(prev_idx);
-                let display_name = self
-                    .declaration_name_to_string(prev_name_idx)
-                    .unwrap_or_else(|| name.clone());
                 self.error_at_node(
-                    name_idx,
+                    error_node,
                     &format!("Duplicate identifier '{display_name}'."),
                     diagnostic_codes::DUPLICATE_IDENTIFIER,
                 );
-                // Also mark the first occurrence.
-                if self.ctx.arena.get(prev_idx).is_some() {
-                    self.error_at_node(
-                        prev_name_idx,
-                        &format!("Duplicate identifier '{display_name}'."),
-                        diagnostic_codes::DUPLICATE_IDENTIFIER,
-                    );
-                }
 
-                // TS2717 on the subsequent declaration when types differ.
-                // Use display text for the property name to match TSC's
+                // TS2717 on every declaration OTHER than the reference, when
+                // its type differs from the reference's. Use display text
+                // for the property name to match TSC's
                 // declarationNameToString (e.g., "1.0" not "1").
-                let first_type = if prev_type_ann.is_some() {
-                    self.get_type_from_type_node(prev_type_ann)
-                } else {
-                    TypeId::ANY
-                };
-                let this_type = if type_ann.is_some() {
-                    self.get_type_from_type_node(type_ann)
-                } else {
-                    TypeId::ANY
-                };
-                if !self.type_contains_error(first_type)
-                    && !self.type_contains_error(this_type)
-                    && first_type != this_type
-                {
-                    let display_name = self
-                        .get_member_name_display_text(name_idx)
-                        .unwrap_or_else(|| name.clone());
-                    let first_type_str = self.format_type(first_type);
-                    let this_type_str = self.format_type(this_type);
-                    self.error_at_node_msg(
-                        name_idx,
-                        diagnostic_codes::SUBSEQUENT_PROPERTY_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_PROPERTY_MUST_BE_OF_TYP,
-                        &[&display_name, &first_type_str, &this_type_str],
-                    );
+                if idx != render_idx {
+                    let this_type = if type_ann.is_some() {
+                        self.get_type_from_type_node(type_ann)
+                    } else {
+                        TypeId::ANY
+                    };
+                    if !self.type_contains_error(reference_type)
+                        && !self.type_contains_error(this_type)
+                        && reference_type != this_type
+                    {
+                        let display_name = self
+                            .get_member_name_display_text(error_node)
+                            .unwrap_or_else(|| name.clone());
+                        let reference_type_str = self.format_type(reference_type);
+                        let this_type_str = self.format_type(this_type);
+                        self.error_at_node_msg(
+                            error_node,
+                            diagnostic_codes::SUBSEQUENT_PROPERTY_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_PROPERTY_MUST_BE_OF_TYP,
+                            &[&display_name, &reference_type_str, &this_type_str],
+                        );
+                    }
                 }
-            } else {
-                seen.insert(name, (member_idx, type_ann));
             }
-        }
-
-        for (name, member_nodes) in &duplicate_groups {
-            // TS2687 names the member the same way TS2300 does — by the first
-            // declaration's verbatim spelling, not the canonical member key.
-            let first_name_node = self
-                .property_signature_name_node(member_nodes[0])
-                .unwrap_or(member_nodes[0]);
-            let display_name = self
-                .declaration_name_to_string(first_name_node)
-                .unwrap_or_else(|| name.clone());
-            self.report_property_modifier_disagreements(&display_name, member_nodes);
         }
     }
 
@@ -179,22 +178,27 @@ impl<'a> CheckerState<'a> {
     /// the same member name but disagree on the `readonly` or optional (`?`)
     /// modifier. It is independent of the same-type (TS2717) diagnostic: it
     /// fires even when the declared types are identical (so TS2717 is absent).
-    /// It accompanies TS2300 on the same group of declarations, and `name` is
-    /// the same first-declaration spelling TS2300 renders.
     ///
-    /// Targeting mirrors `tsc`: the first declaration is the reference; every
-    /// later declaration whose flags differ from it is flagged, and the
-    /// reference itself is flagged once if any later declaration differs. So
-    /// `readonly a; a; readonly a` flags the first two (the third matches the
-    /// reference) while `a; readonly a; readonly a` flags all three.
+    /// Targeting and naming both key off `reference_idx` — the group's first
+    /// *eagerly bound* declaration (`is_eagerly_bound_member_name`), the same
+    /// declaration TS2300 renders and TS2717 compares types against — not
+    /// source-order-first. Every other declaration whose flags differ from
+    /// the reference's is flagged, and the reference itself is flagged once
+    /// if anything differs. Unlike TS2300 (one shared name for the whole
+    /// group), each flagged declaration is named by **its own** spelling, not
+    /// the reference's: oracle-pinned on `readonly [c0]: number; 1: string;`
+    /// (`const c0 = "1"`, so `1` is the reference) — `tsc` reports `"All
+    /// declarations of '[c0]' must have identical modifiers."` at `[c0]` and
+    /// `"...of '1'..."` at `1`, not the same name at both (#16258 residual 1).
     ///
     /// `member_nodes` is the property-signature member nodes that share the
-    /// canonical `name`, in source order. Callers pass the same group of
-    /// declarations they already detected as duplicates, so computed names that
-    /// resolve to the same value share a group.
+    /// canonical member name, in source order; `reference_idx` must be one of
+    /// them. Callers pass the same group of declarations they already
+    /// detected as duplicates, so computed names that resolve to the same
+    /// value share a group.
     pub(crate) fn report_property_modifier_disagreements(
         &mut self,
-        name: &str,
+        reference_idx: NodeIndex,
         member_nodes: &[NodeIndex],
     ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
@@ -203,38 +207,42 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let Some(reference) = self.property_signature_modifier_flags(member_nodes[0]) else {
+        let Some(reference) = self.property_signature_modifier_flags(reference_idx) else {
             return;
         };
 
         // Collect the declarations that disagree with the reference before
         // emitting, so the flag reads (`&self`) don't interleave with the error
-        // emission (`&mut self`). The reference is flagged once if any later
+        // emission (`&mut self`). The reference is flagged once if any other
         // declaration differs.
         let mut nodes_to_flag: Vec<NodeIndex> = Vec::new();
-        for &member_idx in &member_nodes[1..] {
+        for &member_idx in member_nodes {
+            if member_idx == reference_idx {
+                continue;
+            }
             let Some(flags) = self.property_signature_modifier_flags(member_idx) else {
                 continue;
             };
             if flags != reference {
-                if nodes_to_flag.is_empty() {
-                    nodes_to_flag.push(member_nodes[0]);
-                }
                 nodes_to_flag.push(member_idx);
             }
         }
         if nodes_to_flag.is_empty() {
             return;
         }
+        nodes_to_flag.insert(0, reference_idx);
 
-        let message = crate::diagnostics::format_message(
-            diagnostic_messages::ALL_DECLARATIONS_OF_MUST_HAVE_IDENTICAL_MODIFIERS,
-            &[name],
-        );
         for member_idx in nodes_to_flag {
             let name_node = self
                 .property_signature_name_node(member_idx)
                 .unwrap_or(member_idx);
+            let display_name = self
+                .get_member_name_display_text(name_node)
+                .unwrap_or_default();
+            let message = crate::diagnostics::format_message(
+                diagnostic_messages::ALL_DECLARATIONS_OF_MUST_HAVE_IDENTICAL_MODIFIERS,
+                &[&display_name],
+            );
             self.error_at_node(
                 name_node,
                 &message,

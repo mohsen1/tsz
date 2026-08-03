@@ -13,6 +13,47 @@ impl<'a> CheckerState<'a> {
     // Section 30: Name Extraction Utilities
     // =========================================================================
 
+    /// Whether `name_idx` is a member name the *binder* keys immediately,
+    /// without consulting the expression's type: an identifier, a private
+    /// name, a string/numeric-literal name, or a computed name whose
+    /// expression is itself a string/numeric/no-substitution-template literal
+    /// (`["abc"]`, `[123]`, `` [`abc`] ``).
+    ///
+    /// Purely syntactic — unlike `is_late_bound_member_name`, this never
+    /// evaluates the expression's type. `[c0]` where `const c0 = "1"` is
+    /// late-bound by *this* test even though `is_late_bound_member_name`
+    /// classifies it as not-late-bound once `c0`'s type resolves to a string
+    /// literal: tsc's binder defers a computed name over an entity-name
+    /// expression to a later binding pass regardless of what its type turns
+    /// out to be, and it is that deferral — not the eventual resolved type —
+    /// that decides which declaration's spelling a duplicate-name group's
+    /// `TS2300`/`TS2687`/`TS2717` diagnostics render: the group's first
+    /// *eagerly* bound declaration, falling back to the first declaration
+    /// only when every member of the group is late-bound (`#16258` residual
+    /// 1, `dynamicNamesErrors.ts`: `[c0]: number; 1: number` with
+    /// `const c0 = "1"` renders `'1'`, not `'[c0]'`).
+    pub(crate) fn is_eagerly_bound_member_name(&self, name_idx: NodeIndex) -> bool {
+        if name_idx.is_none() {
+            return false;
+        }
+        let Some(name_node) = self.ctx.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return true;
+        }
+        let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
+            return true;
+        };
+        let Some(expr_node) = self.ctx.arena.get(computed.expression) else {
+            return false;
+        };
+        let kind = expr_node.kind;
+        kind == SyntaxKind::StringLiteral as u16
+            || kind == SyntaxKind::NumericLiteral as u16
+            || kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+    }
+
     /// Check if a computed property name resolves to a string literal type
     /// (e.g. `[hundredStr]` where `const hundredStr = "100"`).
     pub(crate) fn is_computed_string_property_name(&mut self, name_idx: NodeIndex) -> bool {

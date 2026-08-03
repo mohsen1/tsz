@@ -994,9 +994,10 @@ impl<'a> CheckerState<'a> {
         use crate::diagnostics::diagnostic_codes;
         use rustc_hash::FxHashMap;
 
-        // Track canonical property names → (member_idx, type_annotation_node) pairs.
-        // Methods are allowed to have overloads so they are excluded.
-        let mut seen_properties: FxHashMap<String, Vec<(NodeIndex, NodeIndex)>> =
+        // Track canonical property names → (member_idx, type_annotation_node,
+        // is_eagerly_bound) triples. Methods are allowed to have overloads so
+        // they are excluded.
+        let mut seen_properties: FxHashMap<String, Vec<(NodeIndex, NodeIndex, bool)>> =
             FxHashMap::default();
 
         for &member_idx in members {
@@ -1042,10 +1043,12 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            seen_properties
-                .entry(canonical_name)
-                .or_default()
-                .push((member_idx, sig.type_annotation));
+            let is_eager = self.is_eagerly_bound_member_name(sig.name);
+            seen_properties.entry(canonical_name).or_default().push((
+                member_idx,
+                sig.type_annotation,
+                is_eager,
+            ));
         }
 
         // Report errors for duplicates — tsc reports TS2300 on ALL occurrences
@@ -1053,33 +1056,53 @@ impl<'a> CheckerState<'a> {
         for (name, entries) in &seen_properties {
             if entries.len() > 1 {
                 // tsc renders the duplicate name via `declarationNameToString` of
-                // the FIRST declaration's name node (verbatim source spelling) and
-                // reuses it for every occurrence: `{ "artist"; artist }` reports
-                // `'"artist"'` at both, and `{ "1"; 1 }` reports `'"1"'` (source,
-                // not the canonicalized `1`). Computed spellings are kept whole,
-                // so `{ ["abc"]; abc }` reports `'["abc"]'` at both. TS2717, by
-                // contrast, names the member by the *subsequent* declaration's
-                // spelling — the asymmetry is deliberate on both sides.
+                // the group's first *eagerly bound* declaration's name node
+                // (verbatim source spelling), falling back to the first
+                // declaration only when every member of the group is
+                // late-bound: `{ "artist"; artist }` reports `'"artist"'` at
+                // both, `{ "1"; 1 }` reports `'"1"'` (source, not the
+                // canonicalized `1`), and `{ [c0]: number; 1: number }` (where
+                // `const c0 = "1"`) reports `'1'` even though `[c0]` is
+                // written first, because a computed name over an entity
+                // reference is late-bound and the plain numeric-literal `1`
+                // is not (#16258 residual 1). Computed spellings are kept
+                // whole, so `{ ["abc"]; abc }` reports `'["abc"]'` at both.
+                // TS2717, by contrast, names the member by the *subsequent*
+                // declaration's spelling — the asymmetry is deliberate on
+                // both sides.
+                let render_entry = *entries.iter().find(|entry| entry.2).unwrap_or(&entries[0]);
+                let render_idx = render_entry.0;
                 let first_name_node = self
-                    .get_interface_member_name_node(entries[0].0)
-                    .unwrap_or(entries[0].0);
+                    .get_interface_member_name_node(render_idx)
+                    .unwrap_or(render_idx);
                 let display_name = self
                     .declaration_name_to_string(first_name_node)
                     .unwrap_or_else(|| name.clone());
 
                 // TS2687: duplicate property declarations must agree on
                 // `readonly` / optional modifiers. Independent of TS2300/TS2717.
+                // The comparison reference is the same eagerly-bound
+                // declaration TS2300 renders, not source-order-first (#16258
+                // residual 1: oracle-verified on `readonly [c0]: number;
+                // [c1]: string; 1: boolean;` — only the declaration that
+                // disagrees with `1`'s modifiers is flagged, not `[c1]`'s,
+                // even though `[c0]` is written first).
                 let member_nodes: Vec<NodeIndex> = entries.iter().map(|entry| entry.0).collect();
-                self.report_property_modifier_disagreements(&display_name, &member_nodes);
+                self.report_property_modifier_disagreements(render_idx, &member_nodes);
 
-                // Resolve the first property's type for TS2717 comparison
-                let first_type = if entries[0].1.is_some() {
-                    self.get_type_from_type_node(entries[0].1)
+                // The reference type for TS2717 is the eagerly-bound
+                // declaration's own type, not source-order-first's — same
+                // reference `render_idx` as TS2300/TS2687. Oracle-verified:
+                // `[c0]: number; [c1]: string; 1: boolean;` reports TS2717 on
+                // `[c0]` and `[c1]` naming `'boolean'` (the eager `1`'s type)
+                // as the expected type, never on `1` itself.
+                let reference_type = if render_entry.1.is_some() {
+                    self.get_type_from_type_node(render_entry.1)
                 } else {
                     TypeId::ANY
                 };
 
-                for (i, &(idx, type_ann)) in entries.iter().enumerate() {
+                for &(idx, type_ann, _) in entries.iter() {
                     let error_node = self.get_interface_member_name_node(idx).unwrap_or(idx);
 
                     // TS2300 on every declaration in the group. How each name was
@@ -1092,30 +1115,31 @@ impl<'a> CheckerState<'a> {
                         &[&display_name],
                     );
 
-                    // TS2717 on subsequent declarations when types differ
-                    if i > 0 {
+                    // TS2717 on every declaration OTHER than the reference,
+                    // when its type differs from the reference's.
+                    if idx != render_idx {
                         let this_type = if type_ann.is_some() {
                             self.get_type_from_type_node(type_ann)
                         } else {
                             TypeId::ANY
                         };
-                        if !self.type_contains_error(first_type)
+                        if !self.type_contains_error(reference_type)
                             && !self.type_contains_error(this_type)
                         {
                             // TS2717 uses type identity, not assignability.
                             // With interned types, TypeId equality is structural identity.
-                            if first_type != this_type {
+                            if reference_type != this_type {
                                 // Use display text for the property name in diagnostics.
                                 // For computed properties, this preserves the `[expr]` syntax.
                                 let display_name = self
                                     .get_member_name_display_text(error_node)
                                     .unwrap_or_else(|| name.clone());
-                                let first_type_str = self.format_type(first_type);
+                                let reference_type_str = self.format_type(reference_type);
                                 let this_type_str = self.format_type(this_type);
                                 self.error_at_node_msg(
                                     error_node,
                                     diagnostic_codes::SUBSEQUENT_PROPERTY_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_PROPERTY_MUST_BE_OF_TYP,
-                                    &[&display_name, &first_type_str, &this_type_str],
+                                    &[&display_name, &reference_type_str, &this_type_str],
                                 );
                             }
                         }
