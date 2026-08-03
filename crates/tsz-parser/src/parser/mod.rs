@@ -238,6 +238,10 @@ mod close_brace_node_end_position_tests;
 mod accessor_signature_parameter_list_tests;
 
 #[cfg(test)]
+#[path = "../../tests/object_literal_set_accessor_return_type_tests.rs"]
+mod object_literal_set_accessor_return_type_tests;
+
+#[cfg(test)]
 #[path = "../../tests/close_brace_node_end_position_remaining_tests.rs"]
 mod close_brace_node_end_position_remaining_tests;
 
