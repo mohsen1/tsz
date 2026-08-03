@@ -468,3 +468,125 @@ module.exports = Host;
 // referenced symbol IS (or aliases to) the target's own
 // `JsExportSurface::direct_export_type`, which a function call's return
 // value is not.
+
+fn ts9006_require_aliased_reexport_config() -> &'static str {
+    r#"{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "target": "es2015",
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "module": "commonjs"
+  },
+  "files": ["cls.js", "cjs2.js", "includeAll.js"]
+}"#
+}
+
+/// `module.exports = ns;` where `ns = require(...)` re-exports another
+/// module's namespace WHOLESALE, distinct from #16254's direct
+/// class/function export target: the private member (`Foo`) is reached only
+/// by drilling into `ns`'s namespace type, not by `ns` itself matching
+/// `Foo`'s symbol. tsc still prints this as a single alias
+/// (`import ns = require("./cls"); export = ns;`) and never needs to name
+/// `Foo` on its own, so no TS9006 should fire on any member reachable
+/// through the re-exported namespace.
+#[test]
+fn commonjs_require_aliased_whole_module_reexport_is_nameable() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(&base.join("tsconfig.json"), ts9006_require_aliased_reexport_config());
+    write_file(&base.join("cls.js"), "export class Foo {}\n");
+    write_file(
+        &base.join("cjs2.js"),
+        r#"const ns = require("./cls");
+module.exports = ns;
+"#,
+    );
+    write_file(&base.join("includeAll.js"), "import \"./cjs2\";\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts9006: Vec<_> = result.diagnostics.iter().filter(|d| d.code == 9006).collect();
+    assert!(
+        ts9006.is_empty(),
+        "module.exports = ns (require-aliased whole-module re-export) makes every member of \
+         ns's namespace nameable via `import ns = require(...)`; no TS9006 should fire, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+/// Same shape with every binder renamed, to rule out a name-string match.
+#[test]
+fn commonjs_require_aliased_whole_module_reexport_is_nameable_renamed_binders() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(&base.join("tsconfig.json"), ts9006_require_aliased_reexport_config());
+    write_file(&base.join("cls.js"), "export class Gadget {}\n");
+    write_file(
+        &base.join("cjs2.js"),
+        r#"const alias = require("./cls");
+module.exports = alias;
+"#,
+    );
+    write_file(&base.join("includeAll.js"), "import \"./cjs2\";\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts9006: Vec<_> = result.diagnostics.iter().filter(|d| d.code == 9006).collect();
+    assert!(
+        ts9006.is_empty(),
+        "renamed-binder variant must also suppress TS9006, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+/// Negative control: a *structural* re-export (`module.exports = { ns };`,
+/// the object literal wraps the require-aliased namespace rather than
+/// assigning it wholesale) is a DIFFERENT, still-open mechanism (tsc prints
+/// it as `declare const _exports: { ns: typeof ns }; export = _exports;
+/// import ns = require("./cls");` — a distinct alias-hoisting shape this fix
+/// does not implement). This pins the current, pre-existing behavior so a
+/// future widening of the `namespace_module_names` gate cannot silently
+/// start masking real TS9006s on structural (non-wholesale) exports without
+/// this test forcing a conscious update.
+#[test]
+fn commonjs_object_literal_wrapped_namespace_reexport_still_reports_ts9006() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "target": "es2015",
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "module": "commonjs"
+  },
+  "files": ["cls.js", "cjs.js", "includeAll.js"]
+}"#,
+    );
+    write_file(&base.join("cls.js"), "export class Foo {}\n");
+    write_file(
+        &base.join("cjs.js"),
+        r#"const ns = require("./cls");
+module.exports = { ns };
+"#,
+    );
+    write_file(&base.join("includeAll.js"), "import \"./cjs\";\n");
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts9006: Vec<_> = result.diagnostics.iter().filter(|d| d.code == 9006).collect();
+    assert!(
+        !ts9006.is_empty(),
+        "structural (object-literal-wrapped) re-export is a distinct, still-open mechanism; \
+         expected TS9006 to still fire, got: {:#?}",
+        result.diagnostics
+    );
+}
