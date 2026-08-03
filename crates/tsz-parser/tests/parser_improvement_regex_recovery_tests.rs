@@ -131,6 +131,64 @@ const missing = /[a&&]/v;
 }
 
 #[test]
+fn test_regex_q_escape_outside_character_class_reports_ts1511_under_v_flag() {
+    // tsc: `\q` is a `v`-mode-only character-class atom (ECMA-262
+    // `ClassSetCharacter :: \q{...}`). Used at atom position outside a class
+    // under the `v` flag it is still reserved, but tsc names the specific
+    // reason (TS1511) rather than the generic TS1535 fallback.
+    let source = r"const outside = /\q{abc}/v;";
+    let (parser, _root) = parse_source(source);
+
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::Q_IS_ONLY_AVAILABLE_INSIDE_CHARACTER_CLASS),
+        "Expected TS1511 for \\q outside a character class under /v, got {diagnostics:?}"
+    );
+    assert!(
+        !codes
+            .contains(&diagnostic_codes::THIS_CHARACTER_CANNOT_BE_ESCAPED_IN_A_REGULAR_EXPRESSION),
+        "TS1511 should replace the generic TS1535 fallback for this shape, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_regex_q_escape_stays_ts1535_without_v_flag_or_inside_class() {
+    // Negative/adjacent matrix for the TS1511 fix above: only "atom
+    // position + `v` flag" gets the specific code. Every other combination
+    // must keep reporting the pre-existing generic TS1535 (or, inside a
+    // `v`-mode class, no diagnostic at all — `\q{...}` is valid there).
+    let source = r"
+const uOnlyOutsideClass = /\q{abc}/u;
+const noFlagOutsideClass = /\q/;
+const uOnlyInsideClass = /[\q{abc}]/u;
+const vModeInsideClass = /[\q{abc}]/v;
+";
+    let (parser, _root) = parse_source(source);
+
+    let diagnostics = parser.get_diagnostics();
+    let codes: Vec<_> = diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        !codes.contains(&diagnostic_codes::Q_IS_ONLY_AVAILABLE_INSIDE_CHARACTER_CLASS),
+        "TS1511 must not fire without /v at atom position or inside a class, got {diagnostics:?}"
+    );
+    let ts1535_count = diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == diagnostic_codes::THIS_CHARACTER_CANNOT_BE_ESCAPED_IN_A_REGULAR_EXPRESSION
+        })
+        .count();
+    assert_eq!(
+        ts1535_count, 2,
+        "Expected TS1535 for the `u`-only outside-class use and the `u`-only \
+         in-class use (no-flag outside-class and `v`-mode in-class are both \
+         valid \\q shapes), got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_regex_hyphen_after_range_is_literal() {
     let source = "const idSuffixPattern = /^([a-z][a-z0-9-]*)(:[a-z0-9-.]*)?$/i;";
     let (parser, _root) = parse_source(source);

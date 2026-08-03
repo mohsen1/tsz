@@ -668,6 +668,26 @@ impl ParserState {
                             );
                         }
                     }
+                    // `\q` is a character-class-only atom (`scan_character_class_escape`
+                    // owns its in-class form). Outside a class under the `v` flag it is
+                    // still a reserved escape, but tsc names the specific reason
+                    // (TS1511) rather than falling through to the generic
+                    // THIS_CHARACTER_CANNOT_BE_ESCAPED_IN_A_REGULAR_EXPRESSION this arm's
+                    // `_` fallback would otherwise report. Not gated on `atom_escape`:
+                    // this function is never reached for `q` from inside a class while
+                    // `unicode_sets_mode` is true, because
+                    // `scan_character_class_escape`'s own `b'q' if unicode_sets_mode`
+                    // arm always claims it first.
+                    b'q' if scan_ctx.unicode_sets_mode => {
+                        emit(
+                            parser,
+                            escape_start,
+                            2,
+                            diagnostic_messages::Q_IS_ONLY_AVAILABLE_INSIDE_CHARACTER_CLASS,
+                            diagnostic_codes::Q_IS_ONLY_AVAILABLE_INSIDE_CHARACTER_CLASS,
+                        );
+                        *pos += 1;
+                    }
                     b'o' if atom_escape => {
                         if strict_mode {
                             emit(
