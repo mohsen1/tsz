@@ -40,7 +40,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 }
             }
 
-            self.check_regular_expression_v_flag(node.pos, bytes, body_end);
+            self.check_regular_expression_target_gated_flags(node.pos, bytes, body_end);
             self.check_regular_expression_named_groups(node.pos, raw_text, bytes, body_end);
         }
 
@@ -49,29 +49,42 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             .unwrap_or(TypeId::ANY)
     }
 
-    fn check_regular_expression_v_flag(&mut self, node_pos: u32, bytes: &[u8], body_end: usize) {
-        if self.checker.ctx.compiler_options.target.supports_es2024() {
-            return;
-        }
-
+    /// tsc gates the `s` (dotAll), `d` (hasIndices), and `v` (unicodeSets)
+    /// regex flags on the target that introduced them; `u` and `y` require
+    /// only ES2015, which every reachable target already satisfies. Each
+    /// offending flag is reported at its own position, in source order,
+    /// mirroring tsc's per-flag scan.
+    fn check_regular_expression_target_gated_flags(
+        &mut self,
+        node_pos: u32,
+        bytes: &[u8],
+        body_end: usize,
+    ) {
+        let target = self.checker.ctx.compiler_options.target;
         let flag_start = body_end.saturating_add(1);
-        let Some(v_offset) = bytes
-            .get(flag_start..)
-            .and_then(|flags| flags.iter().position(|&flag| flag == b'v'))
-        else {
+        let Some(flags) = bytes.get(flag_start..) else {
             return;
         };
 
-        let message = format_message(
-            diagnostic_messages::THIS_REGULAR_EXPRESSION_FLAG_IS_ONLY_AVAILABLE_WHEN_TARGETING_OR_LATER,
-            &["es2024"],
-        );
-        self.checker.error_at_position(
-            node_pos + (flag_start + v_offset) as u32,
-            1,
-            &message,
-            diagnostic_codes::THIS_REGULAR_EXPRESSION_FLAG_IS_ONLY_AVAILABLE_WHEN_TARGETING_OR_LATER,
-        );
+        for (offset, &flag) in flags.iter().enumerate() {
+            let min_target = match flag {
+                b's' if !target.supports_es2018() => "es2018",
+                b'd' if !target.supports_es2022() => "es2022",
+                b'v' if !target.supports_es2024() => "es2024",
+                _ => continue,
+            };
+
+            let message = format_message(
+                diagnostic_messages::THIS_REGULAR_EXPRESSION_FLAG_IS_ONLY_AVAILABLE_WHEN_TARGETING_OR_LATER,
+                &[min_target],
+            );
+            self.checker.error_at_position(
+                node_pos + (flag_start + offset) as u32,
+                1,
+                &message,
+                diagnostic_codes::THIS_REGULAR_EXPRESSION_FLAG_IS_ONLY_AVAILABLE_WHEN_TARGETING_OR_LATER,
+            );
+        }
     }
 
     fn check_regular_expression_named_groups(

@@ -1,7 +1,9 @@
 //! Tests for TS1501: Regular expression flag target validation.
 //!
-//! TypeScript 6.0 still emits TS1501 for the `v` regular-expression flag
-//! when targeting below ES2024.
+//! tsc gates `s` (dotAll) on ES2018, `d` (hasIndices) on ES2022, and `v`
+//! (unicodeSets) on ES2024; `u` and `y` require only ES2015 and never fire
+//! on a reachable target. Every row below is pinned against the
+//! `typescript@7.0.2` oracle.
 
 use tsz_checker::context::CheckerOptions;
 use tsz_common::common::ScriptTarget;
@@ -27,6 +29,16 @@ fn ts1501_diagnostic(source: &str, target: ScriptTarget) -> tsz_common::diagnost
         .into_iter()
         .find(|d| d.code == 1501)
         .expect("expected TS1501 diagnostic")
+}
+
+fn ts1501_diagnostics(
+    source: &str,
+    target: ScriptTarget,
+) -> Vec<tsz_common::diagnostics::Diagnostic> {
+    diagnostics_for(source, target)
+        .into_iter()
+        .filter(|d| d.code == 1501)
+        .collect()
 }
 
 #[test]
@@ -57,11 +69,71 @@ fn v_flag_is_allowed_for_es2024_or_later() {
 }
 
 #[test]
-fn ts1501_not_emitted_for_other_regex_flags() {
-    assert!(!has_ts1501("var x = /foo/u;", ScriptTarget::ES5));
-    assert!(!has_ts1501("var x = /foo/y;", ScriptTarget::ES5));
-    assert!(!has_ts1501("var x = /foo/s;", ScriptTarget::ES2015));
-    assert!(!has_ts1501("var x = /foo/d;", ScriptTarget::ES2018));
-    assert!(!has_ts1501("var x = /foo/gim;", ScriptTarget::ES3));
-    assert!(!has_ts1501("var x = /foo/us;", ScriptTarget::ES5));
+fn ts1501_not_emitted_for_flags_requiring_only_es2015() {
+    assert!(!has_ts1501("var x = /foo/u;", ScriptTarget::ES2015));
+    assert!(!has_ts1501("var x = /foo/y;", ScriptTarget::ES2015));
+    assert!(!has_ts1501("var x = /foo/gim;", ScriptTarget::ES2015));
+    assert!(!has_ts1501("var x = /foo/uy;", ScriptTarget::ES2015));
+}
+
+#[test]
+fn s_flag_requires_es2018_or_later() {
+    assert!(has_ts1501("var x = /foo/s;", ScriptTarget::ES2015));
+    assert!(has_ts1501("var x = /foo/s;", ScriptTarget::ES2017));
+    assert!(!has_ts1501("var x = /foo/s;", ScriptTarget::ES2018));
+    assert!(!has_ts1501("var x = /foo/s;", ScriptTarget::ES2022));
+}
+
+#[test]
+fn s_flag_ts1501_points_to_flag() {
+    let diagnostic = ts1501_diagnostic("var a = /foo/s;", ScriptTarget::ES2015);
+
+    assert_eq!(diagnostic.start, 13);
+    assert_eq!(diagnostic.length, 1);
+    assert_eq!(
+        diagnostic.message_text,
+        "This regular expression flag is only available when targeting 'es2018' or later."
+    );
+}
+
+#[test]
+fn d_flag_requires_es2022_or_later() {
+    assert!(has_ts1501("var x = /foo/d;", ScriptTarget::ES2018));
+    assert!(has_ts1501("var x = /foo/d;", ScriptTarget::ES2021));
+    assert!(!has_ts1501("var x = /foo/d;", ScriptTarget::ES2022));
+    assert!(!has_ts1501("var x = /foo/d;", ScriptTarget::ESNext));
+}
+
+#[test]
+fn d_flag_ts1501_points_to_flag() {
+    let diagnostic = ts1501_diagnostic("var a = /foo/d;", ScriptTarget::ES2018);
+
+    assert_eq!(diagnostic.start, 13);
+    assert_eq!(diagnostic.length, 1);
+    assert_eq!(
+        diagnostic.message_text,
+        "This regular expression flag is only available when targeting 'es2022' or later."
+    );
+}
+
+#[test]
+fn multiple_offending_flags_each_report_at_their_own_position_in_source_order() {
+    let diagnostics = ts1501_diagnostics("var a = /foo/dsv;", ScriptTarget::ES2015);
+
+    assert_eq!(diagnostics.len(), 3);
+    assert_eq!(diagnostics[0].start, 13);
+    assert_eq!(
+        diagnostics[0].message_text,
+        "This regular expression flag is only available when targeting 'es2022' or later."
+    );
+    assert_eq!(diagnostics[1].start, 14);
+    assert_eq!(
+        diagnostics[1].message_text,
+        "This regular expression flag is only available when targeting 'es2018' or later."
+    );
+    assert_eq!(diagnostics[2].start, 15);
+    assert_eq!(
+        diagnostics[2].message_text,
+        "This regular expression flag is only available when targeting 'es2024' or later."
+    );
 }
