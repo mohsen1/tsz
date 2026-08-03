@@ -1612,7 +1612,15 @@ impl<'a> CheckerState<'a> {
         let is_using = (flags_u32 & node_flags::USING) != 0;
         let is_await_using = node_flags::is_await_using(flags_u32);
 
-        if is_await_using {
+        // TS1545/TS1546/TS1547/TS1548: where a `using` / `await using` list is
+        // allowed to stand at all. tsc checks this in `checkGrammarVariableDeclarationList`,
+        // ahead of the `await using` placement family below, and returns at the first
+        // failure — so a placement error replaces those diagnostics rather than
+        // accompanying them.
+        let placement_error =
+            is_using && self.check_grammar_using_declaration_placement(list_idx, is_await_using);
+
+        if is_await_using && !placement_error {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
             // Same top-level-await-eligibility predicate as `check_await_expression`
