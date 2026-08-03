@@ -397,6 +397,7 @@ const fn is_parser_grammar_code(code: u32) -> bool {
         code,
         1014 // A rest parameter must be last in a parameter list
         | 1017 // An index signature cannot have a rest parameter
+        | 1018 // An index signature parameter cannot have an accessibility modifier
         | 1101 // 'with' statements are not allowed in strict mode. tsc's
                 // checkStrictModeWithStatement is a binder check
                 // (file.bindDiagnostics); tsz emits it eagerly from the parser
@@ -405,7 +406,9 @@ const fn is_parser_grammar_code(code: u32) -> bool {
                 // checker. Route it through the same hasParseDiagnostics-style
                 // suppression as its checker-emitted binder-check siblings.
         | 1019 // An index signature parameter cannot have a question mark
+        | 1020 // An index signature parameter cannot have an initializer
         | 1021 // An index signature must have a type annotation
+        | 1025 // An index signature cannot have a trailing comma
         | 1028 // Accessibility modifier already seen
         | 1029 // '{0}' modifier must precede '{1}' modifier
         | 1030 // '{0}' modifier already seen
