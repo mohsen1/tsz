@@ -447,7 +447,10 @@ const fn is_parser_grammar_code(code: u32) -> bool {
         | 1163 // A 'yield' expression is only allowed in a generator body
         | 1171 // A comma expression is not allowed in a computed property name
         | 1172 // extends clause already seen
+        | 1173 // extends clause must precede implements clause
         | 1174 // Classes can only extend a single class
+        | 1175 // implements clause already seen
+        | 1176 // Interface declaration cannot have an implements clause
         | 1182 // A destructuring declaration must have an initializer
         | 1184 // Modifiers cannot appear here
         | 1191 // An import declaration cannot have modifiers
@@ -1470,3 +1473,7 @@ pub(super) const fn is_plain_js_allowed_code(code: u32) -> bool {
 #[cfg(test)]
 #[path = "check_utils/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "check_utils/heritage_clause_tests.rs"]
+mod heritage_clause_tests;
