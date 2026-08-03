@@ -90,6 +90,13 @@ impl<'a> CheckerState<'a> {
         // When a paired getter exists, the setter parameter type is inferred
         // from the getter return type (contextually typed, suppress TS7006/7032).
         if elem_node.kind == syntax_kind_ext::SET_ACCESSOR {
+            // TS1052/TS1053: the `set`-accessor parameter grammar. tsc reaches
+            // it from `checkGrammarAccessor` for an object-literal accessor
+            // exactly as it does for a class member — the rule reads the
+            // parameter node, not the container. Shared with the class and
+            // type-member containers rather than re-derived here.
+            self.check_setter_parameter_grammar(elem_idx);
+
             let name_opt = self.get_property_name(accessor.name).or_else(|| {
                 let prop_name_type = self.get_type_of_node(accessor.name);
                 crate::query_boundaries::type_computation::access::literal_property_name(
