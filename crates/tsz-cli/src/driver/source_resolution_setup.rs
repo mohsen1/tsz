@@ -72,6 +72,7 @@ pub(super) fn prepare_source_resolution_setup(
                         &file.arena,
                         file.source_file,
                         file.is_external_module,
+                        options.skip_lib_check,
                     )
                 })
                 .collect()
@@ -89,6 +90,7 @@ pub(super) fn prepare_source_resolution_setup(
                         &file.arena,
                         file.source_file,
                         file.is_external_module,
+                        options.skip_lib_check,
                     )
                 })
                 .collect()

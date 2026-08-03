@@ -246,7 +246,8 @@ declare module "pkg" {
 }
 
 #[test]
-fn test_collect_module_specifiers_for_check_skips_declaration_file_ambient_names() {
+fn test_collect_module_specifiers_for_check_skips_declaration_file_ambient_names_under_skip_lib_check()
+ {
     let text = r#"
 declare module "*.css" {}
 declare module "virtual:asset" {}
@@ -259,7 +260,7 @@ declare module "pkg" {
     let source_file = parser.parse_source_file();
     let (arena, _diagnostics) = parser.into_parts();
 
-    let specifiers: Vec<_> = collect_module_specifiers_for_check(&arena, source_file, true)
+    let specifiers: Vec<_> = collect_module_specifiers_for_check(&arena, source_file, true, true)
         .into_iter()
         .map(|(specifier, _, _, _)| specifier)
         .collect();
@@ -276,7 +277,8 @@ declare module "pkg" {
     );
     assert!(
         !specifiers.iter().any(|specifier| specifier == "pkg"),
-        "ambient declaration names are not driver lookups in declaration files: {specifiers:?}"
+        "under skip_lib_check the checker discards this file's diagnostics entirely, \
+         so a bare ambient declaration name is not worth a driver lookup: {specifiers:?}"
     );
     assert!(
         specifiers.iter().any(|specifier| specifier == "./augment"),
@@ -285,6 +287,34 @@ declare module "pkg" {
     assert!(
         specifiers.iter().any(|specifier| specifier == "dep"),
         "real re-exports inside ambient module bodies remain dependencies: {specifiers:?}"
+    );
+}
+
+#[test]
+fn test_collect_module_specifiers_for_check_keeps_declaration_file_ambient_names_when_checked() {
+    // Without skip_lib_check, tsc still validates a `.d.ts`-hosted augmentation
+    // (TS2665 for an untyped target) exactly as it would in a `.ts` file, so the
+    // bare augmentation name needs the same driver lookup here — matching the
+    // pre-existing `.ts`-host behavior exercised by
+    // `test_collect_module_specifiers_for_check_keeps_bare_source_augmentation_targets`
+    // above, which this test now mirrors for a `.d.ts` host.
+    let text = r#"
+declare module "pkg" {
+  export { T } from "dep";
+}
+"#;
+    let mut parser = tsz::parser::ParserState::new("types.d.ts".to_string(), text.to_string());
+    let source_file = parser.parse_source_file();
+    let (arena, _diagnostics) = parser.into_parts();
+
+    let specifiers: Vec<_> = collect_module_specifiers_for_check(&arena, source_file, true, false)
+        .into_iter()
+        .map(|(specifier, _, _, _)| specifier)
+        .collect();
+
+    assert!(
+        specifiers.iter().any(|specifier| specifier == "pkg"),
+        "a bare augmentation name in a checked declaration file needs resolution for TS2665: {specifiers:?}"
     );
 }
 
@@ -301,7 +331,7 @@ declare module "pkg" {
     let (arena, _diagnostics) = parser.into_parts();
 
     let external_specifiers: Vec<_> =
-        collect_module_specifiers_for_check(&arena, source_file, true)
+        collect_module_specifiers_for_check(&arena, source_file, true, false)
             .into_iter()
             .map(|(specifier, _, _, _)| specifier)
             .collect();
@@ -312,10 +342,11 @@ declare module "pkg" {
         "external source augmentations need lookup for TS2664: {external_specifiers:?}"
     );
 
-    let script_specifiers: Vec<_> = collect_module_specifiers_for_check(&arena, source_file, false)
-        .into_iter()
-        .map(|(specifier, _, _, _)| specifier)
-        .collect();
+    let script_specifiers: Vec<_> =
+        collect_module_specifiers_for_check(&arena, source_file, false, false)
+            .into_iter()
+            .map(|(specifier, _, _, _)| specifier)
+            .collect();
     assert!(
         !script_specifiers.iter().any(|specifier| specifier == "pkg"),
         "script ambient declarations should not become driver lookups: {script_specifiers:?}"

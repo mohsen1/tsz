@@ -585,11 +585,15 @@ pub(crate) fn collect_module_specifiers_for_check(
     arena: &NodeArena,
     source_file: NodeIndex,
     is_external_module: bool,
+    skip_lib_check: bool,
 ) -> Vec<CollectedModuleSpecifier> {
     collect_module_specifiers_impl(
         arena,
         source_file,
-        AmbientModuleDeclarationSpecifierPolicy::Check { is_external_module },
+        AmbientModuleDeclarationSpecifierPolicy::Check {
+            is_external_module,
+            skip_lib_check,
+        },
     )
 }
 
@@ -716,15 +720,27 @@ pub(crate) fn collect_module_specifiers_impl(
                 let specifier = strip_quotes(text);
                 // Relative names can be module augmentations of concrete sibling
                 // files. Non-relative names only need driver resolution in
-                // non-declaration external modules, where the lookup proves
-                // whether a bare augmentation target exists for TS2664.
+                // external modules, where the lookup proves whether a bare
+                // augmentation target exists for TS2664, or resolves to an
+                // untyped module for TS2665.
+                //
+                // TS2664 stays gated on `!is_declaration_file` at the checker
+                // (it never fires in a `.d.ts` host), but TS2665 does not: tsc
+                // reports it for a `.d.ts`-hosted augmentation exactly as for a
+                // `.ts` one. So a `.d.ts` host still needs the specifier
+                // resolved when its diagnostics are not discarded outright —
+                // when `skip_lib_check` is on, `check_file.rs` runs this file's
+                // checker pass only to populate shared caches and throws every
+                // diagnostic away, so resolving here would just be wasted work
+                // across every vendored `.d.ts` in `node_modules`.
                 let include_non_relative = match ambient_declaration_policy {
                     #[cfg(test)]
                     AmbientModuleDeclarationSpecifierPolicy::All => true,
                     AmbientModuleDeclarationSpecifierPolicy::SourceDiscovery => false,
-                    AmbientModuleDeclarationSpecifierPolicy::Check { is_external_module } => {
-                        is_external_module && !source.is_declaration_file
-                    }
+                    AmbientModuleDeclarationSpecifierPolicy::Check {
+                        is_external_module,
+                        skip_lib_check,
+                    } => is_external_module && (!source.is_declaration_file || !skip_lib_check),
                 };
                 if include_non_relative || tsz::module_resolver::is_path_relative(&specifier) {
                     specifiers.push((specifier, module_decl.name, ImportKind::EsmImport, None));
