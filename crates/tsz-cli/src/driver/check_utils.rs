@@ -1510,6 +1510,7 @@ pub(super) const fn is_non_suppressing_parse_error(code: u32) -> bool {
             | 1512 // '\c' must be followed by an ASCII letter (`/\c1/u`)
             | 1516 // A character class range must not be bounded by another character class (`/[a-\d]/u`)
             | 1517 // Range out of order in character class (`/[b-a]/`)
+            | 1519 // Operators must not be mixed within a character class (regex grammar, AST is valid)
             | 1520 // Expected a class set operand (`/[a--]/v`)
             | 1523 // Expected a Unicode property name (`/\p{=x}/u`)
             | 1525 // Expected a Unicode property value (`/\p{Script=}/u`)
