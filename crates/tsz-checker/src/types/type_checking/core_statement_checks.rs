@@ -20,6 +20,23 @@ use tsz_solver::TypeId;
 /// (`isInTopLevelContext`, which selects the TS1375/TS1378 pair over TS1308).
 /// A root position can suppress either axis independently, so they are modelled
 /// as two orthogonal properties rather than one "is this special" flag.
+/// What `tsc`'s module switch decides about a top-level `await` in the
+/// current file, independent of which of the three constructs asked.
+///
+/// The two error arms map to a different code per construct — `await`
+/// answers TS1378, `for await` TS1432, `await using` TS2854 — except for
+/// [`Self::CommonJsFile`], where all three answer the single shared TS1309.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TopLevelAwaitVerdict {
+    /// The module kind, target, and file format all permit top-level `await`.
+    Allowed,
+    /// A Node module kind with a `CommonJS`-format file: TS1309, at every
+    /// target.
+    CommonJsFile,
+    /// The module/target pair does not support top-level `await` at all.
+    UnsupportedModuleOrTarget,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AwaitContainerKind {
     /// Ordinary position: both axes answered from the surrounding code.
@@ -597,6 +614,41 @@ impl<'a> CheckerState<'a> {
         self.ctx.capabilities.top_level_await_using_supported
     }
 
+    /// `tsc`'s module switch in `checkGrammarAwaitOrAwaitUsing`, shared by all
+    /// three top-level `await` constructs (`await`, `for await`,
+    /// `await using`).
+    ///
+    /// Under a Node module kind the verdict is per *file*: a file whose
+    /// implied format is `CommonJS` cannot host top-level `await` at any
+    /// target, and answers TS1309 instead of the module/target family. A file
+    /// whose implied format is ESM falls through to the ordinary
+    /// module + target requirement.
+    pub(crate) fn top_level_await_verdict(&self) -> TopLevelAwaitVerdict {
+        if self.ctx.compiler_options.module.is_node_module()
+            && self.ctx.current_file_builds_to_commonjs()
+        {
+            return TopLevelAwaitVerdict::CommonJsFile;
+        }
+        if self.supports_top_level_await() {
+            TopLevelAwaitVerdict::Allowed
+        } else {
+            TopLevelAwaitVerdict::UnsupportedModuleOrTarget
+        }
+    }
+
+    /// Whether the "…but this file has no imports or exports" family
+    /// (TS1375 / TS1431 / TS2853) can fire for the current file.
+    ///
+    /// Under a Node module kind a file's module-ness is settled by its implied
+    /// format rather than by the presence of an `import`/`export`: an
+    /// ESM-format file is a module even with none (`await` in a bare `.mts` is
+    /// clean), and a `CommonJS`-format file answers TS1309 instead. So the
+    /// family is unreachable there, and only the non-Node module kinds ask the
+    /// binder's external-module question.
+    pub(crate) fn top_level_await_requires_module_diagnostic(&self) -> bool {
+        !self.ctx.compiler_options.module.is_node_module() && !self.ctx.is_external_module_file()
+    }
+
     /// Check an await expression for async context.
     ///
     /// Validates that await expressions are only used within async functions,
@@ -743,7 +795,7 @@ impl<'a> CheckerState<'a> {
                             // way (`check_using_declaration_list` in `core.rs`).
 
                             // TS1375: top-level await is only valid in a module.
-                            if !self.ctx.is_external_module_file() {
+                            if self.top_level_await_requires_module_diagnostic() {
                                 self.error_at_node(
                                     current_idx,
                                     diagnostic_messages::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_FILE_WHEN_THAT_FILE_IS,
@@ -751,15 +803,27 @@ impl<'a> CheckerState<'a> {
                                 );
                             }
 
+                            // TS1309: a CommonJS-format file under a Node
+                            // module kind, at any target.
                             // TS1378: top-level await requires a module in
                             // {ES2022, ESNext, System, Node16/18/20, NodeNext,
                             // Preserve} and target >= ES2017.
-                            if !self.supports_top_level_await() {
-                                self.error_at_node(
-                                    current_idx,
-                                    diagnostic_messages::TOP_LEVEL_AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ES,
-                                    diagnostic_codes::TOP_LEVEL_AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ES,
-                                );
+                            match self.top_level_await_verdict() {
+                                TopLevelAwaitVerdict::Allowed => {}
+                                TopLevelAwaitVerdict::CommonJsFile => {
+                                    self.error_at_node(
+                                        current_idx,
+                                        diagnostic_messages::THE_CURRENT_FILE_IS_A_COMMONJS_MODULE_AND_CANNOT_USE_AWAIT_AT_THE_TOP_LEVEL,
+                                        diagnostic_codes::THE_CURRENT_FILE_IS_A_COMMONJS_MODULE_AND_CANNOT_USE_AWAIT_AT_THE_TOP_LEVEL,
+                                    );
+                                }
+                                TopLevelAwaitVerdict::UnsupportedModuleOrTarget => {
+                                    self.error_at_node(
+                                        current_idx,
+                                        diagnostic_messages::TOP_LEVEL_AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ES,
+                                        diagnostic_codes::TOP_LEVEL_AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ES,
+                                    );
+                                }
                             }
                         } else {
                             // TS1308: 'await' expressions are only allowed within async functions
@@ -981,7 +1045,7 @@ impl<'a> CheckerState<'a> {
         };
 
         // TS1431: top-level `for await` is only valid in a module.
-        if !self.ctx.is_external_module_file() {
+        if self.top_level_await_requires_module_diagnostic() {
             self.error(
                 await_pos,
                 await_len,
@@ -991,15 +1055,29 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // TS1432: top-level `for await` requires a supporting module/target.
-        if !self.supports_top_level_await() {
-            self.error(
-                await_pos,
-                await_len,
-                diagnostic_messages::TOP_LEVEL_FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ES20
-                    .to_string(),
-                diagnostic_codes::TOP_LEVEL_FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ES20,
-            );
+        // TS1309 for a CommonJS-format file under a Node module kind;
+        // otherwise TS1432 when the module/target pair does not support
+        // top-level `for await`.
+        match self.top_level_await_verdict() {
+            TopLevelAwaitVerdict::Allowed => {}
+            TopLevelAwaitVerdict::CommonJsFile => {
+                self.error(
+                    await_pos,
+                    await_len,
+                    diagnostic_messages::THE_CURRENT_FILE_IS_A_COMMONJS_MODULE_AND_CANNOT_USE_AWAIT_AT_THE_TOP_LEVEL
+                        .to_string(),
+                    diagnostic_codes::THE_CURRENT_FILE_IS_A_COMMONJS_MODULE_AND_CANNOT_USE_AWAIT_AT_THE_TOP_LEVEL,
+                );
+            }
+            TopLevelAwaitVerdict::UnsupportedModuleOrTarget => {
+                self.error(
+                    await_pos,
+                    await_len,
+                    diagnostic_messages::TOP_LEVEL_FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ES20
+                        .to_string(),
+                    diagnostic_codes::TOP_LEVEL_FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ES20,
+                );
+            }
         }
     }
 

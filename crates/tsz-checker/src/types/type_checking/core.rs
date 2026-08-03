@@ -5,6 +5,7 @@
 //! Type alias declaration checking and type node validation are in
 //! `type_alias_checking.rs`.
 
+use super::core_statement_checks::TopLevelAwaitVerdict;
 use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
@@ -1629,7 +1630,7 @@ impl<'a> CheckerState<'a> {
             // `function_depth == 0`.
             if self.is_directly_at_source_file_top_level(list_idx) {
                 // TS2853: Top-level 'await using' is only valid in modules.
-                if !self.ctx.is_external_module_file() {
+                if self.top_level_await_requires_module_diagnostic() {
                     self.error_at_node(
                         list_idx,
                         diagnostic_messages::AWAIT_USING_STATEMENTS_ARE_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_FILE_WHEN_THAT_FIL,
@@ -1637,21 +1638,28 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
-                // TS2854: Top-level 'await using' requires specific module + target options.
-                // Routes through the environment capability boundary to determine whether
-                // a diagnostic should be emitted.
-                use crate::query_boundaries::capabilities::FeatureGate;
-                if self
-                    .ctx
-                    .capabilities
-                    .check_feature_gate(FeatureGate::TopLevelAwaitUsing)
-                    .is_some()
-                {
-                    self.error_at_node(
-                        list_idx,
-                        diagnostic_messages::TOP_LEVEL_AWAIT_USING_STATEMENTS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET,
-                        diagnostic_codes::TOP_LEVEL_AWAIT_USING_STATEMENTS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET,
-                    );
+                // TS1309 when a Node module kind pairs with a CommonJS-format
+                // file; otherwise TS2854, which requires specific module +
+                // target options. Both answers come from the shared
+                // `checkGrammarAwaitOrAwaitUsing` switch, which routes the
+                // module/target half through the environment capability
+                // boundary.
+                match self.top_level_await_verdict() {
+                    TopLevelAwaitVerdict::Allowed => {}
+                    TopLevelAwaitVerdict::CommonJsFile => {
+                        self.error_at_node(
+                            list_idx,
+                            diagnostic_messages::THE_CURRENT_FILE_IS_A_COMMONJS_MODULE_AND_CANNOT_USE_AWAIT_AT_THE_TOP_LEVEL,
+                            diagnostic_codes::THE_CURRENT_FILE_IS_A_COMMONJS_MODULE_AND_CANNOT_USE_AWAIT_AT_THE_TOP_LEVEL,
+                        );
+                    }
+                    TopLevelAwaitVerdict::UnsupportedModuleOrTarget => {
+                        self.error_at_node(
+                            list_idx,
+                            diagnostic_messages::TOP_LEVEL_AWAIT_USING_STATEMENTS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET,
+                            diagnostic_codes::TOP_LEVEL_AWAIT_USING_STATEMENTS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET,
+                        );
+                    }
                 }
             } else if !self.enclosing_function_allows_await_using(list_idx) {
                 // TS2852: Nested 'await using' is only valid inside async functions.
