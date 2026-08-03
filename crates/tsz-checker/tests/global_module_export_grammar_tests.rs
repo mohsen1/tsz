@@ -27,7 +27,7 @@ use tsz_checker::test_utils::check_source_codes_named;
 fn global_module_export_codes(source: &str, file_name: &str) -> Vec<u32> {
     let mut codes: Vec<u32> = check_source_codes_named(source, file_name)
         .into_iter()
-        .filter(|c| matches!(c, 1314 | 1315 | 1316))
+        .filter(|c| matches!(c, 1314..=1316))
         .collect();
     codes.sort_unstable();
     codes
