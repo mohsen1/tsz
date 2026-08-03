@@ -1629,3 +1629,100 @@ fn augmenting_local_relative_js_file_does_not_report_ts2665() {
         "a local JS program input is not an untyped module, got:\n{output}"
     );
 }
+
+#[test]
+fn augmenting_untyped_package_from_declaration_file_host_reports_ts2665() {
+    // The augmentation lives in a `.d.ts` host rather than a `.ts` one. tsc
+    // validates a `.d.ts`-hosted augmentation exactly as a `.ts`-hosted one, but
+    // source discovery previously never even collected a bare (non-relative)
+    // augmentation target for a declaration-file host, so the specifier never
+    // reached the driver's resolution pass and TS2665 stayed silent.
+    let temp = TempDir::new("augment_untyped_dts_host_ts2665").expect("temp dir");
+    write_file(
+        &temp.path.join("node_modules/gearbox/index.js"),
+        "module.exports = {};\n",
+    );
+    write_file(
+        &temp.path.join("node_modules/gearbox/package.json"),
+        "{ \"name\": \"gearbox\", \"version\": \"1.0.0\", \"main\": \"index.js\" }\n",
+    );
+    write_file(
+        &temp.path.join("a.d.ts"),
+        "declare module \"gearbox\" { export const g: number; }\nexport {};\n",
+    );
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        "{ \"compilerOptions\": { \"module\": \"commonjs\", \"strict\": false, \"types\": [] }, \"files\": [\"a.d.ts\"] }\n",
+    );
+
+    let Some((code, output)) = run_tsz_with_exit_code(
+        &temp.path,
+        &["-p", ".", "--noEmit", "--pretty", "false"],
+    ) else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+
+    assert_ne!(
+        code, 0,
+        "augmenting an untyped module from a .d.ts host should fail:\n{output}"
+    );
+    assert!(
+        output.contains("error TS2665: Invalid module name in augmentation. Module 'gearbox' resolves to an untyped module at "),
+        "expected TS2665 for a .d.ts-hosted augmentation, got:\n{output}"
+    );
+    assert!(
+        output.contains("node_modules/gearbox/index.js', which cannot be augmented."),
+        "TS2665 must name the resolved JS file, got:\n{output}"
+    );
+    // TS2664 stays gated on `!is_declaration_file()`, so it must not appear
+    // here even though the file is now a driver-side resolution target.
+    assert!(
+        !output.contains("error TS2664"),
+        "TS2664 never fires for a .d.ts host, got:\n{output}"
+    );
+}
+
+#[test]
+fn augmenting_untyped_package_from_declaration_file_host_under_skip_lib_check_reports_nothing() {
+    // Adjacent negative control on the same shape: with `skipLibCheck` on, the
+    // checker still visits the `.d.ts` file to populate shared caches but
+    // discards every diagnostic it produces (`check_file.rs`), so resolving the
+    // augmentation target for this file is pure overhead — the driver's
+    // specifier-collection gate skips it, mirroring the pre-existing skip for
+    // `.d.ts` hosts.
+    let temp = TempDir::new("augment_untyped_dts_host_skip_lib_check").expect("temp dir");
+    write_file(
+        &temp.path.join("node_modules/gearbox/index.js"),
+        "module.exports = {};\n",
+    );
+    write_file(
+        &temp.path.join("node_modules/gearbox/package.json"),
+        "{ \"name\": \"gearbox\", \"version\": \"1.0.0\", \"main\": \"index.js\" }\n",
+    );
+    write_file(
+        &temp.path.join("a.d.ts"),
+        "declare module \"gearbox\" { export const g: number; }\nexport {};\n",
+    );
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        "{ \"compilerOptions\": { \"module\": \"commonjs\", \"strict\": false, \"skipLibCheck\": true, \"types\": [] }, \"files\": [\"a.d.ts\"] }\n",
+    );
+
+    let Some((code, output)) = run_tsz_with_exit_code(
+        &temp.path,
+        &["-p", ".", "--noEmit", "--pretty", "false"],
+    ) else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+
+    assert_eq!(
+        code, 0,
+        "skipLibCheck discards this .d.ts host's diagnostics, so it must stay clean:\n{output}"
+    );
+    assert!(
+        !output.contains("TS2665"),
+        "skipLibCheck must suppress the augmentation diagnostic, got:\n{output}"
+    );
+}

@@ -289,6 +289,72 @@ declare module "pkg" {
 }
 
 #[test]
+fn test_collect_declaration_file_augmentation_targets_for_untyped_check_finds_bare_names() {
+    // The dedicated TS2665-only collector picks up exactly what the
+    // general-purpose `collect_module_specifiers_for_check` above deliberately
+    // excludes for a `.d.ts` host: bare (non-relative) augmentation names.
+    // This collector feeds a side-channel resolution that only ever writes
+    // `untyped_module_paths`, so it does not need to distinguish wildcard
+    // ambient patterns or relative names the way the general pipeline does —
+    // callers only care about "does this look like a real augmentation
+    // target."
+    let text = r#"
+declare module "*.css" {}
+declare module "./augment" {}
+declare module "pkg" {
+  export { T } from "dep";
+}
+"#;
+    let mut parser = tsz::parser::ParserState::new("types.d.ts".to_string(), text.to_string());
+    let source_file = parser.parse_source_file();
+    let (arena, _diagnostics) = parser.into_parts();
+
+    let targets: Vec<_> =
+        collect_declaration_file_augmentation_targets_for_untyped_check(&arena, source_file)
+            .into_iter()
+            .map(|(specifier, _)| specifier)
+            .collect();
+
+    assert!(
+        targets.iter().any(|specifier| specifier == "pkg"),
+        "a bare augmentation name needs resolution for TS2665: {targets:?}"
+    );
+    assert!(
+        targets.iter().any(|specifier| specifier == "*.css"),
+        "the collector itself does not filter wildcard patterns — the caller \
+         resolves every entry through ModuleResolver, which classifies a \
+         pattern like any other unresolvable specifier: {targets:?}"
+    );
+    assert!(
+        !targets.iter().any(|specifier| specifier == "./augment"),
+        "relative augmentation names resolve through the general pipeline \
+         already (TS2664), not this untyped-only side channel: {targets:?}"
+    );
+}
+
+#[test]
+fn test_collect_declaration_file_augmentation_targets_for_untyped_check_ignores_non_ambient() {
+    // A non-`declare` module block (a real `namespace`/module body) and a
+    // relative name are both out of scope for this collector.
+    let text = r#"
+export {};
+namespace NotAmbient {
+  export const x = 1;
+}
+"#;
+    let mut parser = tsz::parser::ParserState::new("types.d.ts".to_string(), text.to_string());
+    let source_file = parser.parse_source_file();
+    let (arena, _diagnostics) = parser.into_parts();
+
+    let targets =
+        collect_declaration_file_augmentation_targets_for_untyped_check(&arena, source_file);
+    assert!(
+        targets.is_empty(),
+        "a non-ambient namespace is not an augmentation target: {targets:?}"
+    );
+}
+
+#[test]
 fn test_collect_module_specifiers_for_check_keeps_bare_source_augmentation_targets() {
     let text = r#"
 export {};

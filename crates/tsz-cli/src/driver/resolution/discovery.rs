@@ -604,6 +604,65 @@ pub(crate) fn collect_module_specifiers_for_source_discovery(
     )
 }
 
+/// Bare (non-relative) `declare module "spec" { ... }` augmentation names in a
+/// `.d.ts` host, top-level only, mirroring the shape `collect_module_specifiers_impl`
+/// looks for but scoped to exactly the declaration-file case that function
+/// always excludes.
+///
+/// Deliberately NOT folded into `cached_module_specifiers`: that pipeline
+/// feeds `resolved_module_specifiers`/`resolved_module_paths`, which drive
+/// cross-file symbol merging (ambient-module precedence,
+/// `module_exists`/`module_augmentation_target_exists`, augmentation-body
+/// checks). Joining a `.d.ts`-hosted bare augmentation name into that
+/// machinery surfaced two unrelated resolution bugs (self-name `exports`
+/// condition selection; cross-file overload-augmentation duplicate
+/// identifiers) that a full corpus sweep caught. The caller resolves each
+/// target through the same `ModuleResolver`, but only ever reads
+/// `outcome.untyped_module_path` off the result — never touching the shared
+/// resolution maps — so TS2665 (`declarations_module.rs`'s
+/// `untyped_module_path_for` lookup) can fire for a `.d.ts` host without
+/// pulling it into general-purpose resolution.
+pub(crate) fn collect_declaration_file_augmentation_targets_for_untyped_check(
+    arena: &NodeArena,
+    source_file: NodeIndex,
+) -> Vec<(String, NodeIndex)> {
+    let Some(source) = arena.get_source_file_at(source_file) else {
+        return Vec::new();
+    };
+    let strip_quotes =
+        |s: &str| -> String { s.trim_matches(|c| c == '"' || c == '\'').to_string() };
+    let mut targets = Vec::new();
+    for &stmt_idx in &source.statements.nodes {
+        if stmt_idx.is_none() {
+            continue;
+        }
+        let Some(stmt) = arena.get(stmt_idx) else {
+            continue;
+        };
+        let Some(module_decl) = arena.get_module(stmt) else {
+            continue;
+        };
+        let has_declare = module_decl.modifiers.as_ref().is_some_and(|mods| {
+            mods.nodes.iter().any(|&mod_idx| {
+                arena
+                    .get(mod_idx)
+                    .is_some_and(|node| node.kind == SyntaxKind::DeclareKeyword as u16)
+            })
+        });
+        if !has_declare {
+            continue;
+        }
+        let Some(text) = arena.get_literal_text(module_decl.name) else {
+            continue;
+        };
+        let specifier = strip_quotes(text);
+        if !tsz::module_resolver::is_path_relative(&specifier) {
+            targets.push((specifier, module_decl.name));
+        }
+    }
+    targets
+}
+
 pub(crate) fn collect_module_specifiers_impl(
     arena: &NodeArena,
     source_file: NodeIndex,
@@ -718,6 +777,22 @@ pub(crate) fn collect_module_specifiers_impl(
                 // files. Non-relative names only need driver resolution in
                 // non-declaration external modules, where the lookup proves
                 // whether a bare augmentation target exists for TS2664.
+                //
+                // A `.d.ts` host stays excluded here even though TS2665 also
+                // applies there (see `collect_declaration_file_augmentation_targets_for_untyped_check`
+                // below): joining this specifier into the shared
+                // `cached_module_specifiers` pipeline feeds
+                // `resolved_module_specifiers`/`resolved_module_paths`, which
+                // drive cross-file symbol merging (ambient-precedence,
+                // `module_exists`, augmentation-body checks). A `.d.ts`-hosted
+                // bare augmentation name joining that machinery for the first
+                // time surfaced real, unrelated resolution bugs (self-name
+                // `exports` condition selection, cross-file overload-merge
+                // duplicate identifiers) that have nothing to do with TS2665.
+                // The dedicated collector below resolves the same specifier
+                // through a side channel that only ever populates
+                // `untyped_module_paths`, so TS2665 can fire without pulling a
+                // `.d.ts` host into general-purpose resolution.
                 let include_non_relative = match ambient_declaration_policy {
                     #[cfg(test)]
                     AmbientModuleDeclarationSpecifierPolicy::All => true,

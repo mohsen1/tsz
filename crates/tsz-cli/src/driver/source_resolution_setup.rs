@@ -43,6 +43,47 @@ pub(super) struct SourceResolutionSetupInput<'a> {
     pub(super) resolution_cache: &'a mut ModuleResolutionCache,
 }
 
+/// True when `file_path` sits inside `node_modules/<specifier's package
+/// name>/...` — i.e. `specifier` names the package `file_path` itself belongs
+/// to. Used to route around a self-reference (Node package importing itself
+/// by name; see `crates/tsz-core/src/module_resolver/self_reference.rs`)
+/// rather than attempt an ordinary external lookup for it.
+fn looks_like_package_self_reference(file_path: &Path, specifier: &str) -> bool {
+    // Scoped packages (`@scope/pkg`) occupy two path components
+    // (`node_modules/@scope/pkg`); unscoped ones occupy one.
+    let package_segments: Vec<&str> = if let Some(rest) = specifier.strip_prefix('@') {
+        match rest.find('/') {
+            Some(slash_idx) => {
+                let after_scope = &rest[slash_idx + 1..];
+                let pkg_segment = after_scope.split('/').next().unwrap_or(after_scope);
+                vec![&specifier[..slash_idx + 1], pkg_segment]
+            }
+            None => return false,
+        }
+    } else {
+        match specifier.split('/').next() {
+            Some(name) if !name.is_empty() => vec![name],
+            _ => return false,
+        }
+    };
+    let mut components = file_path.components();
+    while let Some(component) = components.next() {
+        if component.as_os_str() != "node_modules" {
+            continue;
+        }
+        let mut candidate = components.clone();
+        let matches = package_segments.iter().all(|segment| {
+            candidate
+                .next()
+                .is_some_and(|next| next.as_os_str() == std::ffi::OsStr::new(*segment))
+        });
+        if matches {
+            return true;
+        }
+    }
+    false
+}
+
 pub(super) fn prepare_source_resolution_setup(
     input: SourceResolutionSetupInput<'_>,
 ) -> SourceResolutionSetup {
@@ -472,6 +513,90 @@ pub(super) fn prepare_source_resolution_setup(
         }
     }
 
+    // Side-channel resolution for `.d.ts`-hosted bare augmentation names,
+    // scoped to the TS2665 (untyped-augmentation-target) check only. See
+    // `collect_declaration_file_augmentation_targets_for_untyped_check` for
+    // why this stays out of the `cached_module_specifiers` pipeline above:
+    // that pipeline feeds cross-file symbol merging, and folding a `.d.ts`
+    // host's bare augmentation name into it surfaced unrelated resolution
+    // bugs. This pass only ever writes `untyped_module_paths`. Skipped when
+    // `skip_lib_check` discards this file's diagnostics outright — resolving
+    // here would be pure overhead across every vendored `.d.ts` in
+    // `node_modules`.
+    if !options.skip_lib_check {
+        let _span = tracing::info_span!("declaration_file_untyped_augmentation_check").entered();
+        for (file_idx, file) in program.files.iter().enumerate() {
+            if !file.is_external_module || !is_declaration_file(&file.file_name) {
+                continue;
+            }
+            let file_path = Path::new(&file.file_name);
+            for (specifier, specifier_node) in
+                collect_declaration_file_augmentation_targets_for_untyped_check(
+                    &file.arena,
+                    file.source_file,
+                )
+            {
+                // A package augmenting its own name from inside itself is a
+                // Node self-reference (`ModuleResolver::try_self_reference_v2`
+                // in `crates/tsz-core/src/module_resolver/self_reference.rs`),
+                // a distinct resolution algorithm from an ordinary external
+                // lookup. Its `exports` condition selection does not yet match
+                // tsc's for every conditions shape — confirmed independently
+                // of this change (reproduces the same way for a `.ts` host
+                // augmenting its own package, a path this pass never
+                // touches) — so resolving it here risks a false TS2665 from
+                // picking the wrong condition rather than the untyped-target
+                // case this check exists for. Skip it; self-reference TS2665
+                // stays a known gap for a follow-up on the resolver itself.
+                if looks_like_package_self_reference(file_path, &specifier) {
+                    continue;
+                }
+                let span = if let Some(spec_node) = file.arena.get(specifier_node) {
+                    Span::new(spec_node.pos, spec_node.end)
+                } else {
+                    Span::new(0, 0)
+                };
+                let request = tsz::module_resolver::ModuleLookupRequest {
+                    specifier: &specifier,
+                    containing_file: file_path,
+                    specifier_span: span,
+                    import_kind: tsz::module_resolver::ImportKind::EsmImport,
+                    resolution_mode_override: None,
+                    no_implicit_any: options.checker.no_implicit_any,
+                    implied_classic_resolution: options.checker.implied_classic_resolution,
+                };
+                let result = module_resolver.lookup(
+                    &request,
+                    |spec, fp| {
+                        resolve_module_specifier(
+                            fp,
+                            spec,
+                            options,
+                            base_dir,
+                            resolution_cache,
+                            program_paths,
+                        )
+                    },
+                    |spec| {
+                        if let Some(idx) = skeleton_for_ambient {
+                            return idx.is_ambient_module(spec);
+                        }
+                        program.declared_modules.contains(spec)
+                            || program.shorthand_ambient_modules.contains(spec)
+                    },
+                    Some(program_paths),
+                );
+                let outcome = result.classify();
+                if let Some(ref untyped_path) = outcome.untyped_module_path {
+                    untyped_module_paths.insert(
+                        (file_idx, specifier),
+                        untyped_path.to_string_lossy().into_owned(),
+                    );
+                }
+            }
+        }
+    }
+
     // Pre-bucket resolved-module specifiers by file_idx so each per-file
     // checker can look up its own set in O(1) instead of scanning the
     // entire cross-file `resolved_module_specifiers` map. The previous
@@ -661,5 +786,48 @@ pub(super) fn prepare_source_resolution_setup(
         resolved_modules_per_file,
         per_file_ts7016_diagnostics,
         file_is_esm_map,
+    }
+}
+
+#[cfg(test)]
+mod self_reference_guard_tests {
+    use super::looks_like_package_self_reference;
+    use std::path::Path;
+
+    #[test]
+    fn relative_unscoped_package_matches_its_own_augmentation() {
+        let p = Path::new("node_modules/acorn-walk/dist/walk.d.ts");
+        assert!(looks_like_package_self_reference(p, "acorn-walk"));
+    }
+
+    #[test]
+    fn absolute_unscoped_package_matches_its_own_augmentation() {
+        let p = Path::new("/tmp/x/node_modules/acorn-walk/dist/walk.d.ts");
+        assert!(looks_like_package_self_reference(p, "acorn-walk"));
+    }
+
+    #[test]
+    fn scoped_package_matches_its_own_augmentation() {
+        let p = Path::new("node_modules/@scope/pkg/dist/index.d.ts");
+        assert!(looks_like_package_self_reference(p, "@scope/pkg"));
+        assert!(looks_like_package_self_reference(p, "@scope/pkg/subpath"));
+    }
+
+    #[test]
+    fn different_package_is_not_a_self_reference() {
+        let p = Path::new("node_modules/gearbox/index.d.ts");
+        assert!(!looks_like_package_self_reference(p, "acorn-walk"));
+    }
+
+    #[test]
+    fn scoped_specifier_does_not_match_unscoped_directory() {
+        let p = Path::new("node_modules/pkg/index.d.ts");
+        assert!(!looks_like_package_self_reference(p, "@scope/pkg"));
+    }
+
+    #[test]
+    fn file_outside_node_modules_is_never_a_self_reference() {
+        let p = Path::new("src/augment.d.ts");
+        assert!(!looks_like_package_self_reference(p, "acorn-walk"));
     }
 }
