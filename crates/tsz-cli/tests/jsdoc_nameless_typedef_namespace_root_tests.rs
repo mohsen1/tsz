@@ -201,8 +201,15 @@ var probe = null;
 
 #[test]
 fn nameless_typedef_declaring_a_different_name_does_not_exempt_an_unrelated_member() {
-    // The exemption is keyed to the qualified name actually declared, not to
-    // the mere presence of a nameless typedef somewhere in the file.
+    // The namespace-root exemption itself is keyed to the qualified name
+    // actually declared, not to the mere presence of a nameless typedef
+    // somewhere in the file. But a *different* tsc fact dominates this exact
+    // shape: the nameless tag's own TS1003 is a genuine parse-time error in
+    // tsc, which suppresses every semantic diagnostic program-wide — so
+    // `Root.Undeclared`'s TS2503 disappears too, verified against the pinned
+    // oracle. This no longer probes the exemption's width (nothing can, once
+    // a nameless typedef's TS1003 is anywhere in the program); it pins the
+    // combined behavior so it cannot silently regress.
     let out = run_tsz(&[(
         "epsilon.js",
         r#"
@@ -217,20 +224,15 @@ Root.Undeclared = class {};
 var probe = null;
 "#,
     )]);
-    if out == "__SKIP__" {
-        return;
-    }
-    assert!(
-        out.contains("TS2503"),
-        "a nameless typedef declaring `Root.Other.Declared` says nothing about \
-         `Root.Undeclared`, got:\n{out}"
-    );
+    assert_ts1003_without_ts2503(&out, "unrelated member alongside a nameless typedef");
 }
 
 #[test]
 fn nameless_typedef_with_a_bare_host_does_not_manufacture_a_namespace() {
-    // An undotted host (`Solo;`) declares a plain type alias, not a namespace
-    // member, so it must not exempt an unrelated qualified reference.
+    // Same reasoning as above for an undotted host (`Solo;`): the nameless
+    // tag's TS1003 suppresses the file's other semantic diagnostics program
+    // -wide in tsc, regardless of whether `Solo`'s own exemption would ever
+    // reach `Root.Member`.
     let out = run_tsz(&[(
         "zeta.js",
         r#"
@@ -244,11 +246,5 @@ Root.Member = class {};
 var probe = null;
 "#,
     )]);
-    if out == "__SKIP__" {
-        return;
-    }
-    assert!(
-        out.contains("TS2503"),
-        "a bare nameless-typedef host is not a namespace root, got:\n{out}"
-    );
+    assert_ts1003_without_ts2503(&out, "unrelated qualified reference alongside a bare host");
 }

@@ -15,6 +15,25 @@ pub(super) fn program_has_real_syntax_errors(program: &MergedProgram) -> bool {
         .iter()
         .flat_map(|file| file.parse_diagnostics.iter())
         .any(|diag| is_real_syntax_error(diag.code))
+        || program
+            .files
+            .iter()
+            .any(file_has_jsdoc_typedef_missing_name_error)
+}
+
+/// tsc parses JSDoc comments as part of a file's syntax tree, so a nameless
+/// `@typedef {Type}` tag (`TS1003`, "Identifier expected.") is a genuine
+/// parse-time error there — even though tsz discovers it during the checker's
+/// JSDoc pass rather than the parser. `program_has_real_syntax_errors` must
+/// see it as a real syntax error too, or the whole-program semantic
+/// suppression this file drives elsewhere never triggers for it.
+fn file_has_jsdoc_typedef_missing_name_error(file: &BoundFile) -> bool {
+    let Some(node) = file.arena.get(file.source_file) else {
+        return false;
+    };
+    file.arena.get_source_file(node).is_some_and(|sf| {
+        !tsz::checker::diagnostics::jsdoc_typedef_missing_name_anchors(sf).is_empty()
+    })
 }
 
 pub(super) fn program_has_unsupported_js_root(
@@ -269,7 +288,10 @@ pub(super) fn post_process_checker_diagnostics(
 
 #[cfg(test)]
 mod tests {
-    use super::keep_checker_diagnostic_when_program_has_real_syntax_errors;
+    use super::{
+        keep_checker_diagnostic_when_program_has_real_syntax_errors, program_has_real_syntax_errors,
+    };
+    use tsz::parallel;
 
     #[test]
     fn real_syntax_errors_suppress_semantic_ts1xxx_but_keep_parse_diagnostics() {
@@ -282,5 +304,40 @@ mod tests {
             2427
         ));
         assert!(!keep_checker_diagnostic_when_program_has_real_syntax_errors(2322));
+    }
+
+    fn program_from(source: &str) -> tsz::parallel::MergedProgram {
+        let bind_result =
+            parallel::parse_and_bind_single("test.js".to_string(), source.to_string());
+        parallel::merge_bind_results(vec![bind_result])
+    }
+
+    /// tsc parses JSDoc as part of a file's syntax tree, so a nameless
+    /// `@typedef {Type}` tag (`TS1003`) is a genuine parse-time error there —
+    /// verified against the pinned tsc@7.0.2 oracle: `f(1, 2, 3)` against a
+    /// single-`@param` JS function normally reports `TS2554`, but that
+    /// diagnostic (and every other semantic diagnostic in the program)
+    /// disappears once a nameless `@typedef` is anywhere in the program,
+    /// leaving only the `TS1003`. tsz discovers this during the checker's
+    /// JSDoc pass rather than the parser, so `program_has_real_syntax_errors`
+    /// must fold it in explicitly or the whole-program suppression never
+    /// triggers for it.
+    #[test]
+    fn nameless_jsdoc_typedef_is_a_real_syntax_error() {
+        let program =
+            program_from("var exports = {};\n/** @typedef {string} */\nexports.SomeName;\n");
+        assert!(program_has_real_syntax_errors(&program));
+    }
+
+    /// Negative control: a properly-named `@typedef {Type} Name` tag is valid
+    /// JSDoc grammar in tsc — no `TS1003`, so it must not trip the real-syntax
+    /// -error gate (verified against the oracle: `exports.SomeName;` alone
+    /// still reports an ordinary `TS2339` there, it is not suppressed).
+    #[test]
+    fn named_jsdoc_typedef_is_not_a_real_syntax_error() {
+        let program = program_from(
+            "var exports = {};\n/** @typedef {string} SomeName */\nexports.SomeName;\n",
+        );
+        assert!(!program_has_real_syntax_errors(&program));
     }
 }
