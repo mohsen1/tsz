@@ -1378,6 +1378,12 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                             diagnostic_messages::A_DEFAULT_EXPORT_MUST_BE_AT_THE_TOP_LEVEL_OF_A_FILE_OR_MODULE_DECLARATION,
                             diagnostic_codes::A_DEFAULT_EXPORT_MUST_BE_AT_THE_TOP_LEVEL_OF_A_FILE_OR_MODULE_DECLARATION,
                         )
+                    } else if self.is_js_file() {
+                        // In JS files, use TS1474 "...top level of a module" (no namespaces in JS).
+                        (
+                            diagnostic_messages::AN_EXPORT_DECLARATION_CAN_ONLY_BE_USED_AT_THE_TOP_LEVEL_OF_A_MODULE,
+                            diagnostic_codes::AN_EXPORT_DECLARATION_CAN_ONLY_BE_USED_AT_THE_TOP_LEVEL_OF_A_MODULE,
+                        )
                     } else {
                         // TS1233: An export declaration can only be used at the top level
                         (
@@ -1385,6 +1391,11 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                             diagnostic_codes::AN_EXPORT_DECLARATION_CAN_ONLY_BE_USED_AT_THE_TOP_LEVEL_OF_A_NAMESPACE_OR_MODULE,
                         )
                     }
+                } else if self.is_js_file() {
+                    (
+                        diagnostic_messages::AN_EXPORT_DECLARATION_CAN_ONLY_BE_USED_AT_THE_TOP_LEVEL_OF_A_MODULE,
+                        diagnostic_codes::AN_EXPORT_DECLARATION_CAN_ONLY_BE_USED_AT_THE_TOP_LEVEL_OF_A_MODULE,
+                    )
                 } else {
                     (
                         diagnostic_messages::AN_EXPORT_DECLARATION_CAN_ONLY_BE_USED_AT_THE_TOP_LEVEL_OF_A_NAMESPACE_OR_MODULE,
