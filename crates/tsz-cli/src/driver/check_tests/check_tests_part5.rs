@@ -258,3 +258,46 @@ const elem = <div className={class1, class2}/>;
             "Did not expect TS2349 for mapper[key](o), got: {diagnostics:?}"
         );
     }
+
+    /// #16316: cross-location related information must survive the real
+    /// driver, not just the checker's own diagnostic buffer.
+    ///
+    /// `tsc --strict` on this source reports TS1346 carrying a TS1349
+    /// `'use strict' directive used here.` pointer at the directive, and
+    /// TS1347 carrying a TS1348 `Non-simple parameter declared here.` pointer
+    /// at the parameter. Both entries point somewhere other than their
+    /// primary's own span, so a pipeline stage that rebuilt the diagnostic
+    /// without the field would show up here as an empty list.
+    #[test]
+    fn cross_location_related_information_survives_collect_diagnostics() {
+        let diagnostics =
+            collect_test_diagnostics(&[("/main.ts", "function f(a = 1) { \"use strict\"; }\n")]);
+
+        let ts1346 = diagnostics
+            .iter()
+            .find(|d| d.code == 1346)
+            .unwrap_or_else(|| panic!("expected TS1346, got: {diagnostics:?}"));
+        assert_eq!(
+            ts1346
+                .related_information
+                .iter()
+                .map(|r| (r.code, r.start, r.length))
+                .collect::<Vec<_>>(),
+            vec![(1349, 20, 13)],
+            "TS1346 must keep its directive pointer: {ts1346:?}"
+        );
+
+        let ts1347 = diagnostics
+            .iter()
+            .find(|d| d.code == 1347)
+            .unwrap_or_else(|| panic!("expected TS1347, got: {diagnostics:?}"));
+        assert_eq!(
+            ts1347
+                .related_information
+                .iter()
+                .map(|r| (r.code, r.start, r.length))
+                .collect::<Vec<_>>(),
+            vec![(1348, 11, 6)],
+            "TS1347 must keep its parameter pointer: {ts1347:?}"
+        );
+    }

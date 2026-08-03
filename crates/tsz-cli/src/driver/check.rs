@@ -284,7 +284,9 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                         start: 0,
                         length: 0,
                         message_text: "Root file specified for compilation".to_string(),
-                        depth: 0,
+                        // Second link of tsc's file-inclusion-reason chain, so
+                        // it indents one level deeper than the header above it.
+                        depth: 1,
                     });
                 diagnostics.push(ts6504);
             }
