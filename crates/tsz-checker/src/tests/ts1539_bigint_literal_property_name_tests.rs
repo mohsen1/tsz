@@ -1,14 +1,18 @@
 //! Regression tests for TS1539 — a literal (non-computed) `bigint` name
 //! cannot be used as a property name.
 //!
-//! Verified against the pinned `typescript@7.0.2` oracle: this fires
-//! unconditionally on property-shaped members (interface/type-literal
-//! property signatures, class property declarations, object-literal
-//! property assignments) regardless of `readonly`, `static`, `declare`, or
-//! optionality, and never fires on the method-shaped equivalent (methods,
-//! `get`/`set` accessors) in any of those four containers.
+//! Verified against the pinned `typescript@7.0.2` oracle: this fires on
+//! property-shaped members (interface/type-literal property signatures,
+//! class property declarations, object-literal property assignments)
+//! regardless of `readonly`, `static`, `declare`, or optionality, and never
+//! fires on the method-shaped equivalent (methods, `get`/`set` accessors) in
+//! any of those four containers. It is suppressed program-wide whenever any
+//! file in the compilation has a real syntax error, matching `tsc` (verified
+//! directly against the oracle: a genuine parse error in one file suppresses
+//! semantic diagnostics in a completely unrelated file of the same
+//! compilation, not just its own file).
 
-use crate::test_utils::check_source_diagnostics;
+use crate::test_utils::{check_source_codes_with_parse_health, check_source_diagnostics};
 
 fn diag_codes(source: &str) -> Vec<u32> {
     check_source_diagnostics(source)
@@ -130,4 +134,56 @@ class YetAnotherName { 999n = true; }
     );
     let count = codes.iter().filter(|&&c| c == 1539).count();
     assert_eq!(count, 2, "Got: {codes:?}");
+}
+
+// TS1539 must be suppressed program-wide whenever the file has a real syntax
+// error, matching every sibling property-name-shape check in this checker
+// (TS2464's computed-property-name validation, TS1170's type-literal
+// computed-property check). Verified directly against the pinned oracle: a
+// genuine parse error in one file suppresses semantic diagnostics in an
+// entirely unrelated file of the same compilation. These use
+// `check_source_codes_with_parse_health` (real parser-diagnostic wiring)
+// rather than `check_source_diagnostics`, which never sets `has_parse_errors`
+// and so could never observe this suppression either way.
+
+#[test]
+fn ts1539_suppressed_by_a_real_syntax_error_in_the_same_file_interface() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+interface I { 123n: string; }
+const broken = ;
+"#,
+    );
+    assert!(!codes.contains(&1539), "Got: {codes:?}");
+}
+
+#[test]
+fn ts1539_suppressed_by_a_real_syntax_error_in_the_same_file_class() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+class C { 123n = 1; }
+const broken = ;
+"#,
+    );
+    assert!(!codes.contains(&1539), "Got: {codes:?}");
+}
+
+#[test]
+fn ts1539_suppressed_by_a_real_syntax_error_in_the_same_file_object_literal() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+const o = { 123n: 1 };
+const broken = ;
+"#,
+    );
+    assert!(!codes.contains(&1539), "Got: {codes:?}");
+}
+
+#[test]
+fn ts1539_still_fires_via_the_parse_health_harness_without_a_syntax_error() {
+    // Negative control for the three tests above: confirms the harness
+    // itself does not suppress TS1539 unconditionally — only a real parse
+    // error does.
+    let codes = check_source_codes_with_parse_health("interface I { 123n: string; }");
+    assert!(codes.contains(&1539), "Got: {codes:?}");
 }
