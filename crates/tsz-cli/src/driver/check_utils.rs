@@ -1533,6 +1533,7 @@ pub(super) const fn is_non_suppressing_parse_error(code: u32) -> bool {
             | 1507 // There is nothing available for repetition (`/{1}/u`)
             | 1508 // Unexpected '{0}'. Did you mean to escape it with backslash? (`/[a[b]]/u`)
             | 1510 // '\k' must be followed by a capturing group name enclosed in angle brackets
+            | 1511 // '\q' is only available inside character class (`/\q{a}/v`, regex grammar, AST is valid)
             | 1512 // '\c' must be followed by an ASCII letter (`/\c1/u`)
             | 1516 // A character class range must not be bounded by another character class (`/[a-\d]/u`)
             | 1517 // Range out of order in character class (`/[b-a]/`)
