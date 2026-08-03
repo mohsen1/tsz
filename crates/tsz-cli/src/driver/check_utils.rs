@@ -1539,8 +1539,11 @@ pub(super) const fn is_non_suppressing_parse_error(code: u32) -> bool {
             | 1519 // Operators must not be mixed within a character class (regex grammar, AST is valid)
             | 1520 // Expected a class set operand (`/[a--]/v`)
             | 1523 // Expected a Unicode property name (`/\p{=x}/u`)
+            | 1524 // Unknown Unicode property name (`/\p{Foo=Bar}/u`)
             | 1525 // Expected a Unicode property value (`/\p{Script=}/u`)
+            | 1526 // Unknown Unicode property value (`/\p{Script=NotAScript}/u`)
             | 1527 // Expected a Unicode property name or value (`/\p{}/u`)
+            | 1529 // Unknown Unicode property name or value (`/\p{NotAThing}/u`)
             | 1528 // Any Unicode property that would match more than a single character is only available with the 'v' flag
             | 1530 // Unicode property value expressions are only available with the 'u'/'v' flag (`/\p{L}/`)
             | 1531 // '\p' must be followed by a Unicode property value expression in braces (`/\p/u`)

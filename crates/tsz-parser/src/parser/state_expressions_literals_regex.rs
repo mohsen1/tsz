@@ -3,6 +3,10 @@
 //! Pure file-organization move; no logic changes. Keeps `state_expressions_literals.rs`
 //! under the parser LOC ceiling.
 
+use super::regex_unicode_properties::{
+    BINARY_UNICODE_PROPERTIES_OF_STRINGS, canonical_non_binary_property_name,
+    is_known_unicode_property_name_or_value, unicode_property_value_is_known,
+};
 use super::state::ParserState;
 use crate::parser::{NodeIndex, node::LiteralData};
 use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
@@ -862,20 +866,6 @@ impl ParserState {
                 pos: &mut usize,
                 escape_start: usize,
             ) {
-                /// The binary Unicode properties of strings (ECMA-262
-                /// "Binary Unicode property of strings" table). Each matches a
-                /// sequence rather than a single character, so `\p{…}` accepts
-                /// them only under the Unicode Sets (`v`) flag.
-                const PROPERTIES_OF_STRINGS: [&[u8]; 7] = [
-                    b"Basic_Emoji",
-                    b"Emoji_Keycap_Sequence",
-                    b"RGI_Emoji",
-                    b"RGI_Emoji_Flag_Sequence",
-                    b"RGI_Emoji_Modifier_Sequence",
-                    b"RGI_Emoji_Tag_Sequence",
-                    b"RGI_Emoji_ZWJ_Sequence",
-                ];
-
                 fn scan_word(body: &[u8], end: usize, pos: &mut usize) -> usize {
                     let start = *pos;
                     while *pos < end && (body[*pos] == b'_' || body[*pos].is_ascii_alphanumeric()) {
@@ -902,6 +892,11 @@ impl ParserState {
                     *pos += 1;
                     let value_start = *pos;
                     let value_len = scan_word(body, end, pos);
+                    let canonical_name = if name_len > 0 {
+                        canonical_non_binary_property_name(&body[name_start..name_start + name_len])
+                    } else {
+                        None
+                    };
                     if name_len == 0 {
                         emit(
                             parser,
@@ -909,6 +904,14 @@ impl ParserState {
                             0,
                             diagnostic_messages::EXPECTED_A_UNICODE_PROPERTY_NAME,
                             diagnostic_codes::EXPECTED_A_UNICODE_PROPERTY_NAME,
+                        );
+                    } else if canonical_name.is_none() {
+                        emit(
+                            parser,
+                            name_start,
+                            name_len as u32,
+                            diagnostic_messages::UNKNOWN_UNICODE_PROPERTY_NAME,
+                            diagnostic_codes::UNKNOWN_UNICODE_PROPERTY_NAME,
                         );
                     }
                     if value_len == 0 {
@@ -918,6 +921,19 @@ impl ParserState {
                             0,
                             diagnostic_messages::EXPECTED_A_UNICODE_PROPERTY_VALUE,
                             diagnostic_codes::EXPECTED_A_UNICODE_PROPERTY_VALUE,
+                        );
+                    } else if let Some(canonical_name) = canonical_name
+                        && !unicode_property_value_is_known(
+                            canonical_name,
+                            &body[value_start..value_start + value_len],
+                        )
+                    {
+                        emit(
+                            parser,
+                            value_start,
+                            value_len as u32,
+                            diagnostic_messages::UNKNOWN_UNICODE_PROPERTY_VALUE,
+                            diagnostic_codes::UNKNOWN_UNICODE_PROPERTY_VALUE,
                         );
                     }
                 } else {
@@ -929,15 +945,32 @@ impl ParserState {
                             diagnostic_messages::EXPECTED_A_UNICODE_PROPERTY_NAME_OR_VALUE,
                             diagnostic_codes::EXPECTED_A_UNICODE_PROPERTY_NAME_OR_VALUE,
                         );
-                    } else if !unicode_sets_mode
-                        && PROPERTIES_OF_STRINGS.contains(&&body[name_start..name_start + name_len])
+                    } else if BINARY_UNICODE_PROPERTIES_OF_STRINGS
+                        .contains(&&body[name_start..name_start + name_len])
                     {
+                        // Matches a sequence rather than a single character,
+                        // so it is only accepted under the Unicode Sets (`v`)
+                        // flag; under `v` it is valid as-is (the negated-class
+                        // restriction tsc applies here is a separate,
+                        // unwired diagnostic).
+                        if !unicode_sets_mode {
+                            emit(
+                                parser,
+                                name_start,
+                                name_len as u32,
+                                diagnostic_messages::ANY_UNICODE_PROPERTY_THAT_WOULD_POSSIBLY_MATCH_MORE_THAN_A_SINGLE_CHARACTER_IS_O,
+                                diagnostic_codes::ANY_UNICODE_PROPERTY_THAT_WOULD_POSSIBLY_MATCH_MORE_THAN_A_SINGLE_CHARACTER_IS_O,
+                            );
+                        }
+                    } else if !is_known_unicode_property_name_or_value(
+                        &body[name_start..name_start + name_len],
+                    ) {
                         emit(
                             parser,
                             name_start,
                             name_len as u32,
-                            diagnostic_messages::ANY_UNICODE_PROPERTY_THAT_WOULD_POSSIBLY_MATCH_MORE_THAN_A_SINGLE_CHARACTER_IS_O,
-                            diagnostic_codes::ANY_UNICODE_PROPERTY_THAT_WOULD_POSSIBLY_MATCH_MORE_THAN_A_SINGLE_CHARACTER_IS_O,
+                            diagnostic_messages::UNKNOWN_UNICODE_PROPERTY_NAME_OR_VALUE,
+                            diagnostic_codes::UNKNOWN_UNICODE_PROPERTY_NAME_OR_VALUE,
                         );
                     }
                 }

@@ -750,6 +750,69 @@ const unicodePropertyEscapes: RegExp[] = [
 /// The Unicode Sets (`v`) flag makes the properties-of-strings legal, so the
 /// same sources that draw TS1528 under `u` must stay silent under `v`.
 #[test]
+fn test_regex_unicode_property_name_value_validation_matches_tsc() {
+    // Adjacent-case matrix for TS1524/TS1526/TS1529 (unknown Unicode
+    // property name / value / name-or-value), oracle-pinned against
+    // typescript@7.0.2 alongside the pre-existing TS1523/1525/1527/1528/1530
+    // siblings covered above: unknown name via each alias, unknown value
+    // under a known name, an unknown lone name-or-value, a known Script
+    // *value* used bare (invalid — Script only validates through the
+    // `Name=Value` form), and clean positive cases through every alias
+    // (`General_Category`/`gc`, `Script`/`sc`, `Script_Extensions`/`scx`,
+    // a binary property).
+    let source = r#"
+const validation: RegExp[] = [
+  /\p{Foo=Bar}/u,
+  /\p{gc=Bar}/u,
+  /\p{Script=NotAScript}/u,
+  /\p{NotAThing}/u,
+  /\p{Latin}/u,
+  /\p{Script=Latin}/u,
+  /\p{sc=Latin}/u,
+  /\p{General_Category=Letter}/u,
+  /\p{gc=Letter}/u,
+  /\p{Alphabetic}/u,
+  /\p{Script_Extensions=Han}/u,
+  /\p{scx=Han}/u,
+];
+"#;
+    let (parser, _root) = parse_source(source);
+
+    let diagnostics = parser.get_diagnostics();
+    let line_map = LineMap::build(source);
+
+    let mut actual: Vec<(u32, u32, u32)> = diagnostics
+        .iter()
+        .map(|d| {
+            let pos = line_map.offset_to_position(d.start, source);
+            (pos.line + 1, pos.character + 1, d.code)
+        })
+        .collect();
+    actual.sort_unstable();
+
+    let expected: Vec<(u32, u32, u32)> = vec![
+        (3, 7, diagnostic_codes::UNKNOWN_UNICODE_PROPERTY_NAME), // \p{Foo=Bar}, name alias unknown
+        (4, 10, diagnostic_codes::UNKNOWN_UNICODE_PROPERTY_VALUE), // \p{gc=Bar}, known name, unknown value
+        (5, 14, diagnostic_codes::UNKNOWN_UNICODE_PROPERTY_VALUE), // \p{Script=NotAScript}
+        (
+            6,
+            7,
+            diagnostic_codes::UNKNOWN_UNICODE_PROPERTY_NAME_OR_VALUE,
+        ), // \p{NotAThing}
+        (
+            7,
+            7,
+            diagnostic_codes::UNKNOWN_UNICODE_PROPERTY_NAME_OR_VALUE,
+        ), // \p{Latin}: a bare Script *value* only validates through `Script=`
+    ];
+
+    assert_eq!(
+        actual, expected,
+        "TS1524/TS1526/TS1529 adjacent-case matrix mismatch, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_regex_properties_of_strings_are_accepted_under_the_v_flag() {
     let source = r#"
 const underV: RegExp[] = [
