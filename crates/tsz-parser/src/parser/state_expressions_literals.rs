@@ -90,7 +90,7 @@ impl ParserState {
                 let first_token_is_reserved = self.is_reserved_word();
                 let first_name_start = self.token_pos();
                 let first_name_end = self.token_end();
-                let first_name = self.parse_property_name();
+                let first_name = self.parse_property_name_for_binding();
 
                 let (property_name, name) = if self.parse_optional(SyntaxKind::ColonToken) {
                     // propertyName: name

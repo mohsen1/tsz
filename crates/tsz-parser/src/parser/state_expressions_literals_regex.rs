@@ -1220,6 +1220,59 @@ impl ParserState {
                             || (body[pos] == b'-' && body[pos + 1] == b'-'))
                 }
 
+                /// Which `ClassSetExpression` production a class has committed
+                /// to. A plain range or a bare `-` is a union; the two
+                /// class-set operators are their own kinds. Mixing any two of
+                /// these in one class is TS1519.
+                #[derive(Clone, Copy, PartialEq, Eq)]
+                enum ClassSetKind {
+                    Union,
+                    Subtraction,
+                    Intersection,
+                }
+
+                /// Classify the operator at `pos`, which the caller has already
+                /// confirmed with `is_class_set_operator_at`.
+                fn class_set_operator_kind(body: &[u8], pos: usize) -> ClassSetKind {
+                    if body[pos] == b'-' {
+                        ClassSetKind::Subtraction
+                    } else {
+                        ClassSetKind::Intersection
+                    }
+                }
+
+                /// Record `kind` as this class's operator, reporting TS1519 on
+                /// the first operator that disagrees with the one already
+                /// committed. The committed kind is deliberately left unchanged
+                /// on a mismatch so the report stays keyed to the class's
+                /// original production.
+                fn note_class_set_kind<F>(
+                    parser: &mut ParserState,
+                    ctx: &RegexScanContext<'_, F>,
+                    committed: &mut Option<ClassSetKind>,
+                    mixed_reported: &mut bool,
+                    kind: ClassSetKind,
+                    at: usize,
+                    len: u32,
+                ) where
+                    F: Fn(&mut ParserState, usize, u32, &str, u32),
+                {
+                    match *committed {
+                        None => *committed = Some(kind),
+                        Some(existing) if existing != kind && !*mixed_reported => {
+                            *mixed_reported = true;
+                            (ctx.emit)(
+                                parser,
+                                at,
+                                len,
+                                diagnostic_messages::OPERATORS_MUST_NOT_BE_MIXED_WITHIN_A_CHARACTER_CLASS_WRAP_IT_IN_A_NESTED_CLASS_I,
+                                diagnostic_codes::OPERATORS_MUST_NOT_BE_MIXED_WITHIN_A_CHARACTER_CLASS_WRAP_IT_IN_A_NESTED_CLASS_I,
+                            );
+                        }
+                        Some(_) => {}
+                    }
+                }
+
                 fn scan_class_set_operator(
                     parser: &mut ParserState,
                     emit: &impl Fn(&mut ParserState, usize, u32, &str, u32),
@@ -1247,10 +1300,15 @@ impl ParserState {
                     *pos += 1;
                 }
 
-                // A `ClassSetExpression` that has committed to `--`/`&&` no
-                // longer admits ranges, so a later `-` is not a range operator
-                // and its operands are not range bounds.
-                let mut in_class_set_expression = false;
+                // The first operator a class uses fixes its kind, and mixing a
+                // different one in the same class is TS1519. The commitment is
+                // per class, not per pattern: a nested class recurses into its
+                // own `scan_class_ranges` and so gets its own `committed`,
+                // which is why `/[[a--b]&&c]/v` is legal.
+                let mut committed: Option<ClassSetKind> = None;
+                // tsc reports the mixture once, on the first operator that
+                // disagrees — `/[a--b&&c--d]/v` draws a single TS1519.
+                let mut mixed_reported = false;
 
                 while *pos < ctx.body_end {
                     if ctx.body[*pos] == b']' {
@@ -1260,7 +1318,15 @@ impl ParserState {
                     if ctx.unicode_sets_mode
                         && is_class_set_operator_at(ctx.body, *pos, ctx.body_end)
                     {
-                        in_class_set_expression = true;
+                        note_class_set_kind(
+                            parser,
+                            ctx,
+                            &mut committed,
+                            &mut mixed_reported,
+                            class_set_operator_kind(ctx.body, *pos),
+                            *pos,
+                            2,
+                        );
                         scan_class_set_operator(parser, ctx.emit, ctx.body, ctx.body_end, pos);
                         continue;
                     }
@@ -1271,17 +1337,41 @@ impl ParserState {
                     if ctx.unicode_sets_mode
                         && is_class_set_operator_at(ctx.body, *pos, ctx.body_end)
                     {
-                        in_class_set_expression = true;
+                        note_class_set_kind(
+                            parser,
+                            ctx,
+                            &mut committed,
+                            &mut mixed_reported,
+                            class_set_operator_kind(ctx.body, *pos),
+                            *pos,
+                            2,
+                        );
                         scan_class_set_operator(parser, ctx.emit, ctx.body, ctx.body_end, pos);
                         continue;
                     }
                     if *pos >= ctx.body_end || ctx.body[*pos] != b'-' {
                         continue;
                     }
-                    if in_class_set_expression {
+                    // A class already committed to `--`/`&&` admits no ranges,
+                    // so this `-` is a union operator mixed into a set
+                    // expression rather than a range separator.
+                    if matches!(
+                        committed,
+                        Some(ClassSetKind::Subtraction | ClassSetKind::Intersection)
+                    ) {
+                        note_class_set_kind(
+                            parser,
+                            ctx,
+                            &mut committed,
+                            &mut mixed_reported,
+                            ClassSetKind::Union,
+                            *pos,
+                            1,
+                        );
                         *pos += 1;
                         continue;
                     }
+                    committed = Some(ClassSetKind::Union);
 
                     *pos += 1;
 

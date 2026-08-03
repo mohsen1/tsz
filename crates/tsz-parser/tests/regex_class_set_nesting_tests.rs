@@ -115,20 +115,26 @@ fn nested_classes_on_both_range_bounds_report_ts1516_twice() {
 // check (TS1516) nor the range-order check (TS1517) may fire inside one
 // ---------------------------------------------------------------------------
 
+/// A `-` after a class-set operator is not a range separator — but it is not
+/// nothing either. It is a union operator mixed into a set expression, which is
+/// TS1519; these three rows asserted `clean` while that code was unwired, and
+/// the oracle reports on the `-` in every one of them.
 #[test]
-fn hyphen_after_a_class_set_operator_is_not_a_range() {
-    assert_eq!(regex_codes("const a = /[a--b-c]/v;"), Vec::<u32>::new());
-    assert_eq!(regex_codes("const a = /[a&&b-c]/v;"), Vec::<u32>::new());
-    assert_eq!(regex_codes("const a = /[[a]--b-c]/v;"), Vec::<u32>::new());
+fn hyphen_after_a_class_set_operator_is_a_mixed_operator_not_a_range() {
+    assert_eq!(regex_codes_at("const a = /[a--b-c]/v;"), vec![(1519, 16)]);
+    assert_eq!(regex_codes_at("const a = /[a&&b-c]/v;"), vec![(1519, 16)]);
+    assert_eq!(regex_codes_at("const a = /[[a]--b-c]/v;"), vec![(1519, 18)]);
 }
 
 /// The witness that first exposed this: a descending pair inside a subtraction
 /// is not a range, so TS1517 must not fire on it.
 #[test]
 fn descending_pair_inside_a_subtraction_does_not_report_ts1517() {
+    // Still no TS1517 — the point of this row. The `-` is now correctly
+    // reported as a mixed union operator (TS1519) rather than passing silently.
     assert_eq!(
-        regex_codes("const a = /[[a]--\\P{L}-_]/v;"),
-        Vec::<u32>::new()
+        regex_codes_at("const a = /[[a]--\\P{L}-_]/v;"),
+        vec![(1519, 22)]
     );
 }
 

@@ -270,6 +270,10 @@ mod regex_class_set_nesting_tests;
 mod regex_class_set_reserved_double_punctuator_tests;
 
 #[cfg(test)]
+#[path = "../../tests/regex_class_set_operator_mixing_tests.rs"]
+mod regex_class_set_operator_mixing_tests;
+
+#[cfg(test)]
 #[path = "../../tests/modifier_ordering_tests.rs"]
 mod modifier_ordering_tests;
 
@@ -308,6 +312,10 @@ mod computed_property_binding_recovery_tests;
 #[cfg(test)]
 #[path = "../../tests/reserved_parameter_recovery_tests.rs"]
 mod reserved_parameter_recovery_tests;
+
+#[cfg(test)]
+#[path = "../../tests/ts1180_property_destructuring_pattern_expected_tests.rs"]
+mod ts1180_property_destructuring_pattern_expected_tests;
 
 // Re-export flags
 pub use flags::{modifier_flags, node_flags, transform_flags};
