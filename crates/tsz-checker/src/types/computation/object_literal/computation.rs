@@ -124,6 +124,11 @@ impl<'a> CheckerState<'a> {
                     // the name can be resolved to a literal atom.
                     self.check_computed_property_name(prop.name);
                 }
+                // TS1539: a bigint literal object-literal property name (`{ 123n: 1 }`).
+                // Object-literal methods (`{ 123n() {} }`) share PropertyAssignment's
+                // sibling ShorthandPropertyAssignment/MethodDeclaration node kinds and
+                // never reach this branch, so no extra gate is needed here.
+                self.check_bigint_literal_property_name(prop.name);
 
                 // When the computed key expression has error type (e.g., [Symbol.nonsense]),
                 // treat the property as unnamed to avoid cascading errors. tsc drops

@@ -783,6 +783,8 @@ mod ts1101_with_in_strict_mode_tests;
 mod ts1170_computed_property_syntactic_form_tests;
 #[path = "tests/ts1361_ambient_computed_property_name_tests.rs"]
 mod ts1361_ambient_computed_property_name_tests;
+#[path = "tests/ts1539_bigint_literal_property_name_tests.rs"]
+mod ts1539_bigint_literal_property_name_tests;
 #[path = "tests/ts18010_jsdoc_tag_anchor_tests.rs"]
 mod ts18010_jsdoc_tag_anchor_tests;
 #[path = "tests/ts18050_nullish_keyword_without_strict_null_checks_tests.rs"]

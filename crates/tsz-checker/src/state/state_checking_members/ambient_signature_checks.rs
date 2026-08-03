@@ -100,6 +100,8 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+        // TS1539: a bigint literal class property name (`123n = 1`).
+        self.check_bigint_literal_property_name(prop.name);
         self.check_modifier_combinations(&prop.modifiers, prop.name, node.kind);
 
         // TS8009/TS8010: Check for TypeScript-only features in JavaScript files

@@ -307,6 +307,12 @@ impl<'a> CheckerState<'a> {
                             diagnostic_codes::A_COMPUTED_PROPERTY_NAME_IN_AN_INTERFACE_MUST_REFER_TO_AN_EXPRESSION_WHOSE_TYPE,
                         );
                     }
+                    // TS1539: a bigint literal interface property name (`123n: string`).
+                    // Method signatures share this same `sig` shape but never take
+                    // this diagnostic — gate on the member being a property.
+                    if member_node.kind == syntax_kind_ext::PROPERTY_SIGNATURE {
+                        self.check_bigint_literal_property_name(sig.name);
+                    }
                     let (_type_params, type_param_updates) =
                         self.push_type_parameters(&sig.type_parameters);
                     // Resolve parameters first so the param scope is built

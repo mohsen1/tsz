@@ -953,6 +953,12 @@ impl<'a> CheckerState<'a> {
                                     diagnostic_codes::A_COMPUTED_PROPERTY_NAME_IN_A_TYPE_LITERAL_MUST_REFER_TO_AN_EXPRESSION_WHOSE_TYP,
                                 );
                             }
+                            // TS1539: a bigint literal type-literal property name
+                            // (`123n: string`). Method signatures share this same
+                            // `sig` shape but never take this diagnostic.
+                            if member_node.kind == syntax_kind_ext::PROPERTY_SIGNATURE {
+                                self.check_bigint_literal_property_name(sig.name);
+                            }
                         } else if let Some(accessor) = self.ctx.arena.get_accessor(member_node) {
                             // For get/set accessors in type literals, use TS2464
                             // (general computed property check) matching tsc behavior

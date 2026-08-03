@@ -1,5 +1,6 @@
 //! Property access checking (accessibility, computed names, const modifiers).
 
+mod literal_name_grammar;
 mod private_error;
 mod super_static_access;
 mod union_restricted_property;
