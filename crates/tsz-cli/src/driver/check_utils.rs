@@ -414,6 +414,21 @@ fn is_hard_keyword_interface_name_2427_parse_diagnostic(diagnostic: &ParseDiagno
 /// TS1014 elsewhere in the same file. TS1015/1016 belong to the same tsc
 /// function but are checker-emitted in tsz (`parameter_checker.rs`), so they
 /// never reach this filter either.
+///
+/// #16279 audit round: 11 more parser-emitted codes confirmed
+/// checker-suppressible against a real `typescript@7.0.2` oracle (a genuine
+/// unrelated syntax error in the same file drops each of these, matching the
+/// families already above) and added here: TS1079/1120 (modifier-on-a-
+/// declaration-that-cannot-have-modifiers, siblings of TS1191/1193 above),
+/// TS1092/1094 (type parameters where none are allowed, siblings of
+/// TS1093/1054 above), TS1098/1099 (list-cannot-be-empty, sibling of TS1097
+/// above), TS1242 (modifier-can-only-appear-on-X, sibling of TS1275 below),
+/// TS1246/1247 (property initializer not allowed in a type position), and
+/// TS1491/1495 (modifier-on-a-using-declaration). Two adjacent candidates
+/// with the same "modifier/decorator in the wrong place" shape, TS1433 and
+/// TS1436, were oracle-tested and rejected: tsc keeps both alongside an
+/// unrelated syntax error in the same file, so they are real parser
+/// diagnostics in tsc too and must NOT be added here.
 const fn is_parser_grammar_code(code: u32) -> bool {
     matches!(
         code,
@@ -445,14 +460,20 @@ const fn is_parser_grammar_code(code: u32) -> bool {
         | 1054 // A 'get' accessor cannot have parameters
         | 1070 // '{0}' modifier cannot appear on a type member
         | 1071 // An accessor must have a body (interface/ambient)
+        | 1079 // A '{0}' modifier cannot be used with an import declaration
         | 1089 // '{0}' modifier cannot appear on a constructor declaration
         | 1090 // '{0}' modifier cannot appear on a parameter
+        | 1092 // Type parameters cannot appear on a constructor declaration
         | 1093 // Type annotation cannot appear on a constructor declaration
+        | 1094 // An accessor cannot have type parameters
         | 1095 // A 'set' accessor cannot have a return type annotation
         | 1096 // An index signature must have exactly one parameter
         | 1097 // '{0}' list cannot be empty
+        | 1098 // Type parameter list cannot be empty
+        | 1099 // Type argument list cannot be empty
         | 1113 // A 'default' clause cannot appear more than once in a 'switch' statement
         | 1114 // Duplicate label
+        | 1120 // An export assignment cannot have modifiers
         | 1123 // Variable declaration list cannot be empty
         | 1162 // An object member cannot be declared optional
         | 1163 // A 'yield' expression is only allowed in a generator body
@@ -472,7 +493,12 @@ const fn is_parser_grammar_code(code: u32) -> bool {
         | 1210 // Code contained in a class is evaluated in strict mode
         | 1212 // Identifier expected. '{0}' is a reserved word in strict mode
         | 1213 // Identifier expected. '{0}' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+        | 1242 // 'abstract' modifier can only appear on a class, method, or property declaration
         | 1243 // '{0}' modifier cannot be used with '{1}' modifier
+        | 1246 // An interface property cannot have an initializer
+        | 1247 // A type literal property cannot have an initializer
+        | 1491 // '{0}' modifier cannot appear on a 'using' declaration
+        | 1495 // '{0}' modifier cannot appear on an 'await using' declaration
         | 1275 // 'accessor' modifier can only appear on a property declaration
         | 1276 // An 'accessor' property cannot be declared optional
         | 8038 // Decorators may not appear after 'export' or 'export default' if they also appear before 'export'
