@@ -1374,7 +1374,7 @@ impl<'a> CheckerState<'a> {
             self.error_at_node(
                 member_idx,
                 "An abstract accessor cannot have an implementation.",
-                diagnostic_codes::METHOD_CANNOT_HAVE_AN_IMPLEMENTATION_BECAUSE_IT_IS_MARKED_ABSTRACT,
+                diagnostic_codes::AN_ABSTRACT_ACCESSOR_CANNOT_HAVE_AN_IMPLEMENTATION,
             );
         }
 

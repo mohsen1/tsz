@@ -785,6 +785,8 @@ mod ts1165_ambient_class_method_computed_name_tests;
 mod ts1168_method_overload_computed_name_tests;
 #[path = "tests/ts1170_computed_property_syntactic_form_tests.rs"]
 mod ts1170_computed_property_syntactic_form_tests;
+#[path = "tests/ts1318_abstract_accessor_implementation_tests.rs"]
+mod ts1318_abstract_accessor_implementation_tests;
 #[path = "tests/ts1361_ambient_computed_property_name_tests.rs"]
 mod ts1361_ambient_computed_property_name_tests;
 #[path = "tests/ts1539_bigint_literal_property_name_tests.rs"]
