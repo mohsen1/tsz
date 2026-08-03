@@ -1714,6 +1714,103 @@ fn filtered_parse_diagnostics_ts1018_does_not_self_suppress_listed_sibling() {
 }
 
 #[test]
+fn filtered_parse_diagnostics_suppresses_16279_audit_codes_when_real_parse_error_present() {
+    use tsz::parser::ParseDiagnostic;
+
+    // #16279 audit round: TS1079/1092/1094/1098/1099/1120/1242/1246/1247/1491/1495
+    // were confirmed checker-suppressible against a real `typescript@7.0.2`
+    // oracle (a genuine unrelated syntax error in the same file drops each of
+    // these, matching the already-listed families they belong to). Before this
+    // fix, each was unlisted and so both went unsuppressed on its own AND
+    // silently deleted every listed sibling in the same file.
+    for code in [
+        1079, 1092, 1094, 1098, 1099, 1120, 1242, 1246, 1247, 1491, 1495,
+    ] {
+        let diagnostics = vec![
+            ParseDiagnostic {
+                start: 0,
+                length: 1,
+                message: "candidate".to_string(),
+                code,
+            },
+            ParseDiagnostic {
+                start: 10,
+                length: 1,
+                message: "Expression expected.".to_string(),
+                code: 1109,
+            },
+        ];
+        let filtered = filtered_parse_diagnostics(&diagnostics, false);
+        let codes: Vec<u32> = filtered.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&code),
+            "TS{code} should be suppressed when a real parse error (TS1109) is present, got: {codes:?}"
+        );
+        assert!(
+            codes.contains(&1109),
+            "TS1109 (real parse error) should survive for the TS{code} case, got: {codes:?}"
+        );
+    }
+}
+
+#[test]
+fn filtered_parse_diagnostics_keeps_16279_audit_codes_when_alone() {
+    use tsz::parser::ParseDiagnostic;
+
+    for code in [
+        1079, 1092, 1094, 1098, 1099, 1120, 1242, 1246, 1247, 1491, 1495,
+    ] {
+        let diagnostics = vec![ParseDiagnostic {
+            start: 0,
+            length: 1,
+            message: "candidate".to_string(),
+            code,
+        }];
+        let filtered = filtered_parse_diagnostics(&diagnostics, false);
+        let codes: Vec<u32> = filtered.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&code),
+            "TS{code} should be kept when it is the only diagnostic, got: {codes:?}"
+        );
+    }
+}
+
+#[test]
+fn filtered_parse_diagnostics_keeps_ts1433_and_ts1436_alongside_real_parse_error() {
+    use tsz::parser::ParseDiagnostic;
+
+    // Oracle-tested and rejected for `is_parser_grammar_code`: unlike their
+    // modifier/decorator-shaped neighbors above, tsc keeps TS1433 ("Neither
+    // decorators nor modifiers may be applied to 'this' parameters.") and
+    // TS1436 ("Decorators must precede the name...") even when a real
+    // structural syntax error (TS1109) exists elsewhere in the file. They are
+    // real tsc parser diagnostics, not checker-side grammar checks, so they
+    // must never be added to the suppression list.
+    for code in [1433, 1436] {
+        let diagnostics = vec![
+            ParseDiagnostic {
+                start: 0,
+                length: 1,
+                message: "candidate".to_string(),
+                code,
+            },
+            ParseDiagnostic {
+                start: 10,
+                length: 1,
+                message: "Expression expected.".to_string(),
+                code: 1109,
+            },
+        ];
+        let filtered = filtered_parse_diagnostics(&diagnostics, false);
+        let codes: Vec<u32> = filtered.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&code),
+            "TS{code} must survive alongside a real parse error (confirmed real tsc parser diagnostic), got: {codes:?}"
+        );
+    }
+}
+
+#[test]
 fn js_parse_allowlist_keeps_plain_js_binder_strict_codes() {
     for code in [1214, 18012] {
         assert!(
