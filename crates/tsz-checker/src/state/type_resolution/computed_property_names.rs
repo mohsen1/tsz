@@ -397,6 +397,22 @@ impl<'a> CheckerState<'a> {
         if let Some(name) = self.local_well_known_symbol_property_name(computed.expression) {
             return Some(ResolvedComputedName::string(name));
         }
+        // `Symbol.<member>` where `<member>` is a plain (non-unique)
+        // `symbol`-typed global augmentation (xstate's `SymbolConstructor.
+        // observable: symbol`) is not a well-known key at all: it does not
+        // mint a named member, so it must be flagged wide (`__symbol_`
+        // prefix) the same way an aliasing identifier's plain-`symbol`
+        // binding is below — `symbol_valued_binding_property_name` only
+        // resolves bare identifiers, so this qualified-access shape needs its
+        // own leg.
+        if let Some(name) = crate::types_domain::computed_names::wide_well_known_symbol_member_key(
+            &self.ctx,
+            self.ctx.arena,
+            self.ctx.binder,
+            computed.expression,
+        ) {
+            return Some(ResolvedComputedName::symbol(name));
+        }
 
         if let Some(name) =
             self.computed_expression_literal_name_in_arena(self.ctx.arena, computed.expression)
