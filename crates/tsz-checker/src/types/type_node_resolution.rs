@@ -1112,6 +1112,26 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     name.starts_with("[Symbol.") || name.starts_with("__unique_")
                 })
             };
+            // A plain (non-unique) `symbol`-typed binding isn't resolved by
+            // `computed_name_resolver` above (it only recognizes `unique
+            // symbol` identity), so it must be checked independently here
+            // rather than derived from that resolver's answer.
+            let computed_wide_symbol_name_resolver = |expr_idx: NodeIndex| -> bool {
+                let sym_id = value_resolver(expr_idx)
+                    .map(tsz_binder::SymbolId)
+                    .or_else(|| {
+                        Self::resolve_computed_property_symbol_in_arena(
+                            decl_arena,
+                            expr_idx,
+                            &resolve_text_symbol,
+                        )
+                    });
+                sym_id.is_some_and(|sym_id| {
+                    crate::types_domain::computed_names::symbol_is_wide_symbol_binding(
+                        self.ctx, sym_id,
+                    )
+                })
+            };
 
             // Provide flow-narrowed types for `typeof expr` in the type alias body.
             // These were pre-computed by `precompute_type_query_flow_types` during
@@ -1312,6 +1332,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 .with_type_param_bindings(bindings)
                 .with_computed_name_resolver(&computed_name_resolver)
                 .with_computed_symbol_name_resolver(&computed_symbol_name_resolver)
+                .with_computed_wide_symbol_name_resolver(&computed_wide_symbol_name_resolver)
                 .with_name_def_id_resolver(&name_resolver)
                 .with_type_query_override(&type_query_override)
             };

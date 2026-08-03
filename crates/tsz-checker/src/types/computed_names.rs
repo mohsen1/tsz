@@ -333,6 +333,23 @@ pub(crate) fn symbol_is_unique_symbol_binding(ctx: &CheckerContext<'_>, sym_id: 
     })
 }
 
+/// Does `sym_id` denote a binding with plain (non-unique) `symbol` identity —
+/// a `const`/parameter/property annotated `: symbol` rather than `: unique
+/// symbol`? Unlike [`symbol_is_unique_symbol_binding`], which value-position
+/// consumers (`ws[sym]` element access) use to key a member by binding
+/// identity, this predicate is for STRUCTURAL member collection
+/// (interface/type-literal lowering): tsc does not give such a key its own
+/// named identity there — it contributes to the containing type's symbol
+/// index signature instead. The two predicates are mutually exclusive for
+/// any single declaration.
+pub(crate) fn symbol_is_wide_symbol_binding(ctx: &CheckerContext<'_>, sym_id: SymbolId) -> bool {
+    let sym_id = follow_import_aliases(ctx, sym_id);
+    any_declaration_matches(ctx, sym_id, |owner_binder, arena, decl_idx| {
+        !declaration_is_unique_symbol_binding(ctx, owner_binder, arena, decl_idx)
+            && declaration_has_nonunique_symbol_annotation(arena, decl_idx)
+    })
+}
+
 fn declaration_is_unique_symbol_binding(
     ctx: &CheckerContext<'_>,
     owner_binder: &BinderState,
@@ -788,4 +805,34 @@ pub(crate) fn computed_property_is_symbol_named_in_arena(
     expr_idx: NodeIndex,
 ) -> bool {
     computed_property_name_atom_in_arena(ctx, arena, binder, resolve_symbol, expr_idx).is_some()
+}
+
+/// Is the computed-name expression keyed by a plain (non-unique)
+/// `symbol`-typed binding — the structural-lowering counterpart of
+/// [`symbol_is_wide_symbol_binding`]? `false` for a well-known `[Symbol.x]`
+/// syntactic key or any other qualified member access (`base.member`),
+/// neither of which routes through binding-identity resolution, and for a
+/// genuine `unique symbol` binding.
+pub(crate) fn computed_property_is_wide_symbol_named(
+    ctx: &CheckerContext<'_>,
+    resolve_symbol: impl Fn(NodeIndex) -> Option<SymbolId>,
+    expr_idx: NodeIndex,
+) -> bool {
+    computed_property_is_wide_symbol_named_in_arena(ctx, ctx.arena, resolve_symbol, expr_idx)
+}
+
+/// Arena-aware form of [`computed_property_is_wide_symbol_named`].
+pub(crate) fn computed_property_is_wide_symbol_named_in_arena(
+    ctx: &CheckerContext<'_>,
+    arena: &NodeArena,
+    resolve_symbol: impl Fn(NodeIndex) -> Option<SymbolId>,
+    expr_idx: NodeIndex,
+) -> bool {
+    if member_access_parts(arena, expr_idx).is_some_and(|parts| parts.member.is_some()) {
+        return false;
+    }
+    let Some(sym_id) = resolve_symbol(expr_idx) else {
+        return false;
+    };
+    symbol_is_wide_symbol_binding(ctx, sym_id)
 }

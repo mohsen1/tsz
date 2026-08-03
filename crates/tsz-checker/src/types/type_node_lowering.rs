@@ -375,6 +375,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             |expr_idx: NodeIndex| self.computed_property_expression_name_atom(expr_idx);
         let computed_symbol_name_resolver =
             |expr_idx: NodeIndex| self.computed_property_expression_is_symbol_named(expr_idx);
+        let computed_wide_symbol_name_resolver =
+            |expr_idx: NodeIndex| self.computed_property_expression_is_wide_symbol_named(expr_idx);
 
         let mut lowering = TypeLowering::with_hybrid_resolver(
             self.ctx.arena,
@@ -389,6 +391,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         .with_type_query_override(&type_query_override)
         .with_computed_name_resolver(&computed_name_resolver)
         .with_computed_symbol_name_resolver(&computed_symbol_name_resolver)
+        .with_computed_wide_symbol_name_resolver(&computed_wide_symbol_name_resolver)
         .with_local_shadow_def_id_resolver(&local_shadow_def_id_resolver);
         if use_qualified_names && self.type_node_is_in_lib_declaration(idx) {
             lowering = lowering.prefer_name_def_id_resolution();

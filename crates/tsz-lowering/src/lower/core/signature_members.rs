@@ -139,7 +139,19 @@ impl<'a> TypeLowering<'a> {
                             .push(self.lower_call_signature(sig));
                     }
                     k if k == syntax_kind_ext::METHOD_SIGNATURE => {
-                        if let Some(name) = self.lower_signature_name(sig.name) {
+                        if self.is_wide_symbol_computed_name(sig.name) {
+                            let readonly = self.arena.has_modifier(
+                                &sig.modifiers,
+                                tsz_scanner::SyntaxKind::ReadonlyKeyword,
+                            );
+                            let value_type = self.lower_method_signature(sig);
+                            parts.merge_index_signature(IndexSignature {
+                                key_type: TypeId::SYMBOL,
+                                value_type,
+                                readonly,
+                                param_name: None,
+                            });
+                        } else if let Some(name) = self.lower_signature_name(sig.name) {
                             let is_symbol_named =
                                 self.lower_signature_name_is_symbol_named(sig.name);
                             let (is_string_named, single_quoted_name) =
@@ -164,7 +176,19 @@ impl<'a> TypeLowering<'a> {
                         }
                     }
                     _ => {
-                        if let Some(prop) = self.lower_type_element(idx) {
+                        if self.is_wide_symbol_computed_name(sig.name) {
+                            let readonly = self.arena.has_modifier(
+                                &sig.modifiers,
+                                tsz_scanner::SyntaxKind::ReadonlyKeyword,
+                            );
+                            let value_type = self.lower_type(sig.type_annotation);
+                            parts.merge_index_signature(IndexSignature {
+                                key_type: TypeId::SYMBOL,
+                                value_type,
+                                readonly,
+                                param_name: None,
+                            });
+                        } else if let Some(prop) = self.lower_type_element(idx) {
                             parts.merge_property(prop);
                         } else if self.is_unresolved_computed_property_name(sig.name) {
                             parts.has_late_bound_members = true;
@@ -183,6 +207,30 @@ impl<'a> TypeLowering<'a> {
 
             // Handle accessor declarations (get/set) in interfaces and type literals
             if member.is_accessor()
+                && let Some(accessor) = self.arena.get_accessor(member)
+                && self.is_wide_symbol_computed_name(accessor.name)
+            {
+                let is_getter = member.kind == syntax_kind_ext::GET_ACCESSOR;
+                let value_type = if is_getter {
+                    self.lower_type(accessor.type_annotation)
+                } else {
+                    accessor
+                        .parameters
+                        .nodes
+                        .first()
+                        .and_then(|&param_idx| self.arena.get(param_idx))
+                        .and_then(|param_node| self.arena.get_parameter(param_node))
+                        .map_or(TypeId::UNKNOWN, |param| {
+                            self.lower_type(param.type_annotation)
+                        })
+                };
+                parts.merge_index_signature(IndexSignature {
+                    key_type: TypeId::SYMBOL,
+                    value_type,
+                    readonly: is_getter,
+                    param_name: None,
+                });
+            } else if member.is_accessor()
                 && let Some(accessor) = self.arena.get_accessor(member)
                 && let Some(name) = self.lower_signature_name(accessor.name)
             {
@@ -681,6 +729,30 @@ impl<'a> TypeLowering<'a> {
         self.arena
             .get(name_idx)
             .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+    }
+
+    /// Returns true when `name_idx` is a computed property name keyed by a
+    /// plain (non-unique) `symbol`-typed binding. Such a member does not mint
+    /// a named property: tsc routes it into the containing type's symbol
+    /// index signature, so two independently-keyed `symbol`-typed members
+    /// still describe the same member set. Checked BEFORE
+    /// `lower_signature_name` so the wide-symbol key never reaches the
+    /// named-member path, matching tsc rather than binding-identity naming
+    /// (which is correct only for value-position member access, not for
+    /// structural interface/type-literal member collection).
+    pub(super) fn is_wide_symbol_computed_name(&self, name_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+        let Some(computed) = self.arena.get_computed_property(node) else {
+            return false;
+        };
+        self.host
+            .computed_name_is_wide_symbol(computed.expression, self.arena)
+            .unwrap_or(false)
     }
 
     pub(super) fn lower_signature_name_is_symbol_named(&self, node_idx: NodeIndex) -> bool {

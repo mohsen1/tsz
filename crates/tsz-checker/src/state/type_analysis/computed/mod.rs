@@ -1755,17 +1755,22 @@ impl<'a> CheckerState<'a> {
                 );
 
                 // Pre-compute computed property names that the lowering can't resolve from AST alone.
-                let (computed_names, computed_symbol_names) = if needs_computed_name_map {
-                    (
-                        self.precompute_computed_property_names(local_declarations),
-                        self.precompute_symbol_named_computed_property_names(local_declarations),
-                    )
-                } else {
-                    (
-                        rustc_hash::FxHashMap::default(),
-                        rustc_hash::FxHashSet::default(),
-                    )
-                };
+                let (computed_names, computed_symbol_names, computed_wide_symbol_names) =
+                    if needs_computed_name_map {
+                        (
+                            self.precompute_computed_property_names(local_declarations),
+                            self.precompute_symbol_named_computed_property_names(
+                                local_declarations,
+                            ),
+                            self.precompute_wide_symbol_computed_property_names(local_declarations),
+                        )
+                    } else {
+                        (
+                            rustc_hash::FxHashMap::default(),
+                            rustc_hash::FxHashSet::default(),
+                            rustc_hash::FxHashSet::default(),
+                        )
+                    };
                 let prewarmed_type_params = if needs_prewarm {
                     self.prewarm_member_type_reference_params(local_declarations)
                 } else {
@@ -1795,6 +1800,9 @@ impl<'a> CheckerState<'a> {
                 };
                 let computed_symbol_name_resolver =
                     |expr_idx: NodeIndex| computed_symbol_names.contains(&(expr_idx, arena_ptr));
+                let computed_wide_symbol_name_resolver = |expr_idx: NodeIndex| {
+                    computed_wide_symbol_names.contains(&(expr_idx, arena_ptr))
+                };
                 let lazy_type_params_resolver = |def_id: tsz_solver::def::DefId| {
                     prewarmed_type_params
                         .get(&def_id)
@@ -1848,6 +1856,7 @@ impl<'a> CheckerState<'a> {
                 .with_type_param_bindings(type_param_bindings)
                 .with_computed_name_resolver(&computed_name_resolver)
                 .with_computed_symbol_name_resolver(&computed_symbol_name_resolver)
+                .with_computed_wide_symbol_name_resolver(&computed_wide_symbol_name_resolver)
                 .with_lazy_type_params_resolver(&lazy_type_params_resolver)
                 .with_name_def_id_resolver(&name_resolver)
                 .with_type_query_override(&type_query_override);

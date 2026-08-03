@@ -11,6 +11,7 @@ pub(crate) mod heritage_publication;
 pub(crate) mod import_type;
 pub(crate) mod import_type_meaning;
 pub(crate) mod judge;
+mod missing_global_type;
 pub(crate) mod mixin_constraints;
 pub(crate) mod module;
 mod primitive_keyword;
@@ -22,6 +23,7 @@ mod symbol_shadowing;
 pub(crate) mod symbol_types;
 pub(crate) mod symbol_types_class;
 pub(crate) mod symbol_types_dynamic_alias;
+pub(crate) mod symbol_types_import_alias;
 pub(crate) mod symbol_types_lazy;
 #[cfg(test)]
 mod symbol_types_tests;
