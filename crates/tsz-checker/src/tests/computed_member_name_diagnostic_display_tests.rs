@@ -169,6 +169,185 @@ fn ts7010_bodyless_method_computed_identifier_name_is_not_downgraded_to_ts7011()
 }
 
 // ---------------------------------------------------------------------------
+// #16229 — a *no-substitution* template literal computed name (`` [`abc`] ``)
+//
+// The last silent form in this family. `get_property_name` does resolve it to
+// the key `abc` (`get_literal_property_name` accepts the kind), which is why
+// #16225 recorded it as "already handled one step earlier" — but naming a
+// member and resolving its key are different questions.
+// `member_name_for_diagnostic` dispatches a `ComputedPropertyName` straight to
+// the display renderer by node *kind*, so the key resolver never covers for a
+// missing display arm, and `computed_name_expression_display_text` had no arm
+// for `NoSubstitutionTemplateLiteral`: not a `StringLiteral`, not a
+// `NumericLiteral`, not a `TemplateExpression`, and declined by
+// `simple_computed_name_expr_text_in_arena`. The renderer returned `None` and
+// every site gating on it dropped the diagnostic.
+//
+// tsc renders it verbatim through `declarationNameToString` → `getTextOfNode`,
+// so the **backticks survive into the message** — `` '[`abc`]' ``, not
+// `'["abc"]'` and not `'[abc]'`. Recorded from `typescript@7.0.2` under
+// `--noEmit --strict --lib es2022 --target es2022`.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ts7033_declare_class_no_substitution_template_name_keeps_backticks() {
+    assert_names(
+        "declare class Cq17 { get [`pq17`](); }",
+        7033,
+        "Property '[`pq17`]'",
+    );
+}
+
+#[test]
+fn ts7033_interface_no_substitution_template_name_keeps_backticks() {
+    assert_names(
+        "interface Iq18 { get [`pq18`](); }",
+        7033,
+        "Property '[`pq18`]'",
+    );
+}
+
+#[test]
+fn ts7033_type_literal_no_substitution_template_name_keeps_backticks() {
+    assert_names(
+        "type Tq19 = { get [`pq19`](); };",
+        7033,
+        "Property '[`pq19`]'",
+    );
+}
+
+#[test]
+fn ts7033_static_no_substitution_template_name_keeps_backticks() {
+    assert_names(
+        "declare class Cq20 { static get [`pq20`](); }",
+        7033,
+        "Property '[`pq20`]'",
+    );
+}
+
+#[test]
+fn ts7033_abstract_no_substitution_template_name_keeps_backticks() {
+    assert_names(
+        "abstract class Cq21 { abstract get [`pq21`](); }",
+        7033,
+        "Property '[`pq21`]'",
+    );
+}
+
+#[test]
+fn ts7032_setter_no_substitution_template_name_keeps_backticks() {
+    assert_names(
+        "declare class Cq22 { set [`pq22`](v); }",
+        7032,
+        "Property '[`pq22`]'",
+    );
+}
+
+#[test]
+fn ts7008_property_no_substitution_template_name_keeps_backticks() {
+    assert_names(
+        "declare class Cq23 { [`pq23`]; }",
+        7008,
+        "Member '[`pq23`]'",
+    );
+}
+
+#[test]
+fn ts7010_bodyless_method_no_substitution_template_name_is_not_downgraded_to_ts7011() {
+    // Same code-level divergence as the computed-identifier row above: with no
+    // name, the member is "unnamable" and falls through to TS7011.
+    let source = "declare class Cq24 { [`pq24`](); }";
+    let codes: Vec<u32> = check_source_strict_messages(source)
+        .into_iter()
+        .map(|(code, _)| code)
+        .collect();
+    assert!(
+        !codes.contains(&7011),
+        "a nameable computed member must not fall through to TS7011; got {codes:?}"
+    );
+    assert_names(
+        source,
+        7010,
+        "'[`pq24`]', which lacks return-type annotation",
+    );
+}
+
+#[test]
+fn no_substitution_template_name_is_not_rendered_as_a_string_literal() {
+    // The renderer must not reach for the *key* (`pq25`) or re-spell it with
+    // the string-literal quoting the key resolver would produce. This is the
+    // row that separates "the diagnostic fires" from "the message is right":
+    // a fix that routed through `get_property_name` would pass every
+    // `has(code)` assertion above and fail here.
+    let message = message_for("declare class Cq25 { get [`pq25`](); }", 7033)
+        .expect("expected TS7033 for a no-substitution template getter");
+    assert!(
+        message.contains("Property '[`pq25`]'"),
+        "the backticked source spelling must survive; got {message:?}"
+    );
+    assert!(
+        !message.contains("[\"pq25\"]") && !message.contains("Property 'pq25'"),
+        "must not be re-spelled as a string literal or a bare key; got {message:?}"
+    );
+}
+
+#[test]
+fn no_substitution_template_name_pairs_get_and_set_and_blames_the_setter() {
+    // The inverse control of the substituted-template row in
+    // `noimplicitany_ambient_member_surface_tests.rs`. A no-substitution
+    // template *is* a constant key, so — unlike `` [`a${x}`] `` — the accessors
+    // pair, and tsc blames only the setter (TS7032), leaving the getter clean.
+    // Verified against the `typescript@7.0.2` oracle: TS7032 alone, with no
+    // TS7033 and no TS7006 (the paired getter contextually types the
+    // parameter).
+    let codes: Vec<u32> =
+        check_source_strict_messages("declare class Cq26 { get [`pq26`](); set [`pq26`](v); }")
+            .into_iter()
+            .map(|(code, _)| code)
+            .collect();
+    assert!(
+        codes.contains(&7032),
+        "the setter is the blame site: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&7033),
+        "a paired setter takes the getter out of TS7033: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&7006),
+        "a paired getter contextually types the setter parameter: {codes:?}"
+    );
+}
+
+#[test]
+fn no_substitution_template_name_pairs_with_its_string_literal_spelling() {
+    // Two spellings of one key. The display fix must not disturb the *key*
+    // resolution that makes them the same member: `` get [`pq27`] `` and
+    // `set ["pq27"]` pair, so the setter is still the single blame site.
+    let codes: Vec<u32> =
+        check_source_strict_messages("declare class Cq27 { get [`pq27`](); set [\"pq27\"](v); }")
+            .into_iter()
+            .map(|(code, _)| code)
+            .collect();
+    assert!(
+        codes.contains(&7032) && !codes.contains(&7033),
+        "the two spellings name one member; the setter is the blame site: {codes:?}"
+    );
+}
+
+#[test]
+fn empty_no_substitution_template_name_is_still_named() {
+    // An empty template is a well-formed literal, not a parse-error shape —
+    // the malformed-name guard below must not catch it. tsc names it
+    // ``'[``]'`` and reports TS7033.
+    assert_names(
+        "declare class Cq28 { get [``](); }",
+        7033,
+        "Property '[``]'",
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Controls — non-computed names are named by their key, unchanged
 // ---------------------------------------------------------------------------
 
