@@ -29,8 +29,11 @@ impl<'a> CheckerState<'a> {
 
             let (type_params, type_param_updates) = self.push_type_parameters(&sig.type_parameters);
             let (params, this_type) = self.extract_params_from_signature_in_type_literal(sig);
-            let (return_type, type_predicate) =
-                self.return_type_and_predicate_in_type_literal(sig.type_annotation, &params);
+            let (return_type, type_predicate) = self.return_type_and_predicate_in_type_literal(
+                sig.type_annotation,
+                &params,
+                crate::signature_builder::signature_param_nodes(&sig.parameters),
+            );
 
             let shape = FunctionShape {
                 type_params,
@@ -127,8 +130,11 @@ impl<'a> CheckerState<'a> {
                 let (type_params, type_param_updates) =
                     self.push_type_parameters(&sig.type_parameters);
                 let (params, this_type) = self.extract_params_from_signature(sig);
-                let (return_type, type_predicate) =
-                    self.return_type_and_predicate(sig.type_annotation, &params);
+                let (return_type, type_predicate) = self.return_type_and_predicate(
+                    sig.type_annotation,
+                    &params,
+                    crate::signature_builder::signature_param_nodes(&sig.parameters),
+                );
 
                 let shape = FunctionShape {
                     type_params,

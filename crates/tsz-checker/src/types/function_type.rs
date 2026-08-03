@@ -1255,7 +1255,8 @@ impl<'a> CheckerState<'a> {
             self.check_type_for_parameter_properties(type_annotation);
             // Check for undefined type names in return type
             self.check_type_for_missing_names(type_annotation);
-            let (ret, pred) = self.return_type_and_predicate(type_annotation, &params);
+            let (ret, pred) =
+                self.return_type_and_predicate(type_annotation, &params, &parameters.nodes);
             (ret, pred)
         } else {
             // Use UNKNOWN as default to enforce strict checking

@@ -1224,6 +1224,7 @@ impl<'a> CheckerState<'a> {
                             .return_type_and_predicate_in_type_literal(
                                 sig.type_annotation,
                                 &params,
+                                crate::signature_builder::signature_param_nodes(&sig.parameters),
                             );
                         call_signatures.push(signature_building_boundary::call_signature(
                             type_params,
@@ -1250,6 +1251,7 @@ impl<'a> CheckerState<'a> {
                             .return_type_and_predicate_in_type_literal(
                                 sig.type_annotation,
                                 &params,
+                                crate::signature_builder::signature_param_nodes(&sig.parameters),
                             );
                         construct_signatures.push(signature_building_boundary::call_signature(
                             type_params,
@@ -1288,6 +1290,9 @@ impl<'a> CheckerState<'a> {
                                 .return_type_and_predicate_in_type_literal(
                                     sig.type_annotation,
                                     &params,
+                                    crate::signature_builder::signature_param_nodes(
+                                        &sig.parameters,
+                                    ),
                                 );
                             let call_sig = signature_building_boundary::call_signature(
                                 type_params,

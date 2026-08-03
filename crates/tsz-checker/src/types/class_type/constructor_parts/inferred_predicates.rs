@@ -10,15 +10,16 @@ impl<'a> CheckerState<'a> {
         method: &MethodDeclData,
         params: &[ParamInfo],
     ) -> (TypeId, Option<TypePredicate>) {
-        let (return_type, mut type_predicate) =
-            if method.type_annotation.is_none() && method.body != NodeIndex::NONE {
-                (
-                    self.infer_return_type_from_body(method_idx, method.body, None),
-                    None,
-                )
-            } else {
-                self.return_type_and_predicate(method.type_annotation, params)
-            };
+        let (return_type, mut type_predicate) = if method.type_annotation.is_none()
+            && method.body != NodeIndex::NONE
+        {
+            (
+                self.infer_return_type_from_body(method_idx, method.body, None),
+                None,
+            )
+        } else {
+            self.return_type_and_predicate(method.type_annotation, params, &method.parameters.nodes)
+        };
         if type_predicate.is_none()
             && method.type_annotation.is_none()
             && matches!(return_type, TypeId::BOOLEAN | TypeId::UNKNOWN)
