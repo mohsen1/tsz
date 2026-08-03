@@ -254,6 +254,10 @@ mod decorator_tests;
 mod regex_octal_decimal_class_escape_tests;
 
 #[cfg(test)]
+#[path = "../../tests/regex_backreference_tests.rs"]
+mod regex_backreference_tests;
+
+#[cfg(test)]
 #[path = "../../tests/modifier_ordering_tests.rs"]
 mod modifier_ordering_tests;
 

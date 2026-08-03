@@ -405,6 +405,15 @@ fn is_hard_keyword_interface_name_2427_parse_diagnostic(diagnostic: &ParseDiagno
 /// in or all out: TS1049, TS1051, TS1054, TS1095. TS1052/TS1053 belong to the
 /// same tsc function but are checker-emitted in tsz, so they never reach this
 /// parse-diagnostic filter.
+///
+/// Same shape for tsc's `checkGrammarParameterList`, which reports TS1014 (a
+/// rest parameter must be last), TS1047 (a rest parameter cannot be
+/// optional), and TS1048 (a rest parameter cannot have an initializer) from
+/// one function. TS1014 was listed, TS1047/1048 were not: a file whose rest
+/// parameter tripped 1047 or 1048 silently deleted an unrelated function's
+/// TS1014 elsewhere in the same file. TS1015/1016 belong to the same tsc
+/// function but are checker-emitted in tsz (`parameter_checker.rs`), so they
+/// never reach this filter either.
 const fn is_parser_grammar_code(code: u32) -> bool {
     matches!(
         code,
@@ -429,6 +438,8 @@ const fn is_parser_grammar_code(code: u32) -> bool {
         | 1040 // '{0}' modifier cannot be used in an ambient context
         | 1042 // 'async' modifier cannot be used here
         | 1044 // '{0}' modifier cannot appear on a module or namespace element
+        | 1047 // A rest parameter cannot be optional
+        | 1048 // A rest parameter cannot have an initializer
         | 1049 // A 'set' accessor must have exactly one parameter
         | 1051 // A 'set' accessor cannot have an optional parameter
         | 1054 // A 'get' accessor cannot have parameters
@@ -1434,24 +1445,26 @@ pub(super) const fn is_non_suppressing_parse_error(code: u32) -> bool {
     matches!(
         code,
         1009  // Trailing comma not allowed
-        | 1014 // A rest parameter must be last in a parameter list
-        | 1047 // A rest parameter cannot be optional
-        | 1048 // A rest parameter cannot have an initializer
-        | 1096 // An index signature must have exactly one parameter (check-time grammar in tsc)
-        | 1185 // Merge conflict marker
-        | 1191 // An import declaration cannot have modifiers (grammar constraint, AST is valid)
-        | 1214 // Identifier expected (strict mode reserved word)
-        | 1262 // 'await' at top level
-        | 1359 // 'await' in async context
-        | 1492 // 'using' declarations may not have binding patterns (grammar constraint, AST is valid)
-        | 1487 // Octal escape sequences are not allowed (regex `\0`-prefixed decimal escape, AST is valid)
-        | 1499 // Unknown regular expression flag (grammar check in tsc's checker, not a parse failure)
-        | 1500 // Duplicate regular expression flag (grammar check, AST is valid)
-        | 1502 // The Unicode 'u' and 'v' flags cannot be set simultaneously (grammar check, AST is valid)
-        | 1536 // Octal escape sequences and backreferences are not allowed in a character class (regex grammar, AST is valid)
-        | 1537 // Decimal escape sequences and backreferences are not allowed in a character class (regex grammar, AST is valid)
-        | 17019 // '?' at end of type is not valid TS syntax (parser recovers valid AST)
-        | 17020 // '?' at start of type is not valid TS syntax (parser recovers valid AST)
+            | 1014 // A rest parameter must be last in a parameter list
+            | 1047 // A rest parameter cannot be optional
+            | 1048 // A rest parameter cannot have an initializer
+            | 1096 // An index signature must have exactly one parameter (check-time grammar in tsc)
+            | 1185 // Merge conflict marker
+            | 1191 // An import declaration cannot have modifiers (grammar constraint, AST is valid)
+            | 1214 // Identifier expected (strict mode reserved word)
+            | 1262 // 'await' at top level
+            | 1359 // 'await' in async context
+            | 1492 // 'using' declarations may not have binding patterns (grammar constraint, AST is valid)
+            | 1487 // Octal escape sequences are not allowed (regex `\0`-prefixed decimal escape, AST is valid)
+            | 1499 // Unknown regular expression flag (grammar check in tsc's checker, not a parse failure)
+            | 1500 // Duplicate regular expression flag (grammar check, AST is valid)
+            | 1502 // The Unicode 'u' and 'v' flags cannot be set simultaneously (grammar check, AST is valid)
+            | 1533 // Backreference to a group beyond the capturing-group count (regex grammar, AST is valid)
+            | 1534 // Backreference with no capturing group in the pattern (regex grammar, AST is valid)
+            | 1536 // Octal escape sequences and backreferences are not allowed in a character class (regex grammar, AST is valid)
+            | 1537 // Decimal escape sequences and backreferences are not allowed in a character class (regex grammar, AST is valid)
+            | 17019 // '?' at end of type is not valid TS syntax (parser recovers valid AST)
+            | 17020 // '?' at start of type is not valid TS syntax (parser recovers valid AST)
     )
 }
 
@@ -1480,3 +1493,7 @@ mod tests;
 #[cfg(test)]
 #[path = "check_utils/heritage_clause_tests.rs"]
 mod heritage_clause_tests;
+
+#[cfg(test)]
+#[path = "check_utils/rest_parameter_grammar_tests.rs"]
+mod rest_parameter_grammar_tests;

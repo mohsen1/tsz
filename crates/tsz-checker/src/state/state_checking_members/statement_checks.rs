@@ -193,8 +193,17 @@ impl<'a> CheckerState<'a> {
                     let Some(decl_list) = self.ctx.arena.get_variable(list_node) else {
                         continue;
                     };
+                    // `using` and `await using` take the const-like branch of tsc's
+                    // `checkAmbientInitializer` exactly as `const` does — the raw
+                    // `CONST` bit is not the predicate, since a plain `using` list
+                    // sets only `USING`. Reading the bit directly sent every ambient
+                    // `using` down the TS1039 arm while the sibling per-declaration
+                    // site (`variable_checking::core`) correctly used the const-like
+                    // predicate and reported TS1254, so the two disagreed on the same
+                    // initializer.
                     use tsz_parser::parser::node_flags;
-                    let is_const = (list_node.flags & node_flags::CONST as u16) != 0;
+                    let is_const =
+                        (u32::from(list_node.flags) & (node_flags::CONST | node_flags::USING)) != 0;
 
                     for &decl_idx in &decl_list.declarations.nodes {
                         let Some(decl_node) = self.ctx.arena.get(decl_idx) else {

@@ -303,12 +303,56 @@ impl ParserState {
                 strict_mode: bool,
                 unicode_sets_mode: bool,
                 start_pos: u32,
+                capturing_group_count: u32,
             }
 
             struct CharEscapeScanCtx<'a> {
                 body: &'a [u8],
                 strict_mode: bool,
                 end: usize,
+                capturing_group_count: u32,
+            }
+
+            /// Count the capturing groups in the whole pattern, the way tsc's
+            /// `scanRegularExpressionWorker` does on its first pass.
+            ///
+            /// A backreference is legal when it names a group that exists
+            /// *anywhere* in the pattern, including one that appears later or in
+            /// another alternative, so the count has to be known before any
+            /// escape is judged. Capturing forms are `(` and `(?<name>`;
+            /// `(?:`, `(?=`, `(?!`, `(?<=`, `(?<!` and modifier groups are not.
+            fn count_capturing_groups(body: &[u8], body_end: usize) -> u32 {
+                let mut count = 0u32;
+                let mut in_class = false;
+                let mut pos = 1usize;
+
+                while pos < body_end {
+                    match body[pos] {
+                        // Skip the escaped byte so `\(` and `\[` never open
+                        // anything. Continuation bytes of a multi-byte escaped
+                        // character are all >= 0x80, so they match no arm here.
+                        b'\\' => pos += 1,
+                        b'[' if !in_class => in_class = true,
+                        b']' if in_class => in_class = false,
+                        b'(' if !in_class => {
+                            if body.get(pos + 1) == Some(&b'?') {
+                                // `(?<name>` captures; `(?<=` and `(?<!` are
+                                // lookbehind assertions and do not.
+                                if body.get(pos + 2) == Some(&b'<')
+                                    && !matches!(body.get(pos + 3), Some(&b'=' | &b'!'))
+                                {
+                                    count += 1;
+                                }
+                            } else {
+                                count += 1;
+                            }
+                        }
+                        _ => {}
+                    }
+                    pos += 1;
+                }
+
+                count
             }
 
             fn scan_digits(body: &[u8], end: usize, pos: &mut usize) -> usize {
@@ -632,12 +676,51 @@ impl ParserState {
                             *pos += 1;
                         }
                     }
-                    // `\1`..`\9` outside a character class are backreferences
-                    // (a distinct, not-yet-validated family — #16291/#16296);
-                    // this arm only judges them inside a class, where a
-                    // decimal escape is never a backreference and always a
-                    // legacy octal (`\1`-`\7`) or bare decimal (`\8`/`\9`)
-                    // escape instead.
+                    b'1'..=b'9' if atom_escape => {
+                        // A decimal escape outside a character class is a
+                        // backreference, in every mode: tsc validates it with
+                        // and without the Unicode flags, so this arm must not be
+                        // gated on `strict_mode`. The span covers the digits
+                        // only — the backslash is not part of it.
+                        let digits_start = *pos;
+                        while *pos < end && body[*pos].is_ascii_digit() {
+                            *pos += 1;
+                        }
+                        let digits_len = (*pos - digits_start) as u32;
+                        let group_number = std::str::from_utf8(&body[digits_start..*pos])
+                            .ok()
+                            .and_then(|digits| digits.parse::<u32>().ok())
+                            // A digit run too long for `u32` cannot name any
+                            // group in a pattern this scanner could reach.
+                            .unwrap_or(u32::MAX);
+
+                        if scan_ctx.capturing_group_count == 0 {
+                            emit(
+                                parser,
+                                digits_start,
+                                digits_len,
+                                diagnostic_messages::THIS_BACKREFERENCE_REFERS_TO_A_GROUP_THAT_DOES_NOT_EXIST_THERE_ARE_NO_CAPTURING,
+                                diagnostic_codes::THIS_BACKREFERENCE_REFERS_TO_A_GROUP_THAT_DOES_NOT_EXIST_THERE_ARE_NO_CAPTURING,
+                            );
+                        } else if group_number > scan_ctx.capturing_group_count {
+                            let message = format_message(
+                                diagnostic_messages::THIS_BACKREFERENCE_REFERS_TO_A_GROUP_THAT_DOES_NOT_EXIST_THERE_ARE_ONLY_CAPTURIN,
+                                &[&scan_ctx.capturing_group_count.to_string()],
+                            );
+                            emit(
+                                parser,
+                                digits_start,
+                                digits_len,
+                                &message,
+                                diagnostic_codes::THIS_BACKREFERENCE_REFERS_TO_A_GROUP_THAT_DOES_NOT_EXIST_THERE_ARE_ONLY_CAPTURIN,
+                            );
+                        }
+                    }
+                    // `\1`..`\9` outside a character class are backreferences,
+                    // matched by the `if atom_escape` arm above; this arm only
+                    // judges them inside a class, where a decimal escape is
+                    // never a backreference and always a legacy octal
+                    // (`\1`-`\7`) or bare decimal (`\8`/`\9`) escape instead.
                     b'1'..=b'7' if !atom_escape => {
                         let octal_end = scan_legacy_octal_digits(body, end, *pos);
                         let value = legacy_octal_value(body, *pos, octal_end);
@@ -663,19 +746,6 @@ impl ParserState {
                             diagnostic_codes::DECIMAL_ESCAPE_SEQUENCES_AND_BACKREFERENCES_ARE_NOT_ALLOWED_IN_A_CHARACTER_CLASS,
                         );
                         *pos += 1;
-                    }
-                    // `\1`..`\9` at atom position (`atom_escape == true`):
-                    // a decimal escape here is a backreference, a distinct
-                    // family this arm does not validate (#16291/#16296).
-                    // Consume the whole digit run without judgement, same as
-                    // every digit did before this arm split — falling
-                    // through to the generic "cannot be escaped" arm below
-                    // would wrongly diagnose a plain backreference and only
-                    // advance by one byte, desynchronising the scan.
-                    b'1'..=b'9' => {
-                        while *pos < end && body[*pos].is_ascii_digit() {
-                            *pos += 1;
-                        }
                     }
                     b'_' if strict_mode => {
                         emit(
@@ -907,6 +977,7 @@ impl ParserState {
                                     body: ctx.body,
                                     strict_mode: ctx.strict_mode,
                                     end: ctx.body_end,
+                                    capturing_group_count: ctx.capturing_group_count,
                                 },
                                 pos,
                                 false,
@@ -1093,6 +1164,7 @@ impl ParserState {
                                         body: ctx.body,
                                         strict_mode: ctx.strict_mode,
                                         end: ctx.body_end,
+                                        capturing_group_count: ctx.capturing_group_count,
                                     },
                                     pos,
                                     true,
@@ -1482,6 +1554,7 @@ impl ParserState {
                 strict_mode,
                 unicode_sets_mode,
                 start_pos,
+                capturing_group_count: count_capturing_groups(bytes, body_end),
             };
             let mut pos = 1usize;
             scan_disjunction(parser, &ctx, &mut pos, false);
