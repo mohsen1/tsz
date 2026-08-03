@@ -647,16 +647,37 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // TS1165: Computed property name in an ambient context must refer to
+        // an expression whose type is a literal type or a 'unique symbol'
+        // type. `is_declared` already folds in every ambient spelling
+        // (`declare class`, `declare abstract class`, a class nested in
+        // `declare namespace`/`declare module`, and an implicitly-ambient
+        // `.d.ts` file), so no separate `is_declaration_file()` check is
+        // needed here. This is the method-signature sibling of TS1166 (class
+        // property declarations, checked unconditionally regardless of
+        // ambient-ness in `check_property_declaration_with_request`), TS1169
+        // (interfaces), and TS1170 (type literals) — verified against the
+        // pinned `typescript@7.0.2` oracle that accessors are exempt from
+        // this arm entirely, so it applies to method declarations only.
+        let in_declared_class = self
+            .ctx
+            .enclosing_class
+            .as_ref()
+            .is_some_and(|c| c.is_declared);
+        if in_declared_class {
+            use crate::diagnostics::diagnostic_messages;
+            self.check_computed_property_requires_literal(
+                method.name,
+                diagnostic_messages::A_COMPUTED_PROPERTY_NAME_IN_AN_AMBIENT_CONTEXT_MUST_REFER_TO_AN_EXPRESSION_WHOSE,
+                diagnostic_codes::A_COMPUTED_PROPERTY_NAME_IN_AN_AMBIENT_CONTEXT_MUST_REFER_TO_AN_EXPRESSION_WHOSE,
+            );
+        }
+
         // Error 1183: An implementation cannot be declared in ambient contexts
         // Check if we're in a declared class and the method has a body,
         // OR if the method itself has a `declare` modifier and a body.
         // TSC anchors the error at the body node (the `{`), not the whole member.
         if method.body.is_some() {
-            let in_declared_class = self
-                .ctx
-                .enclosing_class
-                .as_ref()
-                .is_some_and(|c| c.is_declared);
             let method_has_declare = self.has_declare_modifier(&method.modifiers);
             if in_declared_class || method_has_declare {
                 self.error_at_node(
