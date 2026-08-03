@@ -270,6 +270,157 @@ function assertAllStrings(...values: unknown[]): asserts values is string[] {}
 }
 
 #[test]
+fn type_predicate_cannot_reference_object_binding_pattern_element() {
+    let codes = check_source_codes(
+        r#"
+function f({a}: {a: unknown}): a is string {
+    return typeof a === "string";
+}
+"#,
+    );
+    assert!(
+        codes.contains(&1230),
+        "expected TS1230 for predicate referencing a shorthand destructured element, got {codes:?}"
+    );
+    assert!(
+        !codes.contains(&1225),
+        "the binding-pattern case must not fall through to TS1225, got {codes:?}"
+    );
+}
+
+#[test]
+fn type_predicate_cannot_reference_renamed_binding_pattern_element() {
+    // The predicate subject must be the LOCAL (renamed) binding name, not the
+    // source property name, mirroring how `{a: r}` introduces `r` into scope.
+    let codes = check_source_codes(
+        r#"
+function f({a: r}: {a: unknown}): r is string {
+    return typeof r === "string";
+}
+"#,
+    );
+    assert!(
+        codes.contains(&1230),
+        "expected TS1230 for predicate referencing a renamed destructured element, got {codes:?}"
+    );
+}
+
+#[test]
+fn type_predicate_cannot_reference_nested_binding_pattern_element() {
+    let codes = check_source_codes(
+        r#"
+function f({a: {b}}: {a: {b: unknown}}): b is string {
+    return typeof b === "string";
+}
+"#,
+    );
+    assert!(
+        codes.contains(&1230),
+        "expected TS1230 for predicate referencing a nested destructured element, got {codes:?}"
+    );
+}
+
+#[test]
+fn type_predicate_cannot_reference_array_binding_pattern_element() {
+    let codes = check_source_codes(
+        r#"
+function f([a]: [unknown]): a is string {
+    return typeof a === "string";
+}
+"#,
+    );
+    assert!(
+        codes.contains(&1230),
+        "expected TS1230 for predicate referencing an array-destructured element, got {codes:?}"
+    );
+}
+
+#[test]
+fn type_predicate_cannot_reference_rest_element_in_binding_pattern() {
+    // Distinct from `type_predicate_cannot_reference_rest_parameter` (TS1229,
+    // a rest PARAMETER): this is a `...rest` element nested inside an object
+    // pattern, which tsc reports as a binding-pattern reference, not TS1229.
+    let codes = check_source_codes(
+        r#"
+function f({...rest}: {x?: unknown}): rest is {x: string} {
+    return true;
+}
+"#,
+    );
+    assert!(
+        codes.contains(&1230),
+        "expected TS1230 for predicate referencing a rest element inside a binding pattern, got {codes:?}"
+    );
+    assert!(
+        !codes.contains(&1229),
+        "a binding-pattern rest element is not a rest PARAMETER, must not emit TS1229, got {codes:?}"
+    );
+}
+
+#[test]
+fn type_predicate_cannot_reference_binding_pattern_element_on_class_method() {
+    let codes = check_source_codes(
+        r#"
+class C {
+    m({a}: {a: unknown}): a is string {
+        return typeof a === "string";
+    }
+}
+"#,
+    );
+    assert!(
+        codes.contains(&1230),
+        "expected TS1230 for a class method predicate referencing a destructured element, got {codes:?}"
+    );
+}
+
+#[test]
+fn type_predicate_cannot_reference_binding_pattern_element_asserts_form() {
+    let codes = check_source_codes(
+        r#"
+function f({a}: {a: unknown}): asserts a is string {
+    if (typeof a !== "string") throw new Error();
+}
+"#,
+    );
+    assert!(
+        codes.contains(&1230),
+        "expected TS1230 for an `asserts` predicate referencing a destructured element, got {codes:?}"
+    );
+}
+
+#[test]
+fn type_predicate_on_plain_parameter_does_not_emit_ts1230() {
+    // Negative control: a plain (non-destructured) parameter must never
+    // trigger the binding-pattern check, even when a sibling parameter in
+    // the same list IS destructured.
+    let codes = check_source_codes(
+        r#"
+function f(a: unknown, {b}: {b: unknown}): a is string {
+    return typeof a === "string";
+}
+"#,
+    );
+    assert!(
+        !codes.contains(&1230),
+        "a plain parameter predicate must not emit TS1230 even with a destructured sibling, got {codes:?}"
+    );
+}
+
+#[test]
+fn type_predicate_binding_pattern_element_in_type_literal_call_signature() {
+    let codes = check_source_codes(
+        r#"
+type Lit = { ({a}: {a: unknown}): a is string };
+"#,
+    );
+    assert!(
+        codes.contains(&1230),
+        "expected TS1230 for a type-literal call-signature predicate referencing a destructured element, got {codes:?}"
+    );
+}
+
+#[test]
 fn assertion_element_access_emits_ts2776() {
     let codes = check_source_codes(
         r#"

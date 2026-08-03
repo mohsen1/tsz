@@ -312,6 +312,7 @@ impl<'a> CheckerState<'a> {
                             self.return_type_and_predicate_in_type_literal(
                                 sig.type_annotation,
                                 &params,
+                                crate::signature_builder::signature_param_nodes(&sig.parameters),
                             )
                         } else {
                             (
@@ -354,6 +355,7 @@ impl<'a> CheckerState<'a> {
                             self.return_type_and_predicate_in_type_literal(
                                 sig.type_annotation,
                                 &params,
+                                crate::signature_builder::signature_param_nodes(&sig.parameters),
                             )
                         } else {
                             (
@@ -449,6 +451,9 @@ impl<'a> CheckerState<'a> {
                                 self.return_type_and_predicate_in_type_literal(
                                     sig.type_annotation,
                                     &params,
+                                    crate::signature_builder::signature_param_nodes(
+                                        &sig.parameters,
+                                    ),
                                 )
                             } else {
                                 (

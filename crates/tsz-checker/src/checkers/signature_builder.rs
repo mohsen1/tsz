@@ -35,7 +35,7 @@ impl<'a> CheckerState<'a> {
         self.clear_excluded_params_for_type_param_constraints();
         let (params, this_type) = self.extract_params_from_parameter_list(&func.parameters);
         let (return_type, type_predicate) =
-            self.return_type_and_predicate(func.type_annotation, &params);
+            self.return_type_and_predicate(func.type_annotation, &params, &func.parameters.nodes);
         self.pop_type_parameters(type_param_updates);
         self.pop_type_parameters(enclosing_updates);
 
@@ -240,7 +240,11 @@ impl<'a> CheckerState<'a> {
             }
             (inferred, None)
         } else {
-            self.return_type_and_predicate(method.type_annotation, &params)
+            self.return_type_and_predicate(
+                method.type_annotation,
+                &params,
+                &method.parameters.nodes,
+            )
         };
 
         // Check JSDoc @returns for type predicates on class methods.
@@ -583,12 +587,18 @@ impl<'a> CheckerState<'a> {
     // =========================================================================
 
     /// Extract return type and type predicate from a type annotation (declaration context).
+    ///
+    /// `raw_params` are the parameter declaration nodes backing `params`, used
+    /// only to resolve a type predicate's subject identifier against
+    /// destructuring binding patterns (see
+    /// [`Self::type_predicate_name_matches_binding_element`]).
     pub(crate) fn return_type_and_predicate(
         &mut self,
         type_annotation: NodeIndex,
         params: &[tsz_solver::ParamInfo],
+        raw_params: &[NodeIndex],
     ) -> (TypeId, Option<tsz_solver::TypePredicate>) {
-        self.return_type_and_predicate_impl(type_annotation, params, false)
+        self.return_type_and_predicate_impl(type_annotation, params, raw_params, false)
     }
 
     /// Extract return type and type predicate from a type literal annotation.
@@ -596,8 +606,9 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_annotation: NodeIndex,
         params: &[tsz_solver::ParamInfo],
+        raw_params: &[NodeIndex],
     ) -> (TypeId, Option<tsz_solver::TypePredicate>) {
-        self.return_type_and_predicate_impl(type_annotation, params, true)
+        self.return_type_and_predicate_impl(type_annotation, params, raw_params, true)
     }
 
     /// Shared implementation for return type + type predicate extraction.
@@ -607,6 +618,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_annotation: NodeIndex,
         params: &[tsz_solver::ParamInfo],
+        raw_params: &[NodeIndex],
         in_type_literal: bool,
     ) -> (TypeId, Option<tsz_solver::TypePredicate>) {
         use tsz_solver::TypePredicateTarget;
@@ -668,6 +680,22 @@ impl<'a> CheckerState<'a> {
                 // plain `X is T` predicate it coincides with `node.pos`, so this is a
                 // no-op there). Mirrors the rest-parameter branch below.
                 let error_node = self.ctx.arena.get(data.parameter_name).unwrap_or(node);
+                // `name` never matched a top-level parameter above. tsc still
+                // resolves it against the whole parameter list, including
+                // destructuring binding patterns, and reports TS1230 when it
+                // names an element the pattern introduces — a predicate's
+                // subject must be a plain parameter, never a destructured
+                // binding (renamed, nested, array, or rest).
+                if self.type_predicate_name_matches_binding_element(raw_params, &name_text) {
+                    self.ctx.error(
+                        error_node.pos,
+                        error_node.end.saturating_sub(error_node.pos),
+                        diagnostic_messages::A_TYPE_PREDICATE_CANNOT_REFERENCE_ELEMENT_IN_A_BINDING_PATTERN
+                            .replace("{0}", &name_text),
+                        diagnostic_codes::A_TYPE_PREDICATE_CANNOT_REFERENCE_ELEMENT_IN_A_BINDING_PATTERN,
+                    );
+                    return (return_type, None);
+                }
                 self.ctx.error(
                     error_node.pos,
                     error_node.end.saturating_sub(error_node.pos),
@@ -726,4 +754,65 @@ impl<'a> CheckerState<'a> {
             _ => None,
         }
     }
+
+    /// True when `name_text` is bound by an element of one of `raw_params`'
+    /// destructuring binding patterns (any nesting depth, object or array,
+    /// including renamed and rest elements) — checked only after `name_text`
+    /// has already failed to match a top-level parameter name.
+    fn type_predicate_name_matches_binding_element(
+        &self,
+        raw_params: &[NodeIndex],
+        name_text: &str,
+    ) -> bool {
+        raw_params.iter().any(|&param_idx| {
+            self.ctx
+                .arena
+                .get(param_idx)
+                .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
+                .is_some_and(|param| self.binding_pattern_contains_name(param.name, name_text))
+        })
+    }
+
+    /// Recursively search a binding pattern for an identifier bound to
+    /// `name_text`. `node_idx` may be a plain identifier (no match, not a
+    /// pattern), an object/array binding pattern, or `NONE`.
+    fn binding_pattern_contains_name(&self, node_idx: NodeIndex, name_text: &str) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+        if !node.is_binding_pattern() {
+            return false;
+        }
+        let Some(pattern) = self.ctx.arena.get_binding_pattern(node) else {
+            return false;
+        };
+        pattern.elements.nodes.iter().any(|&el_idx| {
+            let Some(el_name) = self
+                .ctx
+                .arena
+                .get(el_idx)
+                .and_then(|el_node| self.ctx.arena.get_binding_element(el_node))
+                .map(|el| el.name)
+            else {
+                return false;
+            };
+            let is_direct_match = self
+                .ctx
+                .arena
+                .get(el_name)
+                .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                .is_some_and(|ident| ident.escaped_text.as_str() == name_text);
+            is_direct_match || self.binding_pattern_contains_name(el_name, name_text)
+        })
+    }
+}
+
+/// Parameter-declaration node indices backing a `SignatureData`'s optional
+/// parameter list, or `&[]` when absent. Lets call sites that only have a
+/// `sig.parameters: Option<NodeList>` pass raw nodes to
+/// [`CheckerState::return_type_and_predicate`] /
+/// [`CheckerState::return_type_and_predicate_in_type_literal`] without
+/// repeating the `Option` unwrap at every site.
+pub(crate) fn signature_param_nodes(list: &Option<tsz_parser::parser::NodeList>) -> &[NodeIndex] {
+    list.as_ref().map_or(&[], |l| l.nodes.as_slice())
 }
