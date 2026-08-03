@@ -1116,8 +1116,10 @@ impl ParserState {
                 if bare_static_block_await_name && self.is_token(SyntaxKind::CloseBracketToken) {
                     self.error_expression_expected();
                 }
-                self.parse_expected(SyntaxKind::CloseBracketToken);
+                // Capture the `]` token's own end before `parse_expected` advances past it —
+                // `token_end()` after the call would report the end of the *next* token instead.
                 let end_pos = self.token_end();
+                self.parse_expected(SyntaxKind::CloseBracketToken);
 
                 self.arena.add_computed_property(
                     syntax_kind_ext::COMPUTED_PROPERTY_NAME,

@@ -226,6 +226,10 @@ mod state_declaration_tests;
 mod declaration_node_end_tests;
 
 #[cfg(test)]
+#[path = "../../tests/computed_property_name_end_position_tests.rs"]
+mod computed_property_name_end_position_tests;
+
+#[cfg(test)]
 #[path = "../../tests/decorator_tests.rs"]
 mod decorator_tests;
 
