@@ -902,6 +902,15 @@ impl<'a> CheckerState<'a> {
             self.check_parameter_ordering(params, Some(member_idx));
         }
 
+        // TS1052/TS1053 likewise run for a `set` accessor member of an
+        // interface or type literal: tsc's `checkGrammarAccessor` reads the
+        // parameter node alone, so the container never gates the rule. Both
+        // callers of this walk (interface members and type-literal members)
+        // therefore get it here.
+        if node.kind == syntax_kind_ext::SET_ACCESSOR {
+            self.check_setter_parameter_grammar(member_idx);
+        }
+
         // Check call signatures and construct signatures for parameter properties
         if node.kind == syntax_kind_ext::CALL_SIGNATURE
             || node.kind == syntax_kind_ext::CONSTRUCT_SIGNATURE

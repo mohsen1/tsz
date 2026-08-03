@@ -1525,6 +1525,7 @@ impl<'a> CheckerState<'a> {
             };
             let paired_getter_supplies_type =
                 self.paired_getter_supplies_property_type(accessor) || skip_implicit_any_accessor;
+            self.check_setter_parameter_grammar(member_idx);
             self.check_setter_parameter(
                 &accessor.parameters.nodes,
                 has_paired_getter || skip_implicit_any_accessor,

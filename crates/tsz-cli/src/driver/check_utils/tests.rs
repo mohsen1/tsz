@@ -1539,6 +1539,180 @@ fn filtered_parse_diagnostics_suppresses_accessor_grammar_family_when_real_parse
     );
 }
 
+// TS1018/1020/1025 are siblings of TS1017/1019/1021/1096 in tsc's index-signature
+// grammar check (`checkGrammarIndexSignature`), all parser-emitted in tsz from
+// `parse_index_signature_with_modifiers`. #16279 is the general shape (a
+// partially-listed `checkGrammar*` family self-suppresses); this is the second
+// confirmed instance after #16278's accessor family. Verified against the pinned
+// tsc@7.0.2 oracle: `[public key: string]: number;` plus an unrelated real parse
+// error (`let x: = 1;`, TS1110) reports only TS1110, dropping TS1018 — and, before
+// this fix, TS1018 being unlisted made it count as a "real" parse error itself,
+// so `interface Foo { [public key: string]: number; } function f() { foo: while
+// (true) { foo: while (true) { break; } } }` (no real syntax error, an unrelated
+// duplicate label elsewhere in the file) dropped the already-listed TS1114
+// entirely in tsz while tsc reports both TS1018 and TS1114.
+
+#[test]
+fn filtered_parse_diagnostics_suppresses_ts1018_when_real_parse_error_present() {
+    use tsz::parser::ParseDiagnostic;
+
+    let diagnostics = vec![
+        ParseDiagnostic {
+            start: 20,
+            length: 6,
+            message: "An index signature parameter cannot have an accessibility modifier."
+                .to_string(),
+            code: 1018,
+        },
+        ParseDiagnostic {
+            start: 60,
+            length: 1,
+            message: "Type expected.".to_string(),
+            code: 1110,
+        },
+    ];
+
+    let filtered = filtered_parse_diagnostics(&diagnostics, false);
+    let codes: Vec<u32> = filtered.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&1018),
+        "TS1018 should be suppressed when a real parse error (TS1110) is present, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&1110),
+        "TS1110 (real parse error) should survive, got: {codes:?}"
+    );
+}
+
+#[test]
+fn filtered_parse_diagnostics_suppresses_ts1020_when_real_parse_error_present() {
+    use tsz::parser::ParseDiagnostic;
+
+    let diagnostics = vec![
+        ParseDiagnostic {
+            start: 20,
+            length: 1,
+            message: "An index signature parameter cannot have an initializer.".to_string(),
+            code: 1020,
+        },
+        ParseDiagnostic {
+            start: 60,
+            length: 1,
+            message: "Type expected.".to_string(),
+            code: 1110,
+        },
+    ];
+
+    let filtered = filtered_parse_diagnostics(&diagnostics, false);
+    let codes: Vec<u32> = filtered.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&1020),
+        "TS1020 should be suppressed when a real parse error (TS1110) is present, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&1110),
+        "TS1110 (real parse error) should survive, got: {codes:?}"
+    );
+}
+
+#[test]
+fn filtered_parse_diagnostics_suppresses_ts1025_when_real_parse_error_present() {
+    use tsz::parser::ParseDiagnostic;
+
+    let diagnostics = vec![
+        ParseDiagnostic {
+            start: 20,
+            length: 1,
+            message: "An index signature cannot have a trailing comma.".to_string(),
+            code: 1025,
+        },
+        ParseDiagnostic {
+            start: 60,
+            length: 1,
+            message: "Type expected.".to_string(),
+            code: 1110,
+        },
+    ];
+
+    let filtered = filtered_parse_diagnostics(&diagnostics, false);
+    let codes: Vec<u32> = filtered.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&1025),
+        "TS1025 should be suppressed when a real parse error (TS1110) is present, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&1110),
+        "TS1110 (real parse error) should survive, got: {codes:?}"
+    );
+}
+
+#[test]
+fn filtered_parse_diagnostics_keeps_ts1018_ts1020_ts1025_when_alone() {
+    use tsz::parser::ParseDiagnostic;
+
+    for (code, message) in [
+        (
+            1018,
+            "An index signature parameter cannot have an accessibility modifier.",
+        ),
+        (
+            1020,
+            "An index signature parameter cannot have an initializer.",
+        ),
+        (1025, "An index signature cannot have a trailing comma."),
+    ] {
+        let diagnostics = vec![ParseDiagnostic {
+            start: 20,
+            length: 1,
+            message: message.to_string(),
+            code,
+        }];
+
+        let filtered = filtered_parse_diagnostics(&diagnostics, false);
+        let codes: Vec<u32> = filtered.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&code),
+            "TS{code} should be kept when it is the only diagnostic, got: {codes:?}"
+        );
+    }
+}
+
+#[test]
+fn filtered_parse_diagnostics_ts1018_does_not_self_suppress_listed_sibling() {
+    use tsz::parser::ParseDiagnostic;
+
+    // Before the fix, TS1018 was unlisted in `is_parser_grammar_code`, so it
+    // counted as a "real" non-grammar parse error under
+    // `has_non_grammar_parse_error` and silently deleted every *listed* sibling
+    // in the same file — here, the already-listed TS1114 (duplicate label).
+    let diagnostics = vec![
+        ParseDiagnostic {
+            start: 20,
+            length: 6,
+            message: "An index signature parameter cannot have an accessibility modifier."
+                .to_string(),
+            code: 1018,
+        },
+        ParseDiagnostic {
+            start: 80,
+            length: 3,
+            message: "Duplicate label 'foo'.".to_string(),
+            code: 1114,
+        },
+    ];
+
+    let filtered = filtered_parse_diagnostics(&diagnostics, false);
+    let codes: Vec<u32> = filtered.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&1018),
+        "TS1018 should survive when it is the only non-grammar-looking diagnostic, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&1114),
+        "TS1114 must not be self-suppressed by unlisted TS1018, got: {codes:?}"
+    );
+}
+
 #[test]
 fn js_parse_allowlist_keeps_plain_js_binder_strict_codes() {
     for code in [1214, 18012] {
