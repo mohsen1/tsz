@@ -222,6 +222,10 @@ mod state_type_tests;
 mod state_declaration_tests;
 
 #[cfg(test)]
+#[path = "../../tests/export_declaration_modifier_grammar_tests.rs"]
+mod export_declaration_modifier_grammar_tests;
+
+#[cfg(test)]
 #[path = "../../tests/declaration_node_end_tests.rs"]
 mod declaration_node_end_tests;
 
@@ -248,6 +252,10 @@ mod close_brace_node_end_position_remaining_tests;
 #[cfg(test)]
 #[path = "../../tests/decorator_tests.rs"]
 mod decorator_tests;
+
+#[cfg(test)]
+#[path = "../../tests/regex_octal_decimal_class_escape_tests.rs"]
+mod regex_octal_decimal_class_escape_tests;
 
 #[cfg(test)]
 #[path = "../../tests/regex_backreference_tests.rs"]

@@ -502,6 +502,13 @@ impl CheckerState<'_> {
             self.check_unique_symbol_grammar();
         }
 
+        // Grammar: TS1314/TS1315/TS1316 for `export as namespace N;`. Like the
+        // `unique symbol` sweep above this is position-independent, because a
+        // nested occurrence never reaches the top-level statement list below.
+        if !suppress_grammar {
+            self.check_namespace_export_declaration_grammar(&sf.statements.nodes, is_dts);
+        }
+
         let mut seen_dts_ambient_violation = false;
         let statement_timing_enabled = tsz_common::perf_counters::enabled_fast();
         for &stmt_idx in &sf.statements.nodes {
@@ -511,20 +518,6 @@ impl CheckerState<'_> {
                 .arena
                 .get(stmt_idx)
                 .map(|node| (node.kind, node.pos, node.end));
-            if !is_dts
-                && !suppress_grammar
-                && let Some(stmt_node) = self.ctx.arena.get(stmt_idx)
-                && stmt_node.kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
-            {
-                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                self.ctx.error(
-                    stmt_node.pos,
-                    stmt_node.end.saturating_sub(stmt_node.pos),
-                    diagnostic_messages::GLOBAL_MODULE_EXPORTS_MAY_ONLY_APPEAR_IN_DECLARATION_FILES
-                        .to_string(),
-                    diagnostic_codes::GLOBAL_MODULE_EXPORTS_MAY_ONLY_APPEAR_IN_DECLARATION_FILES,
-                );
-            }
             if is_dts && !suppress_grammar && !seen_dts_ambient_violation {
                 seen_dts_ambient_violation = self.check_dts_statement_in_ambient_context(stmt_idx);
             }
@@ -808,6 +801,90 @@ impl CheckerState<'_> {
     /// position-independent sweep over every type-operator node is the faithful
     /// shape — it covers nodes whose enclosing annotation type is never
     /// otherwise materialized (an unused type alias body, a type predicate).
+    /// TS1314 / TS1315 / TS1316 — the `export as namespace N;` (global module
+    /// export) grammar family.
+    ///
+    /// tsc's `checkNamespaceExportDeclaration` is a three-step early-return
+    /// chain, and the *order* is the rule: the declaration's position is
+    /// decided before anything about the containing file is consulted, so a
+    /// nested occurrence never reports a module-ness or declaration-file
+    /// complaint even when both would also hold.
+    ///
+    /// 1. parent is not the source file      -> TS1316, return
+    /// 2. file is not an external module     -> TS1314, return
+    /// 3. file is not a declaration file     -> TS1315, return
+    ///
+    /// Only step 3 was wired, and it ran for every top-level occurrence in a
+    /// non-`.d.ts` file without consulting steps 1 or 2. So a non-module `.ts`
+    /// file reported TS1315 where tsc reports TS1314 (a wrong code, not just a
+    /// missing one), and every nested occurrence — in a namespace body or an
+    /// ambient module block, `.ts` or `.d.ts` alike — was silently accepted.
+    ///
+    /// A `NamespaceExportDeclaration` is deliberately not an external-module
+    /// indicator in either compiler, so step 2 does not see the very
+    /// declaration it is judging: `export as namespace Foo;` alone leaves the
+    /// file a script, which is exactly why that row is TS1314 and not TS1315.
+    fn check_namespace_export_declaration_grammar(
+        &mut self,
+        top_level_statements: &[NodeIndex],
+        is_dts: bool,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        let top_level: FxHashSet<NodeIndex> = top_level_statements
+            .iter()
+            .copied()
+            .filter(|&idx| {
+                self.ctx
+                    .arena
+                    .get(idx)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION)
+            })
+            .collect();
+
+        let is_external_module = self.ctx.is_external_module_file();
+        let mut violations: Vec<(NodeIndex, &'static str, u32)> = Vec::new();
+        for i in 0..self.ctx.arena.len() {
+            let idx = NodeIndex(i as u32);
+            let Some(kind) = self.ctx.arena.get(idx).map(|node| node.kind) else {
+                continue;
+            };
+            if kind != syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION {
+                continue;
+            }
+            let violation = if top_level.contains(&idx) {
+                if is_external_module {
+                    if is_dts {
+                        continue;
+                    }
+                    (
+                        diagnostic_messages::GLOBAL_MODULE_EXPORTS_MAY_ONLY_APPEAR_IN_DECLARATION_FILES,
+                        diagnostic_codes::GLOBAL_MODULE_EXPORTS_MAY_ONLY_APPEAR_IN_DECLARATION_FILES,
+                    )
+                } else {
+                    (
+                        diagnostic_messages::GLOBAL_MODULE_EXPORTS_MAY_ONLY_APPEAR_IN_MODULE_FILES,
+                        diagnostic_codes::GLOBAL_MODULE_EXPORTS_MAY_ONLY_APPEAR_IN_MODULE_FILES,
+                    )
+                }
+            } else {
+                (
+                    diagnostic_messages::GLOBAL_MODULE_EXPORTS_MAY_ONLY_APPEAR_AT_TOP_LEVEL,
+                    diagnostic_codes::GLOBAL_MODULE_EXPORTS_MAY_ONLY_APPEAR_AT_TOP_LEVEL,
+                )
+            };
+            violations.push((idx, violation.0, violation.1));
+        }
+
+        for (idx, message, code) in violations {
+            let Some((start, end)) = self.ctx.arena.pos_end_at(idx) else {
+                continue;
+            };
+            self.ctx
+                .error(start, end.saturating_sub(start), message.to_string(), code);
+        }
+    }
+
     fn check_unique_symbol_grammar(&mut self) {
         use crate::diagnostics::diagnostic_messages;
         use crate::types_domain::unique_symbol_arena::unique_symbol_grammar_violation;
