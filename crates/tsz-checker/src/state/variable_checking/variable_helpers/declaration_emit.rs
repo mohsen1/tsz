@@ -764,6 +764,17 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        // A JS module's whole-module `module.exports = X` / `exports = X` gives
+        // `X` a type meaning the same way TS `export = X` does, but — unlike
+        // `export =` — it never seeds a binder `export=` symbol (that
+        // resolution is a checker-level, type-computed fact, not a binder
+        // fact), so the `is_exported_from_target` / `export=` namespace checks
+        // above never see it. `X` is still fully nameable from a consumer
+        // (`import X = require("./mod")`), so it must not trigger TS9006.
+        if self.is_commonjs_direct_export_target(file_idx, resolved_sym_id, target_sym_id) {
+            return None;
+        }
+
         let locally_nameable = self
             .ctx
             .binder
@@ -801,6 +812,40 @@ impl<'a> CheckerState<'a> {
 
         let module_specifier = self.module_specifier_for_file(file_idx)?;
         Some((referenced_name, module_specifier))
+    }
+
+    /// Whether `resolved_sym_id`/`target_sym_id` is the symbol behind the
+    /// target file's synthesized whole-module CommonJS export
+    /// (`JsExportSurface::direct_export_type`, from `module.exports = X` or
+    /// bare `exports = X`).
+    fn is_commonjs_direct_export_target(
+        &mut self,
+        file_idx: u32,
+        resolved_sym_id: SymbolId,
+        target_sym_id: SymbolId,
+    ) -> bool {
+        let Some(direct_export_type) = self
+            .resolve_js_export_surface(file_idx as usize)
+            .direct_export_type
+        else {
+            return false;
+        };
+        collect_referenced_types(self.ctx.types, direct_export_type)
+            .into_iter()
+            .filter_map(|type_id| {
+                lazy_def_id(self.ctx.types, type_id)
+                    .and_then(|def_id| self.ctx.def_to_symbol_id_with_fallback(def_id))
+                    .or_else(|| query::object_shape(self.ctx.types, type_id).and_then(|s| s.symbol))
+                    .or_else(|| {
+                        query::callable_shape(self.ctx.types, type_id).and_then(|s| s.symbol)
+                    })
+            })
+            .any(|candidate_sym_id| {
+                candidate_sym_id == resolved_sym_id
+                    || candidate_sym_id == target_sym_id
+                    || self.resolve_alias_symbol(candidate_sym_id, &mut AliasCycleTracker::new())
+                        == Some(resolved_sym_id)
+            })
     }
 
     /// Returns true if the current file contains a JSDoc `@type {typeof
