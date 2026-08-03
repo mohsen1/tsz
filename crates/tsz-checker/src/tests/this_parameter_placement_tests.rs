@@ -291,3 +291,35 @@ fn ordinary_parameters_in_arrow_are_clean() {
 fn a_parameter_named_like_a_property_is_not_a_this_parameter() {
     assert_clean("function ff20(ca21: number, ba21: string) {}");
 }
+
+// ---------------------------------------------------------------------------
+// A decorated/modified `this` parameter draws TS1433 (checked elsewhere, in
+// the parser) instead of these placement/container codes — never both.
+// Oracle-verified (`typescript@7.0.2`, `--experimentalDecorators`): a
+// decorator on `this` suppresses TS2680/2681/2784 for that same parameter,
+// even when the parameter is also misplaced or in an illegal container.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn decorated_misplaced_this_does_not_also_report_ts2680() {
+    assert_clean(
+        "declare function dec21(a: unknown, b: unknown, c: number): void; \
+         class Co20 { mg20(@dec21 pa22: number, @dec21 this: Co20) {} }",
+    );
+}
+
+#[test]
+fn decorated_constructor_this_does_not_also_report_ts2681() {
+    assert_clean(
+        "declare function dec22(a: unknown, b: unknown, c: number): void; \
+         class Cp20 { constructor(@dec22 this: Cp20) {} }",
+    );
+}
+
+#[test]
+fn decorated_getter_this_does_not_also_report_ts2784() {
+    assert_clean(
+        "declare function dec23(a: unknown, b: unknown, c: number): void; \
+         class Cq20 { get pi20(@dec23 this: Cq20) { return 1; } }",
+    );
+}

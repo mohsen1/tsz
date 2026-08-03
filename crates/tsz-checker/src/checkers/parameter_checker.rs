@@ -1627,10 +1627,11 @@ pub(crate) fn check_this_parameter_placement_in_ctx(
     };
 
     for (index, &param_idx) in parameters.nodes.iter().enumerate() {
-        let is_this_param = ctx
+        let this_param_data = ctx
             .arena
             .get(param_idx)
-            .and_then(|param_node| ctx.arena.get_parameter(param_node))
+            .and_then(|param_node| ctx.arena.get_parameter(param_node));
+        let is_this_param = this_param_data
             .and_then(|param| ctx.arena.get(param.name))
             .is_some_and(|name_node| {
                 name_node.kind == SyntaxKind::ThisKeyword as u16
@@ -1640,6 +1641,19 @@ pub(crate) fn check_this_parameter_placement_in_ctx(
                         .is_some_and(|ident| ident.escaped_text == "this")
             });
         if !is_this_param {
+            continue;
+        }
+
+        // TS1433 ("Neither decorators nor modifiers may be applied to `this`
+        // parameters") is a parser-level grammar error reported whenever a
+        // `this` parameter carries decorators or modifiers
+        // (`parse_parameter` in `state_statements_class.rs`). tsc does not
+        // additionally run the semantic placement/container checks below on
+        // that same parameter once the grammar error fires — verified
+        // against the pinned oracle across all three container arms
+        // (position, constructor, accessor): a decorated `this` parameter
+        // reports TS1433 alone, never TS1433 plus TS2680/2681/2784.
+        if this_param_data.is_some_and(|param| param.modifiers.is_some()) {
             continue;
         }
 
