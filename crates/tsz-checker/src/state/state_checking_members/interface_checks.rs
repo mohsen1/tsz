@@ -1508,11 +1508,24 @@ impl<'a> CheckerState<'a> {
         // key-shaped helper whose numeric arm both drops the brackets and
         // canonicalizes the digits, which is right for a dedup key and wrong for
         // a message.
+        //
+        // The inner expression decides only *whether* the name is renderable —
+        // a computed name with no expression (`get [](); `) is a parse-error
+        // shape that tsc leaves to the syntax error alone. Once it is
+        // renderable, the whole `[...]` node's own source text is what
+        // `getTextOfNode` returns, interior trivia included: tsc names
+        // `get [/* c */ "a"]()` as `[/* c */ "a"]`, which reassembling from the
+        // expression's trivia-skipped span cannot reproduce.
         if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
             && let Some(computed) = self.ctx.arena.get_computed_property(name_node)
             && let Some(inner) = self.computed_name_expression_display_text(computed.expression)
         {
-            return Some(format!("[{inner}]"));
+            return Some(
+                self.node_text(name_idx)
+                    .map(|text| text.trim().to_string())
+                    .filter(|text| !text.is_empty())
+                    .unwrap_or_else(|| format!("[{inner}]")),
+            );
         }
 
         // Fall back to get_member_name_text for computed properties, etc.
@@ -1520,12 +1533,57 @@ impl<'a> CheckerState<'a> {
     }
 
     /// The inner spelling of a computed member name, for
-    /// `get_member_name_display_text`. Returns `None` when the expression is
-    /// absent or too complex to render, which keeps a malformed computed name
-    /// (`get [](); `, a parse-error shape) unnamed rather than rendering it as
-    /// an empty `[]` — tsc reports only the syntax error there.
+    /// `get_member_name_display_text`. Returns `None` only when the expression
+    /// is absent or occupies no source text, which keeps a malformed computed
+    /// name (`get [](); `, a parse-error shape) unnamed rather than rendering
+    /// it as an empty `[]` — tsc reports only the syntax error there.
+    ///
+    /// Everything else renders as its own verbatim source text, because that is
+    /// what tsc does: `declarationNameToString`'s last arm is `getTextOfNode`
+    /// and it is **unconditional**, so every well-formed computed name is
+    /// nameable whatever the expression is. This helper used to pick from a
+    /// whitelist of expression kinds instead (literals here, then identifier /
+    /// dotted access / zero-argument call / parenthesized in
+    /// `simple_computed_name_expr_text_in_arena`) and return `None` for the
+    /// rest — a call with arguments, a binary expression, a conditional, an
+    /// assertion, a tagged template. `None` makes `member_name_for_diagnostic`
+    /// fail, and every site that gates on it then drops the member's whole
+    /// `noImplicitAny` family (TS7008/TS7010/TS7032/TS7033) silently, with
+    /// TS7010 additionally degrading to TS7011 in class containers. Three
+    /// separate fixes (#16190/#16225, #16201, #16229) each closed one more node
+    /// kind before the whitelist itself was recognized as the defect (#16250).
+    ///
+    /// The verbatim text is also the only rendering that survives a
+    /// syntax-preserving wrapper: `simple_computed_name_expr_text_in_arena`
+    /// recurses *through* a parenthesized expression, so it renders `[(a)]` as
+    /// `[a]`, where `getTextOfNode` keeps the parentheses. That helper is not
+    /// widened to fix this — it is shared with the *key* helpers
+    /// (`get_member_name_text`, `should_check_late_bound_class_property_name`)
+    /// where unwrapping is the correct behaviour for member identity. It stays
+    /// as the fallback for the one case verbatim text cannot serve: a node with
+    /// no owning source file (a synthesized or lib-merged declaration), where
+    /// `node_text` has nothing to slice.
     fn computed_name_expression_display_text(&self, expr_idx: NodeIndex) -> Option<String> {
         let expr_node = self.ctx.arena.get(expr_idx)?;
+
+        // Source text answers the whole question when there is source text to
+        // read: render it verbatim, or decline outright if the parser recovered
+        // this name from a syntax error. Declining must *not* fall through to
+        // the structured arms below — they descend into a recovered node's
+        // well-formed half and rebuild a name from it (`[a.]` renders as `a.`
+        // through the property-access arm), which is the same silent divergence
+        // in the other direction.
+        if let Some(verbatim) = self
+            .node_text(expr_idx)
+            .map(|text| text.trim().to_string())
+            .filter(|text| !text.is_empty())
+        {
+            return if self.computed_name_expression_is_parse_recovered(expr_idx) {
+                None
+            } else {
+                Some(verbatim)
+            };
+        }
 
         if expr_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
             && let Some(lit) = self.ctx.arena.get_literal(expr_node)
@@ -1541,24 +1599,16 @@ impl<'a> CheckerState<'a> {
 
         // Template literal computed name, with substitutions (`` `a${x}` ``) or
         // without (`` `abc` ``). `tsc` names both in messages using their own
-        // source spelling — `declarationNameToString` falls through to
-        // `getTextOfNode` for anything past the literal/identifier cases, and a
-        // `NoSubstitutionTemplateLiteral` is not one of the string/numeric
-        // kinds it special-cases, so the backticks survive into the message
-        // exactly as written.
+        // source spelling, and `node_text` above already produces exactly that
+        // whenever the node has an owning source file — this arm only carries
+        // the source-less case, where there is no text to slice and nothing
+        // better to return.
         //
         // Resolving the *key* is a different question from naming the *member*:
         // `get_property_name` does resolve `` [`abc`] `` to the key `abc` one
         // step earlier, but this display path is reached by node kind, not by
         // first-success, so the key resolver never covers for a missing arm
-        // here. Without one, `member_name_for_diagnostic` returns `None` and
-        // every site that gates on it silently drops the member's
-        // `noImplicitAny` diagnostic (TS7008/TS7010/TS7032/TS7033).
-        //
-        // Verbatim source text is safe for both kinds specifically because the
-        // node is a well-formed template literal, not a parse-error recovery
-        // node — unlike a raw-source fallback keyed on node kind in general,
-        // this can't misrender a malformed computed name.
+        // here.
         if expr_node.kind == syntax_kind_ext::TEMPLATE_EXPRESSION
             || expr_node.kind == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16
         {
@@ -1566,6 +1616,65 @@ impl<'a> CheckerState<'a> {
         }
 
         self.get_simple_computed_name_expr_text(expr_idx)
+    }
+
+    /// Whether a computed-name expression contains a node the parser
+    /// synthesized while recovering from a syntax error, which makes the name
+    /// unrenderable: `get [1+]();` parses as a binary expression whose right
+    /// operand is `create_missing_expression`'s placeholder, and tsc reports
+    /// only the syntax error (`TS1109`) for it, never the member's
+    /// implicit-any diagnostic.
+    ///
+    /// The placeholder is structurally identifiable — it occupies no source
+    /// text at all (`create_missing_expression` builds it at `(pos, pos)`) — so
+    /// this is a deny-list over parser recovery, not a whitelist over
+    /// expression kinds. That polarity is the
+    /// point: an expression form this probe does not know how to descend into
+    /// is treated as **well-formed** and gets named, matching tsc's
+    /// unconditional `getTextOfNode`. The old whitelist had the opposite
+    /// default, which is why each new node kind cost its own bug and fix.
+    fn computed_name_expression_is_parse_recovered(&self, expr_idx: NodeIndex) -> bool {
+        // A *required* child that is absent is the other half of the same
+        // recovery signal: `[a.]` parses as a property access whose member name
+        // never materialized at all, rather than as a zero-width placeholder.
+        // Every position this probe descends into is required by its parent's
+        // grammar, so an absent one always means the parser gave up there.
+        if expr_idx.is_none() {
+            return true;
+        }
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return true;
+        };
+
+        if self
+            .get_node_span(expr_idx)
+            .is_none_or(|(start, end)| start >= end)
+        {
+            return true;
+        }
+
+        // Operand-bearing wrappers: a placeholder is only ever produced *inside*
+        // one of these, so descending through them is enough to see it. Any
+        // other kind falls through to `false` (nameable) by design.
+        if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
+            return self.computed_name_expression_is_parse_recovered(paren.expression);
+        }
+        if let Some(binary) = self.ctx.arena.get_binary_expr(node) {
+            return self.computed_name_expression_is_parse_recovered(binary.left)
+                || self.computed_name_expression_is_parse_recovered(binary.right);
+        }
+        if let Some(unary) = self.ctx.arena.get_unary_expr(node) {
+            return self.computed_name_expression_is_parse_recovered(unary.operand);
+        }
+        if let Some(access) = self.ctx.arena.get_access_expr(node) {
+            return self.computed_name_expression_is_parse_recovered(access.expression)
+                || self.computed_name_expression_is_parse_recovered(access.name_or_argument);
+        }
+        if let Some(call) = self.ctx.arena.get_call_expr(node) {
+            return self.computed_name_expression_is_parse_recovered(call.expression);
+        }
+
+        false
     }
 
     /// The name tsc puts in a member diagnostic, via `declarationNameToString`.

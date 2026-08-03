@@ -385,3 +385,341 @@ fn malformed_computed_name_reports_no_implicit_any_member_diagnostic() {
         "a malformed computed name must not draw TS7033; got {codes:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// #16250 — the display whitelist itself, not one more node kind
+//
+// `computed_name_expression_display_text` rendered a computed name only if the
+// expression matched a whitelist (string / numeric / template literal here,
+// then identifier / dotted access / zero-argument call / parenthesized in
+// `simple_computed_name_expr_text_in_arena`). Every other expression returned
+// `None`, `member_name_for_diagnostic` failed, and every gated site dropped the
+// member's whole `noImplicitAny` family silently. tsc has no whitelist:
+// `declarationNameToString`'s last arm is an unconditional `getTextOfNode`.
+//
+// Every row below is recorded from `typescript@7.0.2` under
+// `--noEmit --strict --lib es2022 --target es2022`. Binder names are distinct
+// per row so nothing can key on an identifier string, and the expressions are
+// deliberately chosen so the *key* is not statically resolvable — a renderer
+// that still went through the key resolver would produce nothing for them.
+// ---------------------------------------------------------------------------
+
+/// Shared preamble: the binders every expression form below reads. Kept in one
+/// place so each row is only its own name shape.
+const Q30_PRELUDE: &str = "declare const aq30: string; \
+                           declare function fq30(n: number): string; \
+                           declare const oq30: { kq30: string }; \
+                           declare function tagq30(s: TemplateStringsArray): string; \
+                           declare const bq30: boolean; ";
+
+fn assert_computed_name_rendered(member: &str, code: u32, expected: &str) {
+    assert_names(&format!("{Q30_PRELUDE}{member}"), code, expected);
+}
+
+#[test]
+fn ts7033_call_with_arguments_computed_name_is_named() {
+    // `simple_computed_name_expr_text_in_arena` accepted a *zero-argument* call
+    // and declined this one, so the whole family vanished for `[f(1)]`.
+    assert_computed_name_rendered(
+        "declare class Cq31 { get [fq30(1)](); }",
+        7033,
+        "Property '[fq30(1)]'",
+    );
+}
+
+#[test]
+fn ts7033_binary_expression_computed_name_is_named() {
+    assert_computed_name_rendered(
+        "declare class Cq32 { get [aq30 + \"b\"](); }",
+        7033,
+        "Property '[aq30 + \"b\"]'",
+    );
+}
+
+#[test]
+fn ts7033_conditional_expression_computed_name_is_named() {
+    assert_computed_name_rendered(
+        "declare class Cq33 { get [bq30 ? \"x\" : \"y\"](); }",
+        7033,
+        "Property '[bq30 ? \"x\" : \"y\"]'",
+    );
+}
+
+#[test]
+fn ts7033_as_assertion_computed_name_is_named() {
+    assert_computed_name_rendered(
+        "declare class Cq34 { get [aq30 as string](); }",
+        7033,
+        "Property '[aq30 as string]'",
+    );
+}
+
+#[test]
+fn ts7033_tagged_template_computed_name_is_named() {
+    assert_computed_name_rendered(
+        "declare class Cq35 { get [tagq30`sq35`](); }",
+        7033,
+        "Property '[tagq30`sq35`]'",
+    );
+}
+
+#[test]
+fn ts7033_element_access_computed_name_is_named() {
+    assert_computed_name_rendered(
+        "declare class Cq36 { get [oq30[\"kq30\"]](); }",
+        7033,
+        "Property '[oq30[\"kq30\"]]'",
+    );
+}
+
+#[test]
+fn ts7033_non_null_assertion_computed_name_is_named() {
+    assert_computed_name_rendered(
+        "declare class Cq37 { get [aq30!](); }",
+        7033,
+        "Property '[aq30!]'",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Parenthesized forms — the second defect in the same helper. The whitelist
+// *accepted* these by recursing through the parentheses, so the name rendered
+// with the wrapper stripped: `[(aq30)]` came out as `[aq30]`. `getTextOfNode`
+// keeps the source syntax. `simple_computed_name_expr_text_in_arena` is not
+// widened to fix this — it is shared with the key helpers, where unwrapping is
+// correct for member identity.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ts7033_parenthesized_identifier_computed_name_keeps_its_parentheses() {
+    assert_computed_name_rendered(
+        "declare class Cq38 { get [(aq30)](); }",
+        7033,
+        "Property '[(aq30)]'",
+    );
+}
+
+#[test]
+fn ts7033_doubly_parenthesized_identifier_computed_name_keeps_both() {
+    assert_computed_name_rendered(
+        "declare class Cq39 { get [((aq30))](); }",
+        7033,
+        "Property '[((aq30))]'",
+    );
+}
+
+#[test]
+fn ts7033_parenthesized_string_literal_computed_name_is_named() {
+    // The literal arms rendered the *unwrapped* literal only when it was the
+    // expression itself; wrapped in parentheses the whitelist declined outright
+    // and the diagnostic disappeared.
+    assert_computed_name_rendered(
+        "declare class Cq40 { get [(\"sq40\")](); }",
+        7033,
+        "Property '[(\"sq40\")]'",
+    );
+}
+
+#[test]
+fn ts7033_parenthesized_template_literal_computed_name_is_named() {
+    assert_computed_name_rendered(
+        "declare class Cq41 { get [(`sq41`)](); }",
+        7033,
+        "Property '[(`sq41`)]'",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The same expression form across every container and member kind, so the fix
+// is pinned at the shared renderer rather than at one caller.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn ts7033_interface_call_computed_name_is_named() {
+    assert_computed_name_rendered(
+        "interface Iq42 { get [fq30(2)](); }",
+        7033,
+        "Property '[fq30(2)]'",
+    );
+}
+
+#[test]
+fn ts7033_type_literal_call_computed_name_is_named() {
+    assert_computed_name_rendered(
+        "type Tq43 = { get [fq30(3)](); };",
+        7033,
+        "Property '[fq30(3)]'",
+    );
+}
+
+#[test]
+fn ts7033_abstract_class_call_computed_name_is_named() {
+    assert_computed_name_rendered(
+        "declare abstract class Aq44 { get [fq30(4)](); }",
+        7033,
+        "Property '[fq30(4)]'",
+    );
+}
+
+#[test]
+fn ts7033_static_call_computed_name_is_named() {
+    assert_computed_name_rendered(
+        "declare class Cq45 { static get [fq30(5)](); }",
+        7033,
+        "Property '[fq30(5)]'",
+    );
+}
+
+#[test]
+fn ts7008_bare_property_call_computed_name_is_named() {
+    assert_computed_name_rendered(
+        "declare class Cq46 { [fq30(6)]; }",
+        7008,
+        "Member '[fq30(6)]'",
+    );
+}
+
+#[test]
+fn ts7008_interface_bare_property_call_computed_name_is_named() {
+    assert_computed_name_rendered("interface Iq47 { [fq30(7)]; }", 7008, "Member '[fq30(7)]'");
+}
+
+#[test]
+fn ts7010_bodyless_method_call_computed_name_is_not_downgraded_to_ts7011() {
+    // An unnamable member falls through to TS7011. This is the row where the
+    // whitelist cost a diagnostic *code*, not only a message.
+    let source = format!("{Q30_PRELUDE}declare class Cq48 {{ [fq30(8)](); }}");
+    let codes: Vec<u32> = check_source_strict_messages(&source)
+        .into_iter()
+        .map(|(code, _)| code)
+        .collect();
+    assert!(
+        !codes.contains(&7011),
+        "a nameable computed member must not fall through to TS7011; got {codes:?}"
+    );
+    assert_names(
+        &source,
+        7010,
+        "'[fq30(8)]', which lacks return-type annotation",
+    );
+}
+
+#[test]
+fn ts7010_interface_bodyless_method_call_computed_name_is_named() {
+    assert_computed_name_rendered(
+        "interface Iq49 { [fq30(9)](); }",
+        7010,
+        "'[fq30(9)]', which lacks return-type annotation",
+    );
+}
+
+#[test]
+fn non_constant_computed_key_accessor_pair_blames_both_halves() {
+    // A constant key pairs the accessors and blames only the setter (TS7032,
+    // see `ts7032_...` above). A call expression is not a constant key, so tsc
+    // treats the two halves as separate members and reports both codes.
+    let source =
+        format!("{Q30_PRELUDE}declare class Cq50 {{ get [fq30(10)](); set [fq30(10)](v); }}");
+    let codes: Vec<u32> = check_source_strict_messages(&source)
+        .into_iter()
+        .map(|(code, _)| code)
+        .collect();
+    assert!(
+        codes.contains(&7033) && codes.contains(&7032),
+        "a non-constant computed key does not pair the accessors; got {codes:?}"
+    );
+    assert_names(&source, 7032, "Property '[fq30(10)]'");
+}
+
+// ---------------------------------------------------------------------------
+// Verbatim means verbatim — the two shapes that prove the renderer reads source
+// text rather than reassembling the name from its parts.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn single_quoted_string_computed_name_keeps_its_own_quote_character() {
+    // The old literal arm rebuilt the name as `"{text}"`, forcing double
+    // quotes. `getTextOfNode` returns the source spelling.
+    assert_names(
+        "declare class Cq51 { get ['sq51'](); }",
+        7033,
+        "Property '['sq51']'",
+    );
+}
+
+#[test]
+fn computed_name_keeps_a_comment_written_inside_the_brackets() {
+    // Reassembling `[{inner}]` from the expression's own span drops interior
+    // trivia, because the expression starts after the comment. tsc renders the
+    // whole name node.
+    assert_names(
+        "declare class Cq52 { get [/* cq52 */ \"sq52\"](); }",
+        7033,
+        "Property '[/* cq52 */ \"sq52\"]'",
+    );
+}
+
+#[test]
+fn parse_recovered_computed_name_still_reports_no_implicit_any_member_diagnostic() {
+    // `get [1+]();` parses as a binary expression whose right operand is the
+    // parser's zero-width recovery placeholder. Verbatim source text would
+    // render it `[1+]` and start reporting a diagnostic tsc never emits —
+    // `typescript@7.0.2` reports only TS1109 here. The recovery placeholder,
+    // not the expression's kind, is what makes a name unrenderable.
+    let codes: Vec<u32> = check_source_strict_messages("declare class Cq53 { get [1+](); }")
+        .into_iter()
+        .map(|(code, _)| code)
+        .collect();
+    assert!(
+        !codes.contains(&7033),
+        "a parse-recovered computed name must not draw TS7033; got {codes:?}"
+    );
+}
+
+#[test]
+fn parse_recovered_computed_name_inside_parentheses_is_still_declined() {
+    // The placeholder is one level deeper here, so a probe that only looked at
+    // the expression node itself would name `[(2+)]` and report.
+    let codes: Vec<u32> = check_source_strict_messages("declare class Cq54 { get [(2+)](); }")
+        .into_iter()
+        .map(|(code, _)| code)
+        .collect();
+    assert!(
+        !codes.contains(&7033),
+        "a parse-recovered computed name must not draw TS7033; got {codes:?}"
+    );
+}
+
+#[test]
+fn parse_recovered_property_access_computed_name_is_declined() {
+    // `[aq70.]` recovers as a property access whose member name is the
+    // zero-width placeholder. The old whitelist *accepted* property accesses,
+    // so the recovery probe has to descend into the member position too, not
+    // only into operands. tsc reports only TS1003 here.
+    let codes: Vec<u32> = check_source_strict_messages(
+        "declare const aq70: { bq70: string }; declare class Cq55 { get [aq70.](); }",
+    )
+    .into_iter()
+    .map(|(code, _)| code)
+    .collect();
+    assert!(
+        !codes.contains(&7033),
+        "a parse-recovered computed name must not draw TS7033; got {codes:?}"
+    );
+}
+
+#[test]
+fn parse_recovered_element_access_computed_name_is_declined() {
+    // `[aq71[]` recovers as an element access with no argument. tsc reports
+    // only TS1011/TS1005.
+    let codes: Vec<u32> = check_source_strict_messages(
+        "declare const aq71: { bq71: string }; declare class Cq56 { get [aq71[](); }",
+    )
+    .into_iter()
+    .map(|(code, _)| code)
+    .collect();
+    assert!(
+        !codes.contains(&7033),
+        "a parse-recovered computed name must not draw TS7033; got {codes:?}"
+    );
+}
