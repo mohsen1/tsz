@@ -697,11 +697,26 @@ impl ParserState {
         // arm was the only one of the three that never checked it.
         self.report_set_accessor_optional_parameter(&parameters, count_error);
 
-        if self.parse_optional(SyntaxKind::ColonToken) {
+        // Parse return type annotation for error recovery (tsc preserves it in JS
+        // output); a setter cannot legally carry one, but the class and
+        // interface/type-literal containers already store it so the checker's
+        // TS1052/TS1053 guard (`report_set_accessor_parameter_count`'s sibling in
+        // the checker) can see it. This container was the one hard-coded empty.
+        let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
             // TS1095, suppressed when TS1049 already fired.
             self.report_set_accessor_return_type_annotation(name, count_error);
-            let _ = self.parse_return_type();
-        }
+            self.parse_return_type()
+        } else {
+            NodeIndex::NONE
+        };
+        // If there's a type annotation, use its end; otherwise use close paren end.
+        // Mirrors the identical `signature_end` computation in
+        // `parse_object_get_accessor` above.
+        let signature_end = if type_annotation.is_none() {
+            close_paren_end
+        } else {
+            self.token_pos()
+        };
 
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
             let saved_body_flags = self.context_flags;
@@ -716,9 +731,12 @@ impl ParserState {
                     // Body-less object-literal accessor terminated by the object's
                     // closing `}` (`{ set foo(a) }`). tsc reports TS1005 `'{' expected`
                     // via `checkGrammarAccessor`'s `grammarErrorAtPos(accessor,
-                    // accessor.end - 1, 1)` — at the `)`, not at the following `}`.
+                    // accessor.end - 1, 1)` — at the last character of the signature
+                    // (the `)`, or near the end of the return type when present, per
+                    // the identical `signature_end` computation `parse_object_get_accessor`
+                    // already uses above), not at the following `}`.
                     self.parse_error_at(
-                        close_paren_end.saturating_sub(1),
+                        signature_end.saturating_sub(1),
                         1,
                         "'{' expected.",
                         diagnostic_codes::EXPECTED,
@@ -730,9 +748,9 @@ impl ParserState {
             NodeIndex::NONE
         };
 
-        // End position: use token_end for normal case, close_paren_end for missing body
+        // End position: use token_end for normal case, signature_end for missing body
         let end_pos = if body.is_none() {
-            close_paren_end
+            signature_end
         } else {
             self.token_end()
         };
@@ -745,7 +763,7 @@ impl ParserState {
                 name,
                 type_parameters,
                 parameters,
-                type_annotation: NodeIndex::NONE,
+                type_annotation,
                 body,
             },
         )
