@@ -712,6 +712,18 @@ impl<'a> CheckerState<'a> {
             });
 
         if is_primitive_type_keyword && !is_import_equals_module_specifier {
+            // A destructured parameter rename that shadows a primitive-keyword
+            // name (`({ a: string }) => typeof string`) is in scope for the
+            // signature's own `typeof` queries, same as any other renamed
+            // binding — see the general guard below. This early-return branch
+            // sits before that guard textually, so it needs its own check;
+            // tsc resolves the binding and reports nothing here rather than
+            // TS2693 on the shadowed primitive.
+            if crate::types_domain::signature_binding_scope::signature_parameter_declares_binding(
+                &self.ctx, idx, name,
+            ) {
+                return;
+            }
             self.error_type_only_value_at(name, idx);
             return;
         }
