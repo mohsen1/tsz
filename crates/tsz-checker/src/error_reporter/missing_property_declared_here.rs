@@ -1,0 +1,271 @@
+use crate::diagnostics::{
+    Diagnostic, DiagnosticRelatedInformation, diagnostic_codes, diagnostic_messages, format_message,
+};
+use crate::state::CheckerState;
+use tsz_parser::parser::{NodeArena, NodeIndex};
+use tsz_solver::TypeId;
+
+impl<'a> CheckerState<'a> {
+    /// Build tsc's `'{0}' is declared here.` (TS2728) pointer for the single
+    /// unmatched property of a `TS2741` failure.
+    ///
+    /// tsc's `reportUnmatchedProperty` attaches this related entry only on the
+    /// one-missing-property form: the multi-property forms (`TS2739`/`TS2740`)
+    /// carry no pointer at all. The anchor is the *name node* of the property's
+    /// own declaration, in whichever file declares it — so a property declared
+    /// in an imported module points across files.
+    ///
+    /// `owner_candidates` are the target types the caller already has in hand
+    /// (the relation target and the evaluated member target); the first one
+    /// that resolves to a declaring symbol owning a member with this name wins.
+    /// When no candidate resolves — an anonymous object type with no symbol,
+    /// for instance — no pointer is produced, which leaves output exactly as it
+    /// was rather than guessing at a declaration.
+    pub(super) fn missing_property_declared_here_related(
+        &mut self,
+        owner_candidates: &[TypeId],
+        property_name: tsz_common::interner::Atom,
+        property_display: &str,
+    ) -> Option<DiagnosticRelatedInformation> {
+        let property = self.ctx.types.resolve_atom(property_name);
+        owner_candidates.iter().find_map(|&owner| {
+            self.declared_here_related_for_owner(owner, &property, property_display)
+        })
+    }
+
+    /// Resolve `owner` to its declaring symbol, find the member declaration
+    /// with this name inside that symbol's own declaration, and anchor there.
+    fn declared_here_related_for_owner(
+        &mut self,
+        owner: TypeId,
+        property: &str,
+        property_display: &str,
+    ) -> Option<DiagnosticRelatedInformation> {
+        let owner_symbol = self.ctx.resolve_type_to_symbol_id(owner).or_else(|| {
+            crate::query_boundaries::common::type_shape_symbol(self.ctx.types, owner)
+        })?;
+        let symbol = self.ctx.binder.get_symbol(owner_symbol)?;
+        let locations: Vec<tsz_binder::StableLocation> =
+            std::iter::once(symbol.stable_value_declaration)
+                .chain(symbol.stable_declarations.iter().copied())
+                .filter(tsz_binder::StableLocation::is_known)
+                .collect();
+        let member_locations: Vec<tsz_binder::StableLocation> = symbol
+            .members
+            .as_ref()
+            .and_then(|members| members.get(property))
+            .and_then(|member_id| self.ctx.binder.get_symbol(member_id))
+            .map(|member| {
+                std::iter::once(member.stable_value_declaration)
+                    .chain(member.stable_declarations.iter().copied())
+                    .filter(tsz_binder::StableLocation::is_known)
+                    .collect()
+            })
+            .unwrap_or_default();
+        for location in locations {
+            let Some((start, length, file)) = self.declared_here_anchor(location, property) else {
+                continue;
+            };
+            return Some(Diagnostic::related_message(
+                diagnostic_codes::IS_DECLARED_HERE,
+                file.unwrap_or_else(|| self.ctx.file_name.clone()),
+                start,
+                length,
+                format_message(diagnostic_messages::IS_DECLARED_HERE, &[property_display]),
+            ));
+        }
+        for location in member_locations {
+            let Some((start, length, file)) = self.declared_here_member_anchor(location, property)
+            else {
+                continue;
+            };
+            return Some(Diagnostic::related_message(
+                diagnostic_codes::IS_DECLARED_HERE,
+                file.unwrap_or_else(|| self.ctx.file_name.clone()),
+                start,
+                length,
+                format_message(diagnostic_messages::IS_DECLARED_HERE, &[property_display]),
+            ));
+        }
+        None
+    }
+
+    /// `(start, length, file)` for a member symbol's own declaration, used when
+    /// the owner's declaration does not carry a member list the walk above can
+    /// read (a class records its members on the symbol instead).
+    ///
+    /// A `StableLocation` resolves by `(pos, end)` against whichever arena the
+    /// stamped file index names, and falls back to the current arena when the
+    /// location carries no file index — so the node it lands on is only trusted
+    /// here when it really is a member declaration whose written name is the
+    /// property being reported. Anything else declines rather than anchoring a
+    /// pointer at an unrelated span.
+    fn declared_here_member_anchor(
+        &self,
+        location: tsz_binder::StableLocation,
+        property: &str,
+    ) -> Option<(u32, u32, Option<String>)> {
+        let (decl_idx, arena) = self.ctx.node_at_stable_location(location)?;
+        let name_idx = Self::member_name_node(arena, decl_idx)?;
+        if crate::types_domain::queries::core::get_literal_property_name(arena, name_idx)
+            .is_none_or(|name| name != property)
+        {
+            return None;
+        }
+        let anchor_idx = Self::member_anchor_for_kind(arena, decl_idx, name_idx);
+        let (start, length) = Self::anchor_span(arena, anchor_idx)?;
+        Some((start, length, Self::arena_file_name(arena, anchor_idx)))
+    }
+
+    /// `(start, length, file)` of the pointer anchor for `property` inside the
+    /// declaration at `location`, in that declaration's own arena.
+    fn declared_here_anchor(
+        &self,
+        location: tsz_binder::StableLocation,
+        property: &str,
+    ) -> Option<(u32, u32, Option<String>)> {
+        let (decl_idx, arena) = self.ctx.node_at_stable_location(location)?;
+        let members = Self::declaration_member_list(arena, decl_idx)?;
+        let anchor_idx = Self::member_anchor_node(arena, &members, property)?;
+        let (start, length) = Self::anchor_span(arena, anchor_idx)?;
+        Some((start, length, Self::arena_file_name(arena, anchor_idx)))
+    }
+
+    /// The member list a type's declaration owns: interfaces and classes carry
+    /// theirs directly, a type alias carries its body's when that body is a
+    /// type literal.
+    fn declaration_member_list(
+        arena: &NodeArena,
+        decl_idx: NodeIndex,
+    ) -> Option<tsz_parser::parser::NodeList> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let node = arena.get(decl_idx)?;
+        if node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
+            return Some(arena.get_interface(node)?.members.clone());
+        }
+        if node.kind == syntax_kind_ext::CLASS_DECLARATION
+            || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+        {
+            return Some(arena.get_class(node)?.members.clone());
+        }
+        if node.kind == syntax_kind_ext::TYPE_LITERAL {
+            return Some(arena.get_type_literal(node)?.members.clone());
+        }
+        if node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+            let body_idx = arena.get_type_alias(node)?.type_node;
+            if body_idx.is_some() && body_idx != decl_idx {
+                return Self::declaration_member_list(arena, body_idx);
+            }
+        }
+        None
+    }
+
+    /// The member in `members` named `property`, resolved to the node tsc
+    /// underlines for it.
+    fn member_anchor_node(
+        arena: &NodeArena,
+        members: &tsz_parser::parser::NodeList,
+        property: &str,
+    ) -> Option<NodeIndex> {
+        for &member_idx in &members.nodes {
+            let Some(name_idx) = Self::member_name_node(arena, member_idx) else {
+                continue;
+            };
+            let Some(name) =
+                crate::types_domain::queries::core::get_literal_property_name(arena, name_idx)
+            else {
+                continue;
+            };
+            if name != property {
+                continue;
+            }
+            return Some(Self::member_anchor_for_kind(arena, member_idx, name_idx));
+        }
+        None
+    }
+
+    /// The name node of a property-like member declaration.
+    fn member_name_node(arena: &NodeArena, member_idx: NodeIndex) -> Option<NodeIndex> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let node = arena.get(member_idx)?;
+        if node.kind != syntax_kind_ext::PROPERTY_SIGNATURE
+            && node.kind != syntax_kind_ext::PROPERTY_DECLARATION
+            && node.kind != syntax_kind_ext::METHOD_SIGNATURE
+            && node.kind != syntax_kind_ext::METHOD_DECLARATION
+        {
+            return None;
+        }
+        let name = arena.get_signature(node)?.name;
+        name.is_some().then_some(name)
+    }
+
+    /// Span of an anchor node, narrowed to the token as written.
+    ///
+    /// A node's `end` runs to the start of the next token, so an identifier
+    /// name node measured as `end - pos` swallows the `:` that follows it. The
+    /// same narrowing `normalized_anchor_span` performs for the current arena
+    /// is done here against the declaration's own arena: an identifier is its
+    /// escaped text, a string-literal name is its text plus the two quotes it
+    /// was written with, and anything else keeps the node span.
+    fn anchor_span(arena: &NodeArena, anchor_idx: NodeIndex) -> Option<(u32, u32)> {
+        use tsz_scanner::SyntaxKind;
+
+        let node = arena.get(anchor_idx)?;
+        let start = node.pos;
+        if (node.kind == SyntaxKind::Identifier as u16
+            || node.kind == SyntaxKind::PrivateIdentifier as u16)
+            && let Some(identifier) = arena.get_identifier(node)
+        {
+            return Some((start, identifier.escaped_text.len() as u32));
+        }
+        if node.kind == SyntaxKind::StringLiteral as u16
+            && let Some(name) =
+                crate::types_domain::queries::core::get_literal_property_name(arena, anchor_idx)
+        {
+            return Some((start, name.len() as u32 + 2));
+        }
+        Some((start, node.end.saturating_sub(start)))
+    }
+
+    /// The node tsc underlines for a member: a property member points at its
+    /// *name* (`y` in `y: number;`), a method member at the whole member
+    /// (`run(): void;`).
+    fn member_anchor_for_kind(
+        arena: &NodeArena,
+        member_idx: NodeIndex,
+        name_idx: NodeIndex,
+    ) -> NodeIndex {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        match arena.get(member_idx).map(|node| node.kind) {
+            Some(kind)
+                if kind == syntax_kind_ext::METHOD_SIGNATURE
+                    || kind == syntax_kind_ext::METHOD_DECLARATION =>
+            {
+                member_idx
+            }
+            _ => name_idx,
+        }
+    }
+
+    /// File name owning `idx` in `arena`, walked from the node itself so a
+    /// cross-file declaration reports its own file rather than the file the
+    /// primary diagnostic lives in.
+    fn arena_file_name(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+        let mut current = idx;
+        while current.is_some() {
+            let node = arena.get(current)?;
+            if let Some(source_file) = arena.get_source_file(node) {
+                return Some(source_file.file_name.clone());
+            }
+            let ext = arena.get_extended(current)?;
+            if ext.parent.is_none() {
+                break;
+            }
+            current = ext.parent;
+        }
+        None
+    }
+}

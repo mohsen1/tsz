@@ -39,6 +39,7 @@ mod generic_display_helpers;
 mod generics;
 mod literal_alias_display;
 mod literal_alias_rewrites;
+mod missing_property_declared_here;
 mod name_resolution;
 mod noinfer_diagnostic_display;
 mod operator_errors;

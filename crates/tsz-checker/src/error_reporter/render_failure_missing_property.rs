@@ -612,13 +612,27 @@ impl<'a> CheckerState<'a> {
             diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
             &[&prop_name_display, &src_str, &tgt_str_qualified],
         );
-        Diagnostic::error(
+        let mut diagnostic = Diagnostic::error(
             file_name,
             start,
             length,
             message,
             diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
-        )
+        );
+        // tsc's `reportUnmatchedProperty` pairs the one-missing-property form
+        // with a TS2728 pointer at that property's own declaration. The
+        // multi-property forms (TS2739/TS2740) above return before this point
+        // and carry no pointer, matching tsc.
+        if depth == 0
+            && let Some(related) = self.missing_property_declared_here_related(
+                &[target, target_type],
+                property_name,
+                &prop_name_display,
+            )
+        {
+            diagnostic.related_information.push(related);
+        }
+        diagnostic
     }
 
     /// Target display for the primitive-source TS2322 downgrade of a
