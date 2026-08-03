@@ -451,6 +451,148 @@ impl<'a> CheckerState<'a> {
     // Setter Parameter Validation
     // =========================================================================
 
+    /// The `set`-accessor *parameter grammar* arms tsz owns, for every
+    /// container a `set` accessor can be written in.
+    ///
+    /// `tsc` runs these from `checkGrammarAccessor`, which is reached for a
+    /// `set` accessor wherever one can be written — class member, object
+    /// literal, interface member, type-literal member — because the rule reads
+    /// the accessor's own signature and never the container.
+    ///
+    /// `checkGrammarAccessor` reports **at most one** diagnostic per accessor:
+    /// it is a chain of early returns, in this order.
+    ///
+    /// | # | condition | code | emitted by |
+    /// | --- | --- | --- | --- |
+    /// | 1 | accessor has type parameters | `TS1094` | parser |
+    /// | 2 | value-parameter count is not exactly 1 | `TS1049` | parser |
+    /// | 3 | setter has a return type annotation | `TS1095` | parser |
+    /// | 4 | parameter is a rest parameter | **`TS1053`** | **here** |
+    /// | 5 | parameter is optional | `TS1051` | parser |
+    /// | 6 | parameter has an initializer | **`TS1052`** | **here** |
+    ///
+    /// tsz splits that chain across two layers — rows 1/2/3/5 are emitted by
+    /// the parser, rows 4 and 6 by this checker — so the ordering cannot be a
+    /// local early return inside either one. This function therefore re-tests
+    /// the *earlier* links' conditions before emitting, from the same
+    /// structural facts the parser uses. Without that, `set p(...v: T[]): void`
+    /// draws `TS1095` **and** `TS1053` where `tsc` reports `TS1095` alone.
+    ///
+    /// The value-parameter count in row 2 excludes a leading `this` parameter
+    /// (`tsc`'s `getSetAccessorValueParameter`): `set p(this: C, ...v: T[])` is
+    /// a one-value-parameter setter and still reaches row 4. A `this`
+    /// parameter on an accessor is separately illegal (`TS2784`), which does
+    /// not suppress this family.
+    ///
+    /// Split out of `check_setter_parameter` so the non-class containers reach
+    /// the same rule rather than re-deriving it. `check_setter_parameter` stays
+    /// the class-declaration entry point and additionally owns the
+    /// `noImplicitAny` family (`TS7006`/`TS7032`), whose suppression *does*
+    /// depend on the container and on a paired getter — which is why only the
+    /// grammar half is shared.
+    pub(crate) fn check_setter_parameter_grammar(&mut self, accessor_idx: NodeIndex) {
+        let Some(accessor_node) = self.ctx.arena.get(accessor_idx) else {
+            return;
+        };
+        let Some(accessor) = self.ctx.arena.get_accessor(accessor_node) else {
+            return;
+        };
+        let accessor_name = accessor.name;
+        let has_type_parameters = accessor
+            .type_parameters
+            .as_ref()
+            .is_some_and(|list| !list.nodes.is_empty());
+        let has_return_type = accessor.type_annotation.is_some();
+
+        // Row 1: `TS1094` claims an accessor with type parameters.
+        if has_type_parameters {
+            return;
+        }
+
+        // Row 2: the value parameters are the declared ones minus a leading
+        // `this` parameter, which is not a value parameter.
+        let value_params: Vec<NodeIndex> = accessor
+            .parameters
+            .nodes
+            .iter()
+            .copied()
+            .filter(|&param_idx| {
+                self.ctx
+                    .arena
+                    .get(param_idx)
+                    .and_then(|node| self.ctx.arena.get_parameter(node))
+                    .is_none_or(|param| !self.is_this_parameter_name(param.name))
+            })
+            .collect();
+        let [param_idx] = value_params[..] else {
+            // `TS1049` claims any other count.
+            return;
+        };
+
+        // Row 3: `TS1095` claims a setter with a return type annotation.
+        if has_return_type {
+            return;
+        }
+
+        let Some(param) = self
+            .ctx
+            .arena
+            .get(param_idx)
+            .and_then(|node| self.ctx.arena.get_parameter(node))
+        else {
+            return;
+        };
+        let (is_rest, is_optional, has_initializer, param_name) = (
+            param.dot_dot_dot_token,
+            param.question_token,
+            param.initializer.is_some(),
+            param.name,
+        );
+
+        // Row 4: rest parameter. tsc anchors TS1053 at the `...` token (the
+        // parameter's start), not at the parameter name.
+        if is_rest {
+            // Raw parameter start: the span normalizer would re-anchor a
+            // parameter at its name, which is exactly the divergence.
+            if let Some(start) = self.ctx.arena.get(param_idx).map(|node| node.pos) {
+                self.error_at_position(
+                    start,
+                    3,
+                    "A 'set' accessor cannot have rest parameter.",
+                    diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_REST_PARAMETER,
+                );
+            } else {
+                self.error_at_node(
+                    param_idx,
+                    "A 'set' accessor cannot have rest parameter.",
+                    diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_REST_PARAMETER,
+                );
+            }
+            return;
+        }
+
+        // Row 5: `TS1051` claims an optional parameter.
+        if is_optional {
+            return;
+        }
+
+        // Row 6: initializer. tsc points at the accessor name (e.g. `X` in
+        // `set X(v = 0)`), falling back to the parameter when the accessor has
+        // no usable name node.
+        if has_initializer {
+            let error_node = if accessor_name.is_some() {
+                accessor_name
+            } else {
+                param_name
+            };
+            self.error_at_node(
+                error_node,
+                "A 'set' accessor parameter cannot have an initializer.",
+                diagnostic_codes::A_SET_ACCESSOR_PARAMETER_CANNOT_HAVE_AN_INITIALIZER,
+            );
+        }
+    }
+
     /// Check setter parameter constraints (TS1052, TS1053, TS7006).
     ///
     /// This function validates that setter parameters comply with TypeScript rules:
@@ -484,40 +626,6 @@ impl<'a> CheckerState<'a> {
             let Some(param) = self.ctx.arena.get_parameter(param_node) else {
                 continue;
             };
-
-            // Check for initializer (error 1052)
-            // tsc points at the accessor name (e.g., `X` in `set X(v = 0)`)
-            if param.initializer.is_some() {
-                let error_node = accessor_name.unwrap_or(param.name);
-                self.error_at_node(
-                    error_node,
-                    "A 'set' accessor parameter cannot have an initializer.",
-                    diagnostic_codes::A_SET_ACCESSOR_PARAMETER_CANNOT_HAVE_AN_INITIALIZER,
-                );
-            }
-
-            // Check for rest parameter (error 1053).
-            // tsc anchors TS1053 at the `...` token (the parameter's start),
-            // not at the parameter name.
-            if param.dot_dot_dot_token {
-                // Raw parameter start: the span normalizer would re-anchor a
-                // parameter at its name, which is exactly the divergence.
-                let rest_token_anchor = self.ctx.arena.get(param_idx).map(|node| node.pos);
-                if let Some(start) = rest_token_anchor {
-                    self.error_at_position(
-                        start,
-                        3,
-                        "A 'set' accessor cannot have rest parameter.",
-                        diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_REST_PARAMETER,
-                    );
-                } else {
-                    self.error_at_node(
-                        param_idx,
-                        "A 'set' accessor cannot have rest parameter.",
-                        diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_REST_PARAMETER,
-                    );
-                }
-            }
 
             // Check for implicit any (error 7006)
             // When a setter has a paired getter, the parameter type is inferred from
