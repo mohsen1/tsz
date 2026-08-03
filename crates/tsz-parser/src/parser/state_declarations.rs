@@ -1105,13 +1105,35 @@ impl ParserState {
 
     /// Parse get accessor signature in type context: get `foo()`: type
     /// Note: TypeScript allows bodies here (which is an error), so we parse them for error recovery
+    ///
+    /// The parameter list is parsed, not asserted empty. tsc's grammar for an
+    /// accessor is keyed on the accessor node, not on its container, so an
+    /// accessor in a type-member list accepts exactly the same parameter list as
+    /// one in a class body and reports the same grammar errors on it. Asserting
+    /// `()` here made the first parameter token terminate the member, which
+    /// turned every such signature into a `TS1005`/`TS1131` parse cascade.
     pub(crate) fn parse_get_accessor_signature(&mut self, start_pos: u32) -> NodeIndex {
         self.parse_expected(SyntaxKind::GetKeyword);
 
         let name = self.parse_property_name();
 
+        let type_parameters = self.is_token(SyntaxKind::LessThanToken).then(|| {
+            self.report_accessor_type_parameters_error(name);
+            self.parse_type_parameters()
+        });
+
         self.parse_expected(SyntaxKind::OpenParenToken);
+        let parameters = if self.is_token(SyntaxKind::CloseParenToken) {
+            Self::make_node_list(vec![])
+        } else {
+            self.parse_parameter_list()
+        };
         self.parse_expected(SyntaxKind::CloseParenToken);
+
+        // TS1054: reported after the list is parsed, so a `,` in an otherwise
+        // empty slot (`get x(,)`) yields the `TS1138` its own slot already
+        // emitted and no arity error, matching tsc.
+        self.report_get_accessor_parameter_count(name, &parameters);
 
         // Return type (supports type predicates)
         let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
@@ -1135,8 +1157,8 @@ impl ParserState {
             crate::parser::node::AccessorData {
                 modifiers: None,
                 name,
-                type_parameters: None,
-                parameters: Self::make_node_list(vec![]),
+                type_parameters,
+                parameters,
                 type_annotation,
                 body,
             },
@@ -1145,14 +1167,39 @@ impl ParserState {
 
     /// Parse set accessor signature in type context: set foo(v: type)
     /// Note: TypeScript allows bodies here (which is an error), so we parse them for error recovery
+    ///
+    /// Carries the same accessor grammar as a `set` accessor in a class body —
+    /// `TS1094`, `TS1049`, `TS1051` and `TS1095` — because tsc keys that grammar
+    /// on the accessor node rather than on its container.
     pub(crate) fn parse_set_accessor_signature(&mut self, start_pos: u32) -> NodeIndex {
         self.parse_expected(SyntaxKind::SetKeyword);
 
         let name = self.parse_property_name();
 
-        self.parse_expected(SyntaxKind::OpenParenToken);
+        let type_parameters = self.is_token(SyntaxKind::LessThanToken).then(|| {
+            self.report_accessor_type_parameters_error(name);
+            self.parse_type_parameters()
+        });
+
+        let had_open_paren = self.parse_expected(SyntaxKind::OpenParenToken);
         let parameters = self.parse_parameter_list();
         self.parse_expected(SyntaxKind::CloseParenToken);
+
+        // TS1049, and the early return that suppresses the later `set`-specific
+        // grammar once the count is already wrong.
+        let count_error =
+            had_open_paren && self.report_set_accessor_parameter_count(name, &parameters);
+
+        self.report_set_accessor_optional_parameter(&parameters, count_error);
+
+        // Parse the return type annotation for error recovery even though a
+        // setter cannot legally carry one; the emitter preserves it.
+        let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
+            self.report_set_accessor_return_type_annotation(name, count_error);
+            self.parse_return_type()
+        } else {
+            NodeIndex::NONE
+        };
 
         // Parse body if present (this is an error in type context, but we handle it)
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
@@ -1169,9 +1216,9 @@ impl ParserState {
             crate::parser::node::AccessorData {
                 modifiers: None,
                 name,
-                type_parameters: None,
+                type_parameters,
                 parameters,
-                type_annotation: NodeIndex::NONE,
+                type_annotation,
                 body,
             },
         )
