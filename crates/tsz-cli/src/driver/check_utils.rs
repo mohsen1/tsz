@@ -1454,23 +1454,26 @@ pub(super) const fn is_non_suppressing_parse_error(code: u32) -> bool {
     matches!(
         code,
         1009  // Trailing comma not allowed
-        | 1014 // A rest parameter must be last in a parameter list
-        | 1047 // A rest parameter cannot be optional
-        | 1048 // A rest parameter cannot have an initializer
-        | 1096 // An index signature must have exactly one parameter (check-time grammar in tsc)
-        | 1185 // Merge conflict marker
-        | 1191 // An import declaration cannot have modifiers (grammar constraint, AST is valid)
-        | 1214 // Identifier expected (strict mode reserved word)
-        | 1262 // 'await' at top level
-        | 1359 // 'await' in async context
-        | 1492 // 'using' declarations may not have binding patterns (grammar constraint, AST is valid)
-        | 1499 // Unknown regular expression flag (grammar check in tsc's checker, not a parse failure)
-        | 1500 // Duplicate regular expression flag (grammar check, AST is valid)
-        | 1502 // The Unicode 'u' and 'v' flags cannot be set simultaneously (grammar check, AST is valid)
-        | 1533 // Backreference to a group beyond the capturing-group count (regex grammar, AST is valid)
-        | 1534 // Backreference with no capturing group in the pattern (regex grammar, AST is valid)
-        | 17019 // '?' at end of type is not valid TS syntax (parser recovers valid AST)
-        | 17020 // '?' at start of type is not valid TS syntax (parser recovers valid AST)
+            | 1014 // A rest parameter must be last in a parameter list
+            | 1047 // A rest parameter cannot be optional
+            | 1048 // A rest parameter cannot have an initializer
+            | 1096 // An index signature must have exactly one parameter (check-time grammar in tsc)
+            | 1185 // Merge conflict marker
+            | 1191 // An import declaration cannot have modifiers (grammar constraint, AST is valid)
+            | 1214 // Identifier expected (strict mode reserved word)
+            | 1262 // 'await' at top level
+            | 1359 // 'await' in async context
+            | 1492 // 'using' declarations may not have binding patterns (grammar constraint, AST is valid)
+            | 1487 // Octal escape sequences are not allowed (regex `\0`-prefixed decimal escape, AST is valid)
+            | 1499 // Unknown regular expression flag (grammar check in tsc's checker, not a parse failure)
+            | 1500 // Duplicate regular expression flag (grammar check, AST is valid)
+            | 1502 // The Unicode 'u' and 'v' flags cannot be set simultaneously (grammar check, AST is valid)
+            | 1533 // Backreference to a group beyond the capturing-group count (regex grammar, AST is valid)
+            | 1534 // Backreference with no capturing group in the pattern (regex grammar, AST is valid)
+            | 1536 // Octal escape sequences and backreferences are not allowed in a character class (regex grammar, AST is valid)
+            | 1537 // Decimal escape sequences and backreferences are not allowed in a character class (regex grammar, AST is valid)
+            | 17019 // '?' at end of type is not valid TS syntax (parser recovers valid AST)
+            | 17020 // '?' at start of type is not valid TS syntax (parser recovers valid AST)
     )
 }
 

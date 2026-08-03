@@ -363,6 +363,36 @@ impl ParserState {
                 *pos - start
             }
 
+            /// Consume a legacy (Annex-B) octal digit run starting at `pos`
+            /// (which points at the leading digit, already known to be
+            /// `0`..=`7`) and return the exclusive end. Mirrors tsc's
+            /// per-leading-digit maximum: a leading `0`-`3` may pull up to 3
+            /// octal digits (`\377` fits in a byte), a leading `4`-`7` only 2
+            /// (`\477` parses as `\47` followed by a literal `7`).
+            fn scan_legacy_octal_digits(body: &[u8], end: usize, pos: usize) -> usize {
+                let max_digits = if body[pos] <= b'3' { 3 } else { 2 };
+                let mut octal_end = pos + 1;
+                let mut count = 1usize;
+                while count < max_digits
+                    && octal_end < end
+                    && (b'0'..=b'7').contains(&body[octal_end])
+                {
+                    octal_end += 1;
+                    count += 1;
+                }
+                octal_end
+            }
+
+            /// Interpret `body[start..octal_end]` (a run produced by
+            /// `scan_legacy_octal_digits`) as a base-8 integer.
+            fn legacy_octal_value(body: &[u8], start: usize, octal_end: usize) -> u32 {
+                let mut value = 0u32;
+                for &byte in &body[start..octal_end] {
+                    value = value * 8 + u32::from(byte - b'0');
+                }
+                value
+            }
+
             const fn hex_byte_value(byte: u8) -> Option<u32> {
                 match byte {
                     b'0'..=b'9' => Some((byte - b'0') as u32),
@@ -618,6 +648,34 @@ impl ParserState {
                             *pos += 1;
                         }
                     }
+                    // `\0` is judged the same way in every context — atom
+                    // position or character class — so this arm is not
+                    // gated on `atom_escape`. Mirrors tsc's per-leading-digit
+                    // octal maximum (leading 0-3 allows up to 3 octal digits,
+                    // leading 4-7 only 2) via the same computation as
+                    // `report_invalid_template_octal_escape`.
+                    b'0' => {
+                        // `\0` not followed by another digit is the NUL
+                        // escape, legal everywhere.
+                        if *pos + 1 < end && body[*pos + 1].is_ascii_digit() {
+                            let octal_end = scan_legacy_octal_digits(body, end, *pos);
+                            let value = legacy_octal_value(body, *pos, octal_end);
+                            let message = format_message(
+                                diagnostic_messages::OCTAL_ESCAPE_SEQUENCES_ARE_NOT_ALLOWED_USE_THE_SYNTAX,
+                                &[&format!("\\x{value:02x}")],
+                            );
+                            emit(
+                                parser,
+                                escape_start,
+                                (octal_end - escape_start) as u32,
+                                &message,
+                                diagnostic_codes::OCTAL_ESCAPE_SEQUENCES_ARE_NOT_ALLOWED_USE_THE_SYNTAX,
+                            );
+                            *pos = octal_end;
+                        } else {
+                            *pos += 1;
+                        }
+                    }
                     b'1'..=b'9' if atom_escape => {
                         // A decimal escape outside a character class is a
                         // backreference, in every mode: tsc validates it with
@@ -658,10 +716,36 @@ impl ParserState {
                             );
                         }
                     }
-                    b'0'..=b'9' => {
-                        while *pos < end && body[*pos].is_ascii_digit() {
-                            *pos += 1;
-                        }
+                    // `\1`..`\9` outside a character class are backreferences,
+                    // matched by the `if atom_escape` arm above; this arm only
+                    // judges them inside a class, where a decimal escape is
+                    // never a backreference and always a legacy octal
+                    // (`\1`-`\7`) or bare decimal (`\8`/`\9`) escape instead.
+                    b'1'..=b'7' if !atom_escape => {
+                        let octal_end = scan_legacy_octal_digits(body, end, *pos);
+                        let value = legacy_octal_value(body, *pos, octal_end);
+                        let message = format_message(
+                            diagnostic_messages::OCTAL_ESCAPE_SEQUENCES_AND_BACKREFERENCES_ARE_NOT_ALLOWED_IN_A_CHARACTER_CLASS_I,
+                            &[&format!("\\x{value:02x}")],
+                        );
+                        emit(
+                            parser,
+                            escape_start,
+                            (octal_end - escape_start) as u32,
+                            &message,
+                            diagnostic_codes::OCTAL_ESCAPE_SEQUENCES_AND_BACKREFERENCES_ARE_NOT_ALLOWED_IN_A_CHARACTER_CLASS_I,
+                        );
+                        *pos = octal_end;
+                    }
+                    b'8' | b'9' if !atom_escape => {
+                        emit(
+                            parser,
+                            escape_start,
+                            (*pos + 1 - escape_start) as u32,
+                            diagnostic_messages::DECIMAL_ESCAPE_SEQUENCES_AND_BACKREFERENCES_ARE_NOT_ALLOWED_IN_A_CHARACTER_CLASS,
+                            diagnostic_codes::DECIMAL_ESCAPE_SEQUENCES_AND_BACKREFERENCES_ARE_NOT_ALLOWED_IN_A_CHARACTER_CLASS,
+                        );
+                        *pos += 1;
                     }
                     b'_' if strict_mode => {
                         emit(
