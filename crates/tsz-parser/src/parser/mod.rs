@@ -258,6 +258,10 @@ mod decorator_tests;
 mod regex_backreference_tests;
 
 #[cfg(test)]
+#[path = "../../tests/regex_class_set_nesting_tests.rs"]
+mod regex_class_set_nesting_tests;
+
+#[cfg(test)]
 #[path = "../../tests/modifier_ordering_tests.rs"]
 mod modifier_ordering_tests;
 
