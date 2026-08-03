@@ -1106,55 +1106,15 @@ impl ParserState {
         let count_error =
             had_open_paren && self.report_set_accessor_parameter_count(name, &parameters);
 
-        // TS1051: A 'set' accessor cannot have an optional parameter
-        // tsc anchors the error at the `?` token, which is right after the
-        // parameter name.
-        if !count_error
-            && let Some(&first_param) = parameters.nodes.first()
-            && let Some(param_node) = self.arena.get(first_param)
-        {
-            let data_idx = param_node.data_index as usize;
-            if let Some(param_data) = self.arena.parameters.get(data_idx)
-                && param_data.question_token
-            {
-                use tsz_common::diagnostics::diagnostic_codes;
-                // Anchor at the `?` token: it starts at param_name.end
-                let question_pos = self
-                    .arena
-                    .get(param_data.name)
-                    .map_or(param_node.pos, |name_node| name_node.end);
-                self.parse_error_at(
-                    question_pos,
-                    1, // `?` is a single character
-                    "A 'set' accessor cannot have an optional parameter.",
-                    diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_AN_OPTIONAL_PARAMETER,
-                );
-            }
-        }
+        // TS1051: A 'set' accessor cannot have an optional parameter.
+        self.report_set_accessor_optional_parameter(&parameters, count_error);
 
         // Parse return type annotation for error recovery (tsc preserves it in JS output).
         // Setters cannot legally have return type annotations, but we store it so the
         // emitter can preserve it.
         let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
-            use tsz_common::diagnostics::diagnostic_codes;
-            // Report error at the accessor name, matching tsc behavior. A wrong
-            // parameter count already fired TS1049, so tsc's early return
-            // suppresses this one.
-            if !count_error {
-                if let Some(name_node) = self.arena.get(name) {
-                    self.parse_error_at(
-                        name_node.pos,
-                        name_node.end - name_node.pos,
-                        "A 'set' accessor cannot have a return type annotation.",
-                        diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_A_RETURN_TYPE_ANNOTATION,
-                    );
-                } else {
-                    self.parse_error_at_current_token(
-                        "A 'set' accessor cannot have a return type annotation.",
-                        diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_A_RETURN_TYPE_ANNOTATION,
-                    );
-                }
-            }
+            // TS1095, suppressed when TS1049 already fired.
+            self.report_set_accessor_return_type_annotation(name, count_error);
             // Use parse_return_type to match tsc, which parses type predicates
             // even in invalid setter return types
             self.parse_return_type()
@@ -1196,16 +1156,7 @@ impl ParserState {
         parameters: &NodeList,
     ) -> bool {
         let count = parameters.nodes.len();
-        let first_is_this = parameters.nodes.first().is_some_and(|&param_idx| {
-            let name_idx = match self.arena.get_parameter_at(param_idx) {
-                Some(param) => param.name,
-                None => return false,
-            };
-            self.arena
-                .get(name_idx)
-                .is_some_and(|name_node| name_node.kind == SyntaxKind::ThisKeyword as u16)
-        });
-        if count == 1 || (count == 2 && first_is_this) {
+        if count == 1 || (count == 2 && self.first_parameter_is_this(parameters)) {
             return false;
         }
         use tsz_common::diagnostics::diagnostic_codes;
@@ -1223,6 +1174,124 @@ impl ParserState {
             );
         }
         true
+    }
+
+    /// Whether a signature's first parameter is a `this` parameter.
+    ///
+    /// A `this` parameter is not a value parameter, so every accessor arity rule
+    /// discounts it. Shared by the `get` and `set` arity checks so the two
+    /// cannot drift apart.
+    pub(crate) fn first_parameter_is_this(&self, parameters: &NodeList) -> bool {
+        parameters.nodes.first().is_some_and(|&param_idx| {
+            let name_idx = match self.arena.get_parameter_at(param_idx) {
+                Some(param) => param.name,
+                None => return false,
+            };
+            self.arena
+                .get(name_idx)
+                .is_some_and(|name_node| name_node.kind == SyntaxKind::ThisKeyword as u16)
+        })
+    }
+
+    /// TS1054: a `get` accessor cannot have parameters. The counterpart to
+    /// `report_set_accessor_parameter_count`, and discounting a leading `this`
+    /// parameter for the same reason: tsc's `checkGrammarAccessor` reads the
+    /// accessor's *value* parameters, so a getter whose only parameter is `this`
+    /// has correct arity and draws `TS2784` alone, with no `TS1054`.
+    ///
+    /// Reported on the accessor name, like tsc's `grammarErrorOnNode(accessor.name, …)`.
+    ///
+    /// Returns whether the diagnostic fired.
+    pub(crate) fn report_get_accessor_parameter_count(
+        &mut self,
+        name: NodeIndex,
+        parameters: &NodeList,
+    ) -> bool {
+        let count = parameters.nodes.len();
+        if count == 0 || (count == 1 && self.first_parameter_is_this(parameters)) {
+            return false;
+        }
+        use tsz_common::diagnostics::diagnostic_codes;
+        if let Some(name_node) = self.arena.get(name) {
+            self.parse_error_at(
+                name_node.pos,
+                name_node.end - name_node.pos,
+                "A 'get' accessor cannot have parameters.",
+                diagnostic_codes::A_GET_ACCESSOR_CANNOT_HAVE_PARAMETERS,
+            );
+        } else {
+            self.parse_error_at_current_token(
+                "A 'get' accessor cannot have parameters.",
+                diagnostic_codes::A_GET_ACCESSOR_CANNOT_HAVE_PARAMETERS,
+            );
+        }
+        true
+    }
+
+    /// TS1051: a `set` accessor cannot have an optional parameter. tsc anchors
+    /// the error at the `?` token, which begins at the parameter name's end.
+    ///
+    /// Suppressed when the parameter count was already wrong, matching tsc's
+    /// single-error early return out of `checkGrammarAccessor`.
+    pub(crate) fn report_set_accessor_optional_parameter(
+        &mut self,
+        parameters: &NodeList,
+        count_error: bool,
+    ) {
+        if count_error {
+            return;
+        }
+        let Some(&first_param) = parameters.nodes.first() else {
+            return;
+        };
+        let Some(param_node) = self.arena.get(first_param) else {
+            return;
+        };
+        let data_idx = param_node.data_index as usize;
+        let Some(param_data) = self.arena.parameters.get(data_idx) else {
+            return;
+        };
+        if !param_data.question_token {
+            return;
+        }
+        use tsz_common::diagnostics::diagnostic_codes;
+        let question_pos = self
+            .arena
+            .get(param_data.name)
+            .map_or(param_node.pos, |name_node| name_node.end);
+        self.parse_error_at(
+            question_pos,
+            1, // `?` is a single character
+            "A 'set' accessor cannot have an optional parameter.",
+            diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_AN_OPTIONAL_PARAMETER,
+        );
+    }
+
+    /// TS1095: a `set` accessor cannot have a return type annotation. Reported
+    /// on the accessor name, and suppressed when the parameter count was already
+    /// wrong, matching tsc's single-error early return.
+    pub(crate) fn report_set_accessor_return_type_annotation(
+        &mut self,
+        name: NodeIndex,
+        count_error: bool,
+    ) {
+        if count_error {
+            return;
+        }
+        use tsz_common::diagnostics::diagnostic_codes;
+        if let Some(name_node) = self.arena.get(name) {
+            self.parse_error_at(
+                name_node.pos,
+                name_node.end - name_node.pos,
+                "A 'set' accessor cannot have a return type annotation.",
+                diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_A_RETURN_TYPE_ANNOTATION,
+            );
+        } else {
+            self.parse_error_at_current_token(
+                "A 'set' accessor cannot have a return type annotation.",
+                diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_A_RETURN_TYPE_ANNOTATION,
+            );
+        }
     }
 
     /// Parse class members

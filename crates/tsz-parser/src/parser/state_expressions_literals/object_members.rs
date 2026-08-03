@@ -676,26 +676,14 @@ impl ParserState {
         let count_error =
             had_open_paren && self.report_set_accessor_parameter_count(name, &parameters);
 
+        // TS1051: A 'set' accessor cannot have an optional parameter. tsc applies
+        // this to an object-literal setter exactly as it does to a class one; this
+        // arm was the only one of the three that never checked it.
+        self.report_set_accessor_optional_parameter(&parameters, count_error);
+
         if self.parse_optional(SyntaxKind::ColonToken) {
-            use tsz_common::diagnostics::diagnostic_codes;
-            // Report error at the accessor name, matching tsc behavior. A wrong
-            // parameter count already fired TS1049, so tsc's early return
-            // suppresses this one.
-            if !count_error {
-                if let Some(name_node) = self.arena.get(name) {
-                    self.parse_error_at(
-                        name_node.pos,
-                        name_node.end - name_node.pos,
-                        "A 'set' accessor cannot have a return type annotation.",
-                        diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_A_RETURN_TYPE_ANNOTATION,
-                    );
-                } else {
-                    self.parse_error_at_current_token(
-                        "A 'set' accessor cannot have a return type annotation.",
-                        diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_A_RETURN_TYPE_ANNOTATION,
-                    );
-                }
-            }
+            // TS1095, suppressed when TS1049 already fired.
+            self.report_set_accessor_return_type_annotation(name, count_error);
             let _ = self.parse_return_type();
         }
 
