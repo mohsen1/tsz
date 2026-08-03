@@ -680,6 +680,8 @@ impl<'a> CheckerState<'a> {
 
         let mut seen_optional = false;
 
+        self.check_this_parameter_placement(parameters, func_idx);
+
         for &param_idx in &parameters.nodes {
             let Some(param_node) = self.ctx.arena.get(param_idx) else {
                 continue;
@@ -737,6 +739,36 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+    }
+
+    /// Report the `this`-parameter placement and container errors for one
+    /// signature's parameter list.
+    ///
+    /// A `this` parameter is legal only as the *first* parameter of a
+    /// signature whose container can have one at all. `tsc` decides this in
+    /// `checkParameter` from two structural facts and nothing else — the
+    /// parameter's index in its own list, and the `SyntaxKind` of the
+    /// container — and reports every arm that applies rather than stopping at
+    /// the first:
+    ///
+    /// - not at index 0 -> `TS2680`
+    /// - container constructs (`Constructor` / `ConstructSignature` /
+    ///   `ConstructorType`) -> `TS2681`
+    /// - container is an accessor (`GetAccessor` / `SetAccessor`) -> `TS2784`
+    /// - container is an `ArrowFunction` -> `TS2730`, whose `this` is lexical
+    ///
+    /// The arms are independent: `class C { constructor(x: number, this: C) {} }`
+    /// draws `TS2680` *and* `TS2681`, so this cannot be a match over the
+    /// container kind.
+    pub(crate) fn check_this_parameter_placement(
+        &mut self,
+        parameters: &tsz_parser::parser::NodeList,
+        func_idx: Option<tsz_parser::parser::NodeIndex>,
+    ) {
+        let container_kind = func_idx
+            .and_then(|idx| self.ctx.arena.get(idx))
+            .map(|node| node.kind);
+        check_this_parameter_placement_in_ctx(&mut self.ctx, parameters, container_kind);
     }
 
     /// Check if a JSDoc `@param` tag marks a parameter as optional.
@@ -1544,6 +1576,115 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+        }
+    }
+}
+
+/// Report the `this`-parameter placement and container errors for one
+/// signature's parameter list, given only the checker context and the
+/// container's `SyntaxKind`.
+///
+/// A `this` parameter is legal only as the *first* parameter of a signature
+/// whose container can have one at all. `tsc` decides this in `checkParameter`
+/// from two structural facts and nothing else — the parameter's index in its
+/// own list, and the `SyntaxKind` of the container — and reports every arm
+/// that applies rather than stopping at the first:
+///
+/// - not at index 0 -> `TS2680`
+/// - container constructs (`Constructor` / `ConstructSignature` /
+///   `ConstructorType`) -> `TS2681`
+/// - container is an accessor (`GetAccessor` / `SetAccessor`) -> `TS2784`
+/// - container is an `ArrowFunction` -> `TS2730`, whose `this` is lexical
+///
+/// The arms are independent: `class C { constructor(x: number, this: C) {} }`
+/// draws `TS2680` *and* `TS2681`, so this cannot be a match over the container
+/// kind. `container_kind` is `None` only when the caller has no owning node, in
+/// which case the position arm still applies and the container arms cannot.
+///
+/// Lives at context level rather than on `CheckerState` because the
+/// `FunctionType` / `ConstructorType` callers run inside `TypeNodeChecker`,
+/// which has the context but not the checker state.
+pub(crate) fn check_this_parameter_placement_in_ctx(
+    ctx: &mut crate::CheckerContext,
+    parameters: &tsz_parser::parser::NodeList,
+    container_kind: Option<u16>,
+) {
+    use crate::diagnostics::{diagnostic_codes, format_message};
+    use tsz_common::diagnostics::get_message_template;
+    use tsz_parser::parser::syntax_kind_ext;
+    use tsz_scanner::SyntaxKind;
+
+    let report = |ctx: &mut crate::CheckerContext, param_idx: NodeIndex, code: u32| {
+        let Some(node) = ctx.arena.get(param_idx) else {
+            return;
+        };
+        let (pos, len) = (node.pos, node.end.saturating_sub(node.pos));
+        let template = get_message_template(code).unwrap_or_default();
+        // `{0}` on TS2680 is the parameter name, always `this` here; tsc
+        // renders it from the name rather than hard-coding the word.
+        let message = format_message(template, &["this"]);
+        ctx.error(pos, len, message, code);
+    };
+
+    for (index, &param_idx) in parameters.nodes.iter().enumerate() {
+        let is_this_param = ctx
+            .arena
+            .get(param_idx)
+            .and_then(|param_node| ctx.arena.get_parameter(param_node))
+            .and_then(|param| ctx.arena.get(param.name))
+            .is_some_and(|name_node| {
+                name_node.kind == SyntaxKind::ThisKeyword as u16
+                    || ctx
+                        .arena
+                        .get_identifier(name_node)
+                        .is_some_and(|ident| ident.escaped_text == "this")
+            });
+        if !is_this_param {
+            continue;
+        }
+
+        if index != 0 {
+            report(
+                ctx,
+                param_idx,
+                diagnostic_codes::A_PARAMETER_MUST_BE_THE_FIRST_PARAMETER,
+            );
+        }
+
+        let Some(kind) = container_kind else {
+            continue;
+        };
+
+        // All three of these container kinds construct, so none of them has a
+        // meaningful `this` to annotate.
+        if kind == syntax_kind_ext::CONSTRUCTOR
+            || kind == syntax_kind_ext::CONSTRUCT_SIGNATURE
+            || kind == syntax_kind_ext::CONSTRUCTOR_TYPE
+        {
+            report(
+                ctx,
+                param_idx,
+                diagnostic_codes::A_CONSTRUCTOR_CANNOT_HAVE_A_THIS_PARAMETER,
+            );
+        }
+
+        if kind == syntax_kind_ext::GET_ACCESSOR || kind == syntax_kind_ext::SET_ACCESSOR {
+            report(
+                ctx,
+                param_idx,
+                diagnostic_codes::GET_AND_SET_ACCESSORS_CANNOT_DECLARE_THIS_PARAMETERS,
+            );
+        }
+
+        // The JS/JSDoc `@this`-tag arm for arrow functions lives in
+        // `function_type.rs` and triggers on a tag with no parameter node, so
+        // the two cannot both fire for one arrow function.
+        if kind == syntax_kind_ext::ARROW_FUNCTION {
+            report(
+                ctx,
+                param_idx,
+                diagnostic_codes::AN_ARROW_FUNCTION_CANNOT_HAVE_A_THIS_PARAMETER,
+            );
         }
     }
 }

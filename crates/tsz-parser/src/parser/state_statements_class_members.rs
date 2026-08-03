@@ -816,21 +816,39 @@ impl ParserState {
             Self::make_node_list(vec![])
         } else {
             use tsz_common::diagnostics::diagnostic_codes;
-            // Report error at the accessor name, matching tsc behavior
-            if let Some(name_node) = self.arena.get(name) {
-                self.parse_error_at(
-                    name_node.pos,
-                    name_node.end - name_node.pos,
-                    "A 'get' accessor cannot have parameters.",
-                    diagnostic_codes::A_GET_ACCESSOR_CANNOT_HAVE_PARAMETERS,
-                );
-            } else {
-                self.parse_error_at_current_token(
-                    "A 'get' accessor cannot have parameters.",
-                    diagnostic_codes::A_GET_ACCESSOR_CANNOT_HAVE_PARAMETERS,
-                );
+            let parsed = self.parse_parameter_list();
+            // A `this` parameter is not a value parameter, so a getter whose
+            // only parameter is `this` has zero parameters as far as this
+            // arity grammar is concerned — tsc rejects it in the checker with
+            // TS2784, not here with TS1054. `report_set_accessor_parameter_count`
+            // already makes the same exclusion for the setter arm.
+            let only_this_parameter = parsed.nodes.len() == 1
+                && parsed.nodes.first().is_some_and(|&param_idx| {
+                    let name_idx = match self.arena.get_parameter_at(param_idx) {
+                        Some(param) => param.name,
+                        None => return false,
+                    };
+                    self.arena
+                        .get(name_idx)
+                        .is_some_and(|name_node| name_node.kind == SyntaxKind::ThisKeyword as u16)
+                });
+            if !only_this_parameter {
+                // Report error at the accessor name, matching tsc behavior
+                if let Some(name_node) = self.arena.get(name) {
+                    self.parse_error_at(
+                        name_node.pos,
+                        name_node.end - name_node.pos,
+                        "A 'get' accessor cannot have parameters.",
+                        diagnostic_codes::A_GET_ACCESSOR_CANNOT_HAVE_PARAMETERS,
+                    );
+                } else {
+                    self.parse_error_at_current_token(
+                        "A 'get' accessor cannot have parameters.",
+                        diagnostic_codes::A_GET_ACCESSOR_CANNOT_HAVE_PARAMETERS,
+                    );
+                }
             }
-            self.parse_parameter_list()
+            parsed
         };
         self.parse_expected(SyntaxKind::CloseParenToken);
 
