@@ -357,3 +357,114 @@ accept('kind', 'wrong')
         result.diagnostics
     );
 }
+
+/// A JS module's whole-module `module.exports = class X {}` gives `X` a type
+/// meaning the same way TS `export = X` does. Unlike `export =`, this never
+/// seeds a binder `export=` symbol — that resolution is a checker-level,
+/// type-computed fact (`JsExportSurface::direct_export_type`), not a binder
+/// fact — so a naive "is this symbol in the target's exports table" check
+/// misses it and TS9006 fires even though `X` is fully nameable from a
+/// consumer via `import X = require("./mod")`.
+fn ts9006_commonjs_direct_export_target_config() -> &'static str {
+    r#"{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "target": "es2015",
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "module": "commonjs"
+  },
+  "files": ["obj.js", "index.js"]
+}"#
+}
+
+#[test]
+fn commonjs_whole_module_class_export_is_nameable_from_a_requiring_consumer() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(&base.join("tsconfig.json"), ts9006_commonjs_direct_export_target_config());
+    write_file(
+        &base.join("obj.js"),
+        r#"module.exports = class Obj {
+    constructor() {
+        this.x = 12;
+    }
+}
+"#,
+    );
+    write_file(
+        &base.join("index.js"),
+        r#"const Obj = require("./obj");
+
+class Container {
+    constructor() {
+        this.usage = new Obj();
+    }
+}
+
+module.exports = Container;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts9006: Vec<_> = result.diagnostics.iter().filter(|d| d.code == 9006).collect();
+    assert!(
+        ts9006.is_empty(),
+        "module.exports = class Obj {{}} makes Obj nameable via `import Obj = require(...)`; \
+         no cross-file private-name diagnostic should fire, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+/// Same shape with every binder renamed, to rule out a name-string match.
+#[test]
+fn commonjs_whole_module_class_export_is_nameable_renamed_binders() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(&base.join("tsconfig.json"), ts9006_commonjs_direct_export_target_config());
+    write_file(
+        &base.join("obj.js"),
+        r#"module.exports = class Widget {
+    constructor() {
+        this.label = "hi";
+    }
+}
+"#,
+    );
+    write_file(
+        &base.join("index.js"),
+        r#"const Widget = require("./obj");
+
+class Host {
+    constructor() {
+        this.child = new Widget();
+    }
+}
+
+module.exports = Host;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let ts9006: Vec<_> = result.diagnostics.iter().filter(|d| d.code == 9006).collect();
+    assert!(
+        ts9006.is_empty(),
+        "renamed-binder variant must also suppress TS9006, got: {:#?}",
+        result.diagnostics
+    );
+}
+
+// Negative control: `declaration_emit_raw_typeof_import_text_still_reports_ts9006`
+// (above) already covers the case this fix must not suppress — a private
+// symbol reached through a *call result* (`require("./some-mod")()`), not
+// through the target file's whole-module export identity itself. That test
+// continues to assert 2 live TS9006s, so it doubles as the regression guard
+// for this change: `is_commonjs_direct_export_target` only matches when the
+// referenced symbol IS (or aliases to) the target's own
+// `JsExportSurface::direct_export_type`, which a function call's return
+// value is not.
