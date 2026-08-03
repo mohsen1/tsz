@@ -5,6 +5,7 @@ use crate::state::CheckerState;
 use crate::symbols_domain::name_text::expression_name_text_in_arena;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::NodeIndex;
+use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
@@ -234,124 +235,158 @@ impl CheckerState<'_> {
         sym_id: SymbolId,
         mut derived_type: TypeId,
     ) -> TypeId {
-        use tsz_scanner::SyntaxKind;
-
         for &decl_idx in declarations {
             let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) else {
+                tracing::warn!(target: "p16308b", stage = "no_decl_arena_entry", sym = sym_id.0, "Q");
                 continue;
             };
+            let nonlocal = arenas
+                .iter()
+                .filter(|a| !std::ptr::eq(a.as_ref(), self.ctx.arena))
+                .count();
+            tracing::warn!(target: "p16308b", stage = "caller", sym = sym_id.0, arenas = arenas.len(), nonlocal, "Q");
             for arena in arenas.iter() {
-                // Skip the local arena (already processed by merge_interface_heritage_types)
-                if std::ptr::eq(arena.as_ref(), self.ctx.arena) {
+                derived_type =
+                    self.merge_cross_file_heritage_in_arena(arena.as_ref(), decl_idx, derived_type);
+            }
+        }
+
+        derived_type
+    }
+
+    /// Merge the heritage of a single interface declaration read through an
+    /// explicit declaring arena.
+    ///
+    /// Split out of `merge_cross_file_heritage` so the same per-declaration
+    /// merge can also be driven from the stable declaring-file index, for
+    /// symbols whose owning arena neither `declaration_arenas` nor
+    /// `symbol_arenas` knows (#16308).
+    pub(crate) fn merge_cross_file_heritage_in_arena(
+        &mut self,
+        arena: &NodeArena,
+        decl_idx: NodeIndex,
+        mut derived_type: TypeId,
+    ) -> TypeId {
+        use tsz_scanner::SyntaxKind;
+
+        // Skip the local arena (already processed by merge_interface_heritage_types)
+        if std::ptr::eq(arena, self.ctx.arena) {
+            tracing::warn!(target: "p16308b", stage = "local_arena_skip", "Q");
+            return derived_type;
+        }
+        let Some(node) = arena.get(decl_idx) else {
+            tracing::warn!(target: "p16308b", stage = "no_node", "Q");
+            return derived_type;
+        };
+        let Some(interface) = arena.get_interface(node) else {
+            tracing::warn!(target: "p16308b", stage = "not_interface", "Q");
+            return derived_type;
+        };
+        let iface_name = expression_name_text_in_arena(arena, interface.name).unwrap_or_default();
+        let Some(ref heritage_clauses) = interface.heritage_clauses else {
+            tracing::warn!(target: "p16308b", stage = "no_heritage", iface = %iface_name, "Q");
+            return derived_type;
+        };
+        tracing::warn!(target: "p16308b", stage = "reached", iface = %iface_name, clauses = heritage_clauses.nodes.len(), "Q");
+
+        for &clause_idx in &heritage_clauses.nodes {
+            let Some(clause_node) = arena.get(clause_idx) else {
+                continue;
+            };
+            let Some(heritage) = arena.get_heritage_clause(clause_node) else {
+                continue;
+            };
+            if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+
+            for &type_idx in &heritage.types.nodes {
+                let Some(type_node) = arena.get(type_idx) else {
+                    continue;
+                };
+
+                let (expr_idx, type_arguments) =
+                    if let Some(expr) = arena.get_expr_type_args(type_node) {
+                        (expr.expression, expr.type_arguments.as_ref())
+                    } else if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                        if let Some(type_ref) = arena.get_type_ref(type_node) {
+                            (type_ref.type_name, type_ref.type_arguments.as_ref())
+                        } else {
+                            (type_idx, None)
+                        }
+                    } else {
+                        (type_idx, None)
+                    };
+
+                let Some(name) = expression_name_text_in_arena(arena, expr_idx) else {
+                    continue;
+                };
+                // Prefer the importing file's locals/globals resolution to
+                // preserve every base that already resolved there (changing
+                // those would perturb downstream relation shapes). Only when a
+                // base is unresolvable here — a module-scoped base declared and
+                // exported by the declaring module but never imported into the
+                // consuming file (e.g. `MutationObserverOptions extends
+                // MutationOptions`, where the consumer imports
+                // `MutationObserverOptions` but never `MutationOptions`) — fall
+                // back to resolving the name in the DECLARING arena's binder
+                // scope, where the module's own top-level declarations live.
+                // Without this fallback the loop `continue`s and drops every
+                // inherited member. `resolve_heritage_base_symbol_in_arena`
+                // registers the owning file index so the `get_type_of_symbol` /
+                // `get_type_params_for_symbol` calls below take the proper
+                // cross-arena delegation path (rather than mis-resolving a
+                // foreign-binder SymbolId in the current arena).
+                let Some(base_sym_id) = self
+                    .resolve_cross_file_global_type_symbol(&name)
+                    .or_else(|| self.resolve_heritage_base_symbol_in_arena(arena, &name))
+                else {
+                    tracing::warn!(target: "p16308b", stage = "base_unresolved", iface = %iface_name, base = %name, "Q");
+                    continue;
+                };
+
+                let mut base_type = self.get_type_of_symbol(base_sym_id);
+                tracing::warn!(target: "p16308b", stage = "base_resolved", iface = %iface_name, base = %name, base_type = base_type.0, "Q");
+                if base_type == TypeId::ERROR || base_type == TypeId::UNKNOWN {
                     continue;
                 }
-                let Some(node) = arena.get(decl_idx) else {
-                    continue;
-                };
-                let Some(interface) = arena.get_interface(node) else {
-                    continue;
-                };
-                let Some(ref heritage_clauses) = interface.heritage_clauses else {
-                    continue;
-                };
-
-                for &clause_idx in &heritage_clauses.nodes {
-                    let Some(clause_node) = arena.get(clause_idx) else {
-                        continue;
-                    };
-                    let Some(heritage) = arena.get_heritage_clause(clause_node) else {
-                        continue;
-                    };
-                    if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
-                        continue;
-                    }
-
-                    for &type_idx in &heritage.types.nodes {
-                        let Some(type_node) = arena.get(type_idx) else {
-                            continue;
-                        };
-
-                        let (expr_idx, type_arguments) =
-                            if let Some(expr) = arena.get_expr_type_args(type_node) {
-                                (expr.expression, expr.type_arguments.as_ref())
-                            } else if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
-                                if let Some(type_ref) = arena.get_type_ref(type_node) {
-                                    (type_ref.type_name, type_ref.type_arguments.as_ref())
-                                } else {
-                                    (type_idx, None)
-                                }
-                            } else {
-                                (type_idx, None)
-                            };
-
-                        let Some(name) = expression_name_text_in_arena(arena, expr_idx) else {
-                            continue;
-                        };
-                        // Prefer the importing file's locals/globals resolution to
-                        // preserve every base that already resolved there (changing
-                        // those would perturb downstream relation shapes). Only when a
-                        // base is unresolvable here — a module-scoped base declared and
-                        // exported by the declaring module but never imported into the
-                        // consuming file (e.g. `MutationObserverOptions extends
-                        // MutationOptions`, where the consumer imports
-                        // `MutationObserverOptions` but never `MutationOptions`) — fall
-                        // back to resolving the name in the DECLARING arena's binder
-                        // scope, where the module's own top-level declarations live.
-                        // Without this fallback the loop `continue`s and drops every
-                        // inherited member. `resolve_heritage_base_symbol_in_arena`
-                        // registers the owning file index so the `get_type_of_symbol` /
-                        // `get_type_params_for_symbol` calls below take the proper
-                        // cross-arena delegation path (rather than mis-resolving a
-                        // foreign-binder SymbolId in the current arena).
-                        let Some(base_sym_id) = self
-                            .resolve_cross_file_global_type_symbol(&name)
-                            .or_else(|| self.resolve_heritage_base_symbol_in_arena(arena, &name))
-                        else {
-                            continue;
-                        };
-
-                        let mut base_type = self.get_type_of_symbol(base_sym_id);
-                        if base_type == TypeId::ERROR || base_type == TypeId::UNKNOWN {
-                            continue;
+                if let Some(type_arguments) = type_arguments {
+                    let base_params = self.get_type_params_for_symbol(base_sym_id);
+                    if !base_params.is_empty() {
+                        let mut type_args = Vec::with_capacity(type_arguments.nodes.len());
+                        for &arg_idx in &type_arguments.nodes {
+                            type_args
+                                .push(self.resolve_cross_file_heritage_type_arg(arena, arg_idx));
                         }
-                        if let Some(type_arguments) = type_arguments {
-                            let base_params = self.get_type_params_for_symbol(base_sym_id);
-                            if !base_params.is_empty() {
-                                let mut type_args = Vec::with_capacity(type_arguments.nodes.len());
-                                for &arg_idx in &type_arguments.nodes {
-                                    type_args.push(
-                                        self.resolve_cross_file_heritage_type_arg(arena, arg_idx),
-                                    );
-                                }
-                                while type_args.len() < base_params.len() {
-                                    let param = &base_params[type_args.len()];
-                                    type_args.push(
-                                        param
-                                            .default
-                                            .or(param.constraint)
-                                            .unwrap_or(TypeId::UNKNOWN),
-                                    );
-                                }
-                                if type_args.len() > base_params.len() {
-                                    type_args.truncate(base_params.len());
-                                }
-                                let substitution =
-                                    crate::query_boundaries::common::TypeSubstitution::from_args(
-                                        self.ctx.types,
-                                        &base_params,
-                                        &type_args,
-                                    );
-                                base_type = crate::query_boundaries::common::instantiate_type(
-                                    self.ctx.types,
-                                    base_type,
-                                    &substitution,
-                                );
-                            }
+                        while type_args.len() < base_params.len() {
+                            let param = &base_params[type_args.len()];
+                            type_args.push(
+                                param
+                                    .default
+                                    .or(param.constraint)
+                                    .unwrap_or(TypeId::UNKNOWN),
+                            );
                         }
-
-                        derived_type = self.merge_interface_types_heritage(derived_type, base_type);
+                        if type_args.len() > base_params.len() {
+                            type_args.truncate(base_params.len());
+                        }
+                        let substitution =
+                            crate::query_boundaries::common::TypeSubstitution::from_args(
+                                self.ctx.types,
+                                &base_params,
+                                &type_args,
+                            );
+                        base_type = crate::query_boundaries::common::instantiate_type(
+                            self.ctx.types,
+                            base_type,
+                            &substitution,
+                        );
                     }
                 }
+
+                let before_merge = derived_type;
+                derived_type = self.merge_interface_types_heritage(derived_type, base_type);
+                tracing::warn!(target: "p16308b", stage = "merged", iface = %iface_name, base = %name, before = before_merge.0, base_ty = base_type.0, after = derived_type.0, "Q");
             }
         }
 

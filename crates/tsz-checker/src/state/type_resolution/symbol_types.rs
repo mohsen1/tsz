@@ -7,6 +7,7 @@ use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use crate::symbols_domain::name_text::entity_name_text_in_arena;
 use crate::types_domain::queries::lib_resolution::resolve_name_to_lib_symbol;
+use std::sync::Arc;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
@@ -1330,6 +1331,56 @@ impl<'a> CheckerState<'a> {
                                 .any(|a| !std::ptr::eq(a.as_ref(), self.ctx.arena))
                         })
                 });
+                // Both binder arena maps can be blind to the owning file for an
+                // interface reached only through a re-export barrel:
+                // `declaration_arenas` has no entry for any declaration and
+                // `symbol_arenas` has no entry for the symbol, so `fallback_arena`
+                // degrades to the CURRENT file's arena. Every arena-local read
+                // below then resolves the declaring file's `NodeIndex` against the
+                // wrong arena — the node is not an interface there, so the
+                // `extends` clause is never seen and every inherited member is
+                // silently dropped (#16308). The stable declaring-file index is the
+                // only remaining route to the owning arena. Scoped strictly to the
+                // map-blind case: wherever either map answers, the existing
+                // resolution order is untouched.
+                let stable_owner_arena: Option<Arc<NodeArena>> =
+                    if has_declaration_arenas || !std::ptr::eq(fallback_arena, self.ctx.arena) {
+                        None
+                    } else {
+                        self.ctx
+                            .resolve_symbol_file_index_stable(sym_id)
+                            .filter(|&owner_idx| owner_idx != self.ctx.current_file_idx)
+                            .and_then(|owner_idx| self.ctx.arena_handle_for_file(owner_idx))
+                            .filter(|owner| !std::ptr::eq(owner.as_ref(), self.ctx.arena))
+                    };
+                {
+                    let local_iface_nodes = symbol
+                        .declarations
+                        .iter()
+                        .filter(|&&d| {
+                            self.ctx
+                                .arena
+                                .get(d)
+                                .and_then(|n| self.ctx.arena.get_interface(n))
+                                .is_some()
+                        })
+                        .count();
+                    tracing::warn!(
+                        target: "p16308",
+                        name = %symbol.escaped_name,
+                        sym = sym_id.0,
+                        cur_file = self.ctx.current_file_idx,
+                        decls = symbol.declarations.len(),
+                        has_da = has_declaration_arenas,
+                        sa_hit = self.ctx.binder.symbol_arenas.get(&sym_id).is_some(),
+                        stable = ?self.ctx.resolve_symbol_file_index_stable(sym_id),
+                        plain = ?self.ctx.resolve_symbol_file_index(sym_id),
+                        owner_arena = stable_owner_arena.is_some(),
+                        local_iface_nodes,
+                        "P16308"
+                    );
+                }
+
                 let needs_text_based_resolution =
                     has_declaration_arenas || !std::ptr::eq(fallback_arena, self.ctx.arena);
 
@@ -1678,7 +1729,9 @@ impl<'a> CheckerState<'a> {
                 // .. }` weak type and mis-flags TS2559/TS2322 against a source that
                 // structurally satisfies the inherited base — #13232 line-12).
                 if has_declaration_arenas {
+                    let before_xf = merged;
                     merged = self.merge_cross_file_heritage(&symbol.declarations, sym_id, merged);
+                    tracing::warn!(target: "p16308c", name = %symbol.escaped_name, iface_ty = interface_type.0, before_xf = before_xf.0, after_xf = merged.0, "R");
                 }
                 self.pop_type_parameters(updates);
                 // The returned params MUST share the body's identities. A cross-arena
@@ -1737,8 +1790,10 @@ impl<'a> CheckerState<'a> {
                         &decls_with_arenas,
                         &resolved_params,
                     ) {
+                        tracing::warn!(target: "p16308d", name = %symbol.escaped_name, merged = merged.0, consumed = consumed.0.0, "S consume-override");
                         return consumed;
                     }
+                    tracing::warn!(target: "p16308d", name = %symbol.escaped_name, merged = merged.0, consumed = 0, "S no-override");
                 }
                 return (merged, resolved_params);
             }

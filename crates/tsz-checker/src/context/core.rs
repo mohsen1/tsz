@@ -1062,6 +1062,16 @@ impl<'a> CheckerContext<'a> {
         self.arena
     }
 
+    /// Clone the shared arena handle for a file index.
+    ///
+    /// Unlike `get_arena_for_file` the returned handle is owned, so a caller
+    /// can hold the declaring file's arena across `&mut self` checker calls.
+    /// Returns `None` when the program-wide arena table is unavailable (the
+    /// single-file pipeline) or the index is out of range.
+    pub fn arena_handle_for_file(&self, file_idx: usize) -> Option<Arc<NodeArena>> {
+        self.all_arenas.as_ref()?.get(file_idx).cloned()
+    }
+
     /// Get the binder for a specific file index.
     /// Returns None if `file_idx` is out of bounds or `all_binders` is not set.
     pub fn get_binder_for_file(&self, file_idx: usize) -> Option<&BinderState> {
