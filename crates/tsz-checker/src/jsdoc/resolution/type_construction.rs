@@ -308,17 +308,21 @@ impl<'a> CheckerState<'a> {
             if self.expression_text(expr_stmt.expression).as_deref() != Some(name) {
                 continue;
             }
-            // A bare JSDoc-commented `C.prototype.member` read is a
-            // declaration site only for a function-as-constructor's expando
-            // prototype. An ES class's prototype is closed: skip so the
-            // ordinary property-access path decides (TS2339 for an absent
-            // member), matching `tsc`.
-            let is_class_prototype_member = self
+            // A bare JSDoc-commented member read is a declaration site only
+            // for a function-as-constructor's expando prototype
+            // (`C.prototype.member`) — tsc still reports TS2339 for a bare
+            // `@type`-commented read of any other property (a plain
+            // namespace/object member, a function's own static property, an
+            // ES class's closed prototype), so the ordinary property-access
+            // path must decide those, not this one.
+            let is_function_constructor_prototype_member = self
                 .ctx
                 .arena
                 .get_access_expr_at(expr_stmt.expression)
-                .is_some_and(|access| self.expando_receiver_is_class(access.expression));
-            if is_class_prototype_member {
+                .is_some_and(|access| {
+                    self.expando_receiver_is_function_constructor(access.expression)
+                });
+            if !is_function_constructor_prototype_member {
                 continue;
             }
             if let Some(jsdoc_type) = self.js_statement_declared_type(idx) {
