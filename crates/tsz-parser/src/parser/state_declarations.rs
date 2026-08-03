@@ -1706,6 +1706,20 @@ impl ParserState {
                     export_end,
                 );
                 let modifiers = Self::make_node_list(vec![declare_modifier, export_modifier]);
+                // `declare export type { x }` / `declare export type * from "m"` is a
+                // type-only export declaration, not the type-alias form `declare export
+                // type X = Y` — same lookahead as the non-ambient path in
+                // `parse_export_declaration`.
+                let is_type_only_export = self.is_token(SyntaxKind::TypeKeyword) && {
+                    let snapshot = self.scanner.save_state();
+                    let current = self.current_token;
+                    self.next_token();
+                    let is_type_only = self.is_token(SyntaxKind::OpenBraceToken)
+                        || self.is_token(SyntaxKind::AsteriskToken);
+                    self.scanner.restore_state(snapshot);
+                    self.current_token = current;
+                    is_type_only
+                };
                 // TS1029: 'export' modifier must precede 'declare' modifier.
                 // Skip for `declare export as namespace` (valid UMD pattern) and
                 // `declare export = expr` (export assignment — TS1120 handles it).
@@ -1716,11 +1730,17 @@ impl ParserState {
                 // TS1184 (Modifiers cannot appear here) is already emitted.
                 // Also skip for `declare export module/namespace` — tsc 6.0 accepts this
                 // form without TS1029 for ambient module/namespace declarations.
+                // Also skip for a plain export declaration (`{ }` / `*` / type-only
+                // `type { }` / `type *`) — tsc emits TS1193 alone there, never TS1029
+                // alongside it (oracle-confirmed).
                 if !self.in_block_context()
                     && !self.is_token(SyntaxKind::AsKeyword)
                     && !self.is_token(SyntaxKind::EqualsToken)
                     && !self.is_token(SyntaxKind::ModuleKeyword)
                     && !self.is_token(SyntaxKind::NamespaceKeyword)
+                    && !self.is_token(SyntaxKind::OpenBraceToken)
+                    && !self.is_token(SyntaxKind::AsteriskToken)
+                    && !is_type_only_export
                     && (saved_flags & crate::parser::state::CONTEXT_FLAG_AMBIENT) == 0
                 {
                     self.parse_error_at(
@@ -1786,6 +1806,62 @@ impl ParserState {
                     SyntaxKind::InterfaceKeyword => {
                         // `declare export interface X { ... }`
                         self.parse_interface_declaration_with_modifiers(start_pos, Some(modifiers))
+                    }
+                    SyntaxKind::AsteriskToken | SyntaxKind::OpenBraceToken => {
+                        // `declare export * from "m"` / `declare export { x }` (from "m")? —
+                        // a plain export declaration cannot carry a `declare` modifier.
+                        // tsc reports TS1193 at the first modifier and still parses the
+                        // export declaration itself (the checker then resolves `x`/`"m"`
+                        // as usual, e.g. TS2304/TS2307 alongside TS1193).
+                        //
+                        // Skipped when already in an ambient context (`declare namespace N
+                        // { declare export { x }; }`): tsc reports TS1038 there instead of
+                        // TS1193 (the same precedence the TS1029 check above already
+                        // follows), but `ExportDeclData` has no modifiers field for the
+                        // checker's TS1038 pass to read, so this nested shape stays a
+                        // known gap rather than a newly-wrong code — see #16291 follow-up.
+                        if (saved_flags & crate::parser::state::CONTEXT_FLAG_AMBIENT) == 0 {
+                            use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+                            let error_start = all_modifiers
+                                .first()
+                                .and_then(|idx| self.arena.get(*idx))
+                                .map_or(start_pos, |node| node.pos);
+                            self.parse_error_at(
+                                error_start,
+                                self.token_pos() - error_start,
+                                diagnostic_messages::AN_EXPORT_DECLARATION_CANNOT_HAVE_MODIFIERS,
+                                diagnostic_codes::AN_EXPORT_DECLARATION_CANNOT_HAVE_MODIFIERS,
+                            );
+                        }
+                        if self.is_token(SyntaxKind::AsteriskToken) {
+                            self.parse_export_star(start_pos, false)
+                        } else {
+                            self.parse_export_named(start_pos, false)
+                        }
+                    }
+                    SyntaxKind::TypeKeyword if is_type_only_export => {
+                        // `declare export type { x }` / `declare export type * from "m"`
+                        // See the `AsteriskToken | OpenBraceToken` arm above for the
+                        // already-ambient exception.
+                        if (saved_flags & crate::parser::state::CONTEXT_FLAG_AMBIENT) == 0 {
+                            use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+                            let error_start = all_modifiers
+                                .first()
+                                .and_then(|idx| self.arena.get(*idx))
+                                .map_or(start_pos, |node| node.pos);
+                            self.parse_error_at(
+                                error_start,
+                                self.token_pos() - error_start,
+                                diagnostic_messages::AN_EXPORT_DECLARATION_CANNOT_HAVE_MODIFIERS,
+                                diagnostic_codes::AN_EXPORT_DECLARATION_CANNOT_HAVE_MODIFIERS,
+                            );
+                        }
+                        self.parse_expected(SyntaxKind::TypeKeyword);
+                        if self.is_token(SyntaxKind::AsteriskToken) {
+                            self.parse_export_star(start_pos, true)
+                        } else {
+                            self.parse_export_named(start_pos, true)
+                        }
                     }
                     SyntaxKind::TypeKeyword => {
                         // `declare export type X = ...`

@@ -465,6 +465,7 @@ const fn is_parser_grammar_code(code: u32) -> bool {
         | 1182 // A destructuring declaration must have an initializer
         | 1184 // Modifiers cannot appear here
         | 1191 // An import declaration cannot have modifiers
+        | 1193 // An export declaration cannot have modifiers
         | 1197 // Catch clause variable cannot have an initializer
         | 1200 // Line terminator not permitted before arrow
         | 1206 // Decorators are not valid here

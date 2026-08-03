@@ -222,6 +222,10 @@ mod state_type_tests;
 mod state_declaration_tests;
 
 #[cfg(test)]
+#[path = "../../tests/export_declaration_modifier_grammar_tests.rs"]
+mod export_declaration_modifier_grammar_tests;
+
+#[cfg(test)]
 #[path = "../../tests/declaration_node_end_tests.rs"]
 mod declaration_node_end_tests;
 
