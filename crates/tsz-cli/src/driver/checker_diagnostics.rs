@@ -296,7 +296,13 @@ mod tests {
     #[test]
     fn real_syntax_errors_suppress_semantic_ts1xxx_but_keep_parse_diagnostics() {
         assert!(!keep_checker_diagnostic_when_program_has_real_syntax_errors(1064));
+        // The global-module-export family is one tsc function reporting three
+        // codes, so the three must agree here. `umd-errors.ts` is the corpus
+        // witness: it pairs all three shapes with real syntax errors in a
+        // sibling file, and tsc reports none of them.
+        assert!(!keep_checker_diagnostic_when_program_has_real_syntax_errors(1314));
         assert!(!keep_checker_diagnostic_when_program_has_real_syntax_errors(1315));
+        assert!(!keep_checker_diagnostic_when_program_has_real_syntax_errors(1316));
         assert!(keep_checker_diagnostic_when_program_has_real_syntax_errors(
             1005
         ));
