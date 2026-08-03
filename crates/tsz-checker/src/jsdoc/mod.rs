@@ -51,5 +51,6 @@ pub(crate) mod params_qualified;
 pub(crate) mod params_type_strings;
 pub(crate) mod parsing;
 pub(crate) mod parsing_import_attributes;
+pub(crate) mod parsing_template_constraints;
 pub(crate) mod resolution;
 pub(crate) mod types;

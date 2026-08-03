@@ -652,6 +652,7 @@ pub(super) const fn is_checker_routed_ts1xxx_grammar(code: u32) -> bool {
         | 1107 // Jump target cannot cross function boundary.
         // Semantic checker diagnostics that merely occupy the grammar range.
         | 1064 // The return type of an async function or method must be the global Promise<T> type.
+        | 1539 // A 'bigint' literal cannot be used as a property name.
         // The global-module-export family — tsc's `checkNamespaceExportDeclaration`
         // is one function reporting three codes in an early-return chain, so all
         // three share its routing and must be listed together. Membership was
