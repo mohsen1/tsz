@@ -690,6 +690,20 @@ impl BinderState {
     /// An import/export declaration, an `import ... = require(...)`, an
     /// `export =`, any exported declaration, or `import.meta`. Deliberately
     /// format-blind — file extensions are the `Auto` arm's business.
+    ///
+    /// A `NamespaceExportDeclaration` (`export as namespace N;`) is
+    /// deliberately NOT an indicator, matching tsc's
+    /// `isAnExternalModuleIndicatorNode`, which lists only import
+    /// declarations, external `import =` references, `export =`, export
+    /// declarations, and nodes carrying an `export` modifier. The omission is
+    /// load-bearing rather than an oversight: `checkNamespaceExportDeclaration`
+    /// reports TS1314 (`Global module exports may only appear in module
+    /// files.`) precisely for the file whose only export-shaped syntax is the
+    /// `export as namespace` itself, and that diagnostic is unreachable if the
+    /// declaration is allowed to make its own file a module. Real UMD
+    /// declaration files pair it with an `export =` or `export {}`, which are
+    /// indicators on their own, so this exclusion only reclassifies files that
+    /// tsc rejects outright.
     fn file_has_module_syntax_indicator(arena: &NodeArena, root: NodeIndex) -> bool {
         let Some(source) = arena.get_source_file_at(root) else {
             return false;
@@ -706,7 +720,6 @@ impl BinderState {
                 syntax_kind_ext::IMPORT_DECLARATION
                 | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                 | syntax_kind_ext::EXPORT_DECLARATION
-                | syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
                 | syntax_kind_ext::EXPORT_ASSIGNMENT => {
                     return true;
                 }
