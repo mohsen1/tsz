@@ -674,3 +674,101 @@ fn test_regex_trailing_non_identifier_codepoint_ends_flag_scan() {
         "non-ID_Continue code point after flags must not emit TS1499, got {diagnostics:?}"
     );
 }
+
+/// `\p{…}` / `\P{…}` Unicode property value expressions, pinned against
+/// `typescript@7.0.2` (`--noEmit --strict --target esnext --module esnext
+/// --lib esnext`). Every fingerprint below — including the two TS1508
+/// follow-ons on the malformed tails, and the clean rows that must stay
+/// silent — was taken from an oracle run over this exact source.
+#[test]
+fn test_regex_unicode_property_escape_diagnostics_match_tsc() {
+    let source = r#"
+const unicodePropertyEscapes: RegExp[] = [
+  /\p{L}/u,
+  /\p{Script=Latin}/u,
+  /\p{General_Category=Letter}/u,
+  /\p{}/u,
+  /\P{}/u,
+  /\p{=Letter}/u,
+  /\p{Script=}/u,
+  /\p{=}/u,
+  /\p{RGI_Emoji}/u,
+  /\p{Basic_Emoji}/u,
+  /[\p{RGI_Emoji}]/u,
+  /\p{L}/,
+  /\P{L}/,
+  /\p{}/,
+  /\p{RGI_Emoji}/,
+  /a\p{L}b/,
+  /\p{Ω}/u,
+  /\p{ Script=Latin }/u,
+];
+"#;
+    let (parser, _root) = parse_source(source);
+
+    let diagnostics = parser.get_diagnostics();
+    let line_map = LineMap::build(source);
+
+    let mut actual: Vec<(u32, u32, u32)> = diagnostics
+        .iter()
+        .map(|d| {
+            let pos = line_map.offset_to_position(d.start, source);
+            (pos.line + 1, pos.character + 1, d.code)
+        })
+        .collect();
+    actual.sort_unstable();
+
+    let expected: Vec<(u32, u32, u32)> = vec![
+        (6, 7, diagnostic_codes::EXPECTED_A_UNICODE_PROPERTY_NAME_OR_VALUE),
+        (7, 7, diagnostic_codes::EXPECTED_A_UNICODE_PROPERTY_NAME_OR_VALUE),
+        (8, 7, diagnostic_codes::EXPECTED_A_UNICODE_PROPERTY_NAME),
+        (9, 14, diagnostic_codes::EXPECTED_A_UNICODE_PROPERTY_VALUE),
+        (10, 7, diagnostic_codes::EXPECTED_A_UNICODE_PROPERTY_NAME),
+        (10, 8, diagnostic_codes::EXPECTED_A_UNICODE_PROPERTY_VALUE),
+        (11, 7, diagnostic_codes::ANY_UNICODE_PROPERTY_THAT_WOULD_POSSIBLY_MATCH_MORE_THAN_A_SINGLE_CHARACTER_IS_O),
+        (12, 7, diagnostic_codes::ANY_UNICODE_PROPERTY_THAT_WOULD_POSSIBLY_MATCH_MORE_THAN_A_SINGLE_CHARACTER_IS_O),
+        (13, 8, diagnostic_codes::ANY_UNICODE_PROPERTY_THAT_WOULD_POSSIBLY_MATCH_MORE_THAN_A_SINGLE_CHARACTER_IS_O),
+        (14, 4, diagnostic_codes::UNICODE_PROPERTY_VALUE_EXPRESSIONS_ARE_ONLY_AVAILABLE_WHEN_THE_UNICODE_U_FLAG_OR),
+        (15, 4, diagnostic_codes::UNICODE_PROPERTY_VALUE_EXPRESSIONS_ARE_ONLY_AVAILABLE_WHEN_THE_UNICODE_U_FLAG_OR),
+        (16, 4, diagnostic_codes::UNICODE_PROPERTY_VALUE_EXPRESSIONS_ARE_ONLY_AVAILABLE_WHEN_THE_UNICODE_U_FLAG_OR),
+        (16, 7, diagnostic_codes::EXPECTED_A_UNICODE_PROPERTY_NAME_OR_VALUE),
+        (17, 4, diagnostic_codes::UNICODE_PROPERTY_VALUE_EXPRESSIONS_ARE_ONLY_AVAILABLE_WHEN_THE_UNICODE_U_FLAG_OR),
+        (17, 7, diagnostic_codes::ANY_UNICODE_PROPERTY_THAT_WOULD_POSSIBLY_MATCH_MORE_THAN_A_SINGLE_CHARACTER_IS_O),
+        (18, 5, diagnostic_codes::UNICODE_PROPERTY_VALUE_EXPRESSIONS_ARE_ONLY_AVAILABLE_WHEN_THE_UNICODE_U_FLAG_OR),
+        (19, 7, diagnostic_codes::EXPECTED_A_UNICODE_PROPERTY_NAME_OR_VALUE),
+        (19, 8, diagnostic_codes::UNEXPECTED_DID_YOU_MEAN_TO_ESCAPE_IT_WITH_BACKSLASH),
+        (20, 7, diagnostic_codes::EXPECTED_A_UNICODE_PROPERTY_NAME_OR_VALUE),
+        (20, 21, diagnostic_codes::UNEXPECTED_DID_YOU_MEAN_TO_ESCAPE_IT_WITH_BACKSLASH),
+    ];
+
+    assert_eq!(
+        actual, expected,
+        "Unicode property escape diagnostics should match tsc exactly, got: {diagnostics:?}"
+    );
+}
+
+/// The Unicode Sets (`v`) flag makes the properties-of-strings legal, so the
+/// same sources that draw TS1528 under `u` must stay silent under `v`.
+#[test]
+fn test_regex_properties_of_strings_are_accepted_under_the_v_flag() {
+    let source = r#"
+const underV: RegExp[] = [
+  /\p{RGI_Emoji}/v,
+  /\p{Basic_Emoji}/v,
+  /\p{Emoji_Keycap_Sequence}/v,
+  /\p{RGI_Emoji_Modifier_Sequence}/v,
+  /\p{RGI_Emoji_Flag_Sequence}/v,
+  /\p{RGI_Emoji_Tag_Sequence}/v,
+  /\p{RGI_Emoji_ZWJ_Sequence}/v,
+  /[\p{RGI_Emoji}]/v,
+];
+"#;
+    let (parser, _root) = parse_source(source);
+
+    let diagnostics = parser.get_diagnostics();
+
+    assert!(
+        diagnostics.is_empty(),
+        "Properties of strings are legal under the v flag, got: {diagnostics:?}"
+    );
+}

@@ -309,6 +309,7 @@ impl ParserState {
             struct CharEscapeScanCtx<'a> {
                 body: &'a [u8],
                 strict_mode: bool,
+                unicode_sets_mode: bool,
                 end: usize,
                 capturing_group_count: u32,
             }
@@ -583,13 +584,16 @@ impl ParserState {
                         let escape_char = ch;
                         *pos += 1;
                         if *pos < end && body[*pos] == b'{' {
-                            *pos += 1;
-                            while *pos < end && body[*pos] != b'}' {
-                                *pos += 1;
-                            }
-                            if *pos < end {
-                                *pos += 1;
-                            }
+                            scan_unicode_property_value_expression(
+                                parser,
+                                emit,
+                                body,
+                                strict_mode,
+                                scan_ctx.unicode_sets_mode,
+                                end,
+                                pos,
+                                escape_start,
+                            );
                         } else if strict_mode {
                             let message = if escape_char == b'P' {
                                 "'\\P' must be followed by a Unicode property value expression enclosed in braces."
@@ -778,13 +782,119 @@ impl ParserState {
                 }
             }
 
+            /// Scans the `{…}` body of a `\p` / `\P` Unicode property value
+            /// expression, with `pos` positioned at the opening brace.
+            ///
+            /// Mirrors `tsc`'s regular-expression scanner: the property name
+            /// and value are scanned as ASCII word characters only, the two
+            /// halves are validated independently so `\p{=}` reports both
+            /// TS1523 and TS1525, and the closing brace is consumed only when
+            /// it is already at `pos`. Anything else is deliberately left for
+            /// the surrounding walker to report as ordinary regex text, which
+            /// is how `\p{ Script=Latin }` gets TS1527 followed by a TS1508 on
+            /// the trailing brace.
+            fn scan_unicode_property_value_expression(
+                parser: &mut ParserState,
+                emit: &impl Fn(&mut ParserState, usize, u32, &str, u32),
+                body: &[u8],
+                unicode_mode: bool,
+                unicode_sets_mode: bool,
+                end: usize,
+                pos: &mut usize,
+                escape_start: usize,
+            ) {
+                /// The binary Unicode properties of strings (ECMA-262
+                /// "Binary Unicode property of strings" table). Each matches a
+                /// sequence rather than a single character, so `\p{…}` accepts
+                /// them only under the Unicode Sets (`v`) flag.
+                const PROPERTIES_OF_STRINGS: [&[u8]; 7] = [
+                    b"Basic_Emoji",
+                    b"Emoji_Keycap_Sequence",
+                    b"RGI_Emoji",
+                    b"RGI_Emoji_Flag_Sequence",
+                    b"RGI_Emoji_Modifier_Sequence",
+                    b"RGI_Emoji_Tag_Sequence",
+                    b"RGI_Emoji_ZWJ_Sequence",
+                ];
+
+                fn scan_word(body: &[u8], end: usize, pos: &mut usize) -> usize {
+                    let start = *pos;
+                    while *pos < end && (body[*pos] == b'_' || body[*pos].is_ascii_alphanumeric()) {
+                        *pos += 1;
+                    }
+                    *pos - start
+                }
+
+                if !unicode_mode {
+                    emit(
+                        parser,
+                        escape_start,
+                        2,
+                        diagnostic_messages::UNICODE_PROPERTY_VALUE_EXPRESSIONS_ARE_ONLY_AVAILABLE_WHEN_THE_UNICODE_U_FLAG_OR,
+                        diagnostic_codes::UNICODE_PROPERTY_VALUE_EXPRESSIONS_ARE_ONLY_AVAILABLE_WHEN_THE_UNICODE_U_FLAG_OR,
+                    );
+                }
+
+                *pos += 1;
+                let name_start = *pos;
+                let name_len = scan_word(body, end, pos);
+
+                if *pos < end && body[*pos] == b'=' {
+                    *pos += 1;
+                    let value_start = *pos;
+                    let value_len = scan_word(body, end, pos);
+                    if name_len == 0 {
+                        emit(
+                            parser,
+                            name_start,
+                            0,
+                            diagnostic_messages::EXPECTED_A_UNICODE_PROPERTY_NAME,
+                            diagnostic_codes::EXPECTED_A_UNICODE_PROPERTY_NAME,
+                        );
+                    }
+                    if value_len == 0 {
+                        emit(
+                            parser,
+                            value_start,
+                            0,
+                            diagnostic_messages::EXPECTED_A_UNICODE_PROPERTY_VALUE,
+                            diagnostic_codes::EXPECTED_A_UNICODE_PROPERTY_VALUE,
+                        );
+                    }
+                } else {
+                    if name_len == 0 {
+                        emit(
+                            parser,
+                            name_start,
+                            0,
+                            diagnostic_messages::EXPECTED_A_UNICODE_PROPERTY_NAME_OR_VALUE,
+                            diagnostic_codes::EXPECTED_A_UNICODE_PROPERTY_NAME_OR_VALUE,
+                        );
+                    } else if !unicode_sets_mode
+                        && PROPERTIES_OF_STRINGS.contains(&&body[name_start..name_start + name_len])
+                    {
+                        emit(
+                            parser,
+                            name_start,
+                            name_len as u32,
+                            diagnostic_messages::ANY_UNICODE_PROPERTY_THAT_WOULD_POSSIBLY_MATCH_MORE_THAN_A_SINGLE_CHARACTER_IS_O,
+                            diagnostic_codes::ANY_UNICODE_PROPERTY_THAT_WOULD_POSSIBLY_MATCH_MORE_THAN_A_SINGLE_CHARACTER_IS_O,
+                        );
+                    }
+                }
+
+                if *pos < end && body[*pos] == b'}' {
+                    *pos += 1;
+                }
+            }
+
             fn scan_character_class_escape(
                 parser: &mut ParserState,
                 emit: &impl Fn(&mut ParserState, usize, u32, &str, u32),
                 body: &[u8],
                 strict_mode: bool,
                 unicode_sets_mode: bool,
-                _end: usize,
+                end: usize,
                 pos: &mut usize,
                 _start_pos: u32,
             ) -> Option<ClassAtomKind> {
@@ -880,58 +990,41 @@ impl ParserState {
                             Some(ClassAtomKind::Unknown)
                         }
                     }
-                    b'P' => {
+                    b'p' | b'P' => {
+                        let negated = body[*pos] == b'P';
                         *pos += 1;
                         if *pos < body.len() && body[*pos] == b'{' {
-                            *pos += 1;
-                            while *pos < body.len() && body[*pos] != b'}' {
-                                *pos += 1;
-                            }
-                            if *pos < body.len() {
-                                *pos += 1;
-                            }
+                            scan_unicode_property_value_expression(
+                                parser,
+                                emit,
+                                body,
+                                strict_mode,
+                                unicode_sets_mode,
+                                end,
+                                pos,
+                                start - 1,
+                            );
                             Some(ClassAtomKind::Class)
                         } else if strict_mode {
                             emit(
                                 parser,
                                 start - 1,
                                 2,
-                                "'\\P' must be followed by a Unicode property value expression enclosed in braces.",
+                                if negated {
+                                    "'\\P' must be followed by a Unicode property value expression enclosed in braces."
+                                } else {
+                                    "'\\p' must be followed by a Unicode property value expression enclosed in braces."
+                                },
                                 diagnostic_codes::MUST_BE_FOLLOWED_BY_A_UNICODE_PROPERTY_VALUE_EXPRESSION_ENCLOSED_IN_BRACES,
                             );
                             Some(ClassAtomKind::Class)
                         } else {
-                            // Annex B: `\P` without braces is treated as the
-                            // literal character `P`. Position is already past
-                            // `P`, so emit a Character atom directly rather
-                            // than returning None and letting the caller
-                            // re-scan (which would consume the next escape).
-                            Some(ClassAtomKind::Character)
-                        }
-                    }
-                    b'p' => {
-                        *pos += 1;
-                        if *pos < body.len() && body[*pos] == b'{' {
-                            *pos += 1;
-                            while *pos < body.len() && body[*pos] != b'}' {
-                                *pos += 1;
-                            }
-                            if *pos < body.len() {
-                                *pos += 1;
-                            }
-                            Some(ClassAtomKind::Class)
-                        } else if strict_mode {
-                            emit(
-                                parser,
-                                start - 1,
-                                2,
-                                "'\\p' must be followed by a Unicode property value expression enclosed in braces.",
-                                diagnostic_codes::MUST_BE_FOLLOWED_BY_A_UNICODE_PROPERTY_VALUE_EXPRESSION_ENCLOSED_IN_BRACES,
-                            );
-                            Some(ClassAtomKind::Class)
-                        } else {
-                            // Annex B: `\p` without braces is treated as the
-                            // literal character `p`. See `\P` above.
+                            // Annex B: `\p` / `\P` without braces is treated as
+                            // the literal character `p` / `P`. Position is
+                            // already past it, so emit a Character atom
+                            // directly rather than returning None and letting
+                            // the caller re-scan (which would consume the next
+                            // escape).
                             Some(ClassAtomKind::Character)
                         }
                     }
@@ -976,6 +1069,7 @@ impl ParserState {
                                 &CharEscapeScanCtx {
                                     body: ctx.body,
                                     strict_mode: ctx.strict_mode,
+                                    unicode_sets_mode: ctx.unicode_sets_mode,
                                     end: ctx.body_end,
                                     capturing_group_count: ctx.capturing_group_count,
                                 },
@@ -1163,6 +1257,7 @@ impl ParserState {
                                     &CharEscapeScanCtx {
                                         body: ctx.body,
                                         strict_mode: ctx.strict_mode,
+                                        unicode_sets_mode: ctx.unicode_sets_mode,
                                         end: ctx.body_end,
                                         capturing_group_count: ctx.capturing_group_count,
                                     },
