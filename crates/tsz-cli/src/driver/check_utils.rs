@@ -1332,6 +1332,7 @@ pub(super) const fn is_real_syntax_error(code: u32) -> bool {
         | 1155 // 'const' declarations must be initialized
         | 1160 // Unterminated template literal
         | 1161 // Unterminated regular expression literal
+        | 1180 // Property destructuring pattern expected
         | 1002 // Unterminated string literal
         | 1003 // Identifier expected
         | 1006 // A file cannot have a reference to itself
@@ -1417,6 +1418,7 @@ pub(super) const fn is_structural_parse_error(code: u32) -> bool {
         | 1155 // 'const' declarations must be initialized
         | 1160 // Unterminated template literal
         | 1161 // Unterminated regular expression literal
+        | 1180 // Property destructuring pattern expected
         | 1185 // Merge conflict marker encountered
         | 1313 // 'else' is not allowed after rest element
         | 1351 // An identifier or keyword cannot immediately follow a numeric literal
