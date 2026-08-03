@@ -13,7 +13,7 @@
 mod alias_defid_visited_pool;
 mod commonjs_object_exports;
 mod core;
-mod core_statement_checks;
+pub(crate) mod core_statement_checks;
 mod cross_file_conflicts;
 mod declarations;
 mod declarations_utils;

@@ -793,6 +793,8 @@ mod ts1168_method_overload_computed_name_tests;
 mod ts1170_computed_property_syntactic_form_tests;
 #[path = "tests/ts1250_ts1251_ts1252_strict_function_in_block_tests.rs"]
 mod ts1250_ts1251_ts1252_strict_function_in_block_tests;
+#[path = "tests/ts1309_top_level_await_commonjs_file_tests.rs"]
+mod ts1309_top_level_await_commonjs_file_tests;
 #[path = "tests/ts1318_abstract_accessor_implementation_tests.rs"]
 mod ts1318_abstract_accessor_implementation_tests;
 #[path = "tests/ts1361_ambient_computed_property_name_tests.rs"]

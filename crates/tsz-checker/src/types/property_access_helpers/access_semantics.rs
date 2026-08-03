@@ -1497,15 +1497,10 @@ impl<'a> CheckerState<'a> {
         if module_kind.is_node_module() {
             // Node16/Node18/Node20/NodeNext: per-file CJS/ESM determination.
             // Only files that build into CommonJS output are rejected (TS1470).
-            let current_file = &self.ctx.file_name;
-            let is_commonjs_file = current_file.ends_with(".cts") || current_file.ends_with(".cjs");
-            let is_esm_file = current_file.ends_with(".mts") || current_file.ends_with(".mjs");
-            // `.cts`/`.cjs` force CJS, `.mts`/`.mjs` force ESM; otherwise an
-            // extensionless `.ts`/`.js` builds to CJS only when the resolved
-            // format is explicitly CommonJS (`file_is_esm == Some(false)`).
-            let builds_to_cjs =
-                is_commonjs_file || (!is_esm_file && self.ctx.file_is_esm == Some(false));
-            if builds_to_cjs {
+            // `CheckerContext::current_file_builds_to_commonjs` owns the
+            // extension/`package.json` precedence; the top-level-`await`
+            // TS1309 family asks it the same question.
+            if self.ctx.current_file_builds_to_commonjs() {
                 self.error_at_node(
                     node_idx,
                     diagnostic_messages::THE_IMPORT_META_META_PROPERTY_IS_NOT_ALLOWED_IN_FILES_WHICH_WILL_BUILD_INTO_COMM,

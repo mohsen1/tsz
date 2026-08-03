@@ -55,6 +55,7 @@ mod file_format_lookup;
 pub(crate) use file_format_lookup::{lookup_file_is_esm_in_map, lookup_is_external_module_in_map};
 mod import_alias_resolution;
 mod import_conflicts;
+mod module_format;
 mod parse_health;
 pub use parse_health::ParseHealth;
 mod import_assert_file_scan;
