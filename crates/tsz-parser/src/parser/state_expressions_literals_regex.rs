@@ -1331,6 +1331,36 @@ impl ParserState {
                         continue;
                     }
 
+                    // A bare `-` is only a legal `ClassSetCharacter` when it
+                    // is consumed as a range separator immediately after the
+                    // atom it follows, in the same iteration (the `-` check
+                    // below, right after `scan_class_atom`). Any `-` that
+                    // instead reaches the *top* of this loop as a fresh atom
+                    // to scan — because it opens the class, or because the
+                    // previous iteration ended without chaining into it as a
+                    // range — is not a legal `ClassSetCharacter` in `v` mode
+                    // and reports TS1508: `/[-a]/v`, `/[-]/v`, and
+                    // `/[a-b-]/v`'s second `-` (which follows a *completed*
+                    // range, not a fresh atom) all take this path, while
+                    // `/[a-]/v` and `/[ab-]/v` never reach it because their
+                    // trailing `-` is consumed by the range-separator check
+                    // instead. Reported once per occurrence, not once per
+                    // class — `/[-a-b-c]/v` draws two, on the leading `-`
+                    // and the one after the completed `a-b` range.
+                    if ctx.unicode_sets_mode && ctx.body[*pos] == b'-' {
+                        let message = format_message(
+                            diagnostic_messages::UNEXPECTED_DID_YOU_MEAN_TO_ESCAPE_IT_WITH_BACKSLASH,
+                            &["-"],
+                        );
+                        (ctx.emit)(
+                            parser,
+                            *pos,
+                            1,
+                            &message,
+                            diagnostic_codes::UNEXPECTED_DID_YOU_MEAN_TO_ESCAPE_IT_WITH_BACKSLASH,
+                        );
+                    }
+
                     let mut atoms = Vec::new();
                     let min_start = *pos;
                     scan_class_atom(parser, ctx, pos, &mut atoms);
