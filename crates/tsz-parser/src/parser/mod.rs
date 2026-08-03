@@ -274,6 +274,10 @@ mod regex_class_set_reserved_double_punctuator_tests;
 mod regex_class_set_operator_mixing_tests;
 
 #[cfg(test)]
+#[path = "../../tests/regex_class_set_bare_hyphen_tests.rs"]
+mod regex_class_set_bare_hyphen_tests;
+
+#[cfg(test)]
 #[path = "../../tests/modifier_ordering_tests.rs"]
 mod modifier_ordering_tests;
 
