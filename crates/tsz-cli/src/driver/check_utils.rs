@@ -1473,6 +1473,7 @@ pub(super) const fn is_non_suppressing_parse_error(code: u32) -> bool {
             | 1534 // Backreference with no capturing group in the pattern (regex grammar, AST is valid)
             | 1536 // Octal escape sequences and backreferences are not allowed in a character class (regex grammar, AST is valid)
             | 1537 // Decimal escape sequences and backreferences are not allowed in a character class (regex grammar, AST is valid)
+            | 1522 // A character class must not contain a reserved double punctuator (regex grammar, AST is valid)
             | 17019 // '?' at end of type is not valid TS syntax (parser recovers valid AST)
             | 17020 // '?' at start of type is not valid TS syntax (parser recovers valid AST)
     )

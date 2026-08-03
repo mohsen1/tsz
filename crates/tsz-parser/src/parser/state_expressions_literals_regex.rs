@@ -1113,6 +1113,49 @@ impl ParserState {
                     range.push(ClassAtomKind::Class);
                     return;
                 }
+                // `v`-mode `ClassSetReservedDoublePunctuator`: a handful of
+                // ASCII punctuators are reserved when they appear doubled
+                // inside a class, so a typo like `[!!]` (meant to escape one
+                // of them) is caught instead of silently matching two
+                // literal characters. `&&`/`--` are excluded: those are the
+                // defined class-set operators, handled by the caller before
+                // `scan_class_atom` is ever reached for their first byte.
+                const fn is_class_set_reserved_double_punctuator_char(ch: u8) -> bool {
+                    matches!(
+                        ch,
+                        b'!' | b'#'
+                            | b'%'
+                            | b'*'
+                            | b'+'
+                            | b','
+                            | b'.'
+                            | b':'
+                            | b';'
+                            | b'<'
+                            | b'='
+                            | b'>'
+                            | b'?'
+                            | b'@'
+                            | b'`'
+                            | b'~'
+                    )
+                }
+                if ctx.unicode_sets_mode
+                    && is_class_set_reserved_double_punctuator_char(ch)
+                    && *pos + 1 < ctx.body_end
+                    && ctx.body[*pos + 1] == ch
+                {
+                    (ctx.emit)(
+                        parser,
+                        *pos,
+                        2,
+                        diagnostic_messages::A_CHARACTER_CLASS_MUST_NOT_CONTAIN_A_RESERVED_DOUBLE_PUNCTUATOR_DID_YOU_MEAN_TO,
+                        diagnostic_codes::A_CHARACTER_CLASS_MUST_NOT_CONTAIN_A_RESERVED_DOUBLE_PUNCTUATOR_DID_YOU_MEAN_TO,
+                    );
+                    range.push(ClassAtomKind::Character);
+                    *pos += 2;
+                    return;
+                }
                 if ch == b'\\' {
                     *pos += 1;
                     if *pos >= ctx.body_end {
