@@ -775,6 +775,32 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        // A JS module can also re-export ANOTHER module's namespace wholesale
+        // (`const ns = require("./cls"); module.exports = ns;`), rather than
+        // exporting a class/function it declares itself. tsc's declaration
+        // emit prints this as a single alias, `import ns = require("./cls");
+        // export = ns;`, so a member reached only by drilling into that
+        // namespace (e.g. `Foo`) needs no name of its own — the whole
+        // namespace is nameable via the require path. `direct_export_type`
+        // is registered in `namespace_module_names` exactly when it denotes
+        // such a wholesale `typeof import(...)` re-export; a structural
+        // object literal (`module.exports = { foo: X }`) is never
+        // registered there, so this stays scoped to the re-export shape and
+        // does not suppress TS9006 for a literal that must name each member.
+        if self.ctx.current_file_idx as u32 != file_idx
+            && self
+                .resolve_js_export_surface(self.ctx.current_file_idx)
+                .direct_export_type
+                .is_some_and(|ty| self.ctx.namespace_module_names.contains_key(&ty))
+            && self.is_commonjs_direct_export_target(
+                self.ctx.current_file_idx as u32,
+                resolved_sym_id,
+                target_sym_id,
+            )
+        {
+            return None;
+        }
+
         let locally_nameable = self
             .ctx
             .binder
