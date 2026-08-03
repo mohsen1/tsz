@@ -137,26 +137,31 @@ fn binding_pattern_declares(ctx: &CheckerContext, name_idx: NodeIndex, name: &st
     })
 }
 
-/// True when a parameter of the signature owning `within` declares a value
-/// binding called `name`.
-///
-/// This is the resolution half of the scope: a `typeof name` query inside the
-/// signature names that binding, so it must not fall through to global name
-/// resolution. It answers structurally from the AST rather than from seeded
-/// scope state, so it holds on every traversal of the signature, not only the
-/// one that lowers its return type.
-pub(crate) fn signature_parameter_declares_binding(
+/// Signature-like kinds that are pure type syntax with no body of their own:
+/// a `FunctionType`/`MethodSignature`/etc. nested inside an outer signature's
+/// return type is still part of that outer signature's type positions, not a
+/// separate scope. The remaining `is_signature_like` kinds (function/method/
+/// accessor/constructor declarations and expressions) can own a body and
+/// resolve their own parameters as ordinary local symbols, so they end the
+/// climb to an outer signature.
+const fn is_pure_type_signature(kind: u16) -> bool {
+    matches!(
+        kind,
+        syntax_kind_ext::FUNCTION_TYPE
+            | syntax_kind_ext::CONSTRUCTOR_TYPE
+            | syntax_kind_ext::CALL_SIGNATURE
+            | syntax_kind_ext::CONSTRUCT_SIGNATURE
+            | syntax_kind_ext::METHOD_SIGNATURE
+    )
+}
+
+/// True when a parameter declared directly on `signature` (not on a nested
+/// signature inside it) binds `name`.
+fn signature_own_parameters_declare(
     ctx: &CheckerContext,
-    within: NodeIndex,
+    signature: NodeIndex,
     name: &str,
 ) -> bool {
-    let Some((signature, saw_type_query)) = enclosing_signature_through_type_query(ctx, within)
-    else {
-        return false;
-    };
-    if !saw_type_query {
-        return false;
-    }
     // Walk the signature's own subtree for its parameters without descending
     // into a nested signature: an inner signature's parameters are scoped to
     // that inner signature and must not answer for the outer one.
@@ -185,6 +190,59 @@ pub(crate) fn signature_parameter_declares_binding(
         stack.extend(ctx.arena.get_children(node_idx));
     }
     false
+}
+
+/// True when a parameter of the signature owning `within` declares a value
+/// binding called `name`.
+///
+/// This is the resolution half of the scope: a `typeof name` query inside the
+/// signature names that binding, so it must not fall through to global name
+/// resolution. It answers structurally from the AST rather than from seeded
+/// scope state, so it holds on every traversal of the signature, not only the
+/// one that lowers its return type.
+///
+/// A `typeof` query nested inside a pure-type signature that is itself part
+/// of an outer signature's return type (`(a: T) => (b: U) => typeof a`) climbs
+/// to that outer signature when the inner one doesn't declare the name — the
+/// inner `FunctionType` has no body and so no scope of its own.
+pub(crate) fn signature_parameter_declares_binding(
+    ctx: &CheckerContext,
+    within: NodeIndex,
+    name: &str,
+) -> bool {
+    let Some((mut signature, saw_type_query)) = enclosing_signature_through_type_query(ctx, within)
+    else {
+        return false;
+    };
+    if !saw_type_query {
+        return false;
+    }
+    let mut guard = 0usize;
+    loop {
+        guard += 1;
+        if guard > 256 {
+            return false;
+        }
+        if signature_own_parameters_declare(ctx, signature, name) {
+            return true;
+        }
+        let Some(node) = ctx.arena.get(signature) else {
+            return false;
+        };
+        if !is_pure_type_signature(node.kind) {
+            return false;
+        }
+        let Some(ext) = ctx.arena.get_extended(signature) else {
+            return false;
+        };
+        if ext.parent.is_none() {
+            return false;
+        }
+        let Some(next) = enclosing_signature(ctx, ext.parent) else {
+            return false;
+        };
+        signature = next;
+    }
 }
 
 /// True when the binding named `name`, declared by a parameter of the signature

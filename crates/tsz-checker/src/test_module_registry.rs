@@ -825,6 +825,8 @@ mod ts2574_rest_tuple_element_type_tests;
 mod ts2590_array_literal_identity_skip_tests;
 #[path = "tests/ts2591_node_global_type_position_tests.rs"]
 mod ts2591_node_global_type_position_tests;
+#[path = "tests/ts2693_signature_binding_shadowed_primitive_tests.rs"]
+mod ts2693_signature_binding_shadowed_primitive_tests;
 #[path = "tests/ts2739_alias_unfold_display_tests.rs"]
 mod ts2739_alias_unfold_display_tests;
 #[path = "tests/ts7053_apparent_receiver_display_tests.rs"]
