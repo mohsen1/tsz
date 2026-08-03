@@ -889,56 +889,6 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Fallback alias resolution for cross-file imports when `resolve_alias_symbol` can't find the target.
-    pub(crate) fn resolve_import_alias_cross_file(&self, sym_id: SymbolId) -> Option<SymbolId> {
-        let lib_binders: Vec<_> = self
-            .ctx
-            .lib_contexts
-            .iter()
-            .map(|lc| std::sync::Arc::clone(&lc.binder))
-            .collect();
-        let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
-        if !symbol.has_any_flags(symbol_flags::ALIAS) {
-            return None;
-        }
-        let module_specifier = symbol.import_module()?;
-        let import_name = symbol.import_name().unwrap_or(symbol.escaped_name.as_str());
-
-        // Local import aliases resolve relative to the current file even if a
-        // same-number cross-file target has already been registered for `sym_id`.
-        // SymbolIds are per binder, so imported aliases can collide numerically
-        // with their target after lib merging.
-        let source_file_idx = if self
-            .ctx
-            .binder
-            .get_symbol(sym_id)
-            .is_some_and(|local| local.has_any_flags(symbol_flags::ALIAS))
-        {
-            self.ctx.current_file_idx
-        } else {
-            self.ctx
-                .resolve_symbol_file_index(sym_id)
-                .unwrap_or(self.ctx.current_file_idx)
-        };
-
-        let target_idx = self
-            .ctx
-            .resolve_import_target_from_file(source_file_idx, module_specifier)?;
-        let target_binder = self.ctx.get_binder_for_file(target_idx)?;
-        let target_arena = self.ctx.get_arena_for_file(target_idx as u32);
-        let file_name = &target_arena.source_files.first()?.file_name;
-
-        // Try module_exports first (keyed by filename), then file_locals.
-        let target_sym_id = target_binder
-            .module_exports
-            .get(file_name)
-            .and_then(|exports| exports.get(import_name))
-            .or_else(|| target_binder.file_locals.get(import_name))?;
-
-        self.ctx
-            .register_symbol_file_target(target_sym_id, target_idx);
-        Some(target_sym_id)
-    }
-
     /// Bypasses `get_type_of_symbol` to get the interface type directly from declarations.
     /// Needed for merged interface+namespace symbols where `get_type_of_symbol` returns the namespace type.
     pub(crate) fn compute_interface_type_from_declarations(&mut self, sym_id: SymbolId) -> TypeId {
@@ -1050,6 +1000,11 @@ impl<'a> CheckerState<'a> {
                 &cross_arena_declarations,
             )
         };
+        let computed_wide_symbol_names = if cross_arena_declarations.is_empty() {
+            self.precompute_wide_symbol_computed_property_names(&declarations)
+        } else {
+            self.precompute_wide_symbol_computed_property_names_in_arenas(&cross_arena_declarations)
+        };
         let prewarmed_type_params = if cross_arena_declarations.is_empty() {
             self.prewarm_member_type_reference_params(&declarations)
         } else {
@@ -1096,6 +1051,9 @@ impl<'a> CheckerState<'a> {
         };
         let computed_symbol_name_resolver =
             |expr_idx: NodeIndex| computed_symbol_names.contains(&(expr_idx, single_arena_ptr));
+        let computed_wide_symbol_name_resolver = |expr_idx: NodeIndex| {
+            computed_wide_symbol_names.contains(&(expr_idx, single_arena_ptr))
+        };
         let lazy_type_params_resolver = |def_id: tsz_solver::def::DefId| {
             prewarmed_type_params
                 .get(&def_id)
@@ -1112,6 +1070,7 @@ impl<'a> CheckerState<'a> {
         .with_type_param_bindings(type_param_bindings)
         .with_computed_name_resolver(&computed_name_resolver)
         .with_computed_symbol_name_resolver(&computed_symbol_name_resolver)
+        .with_computed_wide_symbol_name_resolver(&computed_wide_symbol_name_resolver)
         .with_lazy_type_params_resolver(&lazy_type_params_resolver)
         .with_name_def_id_resolver(&name_resolver);
         let lowering = if (self.ctx.is_declaration_file() && !self.ctx.lib_contexts.is_empty())
@@ -1443,6 +1402,8 @@ impl<'a> CheckerState<'a> {
                     self.precompute_computed_property_names_in_arenas(&decls_with_arenas);
                 let computed_symbol_names = self
                     .precompute_symbol_named_computed_property_names_in_arenas(&decls_with_arenas);
+                let computed_wide_symbol_names = self
+                    .precompute_wide_symbol_computed_property_names_in_arenas(&decls_with_arenas);
 
                 // Push type params, lower interface, pop type params.
                 // push_type_parameters uses self.ctx.arena (user arena) to read
@@ -1632,6 +1593,12 @@ impl<'a> CheckerState<'a> {
                      -> bool {
                         computed_symbol_names.contains(&(expr_idx, arena as usize))
                     };
+                let computed_wide_symbol_name_resolver_with_arena =
+                    |expr_idx: NodeIndex,
+                     arena: *const tsz_parser::parser::node::NodeArena|
+                     -> bool {
+                        computed_wide_symbol_names.contains(&(expr_idx, arena as usize))
+                    };
                 let lazy_type_params_resolver = |def_id: tsz_solver::def::DefId| {
                     prewarmed_lazy_type_params
                         .get(&def_id)
@@ -1651,6 +1618,9 @@ impl<'a> CheckerState<'a> {
                 .with_computed_name_resolver_with_arena(&computed_name_resolver_with_arena)
                 .with_computed_symbol_name_resolver_with_arena(
                     &computed_symbol_name_resolver_with_arena,
+                )
+                .with_computed_wide_symbol_name_resolver_with_arena(
+                    &computed_wide_symbol_name_resolver_with_arena,
                 )
                 .with_preferred_self_reference(
                     symbol.escaped_name.clone(),

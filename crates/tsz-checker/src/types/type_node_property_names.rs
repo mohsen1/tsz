@@ -149,6 +149,17 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         )
     }
 
+    pub(super) fn computed_property_expression_is_wide_symbol_named(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> bool {
+        computed_names::computed_property_is_wide_symbol_named(
+            self.ctx,
+            |idx| self.resolve_computed_property_symbol(idx),
+            expr_idx,
+        )
+    }
+
     /// Resolve the binding a computed-name expression refers to, mirroring the
     /// strong `CheckerState` path's `resolve_computed_name_expression_symbol`:
     /// scope-aware `resolve_identifier` with a `file_locals` fallback (no

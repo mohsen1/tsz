@@ -379,6 +379,32 @@ impl<'a> CheckerState<'a> {
                 .is_some()
     }
 
+    /// Is the computed-name expression keyed by a plain (non-unique)
+    /// `symbol`-typed binding? `false` for a well-known `[Symbol.x]` key, a
+    /// declared unique-symbol member, or a genuine `unique symbol` binding —
+    /// only a plain `: symbol` binding routes into the containing type's
+    /// symbol index signature during structural member collection.
+    pub(crate) fn computed_property_expression_is_wide_symbol_named(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> bool {
+        if self.get_symbol_property_name_from_expr(expr_idx).is_some() {
+            return false;
+        }
+        if self
+            .declared_unique_symbol_member_property_name(expr_idx)
+            .is_some()
+        {
+            return false;
+        }
+        self.resolve_computed_name_expression_symbol(expr_idx)
+            .is_some_and(|sym_id| {
+                crate::types_domain::computed_names::symbol_is_wide_symbol_binding(
+                    &self.ctx, sym_id,
+                )
+            })
+    }
+
     pub(crate) fn computed_property_expression_unique_symbol_type(
         &self,
         expr_idx: NodeIndex,
@@ -451,7 +477,18 @@ impl<'a> CheckerState<'a> {
         self.ctx.preserve_literal_types = prev_preserve;
         self.ctx.checking_computed_property_name = prev_checking;
 
-        crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, expr_type).is_some()
+        if crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, expr_type).is_some() {
+            return true;
+        }
+        // A plain (non-unique) `symbol`-typed binding: the containing
+        // declaration (e.g. a class) still enumerates this as an ordinary
+        // named member — unlike an interface/type-literal, it has no symbol
+        // index signature to route into — but flagging it `is_symbol_named`
+        // lets `check_properties_against_index_signatures` (tsz-solver)
+        // recognize it as structurally satisfying a TARGET's real symbol
+        // index signature, matching tsc's late-bound-member assignability.
+        self.symbol_valued_binding_property_name(computed.expression, expr_type)
+            .is_some()
     }
 
     fn resolve_computed_unique_symbol_property(

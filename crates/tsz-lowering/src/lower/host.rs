@@ -81,6 +81,21 @@ pub trait LoweringHost {
         None
     }
 
+    /// Whether a computed property expression resolves to a plain
+    /// (non-unique) `symbol`-valued key — a binding annotated `: symbol`
+    /// rather than `: unique symbol`. Such a key does not mint a named
+    /// member: tsc routes it into the containing type's symbol index
+    /// signature instead, so two declarations keyed by independent
+    /// `symbol`-typed bindings still describe the same member set.
+    ///
+    /// Returns `None` when this host wires no such resolver, in which case
+    /// the caller treats the key as an ordinary named member (the previous
+    /// behavior). A host that does wire a resolver returns `Some(answer)`
+    /// and that answer wins outright.
+    fn computed_name_is_wide_symbol(&self, _expr: NodeIndex, _arena: &NodeArena) -> Option<bool> {
+        None
+    }
+
     /// Resolve lazy type-parameter metadata for a `DefId` (used to apply omitted
     /// defaulted type arguments).
     fn resolve_lazy_type_params(&self, _def_id: DefId) -> Option<Vec<TypeParamInfo>> {
@@ -119,6 +134,9 @@ pub struct ClosureLoweringHost<'a> {
         Option<&'a dyn Fn(NodeIndex, *const NodeArena) -> Option<Atom>>,
     pub(super) computed_symbol_name_resolver: Option<&'a dyn Fn(NodeIndex) -> bool>,
     pub(super) computed_symbol_name_resolver_with_arena:
+        Option<&'a dyn Fn(NodeIndex, *const NodeArena) -> bool>,
+    pub(super) computed_wide_symbol_name_resolver: Option<&'a dyn Fn(NodeIndex) -> bool>,
+    pub(super) computed_wide_symbol_name_resolver_with_arena:
         Option<&'a dyn Fn(NodeIndex, *const NodeArena) -> bool>,
     pub(super) lazy_type_params_resolver: Option<&'a LazyTypeParamsResolver<'a>>,
     pub(super) type_query_override: Option<&'a NodeIndexResolver<'a, TypeId>>,
@@ -180,6 +198,17 @@ impl LoweringHost for ClosureLoweringHost<'_> {
             return Some(resolver(expr, arena_ptr));
         }
         if let Some(resolver) = self.computed_symbol_name_resolver {
+            return Some(resolver(expr));
+        }
+        None
+    }
+
+    fn computed_name_is_wide_symbol(&self, expr: NodeIndex, arena: &NodeArena) -> Option<bool> {
+        let arena_ptr: *const NodeArena = arena;
+        if let Some(resolver) = self.computed_wide_symbol_name_resolver_with_arena {
+            return Some(resolver(expr, arena_ptr));
+        }
+        if let Some(resolver) = self.computed_wide_symbol_name_resolver {
             return Some(resolver(expr));
         }
         None

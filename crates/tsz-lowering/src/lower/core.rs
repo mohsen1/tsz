@@ -847,6 +847,27 @@ impl<'a> TypeLowering<'a> {
         self
     }
 
+    /// Set the resolver for computed property names that are keyed by a
+    /// plain (non-unique) `symbol`-typed binding. Such members route into
+    /// the containing type's symbol index signature instead of minting a
+    /// named member — see `LoweringHost::computed_name_is_wide_symbol`.
+    pub fn with_computed_wide_symbol_name_resolver(
+        mut self,
+        resolver: &'a dyn Fn(NodeIndex) -> bool,
+    ) -> Self {
+        self.host.computed_wide_symbol_name_resolver = Some(resolver);
+        self
+    }
+
+    /// Arena-aware variant of `with_computed_wide_symbol_name_resolver`.
+    pub fn with_computed_wide_symbol_name_resolver_with_arena(
+        mut self,
+        resolver: &'a dyn Fn(NodeIndex, *const NodeArena) -> bool,
+    ) -> Self {
+        self.host.computed_wide_symbol_name_resolver_with_arena = Some(resolver);
+        self
+    }
+
     /// Set the lazy type parameter resolver for applying omitted defaulted type arguments
     /// when lowering lazy references from interface members.
     pub fn with_lazy_type_params_resolver(

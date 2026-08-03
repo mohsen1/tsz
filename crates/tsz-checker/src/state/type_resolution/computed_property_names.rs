@@ -245,6 +245,66 @@ impl<'a> CheckerState<'a> {
         set
     }
 
+    pub(crate) fn precompute_wide_symbol_computed_property_names(
+        &mut self,
+        declarations: &[NodeIndex],
+    ) -> rustc_hash::FxHashSet<(NodeIndex, usize)> {
+        let decls = self.with_current_arena(declarations);
+        self.precompute_wide_symbol_computed_property_names_in_arenas(&decls)
+    }
+
+    /// Members whose computed key resolves to a plain (non-unique)
+    /// `symbol`-typed binding — the `__symbol_<file>_<id>` leg of
+    /// `resolve_computed_property_name_in_arena`, distinct from a genuine
+    /// `unique symbol` binding's `__unique_<id>` key. These do not mint a
+    /// named member; the interface/type-literal lowering pipeline routes
+    /// them into the containing type's symbol index signature instead.
+    pub(crate) fn precompute_wide_symbol_computed_property_names_in_arenas(
+        &mut self,
+        declarations: &[(NodeIndex, &NodeArena)],
+    ) -> rustc_hash::FxHashSet<(NodeIndex, usize)> {
+        let mut set = rustc_hash::FxHashSet::default();
+        for &(decl_idx, decl_arena) in declarations {
+            let arena_key = decl_arena as *const NodeArena as usize;
+            let Some(node) = decl_arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(interface) = decl_arena.get_interface(node) else {
+                continue;
+            };
+            for &member_idx in &interface.members.nodes {
+                let Some(member) = decl_arena.get(member_idx) else {
+                    continue;
+                };
+                let name_idx = if let Some(sig) = decl_arena.get_signature(member) {
+                    sig.name
+                } else if let Some(acc) = decl_arena.get_accessor(member) {
+                    acc.name
+                } else {
+                    continue;
+                };
+                let Some(name_node) = decl_arena.get(name_idx) else {
+                    continue;
+                };
+                if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                    continue;
+                }
+                let Some(computed) = decl_arena.get_computed_property(name_node) else {
+                    continue;
+                };
+                if self
+                    .resolve_computed_property_name_in_arena(decl_arena, name_idx)
+                    .is_some_and(|resolved| {
+                        resolved.is_symbol && resolved.name.starts_with("__symbol_")
+                    })
+                {
+                    set.insert((computed.expression, arena_key));
+                }
+            }
+        }
+        set
+    }
+
     fn resolve_type_reference_symbol_in_arena(
         &self,
         arena: &NodeArena,
