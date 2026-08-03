@@ -1956,6 +1956,9 @@ path = "tests/ts2852_await_using_context_tests.rs"
 name = "using_disposable_elaboration_tests"
 path = "tests/using_disposable_elaboration_tests.rs"
 [[test]]
+name = "using_declaration_placement_grammar_tests"
+path = "tests/using_declaration_placement_grammar_tests.rs"
+[[test]]
 name = "jsdoc_tag_boundary_tests"
 path = "tests/jsdoc_tag_boundary_tests.rs"
 [[test]]
