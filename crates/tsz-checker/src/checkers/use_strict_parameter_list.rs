@@ -5,6 +5,11 @@
 //! parameter with a default initializer, a rest element, or a binding pattern)
 //! may not carry a `"use strict"` directive in its body prologue. TS1346 is
 //! anchored on each offending parameter, TS1347 on the directive itself.
+//!
+//! Both halves carry cross-location related information, which is the whole
+//! point of reporting the pair: TS1346 points forward at the directive with
+//! TS1349, and TS1347 points back at every offending parameter with TS1348 for
+//! the first and TS6204 (`and here.`) for each subsequent one.
 
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -41,27 +46,102 @@ impl<'a> CheckerState<'a> {
         if non_simple.is_empty() {
             return;
         }
-        use crate::diagnostics::diagnostic_codes;
-        for &param_idx in &non_simple {
-            // tsc anchors on the whole parameter node (`error(parameter, …)`),
-            // which for a rest parameter starts at the `...` token. Emit at the
-            // raw parameter span rather than through `error_at_node`, whose
-            // parameter normalization narrows the anchor to the name and would
-            // drop the leading `...`.
-            if let Some((start, end)) = self.get_node_span(param_idx) {
-                self.error(
-                    start,
-                    end.saturating_sub(start),
-                    "This parameter is not allowed with 'use strict' directive.".to_string(),
-                    diagnostic_codes::THIS_PARAMETER_IS_NOT_ALLOWED_WITH_USE_STRICT_DIRECTIVE,
-                );
-            }
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        // The directive anchor is shared: TS1347 is reported at it, and every
+        // TS1346 points at it through a TS1349 related entry. Compute it once,
+        // exactly as `error_at_node` would, so the primary diagnostic and the
+        // related entries cannot drift onto different spans.
+        let directive_span = self.get_node_span(directive_idx).map(|(start, end)| {
+            self.normalized_anchor_span(directive_idx, start, end.saturating_sub(start))
+        });
+
+        // tsc anchors on the whole parameter node (`error(parameter, …)`),
+        // which for a rest parameter starts at the `...` token. Emit at the
+        // raw parameter span rather than through `error_at_node`, whose
+        // parameter normalization narrows the anchor to the name and would
+        // drop the leading `...`.
+        let param_spans: Vec<(NodeIndex, u32, u32)> = non_simple
+            .iter()
+            .filter_map(|&param_idx| {
+                self.get_node_span(param_idx)
+                    .map(|(start, end)| (param_idx, start, end.saturating_sub(start)))
+            })
+            .collect();
+
+        for &(_, start, length) in &param_spans {
+            let related = directive_span
+                .map(|(directive_start, directive_length)| {
+                    vec![self.related_entry(
+                        directive_start,
+                        directive_length,
+                        diagnostic_codes::USE_STRICT_DIRECTIVE_USED_HERE,
+                        diagnostic_messages::USE_STRICT_DIRECTIVE_USED_HERE,
+                    )]
+                })
+                .unwrap_or_default();
+            self.error_at_span_with_related(
+                start,
+                length,
+                diagnostic_messages::THIS_PARAMETER_IS_NOT_ALLOWED_WITH_USE_STRICT_DIRECTIVE,
+                diagnostic_codes::THIS_PARAMETER_IS_NOT_ALLOWED_WITH_USE_STRICT_DIRECTIVE,
+                related,
+            );
         }
-        self.error_at_node(
+
+        // tsc names the first offending parameter and elides the rest as
+        // `and here.`, in source order — the same shape as its other
+        // multi-site grammar reports.
+        let related: Vec<_> = param_spans
+            .iter()
+            .enumerate()
+            .map(|(index, &(_, start, length))| {
+                if index == 0 {
+                    self.related_entry(
+                        start,
+                        length,
+                        diagnostic_codes::NON_SIMPLE_PARAMETER_DECLARED_HERE,
+                        diagnostic_messages::NON_SIMPLE_PARAMETER_DECLARED_HERE,
+                    )
+                } else {
+                    self.related_entry(
+                        start,
+                        length,
+                        diagnostic_codes::AND_HERE,
+                        diagnostic_messages::AND_HERE,
+                    )
+                }
+            })
+            .collect();
+        self.error_at_node_with_related(
             directive_idx,
-            "'use strict' directive cannot be used with non-simple parameter list.",
+            diagnostic_messages::USE_STRICT_DIRECTIVE_CANNOT_BE_USED_WITH_NON_SIMPLE_PARAMETER_LIST,
             diagnostic_codes::USE_STRICT_DIRECTIVE_CANNOT_BE_USED_WITH_NON_SIMPLE_PARAMETER_LIST,
+            related,
         );
+    }
+
+    /// A cross-location related-information entry in the file under check.
+    ///
+    /// `depth` stays `0`: these are genuine "declared here" pointers, not links
+    /// in an elaboration chain, so they must not pick up the progressive
+    /// indentation the renderer applies to nested elaborations.
+    fn related_entry(
+        &self,
+        start: u32,
+        length: u32,
+        code: u32,
+        message: &str,
+    ) -> crate::diagnostics::DiagnosticRelatedInformation {
+        crate::diagnostics::DiagnosticRelatedInformation {
+            category: tsz_common::diagnostics::DiagnosticCategory::Message,
+            code,
+            file: self.ctx.file_name.clone(),
+            start,
+            length,
+            message_text: message.to_string(),
+            depth: 0,
+        }
     }
 
     /// The brace block body of a function-like declaration, if it has one. Only
@@ -137,7 +217,10 @@ mod tests {
     use tsz_binder::BinderState;
     use tsz_parser::parser::ParserState;
 
-    fn checker_codes_at_target(source: &str, target: tsz_common::common::ScriptTarget) -> Vec<u32> {
+    fn checker_diagnostics_at_target(
+        source: &str,
+        target: tsz_common::common::ScriptTarget,
+    ) -> Vec<crate::diagnostics::Diagnostic> {
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let parse_diagnostics = parser.get_diagnostics().to_vec();
@@ -165,12 +248,52 @@ mod tests {
             parse_diagnostics.iter().map(|diag| diag.start).collect();
 
         checker.check_source_file(root);
-        checker
-            .ctx
-            .diagnostics
+        checker.ctx.diagnostics.clone()
+    }
+
+    fn checker_codes_at_target(source: &str, target: tsz_common::common::ScriptTarget) -> Vec<u32> {
+        checker_diagnostics_at_target(source, target)
             .iter()
             .map(|diag| diag.code)
             .collect()
+    }
+
+    /// The `(code, message_text)` pairs of the related information attached to
+    /// the first diagnostic with `code`, or `None` when no such diagnostic was
+    /// reported at all — so a test cannot pass vacuously on a missing primary.
+    fn related_of(
+        source: &str,
+        code: u32,
+        target: tsz_common::common::ScriptTarget,
+    ) -> Option<Vec<(u32, String)>> {
+        checker_diagnostics_at_target(source, target)
+            .into_iter()
+            .find(|diag| diag.code == code)
+            .map(|diag| {
+                diag.related_information
+                    .iter()
+                    .map(|rel| (rel.code, rel.message_text.clone()))
+                    .collect()
+            })
+    }
+
+    /// The source offset a related entry of `related_code` points at, on the
+    /// first diagnostic with `code`.
+    fn related_start(
+        source: &str,
+        code: u32,
+        related_code: u32,
+        target: tsz_common::common::ScriptTarget,
+    ) -> Option<u32> {
+        checker_diagnostics_at_target(source, target)
+            .into_iter()
+            .find(|diag| diag.code == code)
+            .and_then(|diag| {
+                diag.related_information
+                    .iter()
+                    .find(|rel| rel.code == related_code)
+                    .map(|rel| rel.start)
+            })
     }
 
     #[test]
@@ -190,6 +313,119 @@ mod tests {
                 codes.contains(&1346) && codes.contains(&1347),
                 "expected TS1346+TS1347 for `{source}`: {codes:?}"
             );
+        }
+    }
+
+    /// TS1346 points forward at the directive with a single TS1349 entry, for
+    /// every non-simple parameter shape and every function-like carrier.
+    #[test]
+    fn ts1346_carries_one_ts1349_pointing_at_the_directive() {
+        for source in [
+            "function widget(size = 1) { \"use strict\"; }",
+            "function collect(...items) { \"use strict\"; }",
+            "function unpack({ label }) { \"use strict\"; }",
+            "const handler = (opt = 2) => { \"use strict\"; };",
+            "class Store { method(seed = 3) { \"use strict\"; } }",
+            "class Widget { set label({ text }) { \"use strict\"; } }",
+        ] {
+            let related = related_of(source, 1346, tsz_common::common::ScriptTarget::ES2016)
+                .unwrap_or_else(|| panic!("no TS1346 reported for `{source}`"));
+            assert_eq!(
+                related,
+                vec![(1349, "'use strict' directive used here.".to_string())],
+                "TS1346 related information for `{source}`"
+            );
+            // The related entry must land on the directive, not on the
+            // parameter TS1346 is already anchored at.
+            assert_eq!(
+                related_start(source, 1346, 1349, tsz_common::common::ScriptTarget::ES2016),
+                Some(
+                    source
+                        .find("\"use strict\"")
+                        .expect("witness contains a \"use strict\" directive")
+                        as u32
+                ),
+                "TS1349 anchor for `{source}`"
+            );
+        }
+    }
+
+    /// TS1347 points back at every offending parameter: TS1348 names the first,
+    /// TS6204 (`and here.`) elides each subsequent one, in source order.
+    #[test]
+    fn ts1347_carries_ts1348_then_and_here_per_extra_parameter() {
+        let single = "function widget(size = 1) { \"use strict\"; }";
+        assert_eq!(
+            related_of(single, 1347, tsz_common::common::ScriptTarget::ES2016),
+            Some(vec![(
+                1348,
+                "Non-simple parameter declared here.".to_string()
+            )]),
+            "one non-simple parameter must produce exactly one TS1348 and no `and here.`"
+        );
+
+        // Three parameters, two of them non-simple, with a simple parameter
+        // interleaved — the related list must skip the simple one and stay in
+        // source order.
+        let multi = "function render(size = 1, plain, ...rest) { \"use strict\"; }";
+        assert_eq!(
+            related_of(multi, 1347, tsz_common::common::ScriptTarget::ES2016),
+            Some(vec![
+                (1348, "Non-simple parameter declared here.".to_string()),
+                (6204, "and here.".to_string()),
+            ]),
+            "TS1347 related information for `{multi}`"
+        );
+        assert_eq!(
+            related_start(multi, 1347, 1348, tsz_common::common::ScriptTarget::ES2016),
+            Some(
+                multi
+                    .find("size = 1")
+                    .expect("witness contains the first non-simple parameter")
+                    as u32
+            ),
+            "TS1348 must anchor on the first non-simple parameter"
+        );
+        assert_eq!(
+            related_start(multi, 1347, 6204, tsz_common::common::ScriptTarget::ES2016),
+            Some(
+                multi
+                    .find("...rest")
+                    .expect("witness contains the rest parameter") as u32
+            ),
+            "`and here.` must anchor on the rest parameter including its `...`"
+        );
+    }
+
+    /// The negative side: when the grammar check does not fire, neither related
+    /// code may appear anywhere in the file's diagnostics.
+    #[test]
+    fn related_codes_do_not_leak_when_the_check_does_not_fire() {
+        for (source, target) in [
+            (
+                "function plain(first, second) { \"use strict\"; }",
+                tsz_common::common::ScriptTarget::ES2016,
+            ),
+            (
+                "function widget(size = 1) { \"use strict\"; }",
+                tsz_common::common::ScriptTarget::ES2015,
+            ),
+            (
+                "function widget(size = 1) { const c = 1; \"use strict\"; }",
+                tsz_common::common::ScriptTarget::ES2016,
+            ),
+        ] {
+            let diagnostics = checker_diagnostics_at_target(source, target);
+            for diag in &diagnostics {
+                for rel in &diag.related_information {
+                    assert!(
+                        !matches!(rel.code, 1348 | 1349),
+                        "TS{} leaked as related information on TS{} for `{source}`",
+                        rel.code,
+                        diag.code
+                    );
+                }
+            }
         }
     }
 
