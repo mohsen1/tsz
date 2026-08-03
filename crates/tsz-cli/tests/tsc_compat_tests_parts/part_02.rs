@@ -1726,3 +1726,214 @@ fn augmenting_untyped_package_from_declaration_file_host_under_skip_lib_check_re
         "skipLibCheck must suppress the augmentation diagnostic, got:\n{output}"
     );
 }
+
+#[test]
+fn augmenting_untyped_subpath_from_declaration_file_host_reports_ts2665() {
+    // The `.d.ts`-hosted positive again, but the target is a nested subpath
+    // rather than the package entry point. #16260's side-channel collector
+    // resolves the augmentation name through the module resolver rather than
+    // through the shared `cached_module_specifiers` pipeline, so a subpath —
+    // which reaches the resolver by a different branch than a bare package
+    // name — needs its own row. The message must carry the subpath's own
+    // resolved file, not the package's `main`.
+    //
+    // Renamed binder relative to the sibling `.d.ts` rows: the rule keys on the
+    // resolution extension and `maxNodeModuleJsDepth`, never on the name.
+    let temp = TempDir::new("augment_untyped_dts_host_subpath").expect("temp dir");
+    write_file(
+        &temp.path.join("node_modules/anvil/lib/deep.js"),
+        "module.exports = {};\n",
+    );
+    write_file(
+        &temp.path.join("node_modules/anvil/package.json"),
+        "{ \"name\": \"anvil\", \"version\": \"1.0.0\", \"main\": \"index.js\" }\n",
+    );
+    write_file(
+        &temp.path.join("a.d.ts"),
+        "declare module \"anvil/lib/deep\" { export const d: string; }\nexport {};\n",
+    );
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        "{ \"compilerOptions\": { \"module\": \"commonjs\", \"strict\": false, \"types\": [] }, \"files\": [\"a.d.ts\"] }\n",
+    );
+
+    let Some((code, output)) = run_tsz_with_exit_code(
+        &temp.path,
+        &["-p", ".", "--noEmit", "--pretty", "false"],
+    ) else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+
+    assert_ne!(
+        code, 0,
+        "augmenting an untyped subpath from a .d.ts host should fail:\n{output}"
+    );
+    assert!(
+        output.contains("error TS2665: Invalid module name in augmentation. Module 'anvil/lib/deep' resolves to an untyped module at "),
+        "expected TS2665 naming the subpath specifier, got:\n{output}"
+    );
+    assert!(
+        output.contains("node_modules/anvil/lib/deep.js', which cannot be augmented."),
+        "TS2665 must name the resolved subpath file, not the package entry, got:\n{output}"
+    );
+}
+
+#[test]
+fn augmenting_typed_package_from_declaration_file_host_reports_nothing() {
+    // Negative control: augmenting a *typed* package from a `.d.ts` host is the
+    // ordinary, legal shape — it is what every `@types` override in the wild
+    // looks like. The side-channel collector resolves this specifier too, so
+    // this row is what proves resolving it does not by itself make the site
+    // noisy; only an untyped JS resolution target may.
+    let temp = TempDir::new("augment_typed_dts_host_clean").expect("temp dir");
+    write_file(
+        &temp.path.join("node_modules/gadget/index.js"),
+        "module.exports = {};\n",
+    );
+    write_file(
+        &temp.path.join("node_modules/gadget/index.d.ts"),
+        "export declare const g: string;\n",
+    );
+    write_file(
+        &temp.path.join("node_modules/gadget/package.json"),
+        "{ \"name\": \"gadget\", \"version\": \"1.0.0\", \"main\": \"index.js\", \"types\": \"index.d.ts\" }\n",
+    );
+    write_file(
+        &temp.path.join("a.d.ts"),
+        "declare module \"gadget\" { export const q: number; }\nexport {};\n",
+    );
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        "{ \"compilerOptions\": { \"module\": \"commonjs\", \"strict\": false, \"types\": [] }, \"files\": [\"a.d.ts\"] }\n",
+    );
+
+    let Some((code, output)) = run_tsz_with_exit_code(
+        &temp.path,
+        &["-p", ".", "--noEmit", "--pretty", "false"],
+    ) else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+
+    assert_eq!(code, 0, "augmenting a typed module is legal, got:\n{output}");
+    assert!(
+        output.trim().is_empty(),
+        "a typed .d.ts-hosted augmentation is clean, got:\n{output}"
+    );
+}
+
+#[test]
+fn augmenting_missing_module_from_declaration_file_host_reports_nothing() {
+    // Negative control for the arm the new resolution feeds *past*: a target
+    // that resolves to nothing at all stays silent in a `.d.ts` host, because
+    // TS2664 keeps its own `!is_declaration_file()` guard. This is the row that
+    // would catch the side channel leaking into general-purpose resolution and
+    // reviving TS2664 where tsc has none.
+    let temp = TempDir::new("augment_missing_dts_host_clean").expect("temp dir");
+    write_file(
+        &temp.path.join("a.d.ts"),
+        "declare module \"nowhere\" { export const n: number; }\nexport {};\n",
+    );
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        "{ \"compilerOptions\": { \"module\": \"commonjs\", \"strict\": false, \"types\": [] }, \"files\": [\"a.d.ts\"] }\n",
+    );
+
+    let Some((code, output)) = run_tsz_with_exit_code(
+        &temp.path,
+        &["-p", ".", "--noEmit", "--pretty", "false"],
+    ) else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+
+    assert_eq!(
+        code, 0,
+        "an unresolvable augmentation target is silent in a .d.ts host, got:\n{output}"
+    );
+    assert!(
+        output.trim().is_empty(),
+        "neither TS2664 nor TS2665 applies here, got:\n{output}"
+    );
+}
+
+#[test]
+fn pattern_and_bare_ambient_names_in_declaration_file_host_report_nothing() {
+    // Negative control for the two unresolvable shapes a real `.d.ts` is most
+    // likely to contain — a pattern ambient (`*.scss`) and a bare virtual
+    // specifier — both of which the new collector now hands to the resolver on
+    // every declaration file in the program. Both are legal and must stay
+    // silent, in tsz as in tsc.
+    let temp = TempDir::new("ambient_patterns_dts_host_clean").expect("temp dir");
+    write_file(
+        &temp.path.join("a.d.ts"),
+        "declare module \"*.scss\" {}\ndeclare module \"virtual:thing\" {}\nexport {};\n",
+    );
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        "{ \"compilerOptions\": { \"module\": \"commonjs\", \"strict\": false, \"types\": [] }, \"files\": [\"a.d.ts\"] }\n",
+    );
+
+    let Some((code, output)) = run_tsz_with_exit_code(
+        &temp.path,
+        &["-p", ".", "--noEmit", "--pretty", "false"],
+    ) else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+
+    assert_eq!(
+        code, 0,
+        "pattern and virtual ambient names are legal in a .d.ts, got:\n{output}"
+    );
+    assert!(
+        output.trim().is_empty(),
+        "no augmentation diagnostic applies to these, got:\n{output}"
+    );
+}
+
+#[test]
+fn script_declaration_file_declaring_an_untyped_package_reports_nothing() {
+    // The half of the gate that must NOT move: a *script* `.d.ts` (no top-level
+    // import or export) declares a genuine ambient external module rather than
+    // augmenting one, so tsc stays silent even though the same name resolves to
+    // an untyped `node_modules` JS file. Distinguishing this row from the
+    // positive one above is exactly the external-module test — if the
+    // declaration-file collector ever drops it, this row turns into a false
+    // positive on the single most common shape in `@types` packages.
+    let temp = TempDir::new("ambient_script_dts_clean").expect("temp dir");
+    write_file(
+        &temp.path.join("node_modules/lathe/index.js"),
+        "module.exports = {};\n",
+    );
+    write_file(
+        &temp.path.join("node_modules/lathe/package.json"),
+        "{ \"name\": \"lathe\", \"version\": \"1.0.0\", \"main\": \"index.js\" }\n",
+    );
+    write_file(
+        &temp.path.join("a.d.ts"),
+        "declare module \"lathe\" { export const l: number; }\n",
+    );
+    write_file(
+        &temp.path.join("tsconfig.json"),
+        "{ \"compilerOptions\": { \"module\": \"commonjs\", \"strict\": false, \"types\": [] }, \"files\": [\"a.d.ts\"] }\n",
+    );
+
+    let Some((code, output)) = run_tsz_with_exit_code(
+        &temp.path,
+        &["-p", ".", "--noEmit", "--pretty", "false"],
+    ) else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+
+    assert_eq!(
+        code, 0,
+        "a script .d.ts declares an ambient module, not an augmentation, got:\n{output}"
+    );
+    assert!(
+        !output.contains("TS2665"),
+        "an ambient declaration is not an augmentation, got:\n{output}"
+    );
+}

@@ -779,12 +779,16 @@ mod top_level_await_boundary_tests;
 mod truthiness_promise_coercion_tests;
 #[path = "tests/ts1101_with_in_strict_mode_tests.rs"]
 mod ts1101_with_in_strict_mode_tests;
+#[path = "tests/ts1165_ambient_class_method_computed_name_tests.rs"]
+mod ts1165_ambient_class_method_computed_name_tests;
 #[path = "tests/ts1168_method_overload_computed_name_tests.rs"]
 mod ts1168_method_overload_computed_name_tests;
 #[path = "tests/ts1170_computed_property_syntactic_form_tests.rs"]
 mod ts1170_computed_property_syntactic_form_tests;
 #[path = "tests/ts1361_ambient_computed_property_name_tests.rs"]
 mod ts1361_ambient_computed_property_name_tests;
+#[path = "tests/ts1539_bigint_literal_property_name_tests.rs"]
+mod ts1539_bigint_literal_property_name_tests;
 #[path = "tests/ts18010_jsdoc_tag_anchor_tests.rs"]
 mod ts18010_jsdoc_tag_anchor_tests;
 #[path = "tests/ts18050_nullish_keyword_without_strict_null_checks_tests.rs"]
