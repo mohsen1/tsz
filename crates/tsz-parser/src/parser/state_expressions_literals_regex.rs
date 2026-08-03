@@ -191,8 +191,103 @@ impl ParserState {
                 }
             }
 
+            /// Analyse one character class, starting just past its `[`, and
+            /// push range-order (TS1517) errors for the ranges it contains.
+            /// Under the `v` flag a class may contain further classes, and a
+            /// class that has committed to a `--`/`&&` class-set operator
+            /// contains no ranges at all — but its nested classes still do, so
+            /// the walk recurses instead of skipping.
+            fn analyze_class_ranges(
+                raw_text: &str,
+                i: &mut usize,
+                body_end: usize,
+                unicode_mode: bool,
+                unicode_sets_mode: bool,
+                errors: &mut Vec<(u32, u32)>,
+            ) {
+                let bytes = raw_text.as_bytes();
+                let mut tokens: Vec<ClassToken> = Vec::new();
+                let mut in_class_set_expression = false;
+
+                while *i < body_end {
+                    if bytes[*i] == b']' {
+                        *i += 1;
+                        break;
+                    }
+                    // `--` and `&&` commit the class to a `ClassSetExpression`,
+                    // which admits no ranges.
+                    if unicode_sets_mode
+                        && *i + 1 < body_end
+                        && ((bytes[*i] == b'-' && bytes[*i + 1] == b'-')
+                            || (bytes[*i] == b'&' && bytes[*i + 1] == b'&'))
+                    {
+                        in_class_set_expression = true;
+                        *i += 2;
+                        continue;
+                    }
+                    if bytes[*i] == b'-' {
+                        tokens.push(ClassToken::Hyphen);
+                        *i += 1;
+                        continue;
+                    }
+                    // A nested class is never a range bound, so it contributes
+                    // no code point to compare — but it is a class in its own
+                    // right and carries its own ranges.
+                    if unicode_sets_mode && bytes[*i] == b'[' {
+                        tokens.push(ClassToken::OpaqueAtom);
+                        *i += 1;
+                        analyze_class_ranges(
+                            raw_text,
+                            i,
+                            body_end,
+                            unicode_mode,
+                            unicode_sets_mode,
+                            errors,
+                        );
+                        continue;
+                    }
+                    let Some((atoms, next_i)) =
+                        parse_class_atom(raw_text, *i, body_end, unicode_mode)
+                    else {
+                        break;
+                    };
+                    if atoms.is_empty() {
+                        tokens.push(ClassToken::OpaqueAtom);
+                    } else {
+                        tokens.extend(
+                            atoms
+                                .into_iter()
+                                .map(|(value, start)| ClassToken::Atom { value, start }),
+                        );
+                    }
+                    *i = next_i;
+                }
+
+                if in_class_set_expression {
+                    return;
+                }
+
+                let mut token_index = 0usize;
+                while token_index + 2 < tokens.len() {
+                    match &tokens[token_index..token_index + 3] {
+                        [
+                            ClassToken::Atom { value: left, start },
+                            ClassToken::Hyphen,
+                            ClassToken::Atom { value: right, .. },
+                        ] => {
+                            if left > right {
+                                errors.push((*start, 1));
+                            }
+                            token_index += 3;
+                        }
+                        _ => token_index += 1,
+                    }
+                }
+            }
+
             let flags = &raw_text[body_end + 1..];
             let unicode_mode = flags.contains('u') || flags.contains('v');
+            let unicode_sets_mode = flags.contains('v');
             let bytes = raw_text.as_bytes();
             let mut errors = Vec::new();
             let mut i = 1usize;
@@ -207,50 +302,14 @@ impl ParserState {
                     }
                     b'[' => {
                         i += 1;
-                        let mut tokens = Vec::new();
-                        while i < body_end {
-                            if bytes[i] == b']' {
-                                i += 1;
-                                break;
-                            }
-                            if bytes[i] == b'-' {
-                                tokens.push(ClassToken::Hyphen);
-                                i += 1;
-                                continue;
-                            }
-                            let Some((atoms, next_i)) =
-                                parse_class_atom(raw_text, i, body_end, unicode_mode)
-                            else {
-                                break;
-                            };
-                            if atoms.is_empty() {
-                                tokens.push(ClassToken::OpaqueAtom);
-                            } else {
-                                tokens.extend(
-                                    atoms
-                                        .into_iter()
-                                        .map(|(value, start)| ClassToken::Atom { value, start }),
-                                );
-                            }
-                            i = next_i;
-                        }
-
-                        let mut token_index = 0usize;
-                        while token_index + 2 < tokens.len() {
-                            match &tokens[token_index..token_index + 3] {
-                                [
-                                    ClassToken::Atom { value: left, start },
-                                    ClassToken::Hyphen,
-                                    ClassToken::Atom { value: right, .. },
-                                ] => {
-                                    if left > right {
-                                        errors.push((*start, 1));
-                                    }
-                                    token_index += 3;
-                                }
-                                _ => token_index += 1,
-                            }
-                        }
+                        analyze_class_ranges(
+                            raw_text,
+                            &mut i,
+                            body_end,
+                            unicode_mode,
+                            unicode_sets_mode,
+                            &mut errors,
+                        );
                     }
                     _ => {
                         if let Some(ch) = raw_text.get(i..body_end).and_then(|s| s.chars().next()) {
@@ -1044,6 +1103,16 @@ impl ParserState {
                     return;
                 }
                 let ch = ctx.body[*pos];
+                // `ClassSetExpression` (the `v` flag) nests: a `[` inside a
+                // character class opens another class instead of contributing
+                // a literal `[`. Without the `v` flag the nested form is not
+                // grammar, so this must stay gated.
+                if ctx.unicode_sets_mode && ch == b'[' {
+                    *pos += 1;
+                    scan_class_ranges(parser, ctx, pos);
+                    range.push(ClassAtomKind::Class);
+                    return;
+                }
                 if ch == b'\\' {
                     *pos += 1;
                     if *pos >= ctx.body_end {
@@ -1135,6 +1204,11 @@ impl ParserState {
                     *pos += 1;
                 }
 
+                // A `ClassSetExpression` that has committed to `--`/`&&` no
+                // longer admits ranges, so a later `-` is not a range operator
+                // and its operands are not range bounds.
+                let mut in_class_set_expression = false;
+
                 while *pos < ctx.body_end {
                     if ctx.body[*pos] == b']' {
                         *pos += 1;
@@ -1143,6 +1217,7 @@ impl ParserState {
                     if ctx.unicode_sets_mode
                         && is_class_set_operator_at(ctx.body, *pos, ctx.body_end)
                     {
+                        in_class_set_expression = true;
                         scan_class_set_operator(parser, ctx.emit, ctx.body, ctx.body_end, pos);
                         continue;
                     }
@@ -1153,10 +1228,15 @@ impl ParserState {
                     if ctx.unicode_sets_mode
                         && is_class_set_operator_at(ctx.body, *pos, ctx.body_end)
                     {
+                        in_class_set_expression = true;
                         scan_class_set_operator(parser, ctx.emit, ctx.body, ctx.body_end, pos);
                         continue;
                     }
                     if *pos >= ctx.body_end || ctx.body[*pos] != b'-' {
+                        continue;
+                    }
+                    if in_class_set_expression {
+                        *pos += 1;
                         continue;
                     }
 
