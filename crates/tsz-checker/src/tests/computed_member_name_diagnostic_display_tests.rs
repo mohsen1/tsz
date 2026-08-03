@@ -689,3 +689,37 @@ fn parse_recovered_computed_name_inside_parentheses_is_still_declined() {
         "a parse-recovered computed name must not draw TS7033; got {codes:?}"
     );
 }
+
+#[test]
+fn parse_recovered_property_access_computed_name_is_declined() {
+    // `[aq70.]` recovers as a property access whose member name is the
+    // zero-width placeholder. The old whitelist *accepted* property accesses,
+    // so the recovery probe has to descend into the member position too, not
+    // only into operands. tsc reports only TS1003 here.
+    let codes: Vec<u32> = check_source_strict_messages(
+        "declare const aq70: { bq70: string }; declare class Cq55 { get [aq70.](); }",
+    )
+    .into_iter()
+    .map(|(code, _)| code)
+    .collect();
+    assert!(
+        !codes.contains(&7033),
+        "a parse-recovered computed name must not draw TS7033; got {codes:?}"
+    );
+}
+
+#[test]
+fn parse_recovered_element_access_computed_name_is_declined() {
+    // `[aq71[]` recovers as an element access with no argument. tsc reports
+    // only TS1011/TS1005.
+    let codes: Vec<u32> = check_source_strict_messages(
+        "declare const aq71: { bq71: string }; declare class Cq56 { get [aq71[](); }",
+    )
+    .into_iter()
+    .map(|(code, _)| code)
+    .collect();
+    assert!(
+        !codes.contains(&7033),
+        "a parse-recovered computed name must not draw TS7033; got {codes:?}"
+    );
+}

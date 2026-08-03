@@ -1568,13 +1568,23 @@ impl<'a> CheckerState<'a> {
     fn computed_name_expression_display_text(&self, expr_idx: NodeIndex) -> Option<String> {
         let expr_node = self.ctx.arena.get(expr_idx)?;
 
-        if !self.computed_name_expression_is_parse_recovered(expr_idx)
-            && let Some(verbatim) = self
-                .node_text(expr_idx)
-                .map(|text| text.trim().to_string())
-                .filter(|text| !text.is_empty())
+        // Source text answers the whole question when there is source text to
+        // read: render it verbatim, or decline outright if the parser recovered
+        // this name from a syntax error. Declining must *not* fall through to
+        // the structured arms below — they descend into a recovered node's
+        // well-formed half and rebuild a name from it (`[a.]` renders as `a.`
+        // through the property-access arm), which is the same silent divergence
+        // in the other direction.
+        if let Some(verbatim) = self
+            .node_text(expr_idx)
+            .map(|text| text.trim().to_string())
+            .filter(|text| !text.is_empty())
         {
-            return Some(verbatim);
+            return if self.computed_name_expression_is_parse_recovered(expr_idx) {
+                None
+            } else {
+                Some(verbatim)
+            };
         }
 
         if expr_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
@@ -1626,8 +1636,16 @@ impl<'a> CheckerState<'a> {
     /// unconditional `getTextOfNode`. The old whitelist had the opposite
     /// default, which is why each new node kind cost its own bug and fix.
     fn computed_name_expression_is_parse_recovered(&self, expr_idx: NodeIndex) -> bool {
+        // A *required* child that is absent is the other half of the same
+        // recovery signal: `[a.]` parses as a property access whose member name
+        // never materialized at all, rather than as a zero-width placeholder.
+        // Every position this probe descends into is required by its parent's
+        // grammar, so an absent one always means the parser gave up there.
+        if expr_idx.is_none() {
+            return true;
+        }
         let Some(node) = self.ctx.arena.get(expr_idx) else {
-            return false;
+            return true;
         };
 
         if self
