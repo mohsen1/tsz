@@ -278,6 +278,80 @@ fn top_level_await_using_in_a_script_still_reports_ts2853() {
 }
 
 // ---------------------------------------------------------------------------
+// A rejected modifier suppresses the placement grammar entirely
+//
+// `checkGrammarModifiers` runs ahead of the list grammar and returns as soon as
+// it reports. Every modifier is rejected on a `using` / `await using`
+// declaration — TS1491 / TS1495 interpolate whichever one was written — so the
+// list-level rules are never reached. These four rows are the reduced forms of
+// the corpus fixtures `usingDeclarations.13.ts` and `awaitUsingDeclarations.11.ts`,
+// which a two-sided `compare-to-parent.sh` caught as newly failing when the
+// placement rules were added without this gate.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn exported_using_reports_ts1491_without_ts1545() {
+    let codes = check_codes("export using x = null;");
+    assert!(
+        !codes.contains(&1545),
+        "TS1491 ends grammar checking before the placement rules, got {codes:?}"
+    );
+}
+
+#[test]
+fn declared_using_reports_ts1491_without_ts1545() {
+    let codes = check_codes("declare using y: null;");
+    assert!(
+        !codes.contains(&1545),
+        "TS1491 ends grammar checking before the placement rules, got {codes:?}"
+    );
+}
+
+#[test]
+fn exported_await_using_reports_ts1495_without_ts1546() {
+    let codes = check_codes("export await using x = null;");
+    assert!(
+        !codes.contains(&1546),
+        "TS1495 ends grammar checking before the placement rules, got {codes:?}"
+    );
+}
+
+#[test]
+fn declared_await_using_reports_ts1495_without_ts1546() {
+    let codes = check_codes("declare await using y: null;");
+    assert!(
+        !codes.contains(&1546),
+        "TS1495 ends grammar checking before the placement rules, got {codes:?}"
+    );
+}
+
+#[test]
+fn exported_using_inside_an_ambient_namespace_has_no_ts1545() {
+    let codes = check_codes("declare namespace N { export using i = null; }");
+    assert!(
+        !codes.contains(&1545),
+        "the modifier error wins in an ambient container too, got {codes:?}"
+    );
+}
+
+#[test]
+fn using_in_a_case_clause_with_no_modifier_still_reports_ts1547() {
+    // Control for the gate above: it must key on the modifier, not disable the
+    // placement rules wholesale.
+    let codes = check_codes(
+        r#"
+declare const x: number;
+switch (x) {
+    case 1:
+        using a = null;
+        break;
+}
+"#,
+    );
+    assert!(codes.contains(&1547), "expected TS1547, got {codes:?}");
+}
+
+// ---------------------------------------------------------------------------
 // TS1039 must not fire for an ambient `using` initializer
 // ---------------------------------------------------------------------------
 

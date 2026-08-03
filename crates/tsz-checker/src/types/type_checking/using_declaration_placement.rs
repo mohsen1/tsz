@@ -26,6 +26,17 @@ impl CheckerState<'_> {
     ) -> bool {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
+        // `checkGrammarModifiers` runs ahead of the list grammar and returns as
+        // soon as it reports, so a rejected modifier suppresses the placement
+        // rules entirely. Every modifier is rejected on a `using` / `await using`
+        // declaration — TS1491/TS1495 interpolate whichever one was written — so
+        // the predicate is simply "the statement carries a modifier", not a list
+        // of specific keywords. Without this, `declare using y: null;` draws
+        // TS1491 *and* TS1545 where tsc draws TS1491 alone.
+        if self.using_declaration_statement_has_modifiers(list_idx) {
+            return false;
+        }
+
         if self.ctx.is_ambient_declaration(list_idx) {
             let (message, code) = if is_await_using {
                 (
@@ -59,6 +70,27 @@ impl CheckerState<'_> {
         }
 
         false
+    }
+
+    /// Whether the variable statement wrapping this declaration list carries any
+    /// modifier. No modifier is legal on a `using` / `await using` declaration, so
+    /// the presence of one means `checkGrammarModifiers` already reported
+    /// TS1491/TS1495 and tsc never reached the list-level placement grammar.
+    fn using_declaration_statement_has_modifiers(&self, list_idx: NodeIndex) -> bool {
+        let Some(list_ext) = self.ctx.arena.get_extended(list_idx) else {
+            return false;
+        };
+        let Some(statement_node) = self.ctx.arena.get(list_ext.parent) else {
+            return false;
+        };
+        if statement_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+            return false;
+        }
+        self.ctx
+            .arena
+            .get_variable(statement_node)
+            .and_then(|statement| statement.modifiers.as_ref())
+            .is_some_and(|modifiers| !modifiers.nodes.is_empty())
     }
 
     /// Whether a variable declaration list is the direct child of a `case` or
