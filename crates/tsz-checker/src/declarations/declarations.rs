@@ -351,6 +351,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
     /// TS1250: "Function declarations are not allowed inside blocks in strict mode when targeting 'ES3' or 'ES5'."
     /// TS1251: Same, with "Class definitions are automatically in strict mode."
+    /// TS1252: Same, with "Modules are automatically in strict mode."
     fn check_strict_mode_function_in_block(&mut self, func_idx: NodeIndex) {
         // Only applies when targeting ES5 or lower
         if !self.ctx.compiler_options.target.is_es5() {
@@ -400,9 +401,13 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             _ => {}
         }
 
-        // The function is inside a block (if/while/for/etc.) — check strict mode
+        // The function is inside a block (if/while/for/etc.) — check strict mode.
+        // A module file is automatically strict, same as a class body; oracle-confirmed
+        // precedence when more than one reason applies: class > module > explicit strict.
         let in_class = self.is_inside_class(func_idx);
+        let in_module = !in_class && self.ctx.is_external_module_file();
         let in_strict = in_class
+            || in_module
             || self.ctx.compiler_options.always_strict
             || self.has_use_strict_directive(func_idx);
 
@@ -432,6 +437,14 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 diagnostic_messages::FUNCTION_DECLARATIONS_ARE_NOT_ALLOWED_INSIDE_BLOCKS_IN_STRICT_MODE_WHEN_TARGETIN_2
                     .to_string(),
                 diagnostic_codes::FUNCTION_DECLARATIONS_ARE_NOT_ALLOWED_INSIDE_BLOCKS_IN_STRICT_MODE_WHEN_TARGETIN_2,
+            );
+        } else if in_module {
+            self.ctx.error(
+                pos,
+                len,
+                diagnostic_messages::FUNCTION_DECLARATIONS_ARE_NOT_ALLOWED_INSIDE_BLOCKS_IN_STRICT_MODE_WHEN_TARGETIN_3
+                    .to_string(),
+                diagnostic_codes::FUNCTION_DECLARATIONS_ARE_NOT_ALLOWED_INSIDE_BLOCKS_IN_STRICT_MODE_WHEN_TARGETIN_3,
             );
         } else {
             self.ctx.error(
