@@ -63,7 +63,6 @@ pub(crate) enum AmbientModuleDeclarationSpecifierPolicy {
     SourceDiscovery,
     Check {
         is_external_module: bool,
-        skip_lib_check: bool,
     },
 }
 

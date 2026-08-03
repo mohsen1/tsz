@@ -40,7 +40,8 @@ pub(crate) use super::emit::{normalize_base_url, normalize_output_dir, normalize
 use super::resolution::collect_module_specifiers;
 use super::resolution::{
     ModuleResolutionCache, ProgramFileIndex, apply_json_type_import_attribute_override,
-    build_duplicate_package_redirects, canonicalize_or_owned, collect_export_binding_nodes,
+    build_duplicate_package_redirects, canonicalize_or_owned,
+    collect_declaration_file_augmentation_targets_for_untyped_check, collect_export_binding_nodes,
     collect_import_bindings, collect_module_specifiers_for_check, collect_star_export_specifiers,
     collect_type_packages_from_root, default_type_roots, env_flag,
     implied_resolution_mode_for_file_with_cache, is_declaration_file,
