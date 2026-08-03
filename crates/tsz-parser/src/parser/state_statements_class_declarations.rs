@@ -62,32 +62,40 @@ impl ParserState {
             NodeIndex::NONE
         };
 
-        let (type_parameters, heritage_clauses, members) =
+        let (type_parameters, heritage_clauses, members, end_pos) =
             if recover_reserved_class_name_as_statement {
-                (None, None, Self::make_node_list(Vec::new()))
+                (
+                    None,
+                    None,
+                    Self::make_node_list(Vec::new()),
+                    self.token_end(),
+                )
             } else {
                 let type_parameters = self
                     .is_token(SyntaxKind::LessThanToken)
                     .then(|| self.parse_type_parameters());
                 let heritage_clauses = self.parse_heritage_clauses();
                 let has_open_brace = self.parse_expected(SyntaxKind::OpenBraceToken);
-                let members = if !has_open_brace && self.is_token(SyntaxKind::DotToken) {
+                let (members, end_pos) = if !has_open_brace && self.is_token(SyntaxKind::DotToken) {
                     self.next_token();
                     self.non_block_close_brace_statement_errors_remaining =
                         CLASS_DOT_RECOVERY_STRAY_CLOSE_BRACE_COUNT;
-                    Self::make_node_list(Vec::new())
+                    (Self::make_node_list(Vec::new()), self.token_end())
                 } else {
                     let class_saved_flags = self.context_flags;
                     self.context_flags |= CONTEXT_FLAG_IN_CLASS;
                     let members = self.parse_class_members();
                     self.context_flags = class_saved_flags;
+                    // Capture the `}` token's own end before `parse_expected` advances past
+                    // it — `token_end()` after the call would report the end of the *next*
+                    // token instead.
+                    let end_pos = self.token_end();
                     self.parse_expected(SyntaxKind::CloseBraceToken);
-                    members
+                    (members, end_pos)
                 };
-                (type_parameters, heritage_clauses, members)
+                (type_parameters, heritage_clauses, members, end_pos)
             };
 
-        let end_pos = self.token_end();
         self.arena.add_class(
             syntax_kind_ext::CLASS_DECLARATION,
             start_pos,
@@ -213,9 +221,10 @@ impl ParserState {
         self.context_flags |= CONTEXT_FLAG_IN_CLASS;
         let members = self.parse_class_members();
         self.context_flags = class_saved_flags;
-        self.parse_expected(SyntaxKind::CloseBraceToken);
-
+        // Capture the `}` token's own end before `parse_expected` advances past it —
+        // `token_end()` after the call would report the end of the *next* token instead.
         let end_pos = self.token_end();
+        self.parse_expected(SyntaxKind::CloseBraceToken);
         self.arena.add_class(
             syntax_kind_ext::CLASS_DECLARATION,
             start_pos,
@@ -731,9 +740,10 @@ impl ParserState {
         self.context_flags |= CONTEXT_FLAG_IN_CLASS;
         let members = self.parse_class_members();
         self.context_flags = class_saved_flags;
-        self.parse_expected(SyntaxKind::CloseBraceToken);
-
+        // Capture the `}` token's own end before `parse_expected` advances past it —
+        // `token_end()` after the call would report the end of the *next* token instead.
         let end_pos = self.token_end();
+        self.parse_expected(SyntaxKind::CloseBraceToken);
 
         // Create a modifiers list from decorators
         // In TypeScript, decorators are part of the modifiers
@@ -791,9 +801,10 @@ impl ParserState {
         self.context_flags |= CONTEXT_FLAG_IN_CLASS;
         let members = self.parse_class_members();
         self.context_flags = class_saved_flags;
-        self.parse_expected(SyntaxKind::CloseBraceToken);
-
+        // Capture the `}` token's own end before `parse_expected` advances past it —
+        // `token_end()` after the call would report the end of the *next* token instead.
         let end_pos = self.token_end();
+        self.parse_expected(SyntaxKind::CloseBraceToken);
 
         // Combine decorators with abstract modifier
         let modifiers = if let Some(dec_list) = decorators {
