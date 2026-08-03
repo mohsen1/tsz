@@ -1,6 +1,6 @@
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::syntax_kind_ext::PROPERTY_SIGNATURE;
+use tsz_parser::parser::syntax_kind_ext::{COMPUTED_PROPERTY_NAME, PROPERTY_SIGNATURE};
 use tsz_solver::TypeId;
 
 /// The `readonly` / optional modifier signature of a single property
@@ -34,10 +34,9 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Track (member_idx, type_annotation, is_syntactic_name) for TS2717 comparison.
-        // `is_syntactic_name` is true when the name was determined from syntax alone
-        // (literal property name), false when it required evaluating a computed expression.
-        let mut seen: rustc_hash::FxHashMap<String, (NodeIndex, NodeIndex, bool)> =
+        // Track (member_idx, type_annotation) of the first declaration of each
+        // member name, for the TS2300 / TS2717 comparisons below.
+        let mut seen: rustc_hash::FxHashMap<String, (NodeIndex, NodeIndex)> =
             rustc_hash::FxHashMap::default();
         // Canonical name -> property-signature member nodes (source order) for
         // names that occur more than once. Only populated on a duplicate hit, so
@@ -60,19 +59,30 @@ impl<'a> CheckerState<'a> {
             let Some(sig) = self.ctx.arena.get_signature(member_node) else {
                 continue;
             };
-            // Try syntactic name first; fall back to resolved computed property name.
-            // This handles cases like `[c0]` where c0 is a const variable — the
-            // property name can only be determined by evaluating the expression type.
-            let (name, is_syntactic) = if let Some(n) = self.get_member_name(member_idx) {
-                (n, true)
-            } else if let Some(n) = self.get_property_name_resolved(sig.name) {
-                (n, false)
+            // A computed name declares a member only when it resolves to a
+            // literal or unique-symbol property name (`tsc`'s late-bound name
+            // rule), so it must go through the resolving query. The syntactic
+            // query returns the *expression's* source text for a computed name
+            // (`k` for `[k]`), which both invents a member for a name that
+            // declares none and collides with a sibling literal `k`.
+            let is_computed = self
+                .ctx
+                .arena
+                .get(sig.name)
+                .is_some_and(|node| node.kind == COMPUTED_PROPERTY_NAME);
+            let name = if is_computed {
+                let Some(n) = self.get_property_name_resolved(sig.name) else {
+                    continue;
+                };
+                n
+            } else if let Some(n) = self.get_member_name(member_idx) {
+                n
             } else {
                 continue;
             };
             let type_ann = sig.type_annotation;
 
-            if let Some(&(prev_idx, prev_type_ann, prev_syntactic)) = seen.get(&name) {
+            if let Some(&(prev_idx, prev_type_ann)) = seen.get(&name) {
                 let name_idx = sig.name;
 
                 // Record the full duplicate group (first declaration once, then
@@ -82,40 +92,39 @@ impl<'a> CheckerState<'a> {
                     .or_insert_with(|| vec![prev_idx])
                     .push(member_idx);
 
-                // TS2300 "Duplicate identifier" only when both declarations use
-                // syntactic (literal) names. Computed property names that resolve
-                // to the same value (e.g., `[c0]` and `[c1]` where c0="1", c1=1)
-                // get only TS2717, matching tsc behavior.
-                if is_syntactic && prev_syntactic {
-                    // tsc renders the duplicate name via `declarationNameToString`
-                    // of the FIRST declaration's name node (verbatim source
-                    // spelling), and reuses that spelling for every occurrence:
-                    // `{ "artist"; artist }` reports `'"artist"'` at both, and
-                    // `{ 0.0; '0' }` reports `'0.0'` (raw source, not the
-                    // canonicalized `0`).
-                    let prev_name_idx = self
-                        .ctx
-                        .arena
-                        .get(prev_idx)
-                        .and_then(|prev_node| self.ctx.arena.get_signature(prev_node))
-                        .map(|prev_sig| prev_sig.name)
-                        .unwrap_or(prev_idx);
-                    let display_name = self
-                        .declaration_name_to_string(prev_name_idx)
-                        .unwrap_or_else(|| name.clone());
+                // TS2300 on every declaration in the group. How each name was
+                // spelled does not matter — a computed name that reached this
+                // point resolved to a real member key, so it names the same
+                // member as its group siblings.
+                //
+                // tsc renders the duplicate name via `declarationNameToString`
+                // of the FIRST declaration's name node (verbatim source
+                // spelling), and reuses that spelling for every occurrence:
+                // `{ "artist"; artist }` reports `'"artist"'` at both, and
+                // `{ 0.0; '0' }` reports `'0.0'` (raw source, not the
+                // canonicalized `0`).
+                let prev_name_idx = self
+                    .ctx
+                    .arena
+                    .get(prev_idx)
+                    .and_then(|prev_node| self.ctx.arena.get_signature(prev_node))
+                    .map(|prev_sig| prev_sig.name)
+                    .unwrap_or(prev_idx);
+                let display_name = self
+                    .declaration_name_to_string(prev_name_idx)
+                    .unwrap_or_else(|| name.clone());
+                self.error_at_node(
+                    name_idx,
+                    &format!("Duplicate identifier '{display_name}'."),
+                    diagnostic_codes::DUPLICATE_IDENTIFIER,
+                );
+                // Also mark the first occurrence.
+                if self.ctx.arena.get(prev_idx).is_some() {
                     self.error_at_node(
-                        name_idx,
+                        prev_name_idx,
                         &format!("Duplicate identifier '{display_name}'."),
                         diagnostic_codes::DUPLICATE_IDENTIFIER,
                     );
-                    // Also mark the first occurrence.
-                    if self.ctx.arena.get(prev_idx).is_some() {
-                        self.error_at_node(
-                            prev_name_idx,
-                            &format!("Duplicate identifier '{display_name}'."),
-                            diagnostic_codes::DUPLICATE_IDENTIFIER,
-                        );
-                    }
                 }
 
                 // TS2717 on the subsequent declaration when types differ.
@@ -147,12 +156,20 @@ impl<'a> CheckerState<'a> {
                     );
                 }
             } else {
-                seen.insert(name, (member_idx, type_ann, is_syntactic));
+                seen.insert(name, (member_idx, type_ann));
             }
         }
 
         for (name, member_nodes) in &duplicate_groups {
-            self.report_property_modifier_disagreements(name, member_nodes);
+            // TS2687 names the member the same way TS2300 does — by the first
+            // declaration's verbatim spelling, not the canonical member key.
+            let first_name_node = self
+                .property_signature_name_node(member_nodes[0])
+                .unwrap_or(member_nodes[0]);
+            let display_name = self
+                .declaration_name_to_string(first_name_node)
+                .unwrap_or_else(|| name.clone());
+            self.report_property_modifier_disagreements(&display_name, member_nodes);
         }
     }
 
@@ -160,10 +177,10 @@ impl<'a> CheckerState<'a> {
     ///
     /// `tsc` raises this whenever two or more property declarations resolve to
     /// the same member name but disagree on the `readonly` or optional (`?`)
-    /// modifier. It is independent of the duplicate-identifier (TS2300) and
-    /// same-type (TS2717) diagnostics: it fires even when the names are computed
-    /// (so TS2300 is suppressed) and even when the declared types are identical
-    /// (so TS2717 is absent).
+    /// modifier. It is independent of the same-type (TS2717) diagnostic: it
+    /// fires even when the declared types are identical (so TS2717 is absent).
+    /// It accompanies TS2300 on the same group of declarations, and `name` is
+    /// the same first-declaration spelling TS2300 renders.
     ///
     /// Targeting mirrors `tsc`: the first declaration is the reference; every
     /// later declaration whose flags differ from it is flagged, and the
