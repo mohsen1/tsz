@@ -234,6 +234,10 @@ mod computed_property_name_end_position_tests;
 mod close_brace_node_end_position_tests;
 
 #[cfg(test)]
+#[path = "../../tests/close_brace_node_end_position_remaining_tests.rs"]
+mod close_brace_node_end_position_remaining_tests;
+
+#[cfg(test)]
 #[path = "../../tests/decorator_tests.rs"]
 mod decorator_tests;
 

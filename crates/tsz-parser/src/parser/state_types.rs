@@ -20,8 +20,11 @@ impl ParserState {
             self.deferred_type_member_close_braces -= 1;
             self.token_pos()
         } else {
+            // Capture the `}` token's own end before `parse_expected` advances past it —
+            // `token_end()` after the call would report the end of the *next* token instead.
+            let end_pos = self.token_end();
             self.parse_expected(SyntaxKind::CloseBraceToken);
-            self.token_end()
+            end_pos
         }
     }
 

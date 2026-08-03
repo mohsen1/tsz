@@ -414,8 +414,11 @@ impl ParserState {
             self.deferred_module_close_braces -= 1;
             self.token_pos()
         } else {
+            // Capture the `}` token's own end before `parse_expected` advances past it —
+            // `token_end()` after the call would report the end of the *next* token instead.
+            let end_pos = self.token_end();
             self.parse_expected(SyntaxKind::CloseBraceToken);
-            self.token_end()
+            end_pos
         };
 
         self.arena.add_module_block(
@@ -959,6 +962,10 @@ impl ParserState {
         let mut elements = Vec::new();
         let mut leave_closing_brace_for_statement_recovery = false;
         let mut consumed_closing_brace = false;
+        // Captured at each point `parse_expected(CloseBraceToken)` is actually about to
+        // consume `}` — `token_end()` called after that consumption reads the end of the
+        // *next* token instead, so the `}` end must be read before advancing past it.
+        let mut close_brace_end_pos: Option<u32> = None;
         while !self.is_token(SyntaxKind::CloseBraceToken)
             && !self.is_token(SyntaxKind::EndOfFileToken)
         {
@@ -979,6 +986,7 @@ impl ParserState {
                         "Expression expected.",
                         tsz_common::diagnostics::diagnostic_codes::EXPRESSION_EXPECTED,
                     );
+                    close_brace_end_pos = Some(self.token_end());
                     let _ = self.parse_expected(SyntaxKind::CloseBraceToken);
                     consumed_closing_brace = true;
                     leave_closing_brace_for_statement_recovery = false;
@@ -1098,9 +1106,10 @@ impl ParserState {
             } else if consumed_closing_brace {
                 true
             } else {
+                close_brace_end_pos = Some(self.token_end());
                 self.parse_expected(SyntaxKind::CloseBraceToken)
             };
-        let end_pos = self.token_end();
+        let end_pos = close_brace_end_pos.unwrap_or_else(|| self.token_end());
 
         self.arena.add_named_imports(
             syntax_kind_ext::NAMED_IMPORTS,
