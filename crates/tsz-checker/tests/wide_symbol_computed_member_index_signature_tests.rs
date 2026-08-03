@@ -1,10 +1,19 @@
 //! Adjacent-case matrix for issue #16307: a computed member keyed by a plain
 //! (non-unique) `symbol` must route into the containing type's symbol index
 //! signature, not mint a synthetic named member.
-use tsz_checker::test_utils::check_source_diagnostics;
+use tsz_checker::CheckerOptions;
+use tsz_checker::test_utils::{
+    check_source_diagnostics, check_source_with_libs, load_default_lib_files,
+};
 
 fn assert_clean(source: &str) {
     let diags = check_source_diagnostics(source);
+    assert!(diags.is_empty(), "expected exit 0 like tsc, got: {diags:?}");
+}
+
+fn assert_clean_with_libs(source: &str) {
+    let libs = load_default_lib_files();
+    let diags = check_source_with_libs(source, "test.ts", CheckerOptions::default(), &libs);
     assert!(diags.is_empty(), "expected exit 0 like tsc, got: {diags:?}");
 }
 
@@ -120,5 +129,53 @@ export const bad: FromU2 = a;
         diags.iter().any(|d| d.code == 2322 || d.code == 2741),
         "unique-symbol-keyed interfaces must not unify via a shared symbol \
          index signature, got: {diags:?}"
+    );
+}
+
+#[test]
+fn well_known_symbol_syntax_keyed_by_a_wide_global_augmentation_routes_to_index() {
+    // Adjacent case for #16307's own corpus witness (xstate's `Symbol.
+    // observable` interop convention): the literal `Symbol.<member>` syntax
+    // — not an identifier alias — routes to the symbol index signature when
+    // `<member>` is a user global augmentation typed plain `symbol`, exactly
+    // like the identifier-keyed cases above.
+    assert_clean_with_libs(
+        r#"
+declare global {
+  interface SymbolConstructor {
+    readonly observable: symbol;
+  }
+}
+
+interface Explicit { [key: symbol]: number }
+declare const e: Explicit;
+
+interface Implicit { [Symbol.observable]: number }
+declare const i: Implicit;
+
+export const implicitToExplicit: Explicit = i;
+export const explicitToImplicit: Implicit = e;
+"#,
+    );
+}
+
+#[test]
+fn well_known_symbol_syntax_for_a_real_well_known_keeps_named_identity() {
+    // Negative control: `Symbol.iterator` (and any genuine `unique
+    // symbol`-typed `SymbolConstructor` member) must keep minting its own
+    // literal `[Symbol.iterator]` named key, not fold into the wide-symbol
+    // index-signature path the new global-augmentation leg added.
+    let source = r#"
+interface HasIterator { [Symbol.iterator](): number }
+interface Other { other(): number }
+declare const h: HasIterator;
+export const bad: Other = h;
+"#;
+    let libs = load_default_lib_files();
+    let diags = check_source_with_libs(source, "test.ts", CheckerOptions::default(), &libs);
+    assert!(
+        diags.iter().any(|d| d.code == 2322 || d.code == 2741),
+        "Symbol.iterator must keep its own named identity, not unify with an \
+         unrelated interface via a symbol index signature, got: {diags:?}"
     );
 }
