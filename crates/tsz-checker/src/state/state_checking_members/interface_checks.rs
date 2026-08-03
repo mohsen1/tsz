@@ -988,11 +988,9 @@ impl<'a> CheckerState<'a> {
         use crate::diagnostics::diagnostic_codes;
         use rustc_hash::FxHashMap;
 
-        // Track canonical property names → (member_idx, type_annotation_node, is_syntactic) tuples.
-        // `is_syntactic` is true when the name was determined from syntax alone (literal name),
-        // false when it required evaluating a computed expression (e.g., `[c0]` where c0="1").
+        // Track canonical property names → (member_idx, type_annotation_node) pairs.
         // Methods are allowed to have overloads so they are excluded.
-        let mut seen_properties: FxHashMap<String, Vec<(NodeIndex, NodeIndex, bool)>> =
+        let mut seen_properties: FxHashMap<String, Vec<(NodeIndex, NodeIndex)>> =
             FxHashMap::default();
 
         for &member_idx in members {
@@ -1019,49 +1017,54 @@ impl<'a> CheckerState<'a> {
                 .arena
                 .get(sig.name)
                 .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
-            let (canonical_name, is_syntactic) = if is_computed {
-                // For computed properties, resolve via type evaluation to get
-                // the actual property name. This handles cases like `[c0]` and
-                // `[c1]` where c0="1" and c1=1 both resolve to property "1".
-                if let Some(name) = self.get_property_name_resolved(sig.name) {
-                    (name, false)
-                } else if let Some(name) = self.get_member_name_text(sig.name) {
-                    // Fall back to syntactic text if resolution fails
-                    (name, true)
-                } else {
+            // A computed name declares a member only when it resolves to a
+            // literal or unique-symbol property name (`tsc`'s late-bound name
+            // rule). `[c0]` and `[c1]` where c0="1" and c1=1 both resolve to
+            // property "1" and are duplicates; `[k]` where `k: string` names no
+            // member at all, so two such declarations are *not* duplicates of
+            // each other even though their source spellings are identical.
+            // Falling back to the syntactic text here would group them and
+            // report a duplicate `tsc` does not.
+            let canonical_name = if is_computed {
+                let Some(name) = self.get_property_name_resolved(sig.name) else {
                     continue;
-                }
+                };
+                name
             } else if let Some(name) = self.get_member_name_text(sig.name) {
-                (name, true)
+                name
             } else {
                 continue;
             };
 
-            // tsc does not flag duplicate well-known Symbol properties in interfaces
-            // (e.g., [Symbol.isConcatSpreadable]) because symbols are structurally unique.
-            if canonical_name.starts_with("[Symbol.") {
-                continue;
-            }
-            seen_properties.entry(canonical_name).or_default().push((
-                member_idx,
-                sig.type_annotation,
-                is_syntactic,
-            ));
+            seen_properties
+                .entry(canonical_name)
+                .or_default()
+                .push((member_idx, sig.type_annotation));
         }
 
         // Report errors for duplicates — tsc reports TS2300 on ALL occurrences
         // (both first and subsequent), not just the second+.
         for (name, entries) in &seen_properties {
             if entries.len() > 1 {
+                // tsc renders the duplicate name via `declarationNameToString` of
+                // the FIRST declaration's name node (verbatim source spelling) and
+                // reuses it for every occurrence: `{ "artist"; artist }` reports
+                // `'"artist"'` at both, and `{ "1"; 1 }` reports `'"1"'` (source,
+                // not the canonicalized `1`). Computed spellings are kept whole,
+                // so `{ ["abc"]; abc }` reports `'["abc"]'` at both. TS2717, by
+                // contrast, names the member by the *subsequent* declaration's
+                // spelling — the asymmetry is deliberate on both sides.
+                let first_name_node = self
+                    .get_interface_member_name_node(entries[0].0)
+                    .unwrap_or(entries[0].0);
+                let display_name = self
+                    .declaration_name_to_string(first_name_node)
+                    .unwrap_or_else(|| name.clone());
+
                 // TS2687: duplicate property declarations must agree on
                 // `readonly` / optional modifiers. Independent of TS2300/TS2717.
                 let member_nodes: Vec<NodeIndex> = entries.iter().map(|entry| entry.0).collect();
-                self.report_property_modifier_disagreements(name, &member_nodes);
-
-                // Check if all entries have syntactic names (for TS2300 decisions).
-                // When computed properties resolve to the same name (e.g., `[c0]` and `[c1]`
-                // where c0="1" and c1=1), tsc emits only TS2717, not TS2300.
-                let all_syntactic = entries.iter().all(|e| e.2);
+                self.report_property_modifier_disagreements(&display_name, &member_nodes);
 
                 // Resolve the first property's type for TS2717 comparison
                 let first_type = if entries[0].1.is_some() {
@@ -1070,29 +1073,18 @@ impl<'a> CheckerState<'a> {
                     TypeId::ANY
                 };
 
-                // tsc renders the duplicate name via `declarationNameToString` of
-                // the FIRST declaration's name node (verbatim source spelling) and
-                // reuses it for every occurrence: `{ "artist"; artist }` reports
-                // `'"artist"'` at both, and `{ "1"; 1 }` reports `'"1"'` (source,
-                // not the canonicalized `1`).
-                let first_name_node = self
-                    .get_interface_member_name_node(entries[0].0)
-                    .unwrap_or(entries[0].0);
-                let display_name = self
-                    .declaration_name_to_string(first_name_node)
-                    .unwrap_or_else(|| name.clone());
-
-                for (i, &(idx, type_ann, _is_syntactic)) in entries.iter().enumerate() {
+                for (i, &(idx, type_ann)) in entries.iter().enumerate() {
                     let error_node = self.get_interface_member_name_node(idx).unwrap_or(idx);
 
-                    // TS2300 only when all occurrences have syntactic (literal) names.
-                    if all_syntactic {
-                        self.error_at_node_msg(
-                            error_node,
-                            diagnostic_codes::DUPLICATE_IDENTIFIER,
-                            &[&display_name],
-                        );
-                    }
+                    // TS2300 on every declaration in the group. How each name was
+                    // spelled does not matter — a computed name that reached this
+                    // point resolved to a real member key, so it names the same
+                    // member as its group siblings.
+                    self.error_at_node_msg(
+                        error_node,
+                        diagnostic_codes::DUPLICATE_IDENTIFIER,
+                        &[&display_name],
+                    );
 
                     // TS2717 on subsequent declarations when types differ
                     if i > 0 {
