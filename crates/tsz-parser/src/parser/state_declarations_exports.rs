@@ -627,10 +627,15 @@ impl ParserState {
 
         // Skip '}' expected if we already emitted ',' expected at the same position.
         // tsc's parseDelimitedList emits only the comma error, not a closing brace error.
-        if !emitted_comma_error && !leave_closing_brace_for_statement_recovery {
+        let end_pos = if !emitted_comma_error && !leave_closing_brace_for_statement_recovery {
+            // Capture the `}` token's own end before `parse_expected` advances past it —
+            // `token_end()` after the call would report the end of the *next* token instead.
+            let end_pos = self.token_end();
             self.parse_expected(SyntaxKind::CloseBraceToken);
-        }
-        let end_pos = self.token_end();
+            end_pos
+        } else {
+            self.token_end()
+        };
 
         self.arena.add_named_imports(
             syntax_kind_ext::NAMED_EXPORTS,
