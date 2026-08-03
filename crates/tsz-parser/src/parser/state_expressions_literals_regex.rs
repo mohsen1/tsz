@@ -5,7 +5,7 @@
 
 use super::state::ParserState;
 use crate::parser::{NodeIndex, node::LiteralData};
-use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use tsz_scanner::SyntaxKind;
 use tsz_scanner::scanner_impl::TokenFlags;
 
@@ -303,12 +303,56 @@ impl ParserState {
                 strict_mode: bool,
                 unicode_sets_mode: bool,
                 start_pos: u32,
+                capturing_group_count: u32,
             }
 
             struct CharEscapeScanCtx<'a> {
                 body: &'a [u8],
                 strict_mode: bool,
                 end: usize,
+                capturing_group_count: u32,
+            }
+
+            /// Count the capturing groups in the whole pattern, the way tsc's
+            /// `scanRegularExpressionWorker` does on its first pass.
+            ///
+            /// A backreference is legal when it names a group that exists
+            /// *anywhere* in the pattern, including one that appears later or in
+            /// another alternative, so the count has to be known before any
+            /// escape is judged. Capturing forms are `(` and `(?<name>`;
+            /// `(?:`, `(?=`, `(?!`, `(?<=`, `(?<!` and modifier groups are not.
+            fn count_capturing_groups(body: &[u8], body_end: usize) -> u32 {
+                let mut count = 0u32;
+                let mut in_class = false;
+                let mut pos = 1usize;
+
+                while pos < body_end {
+                    match body[pos] {
+                        // Skip the escaped byte so `\(` and `\[` never open
+                        // anything. Continuation bytes of a multi-byte escaped
+                        // character are all >= 0x80, so they match no arm here.
+                        b'\\' => pos += 1,
+                        b'[' if !in_class => in_class = true,
+                        b']' if in_class => in_class = false,
+                        b'(' if !in_class => {
+                            if body.get(pos + 1) == Some(&b'?') {
+                                // `(?<name>` captures; `(?<=` and `(?<!` are
+                                // lookbehind assertions and do not.
+                                if body.get(pos + 2) == Some(&b'<')
+                                    && !matches!(body.get(pos + 3), Some(&b'=' | &b'!'))
+                                {
+                                    count += 1;
+                                }
+                            } else {
+                                count += 1;
+                            }
+                        }
+                        _ => {}
+                    }
+                    pos += 1;
+                }
+
+                count
             }
 
             fn scan_digits(body: &[u8], end: usize, pos: &mut usize) -> usize {
@@ -574,6 +618,46 @@ impl ParserState {
                             *pos += 1;
                         }
                     }
+                    b'1'..=b'9' if atom_escape => {
+                        // A decimal escape outside a character class is a
+                        // backreference, in every mode: tsc validates it with
+                        // and without the Unicode flags, so this arm must not be
+                        // gated on `strict_mode`. The span covers the digits
+                        // only — the backslash is not part of it.
+                        let digits_start = *pos;
+                        while *pos < end && body[*pos].is_ascii_digit() {
+                            *pos += 1;
+                        }
+                        let digits_len = (*pos - digits_start) as u32;
+                        let group_number = std::str::from_utf8(&body[digits_start..*pos])
+                            .ok()
+                            .and_then(|digits| digits.parse::<u32>().ok())
+                            // A digit run too long for `u32` cannot name any
+                            // group in a pattern this scanner could reach.
+                            .unwrap_or(u32::MAX);
+
+                        if scan_ctx.capturing_group_count == 0 {
+                            emit(
+                                parser,
+                                digits_start,
+                                digits_len,
+                                diagnostic_messages::THIS_BACKREFERENCE_REFERS_TO_A_GROUP_THAT_DOES_NOT_EXIST_THERE_ARE_NO_CAPTURING,
+                                diagnostic_codes::THIS_BACKREFERENCE_REFERS_TO_A_GROUP_THAT_DOES_NOT_EXIST_THERE_ARE_NO_CAPTURING,
+                            );
+                        } else if group_number > scan_ctx.capturing_group_count {
+                            let message = format_message(
+                                diagnostic_messages::THIS_BACKREFERENCE_REFERS_TO_A_GROUP_THAT_DOES_NOT_EXIST_THERE_ARE_ONLY_CAPTURIN,
+                                &[&scan_ctx.capturing_group_count.to_string()],
+                            );
+                            emit(
+                                parser,
+                                digits_start,
+                                digits_len,
+                                &message,
+                                diagnostic_codes::THIS_BACKREFERENCE_REFERS_TO_A_GROUP_THAT_DOES_NOT_EXIST_THERE_ARE_ONLY_CAPTURIN,
+                            );
+                        }
+                    }
                     b'0'..=b'9' => {
                         while *pos < end && body[*pos].is_ascii_digit() {
                             *pos += 1;
@@ -809,6 +893,7 @@ impl ParserState {
                                     body: ctx.body,
                                     strict_mode: ctx.strict_mode,
                                     end: ctx.body_end,
+                                    capturing_group_count: ctx.capturing_group_count,
                                 },
                                 pos,
                                 false,
@@ -995,6 +1080,7 @@ impl ParserState {
                                         body: ctx.body,
                                         strict_mode: ctx.strict_mode,
                                         end: ctx.body_end,
+                                        capturing_group_count: ctx.capturing_group_count,
                                     },
                                     pos,
                                     true,
@@ -1384,6 +1470,7 @@ impl ParserState {
                 strict_mode,
                 unicode_sets_mode,
                 start_pos,
+                capturing_group_count: count_capturing_groups(bytes, body_end),
             };
             let mut pos = 1usize;
             scan_disjunction(parser, &ctx, &mut pos, false);
