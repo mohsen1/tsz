@@ -424,21 +424,15 @@ fn pretty_mode_renders_related_location_snippet_and_message() {
     reporter.set_cwd(&temp.path);
     let output = reporter.render(&[diagnostic]);
 
+    // tsc puts a blank line before a cross-location related entry, then the
+    // message on the location line after ` - `, then the snippet underneath.
     assert!(
-        output.contains("decl.ts:1:18"),
-        "missing related location: {output}"
-    );
-    assert!(
-        output.contains("1 declare function foo(): void;"),
-        "missing related source snippet: {output}"
-    );
-    assert!(
-        output.contains("~~~"),
-        "missing related underline: {output}"
-    );
-    assert!(
-        output.contains("    The symbol is declared here."),
-        "missing related message: {output}"
+        output.contains(
+            "\n\n  decl.ts:1:18 - The symbol is declared here.\n\
+             \x20   1 declare function foo(): void;\n\
+             \x20                      ~~~"
+        ),
+        "related block does not match tsc's pretty shape: {output}"
     );
 }
 

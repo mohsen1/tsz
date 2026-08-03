@@ -859,9 +859,11 @@ fn list_files_only_unsupported_js_root_diagnostics(
                     "Root file specified for compilation",
                 )
             };
-            diagnostic
-                .related_information
-                .push(Diagnostic::related_message(code, String::new(), 0, 0, message));
+            let mut reason = Diagnostic::related_message(code, String::new(), 0, 0, message);
+            // Second link of tsc's file-inclusion-reason chain, so it indents
+            // one level deeper than the header above it.
+            reason.depth = 1;
+            diagnostic.related_information.push(reason);
             diagnostic
         })
         .collect()

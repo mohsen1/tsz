@@ -198,9 +198,10 @@ impl Reporter {
             out.push_str(&snippet);
         }
 
-        // Related information
+        // Related information. Each entry supplies its own leading newline(s):
+        // a located entry is separated from what precedes it by a blank line,
+        // an unlocated chain link is not.
         for related in &diagnostic.related_information {
-            out.push('\n');
             self.format_related_pretty(out, related);
         }
     }
@@ -323,17 +324,32 @@ impl Reporter {
     }
 
     /// Format related information in pretty mode.
+    ///
+    /// A *located* entry — one that names a file, i.e. a genuine cross-location
+    /// "declared here" pointer — is preceded by a blank line and puts its
+    /// message on the location line, with the source snippet underneath:
     /// ```text
-    ///   file:line:col
+    ///
+    ///   file:line:col - message
     ///     {line_num} {source_line}
     ///     {spaces}{tildes}
-    ///     message
     /// ```
+    /// An *unlocated* entry is a message-chain link (tsc keeps these in
+    /// `messageText` rather than `relatedInformation`), and renders as plain
+    /// indented text with no blank line and no location, exactly as in
+    /// non-pretty mode.
     fn format_related_pretty(&mut self, out: &mut String, related: &DiagnosticRelatedInformation) {
-        let file_display = self.relative_path(&related.file);
+        let message = self.translate_message(related.code, &related.message_text);
 
-        // Location line (2-space indent)
-        out.push_str("  ");
+        if related.file.is_empty() {
+            out.push('\n');
+            self.format_related_plain(out, related);
+            return;
+        }
+
+        // Blank line, then the location line (2-space indent).
+        out.push_str("\n\n  ");
+        let file_display = self.relative_path(&related.file);
         if let Some((line, col)) = self.position_for(&related.file, related.start) {
             if self.color {
                 out.push_str(&file_display.bright_cyan().to_string());
@@ -344,26 +360,22 @@ impl Reporter {
             } else {
                 let _ = write!(out, "{file_display}:{line}:{col}");
             }
-        } else if !related.file.is_empty() {
-            if self.color {
-                out.push_str(&file_display.bright_cyan().to_string());
-            } else {
-                out.push_str(&file_display);
-            }
+        } else if self.color {
+            out.push_str(&file_display.bright_cyan().to_string());
+        } else {
+            out.push_str(&file_display);
         }
 
-        // Source snippet (4-space indent)
+        // Message continues the location line, uncolored.
+        out.push_str(" - ");
+        out.push_str(&message);
+
+        // Source snippet (4-space indent), underneath the location line.
         if let Some(snippet) =
             self.format_snippet_pretty_related(&related.file, related.start, related.length)
         {
             out.push_str(&snippet);
         }
-
-        // Message (4-space indent)
-        out.push('\n');
-        out.push_str("    ");
-        let message = self.translate_message(related.code, &related.message_text);
-        out.push_str(&message);
     }
 
     /// Format snippet for related info with 4-space indent and cyan underline.
@@ -680,6 +692,185 @@ fn decode_source_bytes(bytes: &[u8]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A reporter that renders from in-memory sources, with no cwd-relative
+    /// path rewriting and no colors, so rendered output can be compared byte
+    /// for byte against a `tsc --pretty` transcript.
+    fn reporter_with_source(file: &str, source: &str) -> Reporter {
+        let mut reporter = Reporter::new(false);
+        reporter.set_pretty(true);
+        reporter.cwd = None;
+        reporter
+            .sources
+            .insert(file.to_string(), source.to_string());
+        reporter
+    }
+
+    fn related_at(
+        file: &str,
+        start: u32,
+        length: u32,
+        message: &str,
+    ) -> DiagnosticRelatedInformation {
+        DiagnosticRelatedInformation {
+            category: DiagnosticCategory::Message,
+            code: 0,
+            file: file.to_string(),
+            start,
+            length,
+            message_text: message.to_string(),
+            depth: 0,
+        }
+    }
+
+    /// tsc 7.0.2, `--pretty --strict`, on
+    /// `function f(a = 1) { "use strict"; }`:
+    ///
+    /// ```text
+    /// us.ts:1:12 - error TS1346: This parameter is not allowed with 'use strict' directive.
+    ///
+    /// 1 function f(a = 1) { "use strict"; }
+    ///              ~~~~~
+    ///
+    ///   us.ts:1:21 - 'use strict' directive used here.
+    ///     1 function f(a = 1) { "use strict"; }
+    ///                           ~~~~~~~~~~~~~
+    /// ```
+    ///
+    /// The load-bearing details: a blank line separates the related entry from
+    /// the primary's underline, and the related message sits on the location
+    /// line after ` - `, with its snippet underneath.
+    #[test]
+    fn pretty_located_related_puts_message_on_the_location_line() {
+        let source = "function f(a = 1) { \"use strict\"; }\n";
+        let mut reporter = reporter_with_source("us.ts", source);
+
+        let mut diagnostic = Diagnostic::error(
+            "us.ts".to_string(),
+            11,
+            5,
+            "This parameter is not allowed with 'use strict' directive.",
+            1346,
+        );
+        diagnostic.related_information.push(related_at(
+            "us.ts",
+            20,
+            13,
+            "'use strict' directive used here.",
+        ));
+
+        let mut out = String::new();
+        reporter.format_diagnostic_pretty(&mut out, &diagnostic);
+
+        assert_eq!(
+            out,
+            "us.ts:1:12 - error TS1346: This parameter is not allowed with 'use strict' directive.\n\
+             \n\
+             1 function f(a = 1) { \"use strict\"; }\n\
+             \x20            ~~~~~\n\
+             \n\
+             \x20 us.ts:1:21 - 'use strict' directive used here.\n\
+             \x20   1 function f(a = 1) { \"use strict\"; }\n\
+             \x20                         ~~~~~~~~~~~~~",
+            "rendered:\n{out}"
+        );
+    }
+
+    /// Every located entry gets its own blank line, not just the first — tsc
+    /// on `function g(a = 1, [b] = [2]) {{ \"use strict\"; }}` reports TS1347
+    /// with two pointers (`Non-simple parameter declared here.` / `and here.`)
+    /// separated by a blank line each.
+    #[test]
+    fn pretty_blank_line_precedes_every_located_related_entry() {
+        let source = "function g(a = 1, [b] = [2]) { \"use strict\"; }\n";
+        let mut reporter = reporter_with_source("multi.ts", source);
+
+        let mut diagnostic = Diagnostic::error(
+            "multi.ts".to_string(),
+            31,
+            13,
+            "'use strict' directive cannot be used with non-simple parameter list.",
+            1347,
+        );
+        diagnostic.related_information.push(related_at(
+            "multi.ts",
+            11,
+            5,
+            "Non-simple parameter declared here.",
+        ));
+        diagnostic
+            .related_information
+            .push(related_at("multi.ts", 18, 9, "and here."));
+
+        let mut out = String::new();
+        reporter.format_diagnostic_pretty(&mut out, &diagnostic);
+
+        let related_block = out
+            .split_once("~~~~~~~~~~~~~\n")
+            .expect("primary underline present")
+            .1;
+        assert_eq!(
+            related_block,
+            "\n\
+             \x20 multi.ts:1:12 - Non-simple parameter declared here.\n\
+             \x20   1 function g(a = 1, [b] = [2]) { \"use strict\"; }\n\
+             \x20                ~~~~~\n\
+             \n\
+             \x20 multi.ts:1:19 - and here.\n\
+             \x20   1 function g(a = 1, [b] = [2]) { \"use strict\"; }\n\
+             \x20                       ~~~~~~~~~",
+            "rendered:\n{out}"
+        );
+    }
+
+    /// An entry with no file is a message-chain link, not a cross-location
+    /// pointer. tsc renders those as plain indented text in *both* modes —
+    /// `tsc --pretty` on a JS root without `allowJs` prints
+    ///
+    /// ```text
+    /// error TS6504: File 'root.js' is a JavaScript file. Did you mean to enable the 'allowJs' option?
+    ///   The file is in the program because:
+    ///     Root file specified for compilation
+    /// ```
+    ///
+    /// with no blank line, no location, and 2 spaces per nesting level.
+    #[test]
+    fn pretty_unlocated_related_renders_as_indented_chain_text() {
+        let mut reporter = Reporter::new(false);
+        reporter.set_pretty(true);
+        reporter.cwd = None;
+
+        let mut diagnostic = Diagnostic::error(
+            String::new(),
+            0,
+            0,
+            "File 'root.js' is a JavaScript file. Did you mean to enable the 'allowJs' option?",
+            6504,
+        );
+        diagnostic
+            .related_information
+            .push(DiagnosticRelatedInformation {
+                depth: 0,
+                ..related_at("", 0, 0, "The file is in the program because:")
+            });
+        diagnostic
+            .related_information
+            .push(DiagnosticRelatedInformation {
+                depth: 1,
+                ..related_at("", 0, 0, "Root file specified for compilation")
+            });
+
+        let mut out = String::new();
+        reporter.format_diagnostic_pretty(&mut out, &diagnostic);
+
+        assert_eq!(
+            out,
+            "error TS6504: File 'root.js' is a JavaScript file. Did you mean to enable the 'allowJs' option?\n\
+             \x20 The file is in the program because:\n\
+             \x20   Root file specified for compilation",
+            "rendered:\n{out}"
+        );
+    }
 
     #[test]
     fn decode_utf8() {
