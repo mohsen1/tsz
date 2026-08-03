@@ -779,6 +779,8 @@ mod top_level_await_boundary_tests;
 mod truthiness_promise_coercion_tests;
 #[path = "tests/ts1101_with_in_strict_mode_tests.rs"]
 mod ts1101_with_in_strict_mode_tests;
+#[path = "tests/ts1168_method_overload_computed_name_tests.rs"]
+mod ts1168_method_overload_computed_name_tests;
 #[path = "tests/ts1170_computed_property_syntactic_form_tests.rs"]
 mod ts1170_computed_property_syntactic_form_tests;
 #[path = "tests/ts1361_ambient_computed_property_name_tests.rs"]

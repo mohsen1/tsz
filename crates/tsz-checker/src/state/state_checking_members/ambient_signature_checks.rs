@@ -716,6 +716,42 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // TS1168: a computed method name in a *concrete* (non-ambient) class
+        // must be a literal or `unique symbol`-typed expression when the
+        // method has no body — either a genuine overload signature ahead of
+        // its implementation, or a standalone `abstract` method, both of
+        // which are bodyless. tsc reports this per bodyless declaration, not
+        // once per overload group: an implementation with a body (even one
+        // sharing the same bad computed name) never takes it, only the
+        // signature(s) that precede it. TS1165 is this same grammar rule's
+        // ambient-context sibling (`declare class`/`.d.ts`); the two are
+        // mutually exclusive on the same `is_ambient` computation used above
+        // for TS1221/TS1222, so this arm only ever fires where TS1165 does
+        // not. Accessors are a different function (`check_accessor_...`) and
+        // are not affected: an `abstract get`/`set` with a bad computed name
+        // stays clean under tsc's own grammar, unlike an `abstract` method.
+        if method.body.is_none() {
+            let in_declared_class = self
+                .ctx
+                .enclosing_class
+                .as_ref()
+                .is_some_and(|c| c.is_declared);
+            let method_has_declare = self.has_declare_modifier(&method.modifiers);
+            let is_ambient = in_declared_class
+                || method_has_declare
+                || self.ctx.is_declaration_file()
+                || self.is_ambient_declaration(member_idx);
+
+            if !is_ambient {
+                use crate::diagnostics::diagnostic_messages;
+                self.check_computed_property_requires_literal(
+                    method.name,
+                    diagnostic_messages::A_COMPUTED_PROPERTY_NAME_IN_A_METHOD_OVERLOAD_MUST_REFER_TO_AN_EXPRESSION_WHOSE,
+                    diagnostic_codes::A_COMPUTED_PROPERTY_NAME_IN_A_METHOD_OVERLOAD_MUST_REFER_TO_AN_EXPRESSION_WHOSE,
+                );
+            }
+        }
+
         // Keep syntax and declaration-stamped JSDoc binders in scope while checking.
         let (type_params, type_param_updates) = self.push_type_parameters(&method.type_parameters);
         let method_jsdoc = self.get_jsdoc_for_function(member_idx);
