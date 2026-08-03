@@ -447,6 +447,8 @@ mod js_file_function_parameters_as_optional_tests;
 mod js_open_object_property_access_tests;
 #[path = "tests/jsdoc_bare_import_type_tests.rs"]
 mod jsdoc_bare_import_type_tests;
+#[path = "tests/jsdoc_bare_type_tag_non_prototype_expando_tests.rs"]
+mod jsdoc_bare_type_tag_non_prototype_expando_tests;
 #[path = "tests/jsdoc_cast_and_define_property_widening_tests.rs"]
 mod jsdoc_cast_and_define_property_widening_tests;
 #[path = "tests/jsdoc_closure_function_type_tests.rs"]
