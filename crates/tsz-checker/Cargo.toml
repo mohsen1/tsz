@@ -1567,6 +1567,9 @@ path = "tests/self_referencing_alias_member_inheritance_tests.rs"
 name = "self_referential_class_ctor_window_tests"
 path = "tests/self_referential_class_ctor_window_tests.rs"
 [[test]]
+name = "setter_parameter_grammar_container_coverage_tests"
+path = "tests/setter_parameter_grammar_container_coverage_tests.rs"
+[[test]]
 name = "contextual_typing_tests"
 path = "tests/contextual_typing_tests.rs"
 [[test]]
