@@ -53,6 +53,9 @@ pub(crate) struct WellKnownSymbolShape {
     /// The canonical `[Symbol.<name>]` key when the accessed member is
     /// spelled as an identifier or a non-empty string literal.
     pub(crate) name: Option<String>,
+    /// The raw, unformatted member text (`"observable"` for `Symbol.observable`),
+    /// used to look up the member's declared type on `SymbolConstructor`.
+    member: Option<String>,
 }
 
 /// Syntactic match of `<base ident>.<member>` / `<base ident>["<member>"]`
@@ -127,7 +130,11 @@ pub(crate) fn well_known_symbol_access_shape(
     }
     Some(WellKnownSymbolShape {
         base: parts.base,
-        name: parts.member.map(|member| format!("[Symbol.{member}]")),
+        name: parts
+            .member
+            .clone()
+            .map(|member| format!("[Symbol.{member}]")),
+        member: parts.member,
     })
 }
 
@@ -141,6 +148,18 @@ pub(crate) enum WellKnownSymbolName {
 }
 
 /// Match and verify a well-known-symbol computed name expression.
+///
+/// Real well-known symbols (`Symbol.iterator`, `Symbol.asyncIterator`, ...)
+/// are declared `readonly <name>: unique symbol` on `SymbolConstructor`. A
+/// `declare global { interface SymbolConstructor { <name>: symbol } }`
+/// augmentation — xstate's `Symbol.observable` interop convention (#16307) —
+/// types `<name>` as plain `symbol` instead, which tsc does NOT treat as a
+/// well-known named key: it contributes to the containing type's symbol index
+/// signature like any other wide-`symbol`-keyed member. Returning `None` here
+/// for that case (rather than `Some(Global(..))`) lets the ordinary
+/// value-position computed-name resolution take over, which routes a wide
+/// `symbol` key into the index-signature leg instead of minting a synthetic
+/// named member.
 pub(crate) fn well_known_symbol_property_name(
     ctx: &CheckerContext<'_>,
     arena: &NodeArena,
@@ -150,10 +169,75 @@ pub(crate) fn well_known_symbol_property_name(
     let shape = well_known_symbol_access_shape(arena, expr_idx)?;
     if identifier_resolves_to_unshadowed_global_in_context(ctx, arena, binder, shape.base, "Symbol")
     {
-        shape.name.map(WellKnownSymbolName::Global)
+        let name = shape.name?;
+        if let Some(member) = shape.member.as_deref()
+            && symbol_constructor_member_is_unique_symbol(ctx, member) == Some(false)
+        {
+            return None;
+        }
+        Some(WellKnownSymbolName::Global(name))
     } else {
         Some(WellKnownSymbolName::Shadowed)
     }
+}
+
+/// Is `member_name` declared `unique symbol` (vs. plain `symbol`) on the
+/// resolved `SymbolConstructor` interface, across every merged declaration
+/// (lib plus any `declare global` augmentation)? `None` when `member_name`
+/// is not declared on `SymbolConstructor` at all, or `SymbolConstructor`
+/// itself cannot be resolved — callers keep their prior well-known
+/// classification in that case rather than dropping a name they cannot
+/// otherwise recover.
+fn symbol_constructor_member_is_unique_symbol(
+    ctx: &CheckerContext<'_>,
+    member_name: &str,
+) -> Option<bool> {
+    let sym_id = crate::types_domain::queries::lib_resolution::resolve_name_to_lib_symbol(
+        "SymbolConstructor",
+        ctx.binder,
+        ctx.global_file_locals_index.as_deref(),
+        ctx.all_binders
+            .as_ref()
+            .map(|binders| binders.as_ref().as_slice()),
+        &ctx.lib_contexts,
+    )?;
+    let found: std::cell::Cell<Option<bool>> = std::cell::Cell::new(None);
+    any_declaration_matches(ctx, sym_id, |_owner_binder, arena, decl_idx| {
+        match interface_member_unique_symbol_annotation(arena, decl_idx, member_name) {
+            Some(is_unique) => {
+                found.set(Some(is_unique));
+                true
+            }
+            None => false,
+        }
+    });
+    found.into_inner()
+}
+
+/// Does interface declaration `decl_idx` declare a property signature member
+/// named `member_name`, and if so, is its type annotation `unique symbol`?
+fn interface_member_unique_symbol_annotation(
+    arena: &NodeArena,
+    decl_idx: NodeIndex,
+    member_name: &str,
+) -> Option<bool> {
+    let node = arena.get(decl_idx)?;
+    let interface = arena.get_interface(node)?;
+    interface.members.nodes.iter().find_map(|&member_idx| {
+        let member_node = arena.get(member_idx)?;
+        if member_node.kind != syntax_kind_ext::PROPERTY_SIGNATURE {
+            return None;
+        }
+        let sig = arena.get_signature(member_node)?;
+        let name = super::queries::core::get_literal_property_name(arena, sig.name)?;
+        if name != member_name {
+            return None;
+        }
+        Some(
+            sig.type_annotation.is_some()
+                && is_unique_symbol_type_annotation_unwrapped(arena, sig.type_annotation),
+        )
+    })
 }
 
 /// Look up a symbol preferring the binder of its authoritative declaration

@@ -142,7 +142,27 @@ impl<'a> CheckerState<'a> {
         }
 
         let expr_node = self.ctx.arena.get(expr_idx)?;
-        self.ctx.arena.get_identifier(expr_node)?;
+        if self.ctx.arena.get_identifier(expr_node).is_none() {
+            // A non-identifier symbol-valued computed-name expression, e.g. a
+            // property access (`Symbol.observable`) whose accessed member is
+            // declared plain `symbol` rather than `unique symbol` — a
+            // `declare global` `SymbolConstructor` augmentation, xstate's
+            // `Symbol.observable` interop convention (#16307). Unlike a
+            // unique-symbol binding, a wide-`symbol` member is merged into the
+            // containing type's single shared symbol index signature rather
+            // than matched by name across declarations, so the returned text
+            // carries no cross-declaration identity requirement — only the
+            // `__symbol_` classification prefix
+            // (`precompute_wide_symbol_computed_property_names_in_arenas`)
+            // does. The expression's own `NodeIndex` is a sufficient
+            // per-declaration discriminator.
+            return matches!(
+                expr_node.kind,
+                k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            )
+            .then(|| format!("__symbol_expr_{}", expr_idx.0));
+        }
 
         let local_sym_id = self.resolve_identifier_symbol(expr_idx)?;
         // Follow the full import/re-export chain (across files, carrying each

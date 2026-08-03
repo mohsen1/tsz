@@ -1098,6 +1098,9 @@ path = "tests/ts2353_cross_module_symbol_computed_key_tests.rs"
 name = "wide_symbol_computed_member_index_signature_tests"
 path = "tests/wide_symbol_computed_member_index_signature_tests.rs"
 [[test]]
+name = "wide_symbol_property_access_index_signature_tests"
+path = "tests/wide_symbol_property_access_index_signature_tests.rs"
+[[test]]
 name = "relational_operator_type_display_tests"
 path = "tests/relational_operator_type_display_tests.rs"
 [[test]]
