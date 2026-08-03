@@ -704,8 +704,10 @@ impl ParserState {
             }
         }
 
-        self.parse_expected(SyntaxKind::CloseBraceToken);
+        // Capture the '}' token's own end before `parse_expected` advances past it —
+        // `token_end()` after the call would report the end of the *next* token instead.
         let end_pos = self.token_end();
+        self.parse_expected(SyntaxKind::CloseBraceToken);
 
         let node_list = Self::make_node_list(elements);
         self.arena.add_import_attributes(

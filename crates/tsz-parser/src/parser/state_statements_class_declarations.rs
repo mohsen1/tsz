@@ -213,9 +213,10 @@ impl ParserState {
         self.context_flags |= CONTEXT_FLAG_IN_CLASS;
         let members = self.parse_class_members();
         self.context_flags = class_saved_flags;
-        self.parse_expected(SyntaxKind::CloseBraceToken);
-
+        // Capture the '}' token's own end before `parse_expected` advances past it —
+        // `token_end()` after the call would report the end of the *next* token instead.
         let end_pos = self.token_end();
+        self.parse_expected(SyntaxKind::CloseBraceToken);
         self.arena.add_class(
             syntax_kind_ext::CLASS_DECLARATION,
             start_pos,
@@ -731,9 +732,10 @@ impl ParserState {
         self.context_flags |= CONTEXT_FLAG_IN_CLASS;
         let members = self.parse_class_members();
         self.context_flags = class_saved_flags;
-        self.parse_expected(SyntaxKind::CloseBraceToken);
-
+        // Capture the '}' token's own end before `parse_expected` advances past it —
+        // `token_end()` after the call would report the end of the *next* token instead.
         let end_pos = self.token_end();
+        self.parse_expected(SyntaxKind::CloseBraceToken);
 
         // Create a modifiers list from decorators
         // In TypeScript, decorators are part of the modifiers
@@ -791,9 +793,10 @@ impl ParserState {
         self.context_flags |= CONTEXT_FLAG_IN_CLASS;
         let members = self.parse_class_members();
         self.context_flags = class_saved_flags;
-        self.parse_expected(SyntaxKind::CloseBraceToken);
-
+        // Capture the '}' token's own end before `parse_expected` advances past it —
+        // `token_end()` after the call would report the end of the *next* token instead.
         let end_pos = self.token_end();
+        self.parse_expected(SyntaxKind::CloseBraceToken);
 
         // Combine decorators with abstract modifier
         let modifiers = if let Some(dec_list) = decorators {
