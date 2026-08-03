@@ -1207,6 +1207,7 @@ impl<'a> CheckerState<'a> {
                             callable_or_undefined,
                             &mut b.string_index,
                             &mut b.number_index,
+                            &mut b.symbol_index,
                         );
                     }
                     continue;
