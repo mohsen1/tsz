@@ -389,6 +389,77 @@ fn computed_template_expression_property_reports_ts7008() {
 }
 
 // ---------------------------------------------------------------------------
+// (1d) Issue #16229 — the *no-substitution* template computed name
+// (`` [`abc`] ``), the last silent form in this family.
+//
+// #16225 recorded this shape as "unaffected: it already resolves as a literal
+// key one step earlier, in `get_property_name`". The premise is true and the
+// conclusion does not follow: `member_name_for_diagnostic` dispatches a
+// `ComputedPropertyName` to the *display* renderer by node kind, so the key
+// resolver never runs for it, and `computed_name_expression_display_text` had
+// no `NoSubstitutionTemplateLiteral` arm — the renderer returned `None` and the
+// whole family was dropped, exactly as it was for `` [`a${x}`] `` before
+// #16225.
+//
+// The rows below are the ones the display-message file cannot reach: a real
+// `.d.ts` container, and the pairing rule. Message-text pinning for all four
+// codes lives in `src/tests/computed_member_name_diagnostic_display_tests.rs`
+// — a code-level sweep alone has under-scoped this family twice.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn dts_container_no_substitution_template_getter_reports_ts7033() {
+    let codes = check_source_codes_named("class C { get [`abc`](); }", "test.d.ts");
+    assert!(has(&codes, TS7033), "expected TS7033: {codes:?}");
+}
+
+#[test]
+fn no_substitution_template_getter_and_setter_pair_and_blame_the_setter() {
+    // The inverse of `computed_template_expression_getter_and_setter_both_report_independently`
+    // directly above. A no-substitution template *is* a constant key, so the
+    // two accessors bind to one member: tsc reports TS7032 on the setter alone,
+    // with no TS7033 and no TS7006. Getting this backwards is the failure mode
+    // the substituted-template row was written to guard, and the two shapes
+    // genuinely differ — confirmed against the `typescript@7.0.2` oracle.
+    let codes = check_source_strict_codes("declare class C { get [`abc`](); set [`abc`](v); }");
+    assert_eq!(
+        count(&codes, TS7032),
+        1,
+        "exactly one TS7032 on the setter: {codes:?}"
+    );
+    assert!(
+        !has(&codes, TS7033),
+        "the paired setter takes the getter out of TS7033: {codes:?}"
+    );
+    assert!(
+        !has(&codes, TS7006),
+        "the paired getter contextually types the parameter: {codes:?}"
+    );
+}
+
+#[test]
+fn no_substitution_template_bodyless_method_reports_ts7010() {
+    let codes = check_source_strict_codes("declare class C { [`abc`](); }");
+    assert!(has(&codes, TS7010), "expected TS7010: {codes:?}");
+}
+
+#[test]
+fn no_substitution_template_annotated_members_stay_clean() {
+    // The negative direction: the fix restores the *name*, it must not
+    // manufacture a diagnostic where the type is supplied.
+    let codes = check_source_strict_codes(
+        "declare class C { get [`abc`](): number; set [`def`](v: number); [`ghi`]: number; [`jkl`](): void; }",
+    );
+    assert!(
+        !has(&codes, TS7033)
+            && !has(&codes, TS7032)
+            && !has(&codes, TS7008)
+            && !has(&codes, TS7010),
+        "annotations supply the type: {codes:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // (2) The surface rule. Issue #16178 — TS7010 fired where tsc is silent.
 // ---------------------------------------------------------------------------
 

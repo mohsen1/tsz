@@ -1541,17 +1541,29 @@ impl<'a> CheckerState<'a> {
             return Some(lit.text.clone());
         }
 
-        // Template expression with substitutions (`` `a${x}` ``) — a
-        // no-substitution template literal is already a literal key handled by
-        // `get_property_name` upstream and never reaches this fallback. A
-        // substituted one has no static key, but `tsc` still names it in
-        // messages using its own source spelling (`declarationNameToString`
-        // falls through to `getTextOfNode` for anything past the literal/
-        // identifier cases). Verbatim source text is safe here specifically
-        // because the node is a well-formed `TemplateExpression`, not a
-        // parse-error recovery node — unlike a raw-source fallback keyed on
-        // node kind in general, this can't misrender a malformed computed name.
-        if expr_node.kind == syntax_kind_ext::TEMPLATE_EXPRESSION {
+        // Template literal computed name, with substitutions (`` `a${x}` ``) or
+        // without (`` `abc` ``). `tsc` names both in messages using their own
+        // source spelling — `declarationNameToString` falls through to
+        // `getTextOfNode` for anything past the literal/identifier cases, and a
+        // `NoSubstitutionTemplateLiteral` is not one of the string/numeric
+        // kinds it special-cases, so the backticks survive into the message
+        // exactly as written.
+        //
+        // Resolving the *key* is a different question from naming the *member*:
+        // `get_property_name` does resolve `` [`abc`] `` to the key `abc` one
+        // step earlier, but this display path is reached by node kind, not by
+        // first-success, so the key resolver never covers for a missing arm
+        // here. Without one, `member_name_for_diagnostic` returns `None` and
+        // every site that gates on it silently drops the member's
+        // `noImplicitAny` diagnostic (TS7008/TS7010/TS7032/TS7033).
+        //
+        // Verbatim source text is safe for both kinds specifically because the
+        // node is a well-formed template literal, not a parse-error recovery
+        // node — unlike a raw-source fallback keyed on node kind in general,
+        // this can't misrender a malformed computed name.
+        if expr_node.kind == syntax_kind_ext::TEMPLATE_EXPRESSION
+            || expr_node.kind == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        {
             return self.node_text(expr_idx);
         }
 
