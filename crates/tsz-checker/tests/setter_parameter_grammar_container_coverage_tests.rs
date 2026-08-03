@@ -242,6 +242,17 @@ fn class_legal_setter_stays_clean() {
 // ---------------------------------------------------------------------------
 
 /// `tsc`: `TS1095` alone. Without the row-3 guard tsz adds `TS1053` beside it.
+///
+/// The object-literal row was a KNOWN DIVERGENCE until `parse_object_set_accessor`
+/// (`tsz-parser/src/parser/state_expressions_literals/object_members.rs`) was
+/// fixed to stop discarding the parsed return type
+/// (`let _ = self.parse_return_type();`, `type_annotation: NodeIndex::NONE`
+/// hard-coded) — the same hard-coded-empty defect #16276 fixed for interface and
+/// type-literal accessors, in the one container it did not cover. Before that
+/// fix the annotation was invisible to this guard and tsz emitted `TS1095` from
+/// the parser plus `TS1053`/`TS1052` from the checker, where `tsc` reports
+/// `TS1095` alone; folded in here once fixed rather than left as a separate
+/// pinned-divergence test.
 #[test]
 fn return_type_annotation_stands_down_the_rest_arm() {
     assert_sites(
@@ -250,6 +261,10 @@ fn return_type_annotation_stands_down_the_rest_arm() {
     );
     assert_sites(
         "interface IfaceA {\n    set cc(...v: string[]): void;\n}\n",
+        &[],
+    );
+    assert_sites(
+        "const objA = {\n    set bb(...v: string[]): void {},\n};\n",
         &[],
     );
 }
@@ -261,37 +276,9 @@ fn return_type_annotation_stands_down_the_initializer_arm() {
         "class Mu {\n    set gg(v: string = \"z\"): void {}\n}\n",
         &[],
     );
-}
-
-/// KNOWN DIVERGENCE, pinned deliberately — the object-literal container cannot
-/// reach the row-3 guard, and the cause is upstream of this file.
-///
-/// `parse_object_set_accessor`
-/// (`tsz-parser/src/parser/state_expressions_literals/object_members.rs`) parses
-/// the return type and **throws it away** — `let _ = self.parse_return_type();`
-/// — then builds the node with `type_annotation: NodeIndex::NONE` hard-coded.
-/// So an object-literal setter's return annotation is invisible to every
-/// checker-side consumer, this guard included. That is the same hard-coded-empty
-/// defect #16276 fixed for interface and type-literal accessors, in the one
-/// container it did not cover.
-///
-/// The oracle reports `TS1095` alone for both rows. tsz reports `TS1095` from
-/// the parser plus the code below from the checker. The shape needs a setter
-/// that is *already* ill-formed (an explicit return type) to reach, so it is
-/// strictly narrower than the family this file fixes — but it is a real
-/// divergence and is pinned rather than left silent. Restoring the annotation
-/// in the parser makes both rows go to `&[]` with no change to this file's
-/// logic; when that lands, this test fails and should be folded into the two
-/// above.
-#[test]
-fn object_literal_return_type_annotation_is_invisible_to_the_guard() {
-    assert_sites(
-        "const objA = {\n    set bb(...v: string[]): void {},\n};\n",
-        &["TS1053@26"],
-    );
     assert_sites(
         "const objC = {\n    set hh(v: string = \"z\"): void {},\n};\n",
-        &["TS1052@23"],
+        &[],
     );
 }
 
@@ -319,19 +306,22 @@ fn accessor_type_parameters_stand_down_the_rest_arm() {
 }
 
 /// The row-2 count excludes a leading `this` parameter, so this is a
-/// ONE-value-parameter setter and the rest arm still fires. `tsc`:
-/// `TS1053` at the `...`, plus a `TS2784` this-parameter error that this
-/// harness does not carry. The counter-test to the three rows above: a guard
-/// that counted declared parameters rather than value parameters would return
-/// early here and report nothing.
+/// ONE-value-parameter setter and the rest arm still fires. `tsc` also reports
+/// the independent `TS2784` (`'get' and 'set' accessors cannot declare 'this'
+/// parameters.`) on the `this` parameter itself — the `this`-parameter
+/// placement family (#16285) wires that check; the two diagnostics are
+/// unrelated grammar rules that both fire on the same parameter list. The
+/// counter-test to the three rows above: a guard that counted declared
+/// parameters rather than value parameters would return early here and report
+/// neither `TS1052` nor `TS1053`.
 #[test]
 fn leading_this_parameter_does_not_count_toward_the_value_parameter_count() {
     assert_sites(
         "class Sigma {\n    set oo(this: Sigma, ...v: string[]) {}\n}\n",
-        &["TS1053@38"],
+        &["TS1053@38", "TS2784@25"],
     );
     assert_sites(
         "class Ups {\n    set qq(this: Ups, v: string = \"k\") {}\n}\n",
-        &["TS1052@20"],
+        &["TS1052@20", "TS2784@23"],
     );
 }

@@ -405,6 +405,15 @@ fn is_hard_keyword_interface_name_2427_parse_diagnostic(diagnostic: &ParseDiagno
 /// in or all out: TS1049, TS1051, TS1054, TS1095. TS1052/TS1053 belong to the
 /// same tsc function but are checker-emitted in tsz, so they never reach this
 /// parse-diagnostic filter.
+///
+/// Same shape for tsc's `checkGrammarParameterList`, which reports TS1014 (a
+/// rest parameter must be last), TS1047 (a rest parameter cannot be
+/// optional), and TS1048 (a rest parameter cannot have an initializer) from
+/// one function. TS1014 was listed, TS1047/1048 were not: a file whose rest
+/// parameter tripped 1047 or 1048 silently deleted an unrelated function's
+/// TS1014 elsewhere in the same file. TS1015/1016 belong to the same tsc
+/// function but are checker-emitted in tsz (`parameter_checker.rs`), so they
+/// never reach this filter either.
 const fn is_parser_grammar_code(code: u32) -> bool {
     matches!(
         code,
@@ -429,6 +438,8 @@ const fn is_parser_grammar_code(code: u32) -> bool {
         | 1040 // '{0}' modifier cannot be used in an ambient context
         | 1042 // 'async' modifier cannot be used here
         | 1044 // '{0}' modifier cannot appear on a module or namespace element
+        | 1047 // A rest parameter cannot be optional
+        | 1048 // A rest parameter cannot have an initializer
         | 1049 // A 'set' accessor must have exactly one parameter
         | 1051 // A 'set' accessor cannot have an optional parameter
         | 1054 // A 'get' accessor cannot have parameters
@@ -1485,3 +1496,7 @@ mod tests;
 #[cfg(test)]
 #[path = "check_utils/heritage_clause_tests.rs"]
 mod heritage_clause_tests;
+
+#[cfg(test)]
+#[path = "check_utils/rest_parameter_grammar_tests.rs"]
+mod rest_parameter_grammar_tests;
