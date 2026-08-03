@@ -2,6 +2,28 @@
 
 use crate::state::CheckerState;
 
+/// Modifier keywords that are never valid on a JSDoc `@template` type
+/// parameter (TS1273). tsc still registers the type parameter itself under
+/// its real name and reports only the modifier diagnostic — `parsing.rs`'s
+/// `jsdoc_template_constraints` and `params_type_strings.rs`'s
+/// `jsdoc_template_type_params` must skip these keywords the same way they
+/// already skip `const`/`in`/`out` when extracting the parameter name, or
+/// the real name is never registered and every use of it draws a spurious
+/// TS2304.
+pub(crate) const NEVER_VALID_JSDOC_TEMPLATE_MODIFIERS: &[&str] = &[
+    "private",
+    "public",
+    "protected",
+    "static",
+    "override",
+    "abstract",
+    "readonly",
+    "async",
+    "declare",
+    "default",
+    "export",
+];
+
 impl<'a> CheckerState<'a> {
     /// TS1274: In JSDoc, `@template in/out` is invalid on function declarations.
     ///
@@ -273,19 +295,6 @@ impl<'a> CheckerState<'a> {
         let source_text: String = sf.text.to_string();
         let comments = sf.comments.clone();
 
-        const NEVER_VALID_MODIFIERS: &[&str] = &[
-            "private",
-            "public",
-            "protected",
-            "static",
-            "override",
-            "abstract",
-            "readonly",
-            "async",
-            "declare",
-            "default",
-            "export",
-        ];
         const CONST_MODIFIER: &str = "const";
 
         for comment in &comments {
@@ -366,7 +375,7 @@ impl<'a> CheckerState<'a> {
                     (comment.pos, 0)
                 };
 
-                if NEVER_VALID_MODIFIERS.contains(&first_word) {
+                if NEVER_VALID_JSDOC_TEMPLATE_MODIFIERS.contains(&first_word) {
                     let (pos, len) = find_modifier_pos(first_word);
                     let message =
                         format!("'{first_word}' modifier cannot appear on a type parameter");

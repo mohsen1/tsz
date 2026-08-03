@@ -641,6 +641,7 @@ pub(super) const fn is_checker_routed_ts1xxx_grammar(code: u32) -> bool {
         // Semantic checker diagnostics that merely occupy the grammar range.
         | 1064 // The return type of an async function or method must be the global Promise<T> type.
         | 1315 // '{0}' is not a valid meta-property for keyword '{1}'.
+        | 1539 // A 'bigint' literal cannot be used as a property name.
     )
 }
 

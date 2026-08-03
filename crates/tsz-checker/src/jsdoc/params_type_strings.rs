@@ -1569,6 +1569,15 @@ impl<'a> CheckerState<'a> {
                     if name == "in" || name == "out" {
                         continue;
                     }
+                    // Skip modifiers that are never valid on `@template`
+                    // (`private`, `static`, ...). tsc still registers the
+                    // real name, reporting only TS1273 for the modifier —
+                    // see `NEVER_VALID_JSDOC_TEMPLATE_MODIFIERS`.
+                    if super::diagnostics_templates::NEVER_VALID_JSDOC_TEMPLATE_MODIFIERS
+                        .contains(&name)
+                    {
+                        continue;
+                    }
                     // Extract default type string from bracket form `[T=default]`.
                     let default_str = if in_bracket {
                         // After the identifier, skip whitespace and look for `=`
