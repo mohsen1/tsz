@@ -262,18 +262,27 @@ fn subsequent_property_uses_the_redeclarations_spelling() {
 }
 
 #[test]
-fn identical_modifiers_uses_the_first_declarations_spelling() {
+fn identical_modifiers_names_each_flagged_declaration_by_its_own_spelling() {
+    // Oracle-corrected (`typescript@7.0.2`): unlike TS2300, which uses ONE
+    // shared name for every occurrence, TS2687 names each flagged declaration
+    // by its OWN spelling: `readonly ["rho"]: number; rho: number;` reports
+    // `'["rho"]'` at the first declaration and `'rho'` — not `'["rho"]'` — at
+    // the second.
     let messages = messages_for(
         "export {};\ninterface Nu { readonly [\"rho\"]: number; rho: number; }\n",
         IDENTICAL_MODIFIERS,
     );
     assert_eq!(messages.len(), 2, "got {messages:?}");
-    for message in &messages {
-        assert!(
-            message.contains("'[\"rho\"]'"),
-            "TS2687 should name the member by the first declaration's spelling; got {message:?}"
-        );
-    }
+    assert!(
+        messages.iter().any(|m| m.contains("'[\"rho\"]'")),
+        "TS2687 should name the reference declaration '[\"rho\"]'; got {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("'rho'") && !m.contains("'[\"rho\"]'")),
+        "TS2687 should name the disagreeing declaration by its own spelling 'rho', not the reference's; got {messages:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -293,6 +302,145 @@ fn three_declarations_each_get_exactly_one_duplicate_identifier() {
         count_of(source, SUBSEQUENT_PROPERTY),
         2,
         "TS2717 is reported on the two redeclarations only"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Renderer selection: "first eagerly-bound declaration", not "first
+// declaration" (#16258 residual 1). A name is eagerly bound when the binder
+// keys it without checking types: an identifier, a string/numeric-literal
+// name, or a computed name over a string/numeric literal. A computed name
+// over an entity reference (`[c0]`) is late-bound and loses the rendering
+// slot to any eagerly-bound sibling, wherever in the group it sits; the first
+// declaration wins only when every member of the group is late-bound (already
+// covered by `interface_const_references_with_different_spellings_but_one_key_are_duplicates`
+// above).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn interface_late_bound_first_eager_second_renders_the_eager_spelling() {
+    // The exact `dynamicNamesErrors.ts` shape from #16258 residual 1: `[c0]`
+    // is written first but is late-bound; the plain numeric-literal `1` is
+    // written second but is eagerly bound. tsc renders `'1'`, not `'[c0]'`.
+    assert_duplicate_on_both(
+        "export {};\ndeclare const c0: \"1\";\ninterface T0 { [c0]: number; 1: number; }\n",
+        "'1'",
+    );
+}
+
+#[test]
+fn type_literal_late_bound_first_eager_second_renders_the_eager_spelling() {
+    assert_duplicate_on_both(
+        "export {};\ndeclare const c0: \"1\";\ntype T0 = { [c0]: number; 1: number };\n",
+        "'1'",
+    );
+}
+
+#[test]
+fn interface_eager_first_late_bound_second_still_renders_the_eager_spelling() {
+    // Same pair, opposite source order: the eager declaration is first, so
+    // this also matches the old "first declaration" rule — kept as a
+    // completeness control, not a regression discriminator.
+    assert_duplicate_on_both(
+        "export {};\ndeclare const c0: \"1\";\ninterface T1 { 1: number; [c0]: string; }\n",
+        "'1'",
+    );
+}
+
+#[test]
+fn interface_two_late_bound_then_eager_renders_the_eager_spelling_from_third_position() {
+    // Two late-bound computed names precede the eagerly-bound one; the
+    // eagerly-bound declaration still wins the rendering slot regardless of
+    // its position in the group.
+    let source = "export {};\ndeclare const c0: \"1\";\ndeclare const c1: \"1\";\ninterface T2 { [c0]: number; [c1]: string; 1: boolean; }\n";
+    let messages = messages_for(source, DUPLICATE_IDENTIFIER);
+    assert_eq!(messages.len(), 3, "got {messages:?}");
+    for message in &messages {
+        assert!(
+            message.contains("'1'"),
+            "TS2300 should name the member '1' (the eagerly-bound spelling); got {message:?}"
+        );
+    }
+}
+
+#[test]
+fn interface_modifier_disagreement_compares_against_the_eagerly_bound_declaration() {
+    // Oracle-pinned on `readonly [c0]: number; 1: string;` (`const c0 = "1"`):
+    // the comparison REFERENCE is `1` (eagerly bound), even though `[c0]` is
+    // written first — and unlike TS2300, each flagged declaration is named by
+    // its OWN spelling, not the reference's: `tsc` reports `'[c0]'` at `[c0]`
+    // and `'1'` at `1`, never `'1'` at both.
+    let messages = messages_for(
+        "export {};\ndeclare const c0: \"1\";\ninterface T3 { readonly [c0]: number; 1: string; }\n",
+        IDENTICAL_MODIFIERS,
+    );
+    assert_eq!(messages.len(), 2, "got {messages:?}");
+    assert!(
+        messages.iter().any(|m| m.contains("'[c0]'")),
+        "TS2687 should name [c0] by its own spelling; got {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("'1'") && !m.contains("'[c0]'")),
+        "TS2687 should name the reference declaration '1'; got {messages:?}"
+    );
+}
+
+#[test]
+fn interface_ts2717_reference_type_is_the_eagerly_bound_declarations_type() {
+    // Oracle-pinned on `[c0]: number; [c1]: string; 1: boolean;` (both `c0`
+    // and `c1` const `"1"`): TS2717's expected-type operand is `1`'s own type
+    // (`boolean`, the eagerly-bound reference), not `[c0]`'s (source-order-
+    // first, `number`). Both non-reference declarations are flagged against
+    // it; the reference itself (`1`) never gets TS2717.
+    let source = "export {};\ndeclare const c0: \"1\";\ndeclare const c1: \"1\";\ninterface T2 { [c0]: number; [c1]: string; 1: boolean; }\n";
+    let messages = messages_for(source, SUBSEQUENT_PROPERTY);
+    assert_eq!(messages.len(), 2, "got {messages:?}");
+    for message in &messages {
+        assert!(
+            message.contains("be of type 'boolean'"),
+            "TS2717 should compare against the eagerly-bound reference's type 'boolean'; got {message:?}"
+        );
+    }
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("'[c0]'") && m.contains("type 'number'")),
+        "expected a TS2717 naming [c0] with its own type 'number'; got {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("'[c1]'") && m.contains("type 'string'")),
+        "expected a TS2717 naming [c1] with its own type 'string'; got {messages:?}"
+    );
+}
+
+#[test]
+fn interface_modifier_reference_selection_skips_a_late_bound_declaration_that_agrees() {
+    // Oracle-pinned on `readonly [c0]: number; [c1]: string; 1: boolean;`
+    // (`c0`, `c1` both const `"1"`): the reference is `1` (non-readonly).
+    // `[c0]` (readonly) disagrees and is flagged; `[c1]` (also non-readonly)
+    // agrees with the reference and is NOT flagged, even though it disagrees
+    // with `[c0]`'s modifiers — modifier agreement is judged against the
+    // reference only, never pairwise.
+    let source = "export {};\ndeclare const c0: \"1\";\ndeclare const c1: \"1\";\ninterface T5 { readonly [c0]: number; [c1]: string; 1: boolean; }\n";
+    let messages = messages_for(source, IDENTICAL_MODIFIERS);
+    assert_eq!(messages.len(), 2, "got {messages:?}");
+    assert!(
+        messages.iter().any(|m| m.contains("'[c0]'")),
+        "expected [c0] flagged; got {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("'1'") && !m.contains("'[c0]'")),
+        "expected the reference '1' flagged; got {messages:?}"
+    );
+    assert!(
+        !messages.iter().any(|m| m.contains("'[c1]'")),
+        "[c1] agrees with the reference's modifiers and must not be flagged; got {messages:?}"
     );
 }
 
