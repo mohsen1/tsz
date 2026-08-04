@@ -806,6 +806,8 @@ mod this_void_method_call_tests;
 mod top_level_await_boundary_tests;
 #[path = "tests/truthiness_promise_coercion_tests.rs"]
 mod truthiness_promise_coercion_tests;
+#[path = "tests/ts1064_awaited_suggestion_tests.rs"]
+mod ts1064_awaited_suggestion_tests;
 #[path = "tests/ts1101_with_in_strict_mode_tests.rs"]
 mod ts1101_with_in_strict_mode_tests;
 #[path = "tests/ts1165_ambient_class_method_computed_name_tests.rs"]

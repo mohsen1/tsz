@@ -38,6 +38,8 @@ impl ThenableAwaitInfo {
     }
 }
 
+mod awaited_type;
+
 const MAX_THENABLE_THIS_VALIDATION_DEPTH: u8 = 10;
 
 // =============================================================================
