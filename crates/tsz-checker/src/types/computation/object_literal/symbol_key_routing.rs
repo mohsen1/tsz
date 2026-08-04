@@ -134,6 +134,24 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
+        // A binding declared `typeof Symbol.<member>` for a genuine well-known
+        // member IS that well-known symbol under tsc (the type query reports
+        // `unique symbol`), so it names the canonical `[Symbol.<member>]`
+        // member rather than routing into a symbol index signature — the same
+        // answer `[Symbol.<member>]` written inline gets. The value-position
+        // evaluation below only sees the wide `symbol` intrinsic for such a
+        // binding, so the declaration has to be consulted directly.
+        if self
+            .resolve_computed_name_expression_symbol(computed.expression)
+            .and_then(|sym_id| {
+                crate::types_domain::computed_names::type_query_well_known_symbol_key(
+                    &self.ctx, sym_id,
+                )
+            })
+            .is_some()
+        {
+            return false;
+        }
         self.get_type_of_node(computed.expression) == TypeId::SYMBOL
     }
 
