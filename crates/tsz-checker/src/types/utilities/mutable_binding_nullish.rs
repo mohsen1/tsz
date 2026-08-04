@@ -22,7 +22,6 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     /// Whether every `null`/`undefined` leaf that
@@ -149,20 +148,36 @@ impl<'a> CheckerState<'a> {
         }
 
         // Any other leaf expression (identifier, call, property access, ...):
-        // it only needs to be a widening source when its own checked type is
-        // actually nullish — a non-nullish leaf never reaches the widener.
+        // it only needs to be a widening source when the widener would actually
+        // touch it — a leaf the widener leaves alone never contributes a nullish
+        // leaf to the composite, so it cannot make the widen unsafe.
         //
-        // An *uncached* leaf type is not evidence of a non-nullish leaf, so it
-        // fails closed, per this walk's stated policy. The mutable-binding seam
-        // never observes the difference (it runs after the initializer has been
-        // typed), but the generic-call candidate seam does: the argument's
-        // element types are not necessarily resident when candidates are
-        // normalized, and reading `None` as "safe to widen" there turned
-        // `declare var q: undefined; id([q])` into `any[]` when tsc keeps
+        // The question has to be asked of the widener itself, not of the two
+        // scalar ids: `t != UNDEFINED && t != NULL` is not closed under nesting,
+        // so a leaf typed `undefined[]` passed the gate and the deep widener
+        // then rewrote its *interior* — `declare function supply(): undefined[];
+        // var v = [supply()]` inferred `any[][]` where tsc keeps `undefined[][]`
+        // (#16396). `widen_nullish_to_any_deep(leaf) == leaf` is the same
+        // predicate in nesting-closed form: it agrees on the scalar cases
+        // (`undefined`/`null` widen to `any`, so both still fail here) and
+        // additionally rejects every composite the widener would rewrite.
+        // Reaching this point already means the leaf is not a widening source —
+        // the bare `null`/`undefined` keyword and the global `undefined`
+        // identifier returned `true` above. This is the form #16383's
+        // return-contribution seam uses, which is correct on both repros today.
+        //
+        // An *uncached* leaf type is not evidence of a leaf the widener would
+        // skip, so it fails closed, per this walk's stated policy. The
+        // mutable-binding seam never observes the difference (it runs after the
+        // initializer has been typed), but the generic-call candidate seam does:
+        // the argument's element types are not necessarily resident when
+        // candidates are normalized, and reading `None` as "safe to widen" there
+        // turned `declare var q: undefined; id([q])` into `any[]` when tsc keeps
         // `undefined[]` (#16384 leg A).
-        matches!(
-            self.ctx.node_types.get(&expr.0).copied(),
-            Some(t) if t != TypeId::UNDEFINED && t != TypeId::NULL
-        )
+        let Some(&leaf_type) = self.ctx.node_types.get(&expr.0) else {
+            return false;
+        };
+        crate::query_boundaries::widening::widen_nullish_to_any_deep(self.ctx.types, leaf_type)
+            == leaf_type
     }
 }
