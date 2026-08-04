@@ -408,3 +408,149 @@ fn await_inside_async_function_in_commonjs_file_is_clean() {
         "a nested `await` is not a top-level `await`; got {diags:?}"
     );
 }
+
+// --- the ambiguous-operand reparse exemption (#16341) ---
+//
+// `tsc`'s parser cannot tell a top-level `await` apart from `await` used as a
+// plain identifier until it sees the next token
+// (`nextTokenIsIdentifierOrKeywordOrLiteralOnSameLine`). When that token is
+// not an identifier/keyword/numeric-or-bigint/string literal on the same
+// line — most commonly `await (`, `await [`, `await {`, or a line break
+// right after `await` — `tsc` initially parses `await` as an identifier and
+// only fixes it up in a whole-file reparse (`reparseTopLevelAwait`) that
+// forces `NodeFlags.AwaitContext` onto the resulting `AwaitExpression`.
+// `checkGrammarAwaitOrAwaitUsing` gates its *entire* top-level check on that
+// flag being clear, so an ambiguous top-level `await` in an external-module
+// file answers none of TS1375, TS1309, or TS1378 — independent of module
+// kind or target. Every row below is pinned against a live `tsc` run
+// (`--module node16 --moduleResolution node16 --target esnext --strict`,
+// package.json `{}` so `.ts` resolves CommonJS).
+
+/// The reported repro shape: `await` applied directly to a parenthesized
+/// IIFE call. oracle: clean, for all three callee spellings.
+#[test]
+fn top_level_await_of_parenthesized_iife_call_is_exempt() {
+    for (label, source) in [
+        (
+            "async arrow",
+            "export const mod = await (async () => { return 1; })();",
+        ),
+        (
+            "plain arrow returning a promise",
+            "export const mod = await (() => Promise.resolve(1))();",
+        ),
+        (
+            "function expression",
+            "export const mod = await (function () { return 1; })();",
+        ),
+    ] {
+        let diags = node16_cjs_codes(source, "a.ts");
+        // Not a plain `is_empty()`: the no-lib unit harness has no global
+        // `Promise`, so an `async` callee's implicit `Promise<number>`
+        // return type produces unrelated TS2468/TS2705 noise. This checks
+        // exactly the family the exemption governs.
+        assert!(
+            !diags.contains(&1309) && !diags.contains(&1375) && !diags.contains(&1378),
+            "{label}: an ambiguous-operand top-level `await` must be exempt; got {diags:?}"
+        );
+    }
+}
+
+/// The negative control the issue's repro contrasted against: a named-call
+/// callee is unambiguous (`await` immediately followed by an identifier), so
+/// no exemption applies and TS1309 fires normally. oracle: TS1309.
+#[test]
+fn top_level_await_of_named_function_call_is_not_exempt() {
+    let source = "declare const fn: () => Promise<number>;\nexport const mod = await fn();";
+    let diags = node16_cjs_codes(source, "a.ts");
+    assert!(
+        diags.contains(&1309),
+        "an identifier-led operand is unambiguous and must still report TS1309; got {diags:?}"
+    );
+}
+
+/// A bare literal operand is equally unambiguous. oracle: TS1309 for both a
+/// string and a bigint literal.
+#[test]
+fn top_level_await_of_a_literal_is_not_exempt() {
+    for source in [
+        "export const mod = await \"hello\";",
+        "export const mod = await 123n;",
+    ] {
+        let diags = node16_cjs_codes(source, "a.ts");
+        assert!(
+            diags.contains(&1309),
+            "a literal operand is unambiguous; got {diags:?} for {source:?}"
+        );
+    }
+}
+
+/// A keyword-led operand (`typeof`) is also unambiguous — keywords satisfy
+/// `tokenIsIdentifierOrKeyword` — so the exemption does not apply. oracle:
+/// TS1309.
+#[test]
+fn top_level_await_of_a_keyword_led_operand_is_not_exempt() {
+    let source = "export const mod = await typeof 1;";
+    let diags = node16_cjs_codes(source, "a.ts");
+    assert!(
+        diags.contains(&1309),
+        "`typeof` is a keyword, not an ambiguous punctuation lead; got {diags:?}"
+    );
+}
+
+/// Array and object literal operands share the same punctuation-led shape as
+/// the parenthesized-IIFE case and get the same exemption. oracle: clean for
+/// both.
+#[test]
+fn top_level_await_of_array_or_object_literal_is_exempt() {
+    for source in [
+        "export const mod = await [1, 2, 3];",
+        "export const mod = await { then(r: (v: number) => void) { r(1); } };",
+    ] {
+        let diags = node16_cjs_codes(source, "a.ts");
+        assert!(
+            diags.is_empty(),
+            "a punctuation-led operand must be exempt; got {diags:?} for {source:?}"
+        );
+    }
+}
+
+/// A prefix-unary operand (`-x`) is punctuation-led too, and gets the same
+/// exemption. oracle: clean.
+#[test]
+fn top_level_await_of_a_prefix_unary_operand_is_exempt() {
+    let source = "declare const x: number;\nexport const mod = await -x;";
+    let diags = node16_cjs_codes(source, "a.ts");
+    assert!(
+        !diags.contains(&1309) && !diags.contains(&1375) && !diags.contains(&1378),
+        "a prefix-unary operand is punctuation-led and must be exempt; got {diags:?}"
+    );
+}
+
+/// A line break right after `await`, even before an otherwise-unambiguous
+/// identifier, defeats `tsc`'s same-line lookahead and triggers the same
+/// exemption. oracle: clean.
+#[test]
+fn top_level_await_followed_by_a_line_break_is_exempt() {
+    let source = "declare const fn: () => number;\nexport const mod = await\n  fn();";
+    let diags = node16_cjs_codes(source, "a.ts");
+    assert!(
+        !diags.contains(&1309) && !diags.contains(&1375) && !diags.contains(&1378),
+        "a line break before the operand must trigger the exemption too; got {diags:?}"
+    );
+}
+
+/// The exemption is scoped to top-level `await`: the same ambiguous-operand
+/// shape inside an `async` function is ordinary code, not a grammar
+/// question, and stays clean for a wholly different reason (it is not a
+/// top-level `await` at all). Guards against the exemption accidentally
+/// widening `in_async_context` handling.
+#[test]
+fn ambiguous_operand_await_inside_async_function_is_unaffected() {
+    let source = "export {};\nasync function run() { await (async () => 1)(); }";
+    let diags = node16_cjs_codes(source, "inasync.cts");
+    assert!(
+        !diags.contains(&1309),
+        "a nested `await` was already clean before this exemption; got {diags:?}"
+    );
+}
