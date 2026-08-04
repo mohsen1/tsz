@@ -956,7 +956,6 @@ impl<'a> CheckerState<'a> {
                 || parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
                 || parent_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
                 || parent_node.kind == syntax_kind_ext::PARAMETER
-                || parent_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
             {
                 return false;
             }
