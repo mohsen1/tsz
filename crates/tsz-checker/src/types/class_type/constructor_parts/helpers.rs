@@ -329,39 +329,20 @@ impl<'a> CheckerState<'a> {
 
     /// Does this static class member's name node key off a plain
     /// (non-unique) `symbol` binding — `class C { static [s]() {} }` with
-    /// `declare const s: symbol`, or `Symbol.NAME` where `NAME` is a wide
-    /// `SymbolConstructor` global augmentation?
+    /// `declare const s: symbol`?
     ///
     /// Such a member contributes a `[key: symbol]: V` index signature to the
     /// constructor type instead of a named static member, the static-side
     /// twin of `class_member_computed_key_is_wide_symbol`'s instance-side
-    /// routing (#16307).
+    /// routing. `Symbol.NAME` written as property-access syntax is excluded
+    /// by `computed_member_key_is_wide_symbol` itself, even when `NAME` is
+    /// declared plain `symbol`: tsc derives a NAMED member from the syntactic
+    /// well-known shape before it consults the key's type at all (#16307).
     pub(super) fn static_member_computed_key_is_wide_symbol(
         &mut self,
         name_idx: NodeIndex,
     ) -> bool {
-        if !self.computed_member_key_is_wide_symbol(name_idx) {
-            return false;
-        }
-        // `Symbol.NAME` written as property-access syntax is excluded even
-        // when `NAME` is declared plain `symbol`: tsc derives a NAMED member
-        // from the syntactic well-known shape (`isWellKnownSymbolSyntactically`)
-        // before it consults the key's type at all, so
-        // `class C { static [Symbol.observable]() {} }` gets no symbol index
-        // signature and `C[someOtherSymbol]` stays TS7053.
-        let Some(name_node) = self.ctx.arena.get(name_idx) else {
-            return false;
-        };
-        let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
-            return false;
-        };
-        crate::types_domain::computed_names::wide_well_known_symbol_member_key(
-            &self.ctx,
-            self.ctx.arena,
-            self.ctx.binder,
-            computed.expression,
-        )
-        .is_none()
+        self.computed_member_key_is_wide_symbol(name_idx)
     }
 
     pub(super) fn remap_inherited_construct_signatures(

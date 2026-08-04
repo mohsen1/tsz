@@ -141,6 +141,17 @@ pub(crate) enum WellKnownSymbolName {
 }
 
 /// Match and verify a well-known-symbol computed name expression.
+///
+/// `tsc`'s discriminator for whether `Symbol.<member>` denotes the well-known
+/// symbol itself is purely SYNTACTIC — reach to the global `Symbol` value,
+/// written inline or through a `typeof Symbol.<member>` binding (see
+/// [`type_query_well_known_symbol_key`]) — never the declared kind of
+/// `<member>` on the (possibly user-augmented) `SymbolConstructor` interface.
+/// A user augmentation like xstate's `interface SymbolConstructor { readonly
+/// observable: symbol }` does not change what `Symbol.observable` itself
+/// types as; it only affects a SEPARATE binding independently annotated
+/// `: symbol` (`declare const wide: symbol`), which is not this shape at all
+/// (`symbol_is_wide_symbol_binding` owns that case). #16307.
 pub(crate) fn well_known_symbol_property_name(
     ctx: &CheckerContext<'_>,
     arena: &NodeArena,
@@ -150,169 +161,29 @@ pub(crate) fn well_known_symbol_property_name(
     let shape = well_known_symbol_access_shape(arena, expr_idx)?;
     if identifier_resolves_to_unshadowed_global_in_context(ctx, arena, binder, shape.base, "Symbol")
     {
-        // A `Symbol.<member>` access whose member is a plain (non-unique)
-        // `symbol`-typed global augmentation (xstate's `SymbolConstructor.
-        // observable: symbol`) is not a genuine well-known key; it must not
-        // short-circuit here so callers fall through to binding-identity
-        // (wide-symbol) resolution instead.
-        if wide_well_known_symbol_member_key(ctx, arena, binder, expr_idx).is_some() {
-            return None;
-        }
         shape.name.map(WellKnownSymbolName::Global)
     } else {
         Some(WellKnownSymbolName::Shadowed)
     }
 }
 
-/// `Symbol.<member>` (or `Symbol["<member>"]`, parens peeled) where `<member>`
-/// is a plain (non-unique) `symbol`-typed member of the merged
-/// `SymbolConstructor` interface — a user global augmentation (xstate's
-/// `interface SymbolConstructor { readonly observable: symbol }`) rather than
-/// a genuine well-known (`Symbol.iterator` and friends, `unique symbol`-typed).
-/// Such an access does not carry its own literal `[Symbol.<member>]` key: tsc
-/// routes it into the containing type's symbol index signature exactly like
-/// any other plain-`symbol` binding. `None` for a non-`Symbol.X` shape, a
-/// shadowed `Symbol`, or a genuine well-known/unresolvable member — the
-/// historical literal-key behavior stays default for anything this cannot
-/// positively identify as wide.
-pub(crate) fn wide_well_known_symbol_member_key(
+/// Is `expr_idx` a resolved `Symbol.<member>` (or `Symbol["<member>"]`)
+/// syntactic access — the shape that always mints the canonical
+/// `[Symbol.<member>]` named key regardless of `<member>`'s declared kind?
+/// Used by callers (class instance/static member routing) that need to
+/// exclude this shape from a separate wide-`symbol` classification derived
+/// from the expression's evaluated type, which cannot see the syntactic
+/// override on its own. #16307.
+pub(crate) fn is_well_known_symbol_syntax(
     ctx: &CheckerContext<'_>,
     arena: &NodeArena,
     binder: &BinderState,
     expr_idx: NodeIndex,
-) -> Option<String> {
-    let shape = well_known_symbol_access_shape(arena, expr_idx)?;
-    let name = shape.name?;
-    let member = name.strip_prefix("[Symbol.")?.strip_suffix(']')?;
-    if !identifier_resolves_to_unshadowed_global_in_context(
-        ctx, arena, binder, shape.base, "Symbol",
-    ) {
-        return None;
-    }
-    symbol_constructor_member_is_wide(ctx, member).then(|| format!("__symbol_wellknown_{member}"))
-}
-
-/// Resolve the merged `SymbolConstructor` INTERFACE symbol (the type-space
-/// binding, distinct from the `declare var Symbol: SymbolConstructor` value
-/// symbol). Its `all_declarations()` spans every `interface SymbolConstructor
-/// { ... }` block the binder merged together — the lib declaration plus any
-/// `declare global { interface SymbolConstructor { ... } }` user augmentation
-/// — so walking them finds a member regardless of which file declared it.
-fn symbol_constructor_type_symbol(ctx: &CheckerContext<'_>) -> Option<SymbolId> {
-    crate::types_domain::queries::lib_resolution::resolve_name_to_lib_symbol(
-        "SymbolConstructor",
-        ctx.binder,
-        ctx.global_file_locals_index.as_deref(),
-        ctx.all_binders
-            .as_ref()
-            .map(|binders| binders.as_ref().as_slice()),
-        &ctx.lib_contexts,
-    )
-}
-
-/// Declared symbol-kind of `member_name` on the `interface SymbolConstructor`
-/// declaration at `decl_idx` (an `INTERFACE_DECLARATION` node — interfaces
-/// have no binder-level `members` table; their members only exist as AST
-/// child nodes, so this walks the member list directly): `Some(true)` for
-/// `unique symbol` (a genuine well-known, e.g. `Symbol.iterator`),
-/// `Some(false)` for plain `symbol` (a user global augmentation, e.g.
-/// xstate's `SymbolConstructor.observable: symbol`), `None` when the member
-/// isn't found on this particular declaration or isn't property-shaped (a
-/// method like `for(key: string): symbol`, or a missing annotation).
-fn interface_member_declared_symbol_kind(
-    arena: &NodeArena,
-    decl_idx: NodeIndex,
-    member_name: &str,
-) -> Option<bool> {
-    let node = arena.get(decl_idx)?;
-    let interface = arena.get_interface(node)?;
-    for &member_idx in &interface.members.nodes {
-        let Some(member) = arena.get(member_idx) else {
-            continue;
-        };
-        let Some(sig) = arena.get_signature(member) else {
-            continue;
-        };
-        if arena.get_identifier_text(sig.name) != Some(member_name) {
-            continue;
-        }
-        if !sig.type_annotation.is_some() {
-            return None;
-        }
-        if is_unique_symbol_type_annotation_unwrapped(arena, sig.type_annotation) {
-            return Some(true);
-        }
-        return is_symbol_type_node(arena, sig.type_annotation).then_some(false);
-    }
-    None
-}
-
-/// Declared symbol-kind of `member_name` across every `declare global {
-/// interface SymbolConstructor { ... } }` augmentation the binder recorded.
-/// A `declare global` augmentation is NOT merged into the target symbol's own
-/// `declarations` list (that list holds only the plain lib declarations);
-/// the binder tracks it separately in `global_augmentations`, each entry
-/// carrying the arena it was declared in (`None` means the current file's own
-/// arena) — see `resolve_array_global_augmentation_property` for the same
-/// pattern applied to `Array`.
-fn symbol_constructor_augmentation_kind(
-    ctx: &CheckerContext<'_>,
-    member_name: &str,
-) -> Option<bool> {
-    if let Some(kind) = ctx
-        .binder
-        .global_augmentations
-        .get("SymbolConstructor")
-        .and_then(|augs| {
-            augs.iter().find_map(|aug| {
-                let arena = aug.arena.as_deref().unwrap_or(ctx.arena);
-                interface_member_declared_symbol_kind(arena, aug.node, member_name)
-            })
-        })
-    {
-        return Some(kind);
-    }
-    // Fallback for the rare case where the current file's own binder hasn't
-    // merged another file's augmentation into its `global_augmentations` map.
-    ctx.all_binders.as_ref().and_then(|all_binders| {
-        all_binders.iter().find_map(|binder| {
-            binder
-                .global_augmentations
-                .get("SymbolConstructor")
-                .and_then(|augs| {
-                    augs.iter().find_map(|aug| {
-                        let arena = aug.arena.as_deref().unwrap_or(ctx.arena);
-                        interface_member_declared_symbol_kind(arena, aug.node, member_name)
-                    })
-                })
-        })
-    })
-}
-
-/// Is `member_name` a plain (non-unique) `symbol`-typed member of the merged
-/// `SymbolConstructor` interface — a user global augmentation like xstate's
-/// `interface SymbolConstructor { readonly observable: symbol }` — rather
-/// than a genuine well-known `unique symbol` (`Symbol.iterator` and friends)?
-/// `false` when the member cannot be found at all, preserving the historical
-/// well-known-literal-key behavior for anything this cannot resolve.
-pub(crate) fn symbol_constructor_member_is_wide(
-    ctx: &CheckerContext<'_>,
-    member_name: &str,
 ) -> bool {
-    if let Some(kind) = symbol_constructor_augmentation_kind(ctx, member_name) {
-        return !kind;
-    }
-    let Some(sc_sym_id) = symbol_constructor_type_symbol(ctx) else {
-        return false;
-    };
-    if any_declaration_matches(ctx, sc_sym_id, |_owner_binder, arena, decl_idx| {
-        interface_member_declared_symbol_kind(arena, decl_idx, member_name) == Some(true)
-    }) {
-        return false;
-    }
-    any_declaration_matches(ctx, sc_sym_id, |_owner_binder, arena, decl_idx| {
-        interface_member_declared_symbol_kind(arena, decl_idx, member_name) == Some(false)
-    })
+    matches!(
+        well_known_symbol_property_name(ctx, arena, binder, expr_idx),
+        Some(WellKnownSymbolName::Global(_))
+    )
 }
 
 /// Look up a symbol preferring the binder of its authoritative declaration
@@ -504,28 +375,9 @@ pub(crate) fn symbol_is_unique_symbol_binding(ctx: &CheckerContext<'_>, sym_id: 
 pub(crate) fn symbol_is_wide_symbol_binding(ctx: &CheckerContext<'_>, sym_id: SymbolId) -> bool {
     let sym_id = follow_import_aliases(ctx, sym_id);
     any_declaration_matches(ctx, sym_id, |owner_binder, arena, decl_idx| {
-        (!declaration_is_unique_symbol_binding(ctx, owner_binder, arena, decl_idx)
-            && declaration_has_nonunique_symbol_annotation(arena, decl_idx))
-            || declaration_has_wide_type_query_annotation(ctx, owner_binder, arena, decl_idx)
+        !declaration_is_unique_symbol_binding(ctx, owner_binder, arena, decl_idx)
+            && declaration_has_nonunique_symbol_annotation(arena, decl_idx)
     })
-}
-
-/// Does `decl_idx`'s own type annotation resolve, syntactically, to `typeof
-/// Symbol.<member>` where `<member>` is a plain (non-unique) `symbol`-typed
-/// member of the merged `SymbolConstructor` interface? xstate's own
-/// interop-convention re-export (`export const symbolObservable: typeof
-/// Symbol.observable = ...`) is exactly this shape: the const's annotation is
-/// a type query, not a literal `symbol` keyword, so
-/// `declaration_has_nonunique_symbol_annotation`'s syntactic match on the
-/// annotation node never fires for it.
-fn declaration_has_wide_type_query_annotation(
-    ctx: &CheckerContext<'_>,
-    owner_binder: &BinderState,
-    arena: &NodeArena,
-    decl_idx: NodeIndex,
-) -> bool {
-    declaration_type_query_symbol_constructor_member(ctx, owner_binder, arena, decl_idx)
-        .is_some_and(|member| symbol_constructor_member_is_wide(ctx, &member))
 }
 
 /// The `SymbolConstructor` member a declaration's own annotation names through
@@ -573,16 +425,16 @@ fn declaration_type_query_symbol_constructor_member(
 /// `typeof Symbol.<member>` for a genuine well-known (`unique symbol`) member
 /// — `declare const it: typeof Symbol.iterator; interface T { [it]: ... }`.
 ///
-/// `tsc` types such a binding as the well-known symbol itself (`typeof
-/// Symbol.iterator` is a `unique symbol`), so the member it keys is the very
-/// same one `interface U { [Symbol.iterator]: ... }` declares inline. Without
-/// this leg the alias falls through to binding-identity naming
+/// `tsc` types such a binding as the well-known symbol itself regardless of
+/// `<member>`'s own declared kind on the (possibly user-augmented)
+/// `SymbolConstructor` interface — `typeof Symbol.<member>` is `unique
+/// symbol` purely because of its syntactic reach to the global `Symbol`
+/// (#16307), the same discriminator [`well_known_symbol_property_name`] uses
+/// for the inline `Symbol.<member>` spelling. So the member it keys is the
+/// very same one `interface U { [Symbol.iterator]: ... }` declares inline.
+/// Without this leg the alias falls through to binding-identity naming
 /// (`__unique_<id>`), the two declarations describe different member sets, and
 /// `T` reports a missing `[Symbol.iterator]` against `U` where `tsc` is clean.
-///
-/// `None` for a plain (non-`unique`) `SymbolConstructor` member: that binding
-/// carries the wide `symbol` type and routes into the containing type's symbol
-/// index signature instead (#16307), which is a different member shape.
 pub(crate) fn type_query_well_known_symbol_key(
     ctx: &CheckerContext<'_>,
     sym_id: SymbolId,
@@ -595,9 +447,6 @@ pub(crate) fn type_query_well_known_symbol_key(
         else {
             return false;
         };
-        if symbol_constructor_member_is_wide(ctx, &member) {
-            return false;
-        }
         *found.borrow_mut() = Some(format!("[Symbol.{member}]"));
         true
     });
@@ -897,7 +746,6 @@ pub(crate) fn symbol_binding_property_atom(
     any_declaration_matches(ctx, sym_id, |owner_binder, arena, decl_idx| {
         declaration_is_unique_symbol_binding(ctx, owner_binder, arena, decl_idx)
             || declaration_has_nonunique_symbol_annotation(arena, decl_idx)
-            || declaration_has_wide_type_query_annotation(ctx, owner_binder, arena, decl_idx)
     })
     .then(|| ctx.types.intern_string(&unique_symbol_binding_name(sym_id)))
 }
@@ -935,7 +783,6 @@ pub(crate) fn computed_property_name_atom_in_arena(
             && identifier_resolves_to_unshadowed_global_in_context(
                 ctx, arena, binder, parts.base, "Symbol",
             )
-            && !symbol_constructor_member_is_wide(ctx, member)
         {
             return Some(ctx.types.intern_string(&format!("[Symbol.{member}]")));
         }

@@ -1,6 +1,11 @@
 //! Adjacent-case matrix for issue #16307: a computed member keyed by a plain
-//! (non-unique) `symbol` must route into the containing type's symbol index
-//! signature, not mint a synthetic named member.
+//! (non-unique) `symbol` BINDING (`declare const s: symbol`) must route into
+//! the containing type's symbol index signature, not mint a synthetic named
+//! member. `Symbol.<member>` written as literal property-access syntax is a
+//! DIFFERENT shape and stays a named `[Symbol.<member>]` member regardless of
+//! `<member>`'s own declared kind on a (possibly user-augmented)
+//! `SymbolConstructor` — `tsc`'s `isWellKnownSymbolSyntactically` decides
+//! purely from the syntax, never the member's type.
 use tsz_checker::CheckerOptions;
 use tsz_checker::test_utils::{
     check_multi_file_with_libs, check_source_diagnostics, check_source_with_libs,
@@ -9,12 +14,6 @@ use tsz_checker::test_utils::{
 
 fn assert_clean(source: &str) {
     let diags = check_source_diagnostics(source);
-    assert!(diags.is_empty(), "expected exit 0 like tsc, got: {diags:?}");
-}
-
-fn assert_clean_with_libs(source: &str) {
-    let libs = load_default_lib_files();
-    let diags = check_source_with_libs(source, "test.ts", CheckerOptions::default(), &libs);
     assert!(diags.is_empty(), "expected exit 0 like tsc, got: {diags:?}");
 }
 
@@ -134,14 +133,21 @@ export const bad: FromU2 = a;
 }
 
 #[test]
-fn well_known_symbol_syntax_keyed_by_a_wide_global_augmentation_routes_to_index() {
-    // Adjacent case for #16307's own corpus witness (xstate's `Symbol.
-    // observable` interop convention): the literal `Symbol.<member>` syntax
-    // — not an identifier alias — routes to the symbol index signature when
-    // `<member>` is a user global augmentation typed plain `symbol`, exactly
-    // like the identifier-keyed cases above.
-    assert_clean_with_libs(
-        r#"
+fn well_known_symbol_syntax_keeps_named_identity_even_with_a_wide_global_augmentation() {
+    // Corrected adjacent case for #16307 (oracle-verified against pinned
+    // `tsc` 7.0.2, both directions): the literal `Symbol.<member>` syntax —
+    // unlike an identifier bound `: symbol` — is ALWAYS the well-known symbol
+    // itself, regardless of what `<member>` is declared as on a (possibly
+    // user-augmented) `SymbolConstructor`. `isWellKnownSymbolSyntactically`
+    // decides this from the syntax alone, before tsc ever looks at the
+    // member's type. So `[Symbol.observable]` mints the literal
+    // `[Symbol.observable]` NAMED member even when the global augmentation
+    // types `observable` as plain `symbol` — it does NOT fold into a symbol
+    // index signature, and an interface built that way stays mutually
+    // UN-assignable with a real `[key: symbol]` index-signature interface in
+    // both directions, exactly like the real well-known (`Symbol.iterator`)
+    // negative control below.
+    let source = r#"
 declare global {
   interface SymbolConstructor {
     readonly observable: symbol;
@@ -156,7 +162,15 @@ declare const i: Implicit;
 
 export const implicitToExplicit: Explicit = i;
 export const explicitToImplicit: Implicit = e;
-"#,
+"#;
+    let libs = load_default_lib_files();
+    let diags = check_source_with_libs(source, "test.ts", CheckerOptions::default(), &libs);
+    let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&2322) && codes.contains(&2741),
+        "Symbol.observable must keep its own named identity even under a wide \
+         global augmentation, so BOTH directions must mismatch (missing index \
+         signature one way, missing named member the other); got: {diags:?}"
     );
 }
 
@@ -238,15 +252,14 @@ declare global { interface SymbolConstructor { readonly observable: symbol } }
 }
 
 #[test]
-fn well_known_symbol_syntax_direct_on_class_member_same_file() {
-    // A class member keyed DIRECTLY by `[Symbol.observable]` (not via an
-    // identifier alias) implementing an interface with the same literal key.
-    // Class instance-type construction routed an unresolved computed name's
-    // string/number key kind into `string_index`/`number_index` but had no
-    // symbol leg at all (`merge_index_signature_from_unresolved_computed_name`,
-    // `crates/tsz-checker/src/types/class_type/helpers.rs`), so a wide-symbol
-    // class member silently contributed to no index signature and the class
-    // failed to structurally satisfy an interface with a symbol index.
+fn well_known_symbol_syntax_direct_on_class_member_keeps_named_identity() {
+    // Corrected adjacent case for #16307 (oracle-verified against pinned
+    // `tsc` 7.0.2): a class member keyed DIRECTLY by `[Symbol.observable]`
+    // (not via an identifier alias) mints its own named `[Symbol.observable]`
+    // member — same rule as the interface case above — even though the
+    // global augmentation types `observable` as plain `symbol`. It does NOT
+    // structurally satisfy an unrelated `[key: symbol]` index-signature
+    // interface.
     let source = r#"
 declare global {
   interface SymbolConstructor {
@@ -265,7 +278,13 @@ export const implicitToExplicit: Explicit = i;
 "#;
     let libs = load_default_lib_files();
     let diags = check_source_with_libs(source, "test.ts", CheckerOptions::default(), &libs);
-    assert!(diags.is_empty(), "expected exit 0 like tsc, got: {diags:?}");
+    assert!(
+        diags.iter().any(|d| d.code == 2322 || d.code == 2741),
+        "Symbol.observable on a class member must keep its own named identity \
+         even under a wide global augmentation, so the class must NOT \
+         structurally satisfy an unrelated symbol-index-signature interface; \
+         got: {diags:?}"
+    );
 }
 
 #[test]

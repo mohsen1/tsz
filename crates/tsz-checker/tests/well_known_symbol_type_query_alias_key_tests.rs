@@ -10,12 +10,17 @@
 //! `U` described different member sets and `T` reported a missing
 //! `[Symbol.iterator]` against `U` where `tsc` is clean.
 //!
-//! Two boundaries the rule must not cross, both oracle-checked:
-//! - An UNANNOTATED `const it = Symbol.iterator` widens to `symbol`, so it
-//!   keys a symbol index signature, not the well-known member. `tsc` reports
-//!   the mismatch against an inline `[Symbol.iterator]` member; so must tsz.
-//! - A `typeof Symbol.<member>` alias for a PLAIN (non-`unique`) augmented
-//!   member keeps #16307's wide-`symbol` index-signature routing.
+//! One boundary the rule must not cross, oracle-checked: an UNANNOTATED
+//! `const it = Symbol.iterator` widens to `symbol`, so it keys a symbol index
+//! signature, not the well-known member. `tsc` reports the mismatch against
+//! an inline `[Symbol.iterator]` member; so must tsz.
+//!
+//! `typeof Symbol.<member>` is `unique symbol` to `tsc` — and so names the
+//! canonical `[Symbol.<member>]` member — regardless of `<member>`'s own
+//! declared kind on a (possibly user-augmented) `SymbolConstructor`. A PLAIN
+//! (non-`unique`) augmented member is NOT an exception: `tsc`'s discriminator
+//! is the syntactic reach to the global `Symbol`, never the member's declared
+//! type (#16307).
 //!
 //! Binder names vary across cases on purpose: the rule reads the declaration's
 //! annotation, never the identifier the user chose.
@@ -182,13 +187,19 @@ want(widened);
     );
 }
 
-// 8. Boundary: a `typeof Symbol.<member>` alias for a PLAIN (non-`unique`)
-//    augmented member keeps #16307's wide-`symbol` index-signature routing —
-//    a class keyed through it stays assignable to an interface keyed off an
-//    unrelated wide `symbol` binding.
+// 8. Boundary (oracle-verified against pinned `tsc` 7.0.2, corrected from an
+//    earlier premise): a `typeof Symbol.<member>` alias for a PLAIN
+//    (non-`unique`) augmented member is STILL the well-known member, not a
+//    wide-`symbol` binding — `typeof Symbol.observable` types as `unique
+//    symbol` to `tsc` even when `SymbolConstructor.observable` is declared
+//    plain `symbol`. A class keyed through it therefore does NOT structurally
+//    satisfy an interface keyed off an unrelated wide `symbol` binding: `tsc`
+//    reports the missing index signature (`Argument of type 'Emitter' is not
+//    assignable to parameter of type 'Sink'. Index signature for type
+//    'symbol' is missing in type 'Emitter'.`).
 #[test]
-fn type_query_alias_of_a_wide_augmented_member_keeps_index_signature_routing() {
-    assert_no_missing_property(
+fn type_query_alias_of_a_wide_augmented_member_keeps_named_identity() {
+    let result = codes(
         r#"
 interface SymbolConstructor { readonly observable: symbol }
 declare const observableKey: typeof Symbol.observable;
@@ -199,5 +210,11 @@ declare const emitter: Emitter;
 declare function want(value: Sink): void;
 want(emitter);
 "#,
+    );
+    assert!(
+        result.contains(&2345) || result.contains(&2741),
+        "a typeof Symbol.<member> alias for a plain-`symbol`-augmented member \
+         must keep its well-known named identity, not fold into an unrelated \
+         wide-`symbol` index signature, got: {result:?}"
     );
 }
