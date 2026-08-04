@@ -760,12 +760,35 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         if let (Some(s_fn_id), Some(t_fn_id)) = (
-            function_shape_id(self.interner, source),
-            function_shape_id(self.interner, target),
+            function_shape_id(self.interner, resolved_source),
+            function_shape_id(self.interner, resolved_target),
         ) {
             let s_fn = self.interner.function_shape(s_fn_id);
             let t_fn = self.interner.function_shape(t_fn_id);
             return self.explain_function_failure(&s_fn, &t_fn);
+        }
+
+        // A `declare function` symbol's own type — or any other single-signature,
+        // property-free Callable — behaves exactly like a bare Function for
+        // every structural purpose, but tsz interns it as a `Callable` shape
+        // rather than `Function`. When it fails against a genuine `Function`
+        // target (e.g. an arrow-type-annotated variable), the Function-vs-Function
+        // check above never matches on the source side, so return-type and
+        // type-predicate elaboration (TS1224/TS1226) silently produced no
+        // structured reason at all. Peel the lone call signature to a
+        // `FunctionShape` and reuse the same explainer.
+        if let Some(t_fn_id) = function_shape_id(self.interner, resolved_target)
+            && let Some(s_callable_id) = callable_shape_id(self.interner, resolved_source)
+        {
+            let s_callable = self.interner.callable_shape(s_callable_id);
+            if let [sig] = s_callable.call_signatures.as_slice()
+                && s_callable.construct_signatures.is_empty()
+                && s_callable.properties.is_empty()
+            {
+                let s_fn = Self::function_shape_from_call_signature(sig, false);
+                let t_fn = self.interner.function_shape(t_fn_id);
+                return self.explain_function_failure(&s_fn, &t_fn);
+            }
         }
 
         if let Some(t_callable_id) = callable_shape_id(self.interner, resolved_target) {

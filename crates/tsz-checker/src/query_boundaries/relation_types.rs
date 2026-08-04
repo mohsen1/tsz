@@ -371,6 +371,31 @@ impl RelationFailure {
                 source_type: TypeId::ERROR,
                 target_type: TypeId::ERROR,
             },
+            // The checker-facing classification only needs a representative
+            // type pair (used for drift/heuristic inspection); the live
+            // TS1224/TS1226 elaboration is rendered from the solver reason's
+            // structured chain via `render_failure_reason`. When both sides
+            // narrow to a type, that pair is the most useful signal;
+            // otherwise (TS1224: source has no predicate at all) there is no
+            // natural pair, matching the other structural-only reasons above.
+            SubtypeFailureReason::TypePredicateMismatch {
+                source_predicate,
+                target_predicate,
+                ..
+            } => {
+                let (source_type, target_type) = match source_predicate
+                    .as_ref()
+                    .and_then(|p| p.type_id)
+                    .zip(target_predicate.type_id)
+                {
+                    Some((s, t)) => (s, t),
+                    None => (TypeId::ERROR, TypeId::ERROR),
+                };
+                Self::TypeMismatch {
+                    source_type,
+                    target_type,
+                }
+            }
             SubtypeFailureReason::IndexAccessTypeParameterMismatch {
                 source_param,
                 target_param,

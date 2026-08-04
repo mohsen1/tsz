@@ -877,6 +877,8 @@ mod type_parameter_default_identity_tests;
 mod type_position_resolution_cache_tests;
 #[path = "tests/type_predicate_alias_relation_tests.rs"]
 mod type_predicate_alias_relation_tests;
+#[path = "tests/type_predicate_assignability_elaboration_tests.rs"]
+mod type_predicate_assignability_elaboration_tests;
 #[path = "tests/type_predicate_relation_routing_arch_tests.rs"]
 mod type_predicate_relation_routing_arch_tests;
 #[path = "tests/typeof_class_name_structural_lookup_arch_tests.rs"]

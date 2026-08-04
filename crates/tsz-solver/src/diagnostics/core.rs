@@ -3,7 +3,7 @@
 //! Contains failure reasons, lazy diagnostics, diagnostic codes,
 //! and core diagnostic data types. Re-exported from the parent `diagnostics` module.
 
-use crate::types::{TypeId, Visibility};
+use crate::types::{TypeId, TypePredicate, Visibility};
 use std::sync::Arc;
 use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
@@ -146,6 +146,29 @@ pub enum SubtypeFailureReason {
         /// example, distinguishing a callback's inner return-type
         /// failure from an inner parameter failure.
         inner_reason: Option<Box<Self>>,
+    },
+    /// A target function/method's return carries a type predicate (`x is T`,
+    /// `this is T`) that the source signature cannot satisfy.
+    ///
+    /// `source_predicate: None` is tsc's `Signature_0_must_be_a_type_predicate`
+    /// (TS1224) — the target requires a type guard and the source has no
+    /// predicate at all (an assertion-only target, `asserts x`, is compatible
+    /// without one and never reaches this variant). `source_signature` is the
+    /// interned whole-function type of the source, rendered in
+    /// `signatureToString` colon form for that message's `'{0}'` argument.
+    ///
+    /// `source_predicate: Some(_)` is `Type_predicate_0_is_not_assignable_to_1`
+    /// (TS1226) — both sides declare a predicate but they target different
+    /// parameters, mix a type guard with an assertion, or narrow to
+    /// incompatible types. `nested_reason` carries the inner
+    /// `source_predicate.type_id`/`target_predicate.type_id` mismatch when
+    /// both predicates narrow to a type and those types are merely related,
+    /// not the same/subtype.
+    TypePredicateMismatch {
+        source_predicate: Option<TypePredicate>,
+        target_predicate: TypePredicate,
+        source_signature: Option<TypeId>,
+        nested_reason: Option<Box<Self>>,
     },
     /// Too many parameters in source.
     TooManyParameters {
@@ -763,10 +786,12 @@ pub mod codes {
     pub use dc::PROPERTY_IS_OPTIONAL_IN_TYPE_BUT_REQUIRED_IN_TYPE as PROPERTY_OPTIONAL_BUT_REQUIRED;
     pub use dc::PROPERTY_IS_PRIVATE_AND_ONLY_ACCESSIBLE_WITHIN_CLASS as PROPERTY_VISIBILITY_MISMATCH;
     pub use dc::PROPERTY_IS_PROTECTED_AND_ONLY_ACCESSIBLE_THROUGH_AN_INSTANCE_OF_CLASS_THIS_IS_A as PROPERTY_NOMINAL_MISMATCH;
+    pub use dc::SIGNATURE_MUST_BE_A_TYPE_PREDICATE;
     pub use dc::THE_TYPE_IS_READONLY_AND_CANNOT_BE_ASSIGNED_TO_THE_MUTABLE_TYPE as READONLY_TO_MUTABLE;
     pub use dc::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE as NO_COMMON_PROPERTIES;
     pub use dc::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE as MISSING_PROPERTIES;
     pub use dc::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE as TYPE_NOT_ASSIGNABLE;
+    pub use dc::TYPE_PREDICATE_IS_NOT_ASSIGNABLE_TO as TYPE_PREDICATE_NOT_ASSIGNABLE_TO;
 
     pub use dc::INDEX_SIGNATURE_FOR_TYPE_IS_MISSING_IN_TYPE as MISSING_INDEX_SIGNATURE;
     pub use dc::IS_ASSIGNABLE_TO_THE_CONSTRAINT_OF_TYPE_BUT_COULD_BE_INSTANTIATED_WITH_A_DIFFERE as TYPE_PARAM_INSTANTIATED_WITH_DIFFERENT_SUBTYPE;
@@ -897,6 +922,14 @@ impl SubtypeFailureReason {
             Self::ReadonlyPropertyMismatch { .. } => codes::READONLY_PROPERTY,
             Self::PropertyVisibilityMismatch { .. } => codes::PROPERTY_VISIBILITY_MISMATCH,
             Self::PropertyNominalMismatch { .. } => codes::PROPERTY_NOMINAL_MISMATCH,
+            Self::TypePredicateMismatch {
+                source_predicate: None,
+                ..
+            } => codes::SIGNATURE_MUST_BE_A_TYPE_PREDICATE,
+            Self::TypePredicateMismatch {
+                source_predicate: Some(_),
+                ..
+            } => codes::TYPE_PREDICATE_NOT_ASSIGNABLE_TO,
             Self::ReturnTypeMismatch { .. }
             | Self::ParameterTypeMismatch { .. }
             | Self::TupleElementMismatch { .. }
@@ -1101,6 +1134,22 @@ impl SubtypeFailureReason {
                 codes::TYPE_NOT_ASSIGNABLE,
                 vec![(*source_param).into(), (*target_param).into()],
             )),
+
+            Self::TypePredicateMismatch {
+                source_predicate: _,
+                target_predicate: _,
+                source_signature: _,
+                nested_reason,
+            } => {
+                let mut diag = PendingDiagnostic::error(
+                    codes::TYPE_NOT_ASSIGNABLE,
+                    vec![source.into(), target.into()],
+                );
+                if let Some(nested) = nested_reason {
+                    diag = diag.with_related(nested.to_diagnostic(source, target));
+                }
+                diag
+            }
 
             Self::TooManyParameters {
                 source_count: _,
