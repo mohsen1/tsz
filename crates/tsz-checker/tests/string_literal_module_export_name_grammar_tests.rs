@@ -556,3 +556,184 @@ fn plain_identifier_specifiers_never_draw_ts1003() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// The `export_clause` field is shared by five productions; only one of them is
+// a module export name
+// ---------------------------------------------------------------------------
+//
+// tsz has no distinct `NamespaceExport` node, so `ExportDeclData::export_clause`
+// carries the `export * as <name>` namespace name, a `NAMED_EXPORTS` clause, a
+// **default-export expression**, an `export import X = Y`, and the declaration
+// of an `export <declaration>`. `checkModuleExportName` may only ever see the
+// first. Reading the field as a name regardless is what made
+// `export default "./foo"` draw TS18057 while tsc is silent — four conformance
+// rows, all `conformance/dynamicImport/importCallExpressionNested*`.
+//
+// Oracle: `typescript@7.0.2 --noEmit --module <m> --target es2020`.
+
+/// Every module target a default export can be written under. The two that
+/// reject string-literal export *names* lead, because they are the only ones
+/// where a misread clause could reach a diagnostic at all.
+const ALL_MODULE_TARGETS: [ModuleKind; 8] = [
+    ModuleKind::ES2015,
+    ModuleKind::ES2020,
+    ModuleKind::ES2022,
+    ModuleKind::ESNext,
+    ModuleKind::CommonJS,
+    ModuleKind::Preserve,
+    ModuleKind::Node16,
+    ModuleKind::NodeNext,
+];
+
+#[test]
+fn a_string_literal_default_export_is_not_a_module_export_name() {
+    // The reported witness. `export default "./foo"` has no *name* node at all,
+    // so no module target may report on it — tsc is clean on every one.
+    for module in ALL_MODULE_TARGETS {
+        let codes = check_codes_with(module, r#"export default "./foo";"#);
+        assert!(
+            !codes.contains(&STRING_LITERAL_MODULE_EXPORT_NAME),
+            "TS18057 must not fire for a string-literal default export under {module:?}, got {codes:?}"
+        );
+    }
+}
+
+#[test]
+fn the_default_export_row_holds_for_every_string_valued_expression_shape() {
+    // The witness generalises past a bare literal: anything whose *value* is a
+    // string is still valueless as a name. The renamed binders are deliberate —
+    // nothing here may key on a particular identifier or path text.
+    for source in [
+        r#"export default "./foo";"#,
+        r#"export default "";"#,
+        r#"export default "a name with spaces";"#,
+        r#"const someBinding = "s"; export default someBinding;"#,
+        r#"const otherBinding = "s"; export default otherBinding;"#,
+        r#"export default "a" + "b";"#,
+        r#"export default ["./foo"];"#,
+        r#"export default { path: "./foo" };"#,
+    ] {
+        for module in [ModuleKind::ES2015, ModuleKind::ES2020] {
+            assert_eq!(
+                count_18057(module, source),
+                0,
+                "TS18057 must not fire for {source:?} under {module:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn non_string_default_exports_stay_clean_as_the_negative_control() {
+    // These were already clean before the fix — but only because a
+    // `NumericLiteral` fails the string-literal test one frame later, not
+    // because the clause was recognised as a non-name. They are the control
+    // that shows the fix did not simply widen the silence.
+    for source in [
+        "export default 42;",
+        "export default class Renamed {}",
+        "export default function renamed() {}",
+        "export default class {}",
+        "const n = 1; export default n;",
+    ] {
+        for module in ALL_MODULE_TARGETS {
+            assert_eq!(
+                count_18057(module, source),
+                0,
+                "TS18057 must not fire for {source:?} under {module:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_other_clause_sharing_productions_are_not_module_export_names() {
+    // `export import X = Y` and `export <declaration>` also park a non-name in
+    // `export_clause`. Neither can hold a string literal today, so neither had
+    // a witness — they are pinned so a future parser change that puts one there
+    // cannot resurrect the family silently.
+    for source in [
+        r#"export const someValue = "a string";"#,
+        r#"export let otherValue = "a string";"#,
+        r#"export type Alias = "a string";"#,
+        r#"namespace Inner { export const z = 1; } export import Renamed = Inner;"#,
+        r#"export function renamed(): "lit" { return "lit"; }"#,
+    ] {
+        for module in [ModuleKind::ES2015, ModuleKind::ES2020] {
+            assert_eq!(
+                count_18057(module, source),
+                0,
+                "TS18057 must not fire for {source:?} under {module:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_namespace_export_name_still_reports_on_the_two_restricted_targets() {
+    // The one production whose clause *is* a module export name. This is what
+    // the gate must keep reaching; it is the positive half of the same rule.
+    for module in [ModuleKind::ES2015, ModuleKind::ES2020] {
+        assert_eq!(
+            count_18057(module, r#"export * as "ns name" from "target";"#),
+            1,
+            "the namespace export name must still draw TS18057 under {module:?}"
+        );
+    }
+    for module in [ModuleKind::ES2022, ModuleKind::CommonJS] {
+        assert_eq!(
+            count_18057(module, r#"export * as "ns name" from "target";"#),
+            0,
+            "the namespace export name is accepted under {module:?}"
+        );
+    }
+}
+
+#[test]
+fn an_identifier_namespace_export_name_never_reports() {
+    // The negative twin of the row above: same production, name is not a
+    // string, so the gate reaching it must still change nothing.
+    for module in ALL_MODULE_TARGETS {
+        assert_eq!(
+            count_18057(module, r#"export * as renamedNs from "target";"#),
+            0,
+            "an identifier namespace export name must stay clean under {module:?}"
+        );
+    }
+}
+
+#[test]
+fn a_default_export_beside_a_real_string_export_name_reports_exactly_once() {
+    // The discriminating row: both productions in one file. Only the specifier
+    // is a name, so the count pins "one", which neither a blanket report nor a
+    // blanket suppression can satisfy.
+    let source = r#"const q = 1;
+export default "./foo";
+export { q as "real name" };"#;
+    for module in [ModuleKind::ES2015, ModuleKind::ES2020] {
+        assert_eq!(
+            count_18057(module, source),
+            1,
+            "exactly the export specifier's name reports under {module:?}"
+        );
+    }
+}
+
+#[test]
+fn the_conformance_row_shape_is_clean_end_to_end() {
+    // `conformance/dynamicImport/importCallExpressionNested*.ts` in one line:
+    // a module whose default export is a path string, consumed by a nested
+    // dynamic import. Four rows regressed on exactly this.
+    let source = with_target(
+        r#"export default "./foo";
+export const later = () => import("target");"#,
+    );
+    for module in [ModuleKind::ES2015, ModuleKind::ES2020] {
+        assert_eq!(
+            count_18057(module, &source),
+            0,
+            "the conformance row shape must be clean under {module:?}"
+        );
+    }
+}

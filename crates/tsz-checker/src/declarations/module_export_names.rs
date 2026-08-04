@@ -50,6 +50,7 @@
 
 use crate::state::CheckerState;
 use tsz_common::common::ModuleKind;
+use tsz_parser::parser::node::ExportDeclData;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
@@ -103,6 +104,27 @@ impl<'a> CheckerState<'a> {
                 crate::diagnostics::diagnostic_codes::STRING_LITERAL_IMPORT_AND_EXPORT_NAMES_ARE_NOT_SUPPORTED_WHEN_THE_MODULE_FLAG_IS,
             );
         }
+    }
+
+    /// Whether an export declaration's `export_clause` holds a *namespace
+    /// export name* — the `<name>` of `export * as <name> from "m"` — rather
+    /// than some other node that merely shares the field.
+    ///
+    /// tsz has no distinct `NamespaceExport` node, so `ExportDeclData::export_clause`
+    /// is reused by five unrelated productions: the namespace name, the
+    /// `NAMED_EXPORTS` clause, a **default-export expression**, an
+    /// `export import X = Y` declaration, and the declaration of an
+    /// `export <declaration>`. Only the first is a module export name in `tsc`'s
+    /// sense, so only the first may reach `checkModuleExportName`; treating the
+    /// others as names is how `export default "./foo"` came to draw TS18057
+    /// while `tsc` is silent.
+    ///
+    /// `parse_export_star` is the sole producer of a namespace name and always
+    /// parses a `from` clause, so a non-default export declaration carrying a
+    /// module specifier selects exactly that production. The other four
+    /// productions all leave `module_specifier` empty or set `is_default_export`.
+    const fn export_clause_is_namespace_export_name(export_decl: &ExportDeclData) -> bool {
+        !export_decl.is_default_export && export_decl.module_specifier.is_some()
     }
 
     /// Whether `tsc` would consider this module specifier resolved, which is
@@ -204,6 +226,9 @@ impl<'a> CheckerState<'a> {
             return;
         };
         if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+            if !Self::export_clause_is_namespace_export_name(export_decl) {
+                return;
+            }
             // `export * as "ns" from "m"` — the clause *is* the namespace name.
             // `checkExportDeclaration` passes no second argument, so this
             // position always allows a string literal.
