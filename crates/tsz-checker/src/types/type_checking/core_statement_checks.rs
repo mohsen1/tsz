@@ -868,6 +868,21 @@ impl<'a> CheckerState<'a> {
                         let at_top_level = container.allows_top_level_await()
                             && self.is_directly_at_source_file_top_level(current_idx);
 
+                        // tsc anchors every diagnostic `checkAwaitExpression`
+                        // can emit at `getSpanOfTokenAtPosition(sourceFile,
+                        // node.pos)` — the `await` keyword token alone, not
+                        // the whole `AwaitExpression` node (whose stored
+                        // `end` runs past the operand onto trailing tokens
+                        // like a statement's `;`). `node.pos` is already the
+                        // keyword's own start: `parse_await_expression`
+                        // records `start_pos` before consuming `await` on
+                        // every arm that produces an `AwaitExpression`. This
+                        // mirrors the `for await` anchor in
+                        // `check_for_await_statement`.
+                        let await_pos = node.pos;
+                        let await_len =
+                            tsz_scanner::keyword_text_len(tsz_scanner::SyntaxKind::AwaitKeyword);
+
                         if at_top_level && self.top_level_await_ambiguous_reparse_exemption(node) {
                             // Exempt: see `top_level_await_ambiguous_reparse_exemption`.
                         } else if at_top_level {
@@ -882,9 +897,11 @@ impl<'a> CheckerState<'a> {
 
                             // TS1375: top-level await is only valid in a module.
                             if self.top_level_await_requires_module_diagnostic() {
-                                self.error_at_node(
-                                    current_idx,
-                                    diagnostic_messages::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_FILE_WHEN_THAT_FILE_IS,
+                                self.error(
+                                    await_pos,
+                                    await_len,
+                                    diagnostic_messages::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_FILE_WHEN_THAT_FILE_IS
+                                        .to_string(),
                                     diagnostic_codes::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_FILE_WHEN_THAT_FILE_IS,
                                 );
                             }
@@ -897,16 +914,20 @@ impl<'a> CheckerState<'a> {
                             match self.top_level_await_verdict() {
                                 TopLevelAwaitVerdict::Allowed => {}
                                 TopLevelAwaitVerdict::CommonJsFile => {
-                                    self.error_at_node(
-                                        current_idx,
-                                        diagnostic_messages::THE_CURRENT_FILE_IS_A_COMMONJS_MODULE_AND_CANNOT_USE_AWAIT_AT_THE_TOP_LEVEL,
+                                    self.error(
+                                        await_pos,
+                                        await_len,
+                                        diagnostic_messages::THE_CURRENT_FILE_IS_A_COMMONJS_MODULE_AND_CANNOT_USE_AWAIT_AT_THE_TOP_LEVEL
+                                            .to_string(),
                                         diagnostic_codes::THE_CURRENT_FILE_IS_A_COMMONJS_MODULE_AND_CANNOT_USE_AWAIT_AT_THE_TOP_LEVEL,
                                     );
                                 }
                                 TopLevelAwaitVerdict::UnsupportedModuleOrTarget => {
-                                    self.error_at_node(
-                                        current_idx,
-                                        diagnostic_messages::TOP_LEVEL_AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ES,
+                                    self.error(
+                                        await_pos,
+                                        await_len,
+                                        diagnostic_messages::TOP_LEVEL_AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ES
+                                            .to_string(),
                                         diagnostic_codes::TOP_LEVEL_AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ES,
                                     );
                                 }
@@ -918,14 +939,17 @@ impl<'a> CheckerState<'a> {
                             // — see `did_you_mean_async_related`.
                             let related = self.did_you_mean_async_related(current_idx);
                             if related.is_empty() {
-                                self.error_at_node(
-                                    current_idx,
-                                    diagnostic_messages::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS,
+                                self.error(
+                                    await_pos,
+                                    await_len,
+                                    diagnostic_messages::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS
+                                        .to_string(),
                                     diagnostic_codes::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS,
                                 );
                             } else {
-                                self.error_at_node_with_related(
-                                    current_idx,
+                                self.error_at_span_with_related(
+                                    await_pos,
+                                    await_len,
                                     diagnostic_messages::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS,
                                     diagnostic_codes::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS,
                                     related,

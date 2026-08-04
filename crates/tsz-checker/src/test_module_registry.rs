@@ -71,6 +71,8 @@ mod async_return_invalid_thenable_tests;
 mod await_alias_union_distribution_tests;
 #[path = "tests/await_concise_arrow_body_grammar_tests.rs"]
 mod await_concise_arrow_body_grammar_tests;
+#[path = "tests/await_expression_grammar_keyword_anchor_tests.rs"]
+mod await_expression_grammar_keyword_anchor_tests;
 #[path = "tests/await_grammar_computed_property_name_tests.rs"]
 mod await_grammar_computed_property_name_tests;
 #[path = "tests/await_grammar_expression_position_tests.rs"]
