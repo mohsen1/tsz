@@ -1475,6 +1475,90 @@ fn test_ts5052_not_emitted_when_check_js_and_allow_js_true() {
 }
 
 #[test]
+fn test_ts5052_jsx_fragment_factory_requires_jsx_factory() {
+    // Oracle-confirmed (typescript@7.0.2): `jsxFragmentFactory` alone, even
+    // with a syntactically valid value, still requires `jsxFactory`.
+    let source = r#"{"compilerOptions":{"jsxFragmentFactory":"Fragment"}}"#;
+    let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+    let hits: Vec<&Diagnostic> = parsed
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 5052)
+        .collect();
+    assert_eq!(
+        hits.len(),
+        1,
+        "Expected exactly one TS5052 diagnostic, got: {:?}",
+        parsed.diagnostics
+    );
+    assert!(
+        hits[0].message_text.contains(
+            "'jsxFragmentFactory' cannot be specified without specifying option 'jsxFactory'"
+        ),
+        "Unexpected TS5052 message: {}",
+        hits[0].message_text
+    );
+}
+
+#[test]
+fn test_ts5052_jsx_fragment_factory_silent_when_jsx_factory_present() {
+    let source = r#"{"compilerOptions":{"jsxFactory":"h","jsxFragmentFactory":"Fragment.Nested"}}"#;
+    let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+    let has_5052 = parsed.diagnostics.iter().any(|d| d.code == 5052);
+    assert!(
+        !has_5052,
+        "jsxFactory is present, so no TS5052 is due, got: {:?}",
+        parsed.diagnostics
+    );
+}
+
+#[test]
+fn test_ts18035_invalid_jsx_fragment_factory_value() {
+    // Oracle-confirmed (typescript@7.0.2): fires independently of the TS5052
+    // dependency check -- an invalid value is still invalid even paired with
+    // jsxFactory.
+    let source = r#"{"compilerOptions":{"jsxFactory":"h","jsxFragmentFactory":"not a name!"}}"#;
+    let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+    let ts18035 = parsed
+        .diagnostics
+        .iter()
+        .find(|d| d.code == diagnostic_codes::INVALID_VALUE_FOR_JSXFRAGMENTFACTORY_IS_NOT_A_VALID_IDENTIFIER_OR_QUALIFIED_NAME)
+        .unwrap_or_else(|| panic!("Expected TS18035, got: {:?}", parsed.diagnostics));
+    assert!(
+        ts18035
+            .message_text
+            .contains("'not a name!' is not a valid identifier or qualified-name"),
+        "Unexpected TS18035 message: {}",
+        ts18035.message_text
+    );
+    assert_eq!(
+        ts18035.start,
+        source.find("\"not a name!\"").expect("value position") as u32,
+    );
+    let has_5052 = parsed.diagnostics.iter().any(|d| d.code == 5052);
+    assert!(
+        !has_5052,
+        "jsxFactory is present, so no TS5052 is due even though the value is invalid, got: {:?}",
+        parsed.diagnostics
+    );
+}
+
+#[test]
+fn test_ts18035_not_emitted_for_valid_jsx_fragment_factory_value() {
+    let source = r#"{"compilerOptions":{"jsxFactory":"h","jsxFragmentFactory":"Fragment.Nested"}}"#;
+    let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+    let has_18035 = parsed.diagnostics.iter().any(|d| {
+        d.code
+            == diagnostic_codes::INVALID_VALUE_FOR_JSXFRAGMENTFACTORY_IS_NOT_A_VALID_IDENTIFIER_OR_QUALIFIED_NAME
+    });
+    assert!(
+        !has_18035,
+        "'Fragment.Nested' is a valid qualified name, got: {:?}",
+        parsed.diagnostics
+    );
+}
+
+#[test]
 fn test_resolve_compiler_options_propagates_check_js_to_checker_options() {
     let source = r#"{"compilerOptions":{"allowJs":true,"checkJs":true}}"#;
     let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
