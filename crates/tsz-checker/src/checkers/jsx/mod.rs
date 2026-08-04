@@ -25,6 +25,8 @@ pub(crate) mod spread;
 #[cfg(test)]
 mod contextual_children_tests;
 #[cfg(test)]
+mod duplicate_attribute_grammar_tests;
+#[cfg(test)]
 mod optional_prop_display_tests;
 #[cfg(test)]
 mod ref_callback_tests;

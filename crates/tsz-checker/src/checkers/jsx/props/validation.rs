@@ -13,6 +13,7 @@ use crate::error_reporter::{
 use crate::query_boundaries::checkers::jsx as jsx_queries;
 use crate::query_boundaries::common::TypeSubstitution;
 use crate::state::CheckerState;
+use std::collections::HashSet;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{ObjectShape, TypeId};
@@ -1763,9 +1764,28 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
-    /// Grammar check: TS17000 for empty expressions in JSX attributes.
-    /// Matches tsc's `checkGrammarJsxElement`: reports only the first empty
-    /// expression per JSX opening element, then returns.
+    /// Grammar check: TS17001 for repeated attribute names and TS17000 for
+    /// empty expressions in JSX attributes.
+    ///
+    /// Mirrors tsc's `checkGrammarJsxElement` exactly, including its control
+    /// flow, which is observable:
+    ///
+    /// - A `JsxSpreadAttribute` is skipped **without** clearing the seen-name
+    ///   set, so `[div a="1" {...s} a="2" /]` still reports TS17001 on the
+    ///   second `a` even though the spread may have rewritten it in between.
+    /// - Within one attribute the duplicate-name test runs **before** the
+    ///   empty-expression test, and each reports at most once for the whole
+    ///   element and then returns. So `[div a="1" a={} /]` is TS17001 (the
+    ///   name repeats before the empty initializer is reached), while
+    ///   `[div a={} b="1" b="2" /]` is TS17000 (the first attribute's empty
+    ///   initializer returns before the `b` pair is ever compared).
+    /// - The name key is the attribute's full text, so a namespaced name
+    ///   collides only with the same namespace *and* local name: `ns:a` and
+    ///   `other:a` are distinct, `ns:a` twice is TS17001. Comparison is
+    ///   case-sensitive.
+    ///
+    /// The report anchors on the attribute's name node, not the whole
+    /// attribute, matching tsc's `grammarErrorOnNode(name, ...)`.
     pub(in crate::checkers_domain::jsx) fn check_grammar_jsx_element(
         &mut self,
         attributes_idx: NodeIndex,
@@ -1777,6 +1797,8 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        let mut seen_names: HashSet<String> = HashSet::new();
+
         for &attr_idx in &attrs.properties.nodes {
             let Some(attr_node) = self.ctx.arena.get(attr_idx) else {
                 continue;
@@ -1787,6 +1809,22 @@ impl<'a> CheckerState<'a> {
             let Some(attr_data) = self.ctx.arena.get_jsx_attribute(attr_node) else {
                 continue;
             };
+
+            // TS17001 first: tsc compares the name before it ever looks at the
+            // initializer, so a repeated name outranks a later empty `{}`.
+            if let Some(name_node) = self.ctx.arena.get(attr_data.name)
+                && let Some(attr_name) = self.get_jsx_attribute_name(name_node)
+                && !seen_names.insert(attr_name)
+            {
+                self.error_at_node(
+                    attr_data.name,
+                    diagnostic_messages::JSX_ELEMENTS_CANNOT_HAVE_MULTIPLE_ATTRIBUTES_WITH_THE_SAME_NAME,
+                    diagnostic_codes::JSX_ELEMENTS_CANNOT_HAVE_MULTIPLE_ATTRIBUTES_WITH_THE_SAME_NAME,
+                );
+                // tsc returns after the first grammar error per element
+                return;
+            }
+
             if attr_data.initializer.is_none() {
                 continue;
             }
@@ -1801,10 +1839,9 @@ impl<'a> CheckerState<'a> {
             };
             // Empty expression {} without spread
             if expr_data.expression.is_none() && !expr_data.dot_dot_dot_token {
-                use crate::diagnostics::diagnostic_codes;
                 self.error_at_node(
                     attr_data.initializer,
-                    "JSX attributes must only be assigned a non-empty 'expression'.",
+                    diagnostic_messages::JSX_ATTRIBUTES_MUST_ONLY_BE_ASSIGNED_A_NON_EMPTY_EXPRESSION,
                     diagnostic_codes::JSX_ATTRIBUTES_MUST_ONLY_BE_ASSIGNED_A_NON_EMPTY_EXPRESSION,
                 );
                 // tsc returns after the first grammar error per element
