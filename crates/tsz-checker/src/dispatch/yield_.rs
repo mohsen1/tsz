@@ -587,8 +587,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 if is_async_generator
                     && self
                         .checker
-                        .await_operand_invalid_thenable_this_type(expression_type)
-                        .is_some()
+                        .await_operand_is_invalid_thenable(expression_type)
                 {
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.checker.error_at_node(
