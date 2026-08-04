@@ -571,6 +571,7 @@ impl<'a> CheckerState<'a> {
                     category: crate::diagnostics::DiagnosticCategory::Message,
                     code,
                     depth,
+                    kind: crate::diagnostics::RelatedInformationKind::ChainLink,
                 });
         }
         true

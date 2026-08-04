@@ -466,6 +466,7 @@ impl<'a> CheckerState<'a> {
             length: anchor.length,
             message_text: detail,
             depth: 0,
+            kind: crate::diagnostics::RelatedInformationKind::ChainLink,
         }];
 
         self.emit_render_request_at_anchor(

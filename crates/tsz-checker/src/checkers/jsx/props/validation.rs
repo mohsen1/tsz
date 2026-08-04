@@ -3,8 +3,8 @@
 
 use crate::context::TypingRequest;
 use crate::diagnostics::{
-    DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes, diagnostic_messages,
-    format_message,
+    DiagnosticCategory, DiagnosticRelatedInformation, RelatedInformationKind, diagnostic_codes,
+    diagnostic_messages, format_message,
 };
 use crate::error_reporter::{
     DiagnosticAnchorKind, DiagnosticRenderRequest, RelatedInformationPolicy,
@@ -1419,6 +1419,7 @@ impl<'a> CheckerState<'a> {
                         &[&prop_name],
                     ),
                     depth: 0,
+                    kind: RelatedInformationKind::LocationPointer,
                 });
             }
             self.emit_render_request_at_anchor(

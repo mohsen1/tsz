@@ -1,6 +1,6 @@
-//! TS18000 (`Circularity detected while resolving configuration: {0}`) and
-//! TS18035 (`Invalid value for 'jsxFragmentFactory'. ...`) — two config-loader
-//! codes that had zero emit sites (#16291).
+//! TS18000 (`Circularity detected while resolving configuration: {0}`), a
+//! config-loader code that had zero emit sites (#16291), plus follow-on
+//! coverage for TS18035 (`Invalid value for 'jsxFragmentFactory'. ...`).
 //!
 //! TS18000 is a *recovery* rule, not just a message: tsc's `parseConfig`
 //! consults its resolution stack on entry, reports the code once, and returns
@@ -8,9 +8,12 @@
 //! still merges and the program still loads and checks. tsz previously
 //! detected the cycle and aborted the whole config load with a non-tsc error.
 //!
-//! TS18035 is the `jsxFragmentFactory` mirror of the already-wired TS5067
-//! (`jsxFactory`); tsc runs the same identifier-or-qualified-name check on
-//! both options, and tsz had only one half.
+//! The TS18035 emit site itself landed separately in #16291's enumeration
+//! (see `module_resolution.rs` for the base valid/invalid pair and the TS5052
+//! dependency). The cases kept here are the ones that pair it against its
+//! `jsxFactory`/TS5067 sibling: both-invalid reports both codes, the negative
+//! direction, the value-span substring hazard between the two option keys,
+//! and arrival through `extends`.
 //!
 //! Every expectation below is pinned against the real `typescript@7.0.2`
 //! binary, including the unsubstituted `{0}` in TS18000's message, which is
@@ -236,29 +239,11 @@ fn plain_extends_chain_without_a_cycle_stays_clean() {
 }
 
 // ---------------------------------------------------------------------------
-// TS18035 — `jsxFragmentFactory` value validation
+// TS18035 — `jsxFragmentFactory` paired against its `jsxFactory`/TS5067 sibling
+//
+// The plain valid/invalid pair and the TS5052 dependency live in
+// `module_resolution.rs`; these are the cross-option cases.
 // ---------------------------------------------------------------------------
-
-#[test]
-fn invalid_jsx_fragment_factory_reports_ts18035() {
-    let temp = tempdir().expect("create temp dir");
-    let path = write(
-        temp.path(),
-        "tsconfig.json",
-        r#"{"compilerOptions": {"jsx": "react", "jsxFactory": "h", "jsxFragmentFactory": "not a name!"}}"#,
-    );
-
-    let parsed = load_tsconfig_with_diagnostics(&path).expect("load config");
-    let diag = parsed
-        .diagnostics
-        .iter()
-        .find(|d| d.code == 18035)
-        .unwrap_or_else(|| panic!("expected TS18035, got: {:?}", codes(&parsed)));
-    assert_eq!(
-        diag.message_text,
-        "Invalid value for 'jsxFragmentFactory'. 'not a name!' is not a valid identifier or qualified-name."
-    );
-}
 
 #[test]
 fn valid_jsx_fragment_factory_spellings_are_clean() {

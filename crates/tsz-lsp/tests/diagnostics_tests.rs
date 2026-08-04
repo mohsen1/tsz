@@ -1,6 +1,7 @@
 use super::*;
 use tsz_checker::diagnostics::{
-    Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
+    Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, RelatedInformationKind,
+    diagnostic_codes,
 };
 use tsz_common::position::LineMap;
 
@@ -35,6 +36,7 @@ fn test_convert_diagnostic_with_related_info() {
         category: DiagnosticCategory::Message,
         code: 0,
         depth: 0,
+        kind: RelatedInformationKind::ChainLink,
     };
     let related_other = DiagnosticRelatedInformation {
         file: "other.ts".to_string(),
@@ -44,6 +46,7 @@ fn test_convert_diagnostic_with_related_info() {
         category: DiagnosticCategory::Message,
         code: 0,
         depth: 0,
+        kind: RelatedInformationKind::ChainLink,
     };
     let diag = Diagnostic {
         file: "test.ts".to_string(),
@@ -279,6 +282,7 @@ fn test_ts_diagnostic_with_related_information() {
         category: DiagnosticCategory::Message,
         code: 0,
         depth: 0,
+        kind: RelatedInformationKind::ChainLink,
     });
     let ts_diag = convert_to_ts_diagnostic(&diag, &line_map, source);
     assert_eq!(ts_diag.code, 2322);
@@ -437,6 +441,7 @@ fn test_convert_diagnostic_all_related_info_from_other_files_filtered_out() {
         category: DiagnosticCategory::Message,
         code: 0,
         depth: 0,
+        kind: RelatedInformationKind::ChainLink,
     });
     let lsp_diag = convert_diagnostic(&diag, &line_map, source);
     assert!(
@@ -703,6 +708,7 @@ fn test_convert_to_ts_diagnostic_related_info_filtered_by_file() {
         category: DiagnosticCategory::Message,
         code: 0,
         depth: 0,
+        kind: RelatedInformationKind::ChainLink,
     });
     let ts_diag = convert_to_ts_diagnostic(&diag, &line_map, source);
     assert!(
@@ -1233,6 +1239,7 @@ fn test_diagnostic_with_related_info_same_file() {
         category: DiagnosticCategory::Message,
         code: 0,
         depth: 0,
+        kind: RelatedInformationKind::ChainLink,
     });
     let lsp_diag = convert_diagnostic(&diag, &line_map, source);
     let _ = lsp_diag;
@@ -1344,6 +1351,7 @@ fn test_diagnostic_multiple_related_info() {
             category: DiagnosticCategory::Message,
             code: 0,
             depth: 0,
+            kind: RelatedInformationKind::ChainLink,
         });
     }
     let lsp_diag = convert_diagnostic(&diag, &line_map, source);

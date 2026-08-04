@@ -11,6 +11,10 @@ pub mod rescan;
 // Character code constants used by the scanner
 pub mod char_codes;
 
+// Shared positional classification for regex literal flags (scanner and
+// checker both consult it; see module docs).
+pub mod regex_flags;
+
 use serde::Serialize;
 use wasm_bindgen::prelude::wasm_bindgen;
 

@@ -397,6 +397,20 @@ impl<'a> CheckerState<'a> {
         if let Some(name) = self.local_well_known_symbol_property_name(computed.expression) {
             return Some(ResolvedComputedName::string(name));
         }
+        // `[it]` where `it` is declared `typeof Symbol.<member>` for a genuine
+        // well-known member: tsc types that binding as the well-known symbol
+        // itself, so the key is the canonical `[Symbol.<member>]` — the same
+        // member `[Symbol.<member>]` written inline declares. Checked before
+        // the binding-identity legs below, which would otherwise key the alias
+        // under `__unique_<id>` and split one member into two.
+        if let Some(sym_id) = self.resolve_computed_name_expression_symbol(computed.expression)
+            && let Some(name) =
+                crate::types_domain::computed_names::type_query_well_known_symbol_key(
+                    &self.ctx, sym_id,
+                )
+        {
+            return Some(ResolvedComputedName::string(name));
+        }
         // `Symbol.<member>` where `<member>` is a plain (non-unique)
         // `symbol`-typed global augmentation (xstate's `SymbolConstructor.
         // observable: symbol`) is not a well-known key at all: it does not

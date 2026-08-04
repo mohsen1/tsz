@@ -5,8 +5,8 @@
 //! failure is annotated with one of two notes (`TS5082`/`TS5075`).
 
 use crate::diagnostics::{
-    DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes, diagnostic_messages,
-    format_message,
+    DiagnosticCategory, DiagnosticRelatedInformation, RelatedInformationKind, diagnostic_codes,
+    diagnostic_messages, format_message,
 };
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
@@ -57,6 +57,7 @@ impl<'a> CheckerState<'a> {
             length,
             message_text,
             depth: note_depth,
+            kind: RelatedInformationKind::ChainLink,
         };
         let constraint =
             crate::query_boundaries::diagnostics::type_parameter_constraint(self.ctx.types, target)
