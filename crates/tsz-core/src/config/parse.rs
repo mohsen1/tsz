@@ -856,6 +856,23 @@ pub fn parse_tsconfig_with_diagnostics_deferred(
             );
         }
 
+        // TS5052: jsxFragmentFactory requires jsxFactory. Presence-based like
+        // checkJs/allowJs above, not a boolean flag, so a non-empty string
+        // value (any value at all, since option_is_truthy treats a present
+        // string as truthy) is enough to trigger the dependency regardless of
+        // whether that value later fails the TS18035 identifier check below.
+        if option_is_truthy(compiler_opts.get("jsxFragmentFactory"))
+            && !option_is_truthy(compiler_opts.get("jsxFactory"))
+        {
+            push_option_dependency_diagnostic(
+                &mut diagnostics,
+                file_path,
+                &stripped,
+                "jsxFragmentFactory",
+                "jsxFactory",
+            );
+        }
+
         // TS5053: Option '{0}' cannot be specified with option '{1}'.
         // tsc emits for each conflicting key, pointing at the key's position.
         // The message always names the pair (A, B) regardless of which key is pointed at.
@@ -927,6 +944,28 @@ pub fn parse_tsconfig_with_diagnostics_deferred(
                 jsx_factory_val.len() as u32 + 2, // include surrounding quotes
                 msg,
                 diagnostic_codes::INVALID_VALUE_FOR_JSXFACTORY_IS_NOT_A_VALID_IDENTIFIER_OR_QUALIFIED_NAME,
+            ));
+        }
+
+        // TS18035: Invalid value for 'jsxFragmentFactory' — same identifier-or-
+        // qualified-name rule as jsxFactory (TS5067) above, independent
+        // diagnostic. tsc reports this regardless of whether jsxFactory is
+        // present, so it does not gate on the TS5052 dependency check above.
+        if let Some(serde_json::Value::String(jsx_fragment_factory_val)) =
+            compiler_opts.get("jsxFragmentFactory")
+            && !is_valid_identifier_or_qualified_name(jsx_fragment_factory_val)
+        {
+            let start = find_value_offset_in_source(&stripped, "jsxFragmentFactory");
+            let msg = format_message(
+                diagnostic_messages::INVALID_VALUE_FOR_JSXFRAGMENTFACTORY_IS_NOT_A_VALID_IDENTIFIER_OR_QUALIFIED_NAME,
+                &[jsx_fragment_factory_val.as_str()],
+            );
+            diagnostics.push(Diagnostic::error(
+                file_path,
+                start,
+                jsx_fragment_factory_val.len() as u32 + 2, // include surrounding quotes
+                msg,
+                diagnostic_codes::INVALID_VALUE_FOR_JSXFRAGMENTFACTORY_IS_NOT_A_VALID_IDENTIFIER_OR_QUALIFIED_NAME,
             ));
         }
 
