@@ -718,7 +718,7 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    fn unwrap_parenthesized_expression(&self, expr_idx: NodeIndex) -> NodeIndex {
+    pub(crate) fn unwrap_parenthesized_expression(&self, expr_idx: NodeIndex) -> NodeIndex {
         let mut current = expr_idx;
         while let Some(node) = self.ctx.arena.get(current) {
             if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
@@ -1682,7 +1682,17 @@ impl<'a> CheckerState<'a> {
                                     self.ctx.types,
                                     return_type,
                                 );
-                            (self.widen_enum_member_type(widened), None)
+                            let widened = self.widen_enum_member_type(widened);
+                            // Non-strict nullish widening, the block-body twin of
+                            // the expression-body seam in
+                            // `maybe_widen_return_contribution`: under
+                            // `strictNullChecks: false` tsc maps the widening
+                            // `null`/`undefined` leaves of a fresh return
+                            // contribution to `any`, so `return [undefined]`
+                            // infers `any[]`, not `undefined[]`.
+                            let widened = self
+                                .widen_nullish_return_contribution(return_data.expression, widened);
+                            (widened, None)
                         } else {
                             (return_type, widenable.then_some(return_data.expression))
                         };
