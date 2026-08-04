@@ -815,11 +815,11 @@ impl ParserState {
 
     /// Classify `abstract export <declaration>` by the node kind that `export`
     /// decorates, or return `None` when the shape is not one where `export` is
-    /// a modifier on a trailing declaration (`export as namespace`, `export
-    /// default ...`, `export { }`, `export * from ...`, `export = ...`, and a
-    /// bare `abstract` identifier expression are all left to their existing
-    /// paths). The `abstract`-`export` boundary is ASI-sensitive; `abstract` is
-    /// a contextual keyword that a line break cuts into its own expression
+    /// a modifier on a trailing declaration (`export as namespace`, a
+    /// non-class `export default ...`, `export = ...`, and a bare `abstract`
+    /// identifier expression are all left to their existing paths). The
+    /// `abstract`-`export` boundary is ASI-sensitive; `abstract` is a
+    /// contextual keyword that a line break cuts into its own expression
     /// statement.
     pub(crate) fn look_ahead_abstract_before_export_target(
         &mut self,
@@ -837,12 +837,33 @@ impl ParserState {
                 | SyntaxKind::GlobalKeyword => self
                     .look_ahead_is_module_declaration()
                     .then_some(AbstractExportTarget::PositionErrorWins),
-                // A named or star export declaration. `export default ...` and
-                // `export = ...` are deliberately not here: tsc picks TS1029
-                // for the former and TS1120 owns the latter, and neither is
-                // reached through this modifier run.
+                // A named or star export declaration. `export = ...` is
+                // deliberately not here: tsc routes it through TS1120, not
+                // this modifier run.
                 SyntaxKind::OpenBraceToken | SyntaxKind::AsteriskToken => {
                     Some(AbstractExportTarget::PositionErrorWins)
+                }
+                // `export default class C {}` (named or anonymous) reads the
+                // same modifier run `[abstract, export, default]` as the bare
+                // `export class` arm above, and `abstract` is legal on a
+                // class regardless of `default` — same TS1029 ordering
+                // violation, same anchor on `export`, every container
+                // (#16398). A second, legally-placed `abstract` directly
+                // before `class` (`abstract export default abstract class`)
+                // is tolerated here too: it belongs to the correct
+                // `export default abstract class` tail that
+                // `parse_export_declaration` already parses standalone, and
+                // tsc's own diagnostic set for that shape is still exactly
+                // one TS1029 (oracle-confirmed). Every other
+                // `export default <expr>` form admits no `abstract` modifier
+                // at all and is left to its existing, unaffected path.
+                SyntaxKind::DefaultKeyword => {
+                    self.next_token(); // skip `default`
+                    if self.is_token(SyntaxKind::AbstractKeyword) {
+                        self.next_token(); // skip a second, legal `abstract`
+                    }
+                    matches!(self.token(), SyntaxKind::ClassKeyword)
+                        .then_some(AbstractExportTarget::Class)
                 }
                 // `export type { x }` / `export type * from "m"` is a type-only
                 // export declaration, not the type-alias form — same lookahead

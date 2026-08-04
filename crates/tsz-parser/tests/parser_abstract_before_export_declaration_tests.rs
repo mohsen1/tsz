@@ -293,3 +293,121 @@ fn abstract_export_type_only_export_is_not_read_as_a_type_alias() {
         );
     }
 }
+
+// -- `abstract export default class`: #16398's follow-up. `export default
+//    class C {}` reaches a different parser entry point
+//    (`parse_export_declaration`) than the plain `abstract export class`
+//    arm above, but `abstract` is legal on a class regardless of `default`,
+//    so tsc reads the same modifier run and reports the same single TS1029
+//    on `export`, in every container. Oracle-confirmed against
+//    `typescript@7.0.2`: named class, anonymous class, and a second,
+//    legally-placed `abstract` directly before `class` all produce exactly
+//    one TS1029, nothing else. --
+
+#[test]
+fn abstract_export_default_class_reports_ts1029_on_the_export_keyword_in_every_container() {
+    for statement in [
+        "abstract export default class D {}",
+        "abstract export default class {}",
+    ] {
+        for index in 0..CONTAINERS.len() {
+            let source = in_container(index, statement);
+            let (parser, _root) = parse_source(&source);
+            let diagnostics = parser.get_diagnostics();
+            let export_start = source.find("export").unwrap() as u32;
+            assert!(
+                diagnostics.iter().any(|d| d.code
+                    == diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER
+                    && d.start == export_start
+                    && d.length == "export".len() as u32),
+                "expected TS1029 anchored on `export` at {export_start} for {source:?}, got {diagnostics:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn abstract_export_default_class_does_not_also_report_the_container_modifier_error() {
+    for statement in [
+        "abstract export default class D {}",
+        "abstract export default class {}",
+    ] {
+        for index in 0..CONTAINERS.len() {
+            let source = in_container(index, statement);
+            assert_eq!(
+                codes(&source),
+                vec![diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER],
+                "unexpected extra diagnostics for {source:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn abstract_export_default_class_binder_name_does_not_change_the_answer() {
+    for name in ["D", "abstract", "exportish", "Telemetry"] {
+        let source = format!("abstract export default class {name} {{}}");
+        assert_eq!(
+            codes(&source),
+            vec![diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER],
+            "unexpected diagnostics for {source:?}"
+        );
+    }
+}
+
+#[test]
+fn abstract_export_default_redundant_abstract_before_class_still_reports_exactly_one_ts1029() {
+    // A second, legally-placed `abstract` directly before `class` belongs to
+    // the correct `export default abstract class` tail — tsc's own answer for
+    // this shape is still exactly one TS1029, oracle-confirmed.
+    for index in 0..CONTAINERS.len() {
+        let source = in_container(index, "abstract export default abstract class D {}");
+        assert_eq!(
+            codes(&source),
+            vec![diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER],
+            "unexpected diagnostics for {source:?}"
+        );
+    }
+}
+
+#[test]
+fn a_line_break_between_abstract_and_export_default_class_is_not_a_modifier_run() {
+    let source = "abstract\nexport default class D {}";
+    assert!(
+        !codes(source).contains(&diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER),
+        "ASI must cut `abstract` off into its own statement, got {:?}",
+        codes(source)
+    );
+}
+
+#[test]
+fn a_valid_export_default_class_stays_clean() {
+    // Negative controls: the correct order, with and without a legal
+    // `abstract`, must be entirely unaffected by this fix.
+    for source in [
+        "export default class D {}",
+        "export default abstract class D {}",
+        "export default class {}",
+    ] {
+        assert_eq!(codes(source), Vec::<u32>::new(), "for {source:?}");
+    }
+}
+
+#[test]
+fn abstract_export_default_non_class_forms_are_not_read_as_the_class_arm() {
+    // `abstract` admits no other `export default <expr>` form at all — this
+    // fix must not widen the classification past `class`. Left to its
+    // existing (separately tracked) path.
+    for statement in [
+        "abstract export default function f() {}",
+        "abstract export default 1;",
+        "abstract export default (class {});",
+    ] {
+        let source = in_container(0, statement);
+        assert!(
+            !codes(&source).contains(&diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER),
+            "must not report the class-ordering TS1029 for {source:?}: {:?}",
+            codes(&source)
+        );
+    }
+}
