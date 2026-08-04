@@ -893,3 +893,176 @@ const underV: RegExp[] = [
         "Properties of strings are legal under the v flag, got: {diagnostics:?}"
     );
 }
+
+/// Codes per witness, in emission order, so the modifier-group tests below can
+/// assert an exact sequence rather than "contains".
+fn regex_codes(source: &str, target: tsz_common::ScriptTarget) -> Vec<u32> {
+    let (parser, _root) =
+        crate::parser::test_fixture::parse_source_with_language_version(source, target);
+    parser.get_diagnostics().iter().map(|d| d.code).collect()
+}
+
+#[test]
+fn test_subpattern_modifier_group_rejects_non_toggleable_flags_with_ts1509() {
+    // Only `i`, `m` and `s` may be toggled within a subpattern; `d`, `g`, `u`,
+    // `v` and `y` are whole-pattern flags. Checked on both sides of the minus
+    // so the second run is not silently exempt.
+    for witness in [
+        "const r = /(?d:x)/;",
+        "const r = /(?g:x)/;",
+        "const r = /(?u:x)/;",
+        "const r = /(?v:x)/;",
+        "const r = /(?y:x)/;",
+        "const r = /(?-d:x)/;",
+        "const r = /(?-g:x)/;",
+        "const r = /(?-y:x)/;",
+    ] {
+        assert_eq!(
+            regex_codes(witness, tsz_common::ScriptTarget::ES2022),
+            vec![
+                diagnostic_codes::THIS_REGULAR_EXPRESSION_FLAG_CANNOT_BE_TOGGLED_WITHIN_A_SUBPATTERN
+            ],
+            "{witness} should report exactly one TS1509"
+        );
+    }
+}
+
+#[test]
+fn test_subpattern_modifier_group_minus_without_any_flag_reports_ts1504() {
+    // TS1504 is positional in tsc: it fires only when the whole prelude
+    // consumed nothing but the minus sign, so a flag on either side clears it.
+    assert_eq!(
+        regex_codes("const r = /(?-:x)/;", tsz_common::ScriptTarget::ES2022),
+        vec![diagnostic_codes::SUBPATTERN_FLAGS_MUST_BE_PRESENT_WHEN_THERE_IS_A_MINUS_SIGN],
+    );
+    assert_eq!(
+        regex_codes("const r = /(?i-:x)/;", tsz_common::ScriptTarget::ES2022),
+        Vec::<u32>::new(),
+        "flags before the minus satisfy the rule"
+    );
+    assert_eq!(
+        regex_codes("const r = /(?-i:x)/;", tsz_common::ScriptTarget::ES2022),
+        Vec::<u32>::new(),
+        "flags after the minus satisfy the rule"
+    );
+    assert_eq!(
+        regex_codes("const r = /(?i-m:x)/;", tsz_common::ScriptTarget::ES2022),
+        Vec::<u32>::new(),
+        "flags on both sides are the ordinary legal form"
+    );
+}
+
+#[test]
+fn test_subpattern_modifier_group_duplicate_flags_report_ts1500() {
+    // The second run is seeded with the first run's flags, so `(?i-i:` is a
+    // duplicate rather than a set-then-clear toggle.
+    assert_eq!(
+        regex_codes("const r = /(?ii:x)/;", tsz_common::ScriptTarget::ES2022),
+        vec![diagnostic_codes::DUPLICATE_REGULAR_EXPRESSION_FLAG],
+    );
+    assert_eq!(
+        regex_codes("const r = /(?i-i:x)/;", tsz_common::ScriptTarget::ES2022),
+        vec![diagnostic_codes::DUPLICATE_REGULAR_EXPRESSION_FLAG],
+    );
+    assert_eq!(
+        regex_codes(
+            "const r = /(?ims-ims:x)/;",
+            tsz_common::ScriptTarget::ES2022
+        ),
+        vec![
+            diagnostic_codes::DUPLICATE_REGULAR_EXPRESSION_FLAG,
+            diagnostic_codes::DUPLICATE_REGULAR_EXPRESSION_FLAG,
+            diagnostic_codes::DUPLICATE_REGULAR_EXPRESSION_FLAG,
+        ],
+    );
+}
+
+#[test]
+fn test_subpattern_modifier_group_without_colon_reports_ts1005() {
+    // A group that opened `(?` stays a modifier group even when malformed, so
+    // the missing `:` is reported instead of the prelude being re-scanned as
+    // pattern characters.
+    assert_eq!(
+        regex_codes("const r = /(?i)/;", tsz_common::ScriptTarget::ES2022),
+        vec![diagnostic_codes::EXPECTED],
+    );
+    assert_eq!(
+        regex_codes("const r = /(?P<n>x)/;", tsz_common::ScriptTarget::ES2022),
+        vec![
+            diagnostic_codes::UNKNOWN_REGULAR_EXPRESSION_FLAG,
+            diagnostic_codes::EXPECTED,
+        ],
+        "`P` is an unknown flag, then the `<` is where the `:` should have been"
+    );
+    assert_eq!(
+        regex_codes("const r = /(?-)/;", tsz_common::ScriptTarget::ES2022),
+        vec![
+            diagnostic_codes::SUBPATTERN_FLAGS_MUST_BE_PRESENT_WHEN_THERE_IS_A_MINUS_SIGN,
+            diagnostic_codes::EXPECTED,
+        ],
+    );
+    assert_eq!(
+        regex_codes("const r = /(?/;", tsz_common::ScriptTarget::ES2022),
+        vec![diagnostic_codes::EXPECTED],
+        "end of body is not a group terminator — tsc still wants the `:`"
+    );
+}
+
+#[test]
+fn test_subpattern_modifier_group_is_not_a_capturing_group() {
+    // `\1` has nothing to refer to when the only group is a modifier group.
+    assert_eq!(
+        regex_codes("const r = /(?i:x)\\1/;", tsz_common::ScriptTarget::ES2022),
+        vec![
+            diagnostic_codes::THIS_BACKREFERENCE_REFERS_TO_A_GROUP_THAT_DOES_NOT_EXIST_THERE_ARE_NO_CAPTURING
+        ],
+    );
+    assert_eq!(
+        regex_codes("const r = /(?i:(x))\\1/;", tsz_common::ScriptTarget::ES2022),
+        Vec::<u32>::new(),
+        "a real group nested inside a modifier group still counts"
+    );
+}
+
+#[test]
+fn test_subpattern_modifier_group_dot_all_flag_follows_target_availability() {
+    // Of the three toggleable flags only `s` is version-gated, and TS1509
+    // rejects every other flag before availability is ever consulted.
+    assert_eq!(
+        regex_codes("const r = /(?s:x)/;", tsz_common::ScriptTarget::ES2015),
+        vec![diagnostic_codes::THIS_REGULAR_EXPRESSION_FLAG_IS_ONLY_AVAILABLE_WHEN_TARGETING_OR_LATER],
+    );
+    assert_eq!(
+        regex_codes("const r = /(?s:x)/;", tsz_common::ScriptTarget::ES2018),
+        Vec::<u32>::new(),
+    );
+    assert_eq!(
+        regex_codes("const r = /(?im:x)/;", tsz_common::ScriptTarget::ES2015),
+        Vec::<u32>::new(),
+        "`i` and `m` are not version-gated"
+    );
+}
+
+#[test]
+fn test_non_modifier_group_forms_are_unaffected() {
+    // The `(?` arm now runs unconditionally, so every neighbouring group form
+    // has to stay silent — including the degenerate `(?:` modifier group.
+    for witness in [
+        "const r = /(?:x)/;",
+        "const r = /(?=x)/;",
+        "const r = /(?!x)/;",
+        "const r = /(?<=x)/;",
+        "const r = /(?<!x)/;",
+        "const r = /(?<n>x)\\k<n>/;",
+        "const r = /(x)(?:y)\\1/;",
+        "const r = /(?i:x)*/;",
+        "const r = /a(?i:b)c/u;",
+        "const r = /(?i:(?m:x))/;",
+    ] {
+        assert_eq!(
+            regex_codes(witness, tsz_common::ScriptTarget::ES2022),
+            Vec::<u32>::new(),
+            "{witness} is legal and must stay clean"
+        );
+    }
+}

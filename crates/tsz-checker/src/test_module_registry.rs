@@ -153,6 +153,8 @@ mod class_static_init_self_new_tests;
 mod class_static_side_relation_routing_arch_tests;
 #[path = "tests/class_static_wide_symbol_member_index_tests.rs"]
 mod class_static_wide_symbol_member_index_tests;
+#[path = "tests/class_wide_symbol_member_index_tests.rs"]
+mod class_wide_symbol_member_index_tests;
 #[path = "tests/closure_destructuring_top_level_diagnostics_tests.rs"]
 mod closure_destructuring_top_level_diagnostics_tests;
 #[path = "tests/comlink_row_regression_tests.rs"]
@@ -877,6 +879,8 @@ mod type_parameter_default_identity_tests;
 mod type_position_resolution_cache_tests;
 #[path = "tests/type_predicate_alias_relation_tests.rs"]
 mod type_predicate_alias_relation_tests;
+#[path = "tests/type_predicate_assignability_elaboration_tests.rs"]
+mod type_predicate_assignability_elaboration_tests;
 #[path = "tests/type_predicate_relation_routing_arch_tests.rs"]
 mod type_predicate_relation_routing_arch_tests;
 #[path = "tests/typeof_class_name_structural_lookup_arch_tests.rs"]

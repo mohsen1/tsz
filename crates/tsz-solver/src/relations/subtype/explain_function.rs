@@ -35,7 +35,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     .is_true()
                     || checker.allow_void_return && target.return_type == TypeId::VOID
                 {
-                    return None;
+                    return checker.explain_type_predicate_failure(source, target);
                 }
                 let nested_reason = checker
                     .explain_failure(source.return_type, target.return_type)
@@ -47,6 +47,52 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 })
             },
         )
+    }
+
+    /// Explain a `check_function_subtype` failure caused solely by
+    /// `are_type_predicates_compatible` (called only once the parameter and
+    /// return-type legs have already passed, mirroring tsc's
+    /// `compareSignaturesRelated`, which checks the predicate only after the
+    /// return type itself relates).
+    fn explain_type_predicate_failure(
+        &mut self,
+        source: &FunctionShape,
+        target: &FunctionShape,
+    ) -> Option<SubtypeFailureReason> {
+        if self.are_type_predicates_compatible(source, target) {
+            return None;
+        }
+        match (&source.type_predicate, &target.type_predicate) {
+            // TS1224: the target demands a type guard (`x is T`/`this is T`)
+            // and the source has no predicate at all. An assertion-only
+            // target (`asserts x`) is compatible without one and never
+            // reaches this branch — see `are_type_predicates_compatible`.
+            (None, Some(target_predicate)) => Some(SubtypeFailureReason::TypePredicateMismatch {
+                source_predicate: None,
+                target_predicate: *target_predicate,
+                source_signature: Some(self.interner.function(source.clone())),
+                nested_reason: None,
+            }),
+            // TS1226: both sides declare a predicate but they are
+            // incompatible (different target, guard-vs-assertion, or
+            // unrelated narrowed types).
+            (Some(source_predicate), Some(target_predicate)) => {
+                let nested_reason = match (source_predicate.type_id, target_predicate.type_id) {
+                    (Some(source_type), Some(target_type)) => {
+                        self.explain_failure(source_type, target_type).map(Box::new)
+                    }
+                    _ => None,
+                };
+                Some(SubtypeFailureReason::TypePredicateMismatch {
+                    source_predicate: Some(*source_predicate),
+                    target_predicate: *target_predicate,
+                    source_signature: None,
+                    nested_reason,
+                })
+            }
+            // (None, None) and (Some(_), None) are always compatible.
+            _ => None,
+        }
     }
 
     fn explain_function_parameter_failure(
@@ -268,7 +314,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         None
     }
 
-    fn function_shape_from_call_signature(
+    pub(super) fn function_shape_from_call_signature(
         signature: &CallSignature,
         is_constructor: bool,
     ) -> FunctionShape {

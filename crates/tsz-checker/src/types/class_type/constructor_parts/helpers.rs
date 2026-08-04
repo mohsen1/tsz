@@ -138,7 +138,7 @@ impl<'a> CheckerState<'a> {
         // gets in `merge_index_signature_from_unresolved_computed_name`.
         // `get_index_key_kind` below has no symbol case, so this must be
         // checked first or a symbol-typed key is silently dropped.
-        if self.object_literal_computed_key_is_wide_symbol(name_idx) {
+        if self.computed_member_key_is_wide_symbol(name_idx) {
             self.merge_static_late_bound_index_value(
                 static_symbol_index,
                 class_type_boundary::static_late_bound_index_signature(TypeId::SYMBOL, value_type),
@@ -340,7 +340,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         name_idx: NodeIndex,
     ) -> bool {
-        if !self.object_literal_computed_key_is_wide_symbol(name_idx) {
+        if !self.computed_member_key_is_wide_symbol(name_idx) {
             return false;
         }
         // `Symbol.NAME` written as property-access syntax is excluded even
