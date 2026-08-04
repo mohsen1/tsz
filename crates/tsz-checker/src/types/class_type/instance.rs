@@ -43,6 +43,10 @@ pub(super) struct DeferredAccessor<'b> {
     pub(super) is_getter: bool,
     pub(super) name_atom: Atom,
     pub(super) is_symbol_named: bool,
+    /// The key is a plain (non-unique) `symbol` binding, so the accessor's
+    /// resolved type folds into the shape's symbol index signature instead of
+    /// becoming a named accessor member.
+    pub(super) keys_symbol_index: bool,
     pub(super) visibility: Visibility,
     pub(super) declaration_order: u32,
 }
@@ -537,6 +541,8 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
                     let is_symbol_named = self.class_member_name_is_symbol_named(prop.name);
+                    let keys_symbol_index =
+                        self.class_member_computed_key_is_wide_symbol(prop.name);
                     let name_atom = self.ctx.types.intern_string(&name);
                     let is_readonly = self.has_readonly_modifier(&prop.modifiers)
                         || self.jsdoc_has_readonly_tag(member_idx);
@@ -679,6 +685,21 @@ impl<'a> CheckerState<'a> {
                     };
                     self.ctx.node_types.insert(member_idx.0, type_id);
 
+                    // A wide-`symbol` key contributes to the shape's symbol
+                    // index signature rather than a named member; the synthetic
+                    // `__symbol_<file>_<sym>` atom must not reach `properties`,
+                    // or the member would only match a declaration keyed off the
+                    // very same binding.
+                    if keys_symbol_index {
+                        b.set_has_late_bound_members();
+                        self.merge_class_wide_symbol_member_index(
+                            &mut b.symbol_index,
+                            type_id,
+                            is_readonly,
+                        );
+                        continue;
+                    }
+
                     b.properties.insert(
                         name_atom,
                         class_type::class_member_property(
@@ -745,6 +766,8 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
                     let is_symbol_named = self.class_member_name_is_symbol_named(accessor.name);
+                    let keys_symbol_index =
+                        self.class_member_computed_key_is_wide_symbol(accessor.name);
                     let name_atom = self.ctx.types.intern_string(&name);
                     let visibility = self.get_member_visibility(&accessor.modifiers, accessor.name);
                     b.deferred_accessors.push(DeferredAccessor {
@@ -753,6 +776,7 @@ impl<'a> CheckerState<'a> {
                         is_getter: k == syntax_kind_ext::GET_ACCESSOR,
                         name_atom,
                         is_symbol_named,
+                        keys_symbol_index,
                         visibility,
                         declaration_order,
                     });
@@ -1045,6 +1069,11 @@ impl<'a> CheckerState<'a> {
                 FxHashSet::with_capacity_and_hasher(partial_props.len(), Default::default());
             partial_prop_names.extend(partial_props.iter().map(|prop| prop.name));
             for (_, method, declaration_order) in &b.deferred_methods {
+                // Wide-`symbol`-keyed methods have no named member to placehold;
+                // they reach `this` through the symbol index signature.
+                if self.class_member_computed_key_is_wide_symbol(method.name) {
+                    continue;
+                }
                 if let Some(name) = self.get_property_name_resolved(method.name) {
                     let is_symbol_named = self.class_member_name_is_symbol_named(method.name);
                     let name_atom = self.ctx.types.intern_string(&name);
@@ -1190,6 +1219,20 @@ impl<'a> CheckerState<'a> {
                     callable_type,
                     method.question_token,
                 );
+                // A wide-`symbol`-keyed method contributes to the shape's symbol
+                // index signature rather than a named member, so that a class
+                // and the interface it implements stay mutually assignable when
+                // each keys off a DIFFERENT `symbol` binding — which is the
+                // whole point of tsc's symbol-index lowering.
+                if self.class_member_computed_key_is_wide_symbol(method.name) {
+                    b.set_has_late_bound_members();
+                    self.merge_class_wide_symbol_member_index(
+                        &mut b.symbol_index,
+                        callable_or_undefined,
+                        false,
+                    );
+                    continue;
+                }
                 let Some(name) = self.get_property_name_resolved(method.name) else {
                     if self
                         .ctx
@@ -1286,6 +1329,12 @@ impl<'a> CheckerState<'a> {
             let mut placeholder_seen: FxHashSet<Atom> =
                 base_props.iter().map(|prop| prop.name).collect();
             for ad in &deferred_accessors {
+                // A wide-`symbol`-keyed accessor has no named member to
+                // placehold; it reaches `this` through the symbol index
+                // signature that `b.symbol_index` already carries.
+                if ad.keys_symbol_index {
+                    continue;
+                }
                 if placeholder_seen.insert(ad.name_atom) {
                     placeholder_accessors.push(ad);
                 }
@@ -1380,6 +1429,15 @@ impl<'a> CheckerState<'a> {
                             t
                         }
                     };
+                    if deferred.keys_symbol_index {
+                        b.set_has_late_bound_members();
+                        self.merge_class_wide_symbol_member_index(
+                            &mut b.symbol_index,
+                            getter_type,
+                            false,
+                        );
+                        continue;
+                    }
                     let entry =
                         b.accessors
                             .entry(deferred.name_atom)
@@ -1419,6 +1477,15 @@ impl<'a> CheckerState<'a> {
                             None
                         })
                         .unwrap_or(TypeId::UNKNOWN);
+                    if deferred.keys_symbol_index {
+                        b.set_has_late_bound_members();
+                        self.merge_class_wide_symbol_member_index(
+                            &mut b.symbol_index,
+                            setter_type,
+                            false,
+                        );
+                        continue;
+                    }
                     let entry =
                         b.accessors
                             .entry(deferred.name_atom)

@@ -100,10 +100,13 @@ impl<'a> CheckerState<'a> {
         (is_string_named, is_symbol_named, single_quoted_name)
     }
 
-    pub(crate) fn object_literal_computed_key_is_wide_symbol(
-        &mut self,
-        name_idx: NodeIndex,
-    ) -> bool {
+    /// True when `name_idx` is a computed-property name whose key expression
+    /// has the wide `symbol` type. Shared by every member-bearing declaration
+    /// form — object literals, and class bodies via
+    /// `class_member_computed_key_is_wide_symbol` — because `tsc` routes such a
+    /// member into the containing type's `[key: symbol]: V` index signature
+    /// regardless of which declaration form wrote it.
+    pub(crate) fn computed_member_key_is_wide_symbol(&mut self, name_idx: NodeIndex) -> bool {
         let Some(name_node) = self.ctx.arena.get(name_idx) else {
             return false;
         };

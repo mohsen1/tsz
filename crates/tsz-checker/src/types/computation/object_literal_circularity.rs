@@ -166,7 +166,7 @@ impl<'a> CheckerState<'a> {
             || elem_node.kind == syntax_kind_ext::SET_ACCESSOR
         {
             let accessor_name = self.ctx.arena.get_accessor(elem_node)?.name;
-            if self.object_literal_computed_key_is_wide_symbol(accessor_name) {
+            if self.computed_member_key_is_wide_symbol(accessor_name) {
                 return None;
             }
             let name = self.get_property_name_resolved(accessor_name)?;
@@ -206,7 +206,7 @@ impl<'a> CheckerState<'a> {
         }) {
             return None;
         }
-        if self.object_literal_computed_key_is_wide_symbol(prop.name) {
+        if self.computed_member_key_is_wide_symbol(prop.name) {
             return None;
         }
         let name = self.get_property_name_resolved(prop.name)?;

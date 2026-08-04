@@ -455,6 +455,64 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Does this class member's name node key off a plain (non-unique)
+    /// `symbol` binding — `class C { [s]() {} }` with `declare const s: symbol`,
+    /// or `Symbol.NAME` where `NAME` is a wide `SymbolConstructor` global
+    /// augmentation?
+    ///
+    /// Such a member contributes a `[key: symbol]: V` index signature to the
+    /// class instance shape instead of a named member, matching what the
+    /// object-literal and interface lowering paths already do. Without this the
+    /// member is stashed under a synthetic `__symbol_<file>_<sym>` atom that
+    /// only ever matches another declaration whose key resolves to the SAME
+    /// binding, so a class and the interface it implements — keyed off two
+    /// different `symbol` bindings, as tsc allows — stop being mutually
+    /// assignable.
+    pub(super) fn class_member_computed_key_is_wide_symbol(&mut self, name_idx: NodeIndex) -> bool {
+        if !self.computed_member_key_is_wide_symbol(name_idx) {
+            return false;
+        }
+        // `Symbol.NAME` written as property-access syntax is excluded even when
+        // `NAME` is declared plain `symbol`: tsc derives a NAMED member from the
+        // syntactic well-known shape (`isWellKnownSymbolSyntactically`) before it
+        // consults the key's type at all, so `class C { [Symbol.observable]() {} }`
+        // gets no symbol index signature and `c[someOtherSymbol]` stays TS7053.
+        // Every other wide-`symbol` key — a bare identifier, or a property access
+        // whose base is not the unshadowed global `Symbol` — does route to the
+        // index signature. A genuine well-known (`Symbol.iterator`, `unique
+        // symbol`-typed) never reaches here, having failed the wide-key test above.
+        let Some(name_node) = self.ctx.arena.get(name_idx) else {
+            return false;
+        };
+        let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
+            return false;
+        };
+        crate::types_domain::computed_names::wide_well_known_symbol_member_key(
+            &self.ctx,
+            self.ctx.arena,
+            self.ctx.binder,
+            computed.expression,
+        )
+        .is_none()
+    }
+
+    /// Fold a wide-`symbol`-keyed class member's value type into the class
+    /// instance shape's symbol index signature.
+    ///
+    /// Several such members union their value types, exactly as tsc widens a
+    /// late-bound index signature over every contributing declaration; the
+    /// signature stays `readonly` only while every contributor is.
+    pub(super) fn merge_class_wide_symbol_member_index(
+        &mut self,
+        symbol_index: &mut Option<IndexSignature>,
+        value_type: TypeId,
+        readonly: bool,
+    ) {
+        let mut index = class_type::static_late_bound_index_signature(TypeId::SYMBOL, value_type);
+        index.readonly = readonly;
+        self.merge_union_index_signature(symbol_index, index);
+    }
+
     pub(super) fn merge_index_signature_from_unresolved_computed_name(
         &mut self,
         name_idx: NodeIndex,
