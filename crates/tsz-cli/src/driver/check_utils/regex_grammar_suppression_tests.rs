@@ -28,7 +28,11 @@ const REGEX_GRAMMAR_CODES: &[(u32, &str)] = &[
     (1487, r"/[\0]/u"),
     (1499, "/a/q"),
     (1500, "/a/gg"),
+    (1501, "/(?s:x)/"), // parser-side only for a subpattern flag; see below
     (1502, "/a/uv"),
+    (1504, "/(?-:x)/"),
+    (1509, "/(?g:x)/"),
+    (1511, r"/\q{a}/v"),
     (1505, "/a{1,/u"),
     (1506, "/a{2,1}/"),
     (1507, "/{1}/u"),
@@ -81,8 +85,21 @@ fn every_regex_grammar_code_is_non_suppressing() {
 /// to `REGEX_GRAMMAR_CODES` above, or record here why it suppresses.
 #[test]
 fn regex_validator_diagnostic_surface_is_audited() {
-    const VALIDATOR_SOURCE: &str =
-        include_str!("../../../../tsz-parser/src/parser/state_expressions_literals_regex.rs");
+    // Every parser module that emits into the regex-literal walk has to be
+    // listed here, not just the main one. Splitting a sub-grammar out into its
+    // own module is normal (`state_expressions_literals_regex.rs` is past the
+    // 2000-line shard limit, so it will keep happening) and must not carry the
+    // emit sites out of this tripwire's sight along with them.
+    const VALIDATOR_SOURCES: &[(&str, &str)] = &[
+        (
+            "state_expressions_literals_regex.rs",
+            include_str!("../../../../tsz-parser/src/parser/state_expressions_literals_regex.rs"),
+        ),
+        (
+            "regex_modifier_groups.rs",
+            include_str!("../../../../tsz-parser/src/parser/regex_modifier_groups.rs"),
+        ),
+    ];
 
     /// Constants the validator shares with non-regex parse failures. These stay
     /// out of `is_non_suppressing_parse_error` because the code, not the site,
@@ -125,32 +142,49 @@ fn regex_validator_diagnostic_surface_is_audited() {
         "OCTAL_ESCAPE_SEQUENCES_AND_BACKREFERENCES_ARE_NOT_ALLOWED_IN_A_CHARACTER_CLASS_I",
         "DECIMAL_ESCAPE_SEQUENCES_AND_BACKREFERENCES_ARE_NOT_ALLOWED_IN_A_CHARACTER_CLASS",
         "UNICODE_ESCAPE_SEQUENCES_ARE_ONLY_AVAILABLE_WHEN_THE_UNICODE_U_FLAG_OR_THE_UNICO",
+        // `\q` outside a character class under the `v` flag. Already carried by
+        // `is_non_suppressing_parse_error`; it was the emit site that landed
+        // without a matching entry here.
+        "Q_IS_ONLY_AVAILABLE_INSIDE_CHARACTER_CLASS",
+        // Subpattern modifier groups, `(?ims-ims: … )`.
+        "SUBPATTERN_FLAGS_MUST_BE_PRESENT_WHEN_THERE_IS_A_MINUS_SIGN",
+        "THIS_REGULAR_EXPRESSION_FLAG_CANNOT_BE_TOGGLED_WITHIN_A_SUBPATTERN",
+        "DUPLICATE_REGULAR_EXPRESSION_FLAG",
+        // Emitted from the parser only for `s` in a subpattern below ES2018.
+        // The trailing-flag pass emits the same code from the checker, where
+        // parse-diagnostic suppression never applied — which is exactly why
+        // this one was easy to miss.
+        "THIS_REGULAR_EXPRESSION_FLAG_IS_ONLY_AVAILABLE_WHEN_TARGETING_OR_LATER",
     ];
 
-    let mut referenced: Vec<&str> = VALIDATOR_SOURCE
-        .match_indices("diagnostic_codes::")
-        .map(|(at, marker)| {
-            let rest = &VALIDATOR_SOURCE[at + marker.len()..];
-            let end = rest
-                .find(|c: char| !c.is_ascii_uppercase() && !c.is_ascii_digit() && c != '_')
-                .unwrap_or(rest.len());
-            &rest[..end]
+    let mut referenced: Vec<(&str, &str)> = VALIDATOR_SOURCES
+        .iter()
+        .flat_map(|&(module, source)| {
+            source
+                .match_indices("diagnostic_codes::")
+                .map(move |(at, marker)| {
+                    let rest = &source[at + marker.len()..];
+                    let end = rest
+                        .find(|c: char| !c.is_ascii_uppercase() && !c.is_ascii_digit() && c != '_')
+                        .unwrap_or(rest.len());
+                    (module, &rest[..end])
+                })
         })
         .collect();
     referenced.sort_unstable();
     referenced.dedup();
 
-    let unaudited: Vec<&str> = referenced
+    let unaudited: Vec<(&str, &str)> = referenced
         .iter()
         .copied()
-        .filter(|name| {
+        .filter(|(_, name)| {
             !AUDITED_REGEX_ONLY.contains(name) && !SHARED_WITH_REAL_PARSE_FAILURES.contains(name)
         })
         .collect();
 
     assert!(
         unaudited.is_empty(),
-        "state_expressions_literals_regex.rs emits diagnostic code constant(s) \
+        "the regex validator emits diagnostic code constant(s) \
          {unaudited:?} that no one has classified. tsz emits these at PARSE time \
          but tsc emits the whole regex grammar family at CHECK time, so an \
          unclassified code silently suppresses every other diagnostic in any file \

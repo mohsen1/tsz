@@ -1527,11 +1527,17 @@ pub(super) const fn is_non_suppressing_parse_error(code: u32) -> bool {
             | 1487 // Octal escape sequences are not allowed (regex `\0`-prefixed decimal escape, AST is valid)
             | 1499 // Unknown regular expression flag (grammar check in tsc's checker, not a parse failure)
             | 1500 // Duplicate regular expression flag (grammar check, AST is valid)
+            | 1501 // This regular expression flag is only available when targeting '{0}' or later.
+                   // Reachable from the parser only for `s` inside a subpattern
+                   // (`/(?s:x)/` below ES2018); the trailing-flag pass emits the
+                   // same code from the checker, where suppression never applied.
             | 1502 // The Unicode 'u' and 'v' flags cannot be set simultaneously (grammar check, AST is valid)
+            | 1504 // Subpattern flags must be present when there is a minus sign (`/(?-:x)/`)
             | 1505 // Incomplete quantifier. Digit expected
             | 1506 // Numbers out of order in quantifier (`/a{2,1}/`)
             | 1507 // There is nothing available for repetition (`/{1}/u`)
             | 1508 // Unexpected '{0}'. Did you mean to escape it with backslash? (`/[a[b]]/u`)
+            | 1509 // This regular expression flag cannot be toggled within a subpattern (`/(?g:x)/`)
             | 1510 // '\k' must be followed by a capturing group name enclosed in angle brackets
             | 1511 // '\q' is only available inside character class (`/\q{a}/v`, regex grammar, AST is valid)
             | 1512 // '\c' must be followed by an ASCII letter (`/\c1/u`)
