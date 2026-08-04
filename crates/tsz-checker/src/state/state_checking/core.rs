@@ -246,6 +246,7 @@ impl<'a> CheckerState<'a> {
                             &[&var_name],
                         ),
                         depth: 0,
+                        kind: crate::diagnostics::RelatedInformationKind::ChainLink,
                     }]
                 })
                 .unwrap_or_default();

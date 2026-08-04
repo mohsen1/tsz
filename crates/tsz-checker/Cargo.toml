@@ -1098,6 +1098,9 @@ path = "tests/ts2353_cross_module_symbol_computed_key_tests.rs"
 name = "wide_symbol_computed_member_index_signature_tests"
 path = "tests/wide_symbol_computed_member_index_signature_tests.rs"
 [[test]]
+name = "well_known_symbol_type_query_alias_key_tests"
+path = "tests/well_known_symbol_type_query_alias_key_tests.rs"
+[[test]]
 name = "relational_operator_type_display_tests"
 path = "tests/relational_operator_type_display_tests.rs"
 [[test]]
@@ -1965,6 +1968,9 @@ path = "tests/global_module_export_grammar_tests.rs"
 name = "using_declaration_placement_grammar_tests"
 path = "tests/using_declaration_placement_grammar_tests.rs"
 [[test]]
+name = "string_literal_module_export_name_grammar_tests"
+path = "tests/string_literal_module_export_name_grammar_tests.rs"
+[[test]]
 name = "jsdoc_tag_boundary_tests"
 path = "tests/jsdoc_tag_boundary_tests.rs"
 [[test]]
@@ -2628,3 +2634,6 @@ path = "tests/signature_binding_pattern_typeof_scope_tests.rs"
 [[test]]
 name = "ts1501_tests"
 path = "tests/ts1501_tests.rs"
+[[test]]
+name = "ts18036_class_decorator_static_private_identifier_tests"
+path = "tests/ts18036_class_decorator_static_private_identifier_tests.rs"

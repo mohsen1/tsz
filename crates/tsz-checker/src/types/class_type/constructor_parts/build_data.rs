@@ -17,6 +17,7 @@ pub(super) struct StaticMemberBuildData<'a> {
     pub(super) accessors: &'a FxHashMap<Atom, AccessorAggregate>,
     pub(super) static_string_index: &'a Option<IndexSignature>,
     pub(super) static_number_index: &'a Option<IndexSignature>,
+    pub(super) static_symbol_index: &'a Option<IndexSignature>,
     /// Property being injected mid-pass, before it has a cached type entry.
     pub(super) extra_property: Option<PropertyInfo>,
     pub(super) inherited_static_props: &'a [PropertyInfo],

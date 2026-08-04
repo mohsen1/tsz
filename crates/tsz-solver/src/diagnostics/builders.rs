@@ -671,7 +671,7 @@ impl TypeDiagnostic {
     /// Uses the provided `file_name` if no span is present.
     pub fn to_checker_diagnostic(&self, default_file: &str) -> tsz_common::diagnostics::Diagnostic {
         use tsz_common::diagnostics::{
-            Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation,
+            Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, RelatedInformationKind,
         };
 
         let (file, start, length) = if let Some(ref span) = self.span {
@@ -698,6 +698,7 @@ impl TypeDiagnostic {
                 category: DiagnosticCategory::Message,
                 code: 0,
                 depth: rel.depth,
+                kind: RelatedInformationKind::ChainLink,
             })
             .collect();
 

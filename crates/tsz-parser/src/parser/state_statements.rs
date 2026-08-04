@@ -1136,6 +1136,15 @@ impl ParserState {
 
         let start_pos = self.token_pos();
 
+        // TS18054: an `await using` declaration parsed directly inside a
+        // class static block (no intervening function boundary — the same
+        // `in_static_block_context()` gate `parse_await_expression` already
+        // uses for TS18037's sibling `await` expression check). Captured
+        // before consuming the `await`/`using` tokens; the block's flags
+        // never change mid-declaration-list.
+        let await_using_in_static_block =
+            self.token() == SyntaxKind::AwaitKeyword && self.in_static_block_context();
+
         // Consume var/let/const/using/await using and get flags
         // Use consume_keyword() for TS1260 check (keywords cannot contain escape characters)
         let flags: u16 = match self.token() {
@@ -1862,6 +1871,25 @@ impl ParserState {
                 0,
                 "Variable declaration list cannot be empty.",
                 diagnostic_codes::VARIABLE_DECLARATION_LIST_CANNOT_BE_EMPTY,
+            );
+        }
+
+        // TS18054: tsc's `checkAwaitGrammar` reports this on the whole
+        // declaration list (`await using x = 1` — up to the last declarator,
+        // not the trailing `;`) once the list has at least one declarator;
+        // an empty list (`await using ;`) reports only
+        // `VARIABLE_DECLARATION_LIST_CANNOT_BE_EMPTY` above and returns
+        // early in tsc before ever reaching the await-grammar check.
+        if let Some(diag_end) = await_using_in_static_block
+            .then(|| declarations.last().and_then(|&d| self.arena.get(d)))
+            .flatten()
+            .map(|n| n.end)
+        {
+            self.parse_error_at(
+                start_pos,
+                diag_end.saturating_sub(start_pos),
+                tsz_common::diagnostics::diagnostic_messages::AWAIT_USING_STATEMENTS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
+                diagnostic_codes::AWAIT_USING_STATEMENTS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
             );
         }
 

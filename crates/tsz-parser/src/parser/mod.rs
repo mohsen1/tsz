@@ -27,6 +27,8 @@ mod node_modifiers;
 mod node_pools;
 mod node_view;
 pub mod parse_rules;
+mod regex_group_names;
+mod regex_modifier_groups;
 mod regex_unicode_properties;
 mod speculation;
 pub mod spelling;
@@ -263,12 +265,20 @@ mod regex_octal_decimal_class_escape_tests;
 mod regex_backreference_tests;
 
 #[cfg(test)]
+#[path = "../../tests/regex_capturing_group_name_tests.rs"]
+mod regex_capturing_group_name_tests;
+
+#[cfg(test)]
 #[path = "../../tests/regex_class_set_nesting_tests.rs"]
 mod regex_class_set_nesting_tests;
 
 #[cfg(test)]
 #[path = "../../tests/regex_class_set_reserved_double_punctuator_tests.rs"]
 mod regex_class_set_reserved_double_punctuator_tests;
+
+#[cfg(test)]
+#[path = "../../tests/regex_negated_class_may_contain_strings_tests.rs"]
+mod regex_negated_class_may_contain_strings_tests;
 
 #[cfg(test)]
 #[path = "../../tests/regex_class_set_operator_mixing_tests.rs"]

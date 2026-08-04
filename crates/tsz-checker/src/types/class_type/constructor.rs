@@ -313,6 +313,7 @@ impl<'a> CheckerState<'a> {
             FxHashMap::with_capacity_and_hasher(4, Default::default());
         let mut static_string_index: Option<IndexSignature> = None;
         let mut static_number_index: Option<IndexSignature> = None;
+        let mut static_symbol_index: Option<IndexSignature> = None;
         let mut has_static_late_bound_members = false;
 
         // Pre-scan all static member names so that partial constructor types
@@ -356,6 +357,7 @@ impl<'a> CheckerState<'a> {
                 accessors: &accessors,
                 static_string_index: &static_string_index,
                 static_number_index: &static_number_index,
+                static_symbol_index: &static_symbol_index,
                 extra_property: None,
                 inherited_static_props: &inherited_static_props,
                 all_static_member_names: &all_static_member_names,
@@ -541,6 +543,7 @@ impl<'a> CheckerState<'a> {
                     accessors: &accessors,
                     static_string_index: &static_string_index,
                     static_number_index: &static_number_index,
+                    static_symbol_index: &static_symbol_index,
                     extra_property: None,
                     inherited_static_props: &inherited_static_props,
                     all_static_member_names: &all_static_member_names,
@@ -620,6 +623,7 @@ impl<'a> CheckerState<'a> {
                                 accessors: &accessors,
                                 static_string_index: &static_string_index,
                                 static_number_index: &static_number_index,
+                                static_symbol_index: &static_symbol_index,
                                 extra_property: Some(class_type::class_member_property(
                                     class_type::ClassMemberProperty::new(name_atom, TypeId::ANY)
                                         .optional(prop.question_token)
@@ -738,6 +742,7 @@ impl<'a> CheckerState<'a> {
                                 accessors: &accessors,
                                 static_string_index: &static_string_index,
                                 static_number_index: &static_number_index,
+                                static_symbol_index: &static_symbol_index,
                                 extra_property: Some(class_type::class_member_property(
                                     class_type::ClassMemberProperty::new(name_atom, TypeId::ANY)
                                         .optional(prop.question_token)
@@ -806,6 +811,16 @@ impl<'a> CheckerState<'a> {
                     };
                     self.ctx.node_types.insert(member_idx.0, type_id);
 
+                    // Wide-`symbol` key: route to the symbol index signature
+                    // instead of a named static (#16307's static-side leg).
+                    if self.static_member_computed_key_is_wide_symbol(prop.name) {
+                        self.merge_static_late_bound_index_value(
+                            &mut static_symbol_index,
+                            class_type::static_late_bound_index_signature(TypeId::SYMBOL, type_id),
+                        );
+                        continue;
+                    }
+
                     properties.insert(
                         name_atom,
                         class_type::class_member_property(
@@ -838,6 +853,7 @@ impl<'a> CheckerState<'a> {
                                 accessors: &accessors,
                                 static_string_index: &static_string_index,
                                 static_number_index: &static_number_index,
+                                static_symbol_index: &static_symbol_index,
                                 extra_property: None,
                                 inherited_static_props: &inherited_static_props,
                                 all_static_member_names: &all_static_member_names,
@@ -888,10 +904,26 @@ impl<'a> CheckerState<'a> {
                                 request,
                                 &mut static_string_index,
                                 &mut static_number_index,
+                                &mut static_symbol_index,
                             );
                         }
                         continue;
                     };
+                    // The resolved name of a wide-`symbol` key is the
+                    // synthetic `__symbol_<file>_<sym>` atom; route to the
+                    // symbol index signature instead (#16307's static-side
+                    // leg). Tested after resolution, which owns the one
+                    // value-position evaluation of the key expression.
+                    if self.static_member_computed_key_is_wide_symbol(method.name) {
+                        self.merge_static_late_bound_index_value(
+                            &mut static_symbol_index,
+                            class_type::static_late_bound_index_signature(
+                                TypeId::SYMBOL,
+                                callable_or_undefined,
+                            ),
+                        );
+                        continue;
+                    }
                     let name_atom = self.ctx.types.intern_string(&name);
                     let entry = methods.entry(name_atom).or_insert(MethodAggregate {
                         overload_signatures: Vec::new(),
@@ -930,6 +962,10 @@ impl<'a> CheckerState<'a> {
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
                     let visibility = self.get_member_visibility(&accessor.modifiers, accessor.name);
+                    // Wide-`symbol` key: union into the symbol index
+                    // signature instead of a named static (#16307).
+                    let keys_symbol_index =
+                        self.static_member_computed_key_is_wide_symbol(accessor.name);
 
                     if k == syntax_kind_ext::GET_ACCESSOR {
                         let getter_type = if accessor.type_annotation.is_some() {
@@ -946,6 +982,7 @@ impl<'a> CheckerState<'a> {
                                         accessors: &accessors,
                                         static_string_index: &static_string_index,
                                         static_number_index: &static_number_index,
+                                        static_symbol_index: &static_symbol_index,
                                         extra_property: None,
                                         inherited_static_props: &inherited_static_props,
                                         all_static_member_names: &all_static_member_names,
@@ -966,6 +1003,16 @@ impl<'a> CheckerState<'a> {
                             self.ctx.node_types.insert(member_idx.0, t);
                             t
                         };
+                        if keys_symbol_index {
+                            self.merge_static_late_bound_index_value(
+                                &mut static_symbol_index,
+                                class_type::static_late_bound_index_signature(
+                                    TypeId::SYMBOL,
+                                    getter_type,
+                                ),
+                            );
+                            continue;
+                        }
                         let entry = accessors.entry(name_atom).or_insert(AccessorAggregate {
                             getter: None,
                             setter: None,
@@ -984,6 +1031,16 @@ impl<'a> CheckerState<'a> {
                                     .then(|| self.get_type_from_type_node(param.type_annotation))
                             })
                             .unwrap_or(TypeId::UNKNOWN);
+                        if keys_symbol_index {
+                            self.merge_static_late_bound_index_value(
+                                &mut static_symbol_index,
+                                class_type::static_late_bound_index_signature(
+                                    TypeId::SYMBOL,
+                                    setter_type,
+                                ),
+                            );
+                            continue;
+                        }
                         let entry = accessors.entry(name_atom).or_insert(AccessorAggregate {
                             getter: None,
                             setter: None,
@@ -1863,6 +1920,9 @@ impl<'a> CheckerState<'a> {
                 TypeId::ANY,
             ))
         };
+        // A symbol index rides in the string-index slot (see `CallableShape`'s
+        // doc comment); same convention as `type_literal_callable_type`.
+        let effective_string_index = effective_string_index.or(static_symbol_index);
 
         let constructor_type = class_type::class_constructor_callable_type(
             self.ctx.types,

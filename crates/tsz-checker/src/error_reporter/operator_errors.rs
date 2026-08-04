@@ -4,8 +4,8 @@ use super::fingerprint_policy::{
     DiagnosticAnchorKind, DiagnosticRenderRequest, RelatedInformationPolicy,
 };
 use crate::diagnostics::{
-    DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes, diagnostic_messages,
-    format_message,
+    DiagnosticCategory, DiagnosticRelatedInformation, RelatedInformationKind, diagnostic_codes,
+    diagnostic_messages, format_message,
 };
 use crate::query_boundaries::diagnostics as diagnostic_query;
 use crate::state::CheckerState;
@@ -131,6 +131,7 @@ impl<'a> CheckerState<'a> {
             length,
             message_text: format_message(template, &[&type_str]),
             depth: 0,
+            kind: RelatedInformationKind::ChainLink,
         })
     }
 

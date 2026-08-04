@@ -3,12 +3,14 @@
 //! Pure file-organization move; no logic changes. Keeps `state_expressions_literals.rs`
 //! under the parser LOC ceiling.
 
+use super::regex_group_names;
 use super::regex_unicode_properties::{
     BINARY_UNICODE_PROPERTIES_OF_STRINGS, canonical_non_binary_property_name,
     is_known_unicode_property_name_or_value, unicode_property_value_is_known,
 };
 use super::state::ParserState;
 use crate::parser::{NodeIndex, node::LiteralData};
+use std::cell::RefCell;
 use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use tsz_scanner::SyntaxKind;
 use tsz_scanner::scanner_impl::TokenFlags;
@@ -365,8 +367,11 @@ impl ParserState {
                 body_end: usize,
                 strict_mode: bool,
                 unicode_sets_mode: bool,
-                start_pos: u32,
                 capturing_group_count: u32,
+                /// Per-alternative capturing-group name scopes, shared across
+                /// the whole recursive scan. `RefCell` because the scan hands
+                /// `&RegexScanContext` down every level.
+                group_names: &'a RefCell<regex_group_names::GroupNameScopes>,
             }
 
             struct CharEscapeScanCtx<'a> {
@@ -466,20 +471,61 @@ impl ParserState {
                 }
             }
 
-            fn next_utf8_char(bytes: &[u8], end: usize, pos: usize) -> Option<(char, usize)> {
-                std::str::from_utf8(&bytes[pos..end])
-                    .ok()
-                    .and_then(|slice| slice.chars().next())
-                    .map(|ch| (ch, ch.len_utf8()))
-            }
+            use crate::parser::regex_modifier_groups::next_utf8_char;
 
-            const fn is_word_char(ch: u8) -> bool {
-                ch == b'_' || ch.is_ascii_alphanumeric() || ch >= 0x80
-            }
+            /// Scan a `(?<name>` or `\k<name>` group name and report the
+            /// grammar errors tsc's `scanGroupName` reports there.
+            ///
+            /// `pos` must sit just past the `<`. Reports `TS1514` when no
+            /// identifier is present, `TS1515` when a *declaration*'s name is
+            /// already visible in the current or an enclosing alternative, and
+            /// consumes the closing `>` or reports `'>' expected.` in its
+            /// place. Reference names (`\k<...>`) are only shape-checked here;
+            /// their resolution against the pattern's declared names is the
+            /// checker's existing `TS1532` pass.
+            fn scan_group_name_and_delimiter<F>(
+                parser: &mut ParserState,
+                ctx: &RegexScanContext<'_, F>,
+                pos: &mut usize,
+                is_reference: bool,
+            ) where
+                F: Fn(&mut ParserState, usize, u32, &str, u32),
+            {
+                let name_start = *pos;
+                let scanned = regex_group_names::scan_group_name(ctx.body, ctx.body_end, pos);
 
-            fn scan_identifier(body: &[u8], end: usize, pos: &mut usize) {
-                while *pos < end && is_word_char(body[*pos]) {
+                match scanned {
+                    None => {
+                        (ctx.emit)(
+                            parser,
+                            name_start,
+                            0,
+                            diagnostic_messages::EXPECTED_A_CAPTURING_GROUP_NAME,
+                            diagnostic_codes::EXPECTED_A_CAPTURING_GROUP_NAME,
+                        );
+                    }
+                    Some(name) if !is_reference => {
+                        if !ctx.group_names.borrow_mut().declare(&name) {
+                            (ctx.emit)(
+                                parser,
+                                name_start,
+                                (*pos - name_start) as u32,
+                                diagnostic_messages::NAMED_CAPTURING_GROUPS_WITH_THE_SAME_NAME_MUST_BE_MUTUALLY_EXCLUSIVE_TO_EACH_OTH,
+                                diagnostic_codes::NAMED_CAPTURING_GROUPS_WITH_THE_SAME_NAME_MUST_BE_MUTUALLY_EXCLUSIVE_TO_EACH_OTH,
+                            );
+                        }
+                    }
+                    Some(_) => {}
+                }
+
+                if *pos < ctx.body_end && ctx.body[*pos] == b'>' {
                     *pos += 1;
+                } else {
+                    // tsc's `scanExpectedChar`. A zero-length report at the
+                    // same position as the `TS1514` above is dropped by the
+                    // parser's same-position dedup, which is why
+                    // `/(?<1a>x)/` is one diagnostic in tsc and not two.
+                    (ctx.emit)(parser, *pos, 0, "'>' expected.", diagnostic_codes::EXPECTED);
                 }
             }
 
@@ -559,55 +605,7 @@ impl ParserState {
                 }
             }
 
-            fn is_identifier_part_for_regex_flags(ch: char) -> bool {
-                // tsc terminates regex-flag scanning with `isIdentifierPart`
-                // (`scanner.ts`); route through the scanner predicate so flag
-                // termination matches identifier scanning exactly.
-                tsz_scanner::is_ecmascript_identifier_part(ch)
-            }
-
-            const fn is_regex_flag(ch: char) -> bool {
-                matches!(ch, 'g' | 'i' | 'm' | 's' | 'u' | 'v' | 'y' | 'd')
-            }
-
-            fn scan_regex_modifier_segment(
-                parser: &mut ParserState,
-                emit: &impl Fn(&mut ParserState, usize, u32, &str, u32),
-                body: &[u8],
-                end: usize,
-                pos: &mut usize,
-            ) -> bool {
-                let mut consumed_any = false;
-
-                while *pos < end {
-                    let Some((ch, char_len)) = next_utf8_char(body, end, *pos) else {
-                        break;
-                    };
-
-                    if is_regex_flag(ch) {
-                        *pos += char_len;
-                        consumed_any = true;
-                        continue;
-                    }
-
-                    if is_identifier_part_for_regex_flags(ch) {
-                        emit(
-                            parser,
-                            *pos,
-                            1,
-                            diagnostic_messages::UNKNOWN_REGULAR_EXPRESSION_FLAG,
-                            diagnostic_codes::UNKNOWN_REGULAR_EXPRESSION_FLAG,
-                        );
-                        *pos += char_len;
-                        consumed_any = true;
-                        continue;
-                    }
-
-                    break;
-                }
-
-                consumed_any
-            }
+            use crate::parser::regex_modifier_groups::scan_modifier_group_prelude;
 
             fn scan_character_escape(
                 parser: &mut ParserState,
@@ -647,15 +645,23 @@ impl ParserState {
                         let escape_char = ch;
                         *pos += 1;
                         if *pos < end && body[*pos] == b'{' {
+                            // At atom position there is no enclosing class to
+                            // judge, so the strings answer is discarded; only
+                            // the `\P` rejection above can fire here.
+                            let mut may_contain_strings = false;
                             scan_unicode_property_value_expression(
                                 parser,
                                 emit,
                                 body,
-                                strict_mode,
-                                scan_ctx.unicode_sets_mode,
+                                PropertyExpressionMode {
+                                    unicode: strict_mode,
+                                    unicode_sets: scan_ctx.unicode_sets_mode,
+                                    negated: escape_char == b'P',
+                                },
                                 end,
                                 pos,
                                 escape_start,
+                                &mut may_contain_strings,
                             );
                         } else if strict_mode {
                             let message = if escape_char == b'P' {
@@ -876,16 +882,35 @@ impl ParserState {
             /// the surrounding walker to report as ordinary regex text, which
             /// is how `\p{ Script=Latin }` gets TS1527 followed by a TS1508 on
             /// the trailing brace.
+            /// The three mode bits `scan_unicode_property_value_expression`
+            /// judges by, bundled so the parameter list stays readable.
+            #[derive(Clone, Copy)]
+            struct PropertyExpressionMode {
+                unicode: bool,
+                unicode_sets: bool,
+                /// `true` for `\P{...}`, whose complement is only defined over
+                /// single characters — see the properties-of-strings arm.
+                negated: bool,
+            }
+
             fn scan_unicode_property_value_expression(
                 parser: &mut ParserState,
                 emit: &impl Fn(&mut ParserState, usize, u32, &str, u32),
                 body: &[u8],
-                unicode_mode: bool,
-                unicode_sets_mode: bool,
+                mode: PropertyExpressionMode,
                 end: usize,
                 pos: &mut usize,
                 escape_start: usize,
+                // Set when this expression names a property of *strings*, so
+                // the enclosing class can judge TS1518 for itself.
+                may_contain_strings: &mut bool,
             ) {
+                let PropertyExpressionMode {
+                    unicode: unicode_mode,
+                    unicode_sets: unicode_sets_mode,
+                    negated: property_negated,
+                } = mode;
+
                 fn scan_word(body: &[u8], end: usize, pos: &mut usize) -> usize {
                     let start = *pos;
                     while *pos < end && (body[*pos] == b'_' || body[*pos].is_ascii_alphanumeric()) {
@@ -970,9 +995,7 @@ impl ParserState {
                     {
                         // Matches a sequence rather than a single character,
                         // so it is only accepted under the Unicode Sets (`v`)
-                        // flag; under `v` it is valid as-is (the negated-class
-                        // restriction tsc applies here is a separate,
-                        // unwired diagnostic).
+                        // flag.
                         if !unicode_sets_mode {
                             emit(
                                 parser,
@@ -981,6 +1004,25 @@ impl ParserState {
                                 diagnostic_messages::ANY_UNICODE_PROPERTY_THAT_WOULD_POSSIBLY_MATCH_MORE_THAN_A_SINGLE_CHARACTER_IS_O,
                                 diagnostic_codes::ANY_UNICODE_PROPERTY_THAT_WOULD_POSSIBLY_MATCH_MORE_THAN_A_SINGLE_CHARACTER_IS_O,
                             );
+                        } else if property_negated {
+                            // `\P{...}` complements the property, and a
+                            // complement is only defined over single
+                            // characters — so a property of strings is
+                            // rejected outright, in or out of a negated
+                            // class, and reported on the property *name*
+                            // rather than on the escape. Because the
+                            // operand is already an error it does not also
+                            // feed the enclosing class's own TS1518 check:
+                            // `/[^\P{RGI_Emoji}]/v` draws exactly one.
+                            emit(
+                                parser,
+                                name_start,
+                                name_len as u32,
+                                diagnostic_messages::ANYTHING_THAT_WOULD_POSSIBLY_MATCH_MORE_THAN_A_SINGLE_CHARACTER_IS_INVALID_INSID,
+                                diagnostic_codes::ANYTHING_THAT_WOULD_POSSIBLY_MATCH_MORE_THAN_A_SINGLE_CHARACTER_IS_INVALID_INSID,
+                            );
+                        } else {
+                            *may_contain_strings = true;
                         }
                     } else if !is_known_unicode_property_name_or_value(
                         &body[name_start..name_start + name_len],
@@ -1000,6 +1042,56 @@ impl ParserState {
                 }
             }
 
+            /// Whether a `\q{...}` body — the raw bytes between the braces —
+            /// denotes a set containing anything other than single characters.
+            /// Each `|`-separated alternative is a `ClassString`, and the
+            /// disjunction may contain strings as soon as one alternative is
+            /// not exactly one code point. An escape sequence contributes
+            /// exactly one code point, so `\q{a}` is a single character
+            /// and must not be judged by its six source bytes.
+            fn class_string_disjunction_may_contain_strings(alternatives: &[u8]) -> bool {
+                let mut code_points = 0usize;
+                let mut pos = 0usize;
+
+                while pos < alternatives.len() {
+                    match alternatives[pos] {
+                        b'|' => {
+                            if code_points != 1 {
+                                return true;
+                            }
+                            code_points = 0;
+                            pos += 1;
+                        }
+                        b'\\' => {
+                            code_points += 1;
+                            pos += 1;
+                            // `\u{H+}` spans to its closing brace; every other
+                            // escape is sized by the walker that follows, and
+                            // consuming the single byte after the backslash is
+                            // enough to keep `|` and code-point counting
+                            // aligned for all of them.
+                            if alternatives.get(pos) == Some(&b'u')
+                                && alternatives.get(pos + 1) == Some(&b'{')
+                            {
+                                pos += 2;
+                                while pos < alternatives.len() && alternatives[pos] != b'}' {
+                                    pos += 1;
+                                }
+                            }
+                            pos += 1;
+                        }
+                        _ => {
+                            let advance = next_utf8_char(alternatives, alternatives.len(), pos)
+                                .map_or(1, |(_ch, char_len)| char_len);
+                            code_points += 1;
+                            pos += advance;
+                        }
+                    }
+                }
+
+                code_points != 1
+            }
+
             fn scan_character_class_escape(
                 parser: &mut ParserState,
                 emit: &impl Fn(&mut ParserState, usize, u32, &str, u32),
@@ -1008,7 +1100,10 @@ impl ParserState {
                 unicode_sets_mode: bool,
                 end: usize,
                 pos: &mut usize,
-                _start_pos: u32,
+                // Set when this escape denotes a set that can match something
+                // other than exactly one character, which is what the
+                // enclosing negated class rejects with TS1518.
+                may_contain_strings: &mut bool,
             ) -> Option<ClassAtomKind> {
                 if *pos >= body.len() {
                     return None;
@@ -1091,8 +1186,20 @@ impl ParserState {
                         *pos += 1;
                         if *pos < body.len() && body[*pos] == b'{' {
                             *pos += 1;
+                            let alternatives_start = *pos;
                             while *pos < body.len() && body[*pos] != b'}' {
                                 *pos += 1;
+                            }
+                            // `\q{...}` denotes a set of string literals. It
+                            // can match other than exactly one character as
+                            // soon as any single `|`-separated alternative is
+                            // not exactly one code point long — including the
+                            // empty alternative in `\q{}`, which matches the
+                            // empty string.
+                            if class_string_disjunction_may_contain_strings(
+                                &body[alternatives_start..*pos],
+                            ) {
+                                *may_contain_strings = true;
                             }
                             if *pos < body.len() {
                                 *pos += 1;
@@ -1110,11 +1217,15 @@ impl ParserState {
                                 parser,
                                 emit,
                                 body,
-                                strict_mode,
-                                unicode_sets_mode,
+                                PropertyExpressionMode {
+                                    unicode: strict_mode,
+                                    unicode_sets: unicode_sets_mode,
+                                    negated,
+                                },
                                 end,
                                 pos,
                                 start - 1,
+                                may_contain_strings,
                             );
                             Some(ClassAtomKind::Class)
                         } else if strict_mode {
@@ -1149,6 +1260,7 @@ impl ParserState {
                 ctx: &RegexScanContext<'_, F>,
                 pos: &mut usize,
                 range: &mut Vec<ClassAtomKind>,
+                may_contain_strings: &mut bool,
             ) where
                 F: Fn(&mut ParserState, usize, u32, &str, u32),
             {
@@ -1162,7 +1274,10 @@ impl ParserState {
                 // grammar, so this must stay gated.
                 if ctx.unicode_sets_mode && ch == b'[' {
                     *pos += 1;
-                    scan_class_ranges(parser, ctx, pos);
+                    // A nested class contributes its own strings answer to the
+                    // class that encloses it: `/[^[\q{ab}]]/v` is reported on
+                    // the nested `[`, not on the `\q` inside it.
+                    *may_contain_strings |= scan_class_ranges(parser, ctx, pos);
                     range.push(ClassAtomKind::Class);
                     return;
                 }
@@ -1223,7 +1338,7 @@ impl ParserState {
                         ctx.unicode_sets_mode,
                         ctx.body_end,
                         pos,
-                        ctx.start_pos,
+                        may_contain_strings,
                     ) {
                         Some(atom) => range.push(atom),
                         None => {
@@ -1260,11 +1375,16 @@ impl ParserState {
                 }
             }
 
+            /// Returns whether this class may match something other than
+            /// exactly one character, for the benefit of a class that encloses
+            /// it. See the TS1518 block below for why that answer is the
+            /// *first* operand's rather than the union of every operand's.
             fn scan_class_ranges<F>(
                 parser: &mut ParserState,
                 ctx: &RegexScanContext<'_, F>,
                 pos: &mut usize,
-            ) where
+            ) -> bool
+            where
                 F: Fn(&mut ParserState, usize, u32, &str, u32),
             {
                 fn is_class_set_operator_at(body: &[u8], pos: usize, end: usize) -> bool {
@@ -1349,9 +1469,38 @@ impl ParserState {
                 }
 
                 // Consume optional leading ^
-                if *pos < ctx.body_end && ctx.body[*pos] == b'^' {
+                let negated = *pos < ctx.body_end && ctx.body[*pos] == b'^';
+                if negated {
                     *pos += 1;
                 }
+
+                // A negated class complements its contents, and a complement
+                // is only defined over single characters, so an operand that
+                // may match a string is TS1518.
+                //
+                // In a UNION, tsc consults only the class's FIRST operand:
+                // `/[^\q{xy}b]/v` is reported and `/[^b\q{xy}]/v` is not, and
+                // likewise `/[^\p{RGI_Emoji}a]/v` against
+                // `/[^a\p{RGI_Emoji}]/v`. The ECMAScript grammar makes
+                // `MayContainStrings` of a union true when *any* operand may
+                // contain strings, so the second member of each pair is a tsc
+                // miss rather than intended behaviour — filed upstream, and
+                // matched here deliberately, because parity with tsc is the
+                // contract.
+                //
+                // INTERSECTION is not subject to that miss and is spec-exact
+                // in tsc: `A&&B` may contain strings only when *every* operand
+                // does, so `/[^\q{ab}&&\q{a}]/v` is clean while
+                // `/[^\q{ab}&&\q{cd}]/v` is not. SUBTRACTION takes its first
+                // operand's answer, which the union rule already gives.
+                //
+                // Because an intersection's verdict is not known until its
+                // last operand, the report is deferred to the end of the class
+                // and anchored to the first operand's start — which is where
+                // tsc points for every shape above.
+                let mut class_may_contain_strings = false;
+                let mut first_operand_start = None;
+                let mut operand_index = 0usize;
 
                 // The first operator a class uses fixes its kind, and mixing a
                 // different one in the same class is TS1519. The commitment is
@@ -1416,7 +1565,15 @@ impl ParserState {
 
                     let mut atoms = Vec::new();
                     let min_start = *pos;
-                    scan_class_atom(parser, ctx, pos, &mut atoms);
+                    let mut atom_may_contain_strings = false;
+                    scan_class_atom(parser, ctx, pos, &mut atoms, &mut atom_may_contain_strings);
+                    if operand_index == 0 {
+                        class_may_contain_strings = atom_may_contain_strings;
+                        first_operand_start = Some(min_start);
+                    } else if committed == Some(ClassSetKind::Intersection) {
+                        class_may_contain_strings &= atom_may_contain_strings;
+                    }
+                    operand_index += 1;
                     if ctx.unicode_sets_mode
                         && is_class_set_operator_at(ctx.body, *pos, ctx.body_end)
                     {
@@ -1465,7 +1622,17 @@ impl ParserState {
 
                     let max_start = *pos;
                     let mut max_atoms = Vec::new();
-                    scan_class_atom(parser, ctx, pos, &mut max_atoms);
+                    // The upper bound of a range is not an operand of the
+                    // class, so its strings answer is not the class's; a
+                    // non-single-character bound is already TS1517's business.
+                    let mut max_atom_may_contain_strings = false;
+                    scan_class_atom(
+                        parser,
+                        ctx,
+                        pos,
+                        &mut max_atoms,
+                        &mut max_atom_may_contain_strings,
+                    );
 
                     let min_atom = atoms.first().copied();
                     let max_atom = max_atoms.first().copied();
@@ -1502,6 +1669,22 @@ impl ParserState {
                     // and surrogate pairs consistently. This scanner still
                     // validates class-boundary rules above.
                 }
+
+                if let Some(report_at) = first_operand_start
+                    && ctx.unicode_sets_mode
+                    && negated
+                    && class_may_contain_strings
+                {
+                    (ctx.emit)(
+                        parser,
+                        report_at,
+                        1,
+                        diagnostic_messages::ANYTHING_THAT_WOULD_POSSIBLY_MATCH_MORE_THAN_A_SINGLE_CHARACTER_IS_INVALID_INSID,
+                        diagnostic_codes::ANYTHING_THAT_WOULD_POSSIBLY_MATCH_MORE_THAN_A_SINGLE_CHARACTER_IS_INVALID_INSID,
+                    );
+                }
+
+                class_may_contain_strings
             }
 
             fn scan_alternative<F>(
@@ -1533,10 +1716,9 @@ impl ParserState {
                                 *pos += 1;
                                 if *pos < ctx.body_end && ctx.body[*pos] == b'<' {
                                     *pos += 1;
-                                    scan_identifier(ctx.body, ctx.body_end, pos);
-                                    if *pos < ctx.body_end && ctx.body[*pos] == b'>' {
-                                        *pos += 1;
-                                    }
+                                    scan_group_name_and_delimiter(
+                                        parser, ctx, pos, /*is_reference*/ true,
+                                    );
                                 } else if ctx.strict_mode {
                                     (ctx.emit)(
                                         parser,
@@ -1573,10 +1755,12 @@ impl ParserState {
 
                             if ctx.body[*pos] == b'?' {
                                 *pos += 1;
-                                if *pos >= ctx.body_end {
-                                    break;
-                                }
-                                match ctx.body[*pos] {
+                                // tsc reads the character after `?` through
+                                // `charCodeChecked`, so end-of-body is not a
+                                // termination condition here: `/(?/` still
+                                // enters the modifier-group arm and reports the
+                                // missing `:` where the body ran out.
+                                match ctx.body.get(*pos).copied().unwrap_or(b'\0') {
                                     b'=' | b'!' => {
                                         *pos += 1;
                                         is_previous_term_quantifiable = !ctx.strict_mode;
@@ -1590,61 +1774,26 @@ impl ParserState {
                                             *pos += 1;
                                             is_previous_term_quantifiable = false;
                                         } else {
-                                            scan_identifier(ctx.body, ctx.body_end, pos);
-                                            if *pos < ctx.body_end && ctx.body[*pos] == b'>' {
-                                                *pos += 1;
-                                            }
+                                            scan_group_name_and_delimiter(
+                                                parser, ctx, pos, /*is_reference*/ false,
+                                            );
                                             is_previous_term_quantifiable = true;
                                         }
                                         scan_disjunction(parser, ctx, pos, true);
                                     }
+                                    // Modifier group, including the degenerate
+                                    // `(?:` form: tsc reaches both through this
+                                    // same `default` arm and never backtracks
+                                    // out of it.
                                     _ => {
-                                        let saved_pos = *pos;
-                                        let has_first = scan_regex_modifier_segment(
+                                        scan_modifier_group_prelude(
                                             parser,
                                             ctx.emit,
                                             ctx.body,
                                             ctx.body_end,
                                             pos,
                                         );
-
-                                        if has_first
-                                            && *pos < ctx.body_end
-                                            && ctx.body[*pos] == b'-'
-                                        {
-                                            *pos += 1;
-                                            if *pos < ctx.body_end {
-                                                let has_second = scan_regex_modifier_segment(
-                                                    parser,
-                                                    ctx.emit,
-                                                    ctx.body,
-                                                    ctx.body_end,
-                                                    pos,
-                                                );
-
-                                                if !has_second {
-                                                    *pos = saved_pos;
-                                                }
-                                            } else {
-                                                *pos = saved_pos;
-                                            }
-                                        }
-
-                                        let is_modifier_group = has_first
-                                            && *pos < ctx.body_end
-                                            && ctx.body[*pos] == b':';
-
-                                        if !is_modifier_group {
-                                            *pos = saved_pos;
-                                        } else {
-                                            *pos += 1;
-                                            is_previous_term_quantifiable = true;
-                                        }
-
-                                        if !is_modifier_group {
-                                            is_previous_term_quantifiable = true;
-                                        }
-
+                                        is_previous_term_quantifiable = true;
                                         scan_disjunction(parser, ctx, pos, true);
                                     }
                                 }
@@ -1859,7 +2008,10 @@ impl ParserState {
                         }
                         b'[' => {
                             *pos += 1;
-                            scan_class_ranges(parser, ctx, pos);
+                            // A top-level class has no enclosing class to
+                            // answer to; it has already reported TS1518 for
+                            // itself if it needed to.
+                            let _ = scan_class_ranges(parser, ctx, pos);
                             is_previous_term_quantifiable = true;
                         }
                         b')' => {
@@ -1928,7 +2080,12 @@ impl ParserState {
                 F: Fn(&mut ParserState, usize, u32, &str, u32),
             {
                 loop {
+                    // tsc brackets every alternative with a fresh capturing-group
+                    // name scope, so sibling alternatives are mutually exclusive
+                    // while enclosing alternatives stay visible.
+                    ctx.group_names.borrow_mut().enter_alternative();
                     scan_alternative(parser, ctx, pos, in_group);
+                    ctx.group_names.borrow_mut().leave_alternative();
 
                     if *pos >= ctx.body_end || ctx.body[*pos] != b'|' {
                         return;
@@ -1938,14 +2095,15 @@ impl ParserState {
                 }
             }
 
+            let group_names = RefCell::new(regex_group_names::GroupNameScopes::new());
             let ctx = RegexScanContext {
                 emit: &emit,
                 body: bytes,
                 body_end,
                 strict_mode,
                 unicode_sets_mode,
-                start_pos,
                 capturing_group_count: count_capturing_groups(bytes, body_end),
+                group_names: &group_names,
             };
             let mut pos = 1usize;
             scan_disjunction(parser, &ctx, &mut pos, false);

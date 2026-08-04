@@ -66,7 +66,7 @@ impl<'a> CheckerState<'a> {
             let Some((start, length, file)) = self.declared_here_anchor(location, property) else {
                 continue;
             };
-            return Some(Diagnostic::related_message(
+            return Some(Diagnostic::related_pointer(
                 diagnostic_codes::IS_DECLARED_HERE,
                 file.unwrap_or_else(|| self.ctx.file_name.clone()),
                 start,
@@ -79,7 +79,7 @@ impl<'a> CheckerState<'a> {
             else {
                 continue;
             };
-            return Some(Diagnostic::related_message(
+            return Some(Diagnostic::related_pointer(
                 diagnostic_codes::IS_DECLARED_HERE,
                 file.unwrap_or_else(|| self.ctx.file_name.clone()),
                 start,

@@ -407,6 +407,7 @@ impl ParserState {
                         crate::parser::node::UnaryExprDataEx {
                             expression: expr,
                             asterisk_token: false,
+                            next_token_identifier_keyword_or_literal_same_line: true,
                         },
                     );
                 }

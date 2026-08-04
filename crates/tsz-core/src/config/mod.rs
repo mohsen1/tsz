@@ -1456,6 +1456,7 @@ fn load_tsconfig_inner_with_diagnostics(
     }
 
     let extends = parsed.config.extends.take();
+    let has_own_extends = extends.is_some();
     if let Some(extends_value) = extends {
         let extends_paths = match extends_value {
             ExtendsValue::Single(s) => vec![s],
@@ -1584,6 +1585,38 @@ fn load_tsconfig_inner_with_diagnostics(
         }
         // The flush happens in the public load wrappers so the CLI driver's
         // deferred path can retract CLI-overridden notices first.
+
+        // tsc's `getConfigFileSpecs` (`commandLineParser.ts`): an explicit
+        // `"files": []` is only diagnosed on the entry config itself (never
+        // on a base pulled in through `extends` — see below), and only when
+        // there is no other way the entry could name its own inputs: no
+        // `extends` (which could otherwise supply `files` from a base) and
+        // no non-empty `references` (a solution-style root that legitimately
+        // has an empty `files`). This is independent of `include`/`exclude`:
+        // tsc reports it even when `include` would find real sources.
+        if !has_own_extends
+            && parsed
+                .config
+                .references
+                .as_ref()
+                .is_none_or(|r| r.is_empty())
+            && let Some(files) = parsed.config.files.as_ref()
+            && files.is_empty()
+        {
+            let value_start = find_top_level_value_offset_in_source(&source, "files");
+            let value_len = estimate_json_value_len(&serde_json::Value::Array(Vec::new()));
+            let message = format_message(
+                diagnostic_messages::THE_FILES_LIST_IN_CONFIG_FILE_IS_EMPTY,
+                &[&file_display],
+            );
+            parsed.diagnostics.push(Diagnostic::error(
+                &file_display,
+                value_start,
+                value_len,
+                message,
+                diagnostic_codes::THE_FILES_LIST_IN_CONFIG_FILE_IS_EMPTY,
+            ));
+        }
     }
 
     visited.remove(&canonical);

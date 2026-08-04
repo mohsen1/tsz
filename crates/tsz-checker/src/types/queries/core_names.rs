@@ -168,6 +168,22 @@ impl<'a> CheckerState<'a> {
 
         if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
             let computed = self.ctx.arena.get_computed_property(name_node)?;
+            // `[it]` where `it` is declared `typeof Symbol.<member>` for a
+            // genuine well-known member names the canonical
+            // `[Symbol.<member>]` member, the same one the inline access
+            // declares — tsc types the alias as that `unique symbol` itself.
+            // Ahead of binding-identity naming, which would otherwise mint a
+            // per-binding `__unique_<id>` key and split one member in two.
+            if let Some(name) = self
+                .resolve_computed_name_expression_symbol(computed.expression)
+                .and_then(|sym_id| {
+                    crate::types_domain::computed_names::type_query_well_known_symbol_key(
+                        &self.ctx, sym_id,
+                    )
+                })
+            {
+                return Some(name);
+            }
             if let Some(sym_ref) =
                 self.computed_identifier_unique_symbol_property_ref(computed.expression)
             {
@@ -425,7 +441,7 @@ impl<'a> CheckerState<'a> {
     /// or qualified entity name), without following import aliases; the
     /// canonical key helpers in `types_domain::computed_names` own alias
     /// hops and the symbol-valued key policy.
-    fn resolve_computed_name_expression_symbol(
+    pub(crate) fn resolve_computed_name_expression_symbol(
         &self,
         expr_idx: NodeIndex,
     ) -> Option<tsz_binder::SymbolId> {

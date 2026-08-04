@@ -70,6 +70,36 @@ fn span_text(source: &str, start: u32, length: u32) -> &str {
     &source[start as usize..(start + length) as usize]
 }
 
+/// The pointer models tsc's `relatedInformation`, not a `messageText` chain
+/// link, so it must carry that tag through to the reporter. Oracled on
+/// `typescript@7.0.2`: `tsc --noEmit --strict --pretty false` on this source
+/// prints the TS2741 line alone, with no `'y' is declared here.` beneath it,
+/// while the `--pretty` run does print it with its own location and snippet.
+/// Only the tag distinguishes the two — a chain link carries a real file and a
+/// real span exactly as this entry does.
+#[test]
+fn declared_here_pointer_is_tagged_as_a_cross_location_pointer() {
+    let source = "interface Point { x: number; y: number; }\nconst p: Point = { x: 1 };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let pointer = diagnostic
+        .related_information
+        .iter()
+        .find(|info| info.code == TS2728)
+        .expect("TS2728 pointer");
+    assert!(
+        pointer.is_location_pointer(),
+        "TS2728 must be a cross-location pointer: {pointer:?}"
+    );
+    assert!(
+        diagnostic
+            .related_information
+            .iter()
+            .filter(|info| info.code != TS2728)
+            .all(|info| !info.is_location_pointer()),
+        "elaboration links on the same diagnostic stay chain links: {diagnostic:?}"
+    );
+}
+
 #[test]
 fn single_missing_interface_property_points_at_its_declaration() {
     let source = "interface Point { x: number; y: number; }\nconst p: Point = { x: 1 };\n";
