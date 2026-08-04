@@ -55,17 +55,34 @@ impl ParserState {
             use tsz_common::diagnostics::diagnostic_codes;
             // `abstract` before a variable or function declaration
             // (`abstract const x = 1;`, `abstract function f() {}`): tsc parses
-            // `abstract` as a modifier and reports TS1242 at the keyword, then
-            // parses the trailing declaration with the (invalid) modifier — it
-            // does NOT degrade to an identifier expression (which would give a
-            // spurious TS2304). Route through the shared modifier-prefixed
-            // statement parser so the declaration is still produced.
+            // `abstract` as a modifier and reports a diagnostic at the keyword,
+            // then parses the trailing declaration with the (invalid) modifier
+            // — it does NOT degrade to an identifier expression (which would
+            // give a spurious TS2304). Route through the shared
+            // modifier-prefixed statement parser so the declaration is still
+            // produced.
+            //
+            // tsc's grammar check picks the message from the statement's
+            // container, the same split `parse_statement_top_level_modifier`
+            // uses for the sibling modifiers (#16368/#16375): a Block body
+            // (function body, a nested block, or a class static block) gets
+            // the generic TS1184; a module/namespace body or the source
+            // file's own top level, neither of which is a Block, keeps the
+            // specific TS1242.
             let abstract_start = self.token_pos();
-            let abstract_modifier = self.consume_modifier_with_error(
-                SyntaxKind::AbstractKeyword,
-                "'abstract' modifier can only appear on a class, method, or property declaration.",
-                diagnostic_codes::ABSTRACT_MODIFIER_CAN_ONLY_APPEAR_ON_A_CLASS_METHOD_OR_PROPERTY_DECLARATION,
-            );
+            let abstract_modifier = if self.in_block_context() || self.in_static_block_context() {
+                self.consume_modifier_with_error(
+                    SyntaxKind::AbstractKeyword,
+                    "Modifiers cannot appear here.",
+                    diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+                )
+            } else {
+                self.consume_modifier_with_error(
+                    SyntaxKind::AbstractKeyword,
+                    "'abstract' modifier can only appear on a class, method, or property declaration.",
+                    diagnostic_codes::ABSTRACT_MODIFIER_CAN_ONLY_APPEAR_ON_A_CLASS_METHOD_OR_PROPERTY_DECLARATION,
+                )
+            };
             self.parse_accessor_modified_statement(abstract_start, vec![abstract_modifier])
         } else {
             // When 'abstract' at statement level is followed by '@' on the same line,

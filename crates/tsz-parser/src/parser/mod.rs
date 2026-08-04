@@ -79,6 +79,9 @@ pub(crate) mod test_fixture;
 #[path = "../../tests/definite_assignment_assertion_tests.rs"]
 mod definite_assignment_assertion_tests;
 #[cfg(test)]
+#[path = "../../tests/parser_abstract_ts1184_ts1242_tests.rs"]
+mod parser_abstract_ts1184_ts1242_tests;
+#[cfg(test)]
 #[path = "../../tests/parser_async_arrow_context_tests.rs"]
 mod parser_async_arrow_context_tests;
 #[cfg(test)]
