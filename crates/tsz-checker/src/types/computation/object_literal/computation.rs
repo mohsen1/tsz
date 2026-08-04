@@ -144,7 +144,7 @@ impl<'a> CheckerState<'a> {
                         self.get_type_of_node(computed.expression) == TypeId::ERROR
                     });
                 let name_opt = if computed_key_is_error
-                    || self.object_literal_computed_key_is_wide_symbol(prop.name)
+                    || self.computed_member_key_is_wide_symbol(prop.name)
                 {
                     None
                 } else {
@@ -1265,7 +1265,7 @@ impl<'a> CheckerState<'a> {
                 {
                     self.get_type_of_node(computed.expression);
                 }
-                let name_opt = if self.object_literal_computed_key_is_wide_symbol(method.name) {
+                let name_opt = if self.computed_member_key_is_wide_symbol(method.name) {
                     None
                 } else {
                     self.get_property_name_resolved(method.name)

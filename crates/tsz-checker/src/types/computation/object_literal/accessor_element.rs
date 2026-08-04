@@ -146,7 +146,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let name_opt = if self.object_literal_computed_key_is_wide_symbol(accessor.name) {
+        let name_opt = if self.computed_member_key_is_wide_symbol(accessor.name) {
             None
         } else {
             self.get_property_name_resolved(accessor.name)
