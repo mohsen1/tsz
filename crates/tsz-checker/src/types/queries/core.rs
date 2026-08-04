@@ -375,6 +375,32 @@ impl<'a> CheckerState<'a> {
             && (self.has_private_modifier(modifiers) || self.is_private_identifier_name(name_idx))
     }
 
+    /// Whether a class member's own `declare` modifier — independent of
+    /// whether the enclosing class or file is ambient — hides it from the
+    /// observable surface, suppressing `noImplicitAny` (TS7006/TS7008/TS7010)
+    /// for it.
+    ///
+    /// `declare` is not a legal modifier on a method or property inside a
+    /// non-ambient class (`tsc` reports TS1031 for it), but `tsc` still
+    /// treats the member as if it were ambient for this one purpose when it
+    /// is also `private` or named with a private identifier — the same
+    /// discriminator as [`Self::member_hidden_from_ambient_declaration_surface`].
+    /// Oracle-verified against `typescript@7.0.2`: `declare #m()` and
+    /// `declare private m()` report only TS1031, `declare m()` (no
+    /// private-ness) still reports TS7010 alongside TS1031.
+    ///
+    /// This does **not** apply to accessors — `declare get #m()` and
+    /// `declare private set m(v)` still report TS7033/TS7032/TS7006, oracle-
+    /// confirmed. Callers checking an accessor must not use this helper.
+    pub(crate) fn member_own_declare_hides_from_ambient_surface(
+        &self,
+        modifiers: &Option<tsz_parser::parser::NodeList>,
+        name_idx: NodeIndex,
+    ) -> bool {
+        self.has_declare_modifier(modifiers)
+            && (self.has_private_modifier(modifiers) || self.is_private_identifier_name(name_idx))
+    }
+
     /// Check if a node is a private identifier.
     pub(crate) fn is_private_identifier_name(&self, name_idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(name_idx) else {

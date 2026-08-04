@@ -1017,25 +1017,37 @@ impl<'a> CheckerState<'a> {
                 // and ambient declarations (declare class/module private members).
                 let is_setter = node.kind == syntax_kind_ext::SET_ACCESSOR
                     || self.is_object_define_property_setter(idx);
-                // In ambient contexts (declare class, .d.ts), tsc suppresses
-                // TS7006/TS7031 for private members since they're excluded from
-                // .d.ts output. check_method_declaration in ambient_signature_checks.rs
-                // handles this for the method-checking path, but get_type_of_function
-                // also processes these methods and must skip as well.
+                // In ambient contexts (declare class, .d.ts, or a method carrying
+                // its own — here grammatically illegal — `declare` modifier), tsc
+                // suppresses TS7006/TS7031 for private members since they're
+                // excluded from .d.ts output. check_method_declaration in
+                // ambient_signature_checks.rs handles this for the method-checking
+                // path, but get_type_of_function also processes these methods and
+                // must skip as well.
                 // Check the node's own modifiers directly rather than relying on
                 // enclosing_class (which may not be set when get_type_of_function
                 // is called outside the class member checking pass).
+                //
+                // A method may be hidden by a private-identifier (`#m`) name as well
+                // as the `private` modifier (oracle-verified: `declare #m(x)` and
+                // `declare class A { #m(x) }` both suppress TS7006, matching the
+                // `private`-modifier sibling). Accessors deliberately keep the
+                // narrower `private`-modifier-only check: a private-identifier
+                // accessor's own `declare` does NOT suppress its parameter/return
+                // implicit-any (`class A { declare set #m(v) }` still reports
+                // TS7032/TS7006, oracle-verified) — only a *class*-level ambient
+                // context does, and that path is handled by
+                // `member_hidden_from_ambient_declaration_surface` in
+                // `accessor_checker.rs`, not here.
                 let is_ambient_private = self.ctx.is_ambient_declaration(idx)
-                    && (self
+                    && (self.ctx.arena.get_method_decl(node).is_some_and(|m| {
+                        self.has_private_modifier(&m.modifiers)
+                            || self.is_private_identifier_name(m.name)
+                    }) || self
                         .ctx
                         .arena
-                        .get_method_decl(node)
-                        .is_some_and(|m| self.has_private_modifier(&m.modifiers))
-                        || self
-                            .ctx
-                            .arena
-                            .get_accessor(node)
-                            .is_some_and(|a| self.has_private_modifier(&a.modifiers))
+                        .get_accessor(node)
+                        .is_some_and(|a| self.has_private_modifier(&a.modifiers))
                         || self
                             .ctx
                             .arena

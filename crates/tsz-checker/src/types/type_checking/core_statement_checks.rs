@@ -264,6 +264,25 @@ impl<'a> CheckerState<'a> {
             }
             self.ctx.preserve_literal_types = prev_preserve_literals;
             if self.ctx.in_async_context() {
+                // TS1058: tsc's `checkReturnExpression` runs this check only when
+                // the enclosing async function has an explicit return type
+                // annotation (`getReturnTypeFromAnnotation(container) != nil`) —
+                // an inferred return type widens from the return expressions
+                // themselves, so there is no independent annotation to validate
+                // against. It reports at the return statement itself, testing the
+                // return *expression's* type directly, independent of whether the
+                // declared return type is even `Promise<T>` (that is TS1064's
+                // separate, earlier check on the annotation node).
+                if self.enclosing_async_function_has_return_type_annotation(stmt_idx)
+                    && self.await_operand_is_invalid_thenable(return_type)
+                {
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    self.error_at_node(
+                        stmt_idx,
+                        diagnostic_messages::THE_RETURN_TYPE_OF_AN_ASYNC_FUNCTION_MUST_EITHER_BE_A_VALID_PROMISE_OR_MUST_NOT,
+                        diagnostic_codes::THE_RETURN_TYPE_OF_AN_ASYNC_FUNCTION_MUST_EITHER_BE_A_VALID_PROMISE_OR_MUST_NOT,
+                    );
+                }
                 // Use unwrap_async_return_type_for_body which handles unions
                 // by unwrapping Promise from each member individually.
                 // This is needed for cases like:
@@ -544,6 +563,37 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn type_references_unresolved_import(&self, type_id: TypeId) -> bool {
         self.ctx.type_references_unresolved_import(type_id)
+    }
+
+    /// Whether the innermost function-like container of `idx` is async and
+    /// carries an explicit return type annotation. Mirrors tsc's
+    /// `getReturnTypeFromAnnotation(container) != nil` gate on
+    /// `checkReturnExpression`'s TS1058 branch — an inferred (unannotated)
+    /// async return type widens from the return expressions themselves, so
+    /// there is nothing independent to validate a return expression against.
+    fn enclosing_async_function_has_return_type_annotation(&self, idx: NodeIndex) -> bool {
+        let Some(fn_idx) = self.find_enclosing_function(idx) else {
+            return false;
+        };
+        let Some(fn_node) = self.ctx.arena.get(fn_idx) else {
+            return false;
+        };
+        let type_annotation = match fn_node.kind {
+            syntax_kind_ext::FUNCTION_DECLARATION
+            | syntax_kind_ext::FUNCTION_EXPRESSION
+            | syntax_kind_ext::ARROW_FUNCTION => self
+                .ctx
+                .arena
+                .get_function(fn_node)
+                .map(|f| f.type_annotation),
+            syntax_kind_ext::METHOD_DECLARATION => self
+                .ctx
+                .arena
+                .get_method_decl(fn_node)
+                .map(|m| m.type_annotation),
+            _ => return false,
+        };
+        type_annotation.is_some_and(|t| t.is_some())
     }
 
     fn should_report_primitive_to_generic_indexed_conditional_return(
@@ -832,7 +882,7 @@ impl<'a> CheckerState<'a> {
 
                             // TS1375: top-level await is only valid in a module.
                             if self.top_level_await_requires_module_diagnostic() {
-                                self.error_at_node(
+                                self.error_at_first_token_of_node(
                                     current_idx,
                                     diagnostic_messages::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_FILE_WHEN_THAT_FILE_IS,
                                     diagnostic_codes::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_FILE_WHEN_THAT_FILE_IS,
@@ -847,14 +897,14 @@ impl<'a> CheckerState<'a> {
                             match self.top_level_await_verdict() {
                                 TopLevelAwaitVerdict::Allowed => {}
                                 TopLevelAwaitVerdict::CommonJsFile => {
-                                    self.error_at_node(
+                                    self.error_at_first_token_of_node(
                                         current_idx,
                                         diagnostic_messages::THE_CURRENT_FILE_IS_A_COMMONJS_MODULE_AND_CANNOT_USE_AWAIT_AT_THE_TOP_LEVEL,
                                         diagnostic_codes::THE_CURRENT_FILE_IS_A_COMMONJS_MODULE_AND_CANNOT_USE_AWAIT_AT_THE_TOP_LEVEL,
                                     );
                                 }
                                 TopLevelAwaitVerdict::UnsupportedModuleOrTarget => {
-                                    self.error_at_node(
+                                    self.error_at_first_token_of_node(
                                         current_idx,
                                         diagnostic_messages::TOP_LEVEL_AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ES,
                                         diagnostic_codes::TOP_LEVEL_AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ES,
@@ -862,12 +912,25 @@ impl<'a> CheckerState<'a> {
                                 }
                             }
                         } else {
-                            // TS1308: 'await' expressions are only allowed within async functions
-                            self.error_at_node(
-                                current_idx,
-                                diagnostic_messages::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS,
-                                diagnostic_codes::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS,
-                            );
+                            // TS1308: 'await' expressions are only allowed within async functions.
+                            // tsc points the reader at the function that would
+                            // have to become `async` (TS1356), when there is one
+                            // — see `did_you_mean_async_related`.
+                            let related = self.did_you_mean_async_related(current_idx);
+                            if related.is_empty() {
+                                self.error_at_first_token_of_node(
+                                    current_idx,
+                                    diagnostic_messages::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS,
+                                    diagnostic_codes::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS,
+                                );
+                            } else {
+                                self.error_at_first_token_of_node_with_related(
+                                    current_idx,
+                                    diagnostic_messages::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS,
+                                    diagnostic_codes::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS,
+                                    related,
+                                );
+                            }
                         }
                     }
                 }
@@ -1025,12 +1088,14 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // The `await` keyword sits immediately after `for `.
-        let await_anchor = self
-            .ctx
-            .arena
-            .get(stmt_idx)
-            .map(|stmt_node| (stmt_node.pos + 4, 5u32));
+        // tsc anchors this family on `ForOfStatement.awaitModifier` — the
+        // `await` keyword token, never the whole statement. This arena stores
+        // no modifier node, so the keyword is located as the token after
+        // `for`. Scanning for it (rather than assuming `stmt.pos + 4`) keeps
+        // the anchor right when the two keywords are not separated by exactly
+        // one space, e.g. `for /* c */ await (const x of y) {}`, and when
+        // `stmt.pos` still carries leading trivia.
+        let await_anchor = self.span_of_second_token_of_node(stmt_idx);
 
         if self.ctx.function_depth > 0 {
             if self.find_enclosing_static_block(stmt_idx).is_some() {
@@ -1054,20 +1119,23 @@ impl<'a> CheckerState<'a> {
                 // TS1103: 'for await' loops are only allowed within async
                 // functions and at the top levels of modules. This is to
                 // `for await` exactly what TS1308 is to a bare `await`
-                // expression's non-top-level arm.
+                // expression's non-top-level arm — including tsc's TS1356
+                // pointer at the function that would have to become `async`.
+                let related = self.did_you_mean_async_related(stmt_idx);
                 if let Some((await_pos, await_len)) = await_anchor {
-                    self.error(
+                    self.error_at_span_with_related(
                         await_pos,
                         await_len,
-                        diagnostic_messages::FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS_OF
-                            .to_string(),
+                        diagnostic_messages::FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS_OF,
                         diagnostic_codes::FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS_OF,
+                        related,
                     );
                 } else {
-                    self.error_at_node(
+                    self.error_at_node_with_related(
                         stmt_idx,
                         diagnostic_messages::FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS_OF,
                         diagnostic_codes::FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS_OF,
+                        related,
                     );
                 }
             }

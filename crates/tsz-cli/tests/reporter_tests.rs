@@ -405,19 +405,27 @@ fn pretty_mode_renders_related_location_snippet_and_message() {
     write_file(&decl_path, "declare function foo(): void;\n");
 
     let related_start = "declare function ".len() as u32;
-    let diagnostic = Diagnostic::error(
+    let mut diagnostic = Diagnostic::error(
         main_path.to_string_lossy().into_owned(),
         0,
         3,
         "Cannot find name 'foo'.".to_string(),
         2304,
-    )
-    .with_related(
-        decl_path.to_string_lossy().into_owned(),
-        related_start,
-        3,
-        "The symbol is declared here.",
     );
+    // A cross-file "declared here" reference is a genuine `relatedInformation`
+    // pointer, not a `messageText` chain link — tag it explicitly rather than
+    // via `with_related` (which defaults to `ChainLink`, the common case for
+    // same-span elaboration), or pretty mode renders it as plain indented
+    // text before the primary's snippet instead of a located block after it.
+    diagnostic
+        .related_information
+        .push(Diagnostic::related_pointer(
+            0,
+            decl_path.to_string_lossy().into_owned(),
+            related_start,
+            3,
+            "The symbol is declared here.",
+        ));
 
     let mut reporter = Reporter::new(false);
     reporter.set_pretty(true);

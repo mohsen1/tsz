@@ -6,6 +6,27 @@ use tsz_common::diagnostics::diagnostic_codes;
 use tsz_common::interner::AstAtom;
 use tsz_scanner::{SyntaxKind, keyword_text_len};
 
+/// Which grammar diagnostic `checkGrammarModifiers` picks for the modifier run
+/// `[abstract, export]` depends on the node kind `export` decorates, not on the
+/// statement's container alone — so `abstract export ...` cannot reuse the
+/// container split the sibling modifier paths use.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AbstractExportTarget {
+    /// `abstract export class C {}` — `abstract` is legal on a class, so the
+    /// only violation left is the modifier ordering: TS1029 on the `export`
+    /// keyword, in every container, and it outranks the container check.
+    Class,
+    /// A declaration that takes `export` as a modifier but admits no
+    /// `abstract` (`const`/`let`/`var`/`function`/`interface`/`type`/`enum`).
+    /// TS1242 outside a Block, the generic TS1184 inside one.
+    ModifierRun,
+    /// A form that reports its own position error inside a Block and therefore
+    /// suppresses the modifier diagnostic there — `export namespace N {}`
+    /// (TS1235), `export { }` and `export * from "m"` (TS1233). Outside a Block
+    /// the modifier diagnostic is reported as usual.
+    PositionErrorWins,
+}
+
 impl ParserState {
     pub(crate) fn parse_statement_async_declaration_or_expression(&mut self) -> NodeIndex {
         if self.look_ahead_is_async_function() {
@@ -51,21 +72,123 @@ impl ParserState {
                 }
                 _ => self.parse_expression_statement(),
             }
+        } else if self.look_ahead_is_abstract_before_export_as_namespace() {
+            // `abstract export as namespace Foo;` — the resulting
+            // `NamespaceExportDeclaration` admits no modifiers in any container,
+            // unlike the sibling `abstract` var/function declarations handled
+            // just below, which split their diagnostic by container. tsc reports
+            // TS1184 across the whole statement unconditionally and still parses
+            // the namespace export (#16389). The other `abstract export ...`
+            // forms (const/class/function/...) are not covered by this branch —
+            // `abstract` is a legal modifier on some of those node kinds and tsc
+            // picks a different diagnostic there, still open as a separate gap.
+            let start_pos = self.token_pos();
+            self.parse_expected(SyntaxKind::AbstractKeyword);
+            self.parse_expected(SyntaxKind::ExportKeyword);
+            let node = self.parse_namespace_export_declaration(start_pos);
+            if let Some(n) = self.arena.get(node) {
+                let (span_start, span_end) = (n.pos, n.end);
+                self.parse_error_at(
+                    span_start,
+                    span_end - span_start,
+                    "Modifiers cannot appear here.",
+                    diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+                );
+            }
+            node
+        } else if let Some(target) = self.look_ahead_abstract_before_export_target() {
+            // `abstract export <declaration>` — `export` here is a *modifier* on
+            // the trailing declaration, so tsc reads one modifier run
+            // `[abstract, export]` and `checkGrammarModifiers` reports exactly
+            // one diagnostic for it, chosen by the node kind `export`
+            // decorates. Without this branch `abstract` degraded to an
+            // identifier expression and tsz reported a spurious TS2304 on top
+            // of the wrong grammar code (#16389's handoff).
+            let abstract_start = self.token_pos();
+            let abstract_end = self.token_end();
+            let in_block = self.in_block_context() || self.in_static_block_context();
+            match target {
+                // `abstract` is a legal modifier on a class, so the only
+                // violation left is the ordering one, and it outranks the
+                // container check in every container.
+                AbstractExportTarget::Class => {}
+                // The trailing form reports its own position error inside a
+                // Block (TS1235 / TS1233) and no modifier error at all.
+                AbstractExportTarget::PositionErrorWins if in_block => {}
+                // Everything else follows the same container split the sibling
+                // `abstract` var/function path uses (#16368/#16375): a Block
+                // body gets the generic TS1184, a module/namespace body or the
+                // source file top level keeps the specific TS1242.
+                _ if in_block => {
+                    self.parse_error_at(
+                        abstract_start,
+                        abstract_end - abstract_start,
+                        "Modifiers cannot appear here.",
+                        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+                    );
+                }
+                _ => {
+                    self.parse_error_at(
+                        abstract_start,
+                        abstract_end - abstract_start,
+                        "'abstract' modifier can only appear on a class, method, or property declaration.",
+                        diagnostic_codes::ABSTRACT_MODIFIER_CAN_ONLY_APPEAR_ON_A_CLASS_METHOD_OR_PROPERTY_DECLARATION,
+                    );
+                }
+            }
+            self.parse_expected(SyntaxKind::AbstractKeyword);
+            if target == AbstractExportTarget::Class {
+                // tsc anchors TS1029 on the *later* of the two modifiers, i.e.
+                // the `export` keyword now sitting at the current token.
+                let export_start = self.token_pos();
+                let export_end = self.token_end();
+                self.parse_error_at(
+                    export_start,
+                    export_end - export_start,
+                    &tsz_common::diagnostics::diagnostic_messages::MODIFIER_MUST_PRECEDE_MODIFIER
+                        .replace("{0}", "export")
+                        .replace("{1}", "abstract"),
+                    diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
+                );
+            }
+            let abstract_modifier = self.arena.add_token(
+                SyntaxKind::AbstractKeyword as u16,
+                abstract_start,
+                abstract_end,
+            );
+            self.parse_accessor_modified_statement(abstract_start, vec![abstract_modifier])
         } else if self.look_ahead_is_abstract_before_var_or_function() {
             use tsz_common::diagnostics::diagnostic_codes;
             // `abstract` before a variable or function declaration
             // (`abstract const x = 1;`, `abstract function f() {}`): tsc parses
-            // `abstract` as a modifier and reports TS1242 at the keyword, then
-            // parses the trailing declaration with the (invalid) modifier — it
-            // does NOT degrade to an identifier expression (which would give a
-            // spurious TS2304). Route through the shared modifier-prefixed
-            // statement parser so the declaration is still produced.
+            // `abstract` as a modifier and reports a diagnostic at the keyword,
+            // then parses the trailing declaration with the (invalid) modifier
+            // — it does NOT degrade to an identifier expression (which would
+            // give a spurious TS2304). Route through the shared
+            // modifier-prefixed statement parser so the declaration is still
+            // produced.
+            //
+            // tsc's grammar check picks the message from the statement's
+            // container, the same split `parse_statement_top_level_modifier`
+            // uses for the sibling modifiers (#16368/#16375): a Block body
+            // (function body, a nested block, or a class static block) gets
+            // the generic TS1184; a module/namespace body or the source
+            // file's own top level, neither of which is a Block, keeps the
+            // specific TS1242.
             let abstract_start = self.token_pos();
-            let abstract_modifier = self.consume_modifier_with_error(
-                SyntaxKind::AbstractKeyword,
-                "'abstract' modifier can only appear on a class, method, or property declaration.",
-                diagnostic_codes::ABSTRACT_MODIFIER_CAN_ONLY_APPEAR_ON_A_CLASS_METHOD_OR_PROPERTY_DECLARATION,
-            );
+            let abstract_modifier = if self.in_block_context() || self.in_static_block_context() {
+                self.consume_modifier_with_error(
+                    SyntaxKind::AbstractKeyword,
+                    "Modifiers cannot appear here.",
+                    diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+                )
+            } else {
+                self.consume_modifier_with_error(
+                    SyntaxKind::AbstractKeyword,
+                    "'abstract' modifier can only appear on a class, method, or property declaration.",
+                    diagnostic_codes::ABSTRACT_MODIFIER_CAN_ONLY_APPEAR_ON_A_CLASS_METHOD_OR_PROPERTY_DECLARATION,
+                )
+            };
             self.parse_accessor_modified_statement(abstract_start, vec![abstract_modifier])
         } else {
             // When 'abstract' at statement level is followed by '@' on the same line,
@@ -218,15 +341,37 @@ impl ParserState {
                 self.next_token();
                 self.parse_statement()
             } else {
-                // TS1044: '{0}' modifier cannot appear on a module or namespace element.
+                // tsc's grammar check picks the message from the statement's
+                // container, not the modifier itself: a Block body (function
+                // body, a nested block, or a class static block) gets the
+                // generic TS1184; a module/namespace body or the source
+                // file's own top level, neither of which is a Block, keeps
+                // the module/namespace-specific TS1044 (#16368).
+                //
+                // `in_static_block_context()` covers the static-block case
+                // directly rather than through `in_block_context()`
+                // (`parse_static_block` does not set CONTEXT_FLAG_IN_BLOCK,
+                // deliberately: doing so also makes the class-body nested-
+                // block recovery heuristic a few lines up in
+                // `parse_statements` fire inside static blocks, which is a
+                // separate, pre-existing bug — confirmed it already
+                // misparses a plain method body the same way, unrelated to
+                // this fix — and out of scope here).
                 let modifier_start = self.token_pos();
                 let modifier_text = self.scanner.get_token_text();
-                self.parse_error_at_current_token(
-                    &format!(
-                        "'{modifier_text}' modifier cannot appear on a module or namespace element."
-                    ),
-                    diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT,
-                );
+                if self.in_block_context() || self.in_static_block_context() {
+                    self.parse_error_at_current_token(
+                        "Modifiers cannot appear here.",
+                        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+                    );
+                } else {
+                    self.parse_error_at_current_token(
+                        &format!(
+                            "'{modifier_text}' modifier cannot appear on a module or namespace element."
+                        ),
+                        diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT,
+                    );
+                }
                 let modifier_kind = self.token();
                 self.next_token();
                 let modifier = self.arena.add_token(
@@ -585,6 +730,94 @@ impl ParserState {
         self.parse_error_at(start, end - start, message, code);
         self.next_token();
         self.arena.add_token(kind as u16, start, end)
+    }
+
+    /// Look ahead to see if `abstract` is followed by `export as` — the
+    /// `export as namespace ...` shape specifically, distinct from the other
+    /// `abstract export ...` forms (const/class/function/...), whose
+    /// diagnostic choice depends on whether `abstract` is a legal modifier for
+    /// the target node kind and is not decided by this lookahead (#16389).
+    /// Only the `abstract`-`export` boundary is ASI-sensitive (`abstract` is a
+    /// contextual keyword that ASI can cut off into its own expression
+    /// statement); `export`-`as` is not — a line break there does not stop
+    /// `tsc` from reading one `export as namespace` statement, so this
+    /// lookahead does not require it either.
+    pub(crate) fn look_ahead_is_abstract_before_export_as_namespace(&mut self) -> bool {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token(); // skip 'abstract'
+        let result = !self.scanner.has_preceding_line_break()
+            && self.is_token(SyntaxKind::ExportKeyword)
+            && {
+                self.next_token(); // skip 'export'
+                self.is_token(SyntaxKind::AsKeyword)
+            };
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        result
+    }
+
+    /// Classify `abstract export <declaration>` by the node kind that `export`
+    /// decorates, or return `None` when the shape is not one where `export` is
+    /// a modifier on a trailing declaration (`export as namespace`, `export
+    /// default ...`, `export { }`, `export * from ...`, `export = ...`, and a
+    /// bare `abstract` identifier expression are all left to their existing
+    /// paths). The `abstract`-`export` boundary is ASI-sensitive; `abstract` is
+    /// a contextual keyword that a line break cuts into its own expression
+    /// statement.
+    pub(crate) fn look_ahead_abstract_before_export_target(
+        &mut self,
+    ) -> Option<AbstractExportTarget> {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token(); // skip `abstract`
+        let mut target = None;
+        if !self.scanner.has_preceding_line_break() && self.is_token(SyntaxKind::ExportKeyword) {
+            self.next_token(); // skip `export`
+            target = match self.token() {
+                SyntaxKind::ClassKeyword => Some(AbstractExportTarget::Class),
+                SyntaxKind::NamespaceKeyword
+                | SyntaxKind::ModuleKeyword
+                | SyntaxKind::GlobalKeyword => self
+                    .look_ahead_is_module_declaration()
+                    .then_some(AbstractExportTarget::PositionErrorWins),
+                // A named or star export declaration. `export default ...` and
+                // `export = ...` are deliberately not here: tsc picks TS1029
+                // for the former and TS1120 owns the latter, and neither is
+                // reached through this modifier run.
+                SyntaxKind::OpenBraceToken | SyntaxKind::AsteriskToken => {
+                    Some(AbstractExportTarget::PositionErrorWins)
+                }
+                // `export type { x }` / `export type * from "m"` is a type-only
+                // export declaration, not the type-alias form — same lookahead
+                // the ambient `declare export` path uses.
+                SyntaxKind::TypeKeyword => {
+                    self.next_token();
+                    Some(
+                        if self.is_token(SyntaxKind::OpenBraceToken)
+                            || self.is_token(SyntaxKind::AsteriskToken)
+                        {
+                            AbstractExportTarget::PositionErrorWins
+                        } else {
+                            AbstractExportTarget::ModifierRun
+                        },
+                    )
+                }
+                SyntaxKind::AsyncKeyword => self
+                    .look_ahead_is_async_function()
+                    .then_some(AbstractExportTarget::ModifierRun),
+                SyntaxKind::ConstKeyword
+                | SyntaxKind::LetKeyword
+                | SyntaxKind::VarKeyword
+                | SyntaxKind::FunctionKeyword
+                | SyntaxKind::InterfaceKeyword
+                | SyntaxKind::EnumKeyword => Some(AbstractExportTarget::ModifierRun),
+                _ => None,
+            };
+        }
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        target
     }
 
     /// Look ahead to see if `abstract` is followed by a variable or function

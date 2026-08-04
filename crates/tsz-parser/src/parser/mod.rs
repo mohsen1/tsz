@@ -79,8 +79,20 @@ pub(crate) mod test_fixture;
 #[path = "../../tests/definite_assignment_assertion_tests.rs"]
 mod definite_assignment_assertion_tests;
 #[cfg(test)]
+#[path = "../../tests/parser_abstract_before_export_declaration_tests.rs"]
+mod parser_abstract_before_export_declaration_tests;
+#[cfg(test)]
+#[path = "../../tests/parser_abstract_declare_export_as_namespace_tests.rs"]
+mod parser_abstract_declare_export_as_namespace_tests;
+#[cfg(test)]
+#[path = "../../tests/parser_abstract_ts1184_ts1242_tests.rs"]
+mod parser_abstract_ts1184_ts1242_tests;
+#[cfg(test)]
 #[path = "../../tests/parser_async_arrow_context_tests.rs"]
 mod parser_async_arrow_context_tests;
+#[cfg(test)]
+#[path = "../../tests/parser_class_body_modifier_recovery_tests.rs"]
+mod parser_class_body_modifier_recovery_tests;
 #[cfg(test)]
 #[path = "../../tests/parser_export_specifier_from_tests.rs"]
 mod parser_export_specifier_from_tests;
@@ -168,6 +180,9 @@ mod parser_improvement_yield_generator_recovery_tests;
 #[cfg(test)]
 #[path = "../../tests/parser_speculative_context_restore_tests.rs"]
 mod parser_speculative_context_restore_tests;
+#[cfg(test)]
+#[path = "../../tests/parser_top_level_modifier_ts1044_ts1184_tests.rs"]
+mod parser_top_level_modifier_ts1044_ts1184_tests;
 #[cfg(test)]
 #[path = "../../tests/tests.rs"]
 mod tests;

@@ -1754,10 +1754,23 @@ impl ParserState {
                 }
                 match self.token() {
                     SyntaxKind::AsKeyword => {
-                        // `declare export as namespace Foo;` — parse as namespace export declaration.
-                        // TSC treats `declare` as a modifier on the export-as-namespace statement
-                        // and produces no error for this form.
-                        self.parse_namespace_export_declaration(start_pos)
+                        // `declare export as namespace Foo;` — the resulting
+                        // `NamespaceExportDeclaration` admits no modifiers in any
+                        // container (unlike the container split the other arms of
+                        // this match apply), so tsc reports TS1184 across the whole
+                        // statement unconditionally and still parses the namespace
+                        // export (#16389).
+                        let node = self.parse_namespace_export_declaration(start_pos);
+                        if let Some(n) = self.arena.get(node) {
+                            let (span_start, span_end) = (n.pos, n.end);
+                            self.parse_error_at(
+                                span_start,
+                                span_end - span_start,
+                                "Modifiers cannot appear here.",
+                                tsz_common::diagnostics::diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+                            );
+                        }
+                        node
                     }
                     SyntaxKind::FunctionKeyword => {
                         self.parse_function_declaration_with_async(false, Some(modifiers))

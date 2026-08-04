@@ -65,6 +65,8 @@ mod assignment_ops_relation_routing_arch_tests;
 mod async_generator_yieldstar_contribution_tests;
 #[path = "tests/async_generator_yieldstar_union_delegate_tests.rs"]
 mod async_generator_yieldstar_union_delegate_tests;
+#[path = "tests/async_return_invalid_thenable_tests.rs"]
+mod async_return_invalid_thenable_tests;
 #[path = "tests/await_alias_union_distribution_tests.rs"]
 mod await_alias_union_distribution_tests;
 #[path = "tests/await_concise_arrow_body_grammar_tests.rs"]
@@ -217,6 +219,8 @@ mod cross_module_class_self_member_tests;
 mod cross_module_generic_interface_heritage_tests;
 #[path = "tests/declaration_extract_key_path_tests.rs"]
 mod declaration_extract_key_path_tests;
+#[path = "tests/declare_private_member_implicit_any_tests.rs"]
+mod declare_private_member_implicit_any_tests;
 #[path = "tests/declared_signature_return_literal_display_tests.rs"]
 mod declared_signature_return_literal_display_tests;
 #[path = "tests/decorator_return_relation_routing_arch_tests.rs"]
@@ -235,6 +239,8 @@ mod destructuring_relation_routing_arch_tests;
 mod diagnostic_sink_message_surgery_arch_tests;
 #[path = "tests/diagnostic_source_relation_routing_arch_tests.rs"]
 mod diagnostic_source_relation_routing_arch_tests;
+#[path = "tests/did_you_mean_async_related_tests.rs"]
+mod did_you_mean_async_related_tests;
 #[path = "tests/direct_generic_return_tests.rs"]
 mod direct_generic_return_tests;
 #[path = "tests/dispatch_tests.rs"]
@@ -315,6 +321,7 @@ mod generator_inferred_yield_star_array_generic_call_tests;
 mod generator_yield_identity_tests;
 #[path = "tests/generator_yield_invalid_thenable_tests.rs"]
 mod generator_yield_invalid_thenable_tests;
+
 #[path = "tests/generator_yield_literal_widening_tests.rs"]
 mod generator_yield_literal_widening_tests;
 #[path = "tests/generator_yield_self_similar_nesting_tests.rs"]
@@ -443,6 +450,8 @@ mod intersection_callable_constraint_ts2344_tests;
 mod intersection_source_literal_member_display_tests;
 #[path = "tests/intersection_target_elaboration_tests.rs"]
 mod intersection_target_elaboration_tests;
+#[path = "tests/invalid_thenable_no_fulfillment_payload_tests.rs"]
+mod invalid_thenable_no_fulfillment_payload_tests;
 #[path = "tests/invocation_signature_detail_tests.rs"]
 mod invocation_signature_detail_tests;
 #[path = "tests/issue_9762_literal_init_callback_inference.rs"]
@@ -595,6 +604,14 @@ mod nolib_user_global_array_member_tests;
 mod non_generic_spread_tuple_alias_display_tests;
 #[path = "tests/non_strict_non_null_check_narrows_tests.rs"]
 mod non_strict_non_null_check_narrows_tests;
+#[path = "tests/non_strict_nullish_return_widening_tests.rs"]
+mod non_strict_nullish_return_widening_tests;
+#[path = "tests/nonstrict_nullish_widening_generic_call_tests.rs"]
+mod nonstrict_nullish_widening_generic_call_tests;
+#[path = "tests/nonstrict_nullish_widening_mutable_binding_tests.rs"]
+mod nonstrict_nullish_widening_mutable_binding_tests;
+#[path = "tests/nonstrict_nullish_widening_nested_leaf_tests.rs"]
+mod nonstrict_nullish_widening_nested_leaf_tests;
 #[path = "tests/nonunique_symbol_property_access_tests.rs"]
 mod nonunique_symbol_property_access_tests;
 #[path = "tests/noUIA_any_index_emits_ts2322_tests.rs"]
@@ -809,6 +826,8 @@ mod ts1361_ambient_computed_property_name_tests;
 mod ts1539_bigint_literal_property_name_tests;
 #[path = "tests/ts18010_jsdoc_tag_anchor_tests.rs"]
 mod ts18010_jsdoc_tag_anchor_tests;
+#[path = "tests/ts18017_ts18018_private_identifier_shadow_related_info_tests.rs"]
+mod ts18017_ts18018_private_identifier_shadow_related_info_tests;
 #[path = "tests/ts18050_nullish_keyword_without_strict_null_checks_tests.rs"]
 mod ts18050_nullish_keyword_without_strict_null_checks_tests;
 #[path = "tests/ts2322_private_field_narrowing_write_tests.rs"]
@@ -921,5 +940,7 @@ mod variadic_tuple_spread_element_inference_tests;
 mod void_undefined_discriminant_narrowing_tests;
 #[path = "tests/window_self_globalthis_resolution_tests.rs"]
 mod window_self_globalthis_resolution_tests;
+#[path = "tests/yieldstar_async_iterable_invalid_thenable_element_tests.rs"]
+mod yieldstar_async_iterable_invalid_thenable_element_tests;
 #[path = "tests/zod_type_query_regression_tests.rs"]
 mod zod_type_query_regression_tests;
