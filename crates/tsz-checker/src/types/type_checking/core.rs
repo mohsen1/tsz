@@ -1621,7 +1621,7 @@ impl<'a> CheckerState<'a> {
         let placement_error =
             is_using && self.check_grammar_using_declaration_placement(list_idx, is_await_using);
 
-        if is_await_using && !placement_error {
+        if is_await_using && !placement_error && !self.ctx.has_syntax_parse_errors {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
             // Same top-level-await-eligibility predicate as `check_await_expression`

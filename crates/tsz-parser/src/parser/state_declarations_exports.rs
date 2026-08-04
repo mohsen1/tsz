@@ -965,6 +965,17 @@ impl ParserState {
         };
         self.context_flags = saved_flags;
 
+        // TS18054: an `await using` for-of or C-style for initializer
+        // directly inside a class static block. Excluded from the
+        // for...in head — that shape reports only TS1494
+        // (`report_for_in_using_left_hand_side` below), matching tsc's
+        // `checkGrammarVariableDeclarationList`, which returns at the
+        // for...in-specific diagnostic before ever reaching the
+        // await-grammar check.
+        if self.in_static_block_context() && !self.is_token(SyntaxKind::InKeyword) {
+            self.report_await_using_static_block_for_initializer(initializer);
+        }
+
         // Error recovery: if initializer parsing failed badly, resync to semicolon
         if initializer.is_none()
             && !self.is_token(SyntaxKind::SemicolonToken)
@@ -1329,6 +1340,42 @@ impl ParserState {
             )
         };
         self.parse_error_at(node.pos, node.end - node.pos, message, code);
+    }
+
+    /// TS18054: an `await using` `for`-of or C-style `for` initializer
+    /// parsed directly inside a class static block. Sibling of
+    /// `parse_variable_declaration_list`'s plain-statement check
+    /// (`state_statements.rs`) — same structural rule
+    /// (`getContainingFunctionOrClassStaticBlock` resolving to the static
+    /// block), different call site because `for`-header declaration lists
+    /// are parsed by a wholly separate function
+    /// (`parse_for_variable_declaration`). Not called for a `for...in` head:
+    /// tsc's `checkGrammarVariableDeclarationList` returns at the
+    /// `for...in`-specific TS1494 before ever reaching the await-grammar
+    /// check, so `report_for_in_using_left_hand_side` alone must own that
+    /// case.
+    fn report_await_using_static_block_for_initializer(&mut self, initializer: NodeIndex) {
+        use crate::parser::node_flags;
+        let Some(node) = self.arena.get(initializer) else {
+            return;
+        };
+        if !node.has_any_node_flags(node_flags::USING)
+            || !node.has_any_node_flags(node_flags::CONST)
+        {
+            return;
+        }
+        let diag_end = self
+            .arena
+            .get_variable_at(initializer)
+            .and_then(|var| var.declarations.nodes.last().copied())
+            .and_then(|last_decl| self.arena.get(last_decl))
+            .map_or(node.end, |last_decl| last_decl.end);
+        self.parse_error_at(
+            node.pos,
+            diag_end.saturating_sub(node.pos),
+            tsz_common::diagnostics::diagnostic_messages::AWAIT_USING_STATEMENTS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
+            diagnostic_codes::AWAIT_USING_STATEMENTS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
+        );
     }
 
     fn parse_for_variable_declaration_entry(
