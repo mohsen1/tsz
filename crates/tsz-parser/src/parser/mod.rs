@@ -79,6 +79,9 @@ pub(crate) mod test_fixture;
 #[path = "../../tests/definite_assignment_assertion_tests.rs"]
 mod definite_assignment_assertion_tests;
 #[cfg(test)]
+#[path = "../../tests/parser_abstract_before_export_declaration_tests.rs"]
+mod parser_abstract_before_export_declaration_tests;
+#[cfg(test)]
 #[path = "../../tests/parser_abstract_declare_export_as_namespace_tests.rs"]
 mod parser_abstract_declare_export_as_namespace_tests;
 #[cfg(test)]
