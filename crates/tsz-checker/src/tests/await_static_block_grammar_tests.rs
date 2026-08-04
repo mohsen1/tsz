@@ -6,19 +6,35 @@
 //! already emits TS18037 for any `await` parsed while `in_static_block_context()`
 //! is set, regardless of how deeply the `await` sits inside intervening
 //! statements (`while`, `for`, `switch`, ...) — the context flag survives
-//! statement nesting and is only cleared at a function/class boundary. That
-//! parser diagnostic sets `has_syntax_parse_errors`, which suppresses
-//! `check_await_expression`'s own TS1308 grammar walk
-//! (`core_statement_checks.rs`) for the same file. So on current `main` this
-//! family already matches tsc: exactly TS18037, never an accompanying TS1308.
+//! statement nesting and is only cleared at a function/class boundary. So this
+//! family matches tsc: exactly TS18037, never an accompanying TS1308.
+//!
+//! **The reason it matches changed in #16367, and the old reason was a bug.**
+//! It used to be that the parser's TS18037 set `has_syntax_parse_errors`, which
+//! suppressed `check_await_expression`'s TS1308 walk — for the *whole file*,
+//! not just for the static block. tsc emits TS18037 from the checker, so its
+//! `hasParseDiagnostics(sourceFile)` stays false and every other `await` in the
+//! file still reports: `class C { static { await 4 } }` next to an ordinary
+//! non-async `await` gives tsc two diagnostics and gave tsz one.
+//!
+//! The suppression is gone (TS18037 is now non-suppressing, like every other
+//! parser-emitted checker-grammar code), and the exclusivity is stated where
+//! tsc states it instead: `checkAwaitExpression` opens with an `if` on the
+//! containing function-or-class-static-block being a class static block, and
+//! the entire TS1308/TS1375/TS1378/TS1309 family lives in its `else if`.
+//! `await_container_is_class_static_block` in `core_statement_checks.rs` is
+//! that test. The assertions below are unchanged; what they prove is not.
 //!
 //! #16068 reported the opposite (TS1308 instead of TS18037) — that read came
 //! from `test_utils::check_source_codes`, which never wires real parser
 //! diagnostics or `has_syntax_parse_errors` into the `CheckerState` it builds
 //! (see `test_utils::check_source_with_parse_health`'s doc comment), so it
 //! can neither see the parser's TS18037 nor let it suppress the checker's
-//! TS1308. These tests use the parse-health-aware helper instead, so they
-//! reflect what the compiled CLI actually reports.
+//! TS1308. The tests written for #16068 therefore use the parse-health-aware
+//! helper, so they reflect what the compiled CLI actually reports. The three
+//! added by #16367 at the end of this file deliberately use the blind helper
+//! for the opposite reason — with the suppression removed, the blind helper is
+//! what shows the checker walk deciding on its own.
 
 use crate::test_utils::check_source_codes_with_parse_health;
 
@@ -272,5 +288,78 @@ class Gate { static { using x = 1; } }
     assert!(
         !codes.contains(&18054),
         "a plain `using` (not `await using`) is unaffected by the static-block await restriction; got {codes:?}"
+    );
+}
+
+/// The exclusivity, isolated from parse-health suppression entirely (#16367).
+///
+/// `check_source_codes` is the parse-health-*blind* helper: it never wires the
+/// parser's diagnostics or `has_syntax_parse_errors` into the `CheckerState`
+/// (see `test_utils::check_source_with_parse_health`'s doc comment). That makes
+/// it exactly the right instrument here — it shows what the checker's
+/// await-grammar walk decides on its own, with nothing suppressing it.
+///
+/// Before #16367 this reported TS1308 (or the TS1375/TS1378 top-level pair,
+/// depending on module settings) and only the CLI's file-wide suppression hid
+/// it. Now `await_container_is_class_static_block` declines at the source, so
+/// the walk is silent for a static block's own `await` whether or not anything
+/// is suppressing.
+#[test]
+fn static_block_await_is_silent_in_the_checker_walk_without_suppression() {
+    let codes = crate::test_utils::check_source_codes(
+        r#"
+class Gate { static { await 1; } }
+"#,
+    );
+    assert!(
+        !codes.contains(&1308) && !codes.contains(&1375) && !codes.contains(&1378),
+        "tsc's checkAwaitExpression puts the whole TS1308/TS1375/TS1378 family in \
+         the `else if` of its class-static-block test, so the walk must decline \
+         here on its own rather than relying on a file-wide suppression; got {codes:?}"
+    );
+}
+
+/// The same walk must still speak for an `await` that is *not* in a static
+/// block, in a file that also has one.
+///
+/// This is the shape the old suppression got wrong: it keyed on the file, so
+/// one static block silenced every other `await` in it. Renamed binders
+/// throughout, and the sibling `await` sits in a nested function expression so
+/// it cannot be confused with the static block's container.
+#[test]
+fn sibling_await_outside_a_static_block_still_reports_in_the_checker_walk() {
+    let codes = crate::test_utils::check_source_codes(
+        r#"
+class Latch { static { const seeded = await 4; } }
+function makeReader() { const read = function () { return await 1; }; return read; }
+"#,
+    );
+    assert!(
+        codes.contains(&1308),
+        "the non-async `await` in `makeReader`'s inner function expression is \
+         unaffected by the sibling static block; tsc reports TS1308 for it \
+         alongside the static block's TS18037; got {codes:?}"
+    );
+}
+
+/// Container-walk boundary: an `await` inside a function *nested* in a static
+/// block answers from its own function, not from the static block.
+///
+/// `await_container_is_class_static_block` stops at the first
+/// function-like-or-static-block ancestor rather than searching upward for a
+/// static block anywhere, which is what `getContainingFunctionOrClassStaticBlock`
+/// does. Without that stop, this `await` would be silently swallowed.
+#[test]
+fn await_in_a_non_async_function_nested_in_a_static_block_still_reports() {
+    let codes = crate::test_utils::check_source_codes(
+        r#"
+class Harness { static { const build = function () { return await 2; }; void build; } }
+"#,
+    );
+    assert!(
+        codes.contains(&1308),
+        "the nested function expression is its own container, so its non-async \
+         `await` answers TS1308 rather than deferring to the enclosing static \
+         block; got {codes:?}"
     );
 }
