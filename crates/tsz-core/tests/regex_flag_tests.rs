@@ -151,6 +151,52 @@ fn test_all_valid_flags() {
     );
 }
 
+/// Every position below is pinned against `typescript@7.0.2`: tsc's
+/// `scanRegularExpressionWorker` checks the `u`/`v` conflict AS EACH FLAG IS
+/// ACCEPTED, not once after the whole flag run, and a conflict wins over a
+/// plain duplicate at the same position.
+#[test]
+fn test_incompatible_uv_reports_ts1502_at_each_flags_own_position_not_the_end() {
+    let mut parser = ParserState::new("test.ts".to_string(), "const r = /x/uv;".to_string());
+    parser.parse_source_file();
+    let diagnostics = parser.get_diagnostics();
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].code, 1502);
+    // `v` is byte offset 14 (0-indexed) in `const r = /x/uv;` — the
+    // conflicting flag's own position, not one past the end of the run.
+    assert_eq!(diagnostics[0].start, 14, "{diagnostics:?}");
+}
+
+#[test]
+fn test_second_u_after_v_is_a_conflict_not_a_duplicate() {
+    // tsc: (?,20) TS1502, (?,22) TS1500 for `visualstudiocode` — a `u` that
+    // repeats AND collides with an already-seen `v` reports the conflict,
+    // not a duplicate, at that position.
+    let mut parser = ParserState::new("test.ts".to_string(), "const r = /x/vuu;".to_string());
+    parser.parse_source_file();
+    let diagnostics = parser.get_diagnostics();
+
+    assert_eq!(diagnostics.len(), 2, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].code, 1502, "first u vs already-seen v");
+    assert_eq!(
+        diagnostics[1].code, 1502,
+        "second u also loses to the conflict, not a duplicate"
+    );
+}
+
+#[test]
+fn test_v_flag_order_does_not_change_conflict_report_position() {
+    // `v` first: `u` is what conflicts, so the diagnostic moves to `u`'s position.
+    let mut parser = ParserState::new("test.ts".to_string(), "const r = /x/vu;".to_string());
+    parser.parse_source_file();
+    let diagnostics = parser.get_diagnostics();
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].code, 1502);
+    assert_eq!(diagnostics[0].start, 14, "{diagnostics:?}");
+}
+
 #[test]
 fn test_complex_incompatible_flags() {
     // /test/guvx has: g (valid), u (valid), v (incompatible with u), x (invalid)
