@@ -146,7 +146,7 @@ impl ParserState {
                         diagnostic_codes::MODIFIER_ALREADY_SEEN,
                     );
                     if self.is_token(SyntaxKind::OpenBraceToken) {
-                        self.parse_export_named(start_pos, false)
+                        self.parse_export_named(start_pos, false, None)
                     } else if self.is_token(SyntaxKind::ClassKeyword) {
                         let export_modifier = self.arena.add_token(
                             SyntaxKind::ExportKeyword as u16,

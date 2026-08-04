@@ -33,6 +33,10 @@ fn count_ts1038(diags: &[tsz_checker::diagnostics::Diagnostic]) -> usize {
     diags.iter().filter(|d| d.code == 1038).count()
 }
 
+fn count_ts1193(diags: &[tsz_checker::diagnostics::Diagnostic]) -> usize {
+    diags.iter().filter(|d| d.code == 1193).count()
+}
+
 #[test]
 fn export_declare_direct_children_of_declare_namespace_report_ts1038() {
     // Each `export declare X` is EXPORT_DECLARATION-wrapped; the `declare` is
@@ -121,5 +125,98 @@ export declare function nu(): void;\n";
         count_ts1038(&diags),
         0,
         "top-level `export declare` must not report TS1038, got {diags:?}"
+    );
+}
+
+// A plain export declaration (`export { }` / `export *` / `export type { }`)
+// wraps no inner declaration — EXPORT_DECLARATION's own `export_clause` is
+// NONE and the `declare`+`export` modifiers live on the node itself. tsc
+// reports TS1193 ("An export declaration cannot have modifiers.") for this
+// shape at top level but TS1038 when it is already inside an ambient body
+// (oracle-confirmed, `typescript@6.0.2`/`7.0.2`, both agree) — the same
+// declare-precedes-export precedence `check_declare_modifiers_in_ambient_body`
+// already applies to every other declaration kind.
+
+#[test]
+fn declare_export_named_nested_in_declare_namespace_reports_ts1038_not_ts1193() {
+    let source = "\
+declare namespace Xi {\n\
+    declare export { omicron };\n\
+}\n";
+    let diags = check(source);
+    assert_eq!(
+        count_ts1038(&diags),
+        1,
+        "nested `declare export {{ }}` must report TS1038, got {diags:?}"
+    );
+    assert_eq!(
+        count_ts1193(&diags),
+        0,
+        "TS1193 must not accompany TS1038 for the same modifier, got {diags:?}"
+    );
+    // Note: tsc also reports TS2304 for the unresolved `omicron` specifier here
+    // (oracle-confirmed); tsz does not, but that is a pre-existing limitation of
+    // ambient-body checking depth unrelated to this fix — confirmed by the
+    // same-shape statement with no redundant `declare` also producing zero
+    // diagnostics (`export { omicron };` alone inside `declare namespace Xi`).
+}
+
+#[test]
+fn declare_export_star_nested_in_declare_namespace_reports_ts1038_not_ts1193() {
+    let source = "\
+declare namespace Pi {\n\
+    declare export * from \"m\";\n\
+}\n";
+    let diags = check(source);
+    assert_eq!(
+        count_ts1038(&diags),
+        1,
+        "nested `declare export *` must report TS1038, got {diags:?}"
+    );
+    assert_eq!(
+        count_ts1193(&diags),
+        0,
+        "TS1193 must not accompany TS1038 for the same modifier, got {diags:?}"
+    );
+}
+
+#[test]
+fn declare_export_type_named_nested_in_declare_namespace_reports_ts1038_not_ts1193() {
+    let source = "\
+declare namespace Rho {\n\
+    declare export type { sigma };\n\
+}\n";
+    let diags = check(source);
+    assert_eq!(
+        count_ts1038(&diags),
+        1,
+        "nested `declare export type {{ }}` must report TS1038, got {diags:?}"
+    );
+    assert_eq!(
+        count_ts1193(&diags),
+        0,
+        "TS1193 must not accompany TS1038 for the same modifier, got {diags:?}"
+    );
+}
+
+#[test]
+fn top_level_declare_export_named_reports_no_ts1038() {
+    // Control: outside any ambient context, threading modifiers through
+    // `parse_export_named` must not spuriously introduce TS1038. TS1193 itself
+    // is a *parser* diagnostic (`state_declarations.rs`) invisible to this
+    // checker-only harness; its own coverage — including that it is unaffected
+    // by this change — lives in
+    // `tsz-parser/tests/export_declaration_modifier_grammar_tests.rs`.
+    let source = "declare export { tau };\n";
+    let diags = check(source);
+    assert_eq!(
+        count_ts1038(&diags),
+        0,
+        "top-level `declare export {{ }}` has no enclosing ambient context, got {diags:?}"
+    );
+    assert_eq!(
+        count_ts1193(&diags),
+        0,
+        "TS1193 is a parser diagnostic and is never surfaced by this checker-only harness, got {diags:?}"
     );
 }

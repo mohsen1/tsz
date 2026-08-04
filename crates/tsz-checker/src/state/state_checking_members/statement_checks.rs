@@ -37,12 +37,47 @@ impl<'a> CheckerState<'a> {
             // `declare` modifier lives on the inner clause. Unwrap so both the
             // modifier check and the nested-namespace recursion see the real
             // declaration (mirrors `check_initializers_in_ambient_body`).
+            //
+            // A plain export declaration (`declare export { x }` / `declare export *
+            // from "m"` / `declare export type { x }`) wraps no declaration — its
+            // `export_clause` is either NONE (a bare `export * from "m"`) or points to
+            // a NamedExports/namespace-alias clause, never to one of the declaration
+            // kinds below — and carries its own `declare`+`export` modifiers directly
+            // on the EXPORT_DECLARATION node itself. `wraps_declaration` tells the two
+            // shapes apart so decl_idx unwraps only the genuine wrapping case; the
+            // plain-form modifiers are read straight off `stmt_node` via the
+            // EXPORT_DECLARATION arm of the modifiers match below.
             let decl_idx = if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
-                match self.ctx.arena.get_export_decl(stmt_node) {
-                    Some(export_decl) if export_decl.export_clause.is_some() => {
-                        export_decl.export_clause
+                let wraps_declaration =
+                    self.ctx
+                        .arena
+                        .get_export_decl(stmt_node)
+                        .is_some_and(|export_decl| {
+                            export_decl.export_clause.is_some()
+                                && self.ctx.arena.get(export_decl.export_clause).is_some_and(
+                                    |clause| {
+                                        matches!(
+                                            clause.kind,
+                                            syntax_kind_ext::FUNCTION_DECLARATION
+                                                | syntax_kind_ext::VARIABLE_STATEMENT
+                                                | syntax_kind_ext::CLASS_DECLARATION
+                                                | syntax_kind_ext::INTERFACE_DECLARATION
+                                                | syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                                                | syntax_kind_ext::ENUM_DECLARATION
+                                                | syntax_kind_ext::MODULE_DECLARATION
+                                                | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                                                | syntax_kind_ext::IMPORT_DECLARATION
+                                        )
+                                    },
+                                )
+                        });
+                if wraps_declaration {
+                    match self.ctx.arena.get_export_decl(stmt_node) {
+                        Some(export_decl) => export_decl.export_clause,
+                        None => continue,
                     }
-                    _ => continue,
+                } else {
+                    stmt_idx
                 }
             } else {
                 stmt_idx
@@ -90,6 +125,13 @@ impl<'a> CheckerState<'a> {
                         .arena
                         .get_import_decl(decl_node)
                         .map(|i| &i.modifiers),
+                    // Plain export declaration (`declare export { x }` etc.) — see the
+                    // decl_idx unwrap above, decl_node is the EXPORT_DECLARATION itself here.
+                    syntax_kind_ext::EXPORT_DECLARATION => self
+                        .ctx
+                        .arena
+                        .get_export_decl(decl_node)
+                        .map(|e| &e.modifiers),
                     _ => None,
                 };
                 let declare_mod = modifiers.and_then(|mods| self.get_declare_modifier(mods));

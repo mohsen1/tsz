@@ -164,13 +164,15 @@ fn export_declare_export_named_emits_ts1193_at_first_export() {
 
 #[test]
 fn nested_declare_export_in_ambient_namespace_does_not_emit_ts1193() {
-    // Known adjacent gap, not a regression: inside an already-ambient body
-    // (`declare namespace N { ... }`), tsc reports TS1038 ("declare modifier
-    // cannot be used in an already ambient context") for a redundant nested
-    // `declare`, never TS1193 — the same precedence the pre-existing TS1029
-    // check already follows for this position. `ExportDeclData` carries no
-    // modifiers field for the checker's TS1038 pass to read, so this shape
-    // stays silently-clean rather than regressing to a wrong TS1193.
+    // Inside an already-ambient body (`declare namespace N { ... }`), tsc
+    // reports TS1038 ("declare modifier cannot be used in an already ambient
+    // context") for a redundant nested `declare`, never TS1193 — the same
+    // precedence the pre-existing TS1029 check already follows for this
+    // position. This parser-level test only confirms TS1193 stays silent
+    // here; the `declare`+`export` modifiers are threaded onto `ExportDeclData`
+    // so the checker's `check_declare_modifiers_in_ambient_body` pass can
+    // report the TS1038 side — see
+    // `tsz-checker/tests/ts1038_ambient_declare_modifier_tests.rs`.
     let source = "declare namespace N {\n  declare export { x };\n}\n";
     let cs = codes(source);
     assert!(

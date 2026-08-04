@@ -1817,9 +1817,10 @@ impl ParserState {
                         // Skipped when already in an ambient context (`declare namespace N
                         // { declare export { x }; }`): tsc reports TS1038 there instead of
                         // TS1193 (the same precedence the TS1029 check above already
-                        // follows), but `ExportDeclData` has no modifiers field for the
-                        // checker's TS1038 pass to read, so this nested shape stays a
-                        // known gap rather than a newly-wrong code — see #16291 follow-up.
+                        // follows). The `declare`+`export` modifiers are still attached to
+                        // the resulting `ExportDeclData` below so the checker's
+                        // `check_declare_modifiers_in_ambient_body` pass can see them and
+                        // report TS1038 in the nested case.
                         if (saved_flags & crate::parser::state::CONTEXT_FLAG_AMBIENT) == 0 {
                             use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
                             let error_start = all_modifiers
@@ -1834,9 +1835,9 @@ impl ParserState {
                             );
                         }
                         if self.is_token(SyntaxKind::AsteriskToken) {
-                            self.parse_export_star(start_pos, false)
+                            self.parse_export_star(start_pos, false, Some(modifiers))
                         } else {
-                            self.parse_export_named(start_pos, false)
+                            self.parse_export_named(start_pos, false, Some(modifiers))
                         }
                     }
                     SyntaxKind::TypeKeyword if is_type_only_export => {
@@ -1858,9 +1859,9 @@ impl ParserState {
                         }
                         self.parse_expected(SyntaxKind::TypeKeyword);
                         if self.is_token(SyntaxKind::AsteriskToken) {
-                            self.parse_export_star(start_pos, true)
+                            self.parse_export_star(start_pos, true, Some(modifiers))
                         } else {
-                            self.parse_export_named(start_pos, true)
+                            self.parse_export_named(start_pos, true, Some(modifiers))
                         }
                     }
                     SyntaxKind::TypeKeyword => {
