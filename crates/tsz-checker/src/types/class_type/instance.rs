@@ -1069,12 +1069,17 @@ impl<'a> CheckerState<'a> {
                 FxHashSet::with_capacity_and_hasher(partial_props.len(), Default::default());
             partial_prop_names.extend(partial_props.iter().map(|prop| prop.name));
             for (_, method, declaration_order) in &b.deferred_methods {
-                // Wide-`symbol`-keyed methods have no named member to placehold;
-                // they reach `this` through the symbol index signature.
-                if self.class_member_computed_key_is_wide_symbol(method.name) {
-                    continue;
-                }
                 if let Some(name) = self.get_property_name_resolved(method.name) {
+                    // Wide-`symbol`-keyed methods have no named member to
+                    // placehold; they reach `this` through the symbol index
+                    // signature. Tested only AFTER the name resolution above,
+                    // which owns the one value-position evaluation of the key
+                    // expression — an evaluation performed outside that context
+                    // re-reports its diagnostics (a type-only-imported key in an
+                    // ambient class re-fires TS1361).
+                    if self.class_member_computed_key_is_wide_symbol(method.name) {
+                        continue;
+                    }
                     let is_symbol_named = self.class_member_name_is_symbol_named(method.name);
                     let name_atom = self.ctx.types.intern_string(&name);
                     if partial_prop_names.insert(name_atom) {
@@ -1219,20 +1224,6 @@ impl<'a> CheckerState<'a> {
                     callable_type,
                     method.question_token,
                 );
-                // A wide-`symbol`-keyed method contributes to the shape's symbol
-                // index signature rather than a named member, so that a class
-                // and the interface it implements stay mutually assignable when
-                // each keys off a DIFFERENT `symbol` binding — which is the
-                // whole point of tsc's symbol-index lowering.
-                if self.class_member_computed_key_is_wide_symbol(method.name) {
-                    b.set_has_late_bound_members();
-                    self.merge_class_wide_symbol_member_index(
-                        &mut b.symbol_index,
-                        callable_or_undefined,
-                        false,
-                    );
-                    continue;
-                }
                 let Some(name) = self.get_property_name_resolved(method.name) else {
                     if self
                         .ctx
@@ -1255,6 +1246,28 @@ impl<'a> CheckerState<'a> {
                     }
                     continue;
                 };
+                // The key resolved to a name, but a wide-`symbol` key's name is
+                // the synthetic `__symbol_<file>_<sym>` atom, which only ever
+                // matches a declaration keyed off the SAME binding. Route the
+                // member into the shape's symbol index signature instead, so a
+                // class and the interface it implements stay mutually assignable
+                // when each keys off a DIFFERENT `symbol` binding — the whole
+                // point of tsc's symbol-index lowering. Tested after the
+                // resolution above, which owns the one value-position evaluation
+                // of the key expression; re-evaluating outside that context
+                // re-reports its diagnostics (TS1361 for a type-only-imported
+                // key in an ambient class). The unresolved-name sibling case is
+                // handled by `merge_index_signature_from_unresolved_computed_name`
+                // in the `else` arm above.
+                if self.class_member_computed_key_is_wide_symbol(method.name) {
+                    b.set_has_late_bound_members();
+                    self.merge_class_wide_symbol_member_index(
+                        &mut b.symbol_index,
+                        callable_or_undefined,
+                        false,
+                    );
+                    continue;
+                }
                 let is_symbol_named = self.class_member_name_is_symbol_named(method.name);
                 let name_atom = self.ctx.types.intern_string(&name);
                 let visibility = self.get_member_visibility(&method.modifiers, method.name);

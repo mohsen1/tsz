@@ -546,10 +546,10 @@ impl<'a> CheckerState<'a> {
         // only reach this function when the name failed to resolve to one)
         // contributes a `[k: symbol]: V` index signature, mirroring the
         // object-literal routing in
-        // `object_literal_computed_key_is_wide_symbol`. `get_index_key_kind`
+        // `computed_member_key_is_wide_symbol`. `get_index_key_kind`
         // below has no symbol case, so this must be checked first: a
         // symbol-typed key is otherwise silently dropped from every bucket.
-        if self.object_literal_computed_key_is_wide_symbol(name_idx) {
+        if self.computed_member_key_is_wide_symbol(name_idx) {
             self.merge_union_index_signature(
                 symbol_index,
                 class_type::static_late_bound_index_signature(TypeId::SYMBOL, value_type),
