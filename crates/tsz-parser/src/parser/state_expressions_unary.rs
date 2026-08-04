@@ -163,6 +163,20 @@ impl ParserState {
         let current_token = self.current_token;
         self.next_token(); // consume 'await'
         let next_token = self.token();
+        // tsc's `nextTokenIsIdentifierOrKeywordOrLiteralOnSameLine`, the same
+        // ambiguity heuristic the yield-expression parser below already
+        // replicates. Recorded on the resulting node for the checker's
+        // top-level-`await` grammar check; see
+        // `UnaryExprDataEx::next_token_identifier_keyword_or_literal_same_line`.
+        let next_token_identifier_keyword_or_literal_same_line =
+            !self.scanner.has_preceding_line_break()
+                && (crate::parser::parse_rules::is_identifier_or_keyword(next_token)
+                    || matches!(
+                        next_token,
+                        SyntaxKind::NumericLiteral
+                            | SyntaxKind::BigIntLiteral
+                            | SyntaxKind::StringLiteral
+                    ));
         self.scanner.restore_state(snapshot);
         self.current_token = current_token;
 
@@ -274,6 +288,7 @@ impl ParserState {
                     UnaryExprDataEx {
                         expression: NodeIndex::NONE,
                         asterisk_token: false,
+                        next_token_identifier_keyword_or_literal_same_line: true,
                     },
                 );
             }
@@ -331,6 +346,7 @@ impl ParserState {
                 UnaryExprDataEx {
                     expression: NodeIndex::NONE,
                     asterisk_token: false,
+                    next_token_identifier_keyword_or_literal_same_line: true,
                 },
             );
         }
@@ -353,6 +369,7 @@ impl ParserState {
             UnaryExprDataEx {
                 expression,
                 asterisk_token: false,
+                next_token_identifier_keyword_or_literal_same_line,
             },
         )
     }
@@ -468,6 +485,7 @@ impl ParserState {
             UnaryExprDataEx {
                 expression,
                 asterisk_token,
+                next_token_identifier_keyword_or_literal_same_line: true,
             },
         )
     }

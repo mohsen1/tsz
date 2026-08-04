@@ -151,6 +151,8 @@ mod class_namespace_static_relation_routing_arch_tests;
 mod class_static_init_self_new_tests;
 #[path = "tests/class_static_side_relation_routing_arch_tests.rs"]
 mod class_static_side_relation_routing_arch_tests;
+#[path = "tests/class_static_wide_symbol_member_index_tests.rs"]
+mod class_static_wide_symbol_member_index_tests;
 #[path = "tests/class_wide_symbol_member_index_tests.rs"]
 mod class_wide_symbol_member_index_tests;
 #[path = "tests/closure_destructuring_top_level_diagnostics_tests.rs"]

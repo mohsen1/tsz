@@ -387,6 +387,23 @@ pub struct ParenthesizedData {
 pub struct UnaryExprDataEx {
     pub expression: NodeIndex,
     pub asterisk_token: bool, // For yield*
+    /// `AWAIT_EXPRESSION` only: whether the token immediately following the
+    /// `await` keyword, on the same line, is an identifier, a keyword, or a
+    /// numeric/bigint/string literal — `tsc`'s own
+    /// `nextTokenIsIdentifierOrKeywordOrLiteralOnSameLine` heuristic.
+    ///
+    /// When this is `false` (e.g. `await (x)`, `await [x]`, `await` before a
+    /// line break), `tsc`'s parser cannot tell an `AwaitExpression` apart
+    /// from `await` used as a plain identifier and defers the decision to a
+    /// whole-statement reparse pass (`reparseTopLevelAwait`) that forces
+    /// `NodeFlags.AwaitContext` on the reparsed `AwaitExpression`. That flag
+    /// being set makes `checkGrammarAwaitOrAwaitUsing` skip its entire
+    /// top-level-`await` validity family (TS1309/TS1375/TS1378) for the
+    /// node, in an external-module file — see `top_level_await_verdict`'s
+    /// caller in `core_statement_checks.rs`. Meaningless for the other three
+    /// node kinds this struct backs (`YIELD_EXPRESSION`, `NON_NULL_EXPRESSION`,
+    /// `SPREAD_ELEMENT`); always `true` there.
+    pub next_token_identifier_keyword_or_literal_same_line: bool,
 }
 
 /// Data for as/satisfies/type assertion expressions
