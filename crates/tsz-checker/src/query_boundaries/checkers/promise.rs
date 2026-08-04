@@ -256,17 +256,24 @@ pub(crate) fn type_is_primitive_like(db: &dyn TypeDatabase, type_id: TypeId) -> 
         type_id == TypeId::NEVER || tsz_solver::visitor::is_primitive_type(db, type_id)
     }
 
-    if let Some(members) = super::super::common::union_members(db, type_id) {
-        return members
-            .iter()
-            .all(|&member| type_is_primitive_like(db, member));
+    fn walk(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+        if let Some(members) = super::super::common::union_members(db, type_id) {
+            return members.iter().all(|&member| walk(db, member));
+        }
+        if let Some(members) = intersection_members(db, type_id) {
+            return members.iter().any(|&member| walk(db, member));
+        }
+        is_primitive_leaf(db, type_id)
     }
-    if let Some(members) = intersection_members(db, type_id) {
-        return members
-            .iter()
-            .any(|&member| type_is_primitive_like(db, member));
-    }
-    is_primitive_leaf(db, type_id)
+
+    // `getBaseConstraintOrType` first: a type parameter constrained to a
+    // primitive is in the primitive domain regardless of any `then` its
+    // constraint also carries, so `T extends number & { then(): void }` is not
+    // a thenable even though `then` resolves through the constraint.
+    walk(
+        db,
+        tsz_solver::type_queries::get_base_constraint_of_type(db, type_id),
+    ) || walk(db, type_id)
 }
 
 /// Strip `null`/`undefined` from a type, mirroring `tsc`'s

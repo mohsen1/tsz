@@ -272,6 +272,64 @@ fn await_primitive_intersection_carrying_then_reports_nothing() {
     );
 }
 
+/// `getBaseConstraintOrType` first: a type parameter constrained to a
+/// primitive is in the primitive domain regardless of any `then` its
+/// constraint also carries. Corpus witness `awaitedType.ts` (`f16`), which the
+/// fixture itself annotates "T belongs to the domain of primitive types
+/// (regardless of `then`)" — the widened rule reported a spurious TS1320 here
+/// until the primitive guard resolved the constraint.
+#[test]
+fn await_type_parameter_constrained_to_primitive_with_then_reports_nothing() {
+    let codes = strict_codes(
+        r#"
+export {};
+async function consumeConstrained<TValue extends number & { then(): void }>(operand: TValue) {
+  await operand;
+}
+"#,
+    );
+    assert!(
+        !codes.contains(&1320),
+        "a type parameter whose base constraint is primitive is not a thenable: {codes:?}"
+    );
+}
+
+/// The negative half of the same guard: a type parameter whose base constraint
+/// is a plain object with an invalid `then` *is* a thenable, so the rule must
+/// still fire through the constraint.
+#[test]
+fn await_type_parameter_constrained_to_invalid_thenable_reports_ts1320() {
+    let codes = strict_codes(
+        r#"
+export {};
+async function consumeObjectConstrained<TValue extends { then(onDone: string): void }>(
+  operand: TValue,
+) {
+  await operand;
+}
+"#,
+    );
+    assert!(
+        codes.contains(&1320),
+        "the primitive guard must not swallow an object-constrained type parameter: {codes:?}"
+    );
+}
+
+/// A type parameter constrained to a non-callable `then` is not thenable at
+/// all — corpus witness `awaitedType.ts` (`f15`).
+#[test]
+fn await_type_parameter_constrained_to_non_callable_then_reports_nothing() {
+    let codes = strict_codes(
+        r#"
+export {};
+async function consumeNonCallable<TValue extends { then: number }>(operand: TValue) {
+  await operand;
+}
+"#,
+    );
+    assert!(!codes.contains(&1320), "{codes:?}");
+}
+
 /// An intersection whose object half carries a valid `then` stays valid.
 #[test]
 fn await_object_intersection_with_valid_then_reports_nothing() {
