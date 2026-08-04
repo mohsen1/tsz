@@ -215,13 +215,17 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::TYPE_IS_NOT_A_VALID_ASYNC_FUNCTION_RETURN_TYPE_IN_ES5_BECAUSE_IT_DOES_NOT_REFER,
             );
         } else {
-            // TS1064: For ES6+ targets, the return type must be Promise<T>
-            let type_name = self
-                .promise_like_return_type_argument(return_type)
-                .map_or_else(
-                    || self.format_type(return_type),
-                    |inner| self.format_type(inner),
-                );
+            // TS1064: For ES6+ targets, the return type must be Promise<T>.
+            //
+            // tsc's `checkAsyncFunctionReturnType` renders the suggestion from
+            // `typeToString(getAwaitedTypeNoAlias(returnType) || voidType)` —
+            // the annotation's *awaited* type, not the annotation itself. The
+            // two coincide for every non-thenable annotation, which is why
+            // rendering the annotation went unnoticed: only an annotation that
+            // is a thenable other than the global `Promise` distinguishes them.
+            // An invalid thenable awaits to nothing and reports `Promise<void>`.
+            let suggested = self.awaited_type_no_alias(return_type);
+            let type_name = self.format_type(suggested.unwrap_or(TypeId::VOID));
             self.error_at_node(
                 type_annotation,
                 &format_message(

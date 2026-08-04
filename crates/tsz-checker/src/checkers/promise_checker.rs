@@ -523,6 +523,36 @@ impl<'a> CheckerState<'a> {
             .awaited_type
     }
 
+    /// tsc's `getAwaitedTypeNoAlias(t)`.
+    ///
+    /// A type that is not thenable is its own awaited type; a thenable is
+    /// awaited recursively, since a `then` callback whose payload is itself
+    /// thenable keeps unwrapping. `None` marks tsc's `undefined` result — a
+    /// `then` that is callable but yields no fulfillment payload — which the
+    /// diagnostic callers render as `void`, matching tsc's `|| voidType`.
+    pub(crate) fn awaited_type_no_alias(&mut self, type_id: TypeId) -> Option<TypeId> {
+        self.awaited_type_no_alias_with_depth(type_id, 0)
+    }
+
+    fn awaited_type_no_alias_with_depth(&mut self, type_id: TypeId, depth: u8) -> Option<TypeId> {
+        if depth > MAX_THENABLE_THIS_VALIDATION_DEPTH {
+            return Some(type_id);
+        }
+        // Unwrap the `Promise`/`PromiseLike` applications and distribute over
+        // unions and intersections first, so only a user-written thenable
+        // reaches the payload extraction below.
+        let unwrapped = self.compute_awaited_type(type_id, 0);
+        let info = self.extract_awaited_type_from_valid_thenable(unwrapped, false);
+        match info.awaited_type {
+            Some(payload) if payload != unwrapped => {
+                self.awaited_type_no_alias_with_depth(payload, depth + 1)
+            }
+            Some(_) => Some(unwrapped),
+            None if info.has_callable_then => None,
+            None => Some(unwrapped),
+        }
+    }
+
     pub(crate) fn await_operand_invalid_thenable_this_type(
         &mut self,
         type_id: TypeId,
