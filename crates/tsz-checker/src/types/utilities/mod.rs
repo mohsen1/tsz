@@ -13,6 +13,8 @@ pub(crate) mod enum_utils;
 pub(crate) mod enum_utils_readonly;
 pub(crate) mod fresh_literal;
 pub(crate) mod heritage_walk_state;
+pub(crate) mod mutable_binding_nullish;
 pub(crate) mod overlap_relation_helpers;
 pub(crate) mod return_type;
+pub(crate) mod return_type_nullish;
 pub(crate) mod widening;

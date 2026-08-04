@@ -1433,10 +1433,23 @@ impl<'a> CheckerState<'a> {
             // exhibit this specific pre-widening pairwise-mismatch, and its own
             // (pre-existing, separately owned) resolution already happens where
             // it always has: unaffected by this change either way.
+            //
+            // The eager pre-widen is only legitimate for a literal that actually
+            // CARRIES the widening flavour. It is a shape-driven rewrite with no
+            // provenance of its own, so applying it unconditionally rewrote the
+            // interior of a *declared* nullish element:
+            // `declare function supply(): undefined[]; var v = [supply()];`
+            // became `any[][]` where tsc keeps `undefined[][]` (#16396). The
+            // element is neither `NULL` nor `UNDEFINED`, so the scalar carve-out
+            // below does not exempt it — only the provenance walk can. Gate on
+            // the same `initializer_nullish_leaves_are_widening` walk the
+            // mutable-binding and generic-call seams use, so a literal whose
+            // leaves are genuine widening sources still collapses its siblings
+            // post-widening and one whose leaves are declared values does not.
             let bct_element_types: Vec<TypeId> = if self.ctx.strict_null_checks() {
                 element_types.clone()
             } else {
-                element_types
+                let widened: Vec<TypeId> = element_types
                     .iter()
                     .map(|&t| {
                         if t == TypeId::NULL || t == TypeId::UNDEFINED {
@@ -1448,7 +1461,15 @@ impl<'a> CheckerState<'a> {
                             )
                         }
                     })
-                    .collect()
+                    .collect();
+                // Nothing to decide when the pre-widen is already a no-op — this
+                // keeps the provenance walk off the path of every array literal
+                // that has no nullish interior at all, which is nearly all of them.
+                if widened == element_types || self.initializer_nullish_leaves_are_widening(idx) {
+                    widened
+                } else {
+                    element_types.clone()
+                }
             };
             expr_ops::compute_best_common_type_cached(
                 self.ctx.types,

@@ -452,6 +452,41 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         },
                         |i| i.yield_type,
                     );
+                    // TS1322 checks the delegated iterable's *element* type —
+                    // distinct from TS1320 above, which checks the iterator's
+                    // `next()` result. tsc reaches both through
+                    // `getAwaitedTypeNoAliasEx`/`isThenableType` on different
+                    // operands, so a delegate can fail either independently
+                    // (a well-formed `IteratorResult` wrapping an invalid
+                    // thenable element, or vice versa).
+                    //
+                    // Deliberately re-resolved through the checker's env-aware
+                    // `for_of_element_type` rather than reusing `element`
+                    // above: `element`'s solver-only fallback hits the same
+                    // `TypeData::Lazy(DefId)` blind spot documented on
+                    // `async_info` (every non-array/tuple lib iterable,
+                    // including plain `AsyncIterable<T>`/`AsyncGenerator<T>`,
+                    // resolves to `ANY` structurally), which silently
+                    // swallowed this check on the exact lib shapes the issue
+                    // is about. That blind spot is `element`'s consumer's
+                    // problem (the annotated-container TS2322 contextual
+                    // check a few lines below, which has its own generic-delegate
+                    // reason to stay solver-only) — TS1322 has no such
+                    // constraint, so it can use the more accurate chain.
+                    let invalid_thenable_element = async_info.as_ref().map_or_else(
+                        || self.checker.for_of_element_type(expression_type, true),
+                        |i| i.yield_type,
+                    );
+                    if self
+                        .checker
+                        .async_iterated_element_is_invalid_thenable(invalid_thenable_element)
+                    {
+                        self.checker.error_at_node(
+                            yield_expr.expression,
+                            diagnostic_messages::TYPE_OF_ITERATED_ELEMENTS_OF_A_YIELD_OPERAND_MUST_EITHER_BE_A_VALID_PROMISE_OR_M,
+                            diagnostic_codes::TYPE_OF_ITERATED_ELEMENTS_OF_A_YIELD_OPERAND_MUST_EITHER_BE_A_VALID_PROMISE_OR_M,
+                        );
+                    }
                     // Capture the delegated iterator's return type for yield* expression result.
                     // Try get_iterator_info first (structural), then fall back to
                     // get_generator_return_type_argument (direct Application arg extraction)

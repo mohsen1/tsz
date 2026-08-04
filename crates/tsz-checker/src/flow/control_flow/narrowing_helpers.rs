@@ -43,7 +43,7 @@ fn primitive_name_intrinsic(name: &str) -> Option<TypeId> {
 /// to the global `undefined` (a lib symbol or unresolved). A user-declared
 /// local named `undefined` (parameter, variable, etc.) shadows the global
 /// and must not be treated as the literal `undefined` sentinel.
-pub(super) fn is_global_undefined_identifier(
+pub(crate) fn is_global_undefined_identifier(
     arena: &NodeArena,
     binder: &BinderState,
     idx: NodeIndex,

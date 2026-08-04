@@ -604,6 +604,14 @@ mod nolib_user_global_array_member_tests;
 mod non_generic_spread_tuple_alias_display_tests;
 #[path = "tests/non_strict_non_null_check_narrows_tests.rs"]
 mod non_strict_non_null_check_narrows_tests;
+#[path = "tests/non_strict_nullish_return_widening_tests.rs"]
+mod non_strict_nullish_return_widening_tests;
+#[path = "tests/nonstrict_nullish_widening_generic_call_tests.rs"]
+mod nonstrict_nullish_widening_generic_call_tests;
+#[path = "tests/nonstrict_nullish_widening_mutable_binding_tests.rs"]
+mod nonstrict_nullish_widening_mutable_binding_tests;
+#[path = "tests/nonstrict_nullish_widening_nested_leaf_tests.rs"]
+mod nonstrict_nullish_widening_nested_leaf_tests;
 #[path = "tests/nonunique_symbol_property_access_tests.rs"]
 mod nonunique_symbol_property_access_tests;
 #[path = "tests/noUIA_any_index_emits_ts2322_tests.rs"]
@@ -932,5 +940,7 @@ mod variadic_tuple_spread_element_inference_tests;
 mod void_undefined_discriminant_narrowing_tests;
 #[path = "tests/window_self_globalthis_resolution_tests.rs"]
 mod window_self_globalthis_resolution_tests;
+#[path = "tests/yieldstar_async_iterable_invalid_thenable_element_tests.rs"]
+mod yieldstar_async_iterable_invalid_thenable_element_tests;
 #[path = "tests/zod_type_query_regression_tests.rs"]
 mod zod_type_query_regression_tests;
