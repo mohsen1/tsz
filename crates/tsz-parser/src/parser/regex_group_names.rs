@@ -84,11 +84,7 @@ pub(crate) fn scan_group_name(body: &[u8], end: usize, pos: &mut usize) -> Optio
     value.push(first);
     *pos = after_first;
 
-    loop {
-        let Some((ch, next)) = next_char(body, end, *pos) else {
-            break;
-        };
-
+    while let Some((ch, next)) = next_char(body, end, *pos) {
         if ch == '\\' {
             // tsc allows a `\u` escape in continuation position only, and
             // stops on a malformed one — leaving the `'>' expected.` its
