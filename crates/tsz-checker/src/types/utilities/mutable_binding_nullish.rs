@@ -137,9 +137,18 @@ impl<'a> CheckerState<'a> {
         // Any other leaf expression (identifier, call, property access, ...):
         // it only needs to be a widening source when its own checked type is
         // actually nullish — a non-nullish leaf never reaches the widener.
-        !matches!(
+        //
+        // An *uncached* leaf type is not evidence of a non-nullish leaf, so it
+        // fails closed, per this walk's stated policy. The mutable-binding seam
+        // never observes the difference (it runs after the initializer has been
+        // typed), but the generic-call candidate seam does: the argument's
+        // element types are not necessarily resident when candidates are
+        // normalized, and reading `None` as "safe to widen" there turned
+        // `declare var q: undefined; id([q])` into `any[]` when tsc keeps
+        // `undefined[]` (#16384 leg A).
+        matches!(
             self.ctx.node_types.get(&expr.0).copied(),
-            Some(t) if t == TypeId::UNDEFINED || t == TypeId::NULL
+            Some(t) if t != TypeId::UNDEFINED && t != TypeId::NULL
         )
     }
 }
