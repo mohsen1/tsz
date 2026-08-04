@@ -18,10 +18,23 @@ pub(crate) enum ModifiedExportForm {
     /// `export as namespace Foo;` — a `NamespaceExportDeclaration`, which
     /// admits no modifiers in any container.
     NamespaceExport,
-    /// `export {}`, `export * from`, `export =`, `export default` — an export
-    /// declaration or assignment, which draws its own placement diagnostic and
-    /// no modifier diagnostic.
-    ExportDeclarationOrAssignment,
+    /// `export {}`, `export * from` — an `ExportDeclaration` node. Its own
+    /// placement diagnostic (TS1233) wins over the modifier only inside a
+    /// `Block`; at the source file's own top level and inside a namespace
+    /// body the modifier diagnostic still fires (oracle-pinned, #16403).
+    ExportDeclaration,
+    /// `export =`, `export default` — an `ExportAssignment` node. Its own
+    /// placement diagnostic (TS1231/TS1258 in a `Block`, TS1063/TS1319 in a
+    /// namespace body) wins over the modifier in *both* of those containers,
+    /// not just a `Block` — the modifier diagnostic survives only at the
+    /// source file's own top level (oracle-pinned, #16403).
+    ExportAssignment,
+    /// `export namespace N {}`, `export module M {}` — a nested module
+    /// declaration is itself illegal inside a `Block` (TS1235, independent of
+    /// any modifier), so that placement diagnostic wins there the same way
+    /// the two forms above do; outside a `Block` this nests validly and takes
+    /// the ordinary modified-declaration container split (#16403).
+    ModuleDeclaration,
     /// `export const`, `export class`, `export function`, ... — an ordinary
     /// modified declaration, which takes the container split.
     ModifiedDeclaration,
@@ -355,70 +368,124 @@ impl ParserState {
         if self.next_token_is_on_new_line() {
             self.parse_expression_statement()
         } else if self.look_ahead_is_modifier_before_declaration() {
+            // `static`/`public`/`protected`/`private` share one modifier
+            // diagnostic family (TS1044, "'{0}' modifier cannot appear on a
+            // module or namespace element") and the container split below is
+            // oracle-pinned for exactly those four (#16403 slice 1).
+            // `readonly` needs its own code (TS1024) and `override` its own
+            // unconditional one (TS1434) regardless of container — both stay
+            // on the pre-existing silent-drop behavior for the three forms
+            // below until their own slice lands, rather than adopting this
+            // family's TS1044 by sharing the same dispatch.
+            let is_ts1044_family_modifier = matches!(
+                self.token(),
+                SyntaxKind::StaticKeyword
+                    | SyntaxKind::PublicKeyword
+                    | SyntaxKind::ProtectedKeyword
+                    | SyntaxKind::PrivateKeyword
+            );
             let export_form = self.modified_export_form();
-            if matches!(
-                export_form,
-                Some(ModifiedExportForm::ExportDeclarationOrAssignment)
-            ) {
-                // `export {}` / `export * from` / `export =` / `export default`
-                // after a stray modifier: tsc reports the form's own placement
-                // diagnostic (TS1233 / TS1231 / TS1258) and no modifier
-                // diagnostic at all, so the modifier is dropped silently here.
-                self.next_token();
-                self.parse_statement()
-            } else if matches!(export_form, Some(ModifiedExportForm::NamespaceExport)) {
-                // `export as namespace Foo;` after a stray modifier. Unlike every
-                // other shape in this branch the answer is not container-derived:
-                // a `NamespaceExportDeclaration` admits no modifiers at all, so
-                // tsc's grammar check reports TS1184 in a Block, in a namespace
-                // body, and at the source file's own top level alike — where a
-                // modified *declaration* would keep TS1044 in the latter two.
-                self.parse_error_at_current_token(
-                    "Modifiers cannot appear here.",
-                    diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
-                );
-                self.next_token();
-                self.parse_statement()
-            } else {
-                // tsc's grammar check picks the message from the statement's
-                // container, not the modifier itself: a Block body (function
-                // body, a nested block, or a class static block) gets the
-                // generic TS1184; a module/namespace body or the source
-                // file's own top level, neither of which is a Block, keeps
-                // the module/namespace-specific TS1044 (#16368).
-                //
-                // `in_static_block_context()` covers the static-block case
-                // directly rather than through `in_block_context()`
-                // (`parse_static_block` does not set CONTEXT_FLAG_IN_BLOCK,
-                // deliberately: doing so also makes the class-body nested-
-                // block recovery heuristic a few lines up in
-                // `parse_statements` fire inside static blocks, which is a
-                // separate, pre-existing bug — confirmed it already
-                // misparses a plain method body the same way, unrelated to
-                // this fix — and out of scope here).
-                let modifier_start = self.token_pos();
-                let modifier_text = self.scanner.get_token_text();
-                if self.in_block_context() || self.in_static_block_context() {
+            // `in_static_block_context()` covers the static-block case
+            // directly rather than through `in_block_context()`
+            // (`parse_static_block` does not set CONTEXT_FLAG_IN_BLOCK,
+            // deliberately: doing so also makes the class-body nested-block
+            // recovery heuristic a few lines up in `parse_statements` fire
+            // inside static blocks, which is a separate, pre-existing bug —
+            // confirmed it already misparses a plain method body the same
+            // way, unrelated to this fix — and out of scope here).
+            let block_context = self.in_block_context() || self.in_static_block_context();
+            match export_form {
+                Some(ModifiedExportForm::ExportDeclaration)
+                    if !is_ts1044_family_modifier || block_context =>
+                {
+                    // `export {}` / `export * from` after a stray modifier,
+                    // inside a Block: tsc reports the form's own placement
+                    // diagnostic (TS1233) and no modifier diagnostic at all,
+                    // so the modifier is dropped silently here.
+                    self.next_token();
+                    self.parse_statement()
+                }
+                Some(ModifiedExportForm::ExportAssignment)
+                    if !is_ts1044_family_modifier
+                        || block_context
+                        || self.in_module_body_context() =>
+                {
+                    // `export =` / `export default` after a stray modifier,
+                    // inside a Block *or* a namespace body: the assignment's
+                    // own placement diagnostic (TS1231/TS1258 in a Block,
+                    // TS1063/TS1319 in a namespace body) wins outright and
+                    // the modifier is dropped silently — unlike the
+                    // declaration form above, the namespace-body case is
+                    // ALSO silent here, not just the Block one (#16403).
+                    self.next_token();
+                    self.parse_statement()
+                }
+                Some(ModifiedExportForm::ModuleDeclaration)
+                    if is_ts1044_family_modifier && block_context =>
+                {
+                    // `export namespace N {}` / `export module M {}` inside
+                    // a Block: a nested module declaration is itself illegal
+                    // there (TS1235) independent of any modifier, and that
+                    // placement diagnostic wins the same way the two forms
+                    // above do. Gated to the TS1044 family (unlike the two
+                    // arms above, `readonly`/`override` classified this form
+                    // as an ordinary `ModifiedDeclaration` before this PR —
+                    // preserve that catchall routing for them rather than
+                    // newly silencing it, since it was never silent).
+                    self.next_token();
+                    self.parse_statement()
+                }
+                Some(ModifiedExportForm::NamespaceExport) => {
+                    // `export as namespace Foo;` after a stray modifier. Unlike
+                    // every other shape in this branch the answer is not
+                    // container-derived: a `NamespaceExportDeclaration` admits
+                    // no modifiers at all, so tsc's grammar check reports
+                    // TS1184 in a Block, in a namespace body, and at the
+                    // source file's own top level alike — where a modified
+                    // *declaration* would keep TS1044 in the latter two.
                     self.parse_error_at_current_token(
                         "Modifiers cannot appear here.",
                         diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
                     );
-                } else {
-                    self.parse_error_at_current_token(
-                        &format!(
-                            "'{modifier_text}' modifier cannot appear on a module or namespace element."
-                        ),
-                        diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT,
-                    );
+                    self.next_token();
+                    self.parse_statement()
                 }
-                let modifier_kind = self.token();
-                self.next_token();
-                let modifier = self.arena.add_token(
-                    modifier_kind as u16,
-                    modifier_start,
-                    modifier_start + modifier_text.len() as u32,
-                );
-                self.parse_accessor_modified_statement(modifier_start, vec![modifier])
+                _ => {
+                    // Every other shape reaching this branch — a plain
+                    // modified declaration (`export const`/`class`/
+                    // `function`/`interface`/`type`/`enum`), or one of the
+                    // three forms above once it is outside the container that
+                    // silences its modifier diagnostic — takes the same
+                    // container split tsc's grammar check uses for an
+                    // ordinary modified declaration: a Block body gets the
+                    // generic TS1184; a module/namespace body or the source
+                    // file's own top level, neither of which is a Block,
+                    // keeps the module/namespace-specific TS1044 (#16368,
+                    // #16403).
+                    let modifier_start = self.token_pos();
+                    let modifier_text = self.scanner.get_token_text();
+                    if block_context {
+                        self.parse_error_at_current_token(
+                            "Modifiers cannot appear here.",
+                            diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+                        );
+                    } else {
+                        self.parse_error_at_current_token(
+                            &format!(
+                                "'{modifier_text}' modifier cannot appear on a module or namespace element."
+                            ),
+                            diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT,
+                        );
+                    }
+                    let modifier_kind = self.token();
+                    self.next_token();
+                    let modifier = self.arena.add_token(
+                        modifier_kind as u16,
+                        modifier_start,
+                        modifier_start + modifier_text.len() as u32,
+                    );
+                    self.parse_accessor_modified_statement(modifier_start, vec![modifier])
+                }
             }
         } else if self.look_ahead_next_is_identifier_or_keyword_on_same_line() {
             self.parse_error_at_current_token(
@@ -734,10 +801,15 @@ impl ParserState {
             self.next_token(); // skip `export`
             Some(match self.token() {
                 SyntaxKind::AsKeyword => ModifiedExportForm::NamespaceExport,
-                SyntaxKind::OpenBraceToken
-                | SyntaxKind::DefaultKeyword
-                | SyntaxKind::AsteriskToken
-                | SyntaxKind::EqualsToken => ModifiedExportForm::ExportDeclarationOrAssignment,
+                SyntaxKind::OpenBraceToken | SyntaxKind::AsteriskToken => {
+                    ModifiedExportForm::ExportDeclaration
+                }
+                SyntaxKind::DefaultKeyword | SyntaxKind::EqualsToken => {
+                    ModifiedExportForm::ExportAssignment
+                }
+                SyntaxKind::NamespaceKeyword
+                | SyntaxKind::ModuleKeyword
+                | SyntaxKind::GlobalKeyword => ModifiedExportForm::ModuleDeclaration,
                 _ => ModifiedExportForm::ModifiedDeclaration,
             })
         };

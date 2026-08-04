@@ -245,6 +245,179 @@ fn modifier_before_export_default_reports_no_parser_diagnostic() {
 }
 
 // --------------------------------------------------------------------------
+// `export {}` / `export *` / `export =` / `export default` outside a Block —
+// the container-gate-everything fix WAS right, just not unconditionally.
+// tsc's grammar check still reaches the modifier at the source file's own
+// top level (all four forms) and inside a namespace body (`{}`/`*` only —
+// `=`/`default` stay silent there too, since their own placement diagnostic,
+// TS1063/TS1319, wins the same way TS1231/TS1258 wins in a Block). Every row
+// pinned against `typescript@7.0.2` (#16403 slice 1).
+// --------------------------------------------------------------------------
+
+#[test]
+fn modifier_before_export_list_at_top_level_reports_ts1044() {
+    assert_only_diagnostic(
+        "public export {};",
+        "public",
+        diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT,
+    );
+}
+
+#[test]
+fn modifier_before_export_star_at_top_level_reports_ts1044() {
+    assert_only_diagnostic(
+        "public export * from \"./source\";",
+        "public",
+        diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT,
+    );
+}
+
+#[test]
+fn modifier_before_export_assignment_at_top_level_reports_ts1044() {
+    assert_only_diagnostic(
+        "public export = 1;",
+        "public",
+        diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT,
+    );
+}
+
+#[test]
+fn modifier_before_export_default_at_top_level_reports_ts1044() {
+    assert_only_diagnostic(
+        "public export default 1;",
+        "public",
+        diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT,
+    );
+}
+
+#[test]
+fn modifier_before_export_list_in_namespace_body_reports_ts1044() {
+    assert_only_diagnostic(
+        "namespace Outer {\n  public export {};\n}",
+        "public",
+        diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT,
+    );
+}
+
+#[test]
+fn modifier_before_export_star_in_namespace_body_reports_ts1044() {
+    assert_only_diagnostic(
+        "namespace Outer {\n  public export * from \"./source\";\n}",
+        "public",
+        diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT,
+    );
+}
+
+/// Unlike the declaration forms above, `export =` stays silent in a
+/// namespace body — its own TS1063 ("An export assignment cannot be used in
+/// a namespace.") wins there too, not just in a Block.
+#[test]
+fn modifier_before_export_assignment_in_namespace_body_reports_no_parser_diagnostic() {
+    assert_no_parser_diagnostics("namespace Outer {\n  public export = 1;\n}");
+}
+
+/// Same reasoning for `export default` (its own TS1319 wins).
+#[test]
+fn modifier_before_export_default_in_namespace_body_reports_no_parser_diagnostic() {
+    assert_no_parser_diagnostics("namespace Outer {\n  public export default 1;\n}");
+}
+
+/// The message interpolates the modifier written, so the non-`public` members
+/// of the set have to be exercised too, same as the plain-declaration form.
+#[test]
+fn modifier_before_export_list_at_top_level_reports_ts1044_naming_that_modifier() {
+    let source = "static export {};";
+    let (parser, _root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+    assert_eq!(diagnostics.len(), 1, "got {diagnostics:?}");
+    assert_eq!(
+        diagnostics[0].code,
+        diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT
+    );
+    assert!(
+        diagnostics[0].message.contains("'static'"),
+        "the TS1044 message names the modifier that was written; got {:?}",
+        diagnostics[0].message
+    );
+}
+
+// --------------------------------------------------------------------------
+// `export namespace N {}` / `export module M {}` — a nested module
+// declaration is itself illegal in a Block (TS1235), independent of any
+// modifier, so that placement diagnostic wins there and the modifier is
+// dropped — unlike the sibling declaration forms (`const`/`class`/...),
+// which stay legal in a Block and keep the generic TS1184.
+// --------------------------------------------------------------------------
+
+/// TS1235 ("A namespace declaration is only allowed at the top level of a
+/// namespace or module.") is a checker check, out of this parser-only
+/// harness's reach — same as the `export {}`/`export *`/`export =`/
+/// `export default` placement diagnostics above. What the parser controls is
+/// TS1184 no longer piling on top of it (pinned at the CLI level against
+/// `typescript@7.0.2`: TS1235 alone, not TS1184 + TS1235).
+#[test]
+fn modifier_before_export_namespace_declaration_in_function_body_reports_no_parser_diagnostic() {
+    assert_no_parser_diagnostics("function collect() {\n  public export namespace N {}\n}");
+}
+
+/// Outside a Block a nested namespace/module still nests validly, so this is
+/// an ordinary modified declaration and keeps TS1044 — regression guard on
+/// the arm that now special-cases the Block container only.
+#[test]
+fn modifier_before_export_namespace_declaration_at_top_level_reports_ts1044() {
+    assert_only_diagnostic(
+        "public export namespace N {}",
+        "public",
+        diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT,
+    );
+}
+
+#[test]
+fn modifier_before_export_namespace_declaration_in_namespace_body_reports_ts1044() {
+    assert_only_diagnostic(
+        "namespace Outer {\n  public export namespace N {}\n}",
+        "public",
+        diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT,
+    );
+}
+
+// --------------------------------------------------------------------------
+// Containment: `readonly`/`override` are a different diagnostic family
+// (TS1024 always-fixed-text, TS1434 unconditional-of-container) and stay on
+// the pre-existing silent-drop behavior for these four export forms outside
+// a Block until their own slice — this PR must not change their answer.
+// --------------------------------------------------------------------------
+
+#[test]
+fn readonly_before_export_list_at_top_level_reports_no_parser_diagnostic() {
+    assert_no_parser_diagnostics("readonly export {};");
+}
+
+#[test]
+fn readonly_before_export_assignment_in_namespace_body_reports_no_parser_diagnostic() {
+    assert_no_parser_diagnostics("namespace Outer {\n  readonly export = 1;\n}");
+}
+
+#[test]
+fn override_before_export_default_at_top_level_reports_no_parser_diagnostic() {
+    assert_no_parser_diagnostics("override export default 1;");
+}
+
+/// `override` classifies this form as an ordinary `ModifiedDeclaration`
+/// (unlike `static`/`public`/`protected`/`private`, for which #16403 slice 1
+/// adds a Block-only silent path) — this PR must not touch that routing, so
+/// the pre-existing catchall diagnostic still fires here. tsc's real answer
+/// is TS1434 unconditionally, a separate, still-open gap (#16403 slice 2).
+#[test]
+fn override_before_export_namespace_declaration_at_top_level_reports_pre_existing_diagnostic() {
+    assert_only_diagnostic(
+        "override export namespace N {}",
+        "override",
+        diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT,
+    );
+}
+
+// --------------------------------------------------------------------------
 // Negative controls.
 // --------------------------------------------------------------------------
 

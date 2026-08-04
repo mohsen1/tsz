@@ -90,6 +90,12 @@ pub const CONTEXT_FLAG_FUNCTION_BODY: u32 = 1048576;
 pub const CONTEXT_FLAG_IF_CONDITION: u32 = 2097152;
 /// Context flag: parsing parameters of a recovered class member named `if`.
 pub const CONTEXT_FLAG_RECOVERED_IF_CLASS_MEMBER_PARAMETERS: u32 = 4194304;
+/// Context flag: directly inside a `namespace`/`module` declaration's body
+/// (not a nested `Block`, which clears this the same way it clears
+/// `CONTEXT_FLAG_IN_BLOCK`). Distinguishes a namespace body from the source
+/// file's own top level for grammar checks whose answer differs between the
+/// two, e.g. `export =` / `export default` after a stray modifier (#16403).
+pub const CONTEXT_FLAG_IN_MODULE_BODY: u32 = 8388608;
 
 // =============================================================================
 // Parse Diagnostic
@@ -1114,6 +1120,14 @@ impl ParserState {
     #[inline]
     pub(crate) const fn in_block_context(&self) -> bool {
         (self.context_flags & CONTEXT_FLAG_IN_BLOCK) != 0
+    }
+
+    /// Check if we're directly inside a `namespace`/`module` declaration's
+    /// body, as opposed to the source file's own top level or a nested
+    /// `Block`. See [`CONTEXT_FLAG_IN_MODULE_BODY`].
+    #[inline]
+    pub(crate) const fn in_module_body_context(&self) -> bool {
+        (self.context_flags & CONTEXT_FLAG_IN_MODULE_BODY) != 0
     }
 
     /// Check if we're inside an ambient declaration context (`declare namespace`, `declare module`, etc.).
