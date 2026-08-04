@@ -1353,21 +1353,36 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     // In tsc, these all get TS1184 "Modifiers cannot appear
                     // here" instead — `export` is read as a modifier on the
                     // trailing declaration, not as its own statement.
+                    //
+                    // interface/type-alias/enum are TS-only declaration kinds:
+                    // in a JS file tsc's `checkGrammarModifiers` never runs for
+                    // them (TS8006/TS8008 own the diagnostic instead), so the
+                    // TS1184 arm below is TS-file only for those three kinds.
+                    // tsz does not yet route TS8006/TS8008 through an
+                    // export-wrapped clause (`check_js_grammar_statement` only
+                    // matches the unwrapped declaration kind); that gap is
+                    // pre-existing and out of scope here — this guard just
+                    // keeps this fix from changing JS-file behavior it wasn't
+                    // meant to touch.
                     let clause_kind = self
                         .ctx
                         .arena
                         .get(export_decl.export_clause)
                         .map(|n| n.kind);
-                    let is_class_or_function_or_variable = matches!(
+                    let is_ts_only_typed_declaration = matches!(
                         clause_kind,
-                        Some(k) if k == syntax_kind_ext::CLASS_DECLARATION
-                            || k == syntax_kind_ext::CLASS_EXPRESSION
-                            || k == syntax_kind_ext::FUNCTION_DECLARATION
-                            || k == syntax_kind_ext::VARIABLE_STATEMENT
-                            || k == syntax_kind_ext::INTERFACE_DECLARATION
+                        Some(k) if k == syntax_kind_ext::INTERFACE_DECLARATION
                             || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION
                             || k == syntax_kind_ext::ENUM_DECLARATION
-                    );
+                    ) && !self.is_js_file();
+                    let is_class_or_function_or_variable = is_ts_only_typed_declaration
+                        || matches!(
+                            clause_kind,
+                            Some(k) if k == syntax_kind_ext::CLASS_DECLARATION
+                                || k == syntax_kind_ext::CLASS_EXPRESSION
+                                || k == syntax_kind_ext::FUNCTION_DECLARATION
+                                || k == syntax_kind_ext::VARIABLE_STATEMENT
+                        );
 
                     let is_namespace_or_module = matches!(
                         clause_kind,
