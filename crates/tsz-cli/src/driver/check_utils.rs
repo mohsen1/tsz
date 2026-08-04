@@ -1535,6 +1535,22 @@ pub(super) const fn is_structural_parse_error(code: u32) -> bool {
 /// - TS1214: Identifier expected (strict mode reserved word)
 /// - TS1262: 'await' at top level
 /// - TS1359: 'await' in async context
+/// - TS18037: 'await' expression inside a class static block
+///
+/// TS18037 belongs here for the same reason as TS1096: tsc reports it from
+/// `checkAwaitExpression` at CHECK time (the `await` parses fine as an
+/// expression), so it never participates in tsc's `hasParseDiagnostics()`
+/// suppression. tsz emits it from `parse_await_expression` during parsing
+/// instead, so without this entry a class static block's `await` sets
+/// `has_syntax_parse_errors` and silently drops every *other* TS1308/TS1375/
+/// TS1378 ('await' outside an async function/module top level) diagnostic in
+/// the same file — those checks gate on the same flag in
+/// `check_await_expression_in_container` (`core_statement_checks.rs`). The
+/// static block's own `await` does not get a redundant TS1308 once this flag
+/// is cleared: `check_await_expression_in_container` skips it separately via
+/// `find_enclosing_static_block`, matching tsc's `checkAwaitExpression`,
+/// which returns after the static-block diagnostic without falling through
+/// to the "only allowed within async functions" check.
 ///
 /// tsc emits TS7006/TS7019 even in the presence of these errors because
 /// the parameter identity (name) is still valid and can be type-checked.
@@ -1627,6 +1643,8 @@ pub(super) const fn is_non_suppressing_parse_error(code: u32) -> bool {
             | 1214 // Identifier expected (strict mode reserved word)
             | 1262 // 'await' at top level
             | 1359 // 'await' in async context
+            | 18037 // 'await' expression cannot be used inside a class static block
+                    // (check-time grammar in tsc; see doc comment above)
             | 1492 // 'using' declarations may not have binding patterns (grammar constraint, AST is valid)
             | 1487 // Octal escape sequences are not allowed (regex `\0`-prefixed decimal escape,
                    // AST is valid). Outside the contiguous regex band handled above — shared
@@ -1677,3 +1695,7 @@ mod for_in_of_single_declaration_grammar_tests;
 #[cfg(test)]
 #[path = "check_utils/audit_round_3_grammar_tests.rs"]
 mod audit_round_3_grammar_tests;
+
+#[cfg(test)]
+#[path = "check_utils/await_static_block_suppression_tests.rs"]
+mod await_static_block_suppression_tests;

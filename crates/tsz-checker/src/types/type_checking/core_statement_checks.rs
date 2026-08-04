@@ -861,6 +861,16 @@ impl<'a> CheckerState<'a> {
                                     );
                                 }
                             }
+                        } else if self.find_enclosing_static_block(current_idx).is_some() {
+                            // The parser already reported TS18037 for this
+                            // `await` (directly inside a class static block,
+                            // not a nested async function). tsc's
+                            // `checkAwaitExpression` returns after its own
+                            // static-block diagnostic without falling
+                            // through to "await expressions are only
+                            // allowed within async functions" — matching
+                            // that here avoids a TS18037+TS1308 double
+                            // report tsc never produces for the same node.
                         } else {
                             // TS1308: 'await' expressions are only allowed within async functions.
                             // tsc points the reader at the function that would
@@ -969,6 +979,7 @@ impl<'a> CheckerState<'a> {
                 || parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
                 || parent_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
                 || parent_node.kind == syntax_kind_ext::PARAMETER
+                || parent_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
             {
                 return false;
             }

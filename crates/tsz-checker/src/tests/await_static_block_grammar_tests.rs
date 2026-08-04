@@ -6,11 +6,7 @@
 //! already emits TS18037 for any `await` parsed while `in_static_block_context()`
 //! is set, regardless of how deeply the `await` sits inside intervening
 //! statements (`while`, `for`, `switch`, ...) — the context flag survives
-//! statement nesting and is only cleared at a function/class boundary. That
-//! parser diagnostic sets `has_syntax_parse_errors`, which suppresses
-//! `check_await_expression`'s own TS1308 grammar walk
-//! (`core_statement_checks.rs`) for the same file. So on current `main` this
-//! family already matches tsc: exactly TS18037, never an accompanying TS1308.
+//! statement nesting and is only cleared at a function/class boundary.
 //!
 //! #16068 reported the opposite (TS1308 instead of TS18037) — that read came
 //! from `test_utils::check_source_codes`, which never wires real parser
@@ -19,8 +15,131 @@
 //! can neither see the parser's TS18037 nor let it suppress the checker's
 //! TS1308. These tests use the parse-health-aware helper instead, so they
 //! reflect what the compiled CLI actually reports.
+//!
+//! `static_block_own_node_no_double_report_when_not_globally_suppressed` and
+//! `static_block_await_does_not_suppress_unrelated_ts1308_program_wide` below
+//! instead build a `CheckerState` directly with `has_syntax_parse_errors`
+//! computed the way `tsz-cli`'s `check_file.rs`/`check_utils.rs::is_non_suppressing_parse_error`
+//! compute it in production (TS18037 excluded), rather than the
+//! `!parse_diagnostics.is_empty()` coarse signal
+//! `check_source_codes_with_parse_health` uses. That coarse signal makes
+//! `has_syntax_parse_errors` true for *any* file containing an `await` inside
+//! a static block, same as before #16360's fix — so it cannot exercise the
+//! cross-file suppression bug #16360 reported (a static block's TS18037
+//! deleting an unrelated function's TS1308 elsewhere in the same file) or its
+//! fix (`is_non_suppressing_parse_error` no longer includes TS18037; the
+//! static block's own node is instead skipped explicitly via
+//! `find_enclosing_static_block` in `check_await_expression_in_container`,
+//! matching tsc's `checkAwaitExpression`, which returns after its own
+//! static-block diagnostic without falling through to the "only allowed
+//! within async functions" check).
 
+use crate::context::CheckerOptions;
+use crate::query_boundaries::common::TypeInterner;
+use crate::state::CheckerState;
 use crate::test_utils::check_source_codes_with_parse_health;
+use tsz_binder::BinderState;
+use tsz_parser::parser::ParserState;
+
+/// Parse, bind, and check `source` with `has_syntax_parse_errors` computed
+/// the way `tsz-cli` computes it in production: TS18037 (check-time grammar
+/// in tsc, parser-emitted in tsz — see `check_utils.rs::is_non_suppressing_parse_error`)
+/// does not count as a "real" syntax error. Returns `(parser codes, checker
+/// codes)` like `test_utils::check_source_with_parse_health`.
+fn check_with_production_suppression(source: &str) -> (Vec<u32>, Vec<u32>) {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let source_file = parser.parse_source_file();
+    let parse_diagnostics = parser.get_diagnostics().to_vec();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), source_file);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    checker.enable_source_file_test_pragmas();
+    checker.ctx.set_lib_contexts(Vec::new());
+    let real_syntax_errors: Vec<u32> = parse_diagnostics
+        .iter()
+        .filter(|d| d.code != 18037)
+        .map(|d| d.start)
+        .collect();
+    checker.ctx.has_parse_errors = !real_syntax_errors.is_empty();
+    checker.ctx.has_syntax_parse_errors = !real_syntax_errors.is_empty();
+    checker.ctx.syntax_parse_error_positions = real_syntax_errors;
+    checker.ctx.all_parse_error_positions =
+        parse_diagnostics.iter().map(|diag| diag.start).collect();
+    checker.check_source_file(source_file);
+
+    let parse_codes = parse_diagnostics.iter().map(|diag| diag.code).collect();
+    let checker_codes = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|diag| diag.code)
+        .collect();
+    (parse_codes, checker_codes)
+}
+
+/// #16360: a class static block's `await` must not delete an unrelated
+/// function's TS1308 elsewhere in the same file. tsc reports all three
+/// diagnostics (TS1308, TS18037, TS1308) for this file; before #16360's fix,
+/// tsz reported only TS18037 — the static block's TS18037 parse diagnostic
+/// set `has_syntax_parse_errors` file-wide, which gates `check_await_expression_in_container`'s
+/// entire TS1308/TS1375/TS1378 walk.
+#[test]
+fn static_block_await_does_not_suppress_unrelated_ts1308_program_wide() {
+    let (parse_codes, checker_codes) = check_with_production_suppression(
+        r#"
+function outer() { const g = function () { return await 1; }; return g; }
+class C { static { const c = await 4; } }
+function* gen() { const d = await 5; return d; }
+"#,
+    );
+    assert!(
+        parse_codes.contains(&18037),
+        "got parse codes {parse_codes:?}"
+    );
+    assert_eq!(
+        checker_codes.iter().filter(|&&c| c == 1308).count(),
+        2,
+        "tsc reports TS1308 for both `outer`'s and `gen`'s awaits — the static block's own TS18037 must not suppress either; got checker codes {checker_codes:?}"
+    );
+}
+
+/// #16360's second defect: `is_directly_at_source_file_top_level` did not
+/// stop its container walk at `CLASS_STATIC_BLOCK_DECLARATION`, so a static
+/// block's `await` walked all the way up to `SourceFile` and was
+/// misclassified as top-level `await` (TS1375/TS1378) instead of TS1308 —
+/// latent and unobservable before #16360's fix because
+/// `has_syntax_parse_errors` already suppressed this whole branch whenever a
+/// static block's `await` was present. This is a pure checker-classification
+/// bug: reproducible even with `has_syntax_parse_errors` correctly cleared.
+#[test]
+fn static_block_own_node_no_double_report_when_not_globally_suppressed() {
+    let (parse_codes, checker_codes) = check_with_production_suppression(
+        r#"
+class C { static { await 1; } }
+"#,
+    );
+    assert!(
+        parse_codes.contains(&18037),
+        "got parse codes {parse_codes:?}"
+    );
+    assert!(
+        !checker_codes.contains(&1375) && !checker_codes.contains(&1378),
+        "a static block's `await` is never at the source file's top level; got checker codes {checker_codes:?}"
+    );
+    assert!(
+        !checker_codes.contains(&1308),
+        "TS18037 (parser) already covers this `await`; a second TS1308 (checker) would be extra output tsc never produces; got checker codes {checker_codes:?}"
+    );
+}
 
 /// #16068's literal repro: `await` in a static block reached through a
 /// `while` condition, not the block's own top-level statement.
