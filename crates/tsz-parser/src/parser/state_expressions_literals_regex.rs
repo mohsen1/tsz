@@ -252,6 +252,27 @@ impl ParserState {
                         );
                         continue;
                     }
+                    // `\q{ ... }` is a class-string-disjunction operand, not a
+                    // code point: it spans through its closing brace and, like
+                    // a nested class, can never bound a range. Letting the
+                    // generic atom walk see it splits it into `q`, `{`, the
+                    // alternatives and `}`, and the brace then compares as a
+                    // range bound.
+                    if unicode_sets_mode
+                        && bytes[*i] == b'\\'
+                        && bytes.get(*i + 1).copied() == Some(b'q')
+                        && bytes.get(*i + 2).copied() == Some(b'{')
+                    {
+                        tokens.push(ClassToken::OpaqueAtom);
+                        *i += 3;
+                        while *i < body_end && bytes[*i] != b'}' {
+                            *i += 1;
+                        }
+                        if *i < body_end {
+                            *i += 1;
+                        }
+                        continue;
+                    }
                     let Some((atoms, next_i)) =
                         parse_class_atom(raw_text, *i, body_end, unicode_mode)
                     else {
@@ -1206,7 +1227,20 @@ impl ParserState {
                             }
                             Some(ClassAtomKind::Class)
                         } else {
-                            Some(ClassAtomKind::Unknown)
+                            // `ClassSetOperand` only admits `\q` as the head of
+                            // `\q{ ... }`. Without the brace there is no string
+                            // disjunction, so the operand degrades to the single
+                            // character `q` — reported, but still a character,
+                            // which is what keeps a following `-` from also
+                            // drawing the class-bounded-range diagnostic.
+                            emit(
+                                parser,
+                                start - 1,
+                                2,
+                                "'\\q' must be followed by string alternatives enclosed in braces.",
+                                diagnostic_codes::Q_MUST_BE_FOLLOWED_BY_STRING_ALTERNATIVES_ENCLOSED_IN_BRACES,
+                            );
+                            Some(ClassAtomKind::Character)
                         }
                     }
                     b'p' | b'P' => {
