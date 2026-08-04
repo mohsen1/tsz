@@ -1044,6 +1044,19 @@ impl<'a> CheckerState<'a> {
                 *target_return,
                 nested_reason.as_deref(),
             ),
+            SubtypeFailureReason::TypePredicateMismatch {
+                source_predicate,
+                target_predicate,
+                source_signature,
+                nested_reason,
+            } => self.render_type_predicate_mismatch(
+                reason,
+                &rctx,
+                source_predicate.as_ref(),
+                target_predicate,
+                *source_signature,
+                nested_reason.as_deref(),
+            ),
             SubtypeFailureReason::TypeArgumentMismatch {
                 source_arg,
                 target_arg,

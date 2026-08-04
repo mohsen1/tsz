@@ -596,6 +596,142 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Format a `TypePredicate` the way tsc's `typePredicateToString` does
+    /// (`x is T`, `this is T`, `asserts x is T`) — used for the TS1226
+    /// `Type predicate '{0}' is not assignable to '{1}'.` arguments. Mirrors
+    /// the solver's own `format_signature_with_predicate` predicate leg
+    /// (`crates/tsz-solver/src/diagnostics/format/compound.rs`), duplicated
+    /// here because that helper only renders a predicate as part of a whole
+    /// signature, never standalone.
+    fn format_type_predicate_for_diagnostic(&mut self, pred: &tsz_solver::TypePredicate) -> String {
+        let target_name = match pred.target {
+            tsz_solver::TypePredicateTarget::This => "this".to_string(),
+            tsz_solver::TypePredicateTarget::Identifier(atom) => {
+                self.ctx.types.resolve_atom_ref(atom).to_string()
+            }
+        };
+        let type_part = pred
+            .type_id
+            .map(|ty| format!(" is {}", self.format_type_diagnostic(ty)));
+        if pred.asserts {
+            format!("asserts {target_name}{}", type_part.unwrap_or_default())
+        } else {
+            format!("{target_name}{}", type_part.unwrap_or_default())
+        }
+    }
+
+    /// Render a type-predicate assignability failure: TS1224
+    /// (`source_predicate: None` — the target demands a type guard the
+    /// source signature doesn't declare at all) or TS1226 (`Some` — both
+    /// sides declare a predicate but are incompatible), each nested under
+    /// the ordinary `Type 'S' is not assignable to type 'T'.` TS2322 header.
+    pub(super) fn render_type_predicate_mismatch(
+        &mut self,
+        reason: &tsz_solver::SubtypeFailureReason,
+        ctx: &RenderContext,
+        source_predicate: Option<&tsz_solver::TypePredicate>,
+        target_predicate: &tsz_solver::TypePredicate,
+        source_signature: Option<TypeId>,
+        nested_reason: Option<&tsz_solver::SubtypeFailureReason>,
+    ) -> Diagnostic {
+        let source = ctx.source;
+        let target = ctx.target;
+        let idx = ctx.idx;
+        let depth = ctx.depth;
+        let start = ctx.start;
+        let length = ctx.length;
+        let file_name = ctx.file_name.clone();
+
+        let own_message = match source_predicate {
+            None => {
+                let sig_str = source_signature
+                    .and_then(|ty| {
+                        self.ctx
+                            .create_diagnostic_type_formatter()
+                            .format_overload_signature(ty)
+                    })
+                    .unwrap_or_else(|| self.format_type_diagnostic(source));
+                format_message(
+                    diagnostic_messages::SIGNATURE_MUST_BE_A_TYPE_PREDICATE,
+                    &[&sig_str],
+                )
+            }
+            Some(source_pred) => {
+                let source_str = self.format_type_predicate_for_diagnostic(source_pred);
+                let target_str = self.format_type_predicate_for_diagnostic(target_predicate);
+                format_message(
+                    diagnostic_messages::TYPE_PREDICATE_IS_NOT_ASSIGNABLE_TO,
+                    &[&source_str, &target_str],
+                )
+            }
+        };
+
+        // Both predicates narrow to a concrete type: tsc relates those types
+        // directly beneath the TS1226 line (`Type 'S' is not assignable to
+        // type 'T'.`), recursing through the same structured chain a plain
+        // assignability failure would use.
+        let predicate_type_pair = source_predicate
+            .and_then(|p| p.type_id)
+            .zip(target_predicate.type_id);
+
+        if depth == 0 {
+            let (source_str, target_str) =
+                self.format_top_level_assignability_message_types_at(source, target, idx);
+            let base = format_message(
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&source_str, &target_str],
+            );
+            let mut diag = Diagnostic::error(
+                file_name,
+                start,
+                length,
+                base,
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            );
+            diag.push_elaboration(own_message, reason.diagnostic_code(), 0);
+            if let Some(nested) = nested_reason
+                && let Some((s_ty, t_ty)) = predicate_type_pair
+            {
+                let nested_diag = self.render_failure_reason(nested, s_ty, t_ty, idx, depth + 1);
+                diag.push_elaboration_at(
+                    nested_diag.file,
+                    nested_diag.start,
+                    nested_diag.length,
+                    nested_diag.message_text,
+                    nested_diag.code,
+                    1,
+                );
+                diag.related_information
+                    .extend(nested_diag.related_information);
+            }
+            diag
+        } else {
+            let mut diag = Diagnostic::error(
+                file_name,
+                start,
+                length,
+                own_message,
+                reason.diagnostic_code(),
+            );
+            if let Some(nested) = nested_reason
+                && let Some((s_ty, t_ty)) = predicate_type_pair
+            {
+                let nested_diag = self.render_failure_reason(nested, s_ty, t_ty, idx, depth + 1);
+                diag.push_elaboration_at(
+                    nested_diag.file,
+                    nested_diag.start,
+                    nested_diag.length,
+                    nested_diag.message_text,
+                    nested_diag.code,
+                    0,
+                );
+                diag.related_information
+                    .extend(nested_diag.related_information);
+            }
+            diag
+        }
+    }
+
     /// Locate the span of an excess property name within a source expression.
     ///
     /// Walks any surrounding parenthesized expression, `||`/`??`/`,` combinator,
