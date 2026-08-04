@@ -50,6 +50,7 @@ mod property_receiver_formatting;
 mod recursive_alias_display;
 mod render_failure;
 mod suggestions;
+mod token_anchors;
 mod ts2820_display;
 pub(crate) mod type_display_policy;
 mod type_query_alias_display;

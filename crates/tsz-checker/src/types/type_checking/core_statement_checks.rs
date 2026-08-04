@@ -832,7 +832,7 @@ impl<'a> CheckerState<'a> {
 
                             // TS1375: top-level await is only valid in a module.
                             if self.top_level_await_requires_module_diagnostic() {
-                                self.error_at_node(
+                                self.error_at_first_token_of_node(
                                     current_idx,
                                     diagnostic_messages::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_FILE_WHEN_THAT_FILE_IS,
                                     diagnostic_codes::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_FILE_WHEN_THAT_FILE_IS,
@@ -847,14 +847,14 @@ impl<'a> CheckerState<'a> {
                             match self.top_level_await_verdict() {
                                 TopLevelAwaitVerdict::Allowed => {}
                                 TopLevelAwaitVerdict::CommonJsFile => {
-                                    self.error_at_node(
+                                    self.error_at_first_token_of_node(
                                         current_idx,
                                         diagnostic_messages::THE_CURRENT_FILE_IS_A_COMMONJS_MODULE_AND_CANNOT_USE_AWAIT_AT_THE_TOP_LEVEL,
                                         diagnostic_codes::THE_CURRENT_FILE_IS_A_COMMONJS_MODULE_AND_CANNOT_USE_AWAIT_AT_THE_TOP_LEVEL,
                                     );
                                 }
                                 TopLevelAwaitVerdict::UnsupportedModuleOrTarget => {
-                                    self.error_at_node(
+                                    self.error_at_first_token_of_node(
                                         current_idx,
                                         diagnostic_messages::TOP_LEVEL_AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ES,
                                         diagnostic_codes::TOP_LEVEL_AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ES,
@@ -868,13 +868,13 @@ impl<'a> CheckerState<'a> {
                             // — see `did_you_mean_async_related`.
                             let related = self.did_you_mean_async_related(current_idx);
                             if related.is_empty() {
-                                self.error_at_node(
+                                self.error_at_first_token_of_node(
                                     current_idx,
                                     diagnostic_messages::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS,
                                     diagnostic_codes::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS,
                                 );
                             } else {
-                                self.error_at_node_with_related(
+                                self.error_at_first_token_of_node_with_related(
                                     current_idx,
                                     diagnostic_messages::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS,
                                     diagnostic_codes::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS,
@@ -1038,12 +1038,14 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // The `await` keyword sits immediately after `for `.
-        let await_anchor = self
-            .ctx
-            .arena
-            .get(stmt_idx)
-            .map(|stmt_node| (stmt_node.pos + 4, 5u32));
+        // tsc anchors this family on `ForOfStatement.awaitModifier` — the
+        // `await` keyword token, never the whole statement. This arena stores
+        // no modifier node, so the keyword is located as the token after
+        // `for`. Scanning for it (rather than assuming `stmt.pos + 4`) keeps
+        // the anchor right when the two keywords are not separated by exactly
+        // one space, e.g. `for /* c */ await (const x of y) {}`, and when
+        // `stmt.pos` still carries leading trivia.
+        let await_anchor = self.span_of_second_token_of_node(stmt_idx);
 
         if self.ctx.function_depth > 0 {
             if self.find_enclosing_static_block(stmt_idx).is_some() {
