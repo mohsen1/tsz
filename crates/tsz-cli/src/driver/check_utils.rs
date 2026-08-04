@@ -440,6 +440,57 @@ fn is_hard_keyword_interface_name_2427_parse_diagnostic(diagnostic: &ParseDiagno
 /// drops the TS1091/TS1188 that would otherwise fire), and each counted as a
 /// "real" parse error that could silently delete an unrelated listed
 /// sibling from the same file.
+///
+/// #16279 audit round 3: two more parser-emitted, unrelated-family codes
+/// confirmed checker-suppressible against `typescript@7.0.2` (Direction B: a
+/// genuine unrelated syntax error elsewhere in the file drops each of these
+/// on the real compiler, AND the real `tsz` binary was rebuilt and rerun on
+/// each witness end-to-end, not just the synthetic-diagnostic unit test).
+/// TS1156 (`'{0}' declarations can only be declared inside a block`,
+/// `state/recovery.rs`) and TS1358 (`tagged template expressions are not
+/// permitted in an optional chain`, `state_expressions_call_member.rs`;
+/// reachable via the immediate "optional-chain token directly followed by a
+/// template literal" shape — a chain that opens earlier and continues into
+/// a tagged template is a separate, unclaimed detection gap, not this
+/// list's concern), and TS18024 (`an enum member cannot be named with a
+/// private identifier`, `state_declarations.rs`).
+///
+/// Three adjacent candidates from the same scan were investigated and
+/// deliberately left OUT of this round, each for a different reason —
+/// worth reading before extending this list, since none of the three
+/// failure modes is obvious from a synthetic-diagnostic unit test alone:
+/// - **TS1313** (`the body of an 'if' statement cannot be the empty
+///   statement`) is Direction-B-confirmed suppressible in isolation, but
+///   this exact code number is ALSO a pre-existing (mislabeled-comment)
+///   member of `is_real_syntax_error`/`is_structural_parse_error` below —
+///   so a file whose *only* diagnostic is TS1313 already counts as
+///   "the program has a real syntax error" through that other list, and
+///   adding TS1313 here made it suppress *itself*, confirmed as a real
+///   regression by rebuilding `tsz` and rerunning `if (true) ;` before and
+///   after (present on `main`, silently dropped with the naive fix). Fixing
+///   this needs auditing whether 1313 genuinely belongs in
+///   `is_real_syntax_error`/`is_structural_parse_error` first — left as a
+///   NOTE on the coordination board, not folded into this PR.
+/// - **TS2499** (`an interface can only extend an identifier/qualified-name
+///   with optional type arguments`) is Direction-B-confirmed suppressible,
+///   but has a pre-existing, unrelated double-emission bug: both the parser
+///   (`state_statements_class_declarations.rs`) and the checker
+///   (`state/state_checking/heritage.rs`, its own independent TS2499 walk)
+///   report it for the same node, so `interface I extends (1 + 2) {}`
+///   reports TS2499 twice today regardless of this list. Adding it here
+///   would fold a real emission-site bug into this suppression-only audit;
+///   left for its own fix.
+/// - **TS2427/TS2457** (interface/type-alias reserved names) have an
+///   existing bespoke hard-keyword-vs-checker-emitted split
+///   (`is_hard_keyword_interface_name_2427_parse_diagnostic` here,
+///   `is_hard_keyword_interface_name_2427` in `checker_diagnostics.rs`) that
+///   this audit did not have the budget to verify safe to fold in here; a
+///   future slice should re-derive that interaction against the oracle
+///   before touching either code. TS2819 (namespace reserved names, the
+///   third member of this same family) was oracle-tested and rejected: tsc
+///   keeps it alongside an unrelated syntax error in the same file, unlike
+///   its TS2427/TS2457 siblings — so family membership must not be assumed
+///   from a sibling's membership.
 const fn is_parser_grammar_code(code: u32) -> bool {
     matches!(
         code,
@@ -514,6 +565,9 @@ const fn is_parser_grammar_code(code: u32) -> bool {
         | 1495 // '{0}' modifier cannot appear on an 'await using' declaration
         | 1275 // 'accessor' modifier can only appear on a property declaration
         | 1276 // An 'accessor' property cannot be declared optional
+        | 1156 // '{0}' declarations can only be declared inside a block
+        | 1358 // Tagged template expressions are not permitted in an optional chain
+        | 18024 // An enum member cannot be named with a private identifier
         | 8038 // Decorators may not appear after 'export' or 'export default' if they also appear before 'export'
         | 18037 // 'await' expression cannot be used inside a class static block
         | 18041 // A 'return' statement cannot be used inside a class static block
@@ -1619,3 +1673,7 @@ mod regex_grammar_suppression_tests;
 #[cfg(test)]
 #[path = "check_utils/for_in_of_single_declaration_grammar_tests.rs"]
 mod for_in_of_single_declaration_grammar_tests;
+
+#[cfg(test)]
+#[path = "check_utils/audit_round_3_grammar_tests.rs"]
+mod audit_round_3_grammar_tests;
