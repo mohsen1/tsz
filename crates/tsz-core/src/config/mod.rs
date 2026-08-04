@@ -1384,7 +1384,11 @@ fn load_tsconfig_inner(
 ) -> Result<TsConfig> {
     let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     if !visited.insert(canonical.clone()) {
-        bail!("tsconfig extends cycle detected at {}", canonical.display());
+        // An `extends` cycle is recoverable in tsc: the cyclic base simply
+        // contributes nothing and the rest of the chain still merges. See
+        // `load_tsconfig_inner_with_diagnostics` for the TS18000 half; this
+        // diagnostic-free loader only needs the recovery.
+        return Ok(TsConfig::default());
     }
 
     let source = std::fs::read_to_string(path)
@@ -1439,7 +1443,27 @@ fn load_tsconfig_inner_with_diagnostics(
 ) -> Result<ParsedTsConfig> {
     let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     if !visited.insert(canonical.clone()) {
-        bail!("tsconfig extends cycle detected at {}", canonical.display());
+        // tsc's `parseConfig` checks its `resolutionStack` on entry, reports
+        // TS18000 once, and returns an empty config for the cyclic base — the
+        // surviving part of the chain still merges and the program still
+        // loads and checks. `visited` is a path stack (popped on the way out),
+        // so a diamond where two bases share one ancestor is not a cycle and
+        // does not reach here.
+        //
+        // The message keeps its `{0}` placeholder unsubstituted because that
+        // is what tsc emits: it builds this diagnostic without passing the
+        // resolution stack as an argument. Reproduced against `typescript@7.0.2`
+        // on the self-, 2- and 3-config cycles. Filed upstream as a tsc bug;
+        // per the parity contract this matches rather than "fixes" it.
+        let mut parsed = ParsedTsConfig::default();
+        parsed.diagnostics.push(Diagnostic::error(
+            "",
+            0,
+            0,
+            diagnostic_messages::CIRCULARITY_DETECTED_WHILE_RESOLVING_CONFIGURATION.to_string(),
+            diagnostic_codes::CIRCULARITY_DETECTED_WHILE_RESOLVING_CONFIGURATION,
+        ));
+        return Ok(parsed);
     }
 
     let source = std::fs::read_to_string(path)

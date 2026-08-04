@@ -4,6 +4,7 @@
 //! under the 2000-line limit (§19; ratchet tracked by #8280). This module
 //! contains no test logic itself; it only wires up the shards.
 
+mod extends_cycle_and_jsx_factory_values;
 mod files_list_empty;
 mod module_resolution;
 mod options_parsing;

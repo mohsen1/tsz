@@ -34,6 +34,7 @@ pub struct RemovedOptionNotice {
 }
 
 /// Result of parsing a tsconfig.json with diagnostic collection.
+#[derive(Default)]
 pub struct ParsedTsConfig {
     pub config: TsConfig,
     pub diagnostics: Vec<Diagnostic>,
