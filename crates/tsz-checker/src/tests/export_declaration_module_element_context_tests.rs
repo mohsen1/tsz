@@ -139,3 +139,80 @@ fn exported_function_declaration_nested_reports_ts1184_regardless_of_file_kind()
     assert!(!ts.contains(&EXPORT_DECL_TOP_LEVEL_OF_NAMESPACE_OR_MODULE));
     assert!(!js.contains(&EXPORT_DECL_TOP_LEVEL_OF_MODULE));
 }
+
+// --- `export interface`/`export type`/`export enum` nested in a block get
+// --- the same TS1184 as `export class`/`export function`/`export var`
+// --- above, not TS1233. Verified against pinned tsc 7.0.2: `export` on an
+// --- interface/type-alias/enum declaration is a modifier subject to the
+// --- same `checkGrammarModifiers` placement check as class/function/var,
+// --- so a misplaced one reports "Modifiers cannot appear here", not the
+// --- export-declaration-specific top-level-only diagnostic. These three
+// --- declaration kinds are TS-only syntax (invalid in a `.js` file for
+// --- unrelated reasons), so unlike the class/function/var siblings above
+// --- they have no JS-file variant to check.
+
+#[test]
+fn exported_interface_declaration_nested_reports_ts1184() {
+    let source = "function f() {\n  export interface I { a: number }\n}\n";
+    let codes = ts_codes(source);
+    assert!(codes.contains(&MODIFIERS_CANNOT_APPEAR_HERE));
+    assert!(!codes.contains(&EXPORT_DECL_TOP_LEVEL_OF_NAMESPACE_OR_MODULE));
+}
+
+#[test]
+fn exported_type_alias_declaration_nested_reports_ts1184() {
+    let source = "function f() {\n  export type T = number;\n}\n";
+    let codes = ts_codes(source);
+    assert!(codes.contains(&MODIFIERS_CANNOT_APPEAR_HERE));
+    assert!(!codes.contains(&EXPORT_DECL_TOP_LEVEL_OF_NAMESPACE_OR_MODULE));
+}
+
+#[test]
+fn exported_enum_declaration_nested_reports_ts1184() {
+    let source = "function f() {\n  export enum E { A, B }\n}\n";
+    let codes = ts_codes(source);
+    assert!(codes.contains(&MODIFIERS_CANNOT_APPEAR_HERE));
+    assert!(!codes.contains(&EXPORT_DECL_TOP_LEVEL_OF_NAMESPACE_OR_MODULE));
+}
+
+#[test]
+fn exported_const_enum_declaration_nested_reports_ts1184() {
+    let source = "function f() {\n  export const enum E { A, B }\n}\n";
+    let codes = ts_codes(source);
+    assert!(codes.contains(&MODIFIERS_CANNOT_APPEAR_HERE));
+    assert!(!codes.contains(&EXPORT_DECL_TOP_LEVEL_OF_NAMESPACE_OR_MODULE));
+}
+
+// --- Positive controls: these declaration kinds stay clean at the top level.
+
+#[test]
+fn exported_interface_declaration_at_top_level_is_clean() {
+    let codes = ts_codes("export interface I { a: number }\n");
+    assert!(!codes.contains(&MODIFIERS_CANNOT_APPEAR_HERE));
+    assert!(!codes.contains(&EXPORT_DECL_TOP_LEVEL_OF_NAMESPACE_OR_MODULE));
+}
+
+#[test]
+fn exported_type_alias_declaration_at_top_level_is_clean() {
+    let codes = ts_codes("export type T = number;\n");
+    assert!(!codes.contains(&MODIFIERS_CANNOT_APPEAR_HERE));
+    assert!(!codes.contains(&EXPORT_DECL_TOP_LEVEL_OF_NAMESPACE_OR_MODULE));
+}
+
+#[test]
+fn exported_enum_declaration_at_top_level_is_clean() {
+    let codes = ts_codes("export enum E { A, B }\n");
+    assert!(!codes.contains(&MODIFIERS_CANNOT_APPEAR_HERE));
+    assert!(!codes.contains(&EXPORT_DECL_TOP_LEVEL_OF_NAMESPACE_OR_MODULE));
+}
+
+// --- Nested inside a namespace body: MODULE_BLOCK is a valid context, so
+// --- these stay clean too (regression net distinguishing "nested in a
+// --- block" from "nested in a namespace", which share no other test here).
+
+#[test]
+fn exported_interface_declaration_in_namespace_body_is_clean() {
+    let codes = ts_codes("namespace N {\n  export interface I { a: number }\n}\n");
+    assert!(!codes.contains(&MODIFIERS_CANNOT_APPEAR_HERE));
+    assert!(!codes.contains(&EXPORT_DECL_TOP_LEVEL_OF_NAMESPACE_OR_MODULE));
+}
