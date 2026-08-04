@@ -3,12 +3,14 @@
 //! Pure file-organization move; no logic changes. Keeps `state_expressions_literals.rs`
 //! under the parser LOC ceiling.
 
+use super::regex_group_names;
 use super::regex_unicode_properties::{
     BINARY_UNICODE_PROPERTIES_OF_STRINGS, canonical_non_binary_property_name,
     is_known_unicode_property_name_or_value, unicode_property_value_is_known,
 };
 use super::state::ParserState;
 use crate::parser::{NodeIndex, node::LiteralData};
+use std::cell::RefCell;
 use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use tsz_scanner::SyntaxKind;
 use tsz_scanner::scanner_impl::TokenFlags;
@@ -367,6 +369,10 @@ impl ParserState {
                 unicode_sets_mode: bool,
                 start_pos: u32,
                 capturing_group_count: u32,
+                /// Per-alternative capturing-group name scopes, shared across
+                /// the whole recursive scan. `RefCell` because the scan hands
+                /// `&RegexScanContext` down every level.
+                group_names: &'a RefCell<regex_group_names::GroupNameScopes>,
             }
 
             struct CharEscapeScanCtx<'a> {
@@ -468,13 +474,59 @@ impl ParserState {
 
             use crate::parser::regex_modifier_groups::next_utf8_char;
 
-            const fn is_word_char(ch: u8) -> bool {
-                ch == b'_' || ch.is_ascii_alphanumeric() || ch >= 0x80
-            }
+            /// Scan a `(?<name>` or `\k<name>` group name and report the
+            /// grammar errors tsc's `scanGroupName` reports there.
+            ///
+            /// `pos` must sit just past the `<`. Reports `TS1514` when no
+            /// identifier is present, `TS1515` when a *declaration*'s name is
+            /// already visible in the current or an enclosing alternative, and
+            /// consumes the closing `>` or reports `'>' expected.` in its
+            /// place. Reference names (`\k<...>`) are only shape-checked here;
+            /// their resolution against the pattern's declared names is the
+            /// checker's existing `TS1532` pass.
+            fn scan_group_name_and_delimiter<F>(
+                parser: &mut ParserState,
+                ctx: &RegexScanContext<'_, F>,
+                pos: &mut usize,
+                is_reference: bool,
+            ) where
+                F: Fn(&mut ParserState, usize, u32, &str, u32),
+            {
+                let name_start = *pos;
+                let scanned = regex_group_names::scan_group_name(ctx.body, ctx.body_end, pos);
 
-            fn scan_identifier(body: &[u8], end: usize, pos: &mut usize) {
-                while *pos < end && is_word_char(body[*pos]) {
+                match scanned {
+                    None => {
+                        (ctx.emit)(
+                            parser,
+                            name_start,
+                            0,
+                            diagnostic_messages::EXPECTED_A_CAPTURING_GROUP_NAME,
+                            diagnostic_codes::EXPECTED_A_CAPTURING_GROUP_NAME,
+                        );
+                    }
+                    Some(name) if !is_reference => {
+                        if !ctx.group_names.borrow_mut().declare(&name) {
+                            (ctx.emit)(
+                                parser,
+                                name_start,
+                                (*pos - name_start) as u32,
+                                diagnostic_messages::NAMED_CAPTURING_GROUPS_WITH_THE_SAME_NAME_MUST_BE_MUTUALLY_EXCLUSIVE_TO_EACH_OTH,
+                                diagnostic_codes::NAMED_CAPTURING_GROUPS_WITH_THE_SAME_NAME_MUST_BE_MUTUALLY_EXCLUSIVE_TO_EACH_OTH,
+                            );
+                        }
+                    }
+                    Some(_) => {}
+                }
+
+                if *pos < ctx.body_end && ctx.body[*pos] == b'>' {
                     *pos += 1;
+                } else {
+                    // tsc's `scanExpectedChar`. A zero-length report at the
+                    // same position as the `TS1514` above is dropped by the
+                    // parser's same-position dedup, which is why
+                    // `/(?<1a>x)/` is one diagnostic in tsc and not two.
+                    (ctx.emit)(parser, *pos, 0, "'>' expected.", diagnostic_codes::EXPECTED);
                 }
             }
 
@@ -1480,10 +1532,9 @@ impl ParserState {
                                 *pos += 1;
                                 if *pos < ctx.body_end && ctx.body[*pos] == b'<' {
                                     *pos += 1;
-                                    scan_identifier(ctx.body, ctx.body_end, pos);
-                                    if *pos < ctx.body_end && ctx.body[*pos] == b'>' {
-                                        *pos += 1;
-                                    }
+                                    scan_group_name_and_delimiter(
+                                        parser, ctx, pos, /*is_reference*/ true,
+                                    );
                                 } else if ctx.strict_mode {
                                     (ctx.emit)(
                                         parser,
@@ -1539,10 +1590,9 @@ impl ParserState {
                                             *pos += 1;
                                             is_previous_term_quantifiable = false;
                                         } else {
-                                            scan_identifier(ctx.body, ctx.body_end, pos);
-                                            if *pos < ctx.body_end && ctx.body[*pos] == b'>' {
-                                                *pos += 1;
-                                            }
+                                            scan_group_name_and_delimiter(
+                                                parser, ctx, pos, /*is_reference*/ false,
+                                            );
                                             is_previous_term_quantifiable = true;
                                         }
                                         scan_disjunction(parser, ctx, pos, true);
@@ -1843,7 +1893,12 @@ impl ParserState {
                 F: Fn(&mut ParserState, usize, u32, &str, u32),
             {
                 loop {
+                    // tsc brackets every alternative with a fresh capturing-group
+                    // name scope, so sibling alternatives are mutually exclusive
+                    // while enclosing alternatives stay visible.
+                    ctx.group_names.borrow_mut().enter_alternative();
                     scan_alternative(parser, ctx, pos, in_group);
+                    ctx.group_names.borrow_mut().leave_alternative();
 
                     if *pos >= ctx.body_end || ctx.body[*pos] != b'|' {
                         return;
@@ -1853,6 +1908,7 @@ impl ParserState {
                 }
             }
 
+            let group_names = RefCell::new(regex_group_names::GroupNameScopes::new());
             let ctx = RegexScanContext {
                 emit: &emit,
                 body: bytes,
@@ -1861,6 +1917,7 @@ impl ParserState {
                 unicode_sets_mode,
                 start_pos,
                 capturing_group_count: count_capturing_groups(bytes, body_end),
+                group_names: &group_names,
             };
             let mut pos = 1usize;
             scan_disjunction(parser, &ctx, &mut pos, false);
