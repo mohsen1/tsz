@@ -235,6 +235,8 @@ mod destructuring_relation_routing_arch_tests;
 mod diagnostic_sink_message_surgery_arch_tests;
 #[path = "tests/diagnostic_source_relation_routing_arch_tests.rs"]
 mod diagnostic_source_relation_routing_arch_tests;
+#[path = "tests/did_you_mean_async_related_tests.rs"]
+mod did_you_mean_async_related_tests;
 #[path = "tests/direct_generic_return_tests.rs"]
 mod direct_generic_return_tests;
 #[path = "tests/dispatch_tests.rs"]

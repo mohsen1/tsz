@@ -862,12 +862,25 @@ impl<'a> CheckerState<'a> {
                                 }
                             }
                         } else {
-                            // TS1308: 'await' expressions are only allowed within async functions
-                            self.error_at_node(
-                                current_idx,
-                                diagnostic_messages::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS,
-                                diagnostic_codes::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS,
-                            );
+                            // TS1308: 'await' expressions are only allowed within async functions.
+                            // tsc points the reader at the function that would
+                            // have to become `async` (TS1356), when there is one
+                            // — see `did_you_mean_async_related`.
+                            let related = self.did_you_mean_async_related(current_idx);
+                            if related.is_empty() {
+                                self.error_at_node(
+                                    current_idx,
+                                    diagnostic_messages::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS,
+                                    diagnostic_codes::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS,
+                                );
+                            } else {
+                                self.error_at_node_with_related(
+                                    current_idx,
+                                    diagnostic_messages::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS,
+                                    diagnostic_codes::AWAIT_EXPRESSIONS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS,
+                                    related,
+                                );
+                            }
                         }
                     }
                 }
@@ -1054,20 +1067,23 @@ impl<'a> CheckerState<'a> {
                 // TS1103: 'for await' loops are only allowed within async
                 // functions and at the top levels of modules. This is to
                 // `for await` exactly what TS1308 is to a bare `await`
-                // expression's non-top-level arm.
+                // expression's non-top-level arm — including tsc's TS1356
+                // pointer at the function that would have to become `async`.
+                let related = self.did_you_mean_async_related(stmt_idx);
                 if let Some((await_pos, await_len)) = await_anchor {
-                    self.error(
+                    self.error_at_span_with_related(
                         await_pos,
                         await_len,
-                        diagnostic_messages::FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS_OF
-                            .to_string(),
+                        diagnostic_messages::FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS_OF,
                         diagnostic_codes::FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS_OF,
+                        related,
                     );
                 } else {
-                    self.error_at_node(
+                    self.error_at_node_with_related(
                         stmt_idx,
                         diagnostic_messages::FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS_OF,
                         diagnostic_codes::FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LEVELS_OF,
+                        related,
                     );
                 }
             }
