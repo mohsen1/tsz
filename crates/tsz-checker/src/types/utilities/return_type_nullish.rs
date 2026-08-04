@@ -74,6 +74,19 @@ impl CheckerState<'_> {
             };
             let elements: Vec<NodeIndex> = array.elements.nodes.clone();
             return elements.into_iter().all(|element| {
+                // An elided element (`return [,,]`, parsed as `NodeIndex::NONE`)
+                // is a widening source: the user wrote no value, so tsc gives
+                // the hole `undefinedWideningType` exactly as it does the bare
+                // `undefined` keyword, and `() => [,,]` infers `any[]`. Without
+                // this the hole hits the node-lookup guard and fails closed.
+                // The enclosing `all` keeps it honest — a hole is permissive on
+                // its own and decisive nowhere, so one declared-`undefined`
+                // sibling (`return [, q]`) still makes the whole literal
+                // non-widening. Matches the mutable-binding seam's identical
+                // carve-out (`mutable_binding_nullish.rs`, #16393).
+                if element == NodeIndex::NONE {
+                    return true;
+                }
                 self.return_contribution_nullish_leaves_are_widening(element, depth + 1)
             });
         }

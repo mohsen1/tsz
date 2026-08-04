@@ -220,3 +220,47 @@ fn strict_mode_keeps_undefined_array_return_unwidened() {
     .collect();
     assert_eq!(codes, vec![2322]);
 }
+
+#[test]
+fn elided_array_holes_in_a_return_are_widening_sources() {
+    // `return [,,]` — the user wrote no value, so tsc gives each hole
+    // `undefinedWideningType` and infers `() => any[]`.
+    assert_eq!(
+        non_strict_2322(
+            "function sparse() { return [,,]; }\n\
+             var holes = sparse();\n\
+             holes = [\"\"];",
+        ),
+        Vec::<u32>::new(),
+    );
+}
+
+#[test]
+fn one_declared_undefined_sibling_makes_an_elided_literal_non_widening() {
+    // A hole is permissive on its own and decisive nowhere: the declared
+    // `undefined` element still pins the whole literal to `undefined[]`.
+    assert_eq!(
+        non_strict_2322(
+            "declare var gap: undefined;\n\
+             function mixed() { return [, gap]; }\n\
+             var mixture = mixed();\n\
+             mixture = [\"\"];",
+        ),
+        vec![2322],
+    );
+}
+
+#[test]
+fn a_declared_nullish_array_leaf_is_not_a_widening_source() {
+    // `g()` returns a declared `undefined[]`; the array literal built around it
+    // carries no widening flavour, so tsc keeps `undefined[][]`.
+    assert_eq!(
+        non_strict_2322(
+            "declare function supply(): undefined[];\n\
+             function nest() { return [supply()]; }\n\
+             var nested = nest();\n\
+             nested = [[\"\"]];",
+        ),
+        vec![2322],
+    );
+}
