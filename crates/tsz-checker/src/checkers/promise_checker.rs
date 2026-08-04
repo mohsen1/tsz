@@ -15,7 +15,27 @@ use tsz_solver::TypeId;
 struct ThenableAwaitInfo {
     awaited_type: Option<TypeId>,
     rejected_this_type: Option<TypeId>,
-    has_callable_then: bool,
+    /// `tsc`'s `isThenableType`: the `then` property exists and, once `null`
+    /// and `undefined` are stripped from it, is callable. Deliberately looser
+    /// than the signatures of the *raw* `then` property that
+    /// `getPromisedTypeOfPromiseEx` reads — an optional `then?:` is thenable
+    /// but has no raw call signature, and that gap is exactly one of the shapes
+    /// `tsc` reports as an invalid thenable.
+    is_thenable: bool,
+    /// At least one `then` signature surviving the `this` filter has a callable
+    /// `onfulfilled` parameter (`getSignaturesOfType(onfulfilledParameterType)`
+    /// non-empty in `tsc`).
+    fulfillment_callback_callable: bool,
+}
+
+impl ThenableAwaitInfo {
+    /// `tsc` reports the "must either be a valid promise or must not contain a
+    /// callable `then` member" family when a type is thenable but
+    /// `getPromisedTypeOfPromiseEx` still yields nothing.
+    const fn is_invalid_thenable(&self) -> bool {
+        self.is_thenable
+            && (self.rejected_this_type.is_some() || !self.fulfillment_callback_callable)
+    }
 }
 
 const MAX_THENABLE_THIS_VALIDATION_DEPTH: u8 = 10;
@@ -528,8 +548,9 @@ impl<'a> CheckerState<'a> {
     /// A type that is not thenable is its own awaited type; a thenable is
     /// awaited recursively, since a `then` callback whose payload is itself
     /// thenable keeps unwrapping. `None` marks tsc's `undefined` result — a
-    /// `then` that is callable but yields no fulfillment payload — which the
-    /// diagnostic callers render as `void`, matching tsc's `|| voidType`.
+    /// thenable whose `getPromisedTypeOfPromiseEx` still yields nothing —
+    /// which the diagnostic callers render as `void`, matching tsc's
+    /// `|| voidType`.
     pub(crate) fn awaited_type_no_alias(&mut self, type_id: TypeId) -> Option<TypeId> {
         self.awaited_type_no_alias_with_depth(type_id, 0)
     }
@@ -542,46 +563,68 @@ impl<'a> CheckerState<'a> {
         // unions and intersections first, so only a user-written thenable
         // reaches the payload extraction below.
         let unwrapped = self.compute_awaited_type(type_id, 0);
-        let info = self.extract_awaited_type_from_valid_thenable(unwrapped, false);
+        let info = self.extract_awaited_type_from_valid_thenable(unwrapped, true);
         match info.awaited_type {
             Some(payload) if payload != unwrapped => {
                 self.awaited_type_no_alias_with_depth(payload, depth + 1)
             }
-            // A callable `then` that yields no fulfillment payload is tsc's
-            // `undefined` result. Everything else — a thenable that already
-            // awaits to itself, and a type that is not thenable at all — is
-            // its own awaited type.
-            None if info.has_callable_then => None,
+            // Thenable, yet no fulfillment payload survives: tsc's `undefined`
+            // result. Everything else — a thenable that already awaits to
+            // itself, and a type that is not thenable at all — is its own
+            // awaited type.
+            None if info.is_thenable => None,
             _ => Some(unwrapped),
         }
     }
 
+    /// The `this` type that rejected every `then` signature of an invalid
+    /// thenable, when that is why the type is invalid.
+    ///
+    /// This is the sub-message payload only — use
+    /// [`Self::await_operand_is_invalid_thenable`] to decide whether the
+    /// diagnostic fires at all. A thenable can be invalid with no `this`
+    /// mismatch anywhere.
     pub(crate) fn await_operand_invalid_thenable_this_type(
         &mut self,
         type_id: TypeId,
     ) -> Option<TypeId> {
-        self.await_operand_invalid_thenable_this_type_with_depth(type_id, 0)
+        self.invalid_thenable_info(type_id, 0)
+            .and_then(|info| info.rejected_this_type)
     }
 
-    fn await_operand_invalid_thenable_this_type_with_depth(
-        &mut self,
-        type_id: TypeId,
-        depth: u8,
-    ) -> Option<TypeId> {
+    /// Whether an `await`/`yield` operand (or an async return expression) is a
+    /// thenable that is not a valid promise.
+    ///
+    /// Mirrors `tsc`'s `getAwaitedTypeNoAliasEx`: the diagnostic fires exactly
+    /// when `isThenableType(t)` holds and `getPromisedTypeOfPromiseEx(t)`
+    /// still returns nothing.
+    pub(crate) fn await_operand_is_invalid_thenable(&mut self, type_id: TypeId) -> bool {
+        self.invalid_thenable_info(type_id, 0).is_some()
+    }
+
+    fn invalid_thenable_info(&mut self, type_id: TypeId, depth: u8) -> Option<ThenableAwaitInfo> {
         if depth > MAX_THENABLE_THIS_VALIDATION_DEPTH {
             return None;
         }
 
         if let Some(inner) = self.builtin_promise_like_application_arg(type_id) {
             return (!self.is_awaited_application(inner))
-                .then(|| self.await_operand_invalid_thenable_this_type_with_depth(inner, depth + 1))
+                .then(|| self.invalid_thenable_info(inner, depth + 1))
                 .flatten();
         }
 
+        // `tsc` maps `getAwaitedTypeNoAliasEx` over a union's constituents, so a
+        // single bad branch makes the whole operand invalid. A union of `then`
+        // methods has no call signatures of its own, so without this the
+        // per-constituent shape is never examined.
+        if let Some(members) = query::promise_union_members(self.ctx.types, type_id) {
+            return members
+                .into_iter()
+                .find_map(|member| self.invalid_thenable_info(member, depth + 1));
+        }
+
         let info = self.extract_awaited_type_from_valid_thenable(type_id, true);
-        (info.has_callable_then && info.awaited_type.is_none())
-            .then_some(info.rejected_this_type)
-            .flatten()
+        info.is_invalid_thenable().then_some(info)
     }
 
     fn extract_awaited_type_from_valid_thenable(
@@ -617,20 +660,37 @@ impl<'a> CheckerState<'a> {
             return ThenableAwaitInfo {
                 awaited_type: None,
                 rejected_this_type: Some(expected_this),
-                has_callable_then: true,
+                is_thenable: true,
+                fulfillment_callback_callable: false,
             };
         }
+
+        // `tsc`'s `isThenableType` probes the `then` property with `null` and
+        // `undefined` stripped, while `getPromisedTypeOfPromiseEx` reads the raw
+        // property. An optional `then?:` satisfies the former and not the
+        // latter, which is precisely one of the invalid-thenable shapes.
+        let is_thenable = !query::type_is_primitive_like(self.ctx.types, receiver_type)
+            && !query::thenable_signature_surfaces(
+                self.ctx.types,
+                query::non_nullish_type(self.ctx.types, then_type),
+            )
+            .is_empty();
 
         // Call signatures of `then`. The promise boundary recovers both
         // callable and bare-function method forms, mirroring tsc's
         // structural `then`/`onfulfilled` probe.
         let sigs = query::thenable_signature_surfaces(self.ctx.types, then_type);
         if sigs.is_empty() {
-            return ThenableAwaitInfo::default();
+            return ThenableAwaitInfo {
+                is_thenable,
+                ..ThenableAwaitInfo::default()
+            };
         }
 
         let mut callback_value_types = Vec::new();
         let mut rejected_this_type = None;
+        let mut fulfillment_callback_callable = false;
+        let mut candidate_count = 0usize;
         for sig in &sigs {
             if let Some(expected_this) = sig.this_type()
                 && expected_this != TypeId::VOID
@@ -641,14 +701,30 @@ impl<'a> CheckerState<'a> {
                 rejected_this_type.get_or_insert(expected_this);
                 continue;
             }
+            candidate_count += 1;
 
             // The first parameter is `onfulfilled?: ((value: T) => ...) | null | undefined`.
-            if let Some(onfulfilled_type) = sig.onfulfilled_type()
-                && let Some(value_type) =
-                    query::thenable_callback_value_type(self.ctx.types, onfulfilled_type)
+            let Some(onfulfilled_type) = sig.onfulfilled_type() else {
+                continue;
+            };
+            if !query::thenable_callback_is_callable(self.ctx.types, onfulfilled_type) {
+                continue;
+            }
+            fulfillment_callback_callable = true;
+            // A callable `onfulfilled` that declares no parameters still makes
+            // the type a valid promise — `tsc` falls back to `never` for the
+            // payload rather than rejecting the shape.
+            if let Some(value_type) =
+                query::thenable_callback_value_type(self.ctx.types, onfulfilled_type)
             {
                 callback_value_types.push(value_type);
             }
+        }
+
+        // Every signature was rejected by its `this` annotation: `tsc` reports
+        // the `this`-context sub-message and gives up on the promised type.
+        if candidate_count == 0 {
+            fulfillment_callback_callable = false;
         }
 
         let awaited_type =
@@ -656,8 +732,11 @@ impl<'a> CheckerState<'a> {
 
         ThenableAwaitInfo {
             awaited_type,
-            rejected_this_type,
-            has_callable_then: true,
+            rejected_this_type: (candidate_count == 0)
+                .then_some(rejected_this_type)
+                .flatten(),
+            is_thenable,
+            fulfillment_callback_callable,
         }
     }
 

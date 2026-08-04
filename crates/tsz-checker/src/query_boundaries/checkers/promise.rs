@@ -243,6 +243,73 @@ pub(crate) fn thenable_signature_surfaces(
         .collect()
 }
 
+/// Whether every constituent of a type is a primitive or `never`, mirroring
+/// `tsc`'s `allTypesAssignableToKind(getBaseConstraintOrType(t), Primitive | Never)`
+/// guard in `isThenableType`/`getPromisedTypeOfPromiseEx`.
+///
+/// A primitive never adopts a `then` member, so `string & { then(...) }` is not
+/// a thenable however the intersection's property lookup resolves — `tsc`
+/// reaches that verdict through `isTypeAssignableTo(source, stringType)`, which
+/// the structural intersection arm below stands in for.
+pub(crate) fn type_is_primitive_like(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    fn is_primitive_leaf(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+        type_id == TypeId::NEVER || tsz_solver::visitor::is_primitive_type(db, type_id)
+    }
+
+    fn walk(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+        if let Some(members) = super::super::common::union_members(db, type_id) {
+            return members.iter().all(|&member| walk(db, member));
+        }
+        if let Some(members) = intersection_members(db, type_id) {
+            return members.iter().any(|&member| walk(db, member));
+        }
+        is_primitive_leaf(db, type_id)
+    }
+
+    // `getBaseConstraintOrType` first: a type parameter constrained to a
+    // primitive is in the primitive domain regardless of any `then` its
+    // constraint also carries, so `T extends number & { then(): void }` is not
+    // a thenable even though `then` resolves through the constraint.
+    walk(
+        db,
+        tsz_solver::type_queries::get_base_constraint_of_type(db, type_id),
+    ) || walk(db, type_id)
+}
+
+/// Strip `null`/`undefined` from a type, mirroring `tsc`'s
+/// `getTypeWithFacts(t, TypeFacts.NEUndefinedOrNull)`.
+pub(crate) fn non_nullish_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::narrowing::remove_nullish(db, type_id)
+}
+
+/// Whether a `then` signature's `onfulfilled` parameter is itself callable.
+///
+/// `tsc`'s `getPromisedTypeOfPromiseEx` asks
+/// `getSignaturesOfType(onfulfilledParameterType, Call)` and treats an empty
+/// result as "not a valid promise" — independently of whether a *payload* can
+/// be recovered from that callback, because a zero-parameter callback still
+/// resolves (to `never`, via `getTypeOfFirstParameterOfSignature`'s fallback).
+/// `thenable_callback_value_type` cannot answer this: it returns `None` both
+/// for "not callable" and for "callable but declares no parameters".
+///
+/// The member scan mirrors `thenable_callback_value_type`'s own union walk so
+/// the two queries agree on which surfaces count as a callback.
+pub(crate) fn thenable_callback_is_callable(db: &dyn TypeDatabase, callback_type: TypeId) -> bool {
+    fn is_callable_surface(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+        call_signatures_for_type(db, type_id).is_some_and(|sigs| !sigs.is_empty())
+            || function_shape_for_type(db, type_id).is_some()
+    }
+
+    if is_callable_surface(db, callback_type) {
+        return true;
+    }
+    super::super::common::union_members(db, callback_type).is_some_and(|members| {
+        members
+            .iter()
+            .any(|&member| is_callable_surface(db, member))
+    })
+}
+
 pub(crate) fn thenable_callback_value_type(
     db: &dyn TypeDatabase,
     callback_type: TypeId,

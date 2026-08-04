@@ -129,10 +129,7 @@ impl<'a> CheckerState<'a> {
         }
         let expr_type = self.get_type_of_node_with_request(unary.expression, &operand_request);
 
-        if self
-            .await_operand_invalid_thenable_this_type(expr_type)
-            .is_some()
-        {
+        if self.await_operand_is_invalid_thenable(expr_type) {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             self.error_at_node(
                 idx,

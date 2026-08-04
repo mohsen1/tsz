@@ -274,9 +274,7 @@ impl<'a> CheckerState<'a> {
                 // declared return type is even `Promise<T>` (that is TS1064's
                 // separate, earlier check on the annotation node).
                 if self.enclosing_async_function_has_return_type_annotation(stmt_idx)
-                    && self
-                        .await_operand_invalid_thenable_this_type(return_type)
-                        .is_some()
+                    && self.await_operand_is_invalid_thenable(return_type)
                 {
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.error_at_node(
