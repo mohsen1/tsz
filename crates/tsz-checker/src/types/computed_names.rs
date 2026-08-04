@@ -524,30 +524,84 @@ fn declaration_has_wide_type_query_annotation(
     arena: &NodeArena,
     decl_idx: NodeIndex,
 ) -> bool {
-    let Some(node) = arena.get(decl_idx) else {
-        return false;
-    };
-    let type_annotation = if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-        let Some(var_decl) = arena.get_variable_declaration(node) else {
+    declaration_type_query_symbol_constructor_member(ctx, owner_binder, arena, decl_idx)
+        .is_some_and(|member| symbol_constructor_member_is_wide(ctx, &member))
+}
+
+/// The `SymbolConstructor` member a declaration's own annotation names through
+/// a `typeof Symbol.<member>` type query, with `Symbol` resolved to the
+/// unshadowed global. `None` for any other annotation shape, and for a
+/// shadowed `Symbol`. Says nothing about whether the member is `unique symbol`
+/// or plain `symbol`; callers decide on that.
+fn declaration_type_query_symbol_constructor_member(
+    ctx: &CheckerContext<'_>,
+    owner_binder: &BinderState,
+    arena: &NodeArena,
+    decl_idx: NodeIndex,
+) -> Option<String> {
+    let node = arena.get(decl_idx)?;
+    if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+        return None;
+    }
+    let type_annotation = arena.get_variable_declaration(node)?.type_annotation;
+    if !type_annotation.is_some() {
+        return None;
+    }
+    let ann_node = arena.get(type_annotation)?;
+    if ann_node.kind != syntax_kind_ext::TYPE_QUERY {
+        return None;
+    }
+    let type_query = arena.get_type_query(ann_node)?;
+    let shape = well_known_symbol_access_shape(arena, type_query.expr_name)?;
+    let member = shape
+        .name
+        .as_deref()
+        .and_then(|name| name.strip_prefix("[Symbol."))
+        .and_then(|name| name.strip_suffix(']'))?
+        .to_string();
+    identifier_resolves_to_unshadowed_global_in_context(
+        ctx,
+        arena,
+        owner_binder,
+        shape.base,
+        "Symbol",
+    )
+    .then_some(member)
+}
+
+/// The canonical `[Symbol.<member>]` key a binding writes when it is declared
+/// `typeof Symbol.<member>` for a genuine well-known (`unique symbol`) member
+/// — `declare const it: typeof Symbol.iterator; interface T { [it]: ... }`.
+///
+/// `tsc` types such a binding as the well-known symbol itself (`typeof
+/// Symbol.iterator` is a `unique symbol`), so the member it keys is the very
+/// same one `interface U { [Symbol.iterator]: ... }` declares inline. Without
+/// this leg the alias falls through to binding-identity naming
+/// (`__unique_<id>`), the two declarations describe different member sets, and
+/// `T` reports a missing `[Symbol.iterator]` against `U` where `tsc` is clean.
+///
+/// `None` for a plain (non-`unique`) `SymbolConstructor` member: that binding
+/// carries the wide `symbol` type and routes into the containing type's symbol
+/// index signature instead (#16307), which is a different member shape.
+pub(crate) fn type_query_well_known_symbol_key(
+    ctx: &CheckerContext<'_>,
+    sym_id: SymbolId,
+) -> Option<String> {
+    let sym_id = follow_import_aliases(ctx, sym_id);
+    let found = std::cell::RefCell::new(None);
+    any_declaration_matches(ctx, sym_id, |owner_binder, arena, decl_idx| {
+        let Some(member) =
+            declaration_type_query_symbol_constructor_member(ctx, owner_binder, arena, decl_idx)
+        else {
             return false;
         };
-        var_decl.type_annotation
-    } else {
-        return false;
-    };
-    if !type_annotation.is_some() {
-        return false;
-    }
-    let Some(ann_node) = arena.get(type_annotation) else {
-        return false;
-    };
-    if ann_node.kind != syntax_kind_ext::TYPE_QUERY {
-        return false;
-    }
-    let Some(type_query) = arena.get_type_query(ann_node) else {
-        return false;
-    };
-    wide_well_known_symbol_member_key(ctx, arena, owner_binder, type_query.expr_name).is_some()
+        if symbol_constructor_member_is_wide(ctx, &member) {
+            return false;
+        }
+        *found.borrow_mut() = Some(format!("[Symbol.{member}]"));
+        true
+    });
+    found.into_inner()
 }
 
 fn declaration_is_unique_symbol_binding(
