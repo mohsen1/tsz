@@ -452,6 +452,30 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         },
                         |i| i.yield_type,
                     );
+                    // TS1322 (checked further down, once per branch of the
+                    // `async_info`/`resolved` split below): distinct from the TS1320
+                    // check above, which validates the async iterator's `next()`
+                    // **result**. This validates each **iterated element** — tsc's
+                    // `checkAsyncIterableIteratorType` (via
+                    // `checkIteratedTypeOrElementType`) awaits every element it pulls
+                    // off an async iterable, so an element that is thenable but not a
+                    // valid promise is its own diagnostic, not a relocation of TS1320.
+                    // `yield_star_element_is_invalid_thenable` mirrors
+                    // `await_operand_is_invalid_thenable` for a single type but not
+                    // for a union element — see its doc comment.
+                    //
+                    // Deliberately NOT checked against `element` above: for every lib
+                    // async iterable except the array/tuple fast path (`AsyncIterable
+                    // <T>`, `AsyncGenerator<T>`, a user class' `[Symbol.asyncIterator]`
+                    // method), `get_iterator_info` answers `None` (the same
+                    // `TypeData::Lazy(DefId)` blind spot documented below) and
+                    // `element`'s solver-only fallback collapses to `ANY`, which would
+                    // silently skip the check for the issue's own witness shape. The
+                    // check instead runs against whichever element-resolution each
+                    // branch already computes for the generator-yield-type
+                    // contribution — `i.yield_type` when structural, `resolved` (the
+                    // env-aware fallback) otherwise — rather than resolving a third
+                    // time.
                     // Capture the delegated iterator's return type for yield* expression result.
                     // Try get_iterator_info first (structural), then fall back to
                     // get_generator_return_type_argument (direct Application arg extraction)
@@ -483,6 +507,15 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         // type, suppress TS7055 at the function level (see sync path).
                         if i.yield_type == TypeId::ANY {
                             self.checker.ctx.generator_had_ts7057 = true;
+                        } else if self
+                            .checker
+                            .yield_star_element_is_invalid_thenable(i.yield_type)
+                        {
+                            self.checker.error_at_node(
+                                yield_expr.expression,
+                                diagnostic_messages::TYPE_OF_ITERATED_ELEMENTS_OF_A_YIELD_OPERAND_MUST_EITHER_BE_A_VALID_PROMISE_OR_M,
+                                diagnostic_codes::TYPE_OF_ITERATED_ELEMENTS_OF_A_YIELD_OPERAND_MUST_EITHER_BE_A_VALID_PROMISE_OR_M,
+                            );
                         }
                     } else {
                         // `get_iterator_info` is a pure structural solver query: its
@@ -509,6 +542,16 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             self.checker
                                 .ctx
                                 .push_generator_yield_contribution(resolved, false);
+                            if self
+                                .checker
+                                .yield_star_element_is_invalid_thenable(resolved)
+                            {
+                                self.checker.error_at_node(
+                                    yield_expr.expression,
+                                    diagnostic_messages::TYPE_OF_ITERATED_ELEMENTS_OF_A_YIELD_OPERAND_MUST_EITHER_BE_A_VALID_PROMISE_OR_M,
+                                    diagnostic_codes::TYPE_OF_ITERATED_ELEMENTS_OF_A_YIELD_OPERAND_MUST_EITHER_BE_A_VALID_PROMISE_OR_M,
+                                );
+                            }
                         }
                     }
                     element

@@ -568,6 +568,30 @@ impl<'a> CheckerState<'a> {
         self.invalid_thenable_info(type_id, 0).is_some()
     }
 
+    /// Whether a `yield*` delegate's iterated **element** type is a thenable
+    /// that is not a valid promise (TS1322).
+    ///
+    /// Deliberately NOT [`Self::await_operand_is_invalid_thenable`] for a
+    /// union element type. `tsc`'s `getAwaitedTypeNoAliasEx` reports the
+    /// diagnostic as a side effect while walking a union's constituents (so
+    /// `await`/plain-`yield` fires the moment *any* branch is an invalid
+    /// thenable), but the caller on this path — element-type resolution for
+    /// `yield*`, not the operand check — collects the recursive results with
+    /// `append`, which drops a failing branch's `undefined` silently and
+    /// keeps whichever branches resolved. The union as a whole is only
+    /// unresolvable, and only then does the surrounding call site report
+    /// TS1322, when **every** branch fails. Oracle-verified: `AsyncIterable<
+    /// BadThenable | number >` is clean (the `number` branch resolves), while
+    /// `AsyncIterable< BadThenable | OtherBadThenable >` reports TS1322.
+    pub(crate) fn yield_star_element_is_invalid_thenable(&mut self, type_id: TypeId) -> bool {
+        if let Some(members) = query::promise_union_members(self.ctx.types, type_id) {
+            return members
+                .into_iter()
+                .all(|member| self.invalid_thenable_info(member, 0).is_some());
+        }
+        self.invalid_thenable_info(type_id, 0).is_some()
+    }
+
     fn invalid_thenable_info(&mut self, type_id: TypeId, depth: u8) -> Option<ThenableAwaitInfo> {
         if depth > MAX_THENABLE_THIS_VALIDATION_DEPTH {
             return None;
