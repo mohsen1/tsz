@@ -91,7 +91,7 @@ impl<'a> CheckerState<'a> {
         self.get_class_constructor_type_with_request_and_mode(class_idx, class, request, true)
     }
 
-    fn merge_static_late_bound_index_value(
+    pub(super) fn merge_static_late_bound_index_value(
         &self,
         target: &mut Option<IndexSignature>,
         incoming: IndexSignature,
@@ -118,6 +118,7 @@ impl<'a> CheckerState<'a> {
         request: &TypingRequest,
         static_string_index: &mut Option<IndexSignature>,
         static_number_index: &mut Option<IndexSignature>,
+        static_symbol_index: &mut Option<IndexSignature>,
     ) {
         let Some(name_node) = self.ctx.arena.get(name_idx) else {
             return;
@@ -128,6 +129,22 @@ impl<'a> CheckerState<'a> {
         let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
             return;
         };
+
+        // A key whose type is the wide `symbol` (not `unique symbol`, not a
+        // well-known `Symbol.xxx` that resolved to a literal name -- callers
+        // only reach this function when the name failed to resolve to one)
+        // contributes a `[k: symbol]: V` index signature to the constructor
+        // type, mirroring the instance-side routing this same structural rule
+        // gets in `merge_index_signature_from_unresolved_computed_name`.
+        // `get_index_key_kind` below has no symbol case, so this must be
+        // checked first or a symbol-typed key is silently dropped.
+        if self.object_literal_computed_key_is_wide_symbol(name_idx) {
+            self.merge_static_late_bound_index_value(
+                static_symbol_index,
+                class_type_boundary::static_late_bound_index_signature(TypeId::SYMBOL, value_type),
+            );
+            return;
+        }
 
         let prev = self.ctx.preserve_literal_types;
         self.ctx.preserve_literal_types = true;
@@ -214,6 +231,7 @@ impl<'a> CheckerState<'a> {
             accessors,
             static_string_index,
             static_number_index,
+            static_symbol_index,
             extra_property,
             inherited_static_props,
             all_static_member_names,
@@ -292,14 +310,58 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // A `CallableShape` carries only one non-numeric index slot (see its
+        // doc comment): a symbol index signature rides in `string_index` when
+        // no explicit string index is present, exactly as
+        // `type_literal_callable_type` folds the two for an inline callable
+        // type literal.
+        let string_index = static_string_index.or(*static_symbol_index);
+
         class_type_boundary::partial_static_constructor_callable_type(
             self.ctx.types,
             current_sym,
             partial_ctor_props,
             construct_signatures,
-            *static_string_index,
+            string_index,
             *static_number_index,
         )
+    }
+
+    /// Does this static class member's name node key off a plain
+    /// (non-unique) `symbol` binding — `class C { static [s]() {} }` with
+    /// `declare const s: symbol`, or `Symbol.NAME` where `NAME` is a wide
+    /// `SymbolConstructor` global augmentation?
+    ///
+    /// Such a member contributes a `[key: symbol]: V` index signature to the
+    /// constructor type instead of a named static member, the static-side
+    /// twin of `class_member_computed_key_is_wide_symbol`'s instance-side
+    /// routing (#16307).
+    pub(super) fn static_member_computed_key_is_wide_symbol(
+        &mut self,
+        name_idx: NodeIndex,
+    ) -> bool {
+        if !self.object_literal_computed_key_is_wide_symbol(name_idx) {
+            return false;
+        }
+        // `Symbol.NAME` written as property-access syntax is excluded even
+        // when `NAME` is declared plain `symbol`: tsc derives a NAMED member
+        // from the syntactic well-known shape (`isWellKnownSymbolSyntactically`)
+        // before it consults the key's type at all, so
+        // `class C { static [Symbol.observable]() {} }` gets no symbol index
+        // signature and `C[someOtherSymbol]` stays TS7053.
+        let Some(name_node) = self.ctx.arena.get(name_idx) else {
+            return false;
+        };
+        let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
+            return false;
+        };
+        crate::types_domain::computed_names::wide_well_known_symbol_member_key(
+            &self.ctx,
+            self.ctx.arena,
+            self.ctx.binder,
+            computed.expression,
+        )
+        .is_none()
     }
 
     pub(super) fn remap_inherited_construct_signatures(
