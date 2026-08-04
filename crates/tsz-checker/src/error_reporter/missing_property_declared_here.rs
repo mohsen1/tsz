@@ -92,7 +92,7 @@ impl<'a> CheckerState<'a> {
 
     /// `(start, length, file)` for a member symbol's own declaration, used when
     /// the owner's declaration does not carry a member list the walk above can
-    /// read (a class records its members on the symbol instead).
+    /// read.
     ///
     /// A `StableLocation` resolves by `(pos, end)` against whichever arena the
     /// stamped file index names, and falls back to the current arena when the
@@ -186,18 +186,27 @@ impl<'a> CheckerState<'a> {
     }
 
     /// The name node of a property-like member declaration.
+    ///
+    /// An interface/type-literal member (`PROPERTY_SIGNATURE`/
+    /// `METHOD_SIGNATURE`) stores its name on `SignatureData`; a class member
+    /// (`PROPERTY_DECLARATION`/`METHOD_DECLARATION`) stores it on the
+    /// distinct `PropertyDeclData`/`MethodDeclData` instead, so each kind
+    /// needs its own accessor rather than one shared `get_signature` call.
     fn member_name_node(arena: &NodeArena, member_idx: NodeIndex) -> Option<NodeIndex> {
         use tsz_parser::parser::syntax_kind_ext;
 
         let node = arena.get(member_idx)?;
-        if node.kind != syntax_kind_ext::PROPERTY_SIGNATURE
-            && node.kind != syntax_kind_ext::PROPERTY_DECLARATION
-            && node.kind != syntax_kind_ext::METHOD_SIGNATURE
-            && node.kind != syntax_kind_ext::METHOD_DECLARATION
+        let name = if node.kind == syntax_kind_ext::PROPERTY_SIGNATURE
+            || node.kind == syntax_kind_ext::METHOD_SIGNATURE
         {
+            arena.get_signature(node)?.name
+        } else if node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+            arena.get_property_decl(node)?.name
+        } else if node.kind == syntax_kind_ext::METHOD_DECLARATION {
+            arena.get_method_decl(node)?.name
+        } else {
             return None;
-        }
-        let name = arena.get_signature(node)?.name;
+        };
         name.is_some().then_some(name)
     }
 
@@ -229,9 +238,11 @@ impl<'a> CheckerState<'a> {
         Some((start, node.end.saturating_sub(start)))
     }
 
-    /// The node tsc underlines for a member: a property member points at its
-    /// *name* (`y` in `y: number;`), a method member at the whole member
-    /// (`run(): void;`).
+    /// The node tsc underlines for a member: a property points at its *name*
+    /// (`y` in `y: number;`), an interface/type-literal method signature at
+    /// the whole member (`run(): void;`) — but a *class* method declaration
+    /// points at its name only (`run` in `run(): void {}`), pinned against
+    /// `typescript@7.0.2`.
     fn member_anchor_for_kind(
         arena: &NodeArena,
         member_idx: NodeIndex,
@@ -240,12 +251,7 @@ impl<'a> CheckerState<'a> {
         use tsz_parser::parser::syntax_kind_ext;
 
         match arena.get(member_idx).map(|node| node.kind) {
-            Some(kind)
-                if kind == syntax_kind_ext::METHOD_SIGNATURE
-                    || kind == syntax_kind_ext::METHOD_DECLARATION =>
-            {
-                member_idx
-            }
+            Some(kind) if kind == syntax_kind_ext::METHOD_SIGNATURE => member_idx,
             _ => name_idx,
         }
     }
