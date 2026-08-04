@@ -34,6 +34,7 @@ pub struct RemovedOptionNotice {
 }
 
 /// Result of parsing a tsconfig.json with diagnostic collection.
+#[derive(Default)]
 pub struct ParsedTsConfig {
     pub config: TsConfig,
     pub diagnostics: Vec<Diagnostic>,
@@ -927,6 +928,30 @@ pub fn parse_tsconfig_with_diagnostics_deferred(
                 jsx_factory_val.len() as u32 + 2, // include surrounding quotes
                 msg,
                 diagnostic_codes::INVALID_VALUE_FOR_JSXFACTORY_IS_NOT_A_VALID_IDENTIFIER_OR_QUALIFIED_NAME,
+            ));
+        }
+
+        // TS18035: the `jsxFragmentFactory` mirror of TS5067 above. tsc's
+        // `commandLineParser.ts` runs the same identifier-or-qualified-name
+        // check on both JSX factory options, from adjacent branches; tsz had
+        // only the `jsxFactory` half, so an invalid fragment factory was
+        // silently accepted. The two are independent — an invalid value in
+        // each option reports both codes, at its own key's value span.
+        if let Some(serde_json::Value::String(jsx_fragment_factory_val)) =
+            compiler_opts.get("jsxFragmentFactory")
+            && !is_valid_identifier_or_qualified_name(jsx_fragment_factory_val)
+        {
+            let start = find_value_offset_in_source(&stripped, "jsxFragmentFactory");
+            let msg = format_message(
+                diagnostic_messages::INVALID_VALUE_FOR_JSXFRAGMENTFACTORY_IS_NOT_A_VALID_IDENTIFIER_OR_QUALIFIED_NAME,
+                &[jsx_fragment_factory_val.as_str()],
+            );
+            diagnostics.push(Diagnostic::error(
+                file_path,
+                start,
+                jsx_fragment_factory_val.len() as u32 + 2, // include surrounding quotes
+                msg,
+                diagnostic_codes::INVALID_VALUE_FOR_JSXFRAGMENTFACTORY_IS_NOT_A_VALID_IDENTIFIER_OR_QUALIFIED_NAME,
             ));
         }
 
