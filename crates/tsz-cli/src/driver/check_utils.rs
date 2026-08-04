@@ -429,6 +429,17 @@ fn is_hard_keyword_interface_name_2427_parse_diagnostic(diagnostic: &ParseDiagno
 /// TS1436, were oracle-tested and rejected: tsc keeps both alongside an
 /// unrelated syntax error in the same file, so they are real parser
 /// diagnostics in tsc too and must NOT be added here.
+///
+/// #16279 audit round 2: tsc's `checkGrammarForInOrForOfStatement` reports
+/// TS1091 (`for...in`) and TS1188 (`for...of`) — "only a single variable
+/// declaration is allowed" — for a multi-declarator loop head. Both are
+/// parser-emitted in tsz (`state_declarations_exports.rs`) and were entirely
+/// absent from this list, so neither was ever suppressed alongside a real
+/// syntax error the way tsc suppresses both (oracle-confirmed against
+/// `typescript@7.0.2`: a `let a: = 1;` syntax error elsewhere in the file
+/// drops the TS1091/TS1188 that would otherwise fire), and each counted as a
+/// "real" parse error that could silently delete an unrelated listed
+/// sibling from the same file.
 const fn is_parser_grammar_code(code: u32) -> bool {
     matches!(
         code,
@@ -463,6 +474,7 @@ const fn is_parser_grammar_code(code: u32) -> bool {
         | 1079 // A '{0}' modifier cannot be used with an import declaration
         | 1089 // '{0}' modifier cannot appear on a constructor declaration
         | 1090 // '{0}' modifier cannot appear on a parameter
+        | 1091 // Only a single variable declaration is allowed in a 'for...in' statement
         | 1092 // Type parameters cannot appear on a constructor declaration
         | 1093 // Type annotation cannot appear on a constructor declaration
         | 1094 // An accessor cannot have type parameters
@@ -485,6 +497,7 @@ const fn is_parser_grammar_code(code: u32) -> bool {
         | 1176 // Interface declaration cannot have an implements clause
         | 1182 // A destructuring declaration must have an initializer
         | 1184 // Modifiers cannot appear here
+        | 1188 // Only a single variable declaration is allowed in a 'for...of' statement
         | 1191 // An import declaration cannot have modifiers
         | 1193 // An export declaration cannot have modifiers
         | 1197 // Catch clause variable cannot have an initializer
@@ -1602,3 +1615,7 @@ mod rest_parameter_grammar_tests;
 #[cfg(test)]
 #[path = "check_utils/regex_grammar_suppression_tests.rs"]
 mod regex_grammar_suppression_tests;
+
+#[cfg(test)]
+#[path = "check_utils/for_in_of_single_declaration_grammar_tests.rs"]
+mod for_in_of_single_declaration_grammar_tests;
