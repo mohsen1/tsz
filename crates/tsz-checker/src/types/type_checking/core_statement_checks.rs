@@ -264,6 +264,27 @@ impl<'a> CheckerState<'a> {
             }
             self.ctx.preserve_literal_types = prev_preserve_literals;
             if self.ctx.in_async_context() {
+                // TS1058: tsc's `checkReturnExpression` runs this check only when
+                // the enclosing async function has an explicit return type
+                // annotation (`getReturnTypeFromAnnotation(container) != nil`) —
+                // an inferred return type widens from the return expressions
+                // themselves, so there is no independent annotation to validate
+                // against. It reports at the return statement itself, testing the
+                // return *expression's* type directly, independent of whether the
+                // declared return type is even `Promise<T>` (that is TS1064's
+                // separate, earlier check on the annotation node).
+                if self.enclosing_async_function_has_return_type_annotation(stmt_idx)
+                    && self
+                        .await_operand_invalid_thenable_this_type(return_type)
+                        .is_some()
+                {
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    self.error_at_node(
+                        stmt_idx,
+                        diagnostic_messages::THE_RETURN_TYPE_OF_AN_ASYNC_FUNCTION_MUST_EITHER_BE_A_VALID_PROMISE_OR_MUST_NOT,
+                        diagnostic_codes::THE_RETURN_TYPE_OF_AN_ASYNC_FUNCTION_MUST_EITHER_BE_A_VALID_PROMISE_OR_MUST_NOT,
+                    );
+                }
                 // Use unwrap_async_return_type_for_body which handles unions
                 // by unwrapping Promise from each member individually.
                 // This is needed for cases like:
@@ -544,6 +565,37 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn type_references_unresolved_import(&self, type_id: TypeId) -> bool {
         self.ctx.type_references_unresolved_import(type_id)
+    }
+
+    /// Whether the innermost function-like container of `idx` is async and
+    /// carries an explicit return type annotation. Mirrors tsc's
+    /// `getReturnTypeFromAnnotation(container) != nil` gate on
+    /// `checkReturnExpression`'s TS1058 branch — an inferred (unannotated)
+    /// async return type widens from the return expressions themselves, so
+    /// there is nothing independent to validate a return expression against.
+    fn enclosing_async_function_has_return_type_annotation(&self, idx: NodeIndex) -> bool {
+        let Some(fn_idx) = self.find_enclosing_function(idx) else {
+            return false;
+        };
+        let Some(fn_node) = self.ctx.arena.get(fn_idx) else {
+            return false;
+        };
+        let type_annotation = match fn_node.kind {
+            syntax_kind_ext::FUNCTION_DECLARATION
+            | syntax_kind_ext::FUNCTION_EXPRESSION
+            | syntax_kind_ext::ARROW_FUNCTION => self
+                .ctx
+                .arena
+                .get_function(fn_node)
+                .map(|f| f.type_annotation),
+            syntax_kind_ext::METHOD_DECLARATION => self
+                .ctx
+                .arena
+                .get_method_decl(fn_node)
+                .map(|m| m.type_annotation),
+            _ => return false,
+        };
+        type_annotation.is_some_and(|t| t.is_some())
     }
 
     fn should_report_primitive_to_generic_indexed_conditional_return(

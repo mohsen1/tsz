@@ -65,6 +65,8 @@ mod assignment_ops_relation_routing_arch_tests;
 mod async_generator_yieldstar_contribution_tests;
 #[path = "tests/async_generator_yieldstar_union_delegate_tests.rs"]
 mod async_generator_yieldstar_union_delegate_tests;
+#[path = "tests/async_return_invalid_thenable_tests.rs"]
+mod async_return_invalid_thenable_tests;
 #[path = "tests/await_alias_union_distribution_tests.rs"]
 mod await_alias_union_distribution_tests;
 #[path = "tests/await_concise_arrow_body_grammar_tests.rs"]
