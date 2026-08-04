@@ -568,6 +568,21 @@ impl<'a> CheckerState<'a> {
         self.invalid_thenable_info(type_id, 0).is_some()
     }
 
+    /// Whether a `yield*` delegate's iterated *element* type (TS1322) is an
+    /// invalid thenable. Same leaf rule as
+    /// [`Self::await_operand_is_invalid_thenable`] per member, but a union
+    /// combines members with ALL- rather than ANY-invalid semantics: oracle
+    /// (`typescript@7.0.2`) shows `AsyncIterable<Good | Bad>` clean and only
+    /// `AsyncIterable<Bad1 | Bad2>` reporting.
+    pub(crate) fn async_iterated_element_is_invalid_thenable(&mut self, type_id: TypeId) -> bool {
+        match query::promise_union_members(self.ctx.types, type_id) {
+            Some(members) => members
+                .into_iter()
+                .all(|member| self.await_operand_is_invalid_thenable(member)),
+            None => self.await_operand_is_invalid_thenable(type_id),
+        }
+    }
+
     fn invalid_thenable_info(&mut self, type_id: TypeId, depth: u8) -> Option<ThenableAwaitInfo> {
         if depth > MAX_THENABLE_THIS_VALIDATION_DEPTH {
             return None;

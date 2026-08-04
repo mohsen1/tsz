@@ -934,5 +934,7 @@ mod variadic_tuple_spread_element_inference_tests;
 mod void_undefined_discriminant_narrowing_tests;
 #[path = "tests/window_self_globalthis_resolution_tests.rs"]
 mod window_self_globalthis_resolution_tests;
+#[path = "tests/yieldstar_async_iterable_invalid_thenable_element_tests.rs"]
+mod yieldstar_async_iterable_invalid_thenable_element_tests;
 #[path = "tests/zod_type_query_regression_tests.rs"]
 mod zod_type_query_regression_tests;
