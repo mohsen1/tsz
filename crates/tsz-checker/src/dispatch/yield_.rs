@@ -584,6 +584,19 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     yield_type
                 }
             } else {
+                if is_async_generator
+                    && self
+                        .checker
+                        .await_operand_invalid_thenable_this_type(expression_type)
+                        .is_some()
+                {
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    self.checker.error_at_node(
+                        yield_expr.expression,
+                        diagnostic_messages::TYPE_OF_YIELD_OPERAND_IN_AN_ASYNC_GENERATOR_MUST_EITHER_BE_A_VALID_PROMISE_OR_MU,
+                        diagnostic_codes::TYPE_OF_YIELD_OPERAND_IN_AN_ASYNC_GENERATOR_MUST_EITHER_BE_A_VALID_PROMISE_OR_MU,
+                    );
+                }
                 expression_type
             }
         };
