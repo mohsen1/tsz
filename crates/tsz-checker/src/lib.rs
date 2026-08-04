@@ -519,6 +519,9 @@ mod jsdoc_enum_circular_tests;
 #[cfg(test)]
 #[path = "../tests/jsdoc_function_return_type_anchor_tests.rs"]
 mod jsdoc_function_return_type_anchor_tests;
+#[cfg(test)]
+#[path = "../tests/position_invalid_module_element_resolution_tests.rs"]
+mod position_invalid_module_element_resolution_tests;
 
 #[cfg(test)]
 #[path = "../tests/jsdoc_readonly_tests.rs"]

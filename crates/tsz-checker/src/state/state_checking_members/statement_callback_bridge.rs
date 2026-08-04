@@ -205,6 +205,16 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                         crate::diagnostics::diagnostic_messages::EXPORT_DECLARATIONS_ARE_NOT_PERMITTED_IN_A_NAMESPACE,
                         crate::diagnostics::diagnostic_codes::EXPORT_DECLARATIONS_ARE_NOT_PERMITTED_IN_A_NAMESPACE,
                     );
+                    if has_from {
+                        // tsc reports this from `checkExternalImportOrExportDeclaration`,
+                        // which then returns false — the caller gates module resolution on
+                        // that result, so the specifier is never resolved and no TS2307
+                        // follows. Only the `from` form reaches the resolution path, and
+                        // only a non-ambient namespace reaches here at all: inside
+                        // `declare module "m"` the parent IS a module block, so resolution
+                        // still runs and TS2307 is still correct there.
+                        return;
+                    }
                 }
             }
 
@@ -1284,12 +1294,16 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         }
     }
 
-    fn check_grammar_module_element_context(&mut self, stmt_idx: NodeIndex) -> bool {
+    fn check_grammar_module_element_context(
+        &mut self,
+        stmt_idx: NodeIndex,
+    ) -> crate::statements::ModuleElementContext {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use crate::statements::ModuleElementContext;
 
         // Suppress grammar errors when file has parse errors (matches tsc behavior)
         if self.ctx.has_syntax_parse_errors {
-            return false;
+            return ModuleElementContext::Valid;
         }
 
         // Check if the parent is a valid module-element context (SourceFile or ModuleBlock).
@@ -1318,12 +1332,12 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         };
 
         if is_valid_context {
-            return false;
+            return ModuleElementContext::Valid;
         }
 
         // Determine which error to emit based on the statement kind
         let Some(node) = self.ctx.arena.get(stmt_idx) else {
-            return false;
+            return ModuleElementContext::Valid;
         };
 
         let (message, code) = match node.kind {
@@ -1370,7 +1384,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     if is_namespace_or_module {
                         // Namespace/module gets its own error (TS1235/TS1234) from
                         // check_module_declaration. Don't also emit TS1233 for the export.
-                        return false;
+                        return ModuleElementContext::Valid;
                     } else if is_class_or_function_or_variable {
                         // TS1184: Modifiers cannot appear here.
                         (
@@ -1414,11 +1428,18 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     diagnostic_codes::AN_EXPORT_ASSIGNMENT_MUST_BE_AT_THE_TOP_LEVEL_OF_A_FILE_OR_MODULE_DECLARATION,
                 )
             }
-            _ => return false,
+            _ => return ModuleElementContext::Valid,
         };
 
         self.error_at_node(stmt_idx, message, code);
-        true
+        // TS1184 rejects the `export` MODIFIER on a wrapped declaration; tsc still
+        // checks that declaration. Every other code here rejects the statement's
+        // PLACEMENT, which ends tsc's check of it.
+        if code == diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE {
+            ModuleElementContext::ModifierError
+        } else {
+            ModuleElementContext::PlacementError
+        }
     }
 
     /// TS1184: Check if a declaration with `declare` modifier is inside a block context

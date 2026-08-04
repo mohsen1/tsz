@@ -159,10 +159,18 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|clause| clause.is_type_only);
 
         // Suppress semantic diagnostics (TS2307, TS2823, TS2322) when the import
-        // statement has parse errors. A wrong module-element context is a grammar
-        // diagnostic, not a reason to skip module/member validation: tsc still
-        // reports missing modules and missing named exports for imports in a bare
-        // block after TS1232.
+        // statement has parse errors.
+        //
+        // A wrong module-element context no longer reaches here on a parse-error-free
+        // file: the dispatcher short-circuits the whole declaration when
+        // `check_grammar_module_element_context` reports TS1232, because tsc's
+        // `checkImportDeclaration` returns at that point and resolves no specifier.
+        // (The earlier note here claimed tsc still reports missing modules and missing
+        // named exports for an import in a bare block — measured against tsc 7.0.2, it
+        // does not; a bare block behaves exactly like a function body.) The
+        // context-sensitive terms below therefore only still govern the
+        // `has_syntax_parse_errors` path, where the grammar check declines to report
+        // and the declaration is checked anyway.
         let in_wrong_context = self.is_in_non_module_element_context(stmt_idx);
         let wrong_context_allows_module_semantics = in_wrong_context
             && !self.is_inside_function_body(stmt_idx)

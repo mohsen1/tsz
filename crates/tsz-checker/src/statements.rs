@@ -9,6 +9,34 @@ use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
+/// Outcome of the module-element placement grammar check.
+///
+/// tsc's `checkImportDeclaration`, `checkExportDeclaration` and
+/// `checkExportAssignment` each report their placement diagnostic and then
+/// `return`, so *nothing else in that declaration's check runs* — the module
+/// specifier is never resolved (no TS2307), re-exported and imported members are
+/// never validated (no TS2305), and the sibling grammar checks on the same
+/// declaration never fire either.
+///
+/// A modifier diagnostic is not a placement diagnostic. When the `export` prefixes
+/// a class/function/variable declaration inside a block, tsc reports TS1184 for the
+/// modifier and still checks the wrapped declaration, so its own diagnostics must
+/// continue to be reported.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ModuleElementContext {
+    /// The declaration is in a `SourceFile` or `ModuleBlock`, or the check declined
+    /// to report (the file has parse errors, or the form owns its placement
+    /// diagnostic elsewhere — `export namespace N {}` gets TS1235 from
+    /// `check_module_declaration`). The declaration's own checks run normally.
+    Valid,
+    /// A placement diagnostic was reported: TS1231/TS1232/TS1233/TS1258, or the
+    /// JS-file variants TS1473/TS1474. tsc stops checking the declaration here.
+    PlacementError,
+    /// TS1184 was reported for the `export` modifier on a wrapped declaration.
+    /// tsc keeps checking the wrapped declaration.
+    ModifierError,
+}
+
 /// Trait for statement checking callbacks.
 ///
 /// This trait defines the interface that `CheckerState` must implement
@@ -427,11 +455,16 @@ pub trait StatementCheckCallbacks {
 
     /// Check if a module element (import/export/namespace/ambient module) is in
     /// a valid context (`SourceFile` or `ModuleBlock`). If not, emit the appropriate
-    /// grammar error (TS1231-1235, TS1258). Returns true if the context is invalid
-    /// (error was emitted), false if the context is valid.
-    fn check_grammar_module_element_context(&mut self, stmt_idx: NodeIndex) -> bool {
+    /// grammar error (TS1231-1235, TS1258, TS1184).
+    ///
+    /// The returned [`ModuleElementContext`] tells the caller whether tsc would keep
+    /// checking the declaration — see that type's documentation.
+    fn check_grammar_module_element_context(
+        &mut self,
+        stmt_idx: NodeIndex,
+    ) -> ModuleElementContext {
         let _ = stmt_idx;
-        false
+        ModuleElementContext::Valid
     }
 
     /// TS1184: Check if a `declare` modifier on a variable/class/enum declaration
@@ -1061,8 +1094,13 @@ impl StatementChecker {
                 state.check_interface_declaration(stmt_idx);
             }
             syntax_kind_ext::EXPORT_DECLARATION => {
-                state.check_grammar_module_element_context(stmt_idx);
-                state.check_export_declaration(stmt_idx);
+                // A placement error ends tsc's `checkExportDeclaration` before it
+                // resolves the module specifier; TS1184 does not.
+                if state.check_grammar_module_element_context(stmt_idx)
+                    != ModuleElementContext::PlacementError
+                {
+                    state.check_export_declaration(stmt_idx);
+                }
             }
             syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
                 state.check_type_alias_declaration(stmt_idx);
@@ -1117,10 +1155,19 @@ impl StatementChecker {
                 state.check_continue_statement(stmt_idx);
             }
             syntax_kind_ext::IMPORT_DECLARATION => {
-                state.check_grammar_module_element_context(stmt_idx);
-                state.check_import_declaration(stmt_idx);
+                // Same short-circuit as the export side: TS1232 ends
+                // `checkImportDeclaration` before any module resolution.
+                if state.check_grammar_module_element_context(stmt_idx)
+                    != ModuleElementContext::PlacementError
+                {
+                    state.check_import_declaration(stmt_idx);
+                }
             }
             syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                // Not short-circuited: tsc still reports TS2307 for a
+                // position-invalid `import x = require("m")` whose alias is
+                // referenced, so the referenced-alias rule in
+                // `check_import_equals_declaration` stays in charge.
                 state.check_grammar_module_element_context(stmt_idx);
                 state.check_import_equals_declaration(stmt_idx);
             }
@@ -1170,10 +1217,15 @@ impl StatementChecker {
                 }
             }
             syntax_kind_ext::EXPORT_ASSIGNMENT => {
-                state.check_grammar_module_element_context(stmt_idx);
-                // Export assignments are mainly checked in check_export_assignment
-                // at the source file level
-                state.get_type_of_node_with_request(stmt_idx, request);
+                // TS1231 ends tsc's `checkExportAssignment`, so the exported
+                // expression is never resolved (no TS2304 for an unknown name).
+                if state.check_grammar_module_element_context(stmt_idx)
+                    != ModuleElementContext::PlacementError
+                {
+                    // Export assignments are mainly checked in check_export_assignment
+                    // at the source file level
+                    state.get_type_of_node_with_request(stmt_idx, request);
+                }
             }
             _ => {
                 // Catch-all for other statement types, including a concise
