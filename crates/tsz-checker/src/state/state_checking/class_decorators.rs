@@ -136,6 +136,54 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// TS18036: report on `first_decorator_idx` when any of `members` is a static
+    /// `PropertyDeclaration`/`MethodDeclaration`/get-or-set-accessor named with a
+    /// private identifier — mirrors tsc's
+    /// `some(node.members, p => hasStaticModifier(p) && isPrivateIdentifierClassElementDeclaration(p))`.
+    /// Caller has already gated on `experimental_decorators` and a present first decorator.
+    pub(super) fn check_class_decorator_static_private_identifier(
+        &mut self,
+        first_decorator_idx: NodeIndex,
+        members: &[NodeIndex],
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        let has_static_private_member = members.iter().any(|&member_idx| {
+            let Some(node) = self.ctx.arena.get(member_idx) else {
+                return false;
+            };
+            match node.kind {
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                    self.ctx.arena.get_property_decl(node).is_some_and(|decl| {
+                        self.has_static_modifier(&decl.modifiers)
+                            && self.is_private_identifier_name(decl.name)
+                    })
+                }
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    self.ctx.arena.get_method_decl(node).is_some_and(|decl| {
+                        self.has_static_modifier(&decl.modifiers)
+                            && self.is_private_identifier_name(decl.name)
+                    })
+                }
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    self.ctx.arena.get_accessor(node).is_some_and(|decl| {
+                        self.has_static_modifier(&decl.modifiers)
+                            && self.is_private_identifier_name(decl.name)
+                    })
+                }
+                _ => false,
+            }
+        });
+
+        if has_static_private_member {
+            self.error_at_node(
+                first_decorator_idx,
+                diagnostic_messages::CLASS_DECORATORS_CANT_BE_USED_WITH_STATIC_PRIVATE_IDENTIFIER_CONSIDER_REMOVING_T,
+                diagnostic_codes::CLASS_DECORATORS_CANT_BE_USED_WITH_STATIC_PRIVATE_IDENTIFIER_CONSIDER_REMOVING_T,
+            );
+        }
+    }
+
     pub(super) fn first_decorator_in_modifiers(
         &self,
         modifiers: &Option<NodeList>,
