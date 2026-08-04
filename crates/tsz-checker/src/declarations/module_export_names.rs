@@ -1,21 +1,47 @@
-//! TS18057: string-literal module export names under `--module es2015`/`es2020`.
+//! Module export names written as string literals: TS1003 and TS18057.
 //!
-//! ECMAScript arbitrary module namespace names (`export { x as "str name" }`)
-//! postdate the `es2015` and `es2020` module output formats, so `tsc` rejects
-//! them when `module` is set to exactly one of those two targets. Every other
-//! module target — `es2022`, `esnext`, `commonjs`, `preserve` and the `node*`
-//! family — accepts them.
+//! `tsc` centralises both codes in a single `checkModuleExportName`, which runs
+//! over every *module export name* position: the property name of an import
+//! specifier, both halves of an export specifier, and the name of a namespace
+//! export (`export * as "ns" from "m"`). It reports through `grammarErrorOnNode`,
+//! so the whole check is suppressed once the file has parse diagnostics.
 //!
-//! `tsc` centralises this in `checkModuleExportName`, which runs over every
-//! *module export name* position: the property name of an import specifier,
-//! both halves of an export specifier, and the name of a namespace export
-//! (`export * as "ns" from "m"`). It reports through `grammarErrorOnNode`, so
-//! the whole check is suppressed once the file has parse diagnostics.
+//! ```ts
+//! function checkModuleExportName(name, allowStringLiteral = true) {
+//!     if (name === undefined || name.kind !== SyntaxKind.StringLiteral) return;
+//!     if (!allowStringLiteral) grammarErrorOnNode(name, Identifier_expected);
+//!     else if (moduleKind === ES2015 || moduleKind === ES2020) grammarErrorOnNode(name, ...);
+//! }
+//! ```
 //!
-//! One asymmetry is load-bearing and oracle-confirmed. `checkImportDeclaration`
-//! only walks its specifiers when the module specifier *resolves*, while the
-//! export paths do not, so an unresolved module suppresses TS18057 on the
-//! import side but not on the export side:
+//! The two branches are **mutually exclusive per position and answer to
+//! different conditions**, which is the whole structural point of this module:
+//!
+//! * `!allowStringLiteral` (TS1003) means *this position binds a local*, and no
+//!   string can name a local. It is **module-target independent**.
+//! * `allowStringLiteral` (TS18057) means the position really is a module export
+//!   name, and ECMAScript arbitrary module namespace names postdate the `es2015`
+//!   and `es2020` output formats, so `tsc` rejects them on exactly those two
+//!   targets and accepts them everywhere else (`es2022`, `esnext`, `commonjs`,
+//!   `preserve`, the `node*` family).
+//!
+//! `allowStringLiteral` is `false` at exactly one position: an export
+//! specifier's property name when the export declaration has **no module
+//! specifier**, per `checkExportSpecifier`'s
+//! `checkModuleExportName(node.propertyName, hasModuleSpecifier)`. Because the
+//! branches are chosen per position rather than per declaration, one specifier
+//! can draw one of each — oracle-confirmed under `--module es2015`:
+//!
+//! ```text
+//! const q = 1; export { "q" as "y" };
+//!                       ^^^ TS1003 (property name binds a local)
+//!                              ^^^ TS18057 (exported name, es2015 target)
+//! ```
+//!
+//! A second asymmetry is load-bearing and oracle-confirmed.
+//! `checkImportDeclaration` only walks its specifiers when the module specifier
+//! *resolves*, while the export paths do not, so an unresolved module suppresses
+//! TS18057 on the import side but not on the export side:
 //!
 //! ```text
 //! import { "x" as y } from "./nope";   // TS2307 only
@@ -28,26 +54,31 @@ use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> CheckerState<'a> {
-    /// Shared gate: the check is module-target-specific and, like every other
-    /// check-time grammar diagnostic, is suppressed once the file has a real
-    /// parse error (`tsc`'s `grammarErrorOnNode` does the same).
+    /// Shared gate: like every other check-time grammar diagnostic, both codes
+    /// are suppressed once the file has a real parse error (`tsc`'s
+    /// `grammarErrorOnNode` does the same).
     const fn should_check_module_export_names(&self) -> bool {
         !self.ctx.has_parse_errors
-            && matches!(
-                self.ctx.compiler_options.module,
-                ModuleKind::ES2015 | ModuleKind::ES2020
-            )
     }
 
-    /// Report TS18057 on `name_idx` when it is written as a string literal.
+    /// Whether the current module target is one of the two that reject
+    /// arbitrary module namespace names. This is the condition on
+    /// `checkModuleExportName`'s *second* branch only.
+    const fn module_target_rejects_string_export_names(&self) -> bool {
+        matches!(
+            self.ctx.compiler_options.module,
+            ModuleKind::ES2015 | ModuleKind::ES2020
+        )
+    }
+
+    /// `tsc`'s `checkModuleExportName`, both branches.
     ///
-    /// Mirrors `tsc`'s `checkModuleExportName` for the `allowStringLiteral`
-    /// case. The `!allowStringLiteral` case — a local binding that cannot be
-    /// named by a string, as in `import { "a" as "b" }` or
-    /// `export { "a" as b }` with no module specifier — is answered by the
-    /// parser as TS1003 and is mutually exclusive with this code, so it is
-    /// reached only through the `has_parse_errors` gate above.
-    fn check_module_export_name(&mut self, name_idx: NodeIndex) {
+    /// `allow_string_literal` is `false` only where the position binds a local
+    /// rather than naming a module export — an export specifier's property name
+    /// with no module specifier. There a string literal is not a module export
+    /// name at all but a malformed binding identifier, so the answer is TS1003
+    /// regardless of module target, and TS18057 is never reached.
+    fn check_module_export_name(&mut self, name_idx: NodeIndex, allow_string_literal: bool) {
         if name_idx.is_none() {
             return;
         }
@@ -59,11 +90,19 @@ impl<'a> CheckerState<'a> {
         if !is_string_literal {
             return;
         }
-        self.error_at_node(
-            name_idx,
-            crate::diagnostics::diagnostic_messages::STRING_LITERAL_IMPORT_AND_EXPORT_NAMES_ARE_NOT_SUPPORTED_WHEN_THE_MODULE_FLAG_IS,
-            crate::diagnostics::diagnostic_codes::STRING_LITERAL_IMPORT_AND_EXPORT_NAMES_ARE_NOT_SUPPORTED_WHEN_THE_MODULE_FLAG_IS,
-        );
+        if !allow_string_literal {
+            self.error_at_node(
+                name_idx,
+                crate::diagnostics::diagnostic_messages::IDENTIFIER_EXPECTED,
+                crate::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED,
+            );
+        } else if self.module_target_rejects_string_export_names() {
+            self.error_at_node(
+                name_idx,
+                crate::diagnostics::diagnostic_messages::STRING_LITERAL_IMPORT_AND_EXPORT_NAMES_ARE_NOT_SUPPORTED_WHEN_THE_MODULE_FLAG_IS,
+                crate::diagnostics::diagnostic_codes::STRING_LITERAL_IMPORT_AND_EXPORT_NAMES_ARE_NOT_SUPPORTED_WHEN_THE_MODULE_FLAG_IS,
+            );
+        }
     }
 
     /// Whether `tsc` would consider this module specifier resolved, which is
@@ -89,7 +128,15 @@ impl<'a> CheckerState<'a> {
     /// name; the specifier's own name binds a local and must already be an
     /// identifier.
     pub(crate) fn check_import_declaration_module_export_names(&mut self, import_idx: NodeIndex) {
-        if !self.should_check_module_export_names() {
+        // Every module export name reachable from an import declaration is
+        // `allowStringLiteral = true`, so TS18057 is the only branch this path
+        // can take. Skipping the whole walk when the module target does not
+        // reject string export names is therefore exactly equivalent to running
+        // it, and avoids resolving a module specifier for every import in the
+        // program on targets where nothing could be reported.
+        if !self.should_check_module_export_names()
+            || !self.module_target_rejects_string_export_names()
+        {
             return;
         }
         let Some(import_node) = self.ctx.arena.get(import_idx) else {
@@ -127,7 +174,9 @@ impl<'a> CheckerState<'a> {
             })
             .collect();
         for property_name in property_names {
-            self.check_module_export_name(property_name);
+            // `checkImportBinding` passes no second argument: an import
+            // specifier's property name is always a module export name.
+            self.check_module_export_name(property_name, true);
         }
     }
 
@@ -156,7 +205,9 @@ impl<'a> CheckerState<'a> {
         };
         if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
             // `export * as "ns" from "m"` — the clause *is* the namespace name.
-            self.check_module_export_name(export_decl.export_clause);
+            // `checkExportDeclaration` passes no second argument, so this
+            // position always allows a string literal.
+            self.check_module_export_name(export_decl.export_clause, true);
             return;
         }
         let Some(named_exports) = self.ctx.arena.get_named_imports(clause_node) else {
@@ -165,7 +216,8 @@ impl<'a> CheckerState<'a> {
         // `allowStringLiteral` in tsc's `checkExportSpecifier` is `!!moduleSpecifier`
         // for the property name: without a `from` clause the property name is a
         // *local* binding, which no string can name, so tsc answers TS1003 there
-        // and never TS18057.
+        // and never TS18057. The specifier's own name is always a module export
+        // name and always allows a string literal.
         let property_names_are_module_export_names = export_decl.module_specifier.is_some();
         let mut names = Vec::with_capacity(named_exports.elements.nodes.len() * 2);
         for element_idx in &named_exports.elements.nodes {
@@ -175,13 +227,16 @@ impl<'a> CheckerState<'a> {
             let Some(specifier) = self.ctx.arena.get_specifier(element_node) else {
                 continue;
             };
-            if property_names_are_module_export_names {
-                names.push(specifier.property_name);
-            }
-            names.push(specifier.name);
+            // Source order within a specifier: property name, then name — the
+            // order `checkExportSpecifier` calls them in.
+            names.push((
+                specifier.property_name,
+                property_names_are_module_export_names,
+            ));
+            names.push((specifier.name, true));
         }
-        for name_idx in names {
-            self.check_module_export_name(name_idx);
+        for (name_idx, allow_string_literal) in names {
+            self.check_module_export_name(name_idx, allow_string_literal);
         }
     }
 }
