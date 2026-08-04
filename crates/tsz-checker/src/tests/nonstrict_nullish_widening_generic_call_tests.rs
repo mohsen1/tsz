@@ -30,6 +30,13 @@
 //! Every row below is pinned against a real `typescript@7.0.2` oracle,
 //! `--target es2015 --strict false --noImplicitAny false` (and `--strict` for
 //! the strict-mode control).
+//!
+//! The last group covers `widenedTypes/arrayLiteralWidened.ts` and belongs to
+//! the *mutable-binding* seam (leg B), not the candidate seam. It lives here
+//! because it was found and fixed from this branch, and because both seams now
+//! share one provenance walk — a change to that walk has to be read against
+//! both sets at once, which is exactly the coupling that let the elision hole
+//! regress unnoticed.
 
 use crate::test_utils::{
     check_with_options_code_messages, non_strict_checker_options, strict_checker_options,
@@ -274,5 +281,84 @@ var e: string = v;
             "Type 'undefined[]' is not assignable to type 'string'.".to_string()
         )],
         "strict mode must not widen a nullish candidate: {messages:?}"
+    );
+}
+
+/// The full `types/typeRelationships/widenedTypes/arrayLiteralWidened.ts`
+/// conformance row, which #16387 regressed to `TS2403` and #16393 recorded as
+/// un-bisected. The culprit was never `[null, null]` (already `any[]`) — it was
+/// the ELIDED element `[,,]`, which parses as `NodeIndex::NONE` and so fell
+/// into the provenance walk's node-lookup guard and failed closed, leaving
+/// `undefined[]` where tsc says `any[]`.
+///
+/// The fixture's own last section is the control that rules out "treat every
+/// hole as widening and stop there": `var x: undefined = undefined` is a
+/// non-widening element, and tsc's comment states the rule outright — *no
+/// widening when one or more elements are non-widening* — so `[, x]` must keep
+/// `undefined[]` even though it contains a hole.
+#[test]
+fn array_literal_widened_conformance_row_is_clean() {
+    let source = "\
+var a = [];
+var a = [,,];
+var a = [null, null];
+var a = [undefined, undefined];
+";
+    let messages = nonstrict_messages(source);
+    assert!(
+        messages.is_empty(),
+        "every declaration must widen to `any[]`, so no TS2403: {messages:?}"
+    );
+}
+
+/// The elided element alone — tsc: `any[]`.
+#[test]
+fn elided_element_is_a_widening_source() {
+    assert_infers(
+        "\
+var a = [,,];
+var e: string = a;
+",
+        "any[]",
+    );
+}
+
+/// A hole beside a `null` keyword still widens — tsc: `any[]`.
+#[test]
+fn elided_element_beside_null_keyword_widens() {
+    assert_infers(
+        "\
+var a = [, null];
+var e: string = a;
+",
+        "any[]",
+    );
+}
+
+/// Control from the fixture's own last section: one non-widening element makes
+/// the whole literal non-widening, hole or not — tsc: `undefined[]`.
+#[test]
+fn elided_element_beside_declared_undefined_does_not_widen() {
+    assert_infers(
+        "\
+var x: undefined = undefined;
+var d = [, x];
+var e: string = d;
+",
+        "undefined[]",
+    );
+}
+
+/// Same control without the hole, pinning that the `all` semantics — not the
+/// hole arm — is what declines here. tsc: `undefined[]`.
+#[test]
+fn declared_undefined_beside_undefined_keyword_does_not_widen() {
+    assert_infers(
+        "\
+var x: undefined = undefined;
+var d = [undefined, x];
+var e: string = d;
+",
+        "undefined[]",
     );
 }

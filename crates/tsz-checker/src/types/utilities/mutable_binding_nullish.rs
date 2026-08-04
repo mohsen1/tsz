@@ -110,11 +110,25 @@ impl<'a> CheckerState<'a> {
             let Some(array) = self.ctx.arena.get_literal_expr(node) else {
                 return false;
             };
-            return array
-                .elements
-                .nodes
-                .iter()
-                .all(|&elem| self.initializer_nullish_leaves_are_widening_inner(elem, depth + 1));
+            return array.elements.nodes.iter().all(|&elem| {
+                // An ELIDED element (`[,,]`, parsed as `NodeIndex::NONE`) is a
+                // widening source: the user wrote no value at all, so tsc gives
+                // the hole `undefinedWideningType` exactly as it does the bare
+                // `undefined` keyword. Without this the hole falls into the
+                // node-lookup guard below and fails closed, which left
+                // `var a = [,,]` at `undefined[]` where tsc says `any[]` and
+                // regressed `widenedTypes/arrayLiteralWidened.ts` (#16393).
+                //
+                // The enclosing `all` is what keeps this honest: the same
+                // fixture requires `var x: undefined = undefined; var d = [, x]`
+                // to STAY `undefined[]`, because one non-widening element makes
+                // the whole literal non-widening. A hole is permissive on its
+                // own and decisive nowhere.
+                if elem == NodeIndex::NONE {
+                    return true;
+                }
+                self.initializer_nullish_leaves_are_widening_inner(elem, depth + 1)
+            });
         }
 
         if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
