@@ -30,7 +30,7 @@ mod condition_nullish;
 mod core;
 mod flow_dp;
 pub(crate) mod narrowing;
-mod narrowing_helpers;
+pub(crate) mod narrowing_helpers;
 mod optional_chain;
 mod predicate_resolution;
 pub(crate) mod references;

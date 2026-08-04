@@ -210,6 +210,32 @@ impl<'a> CheckerState<'a> {
     /// initializers (`let x = E.A`) to the parent enum type (`E`), not the
     /// specific member.
     pub(crate) fn widen_initializer_type_for_mutable_binding(&mut self, type_id: TypeId) -> TypeId {
+        self.widen_initializer_type_for_mutable_binding_impl(type_id, true)
+    }
+
+    /// Like [`Self::widen_initializer_type_for_mutable_binding`], but gates the
+    /// non-strict nullish-to-`any` deep widen on `initializer`'s own widening
+    /// provenance (#16384 leg B). tsc's nullish widening flavour belongs to the
+    /// *expression* (`null`/`undefined` keyword, or the global `undefined`),
+    /// not the type — `declare var q: undefined; var av = [q];` must keep
+    /// `undefined[]`, not widen to `any[]`, because `q` is a declared value
+    /// rather than a widening source. See
+    /// [`Self::initializer_nullish_leaves_are_widening`] for the walk and its
+    /// fail-closed policy on shapes it cannot account for.
+    pub(crate) fn widen_initializer_type_for_mutable_binding_gated(
+        &mut self,
+        type_id: TypeId,
+        initializer: tsz_parser::parser::NodeIndex,
+    ) -> TypeId {
+        let nullish_widening_allowed = self.initializer_nullish_leaves_are_widening(initializer);
+        self.widen_initializer_type_for_mutable_binding_impl(type_id, nullish_widening_allowed)
+    }
+
+    fn widen_initializer_type_for_mutable_binding_impl(
+        &mut self,
+        type_id: TypeId,
+        nullish_widening_allowed: bool,
+    ) -> TypeId {
         // Enum member → parent enum type `E` (the union of member literals),
         // never the enum object type `typeof E`.
         if let Some(parent) = self.enum_member_widened_binding_type(type_id) {
@@ -224,7 +250,7 @@ impl<'a> CheckerState<'a> {
             self.ctx.types,
             type_id,
         );
-        if self.ctx.strict_null_checks() {
+        if self.ctx.strict_null_checks() || !nullish_widening_allowed {
             widened
         } else {
             // tsc widens null/undefined to `any` in inferred positions when
