@@ -935,6 +935,73 @@ const regex = /(?<foo>)\k<Foo>/;
 }
 
 #[test]
+fn regex_named_group_backreference_allows_forward_reference() {
+    // tsc collects every named-group specifier across the whole pattern
+    // before validating any `\k<name>` reference, so a reference preceding
+    // its declaration is legal. Oracle-confirmed (typescript@6.0.2): clean.
+    let diags = check_source_diagnostics(
+        r#"
+const regex = /\k<a>(?<a>x)/u;
+"#,
+    );
+    let codes = diagnostic_codes(&diags);
+    assert!(
+        !codes.contains(&1532),
+        "Expected no TS1532 for a forward reference to a later-declared group, got {codes:?}"
+    );
+}
+
+#[test]
+fn regex_named_group_backreference_still_flags_undeclared_name() {
+    // Companion negative case: the name genuinely never appears as a
+    // declaration anywhere in the pattern, forward or backward.
+    let diags = check_source_diagnostics(
+        r#"
+const regex = /\k<b>(?<a>x)/u;
+"#,
+    );
+    let codes = diagnostic_codes(&diags);
+    assert!(
+        codes.contains(&1532),
+        "Expected TS1532 for a name with no matching declaration anywhere in the pattern, got {codes:?}"
+    );
+}
+
+#[test]
+fn regex_named_group_backreference_matches_decoded_unicode_escape_name() {
+    // A named-group identifier may spell any character as a `\uHHHH` /
+    // `\u{H+}` escape; tsc compares the *decoded* name, so `a\u{62}` and
+    // `ab` name the same group. Oracle-confirmed (typescript@6.0.2): clean.
+    let diags = check_source_diagnostics(
+        r#"
+const regex = /\k<a\u{62}>(?<ab>x)/u;
+"#,
+    );
+    let codes = diagnostic_codes(&diags);
+    assert!(
+        !codes.contains(&1532),
+        "Expected no TS1532 when the reference's escaped spelling decodes to a declared name, got {codes:?}"
+    );
+}
+
+#[test]
+fn regex_named_group_backreference_rejects_mismatched_decoded_unicode_escape_name() {
+    // Same shape as above but the escape decodes to a name that was never
+    // declared (`ac`, not `ab`) -- decoding must not make an unrelated name
+    // match by accident.
+    let diags = check_source_diagnostics(
+        r#"
+const regex = /\k<a\u{63}>(?<ab>x)/u;
+"#,
+    );
+    let codes = diagnostic_codes(&diags);
+    assert!(
+        codes.contains(&1532),
+        "Expected TS1532 when the decoded reference name has no matching declaration, got {codes:?}"
+    );
+}
+
+#[test]
 fn ts2416_interface_class_merge_method_override_incompatible() {
     // When a class and interface share the same name (declaration merging),
     // the derived class override check must see interface members from the base.

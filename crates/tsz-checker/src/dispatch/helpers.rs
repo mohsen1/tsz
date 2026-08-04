@@ -87,6 +87,14 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         }
     }
 
+    /// tsc collects every named group specifier across the *whole* pattern
+    /// before validating any `\k<name>` backreference against that set
+    /// (`checkGroupingElement` walks the full node tree first; the
+    /// `\k<name>` resolution reads the already-complete
+    /// `groupSpecifiers` map). A forward reference like `/\k<a>(?<a>x)/` is
+    /// therefore legal. This runs the declaration scan to completion first,
+    /// then validates references in a second pass, instead of checking each
+    /// reference against only the names seen so far in one combined walk.
     fn check_regular_expression_named_groups(
         &mut self,
         node_pos: u32,
@@ -94,37 +102,31 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         bytes: &[u8],
         body_end: usize,
     ) {
-        let mut group_names = BTreeSet::new();
-        let mut i = 1usize;
         let target_supports_named_groups =
             self.checker.ctx.compiler_options.target.supports_es2018();
+        let group_names = self.collect_regex_group_names(
+            node_pos,
+            raw_text,
+            bytes,
+            body_end,
+            target_supports_named_groups,
+        );
+        self.check_regex_named_backreferences(node_pos, raw_text, bytes, body_end, &group_names);
+    }
+
+    fn collect_regex_group_names(
+        &mut self,
+        node_pos: u32,
+        raw_text: &str,
+        bytes: &[u8],
+        body_end: usize,
+        target_supports_named_groups: bool,
+    ) -> BTreeSet<String> {
+        let mut group_names = BTreeSet::new();
+        let mut i = 1usize;
 
         while i < body_end {
             if bytes[i] == b'\\' {
-                if i + 2 < body_end && bytes[i + 1] == b'k' && bytes[i + 2] == b'<' {
-                    let name_start = i + 3;
-                    let mut name_end = name_start;
-                    while name_end < body_end && bytes[name_end] != b'>' {
-                        name_end += 1;
-                    }
-                    if name_end < body_end {
-                        let name = &raw_text[name_start..name_end];
-                        if !group_names.contains(name) {
-                            let message = format_message(
-                                diagnostic_messages::THERE_IS_NO_CAPTURING_GROUP_NAMED_IN_THIS_REGULAR_EXPRESSION,
-                                &[name],
-                            );
-                            self.checker.error_at_position(
-                                node_pos + name_start as u32,
-                                1,
-                                &message,
-                                diagnostic_codes::THERE_IS_NO_CAPTURING_GROUP_NAMED_IN_THIS_REGULAR_EXPRESSION,
-                            );
-                        }
-                        i = name_end + 1;
-                        continue;
-                    }
-                }
                 i += 2;
                 continue;
             }
@@ -150,10 +152,56 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     name_end += 1;
                 }
                 if name_end < body_end {
-                    group_names.insert(raw_text[name_start..name_end].to_string());
+                    group_names.insert(decode_regex_group_name(&raw_text[name_start..name_end]));
                     i = name_end + 1;
                     continue;
                 }
+            }
+
+            i += 1;
+        }
+
+        group_names
+    }
+
+    fn check_regex_named_backreferences(
+        &mut self,
+        node_pos: u32,
+        raw_text: &str,
+        bytes: &[u8],
+        body_end: usize,
+        group_names: &BTreeSet<String>,
+    ) {
+        let mut i = 1usize;
+
+        while i < body_end {
+            if bytes[i] == b'\\' {
+                if i + 2 < body_end && bytes[i + 1] == b'k' && bytes[i + 2] == b'<' {
+                    let name_start = i + 3;
+                    let mut name_end = name_start;
+                    while name_end < body_end && bytes[name_end] != b'>' {
+                        name_end += 1;
+                    }
+                    if name_end < body_end {
+                        let raw_name = &raw_text[name_start..name_end];
+                        if !group_names.contains(&decode_regex_group_name(raw_name)) {
+                            let message = format_message(
+                                diagnostic_messages::THERE_IS_NO_CAPTURING_GROUP_NAMED_IN_THIS_REGULAR_EXPRESSION,
+                                &[raw_name],
+                            );
+                            self.checker.error_at_position(
+                                node_pos + name_start as u32,
+                                1,
+                                &message,
+                                diagnostic_codes::THERE_IS_NO_CAPTURING_GROUP_NAMED_IN_THIS_REGULAR_EXPRESSION,
+                            );
+                        }
+                        i = name_end + 1;
+                        continue;
+                    }
+                }
+                i += 2;
+                continue;
             }
 
             i += 1;
@@ -306,6 +354,49 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             _ => false,
         }
     }
+}
+
+/// A named regex group identifier is an ECMAScript `IdentifierName` and may
+/// spell any of its characters as a `\uHHHH` or `\u{H+}` escape, so a
+/// declaration and a reference can name the same group differently
+/// (`(?<a\u{62}>x)` declares `ab`; `\k<ab>` refers to it). tsc compares
+/// group names by their decoded code points, not their source spelling, so
+/// group-name equality here must too.
+fn decode_regex_group_name(name: &str) -> String {
+    if !name.as_bytes().contains(&b'\\') {
+        return name.to_string();
+    }
+
+    let bytes = name.as_bytes();
+    let mut out = String::with_capacity(name.len());
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && bytes.get(i + 1) == Some(&b'u') {
+            if bytes.get(i + 2) == Some(&b'{')
+                && let Some(close) = name[i + 3..].find('}')
+                && let Ok(code_point) = u32::from_str_radix(&name[i + 3..i + 3 + close], 16)
+                && let Some(decoded) = char::from_u32(code_point)
+            {
+                out.push(decoded);
+                i = i + 3 + close + 1;
+                continue;
+            }
+            if let Some(hex) = name.get(i + 2..i + 6)
+                && hex.bytes().all(|b| b.is_ascii_hexdigit())
+                && let Ok(code_point) = u32::from_str_radix(hex, 16)
+                && let Some(decoded) = char::from_u32(code_point)
+            {
+                out.push(decoded);
+                i += 6;
+                continue;
+            }
+        }
+
+        let ch = name[i..].chars().next().expect("i is at a char boundary");
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
 }
 
 /// Maps a syntax kind to its keyword type name and `TypeId` for TS2693 checking.
