@@ -1482,7 +1482,7 @@ pub(super) const fn is_structural_parse_error(code: u32) -> bool {
 ///
 /// # The regular-expression grammar family
 ///
-/// The whole `TS1487..=TS1538` regex band belongs here, for one structural
+/// The whole `TS1499..=TS1538` regex band belongs here, for one structural
 /// reason: tsc never puts a regex grammar diagnostic in `parseDiagnostics` at
 /// all. Its regex validation runs from the checker, which re-scans the literal
 /// through `scanner.scanRange`, so a malformed pattern cannot participate in
@@ -1490,6 +1490,33 @@ pub(super) const fn is_structural_parse_error(code: u32) -> bool {
 /// `state_expressions_literals_regex.rs` during parsing, which places the same
 /// diagnostics in `parse_diagnostics` — so every code that walk can emit has to
 /// be excluded here or it silently suppresses the rest of the file.
+///
+/// That band is matched as a **range, not an enumeration**, and the distinction
+/// is load-bearing. Enumerating it one code at a time made the predicate drift
+/// out of step with this very doc comment three separate times, each time
+/// landing a live whole-file suppression bug on `main`: `TS1511` (`\q` outside a
+/// character class), then `TS1501`/`TS1504`/`TS1509` (subpattern modifier
+/// groups), then `TS1514`/`TS1515` (capturing group names). The codes an
+/// enumeration was missing were exactly `1503`, `1513`, `1514`, `1515`, `1518`,
+/// `1521` and `1532` — every code the family had tripped on plus every one still
+/// queued to be wired.
+///
+/// The range is safe to state as a range because it is upstream's own
+/// allocation, not a shape tsz imposes: the diagnostics table in
+/// `tsz_common::diagnostics` is generated verbatim from TypeScript's
+/// `diagnosticMessages.json`, and every row from `1499` (`Unknown regular
+/// expression flag.`) through `1538` (`Unicode escape sequences are only
+/// available when the Unicode (u) flag …`) is a regular-expression grammar
+/// message, with `1498` (`Invalid syntax in decorator.`) and `1539` (`A 'bigint'
+/// literal cannot be used as a property name.`) as non-regex neighbours on
+/// either side. `regex_grammar_suppression_tests` pins both the band and those
+/// two boundary codes, so a future upstream sync that allocates a non-regex
+/// message inside the band fails a test rather than silently widening this
+/// predicate.
+///
+/// `TS1487` (`Octal escape sequences are not allowed…`) sits outside the band
+/// and stays enumerated below: it is shared with string-literal escapes and is
+/// not part of upstream's contiguous regex allocation.
 ///
 /// That suppression is not limited to the check-time `TS1xxx` grammar family named
 /// above. `has_syntax_parse_errors` is read at 30+ sites in `tsz-checker`,
@@ -1510,6 +1537,17 @@ pub(super) const fn is_structural_parse_error(code: u32) -> bool {
 /// TS1161, TS1198) are deliberately NOT here: this predicate is keyed on the
 /// code, not the emitting site, and those are real parse failures elsewhere.
 pub(super) const fn is_non_suppressing_parse_error(code: u32) -> bool {
+    // The regular-expression grammar band, matched as a range rather than an
+    // enumeration. Every code from 1499 (`Unknown regular expression flag.`)
+    // through 1538 (`Unicode escape sequences are only available when the
+    // Unicode (u) flag …`) is a regex grammar message in upstream's own
+    // diagnostics table, and tsc reports all of them from the checker. Matching
+    // the band keeps a newly wired regex diagnostic from silently suppressing
+    // the rest of the file before anyone remembers to add a line here.
+    if matches!(code, 1499..=1538) {
+        return true;
+    }
+
     matches!(
         code,
         1009  // Trailing comma not allowed
@@ -1523,44 +1561,9 @@ pub(super) const fn is_non_suppressing_parse_error(code: u32) -> bool {
             | 1262 // 'await' at top level
             | 1359 // 'await' in async context
             | 1492 // 'using' declarations may not have binding patterns (grammar constraint, AST is valid)
-            // --- regular-expression grammar band; see the doc comment above ---
-            | 1487 // Octal escape sequences are not allowed (regex `\0`-prefixed decimal escape, AST is valid)
-            | 1499 // Unknown regular expression flag (grammar check in tsc's checker, not a parse failure)
-            | 1500 // Duplicate regular expression flag (grammar check, AST is valid)
-            | 1501 // This regular expression flag is only available when targeting '{0}' or later.
-                   // Reachable from the parser only for `s` inside a subpattern
-                   // (`/(?s:x)/` below ES2018); the trailing-flag pass emits the
-                   // same code from the checker, where suppression never applied.
-            | 1502 // The Unicode 'u' and 'v' flags cannot be set simultaneously (grammar check, AST is valid)
-            | 1504 // Subpattern flags must be present when there is a minus sign (`/(?-:x)/`)
-            | 1505 // Incomplete quantifier. Digit expected
-            | 1506 // Numbers out of order in quantifier (`/a{2,1}/`)
-            | 1507 // There is nothing available for repetition (`/{1}/u`)
-            | 1508 // Unexpected '{0}'. Did you mean to escape it with backslash? (`/[a[b]]/u`)
-            | 1509 // This regular expression flag cannot be toggled within a subpattern (`/(?g:x)/`)
-            | 1510 // '\k' must be followed by a capturing group name enclosed in angle brackets
-            | 1511 // '\q' is only available inside character class (`/\q{a}/v`, regex grammar, AST is valid)
-            | 1512 // '\c' must be followed by an ASCII letter (`/\c1/u`)
-            | 1516 // A character class range must not be bounded by another character class (`/[a-\d]/u`)
-            | 1517 // Range out of order in character class (`/[b-a]/`)
-            | 1519 // Operators must not be mixed within a character class (regex grammar, AST is valid)
-            | 1520 // Expected a class set operand (`/[a--]/v`)
-            | 1523 // Expected a Unicode property name (`/\p{=x}/u`)
-            | 1524 // Unknown Unicode property name (`/\p{Foo=Bar}/u`)
-            | 1525 // Expected a Unicode property value (`/\p{Script=}/u`)
-            | 1526 // Unknown Unicode property value (`/\p{Script=NotAScript}/u`)
-            | 1527 // Expected a Unicode property name or value (`/\p{}/u`)
-            | 1529 // Unknown Unicode property name or value (`/\p{NotAThing}/u`)
-            | 1528 // Any Unicode property that would match more than a single character is only available with the 'v' flag
-            | 1530 // Unicode property value expressions are only available with the 'u'/'v' flag (`/\p{L}/`)
-            | 1531 // '\p' must be followed by a Unicode property value expression in braces (`/\p/u`)
-            | 1533 // Backreference to a group beyond the capturing-group count (regex grammar, AST is valid)
-            | 1534 // Backreference with no capturing group in the pattern (regex grammar, AST is valid)
-            | 1535 // This character cannot be escaped in a regular expression (`/\y/u`)
-            | 1536 // Octal escape sequences and backreferences are not allowed in a character class (regex grammar, AST is valid)
-            | 1537 // Decimal escape sequences and backreferences are not allowed in a character class (regex grammar, AST is valid)
-            | 1522 // A character class must not contain a reserved double punctuator (regex grammar, AST is valid)
-            | 1538 // Unicode escape sequences are only available with the 'u'/'v' flag (`/\u{61}/`)
+            | 1487 // Octal escape sequences are not allowed (regex `\0`-prefixed decimal escape,
+                   // AST is valid). Outside the contiguous regex band handled above — shared
+                   // with string-literal escapes — so it stays enumerated here.
             | 17019 // '?' at end of type is not valid TS syntax (parser recovers valid AST)
             | 17020 // '?' at start of type is not valid TS syntax (parser recovers valid AST)
     )
