@@ -26,6 +26,7 @@ mod assignability_numeric_display;
 mod assignability_satisfies;
 mod assignability_type_helpers;
 mod assignability_type_parameter_target;
+mod async_suggestion;
 mod call_errors;
 mod call_errors_anchors;
 mod conditional_alias_display;
