@@ -40,6 +40,40 @@ impl<'a> CheckerState<'a> {
         self.initializer_nullish_leaves_are_widening_inner(expr, 0)
     }
 
+    /// Whether a *call argument* expression is itself a fresh array/object
+    /// literal whose nullish leaves are all widening sources (#16384 leg A).
+    ///
+    /// tsc's `getInferredType` ends in `getWidenedType`, so a widening-flavoured
+    /// argument propagates the flavour into the inferred type argument:
+    /// `declare function id[ T ](x: T): T; var v = id([undefined]);` infers
+    /// `any[]`, not `undefined[]`. The candidate seam is the only place this can
+    /// be recovered — the variable-declaration seam cannot, because a call
+    /// expression is never a fresh literal.
+    ///
+    /// Unlike [`CheckerState::is_fresh_literal_expression`], this deliberately
+    /// does **not** follow identifiers to a fresh-by-reference initializer, and
+    /// does not accept a bare literal token. The widening-provenance walk is
+    /// only meaningful over literal syntax written at the argument position:
+    /// `declare var qa: undefined[]; id(qa)` must keep `undefined[]`, and an
+    /// identifier's own checked type carries no flavour to recover. The bare
+    /// `undefined`/`null` argument (`id(undefined)` → `any`) already resolves
+    /// correctly through the scalar path and is left alone here.
+    pub(crate) fn fresh_literal_argument_nullish_leaves_are_widening(
+        &self,
+        expr: NodeIndex,
+    ) -> bool {
+        let expr = self.ctx.arena.skip_parenthesized(expr);
+        let Some(node) = self.ctx.arena.get(expr) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+            && node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+        {
+            return false;
+        }
+        self.initializer_nullish_leaves_are_widening(expr)
+    }
+
     fn initializer_nullish_leaves_are_widening_inner(&self, expr: NodeIndex, depth: u8) -> bool {
         // Cycle / runaway-recursion guard, mirroring `is_fresh_literal_expression`.
         const MAX_DEPTH: u8 = 16;
