@@ -56,7 +56,7 @@ impl<'a> CheckerState<'a> {
         init_type: TypeId,
     ) -> TypeId {
         if self.is_fresh_literal_expression(initializer) {
-            return self.widen_initializer_type_for_mutable_binding(init_type);
+            return self.widen_initializer_type_for_mutable_binding_gated(init_type, initializer);
         }
         init_type
     }
