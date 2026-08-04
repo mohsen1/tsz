@@ -319,6 +319,7 @@ mod generator_inferred_yield_star_array_generic_call_tests;
 mod generator_yield_identity_tests;
 #[path = "tests/generator_yield_invalid_thenable_tests.rs"]
 mod generator_yield_invalid_thenable_tests;
+
 #[path = "tests/generator_yield_literal_widening_tests.rs"]
 mod generator_yield_literal_widening_tests;
 #[path = "tests/generator_yield_self_similar_nesting_tests.rs"]
@@ -447,6 +448,8 @@ mod intersection_callable_constraint_ts2344_tests;
 mod intersection_source_literal_member_display_tests;
 #[path = "tests/intersection_target_elaboration_tests.rs"]
 mod intersection_target_elaboration_tests;
+#[path = "tests/invalid_thenable_no_fulfillment_payload_tests.rs"]
+mod invalid_thenable_no_fulfillment_payload_tests;
 #[path = "tests/invocation_signature_detail_tests.rs"]
 mod invocation_signature_detail_tests;
 #[path = "tests/issue_9762_literal_init_callback_inference.rs"]
