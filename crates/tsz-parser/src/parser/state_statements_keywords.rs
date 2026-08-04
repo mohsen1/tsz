@@ -51,6 +51,30 @@ impl ParserState {
                 }
                 _ => self.parse_expression_statement(),
             }
+        } else if self.look_ahead_is_abstract_before_export_as_namespace() {
+            // `abstract export as namespace Foo;` — the resulting
+            // `NamespaceExportDeclaration` admits no modifiers in any container,
+            // unlike the sibling `abstract` var/function declarations handled
+            // just below, which split their diagnostic by container. tsc reports
+            // TS1184 across the whole statement unconditionally and still parses
+            // the namespace export (#16389). The other `abstract export ...`
+            // forms (const/class/function/...) are not covered by this branch —
+            // `abstract` is a legal modifier on some of those node kinds and tsc
+            // picks a different diagnostic there, still open as a separate gap.
+            let start_pos = self.token_pos();
+            self.parse_expected(SyntaxKind::AbstractKeyword);
+            self.parse_expected(SyntaxKind::ExportKeyword);
+            let node = self.parse_namespace_export_declaration(start_pos);
+            if let Some(n) = self.arena.get(node) {
+                let (span_start, span_end) = (n.pos, n.end);
+                self.parse_error_at(
+                    span_start,
+                    span_end - span_start,
+                    "Modifiers cannot appear here.",
+                    diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+                );
+            }
+            node
         } else if self.look_ahead_is_abstract_before_var_or_function() {
             use tsz_common::diagnostics::diagnostic_codes;
             // `abstract` before a variable or function declaration
@@ -624,6 +648,31 @@ impl ParserState {
         self.parse_error_at(start, end - start, message, code);
         self.next_token();
         self.arena.add_token(kind as u16, start, end)
+    }
+
+    /// Look ahead to see if `abstract` is followed by `export as` — the
+    /// `export as namespace ...` shape specifically, distinct from the other
+    /// `abstract export ...` forms (const/class/function/...), whose
+    /// diagnostic choice depends on whether `abstract` is a legal modifier for
+    /// the target node kind and is not decided by this lookahead (#16389).
+    /// Only the `abstract`-`export` boundary is ASI-sensitive (`abstract` is a
+    /// contextual keyword that ASI can cut off into its own expression
+    /// statement); `export`-`as` is not — a line break there does not stop
+    /// `tsc` from reading one `export as namespace` statement, so this
+    /// lookahead does not require it either.
+    pub(crate) fn look_ahead_is_abstract_before_export_as_namespace(&mut self) -> bool {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token(); // skip 'abstract'
+        let result = !self.scanner.has_preceding_line_break()
+            && self.is_token(SyntaxKind::ExportKeyword)
+            && {
+                self.next_token(); // skip 'export'
+                self.is_token(SyntaxKind::AsKeyword)
+            };
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        result
     }
 
     /// Look ahead to see if `abstract` is followed by a variable or function
