@@ -134,6 +134,25 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
+        // `Symbol.<member>` (or `Symbol["<member>"]`) written directly is
+        // ALWAYS the well-known symbol itself, regardless of `<member>`'s own
+        // declared kind on a (possibly user-augmented) `SymbolConstructor`:
+        // tsc derives a NAMED member from the syntactic well-known shape
+        // (`isWellKnownSymbolSyntactically`) before it ever consults the
+        // key's type, so `{ [Symbol.observable]: 1 }` mints the literal
+        // `[Symbol.observable]` key and does NOT route into a symbol index
+        // signature even when `SymbolConstructor.observable` is a user
+        // global augmentation typed plain `symbol` (#16307). Checked ahead of
+        // the type-based fallback below, which cannot see this syntactic
+        // override on its own.
+        if crate::types_domain::computed_names::is_well_known_symbol_syntax(
+            &self.ctx,
+            self.ctx.arena,
+            self.ctx.binder,
+            computed.expression,
+        ) {
+            return false;
+        }
         // A binding declared `typeof Symbol.<member>` for a genuine well-known
         // member IS that well-known symbol under tsc (the type query reports
         // `unique symbol`), so it names the canonical `[Symbol.<member>]`
