@@ -935,6 +935,73 @@ const regex = /(?<foo>)\k<Foo>/;
 }
 
 #[test]
+fn regex_named_group_backreference_may_precede_its_declaration() {
+    // tsc collects every group specifier across the whole pattern before
+    // validating a `\k<name>` reference, so a forward reference is legal
+    // (oracle-confirmed against typescript@7.0.2).
+    let diags = check_source(
+        r#"
+const regex = /\k<a>(?<a>x)/u;
+"#,
+        "test.ts",
+        CheckerOptions {
+            target: ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts1532 = diagnostics_with_code(&diags, 1532);
+    assert_eq!(
+        ts1532.len(),
+        0,
+        "Expected no TS1532 for a forward reference to a later group, got: {:?}",
+        diagnostic_messages(&ts1532)
+    );
+}
+
+#[test]
+fn regex_named_group_backreference_to_undeclared_name_still_reports() {
+    let diags = check_source(
+        r#"
+const regex = /\k<missing>(?<a>x)/u;
+"#,
+        "test.ts",
+        CheckerOptions {
+            target: ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+    let codes = diagnostic_codes(&diags);
+    assert!(
+        codes.contains(&1532),
+        "Expected TS1532 for a reference naming no group in the pattern, got {codes:?}"
+    );
+}
+
+#[test]
+fn regex_named_group_names_compare_decoded_unicode_escapes() {
+    // `(?<a\u{62}>x)` declares group `ab`; `\k<ab>` and `\k<a\u{62}>` both
+    // name it. Comparing raw (un-decoded) text would miss both.
+    let diags = check_source(
+        r#"
+const regex1 = /(?<a\u{62}>x)\k<ab>/u;
+const regex2 = /(?<ab>x)\k<a\u{62}>/u;
+"#,
+        "test.ts",
+        CheckerOptions {
+            target: ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts1532 = diagnostics_with_code(&diags, 1532);
+    assert_eq!(
+        ts1532.len(),
+        0,
+        "Expected group names to compare decoded, got: {:?}",
+        diagnostic_messages(&ts1532)
+    );
+}
+
+#[test]
 fn ts2416_interface_class_merge_method_override_incompatible() {
     // When a class and interface share the same name (declaration merging),
     // the derived class override check must see interface members from the base.

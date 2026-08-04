@@ -11,6 +11,43 @@ use tsz_solver::TypeId;
 
 use super::ExpressionDispatcher;
 
+/// Decodes the `\uHHHH` and `\u{H+}` escapes legal in a regex group name's
+/// continuation position so a declaration and a reference to the same name
+/// compare equal regardless of which one used the escaped spelling (tsc
+/// compares decoded text, e.g. `(?<a\u{62}>x)` and `\k<ab>` name the same
+/// group).
+fn decode_regex_group_name(name: &str) -> String {
+    let bytes = name.as_bytes();
+    let mut out = String::with_capacity(name.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && bytes.get(i + 1) == Some(&b'u') {
+            let rest = &name[i + 2..];
+            if let Some(hex) = rest.strip_prefix('{') {
+                if let Some(close) = hex.find('}')
+                    && let Ok(code_point) = u32::from_str_radix(&hex[..close], 16)
+                    && let Some(decoded) = char::from_u32(code_point)
+                {
+                    out.push(decoded);
+                    i += 2 + 1 + close + 1;
+                    continue;
+                }
+            } else if rest.len() >= 4
+                && let Ok(code_point) = u32::from_str_radix(&rest[..4], 16)
+                && let Some(decoded) = char::from_u32(code_point)
+            {
+                out.push(decoded);
+                i += 6;
+                continue;
+            }
+        }
+        let ch = name[i..].chars().next().expect("i is a char boundary");
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
 impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
     pub(crate) fn dispatch_regular_expression_literal(&mut self, idx: NodeIndex) -> TypeId {
         if let Some(node) = self.checker.ctx.arena.get(idx)
@@ -94,11 +131,44 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         bytes: &[u8],
         body_end: usize,
     ) {
-        let mut group_names = BTreeSet::new();
-        let mut i = 1usize;
         let target_supports_named_groups =
             self.checker.ctx.compiler_options.target.supports_es2018();
 
+        // tsc collects every group specifier across the whole pattern before
+        // it validates any `\k<name>` reference, so a reference may name a
+        // group declared later in the pattern. A single left-to-right pass
+        // that only remembers names seen so far rejects that legal forward
+        // reference, so declarations are gathered in their own pass first.
+        let mut group_names = BTreeSet::new();
+        let mut i = 1usize;
+        while i < body_end {
+            if bytes[i] == b'\\' {
+                i += 2;
+                continue;
+            }
+
+            if i + 3 < body_end
+                && bytes[i] == b'('
+                && bytes[i + 1] == b'?'
+                && bytes[i + 2] == b'<'
+                && !matches!(bytes[i + 3], b'=' | b'!')
+            {
+                let name_start = i + 3;
+                let mut name_end = name_start;
+                while name_end < body_end && bytes[name_end] != b'>' {
+                    name_end += 1;
+                }
+                if name_end < body_end {
+                    group_names.insert(decode_regex_group_name(&raw_text[name_start..name_end]));
+                    i = name_end + 1;
+                    continue;
+                }
+            }
+
+            i += 1;
+        }
+
+        let mut i = 1usize;
         while i < body_end {
             if bytes[i] == b'\\' {
                 if i + 2 < body_end && bytes[i + 1] == b'k' && bytes[i + 2] == b'<' {
@@ -108,11 +178,11 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         name_end += 1;
                     }
                     if name_end < body_end {
-                        let name = &raw_text[name_start..name_end];
-                        if !group_names.contains(name) {
+                        let name = decode_regex_group_name(&raw_text[name_start..name_end]);
+                        if !group_names.contains(&name) {
                             let message = format_message(
                                 diagnostic_messages::THERE_IS_NO_CAPTURING_GROUP_NAMED_IN_THIS_REGULAR_EXPRESSION,
-                                &[name],
+                                &[name.as_str()],
                             );
                             self.checker.error_at_position(
                                 node_pos + name_start as u32,
@@ -150,7 +220,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     name_end += 1;
                 }
                 if name_end < body_end {
-                    group_names.insert(raw_text[name_start..name_end].to_string());
                     i = name_end + 1;
                     continue;
                 }
