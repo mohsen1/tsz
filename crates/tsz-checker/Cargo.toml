@@ -2628,3 +2628,6 @@ path = "tests/signature_binding_pattern_typeof_scope_tests.rs"
 [[test]]
 name = "ts1501_tests"
 path = "tests/ts1501_tests.rs"
+[[test]]
+name = "ts18036_class_decorator_static_private_identifier_tests"
+path = "tests/ts18036_class_decorator_static_private_identifier_tests.rs"

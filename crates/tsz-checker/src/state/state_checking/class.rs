@@ -178,6 +178,20 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // TS18036: legacy (experimental) class decorators cannot be combined with a
+        // static private-identifier member. tsc's checkClassDeclaration checks this
+        // first, on the class's *first* decorator only, regardless of how many static
+        // private members exist. Class expressions are not checked — tsc's sibling
+        // `checkClassExpression` never calls this predicate.
+        if self.ctx.compiler_options.experimental_decorators
+            && let Some(first_decorator_idx) = self.first_decorator_in_modifiers(&class.modifiers)
+        {
+            self.check_class_decorator_static_private_identifier(
+                first_decorator_idx,
+                &class.members.nodes,
+            );
+        }
+
         // TS1211: A class declaration without the 'default' modifier must have a name.
         // Only applies to class declarations, not class expressions (which are allowed to be anonymous).
         // Also skip when `default` is present as a modifier on the class itself (e.g. `default class {}`
