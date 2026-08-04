@@ -3,7 +3,8 @@
 //! signature, not mint a synthetic named member.
 use tsz_checker::CheckerOptions;
 use tsz_checker::test_utils::{
-    check_source_diagnostics, check_source_with_libs, load_default_lib_files,
+    check_multi_file_with_libs, check_source_diagnostics, check_source_with_libs,
+    load_default_lib_files,
 };
 
 fn assert_clean(source: &str) {
@@ -167,6 +168,115 @@ fn well_known_symbol_syntax_for_a_real_well_known_keeps_named_identity() {
     // index-signature path the new global-augmentation leg added.
     let source = r#"
 interface HasIterator { [Symbol.iterator](): number }
+interface Other { other(): number }
+declare const h: HasIterator;
+export const bad: Other = h;
+"#;
+    let libs = load_default_lib_files();
+    let diags = check_source_with_libs(source, "test.ts", CheckerOptions::default(), &libs);
+    assert!(
+        diags.iter().any(|d| d.code == 2322 || d.code == 2741),
+        "Symbol.iterator must keep its own named identity, not unify with an \
+         unrelated interface via a symbol index signature, got: {diags:?}"
+    );
+}
+
+#[test]
+fn issue_16307_xstate_cross_file_corpus_witness() {
+    // The exact 4-file distillation of xstate's own `Symbol.observable`
+    // interop convention from #16307: a `declare global` augmentation typed
+    // plain `symbol`, an aliasing const annotated `typeof Symbol.observable`,
+    // an interface keyed by the literal `[Symbol.observable]` syntax in one
+    // file, and a class implementing it via the alias in another file. `tsc`
+    // exits 0; this was tsz's original corpus witness (TS2420 + TS2741).
+    let libs = load_default_lib_files();
+    let files: &[(&str, &str)] = &[
+        (
+            "symbolObservable.ts",
+            r#"
+export const symbolObservable: typeof Symbol.observable = (() =>
+  (typeof Symbol === 'function' && Symbol.observable) || '@@observable')() as any;
+"#,
+        ),
+        (
+            "types.ts",
+            r#"
+export interface InteropSubscribable { subscribe(o: (v: any) => void): { unsubscribe(): void } }
+export interface InteropObservable { [Symbol.observable]: () => InteropSubscribable }
+"#,
+        ),
+        (
+            "actor.ts",
+            r#"
+import { symbolObservable } from './symbolObservable';
+import type { InteropObservable, InteropSubscribable } from './types';
+export class Actor implements InteropObservable {
+  public [symbolObservable](): InteropSubscribable {
+    return { subscribe: () => ({ unsubscribe() {} }) };
+  }
+}
+declare function want(o: InteropObservable): void;
+declare const a: Actor;
+want(a);
+"#,
+        ),
+        (
+            "index.ts",
+            r#"
+export * from './types';
+export * from './actor';
+declare global { interface SymbolConstructor { readonly observable: symbol } }
+"#,
+        ),
+    ];
+    let diags = check_multi_file_with_libs(files, "actor.ts", CheckerOptions::default(), &libs);
+    assert!(
+        diags.is_empty(),
+        "expected exit 0 like tsc for the xstate Symbol.observable cross-file \
+         witness, got: {diags:?}"
+    );
+}
+
+#[test]
+fn well_known_symbol_syntax_direct_on_class_member_same_file() {
+    // A class member keyed DIRECTLY by `[Symbol.observable]` (not via an
+    // identifier alias) implementing an interface with the same literal key.
+    // Class instance-type construction routed an unresolved computed name's
+    // string/number key kind into `string_index`/`number_index` but had no
+    // symbol leg at all (`merge_index_signature_from_unresolved_computed_name`,
+    // `crates/tsz-checker/src/types/class_type/helpers.rs`), so a wide-symbol
+    // class member silently contributed to no index signature and the class
+    // failed to structurally satisfy an interface with a symbol index.
+    let source = r#"
+declare global {
+  interface SymbolConstructor {
+    readonly observable: symbol;
+  }
+}
+
+interface Explicit { [key: symbol]: () => number }
+declare const e: Explicit;
+
+class Impl {
+  [Symbol.observable](): number { return 1; }
+}
+declare const i: Impl;
+export const implicitToExplicit: Explicit = i;
+"#;
+    let libs = load_default_lib_files();
+    let diags = check_source_with_libs(source, "test.ts", CheckerOptions::default(), &libs);
+    assert!(diags.is_empty(), "expected exit 0 like tsc, got: {diags:?}");
+}
+
+#[test]
+fn well_known_symbol_iterator_direct_on_class_method_keeps_named_identity() {
+    // Negative control: a real well-known (`Symbol.iterator`, `unique
+    // symbol`-typed) class method must keep its own named identity, not
+    // fold into the symbol-index-signature leg the fix above added.
+    let source = r#"
+class HasIterator {
+  [Symbol.iterator](): number { return 1; }
+}
 interface Other { other(): number }
 declare const h: HasIterator;
 export const bad: Other = h;

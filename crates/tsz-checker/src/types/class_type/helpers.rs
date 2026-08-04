@@ -461,6 +461,7 @@ impl<'a> CheckerState<'a> {
         value_type: TypeId,
         string_index: &mut Option<IndexSignature>,
         number_index: &mut Option<IndexSignature>,
+        symbol_index: &mut Option<IndexSignature>,
     ) {
         let Some(name_node) = self.ctx.arena.get(name_idx) else {
             return;
@@ -479,6 +480,22 @@ impl<'a> CheckerState<'a> {
         // others. Without this gate the member manufactures the very signature
         // it is then measured against, producing a spurious `TS2411`.
         if !self.computed_name_uses_entity_expression(computed.expression) {
+            return;
+        }
+
+        // A key whose type is the wide `symbol` (not `unique symbol`, not a
+        // well-known `Symbol.xxx` that resolved to a literal name -- callers
+        // only reach this function when the name failed to resolve to one)
+        // contributes a `[k: symbol]: V` index signature, mirroring the
+        // object-literal routing in
+        // `object_literal_computed_key_is_wide_symbol`. `get_index_key_kind`
+        // below has no symbol case, so this must be checked first: a
+        // symbol-typed key is otherwise silently dropped from every bucket.
+        if self.object_literal_computed_key_is_wide_symbol(name_idx) {
+            self.merge_union_index_signature(
+                symbol_index,
+                class_type::static_late_bound_index_signature(TypeId::SYMBOL, value_type),
+            );
             return;
         }
 
