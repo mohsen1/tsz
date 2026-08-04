@@ -469,7 +469,22 @@ impl<'a> CheckerState<'a> {
     /// different `symbol` bindings, as tsc allows — stop being mutually
     /// assignable.
     pub(super) fn class_member_computed_key_is_wide_symbol(&mut self, name_idx: NodeIndex) -> bool {
-        if !self.computed_member_key_is_wide_symbol(name_idx) {
+        // Classifying the key evaluates its expression in VALUE position, and a
+        // value-position evaluation reports its own diagnostics. Several of those
+        // are suppressed only inside a computed-property-name context —
+        // `is_in_ambient_computed_property_context` reads
+        // `ctx.checking_computed_property_name` and returns early for an
+        // interface/type-literal member, an ambient class, and an `abstract` or
+        // `declare` member. Publishing that context here is what keeps a
+        // type-only-imported key from re-reporting TS1361 on
+        // `abstract class F { abstract [onInit](): void }`, which is emit-free and
+        // clean under tsc. Restored unconditionally so a nested classification
+        // cannot leak this frame's node.
+        let prev_checking = self.ctx.checking_computed_property_name;
+        self.ctx.checking_computed_property_name = Some(name_idx);
+        let is_wide = self.computed_member_key_is_wide_symbol(name_idx);
+        self.ctx.checking_computed_property_name = prev_checking;
+        if !is_wide {
             return false;
         }
         // `Symbol.NAME` written as property-access syntax is excluded even when

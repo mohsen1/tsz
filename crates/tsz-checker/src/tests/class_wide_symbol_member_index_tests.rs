@@ -199,6 +199,29 @@ export { call };
 }
 
 #[test]
+fn classifying_the_key_does_not_re_report_its_value_position_diagnostics() {
+    // Regression guard for the routing's one hazard: classifying the key
+    // evaluates its expression in VALUE position, and several value-position
+    // diagnostics are suppressed only inside a computed-property-name context
+    // (`is_in_ambient_computed_property_context`). An `abstract` member is
+    // emit-free, so tsc reports nothing for its key; classifying without
+    // publishing that context re-fired the diagnostic here.
+    //
+    // The cross-file `import type` form this mirrors is
+    // `conformance/externalModules/typeOnly/computedPropertyName.ts`; the
+    // single-file harness cannot resolve a module specifier, so the ambient
+    // spelling stands in — both reach the same suppression.
+    assert_clean(
+        r#"
+declare const hookKey: symbol;
+declare class Ambient { [hookKey]: number; }
+abstract class Partial2 { abstract [hookKey](): void; }
+export { Partial2 };
+"#,
+    );
+}
+
+#[test]
 fn wide_symbol_key_routing_ignores_the_binder_name() {
     // Same structural shape as the first test with every identifier renamed;
     // the routing must be driven by the declared type, not by any particular
