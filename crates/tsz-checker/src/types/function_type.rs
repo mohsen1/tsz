@@ -1025,17 +1025,25 @@ impl<'a> CheckerState<'a> {
                 // Check the node's own modifiers directly rather than relying on
                 // enclosing_class (which may not be set when get_type_of_function
                 // is called outside the class member checking pass).
+                //
+                // `is_ambient_declaration` already returns true for a *method*'s own
+                // (grammatically illegal, TS1031) `declare` modifier — see
+                // `is_in_ambient_context`. For that own-declare case (as opposed to a
+                // real `declare class`/.d.ts context) tsc's exemption also covers a
+                // `#private` identifier name, not just the `private` keyword —
+                // `class A { declare #m(x) }` reports no TS7006, verified against
+                // `typescript@7.0.2`. Accessors and constructors do not get that
+                // identifier-name extension (`class A { declare set #m(v) }` still
+                // reports TS7006 for `v`), so only the method arm checks it.
                 let is_ambient_private = self.ctx.is_ambient_declaration(idx)
-                    && (self
+                    && (self.ctx.arena.get_method_decl(node).is_some_and(|m| {
+                        self.has_private_modifier(&m.modifiers)
+                            || self.is_private_identifier_name(m.name)
+                    }) || self
                         .ctx
                         .arena
-                        .get_method_decl(node)
-                        .is_some_and(|m| self.has_private_modifier(&m.modifiers))
-                        || self
-                            .ctx
-                            .arena
-                            .get_accessor(node)
-                            .is_some_and(|a| self.has_private_modifier(&a.modifiers))
+                        .get_accessor(node)
+                        .is_some_and(|a| self.has_private_modifier(&a.modifiers))
                         || self
                             .ctx
                             .arena

@@ -545,3 +545,147 @@ fn ambient_private_named_annotated_members_are_clean_either_way() {
     assert!(!has(&codes, TS7033), "annotated + hidden: {codes:?}");
     assert!(!has(&codes, TS7010), "annotated + hidden: {codes:?}");
 }
+
+// ---------------------------------------------------------------------------
+// (3) The member's own (grammatically illegal) `declare` modifier — issue
+// #16371. `declare` on a method or property is itself a TS1031/TS18019
+// grammar error unless the *enclosing class* is already ambient, but when the
+// member is also `private`/`#private`, tsc folds it into the same surface
+// exemption as (2) and reports only the grammar error — not the
+// noImplicitAny family. `declare protected`/an unmarked `declare` member gets
+// no such exemption: the grammar error and the implicit-any family both fire.
+// Accessors are explicitly NOT part of this exemption — a private-identifier
+// accessor's own `declare` does not suppress TS7032/TS7033/TS7006, only the
+// enclosing-class/`.d.ts` ambient context does (see (2)). Every row verified
+// against `typescript@7.0.2`; see `member_or_illegal_declare_hidden_from_surface`.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn own_declare_on_private_identifier_method_is_clean() {
+    // tsc: TS1031 only.
+    let codes = check_source_strict_codes("class A { declare #m(); }");
+    assert!(!has(&codes, TS7010), "own declare + #private: {codes:?}");
+}
+
+#[test]
+fn own_declare_on_private_identifier_property_is_clean() {
+    // tsc: TS18019 only.
+    let codes = check_source_strict_codes("class A { declare #m; }");
+    assert!(!has(&codes, TS7008), "own declare + #private: {codes:?}");
+}
+
+#[test]
+fn own_declare_on_private_identifier_method_param_is_clean() {
+    // The parameter half of the same exemption (TS7006), not just the return.
+    let codes = check_source_strict_codes("class A { declare #m(x); }");
+    assert!(
+        !has(&codes, TS7006),
+        "own declare + #private param: {codes:?}"
+    );
+    assert!(!has(&codes, TS7010), "own declare + #private: {codes:?}");
+}
+
+#[test]
+fn own_declare_on_private_keyword_method_is_clean() {
+    // The `private` keyword is the other way to be hidden, same as (2).
+    let codes = check_source_strict_codes("class A { declare private m(x); }");
+    assert!(!has(&codes, TS7006), "own declare + private: {codes:?}");
+    assert!(!has(&codes, TS7010), "own declare + private: {codes:?}");
+}
+
+#[test]
+fn own_declare_on_static_private_identifier_method_is_clean() {
+    // `static` does not interact with the exemption, same as (2).
+    let codes = check_source_strict_codes("class A { static declare #m(x); }");
+    assert!(
+        !has(&codes, TS7006),
+        "own declare + #private + static: {codes:?}"
+    );
+    assert!(
+        !has(&codes, TS7010),
+        "own declare + #private + static: {codes:?}"
+    );
+}
+
+#[test]
+fn own_declare_on_renamed_private_identifier_members_is_clean() {
+    // Renamed binders throughout — no identifier string drives the rule.
+    let codes = check_source_strict_codes("class Zebra { declare #alpha; declare #beta(gamma); }");
+    assert!(!has(&codes, TS7008), "renamed binders: {codes:?}");
+    assert!(!has(&codes, TS7010), "renamed binders: {codes:?}");
+    assert!(!has(&codes, TS7006), "renamed binders: {codes:?}");
+}
+
+// --- negative controls: declare alone, and protected, do not exempt ---------
+
+#[test]
+fn own_declare_on_ordinary_named_method_still_reports() {
+    // tsc: TS1031 + TS7010 + TS7006. `declare` alone (without a private name)
+    // is not the discriminator.
+    let codes = check_source_strict_codes("class A { declare m(x); }");
+    assert!(
+        has(&codes, TS7010),
+        "declare alone does not exempt: {codes:?}"
+    );
+    assert!(
+        has(&codes, TS7006),
+        "declare alone does not exempt: {codes:?}"
+    );
+}
+
+#[test]
+fn own_declare_on_ordinary_named_property_still_reports() {
+    let codes = check_source_strict_codes("class A { declare x; }");
+    assert!(
+        has(&codes, TS7008),
+        "declare alone does not exempt: {codes:?}"
+    );
+}
+
+#[test]
+fn own_declare_on_protected_method_still_reports() {
+    // tsc: TS1031 + TS7010 + TS7006. `protected` is not `private` — the
+    // exemption does not generalize to every accessibility modifier.
+    let codes = check_source_strict_codes("class A { declare protected m(x); }");
+    assert!(has(&codes, TS7010), "protected does not exempt: {codes:?}");
+    assert!(has(&codes, TS7006), "protected does not exempt: {codes:?}");
+}
+
+#[test]
+fn annotated_own_declare_private_identifier_method_is_clean_either_way() {
+    // Annotated members are clean for two independent reasons — nothing to
+    // infer, and hidden from the surface — pinned so a later change to either
+    // reason does not silently start reporting.
+    let codes = check_source_strict_codes("class A { declare #m(x: number): void; }");
+    assert!(!has(&codes, TS7010), "annotated + hidden: {codes:?}");
+    assert!(!has(&codes, TS7006), "annotated + hidden: {codes:?}");
+}
+
+// --- accessors are excluded from this specific exemption --------------------
+
+#[test]
+fn own_declare_on_private_identifier_getter_still_reports() {
+    // tsc: TS1031 + TS7033, unlike the method/property arms above. Verified
+    // against `typescript@7.0.2` — this is a genuine method-vs-accessor split
+    // in tsc's own behavior, not an oversight to "fix" by extending (3) to
+    // accessors too.
+    let codes = check_source_strict_codes("class A { declare get #g(); }");
+    assert!(
+        has(&codes, TS7033),
+        "accessors are not part of the own-declare exemption: {codes:?}"
+    );
+}
+
+#[test]
+fn own_declare_on_private_identifier_setter_still_reports() {
+    // tsc: TS1031 + TS7032 + TS7006.
+    let codes = check_source_strict_codes("class A { declare set #s(v); }");
+    assert!(
+        has(&codes, TS7032),
+        "accessors are not part of the own-declare exemption: {codes:?}"
+    );
+    assert!(
+        has(&codes, TS7006),
+        "accessors are not part of the own-declare exemption: {codes:?}"
+    );
+}

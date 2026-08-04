@@ -375,6 +375,34 @@ impl<'a> CheckerState<'a> {
             && (self.has_private_modifier(modifiers) || self.is_private_identifier_name(name_idx))
     }
 
+    /// Whether a class *method or property*'s own illegal `declare` modifier
+    /// hides it from the noImplicitAny family (TS7006/TS7008/TS7010), on top
+    /// of [`Self::member_hidden_from_ambient_declaration_surface`]'s
+    /// class-is-ambient/file-is-.d.ts cases.
+    ///
+    /// `declare` is grammatically illegal on a method or property (TS1031)
+    /// unless the enclosing class is itself ambient, but `tsc` still folds
+    /// the member into the ambient-surface exemption when it is also
+    /// `private`/`#private`: `class A { declare #m(x) }` reports only
+    /// TS1031, not TS7010/TS7006. A `protected` or unmarked member gets no
+    /// such exemption (`class A { declare protected m(x) }` reports
+    /// TS1031 *and* TS7010/TS7006) — verified against `typescript@7.0.2`.
+    ///
+    /// Do NOT use this for accessors: `class A { declare set #m(v) }`
+    /// still reports TS7032/TS7006 alongside TS1031, so a bare `declare`
+    /// modifier does not extend the exemption there. Use
+    /// `member_hidden_from_ambient_declaration_surface` for accessors.
+    pub(crate) fn member_or_illegal_declare_hidden_from_surface(
+        &self,
+        modifiers: &Option<tsz_parser::parser::NodeList>,
+        name_idx: NodeIndex,
+    ) -> bool {
+        self.member_hidden_from_ambient_declaration_surface(modifiers, name_idx)
+            || (self.has_declare_modifier(modifiers)
+                && (self.has_private_modifier(modifiers)
+                    || self.is_private_identifier_name(name_idx)))
+    }
+
     /// Check if a node is a private identifier.
     pub(crate) fn is_private_identifier_name(&self, name_idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(name_idx) else {

@@ -483,14 +483,11 @@ impl<'a> CheckerState<'a> {
         // TS7008: Member implicitly has an 'any' type
         // Report this error when noImplicitAny is enabled and the property has no type annotation
         // AND no initializer (if there's an initializer, TypeScript can infer the type)
-        // TSC suppresses this for private members in ambient (declare) classes
-        let is_private_in_ambient = self
-            .ctx
-            .enclosing_class
-            .as_ref()
-            .is_some_and(|c| c.is_declared)
-            && (self.has_private_modifier(&prop.modifiers)
-                || self.is_private_identifier_name(prop.name));
+        // TSC suppresses this for private members in ambient (declare) classes, in a
+        // declaration file, and for a private/#private property's own (grammatically
+        // illegal) `declare` modifier — see `member_or_illegal_declare_hidden_from_surface`.
+        let is_private_in_ambient =
+            self.member_or_illegal_declare_hidden_from_surface(&prop.modifiers, prop.name);
         let is_static = self.has_static_modifier(&prop.modifiers);
         // tsc suppresses TS7008 for `static prototype` since TS2699 already fires
         let is_static_prototype = is_static
@@ -926,9 +923,12 @@ impl<'a> CheckerState<'a> {
 
         // Check parameter type annotations for parameter properties in function types
         // TSC suppresses the noImplicitAny member family for members that are not
-        // part of an ambient declaration's observable surface.
+        // part of an ambient declaration's observable surface. A private/#private
+        // method's own (grammatically illegal) `declare` modifier extends that
+        // exemption even outside an ambient class — see
+        // `member_or_illegal_declare_hidden_from_surface`.
         let skip_implicit_any =
-            self.member_hidden_from_ambient_declaration_surface(&method.modifiers, method.name);
+            self.member_or_illegal_declare_hidden_from_surface(&method.modifiers, method.name);
         // Pre-extract ordered @param names for positional matching with binding patterns
         let jsdoc_param_names: Vec<String> = method_jsdoc
             .as_ref()
