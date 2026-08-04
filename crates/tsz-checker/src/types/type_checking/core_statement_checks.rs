@@ -649,6 +649,40 @@ impl<'a> CheckerState<'a> {
         !self.ctx.compiler_options.module.is_node_module() && !self.ctx.is_external_module_file()
     }
 
+    /// Whether `tsc`'s ambiguous-top-level-`await` parse quirk exempts this
+    /// `AwaitExpression` from the *entire* top-level-`await` grammar family
+    /// (TS1375, TS1309, and TS1378 alike) — not narrowed to any one of them.
+    ///
+    /// `tsc`'s parser cannot tell a Script-shaped top-level `await` apart
+    /// from `await` used as a plain identifier until it sees the next token
+    /// (`nextTokenIsIdentifierOrKeywordOrLiteralOnSameLine`). When that
+    /// heuristic fails — `await (`, `await [`, `await {`, or a line break
+    /// right after `await` — `tsc` initially parses `await` as an identifier
+    /// and only fixes it up in a whole-statement reparse
+    /// (`reparseTopLevelAwait`) that runs once the file is known to be an
+    /// external module. That reparse forces `NodeFlags.AwaitContext` onto the
+    /// resulting `AwaitExpression`, and `checkGrammarAwaitOrAwaitUsing` gates
+    /// its entire top-level check on that flag being clear — so an ambiguous
+    /// top-level `await` in an external-module file answers none of TS1375,
+    /// TS1309, or TS1378, independent of module kind or target.
+    ///
+    /// `tsz`'s parser has no equivalent ambiguous-identifier fallback: it
+    /// always parses `await <expr>` as a real `AwaitExpression`. This
+    /// reconstructs `tsc`'s verdict from the same token-adjacency fact the
+    /// parser already recorded
+    /// (`UnaryExprDataEx::next_token_identifier_keyword_or_literal_same_line`)
+    /// rather than replicating the two-pass reparse.
+    fn top_level_await_ambiguous_reparse_exemption(
+        &self,
+        await_node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        self.ctx
+            .arena
+            .get_unary_expr_ex(await_node)
+            .is_some_and(|unary| !unary.next_token_identifier_keyword_or_literal_same_line)
+            && self.ctx.is_external_module_file()
+    }
+
     /// Check an await expression for async context.
     ///
     /// Validates that await expressions are only used within async functions,
@@ -784,7 +818,9 @@ impl<'a> CheckerState<'a> {
                         let at_top_level = container.allows_top_level_await()
                             && self.is_directly_at_source_file_top_level(current_idx);
 
-                        if at_top_level {
+                        if at_top_level && self.top_level_await_ambiguous_reparse_exemption(node) {
+                            // Exempt: see `top_level_await_ambiguous_reparse_exemption`.
+                        } else if at_top_level {
                             // tsc's `checkAwaitExpression` emits these two
                             // grammar diagnostics *independently*: a non-module
                             // file gets TS1375, and an unsupported module/target
