@@ -182,3 +182,32 @@ fn generic_target_points_at_the_declaration_in_the_generic_body() {
     assert_eq!(message, "'label' is declared here.");
     assert_eq!(span_text(source, start, length), "label");
 }
+
+/// A class-typed target points at its own field declaration. The owner walk
+/// already resolved the class's own symbol correctly; the gap was
+/// `member_name_node` reading a class member's name through `get_signature`
+/// (the accessor for an interface/type-literal `PROPERTY_SIGNATURE`), which
+/// returns `None` for a class's `PROPERTY_DECLARATION` — its name lives on
+/// the distinct `PropertyDeclData` instead.
+#[test]
+fn single_missing_class_property_points_at_its_declaration() {
+    let source = "class C { a: number = 0; b: number = 0; }\nconst c: C = { a: 1 };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, message) = declared_here(&diagnostic);
+    assert_eq!(message, "'b' is declared here.");
+    assert_eq!(span_text(source, start, length), "b");
+}
+
+/// Unlike an interface/type-literal method signature (underlined whole,
+/// `run(): void;`), tsc underlines only a *class* method's name — pinned
+/// against `typescript@7.0.2`: `class HasRun { keep = 0; run(): void {} }`
+/// underlines exactly `run` (3 chars), not the method body.
+#[test]
+fn missing_class_method_member_points_at_the_method_name_only() {
+    let source =
+        "class HasRun { keep: number = 0; run(): void {} }\nconst h: HasRun = { keep: 1 };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, message) = declared_here(&diagnostic);
+    assert_eq!(message, "'run' is declared here.");
+    assert_eq!(span_text(source, start, length), "run");
+}
