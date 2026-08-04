@@ -547,9 +547,12 @@ impl<'a> CheckerState<'a> {
             Some(payload) if payload != unwrapped => {
                 self.awaited_type_no_alias_with_depth(payload, depth + 1)
             }
-            Some(_) => Some(unwrapped),
+            // A callable `then` that yields no fulfillment payload is tsc's
+            // `undefined` result. Everything else — a thenable that already
+            // awaits to itself, and a type that is not thenable at all — is
+            // its own awaited type.
             None if info.has_callable_then => None,
-            None => Some(unwrapped),
+            _ => Some(unwrapped),
         }
     }
 
