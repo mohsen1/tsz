@@ -218,15 +218,37 @@ impl ParserState {
                 self.next_token();
                 self.parse_statement()
             } else {
-                // TS1044: '{0}' modifier cannot appear on a module or namespace element.
+                // tsc's grammar check picks the message from the statement's
+                // container, not the modifier itself: a Block body (function
+                // body, a nested block, or a class static block) gets the
+                // generic TS1184; a module/namespace body or the source
+                // file's own top level, neither of which is a Block, keeps
+                // the module/namespace-specific TS1044 (#16368).
+                //
+                // `in_static_block_context()` covers the static-block case
+                // directly rather than through `in_block_context()`
+                // (`parse_static_block` does not set CONTEXT_FLAG_IN_BLOCK,
+                // deliberately: doing so also makes the class-body nested-
+                // block recovery heuristic a few lines up in
+                // `parse_statements` fire inside static blocks, which is a
+                // separate, pre-existing bug — confirmed it already
+                // misparses a plain method body the same way, unrelated to
+                // this fix — and out of scope here).
                 let modifier_start = self.token_pos();
                 let modifier_text = self.scanner.get_token_text();
-                self.parse_error_at_current_token(
-                    &format!(
-                        "'{modifier_text}' modifier cannot appear on a module or namespace element."
-                    ),
-                    diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT,
-                );
+                if self.in_block_context() || self.in_static_block_context() {
+                    self.parse_error_at_current_token(
+                        "Modifiers cannot appear here.",
+                        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+                    );
+                } else {
+                    self.parse_error_at_current_token(
+                        &format!(
+                            "'{modifier_text}' modifier cannot appear on a module or namespace element."
+                        ),
+                        diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT,
+                    );
+                }
                 let modifier_kind = self.token();
                 self.next_token();
                 let modifier = self.arena.add_token(

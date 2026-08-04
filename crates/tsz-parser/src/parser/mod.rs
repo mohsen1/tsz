@@ -169,6 +169,9 @@ mod parser_improvement_yield_generator_recovery_tests;
 #[path = "../../tests/parser_speculative_context_restore_tests.rs"]
 mod parser_speculative_context_restore_tests;
 #[cfg(test)]
+#[path = "../../tests/parser_top_level_modifier_ts1044_ts1184_tests.rs"]
+mod parser_top_level_modifier_ts1044_ts1184_tests;
+#[cfg(test)]
 #[path = "../../tests/tests.rs"]
 mod tests;
 
