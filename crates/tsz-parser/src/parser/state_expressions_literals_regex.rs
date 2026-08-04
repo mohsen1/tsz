@@ -466,12 +466,7 @@ impl ParserState {
                 }
             }
 
-            fn next_utf8_char(bytes: &[u8], end: usize, pos: usize) -> Option<(char, usize)> {
-                std::str::from_utf8(&bytes[pos..end])
-                    .ok()
-                    .and_then(|slice| slice.chars().next())
-                    .map(|ch| (ch, ch.len_utf8()))
-            }
+            use crate::parser::regex_modifier_groups::next_utf8_char;
 
             const fn is_word_char(ch: u8) -> bool {
                 ch == b'_' || ch.is_ascii_alphanumeric() || ch >= 0x80
@@ -559,55 +554,7 @@ impl ParserState {
                 }
             }
 
-            fn is_identifier_part_for_regex_flags(ch: char) -> bool {
-                // tsc terminates regex-flag scanning with `isIdentifierPart`
-                // (`scanner.ts`); route through the scanner predicate so flag
-                // termination matches identifier scanning exactly.
-                tsz_scanner::is_ecmascript_identifier_part(ch)
-            }
-
-            const fn is_regex_flag(ch: char) -> bool {
-                matches!(ch, 'g' | 'i' | 'm' | 's' | 'u' | 'v' | 'y' | 'd')
-            }
-
-            fn scan_regex_modifier_segment(
-                parser: &mut ParserState,
-                emit: &impl Fn(&mut ParserState, usize, u32, &str, u32),
-                body: &[u8],
-                end: usize,
-                pos: &mut usize,
-            ) -> bool {
-                let mut consumed_any = false;
-
-                while *pos < end {
-                    let Some((ch, char_len)) = next_utf8_char(body, end, *pos) else {
-                        break;
-                    };
-
-                    if is_regex_flag(ch) {
-                        *pos += char_len;
-                        consumed_any = true;
-                        continue;
-                    }
-
-                    if is_identifier_part_for_regex_flags(ch) {
-                        emit(
-                            parser,
-                            *pos,
-                            1,
-                            diagnostic_messages::UNKNOWN_REGULAR_EXPRESSION_FLAG,
-                            diagnostic_codes::UNKNOWN_REGULAR_EXPRESSION_FLAG,
-                        );
-                        *pos += char_len;
-                        consumed_any = true;
-                        continue;
-                    }
-
-                    break;
-                }
-
-                consumed_any
-            }
+            use crate::parser::regex_modifier_groups::scan_modifier_group_prelude;
 
             fn scan_character_escape(
                 parser: &mut ParserState,
@@ -1573,10 +1520,12 @@ impl ParserState {
 
                             if ctx.body[*pos] == b'?' {
                                 *pos += 1;
-                                if *pos >= ctx.body_end {
-                                    break;
-                                }
-                                match ctx.body[*pos] {
+                                // tsc reads the character after `?` through
+                                // `charCodeChecked`, so end-of-body is not a
+                                // termination condition here: `/(?/` still
+                                // enters the modifier-group arm and reports the
+                                // missing `:` where the body ran out.
+                                match ctx.body.get(*pos).copied().unwrap_or(b'\0') {
                                     b'=' | b'!' => {
                                         *pos += 1;
                                         is_previous_term_quantifiable = !ctx.strict_mode;
@@ -1598,53 +1547,19 @@ impl ParserState {
                                         }
                                         scan_disjunction(parser, ctx, pos, true);
                                     }
+                                    // Modifier group, including the degenerate
+                                    // `(?:` form: tsc reaches both through this
+                                    // same `default` arm and never backtracks
+                                    // out of it.
                                     _ => {
-                                        let saved_pos = *pos;
-                                        let has_first = scan_regex_modifier_segment(
+                                        scan_modifier_group_prelude(
                                             parser,
                                             ctx.emit,
                                             ctx.body,
                                             ctx.body_end,
                                             pos,
                                         );
-
-                                        if has_first
-                                            && *pos < ctx.body_end
-                                            && ctx.body[*pos] == b'-'
-                                        {
-                                            *pos += 1;
-                                            if *pos < ctx.body_end {
-                                                let has_second = scan_regex_modifier_segment(
-                                                    parser,
-                                                    ctx.emit,
-                                                    ctx.body,
-                                                    ctx.body_end,
-                                                    pos,
-                                                );
-
-                                                if !has_second {
-                                                    *pos = saved_pos;
-                                                }
-                                            } else {
-                                                *pos = saved_pos;
-                                            }
-                                        }
-
-                                        let is_modifier_group = has_first
-                                            && *pos < ctx.body_end
-                                            && ctx.body[*pos] == b':';
-
-                                        if !is_modifier_group {
-                                            *pos = saved_pos;
-                                        } else {
-                                            *pos += 1;
-                                            is_previous_term_quantifiable = true;
-                                        }
-
-                                        if !is_modifier_group {
-                                            is_previous_term_quantifiable = true;
-                                        }
-
+                                        is_previous_term_quantifiable = true;
                                         scan_disjunction(parser, ctx, pos, true);
                                     }
                                 }
