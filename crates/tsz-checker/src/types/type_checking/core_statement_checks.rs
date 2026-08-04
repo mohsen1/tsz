@@ -912,6 +912,15 @@ impl<'a> CheckerState<'a> {
     /// (the TS2715 abstract-property family relies on that), so widening
     /// `function_depth` to cover them would silently re-break it.
     ///
+    /// A class static block is the same kind of non-function-like container:
+    /// it is not `is_function_like()`, so without an explicit check here the
+    /// walk sails straight through it and up to the source file, answering
+    /// "top level" for an `await using` that is actually nested inside a
+    /// `static { }` block — which routes it into the wrong diagnostic family
+    /// (TS2853/TS2854, the top-level pair) instead of TS18054. Oracle-confirmed
+    /// (`typescript@7.0.2`): `class C { static { await using x = y; } }` in a
+    /// plain script file reports TS18054 alone, never TS2853.
+    ///
     /// A computed member name of a class is the one position that does *not*
     /// take its container from its immediately enclosing declaration: the name
     /// is evaluated once, where the class itself is defined. `tsc` models that
@@ -956,6 +965,7 @@ impl<'a> CheckerState<'a> {
                 || parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
                 || parent_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
                 || parent_node.kind == syntax_kind_ext::PARAMETER
+                || parent_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
             {
                 return false;
             }

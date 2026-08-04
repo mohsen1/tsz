@@ -1,5 +1,5 @@
 //! Placement grammar for `using` / `await using` declaration lists —
-//! TS1545, TS1546, TS1547, TS1548.
+//! TS1545, TS1546, TS1547, TS1548, TS18054.
 //!
 //! Extracted from `core.rs` to keep module size manageable; the single caller is
 //! `check_variable_declaration_list_with_request` there.
@@ -70,6 +70,86 @@ impl CheckerState<'_> {
         }
 
         false
+    }
+
+    /// TS18054/TS2852: where a non-top-level `await using` statement is
+    /// allowed to stand, once the top-level-eligibility branch in the caller
+    /// has already been ruled out.
+    ///
+    /// Checks the static-block placement first — see
+    /// `check_grammar_await_using_static_block_placement` for why that must
+    /// run ahead of, and independently of, the enclosing-function check.
+    pub(super) fn check_grammar_await_using_nested_placement(&mut self, list_idx: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        if self.check_grammar_await_using_static_block_placement(list_idx) {
+            return;
+        }
+        if !self.enclosing_function_allows_await_using(list_idx) {
+            // TS2852: Nested 'await using' is only valid inside async functions.
+            self.error_at_node(
+                list_idx,
+                diagnostic_messages::AWAIT_USING_STATEMENTS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LE,
+                diagnostic_codes::AWAIT_USING_STATEMENTS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LE,
+            );
+        }
+    }
+
+    fn enclosing_function_allows_await_using(&self, idx: NodeIndex) -> bool {
+        let Some(function_idx) = self.find_enclosing_function(idx) else {
+            return false;
+        };
+        let Some(node) = self.ctx.arena.get(function_idx) else {
+            return false;
+        };
+
+        self.ctx
+            .arena
+            .get_function(node)
+            .is_some_and(|function| function.is_async)
+            || self
+                .ctx
+                .arena
+                .get_method_decl(node)
+                .is_some_and(|method| self.has_async_modifier(&method.modifiers))
+            || self
+                .ctx
+                .arena
+                .get_accessor(node)
+                .is_some_and(|accessor| self.has_async_modifier(&accessor.modifiers))
+    }
+
+    /// TS18054: `await using` statements cannot be used inside a class static
+    /// block. Returns `true` when the diagnostic was reported.
+    ///
+    /// `find_enclosing_static_block` stops at the first function boundary, so
+    /// this fires only when the `await using` statement sits directly inside
+    /// the static block (or under further blocks/control flow within it) with
+    /// no intervening function — a nested async function inside the static
+    /// block leaves this returning `false`, letting the caller's ordinary
+    /// `enclosing_function_allows_await_using` check take over, exactly as
+    /// `check_for_await_statement`'s TS18038 already does for `for await`.
+    ///
+    /// An outer async function does NOT suppress this: a static block is
+    /// never itself async, so `enclosing_function_allows_await_using` must
+    /// not be consulted first. Oracle-confirmed (`typescript@7.0.2`):
+    /// `async function outer() { class C { static { await using x = y; } } }`
+    /// still reports TS18054.
+    pub(super) fn check_grammar_await_using_static_block_placement(
+        &mut self,
+        list_idx: NodeIndex,
+    ) -> bool {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        if self.find_enclosing_static_block(list_idx).is_none() {
+            return false;
+        }
+        self.error_at_node(
+            list_idx,
+            diagnostic_messages::AWAIT_USING_STATEMENTS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
+            diagnostic_codes::AWAIT_USING_STATEMENTS_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
+        );
+        true
     }
 
     /// Whether the variable statement wrapping this declaration list carries any

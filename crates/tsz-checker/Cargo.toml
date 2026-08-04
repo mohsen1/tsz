@@ -1956,6 +1956,9 @@ path = "tests/ts2855_static_super_field_tests.rs"
 name = "ts2852_await_using_context_tests"
 path = "tests/ts2852_await_using_context_tests.rs"
 [[test]]
+name = "ts18054_await_using_class_static_block_tests"
+path = "tests/ts18054_await_using_class_static_block_tests.rs"
+[[test]]
 name = "using_disposable_elaboration_tests"
 path = "tests/using_disposable_elaboration_tests.rs"
 [[test]]

@@ -1661,13 +1661,8 @@ impl<'a> CheckerState<'a> {
                         );
                     }
                 }
-            } else if !self.enclosing_function_allows_await_using(list_idx) {
-                // TS2852: Nested 'await using' is only valid inside async functions.
-                self.error_at_node(
-                    list_idx,
-                    diagnostic_messages::AWAIT_USING_STATEMENTS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LE,
-                    diagnostic_codes::AWAIT_USING_STATEMENTS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LE,
-                );
+            } else {
+                self.check_grammar_await_using_nested_placement(list_idx);
             }
         }
 
@@ -1694,30 +1689,6 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
-    }
-
-    fn enclosing_function_allows_await_using(&self, idx: NodeIndex) -> bool {
-        let Some(function_idx) = self.find_enclosing_function(idx) else {
-            return false;
-        };
-        let Some(node) = self.ctx.arena.get(function_idx) else {
-            return false;
-        };
-
-        self.ctx
-            .arena
-            .get_function(node)
-            .is_some_and(|function| function.is_async)
-            || self
-                .ctx
-                .arena
-                .get_method_decl(node)
-                .is_some_and(|method| self.has_async_modifier(&method.modifiers))
-            || self
-                .ctx
-                .arena
-                .get_accessor(node)
-                .is_some_and(|accessor| self.has_async_modifier(&accessor.modifiers))
     }
 
     /// TS2492: Check if any `let`/`const` declaration in a catch block shadows
