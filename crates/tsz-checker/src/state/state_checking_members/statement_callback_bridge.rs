@@ -208,6 +208,11 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 }
             }
 
+            // TS18057: string-literal export names need a module target newer
+            // than `es2015`/`es2020`. Unlike the import side, tsc does not gate
+            // this on the module specifier resolving.
+            self.check_export_declaration_module_export_names(export_idx);
+
             // TS2322: Check export attribute values against global ImportAttributes interface
             self.check_import_attributes_assignability(export_decl.attributes);
 

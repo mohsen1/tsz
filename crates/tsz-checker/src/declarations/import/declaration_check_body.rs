@@ -210,6 +210,11 @@ impl<'a> CheckerState<'a> {
         // Import declarations make the file a module, so it's always strict mode → TS1214.
         self.check_import_binding_reserved_words(import.import_clause);
 
+        // TS18057: string-literal import names need a module target newer than
+        // `es2015`/`es2020`. Like tsc's `checkImportDeclaration`, this only runs
+        // when the module specifier resolves.
+        self.check_import_declaration_module_export_names(stmt_idx);
+
         if import.import_clause.is_some() {
             self.check_import_declaration_conflicts(stmt_idx, import.import_clause);
         }

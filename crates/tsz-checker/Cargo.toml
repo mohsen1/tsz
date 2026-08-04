@@ -1965,6 +1965,9 @@ path = "tests/global_module_export_grammar_tests.rs"
 name = "using_declaration_placement_grammar_tests"
 path = "tests/using_declaration_placement_grammar_tests.rs"
 [[test]]
+name = "string_literal_module_export_name_grammar_tests"
+path = "tests/string_literal_module_export_name_grammar_tests.rs"
+[[test]]
 name = "jsdoc_tag_boundary_tests"
 path = "tests/jsdoc_tag_boundary_tests.rs"
 [[test]]
