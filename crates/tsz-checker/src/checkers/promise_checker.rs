@@ -15,13 +15,12 @@ use tsz_solver::TypeId;
 struct ThenableAwaitInfo {
     awaited_type: Option<TypeId>,
     rejected_this_type: Option<TypeId>,
-    has_callable_then: bool,
     /// `tsc`'s `isThenableType`: the `then` property exists and, once `null`
     /// and `undefined` are stripped from it, is callable. Deliberately looser
-    /// than `has_callable_then`, which reads the signatures of the *raw* `then`
-    /// property the way `getPromisedTypeOfPromiseEx` does — an optional
-    /// `then?:` is thenable but has no raw call signature, and that gap is
-    /// exactly one of the shapes `tsc` reports as an invalid thenable.
+    /// than the signatures of the *raw* `then` property that
+    /// `getPromisedTypeOfPromiseEx` reads — an optional `then?:` is thenable
+    /// but has no raw call signature, and that gap is exactly one of the shapes
+    /// `tsc` reports as an invalid thenable.
     is_thenable: bool,
     /// At least one `then` signature surviving the `this` filter has a callable
     /// `onfulfilled` parameter (`getSignaturesOfType(onfulfilledParameterType)`
@@ -627,7 +626,6 @@ impl<'a> CheckerState<'a> {
             return ThenableAwaitInfo {
                 awaited_type: None,
                 rejected_this_type: Some(expected_this),
-                has_callable_then: true,
                 is_thenable: true,
                 fulfillment_callback_callable: false,
             };
@@ -703,7 +701,6 @@ impl<'a> CheckerState<'a> {
             rejected_this_type: (candidate_count == 0)
                 .then_some(rejected_this_type)
                 .flatten(),
-            has_callable_then: true,
             is_thenable,
             fulfillment_callback_callable,
         }
