@@ -622,6 +622,17 @@ impl ParserState {
             // matches TSC's "abort parsing list" behavior: tokens that could start a
             // class member in an outer context cause the inner block list to terminate
             // rather than consuming tokens that belong to the class body.
+            //
+            // This must NOT fire when the modifier is itself followed by a real
+            // declaration keyword (`const`/`class`/`function`/... — see
+            // `look_ahead_is_modifier_before_declaration`): tsc parses that shape as
+            // a (misplaced) modified declaration and reports a single grammar
+            // diagnostic from `parse_statement`'s own modifier dispatch (TS1184/
+            // TS1044, #16368), not the "declaration or statement expected" recovery
+            // this branch performs. Oracle-confirmed on `public const z = 1;` inside
+            // a method body: tsc reports one TS1184, not this recovery's TS1128
+            // followed by a cascade of unrelated errors from misinterpreting the
+            // rest of the statement as class-body content (#16377).
             if self.in_block_context()
                 && self.in_class_body()
                 && matches!(
@@ -636,6 +647,7 @@ impl ParserState {
                         | SyntaxKind::AccessorKeyword
                 )
                 && self.look_ahead_next_is_identifier_or_keyword_on_same_line()
+                && !self.look_ahead_is_modifier_before_declaration()
             {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token(
