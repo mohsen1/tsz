@@ -139,3 +139,68 @@ fn exported_function_declaration_nested_reports_ts1184_regardless_of_file_kind()
     assert!(!ts.contains(&EXPORT_DECL_TOP_LEVEL_OF_NAMESPACE_OR_MODULE));
     assert!(!js.contains(&EXPORT_DECL_TOP_LEVEL_OF_MODULE));
 }
+
+// --- `export interface`/`export type`/`export enum` nested in a Block: tsc
+// --- reads `export` as a modifier on the trailing declaration here exactly
+// --- as it does for `export function`/`export const`/`export class`, so all
+// --- six shapes must share the TS1184 arm rather than the three already
+// --- covered ones. Verified against pinned tsc 7.0.2.
+
+#[test]
+fn exported_interface_nested_in_function_body_reports_ts1184() {
+    let source = "function f() {\n  export interface I {}\n}\n";
+    let codes = ts_codes(source);
+    assert!(codes.contains(&MODIFIERS_CANNOT_APPEAR_HERE));
+    assert!(!codes.contains(&EXPORT_DECL_TOP_LEVEL_OF_NAMESPACE_OR_MODULE));
+}
+
+#[test]
+fn exported_type_alias_nested_in_arrow_body_reports_ts1184() {
+    let source = "const f = () => {\n  export type T = number;\n};\n";
+    let codes = ts_codes(source);
+    assert!(codes.contains(&MODIFIERS_CANNOT_APPEAR_HERE));
+    assert!(!codes.contains(&EXPORT_DECL_TOP_LEVEL_OF_NAMESPACE_OR_MODULE));
+}
+
+#[test]
+fn exported_generic_type_alias_nested_in_arrow_body_reports_ts1184() {
+    let source = "const f = () => {\n  export type T<A> = A;\n};\n";
+    let codes = ts_codes(source);
+    assert!(codes.contains(&MODIFIERS_CANNOT_APPEAR_HERE));
+    assert!(!codes.contains(&EXPORT_DECL_TOP_LEVEL_OF_NAMESPACE_OR_MODULE));
+}
+
+#[test]
+fn exported_enum_nested_in_bare_block_reports_ts1184() {
+    let source = "{\n  export enum E { A, B }\n}\n";
+    let codes = ts_codes(source);
+    assert!(codes.contains(&MODIFIERS_CANNOT_APPEAR_HERE));
+    assert!(!codes.contains(&EXPORT_DECL_TOP_LEVEL_OF_NAMESPACE_OR_MODULE));
+}
+
+// --- Positive control: `export interface` inside a valid module-element
+// --- context (a namespace body) stays clean — this must not start firing
+// --- TS1184 everywhere just because the wrapped kind now matches.
+
+#[test]
+fn exported_interface_inside_namespace_body_is_clean() {
+    let source = "namespace N {\n  export interface I {}\n}\n";
+    let codes = ts_codes(source);
+    assert!(!codes.contains(&MODIFIERS_CANNOT_APPEAR_HERE));
+    assert!(!codes.contains(&EXPORT_DECL_TOP_LEVEL_OF_NAMESPACE_OR_MODULE));
+}
+
+// --- Fallback: in a JS file, `export interface` is rejected by the
+// --- TS-syntax-in-JS check (TS8006) before context even matters — this arm
+// --- must not additionally fire TS1184 or the export-context codes.
+
+#[test]
+fn exported_interface_nested_in_js_file_reports_ts8006_only() {
+    const INTERFACE_ONLY_IN_TS_FILES: u32 = 8006;
+    let source = "function f() {\n  export interface I {}\n}\n";
+    let codes = js_codes(source);
+    assert!(codes.contains(&INTERFACE_ONLY_IN_TS_FILES));
+    assert!(!codes.contains(&MODIFIERS_CANNOT_APPEAR_HERE));
+    assert!(!codes.contains(&EXPORT_DECL_TOP_LEVEL_OF_NAMESPACE_OR_MODULE));
+    assert!(!codes.contains(&EXPORT_DECL_TOP_LEVEL_OF_MODULE));
+}

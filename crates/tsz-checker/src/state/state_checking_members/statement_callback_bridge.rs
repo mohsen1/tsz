@@ -1346,9 +1346,13 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             }
             k if k == syntax_kind_ext::EXPORT_DECLARATION => {
                 if let Some(export_decl) = self.ctx.arena.get_export_decl_at(stmt_idx) {
-                    // Check if the export wraps a class/function declaration
-                    // (e.g., `export function foo()`, `export default class C`).
-                    // In tsc, these get TS1184 "Modifiers cannot appear here" instead.
+                    // Check if the export wraps a declaration that carries its
+                    // own modifier list (class/function/variable/interface/type
+                    // alias/enum), e.g. `export function foo()`,
+                    // `export default class C`, `export interface I {}`.
+                    // In tsc, these all get TS1184 "Modifiers cannot appear
+                    // here" instead — `export` is read as a modifier on the
+                    // trailing declaration, not as its own statement.
                     let clause_kind = self
                         .ctx
                         .arena
@@ -1360,6 +1364,9 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                             || k == syntax_kind_ext::CLASS_EXPRESSION
                             || k == syntax_kind_ext::FUNCTION_DECLARATION
                             || k == syntax_kind_ext::VARIABLE_STATEMENT
+                            || k == syntax_kind_ext::INTERFACE_DECLARATION
+                            || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                            || k == syntax_kind_ext::ENUM_DECLARATION
                     );
 
                     let is_namespace_or_module = matches!(
