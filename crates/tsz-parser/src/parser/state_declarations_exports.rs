@@ -88,12 +88,12 @@ impl ParserState {
 
         // export * from "mod"
         if self.is_token(SyntaxKind::AsteriskToken) {
-            return self.parse_export_star(start_pos, is_type_only);
+            return self.parse_export_star(start_pos, is_type_only, None);
         }
 
         // export { ... }
         if self.is_token(SyntaxKind::OpenBraceToken) {
-            return self.parse_export_named(start_pos, is_type_only);
+            return self.parse_export_named(start_pos, is_type_only, None);
         }
 
         // export = expression (CommonJS-style export)
@@ -475,7 +475,12 @@ impl ParserState {
     }
 
     // Parse export * from "mod"
-    pub(crate) fn parse_export_star(&mut self, start_pos: u32, is_type_only: bool) -> NodeIndex {
+    pub(crate) fn parse_export_star(
+        &mut self,
+        start_pos: u32,
+        is_type_only: bool,
+        modifiers: Option<crate::parser::NodeList>,
+    ) -> NodeIndex {
         self.parse_expected(SyntaxKind::AsteriskToken);
 
         // Optional "as namespace" for re-export (keywords and string literals allowed)
@@ -520,7 +525,7 @@ impl ParserState {
             start_pos,
             end_pos,
             ExportDeclData {
-                modifiers: None,
+                modifiers,
                 is_type_only,
                 is_default_export: false,
                 default_keyword_pos: None,
@@ -532,7 +537,12 @@ impl ParserState {
     }
 
     // Parse export { x, y } or export { x } from "mod"
-    pub(crate) fn parse_export_named(&mut self, start_pos: u32, is_type_only: bool) -> NodeIndex {
+    pub(crate) fn parse_export_named(
+        &mut self,
+        start_pos: u32,
+        is_type_only: bool,
+        modifiers: Option<crate::parser::NodeList>,
+    ) -> NodeIndex {
         let export_clause = self.parse_named_exports();
 
         let module_specifier = if self.parse_optional(SyntaxKind::FromKeyword) {
@@ -556,7 +566,7 @@ impl ParserState {
             start_pos,
             end_pos,
             ExportDeclData {
-                modifiers: None,
+                modifiers,
                 is_type_only,
                 is_default_export: false,
                 default_keyword_pos: None,
