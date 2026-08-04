@@ -277,6 +277,10 @@ mod regex_class_set_nesting_tests;
 mod regex_class_set_reserved_double_punctuator_tests;
 
 #[cfg(test)]
+#[path = "../../tests/regex_class_set_string_disjunction_operand_tests.rs"]
+mod regex_class_set_string_disjunction_operand_tests;
+
+#[cfg(test)]
 #[path = "../../tests/regex_negated_class_may_contain_strings_tests.rs"]
 mod regex_negated_class_may_contain_strings_tests;
 
