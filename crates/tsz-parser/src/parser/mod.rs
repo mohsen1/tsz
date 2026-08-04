@@ -172,6 +172,9 @@ mod parser_improvement_unicode_escape_recovery_tests;
 #[path = "../../tests/parser_improvement_yield_generator_recovery_tests.rs"]
 mod parser_improvement_yield_generator_recovery_tests;
 #[cfg(test)]
+#[path = "../../tests/parser_modified_export_statement_tests.rs"]
+mod parser_modified_export_statement_tests;
+#[cfg(test)]
 #[path = "../../tests/parser_speculative_context_restore_tests.rs"]
 mod parser_speculative_context_restore_tests;
 #[cfg(test)]

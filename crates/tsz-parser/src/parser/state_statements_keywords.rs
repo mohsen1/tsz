@@ -6,6 +6,27 @@ use tsz_common::diagnostics::diagnostic_codes;
 use tsz_common::interner::AstAtom;
 use tsz_scanner::{SyntaxKind, keyword_text_len};
 
+/// What the `export` that follows a stray modifier keyword actually starts.
+///
+/// tsc attaches the modifier to whichever node the `export` begins, and
+/// `checkGrammarModifiers` then answers by that node's own kind — not by the
+/// modifier, and not by the container alone. The three arms below get three
+/// genuinely different answers, so the classification has to happen before the
+/// container gate runs.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ModifiedExportForm {
+    /// `export as namespace Foo;` — a `NamespaceExportDeclaration`, which
+    /// admits no modifiers in any container.
+    NamespaceExport,
+    /// `export {}`, `export * from`, `export =`, `export default` — an export
+    /// declaration or assignment, which draws its own placement diagnostic and
+    /// no modifier diagnostic.
+    ExportDeclarationOrAssignment,
+    /// `export const`, `export class`, `export function`, ... — an ordinary
+    /// modified declaration, which takes the container split.
+    ModifiedDeclaration,
+}
+
 impl ParserState {
     pub(crate) fn parse_statement_async_declaration_or_expression(&mut self) -> NodeIndex {
         if self.look_ahead_is_async_function() {
@@ -228,10 +249,28 @@ impl ParserState {
         if self.next_token_is_on_new_line() {
             self.parse_expression_statement()
         } else if self.look_ahead_is_modifier_before_declaration() {
-            if self.look_ahead_next_token_is_export_keyword() {
-                // Modifier keyword followed by `export as namespace ...`:
-                // TSC silently accepts the modifier and parses the export statement.
-                // e.g., `static export as namespace Foo;` → no error.
+            let export_form = self.modified_export_form();
+            if matches!(
+                export_form,
+                Some(ModifiedExportForm::ExportDeclarationOrAssignment)
+            ) {
+                // `export {}` / `export * from` / `export =` / `export default`
+                // after a stray modifier: tsc reports the form's own placement
+                // diagnostic (TS1233 / TS1231 / TS1258) and no modifier
+                // diagnostic at all, so the modifier is dropped silently here.
+                self.next_token();
+                self.parse_statement()
+            } else if matches!(export_form, Some(ModifiedExportForm::NamespaceExport)) {
+                // `export as namespace Foo;` after a stray modifier. Unlike every
+                // other shape in this branch the answer is not container-derived:
+                // a `NamespaceExportDeclaration` admits no modifiers at all, so
+                // tsc's grammar check reports TS1184 in a Block, in a namespace
+                // body, and at the source file's own top level alike — where a
+                // modified *declaration* would keep TS1044 in the latter two.
+                self.parse_error_at_current_token(
+                    "Modifiers cannot appear here.",
+                    diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+                );
                 self.next_token();
                 self.parse_statement()
             } else {
@@ -571,18 +610,35 @@ impl ParserState {
         has_line_break
     }
 
-    /// Look ahead to see if the next token is `export` on the same line.
-    /// Used to distinguish `static export as namespace ...` (modifier as expression + export statement)
-    /// from `static class ...` (modifier before declaration).
-    pub(crate) fn look_ahead_next_token_is_export_keyword(&mut self) -> bool {
+    /// Look ahead past a stray modifier keyword to classify the `export` statement
+    /// it prefixes, if the next token is `export` on the same line.
+    ///
+    /// Returns `None` when the modifier is not followed by `export`, which leaves
+    /// the caller on its ordinary container-based path.
+    pub(crate) fn modified_export_form(&mut self) -> Option<ModifiedExportForm> {
         let snapshot = self.scanner.save_state();
         let current = self.current_token;
-        self.next_token();
-        let result =
-            !self.scanner.has_preceding_line_break() && self.token() == SyntaxKind::ExportKeyword;
+
+        self.next_token(); // skip the modifier keyword
+        let form = if self.scanner.has_preceding_line_break()
+            || self.token() != SyntaxKind::ExportKeyword
+        {
+            None
+        } else {
+            self.next_token(); // skip `export`
+            Some(match self.token() {
+                SyntaxKind::AsKeyword => ModifiedExportForm::NamespaceExport,
+                SyntaxKind::OpenBraceToken
+                | SyntaxKind::DefaultKeyword
+                | SyntaxKind::AsteriskToken
+                | SyntaxKind::EqualsToken => ModifiedExportForm::ExportDeclarationOrAssignment,
+                _ => ModifiedExportForm::ModifiedDeclaration,
+            })
+        };
+
         self.scanner.restore_state(snapshot);
         self.current_token = current;
-        result
+        form
     }
 
     /// Look ahead to see if we have "async function"
