@@ -1400,6 +1400,34 @@ impl<'a> CheckerState<'a> {
                 arg_type = declared;
             }
 
+            // With `strictNullChecks: false`, tsc's `getInferredType` ends in
+            // `getWidenedType`, so an argument carrying the nullish *widening
+            // flavour* (`nullWideningType` / `undefinedWideningType`) widens its
+            // nullish leaves to `any` on the way into the substitution:
+            // `declare function id<T>(x: T): T; var v = id([undefined]);` infers
+            // `any[]`. tsz carries no per-type widening flag, so the flavour is
+            // recovered here from the argument expression's own literal syntax —
+            // the same provenance rule the mutable-binding seam applies (#16384
+            // leg B), at the one seam that can see it for a call.
+            //
+            // A declared `undefined` value keeps its type
+            // (`declare var q: undefined; id([q])` stays `undefined[]`), and a
+            // non-generic signature is unaffected because its declared return
+            // type is never built from a candidate (`declare function
+            // ida(x: undefined[]): undefined[]` still returns `undefined[]`).
+            if !self.ctx.strict_null_checks()
+                && self.fresh_literal_argument_nullish_leaves_are_widening(arg_idx)
+            {
+                let widened = crate::query_boundaries::widening::widen_nullish_to_any_deep(
+                    self.ctx.types,
+                    arg_type,
+                );
+                if widened != arg_type {
+                    changed = true;
+                    arg_type = widened;
+                }
+            }
+
             let sanitized_arg = self.sanitize_generic_inference_arg_type(arg_idx, arg_type);
             if sanitized_arg != arg_type {
                 changed = true;
