@@ -197,6 +197,21 @@ impl Reporter {
         let message = self.translate_message(diagnostic.code, &diagnostic.message_text);
         out.push_str(&message);
 
+        // Chain links are part of `tsc`'s flattened `messageText`, not its
+        // `relatedInformation`, so they render immediately after the message
+        // — before the primary's own snippet — in both pretty and non-pretty
+        // mode. Oracled on a nested property-type-mismatch (`typescript@7.0.2`,
+        // `--pretty --strict`): the "Types of ... are incompatible" / "Type
+        // 'string' is not assignable ..." lines print directly under the
+        // header, then a blank line, then the primary's snippet.
+        for related in &diagnostic.related_information {
+            if related.is_location_pointer() {
+                continue;
+            }
+            out.push('\n');
+            self.format_related_plain(out, related);
+        }
+
         // Source snippet
         if let Some(snippet) =
             self.format_snippet_pretty(&diagnostic.file, diagnostic.start, diagnostic.length, 0)
@@ -205,11 +220,13 @@ impl Reporter {
             out.push_str(&snippet);
         }
 
-        // Related information. Each entry supplies its own leading newline(s):
-        // a located entry is separated from what precedes it by a blank line,
-        // an unlocated chain link is not.
+        // Cross-location pointers (`tsc`'s `relatedInformation`) render after
+        // the primary's own snippet, each with its own blank line, location
+        // header, and snippet.
         for related in &diagnostic.related_information {
-            self.format_related_pretty(out, related);
+            if related.is_location_pointer() {
+                self.format_related_pretty(out, related);
+            }
         }
     }
 
@@ -330,29 +347,28 @@ impl Reporter {
         out.push_str(&message);
     }
 
-    /// Format related information in pretty mode.
+    /// Format a cross-location [`RelatedInformationKind::LocationPointer`] in
+    /// pretty mode — a genuine `tsc` `relatedInformation` entry such as a
+    /// "declared here" pointer. Callers only reach this for pointers;
+    /// [`RelatedInformationKind::ChainLink`] entries are folded into the
+    /// primary's flattened message in [`Reporter::format_diagnostic_pretty`]
+    /// instead, before the primary's own snippet.
     ///
-    /// A *located* entry — one that names a file, i.e. a genuine cross-location
-    /// "declared here" pointer — is preceded by a blank line and puts its
-    /// message on the location line, with the source snippet underneath:
+    /// A pointer is preceded by a blank line and puts its message on the
+    /// location line, with the source snippet underneath:
     /// ```text
     ///
     ///   file:line:col - message
     ///     {line_num} {source_line}
     ///     {spaces}{tildes}
     /// ```
-    /// An *unlocated* entry is a message-chain link (tsc keeps these in
-    /// `messageText` rather than `relatedInformation`), and renders as plain
-    /// indented text with no blank line and no location, exactly as in
-    /// non-pretty mode.
     fn format_related_pretty(&mut self, out: &mut String, related: &DiagnosticRelatedInformation) {
+        debug_assert!(
+            related.is_location_pointer(),
+            "format_related_pretty is only called for LocationPointer entries; \
+             ChainLink entries are rendered by format_diagnostic_pretty before the snippet"
+        );
         let message = self.translate_message(related.code, &related.message_text);
-
-        if related.file.is_empty() {
-            out.push('\n');
-            self.format_related_plain(out, related);
-            return;
-        }
 
         // Blank line, then the location line (2-space indent).
         out.push_str("\n\n  ");
@@ -882,7 +898,7 @@ mod tests {
             "This parameter is not allowed with 'use strict' directive.",
             1346,
         );
-        diagnostic.related_information.push(related_at(
+        diagnostic.related_information.push(pointer_at(
             "us.ts",
             20,
             13,
@@ -922,7 +938,7 @@ mod tests {
             "'use strict' directive cannot be used with non-simple parameter list.",
             1347,
         );
-        diagnostic.related_information.push(related_at(
+        diagnostic.related_information.push(pointer_at(
             "multi.ts",
             11,
             5,
@@ -930,7 +946,7 @@ mod tests {
         ));
         diagnostic
             .related_information
-            .push(related_at("multi.ts", 18, 9, "and here."));
+            .push(pointer_at("multi.ts", 18, 9, "and here."));
 
         let mut out = String::new();
         reporter.format_diagnostic_pretty(&mut out, &diagnostic);
@@ -998,6 +1014,72 @@ mod tests {
             "error TS6504: File 'root.js' is a JavaScript file. Did you mean to enable the 'allowJs' option?\n\
              \x20 The file is in the program because:\n\
              \x20   Root file specified for compilation",
+            "rendered:\n{out}"
+        );
+    }
+
+    /// A chain link commonly carries the *same* file/span as its own parent
+    /// diagnostic — `push_elaboration` anchors nested property-mismatch
+    /// elaboration at the primary's own span, not a distinct location — so
+    /// dispatch must key off `kind`, never off whether `file` is empty, or a
+    /// same-file chain link gets misrendered as a second, spurious located
+    /// block. tsc 7.0.2, `--pretty --strict`, on
+    /// `interface A { x: { a: string } } interface B { x: { a: number } }
+    /// const b: B = {} as A;`:
+    ///
+    /// ```text
+    /// rel2.ts:3:7 - error TS2322: Type 'A' is not assignable to type 'B'.
+    ///   The types of 'x.a' are incompatible between these types.
+    ///     Type 'string' is not assignable to type 'number'.
+    ///
+    /// 3 const b: B = {} as A;
+    ///         ~
+    /// ```
+    /// The chain lines sit directly under the header with no blank line
+    /// before them, and the primary's own snippet comes *after* the whole
+    /// chain — the reverse of a pointer, whose snippet always follows a
+    /// blank line and its own location header.
+    #[test]
+    fn pretty_chain_link_with_real_file_renders_before_the_primary_snippet() {
+        let source = "const b: B = {} as A;\n";
+        let mut reporter = reporter_with_source("rel2.ts", source);
+
+        let mut diagnostic = Diagnostic::error(
+            "rel2.ts".to_string(),
+            6,
+            1,
+            "Type 'A' is not assignable to type 'B'.",
+            2322,
+        );
+        diagnostic.related_information.push(related_at(
+            "rel2.ts",
+            6,
+            1,
+            "The types of 'x.a' are incompatible between these types.",
+        ));
+        diagnostic
+            .related_information
+            .push(DiagnosticRelatedInformation {
+                depth: 1,
+                ..related_at(
+                    "rel2.ts",
+                    6,
+                    1,
+                    "Type 'string' is not assignable to type 'number'.",
+                )
+            });
+
+        let mut out = String::new();
+        reporter.format_diagnostic_pretty(&mut out, &diagnostic);
+
+        assert_eq!(
+            out,
+            "rel2.ts:1:7 - error TS2322: Type 'A' is not assignable to type 'B'.\n\
+             \x20 The types of 'x.a' are incompatible between these types.\n\
+             \x20   Type 'string' is not assignable to type 'number'.\n\
+             \n\
+             1 const b: B = {} as A;\n\
+             \x20       ~",
             "rendered:\n{out}"
         );
     }
