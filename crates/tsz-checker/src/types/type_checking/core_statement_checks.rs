@@ -852,7 +852,19 @@ impl<'a> CheckerState<'a> {
                     // `check_await_expression_in_own_container`).
                     let in_async_context =
                         container.inherits_async_context() && self.ctx.in_async_context();
-                    if !in_async_context && !self.ctx.has_syntax_parse_errors {
+                    // tsc's `checkAwaitExpression` opens with an `if` on the
+                    // containing function-or-class-static-block being a class
+                    // static block, and the whole TS1308/TS1375/TS1378/TS1309
+                    // family lives in its `else if`. So a class static block
+                    // answers *only* `TS18037` — which tsz's parser emits at
+                    // `state_expressions_unary.rs` — never a second diagnostic
+                    // from this walk.
+                    let in_class_static_block =
+                        self.await_container_is_class_static_block(current_idx);
+                    if !in_async_context
+                        && !in_class_static_block
+                        && !self.ctx.has_syntax_parse_errors
+                    {
                         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
                         // Check if we're directly at the top level of the
@@ -987,6 +999,50 @@ impl<'a> CheckerState<'a> {
     /// top-level twin of the async-context swap `check_class_member_name`
     /// performs with `EnclosingClassInfo::enclosing_async_depth`: the two axes
     /// of `await` legality are independent and each has to be answered here.
+    /// Whether the nearest function-like-or-class-static-block ancestor of
+    /// `idx` is a class static block — tsc's `getContainingFunctionOrClassStaticBlock`
+    /// followed by `isClassStaticBlockDeclaration`.
+    ///
+    /// `checkAwaitExpression` branches on exactly this, and the branch is
+    /// exclusive: a class static block answers `TS18037` and nothing else, so
+    /// neither `TS1308` nor the `TS1375`/`TS1378`/`TS1309` top-level trio may
+    /// also fire. Verified against `typescript@7.0.2`: a file pairing
+    /// `class C { static { const c = await 4; } }` with an ordinary non-async
+    /// `await` reports one `TS18037` and one `TS1308`, never a third row on the
+    /// static block's own `await`.
+    ///
+    /// The walk stops at the first container rather than searching for a static
+    /// block anywhere above, so an `await` inside a function nested in a static
+    /// block (`class C { static { void (async () => await 1); } }`) keeps
+    /// answering from its own function.
+    fn await_container_is_class_static_block(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        let mut iterations = 0;
+        loop {
+            iterations += 1;
+            if iterations > crate::state::MAX_TREE_WALK_ITERATIONS {
+                return false;
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+            if parent_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
+                return true;
+            }
+            if parent_node.is_function_like() || parent_node.kind == syntax_kind_ext::SOURCE_FILE {
+                return false;
+            }
+            current = parent_idx;
+        }
+    }
+
     pub(crate) fn is_directly_at_source_file_top_level(&self, idx: NodeIndex) -> bool {
         let mut current = idx;
         let mut iterations = 0;

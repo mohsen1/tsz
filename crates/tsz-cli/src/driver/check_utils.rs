@@ -1603,6 +1603,26 @@ pub(super) const fn is_structural_parse_error(code: u32) -> bool {
 /// Codes the regex validator shares with non-regex contexts (TS1005, TS1125,
 /// TS1161, TS1198) are deliberately NOT here: this predicate is keyed on the
 /// code, not the emitting site, and those are real parse failures elsewhere.
+///
+/// # Containment with `is_parser_grammar_code`
+///
+/// The regex band above is one instance of a general rule, and the general rule
+/// is now stated directly: **every code `is_parser_grammar_code` accepts is
+/// non-suppressing.** That predicate means "tsc emits this from the checker via
+/// `grammarErrorOnNode`; tsz emits it from the parser instead". A checker-raised
+/// diagnostic is never in tsc's `sourceFile.parseDiagnostics`, so
+/// `hasParseDiagnostics(sourceFile)` stays `false` and every other checker
+/// grammar check in the file still runs.
+///
+/// Before that containment was stated, the two lists overlapped on only five
+/// codes (`1014`, `1047`, `1048`, `1096`, `1191`) out of ~70, so ~65
+/// parser-emitted grammar codes set `has_syntax_parse_errors` and deleted the
+/// rest of their file's checker diagnostics. Pinned against `typescript@7.0.2`
+/// with each grammar witness paired against a TS1308 (`await` outside an async
+/// function) companion, tsc reported the companion in **every** probed case —
+/// including the structurally suspicious "list is empty" members (`1097`,
+/// `1098`, `1099`, `1123`, `1182`) where a malformed AST might plausibly have
+/// justified suppression. See `parser_grammar_non_suppressing_tests`.
 pub(super) const fn is_non_suppressing_parse_error(code: u32) -> bool {
     // The regular-expression grammar band, matched as a range rather than an
     // enumeration. Every code from 1499 (`Unknown regular expression flag.`)
@@ -1612,6 +1632,19 @@ pub(super) const fn is_non_suppressing_parse_error(code: u32) -> bool {
     // the band keeps a newly wired regex diagnostic from silently suppressing
     // the rest of the file before anyone remembers to add a line here.
     if matches!(code, 1499..=1538) {
+        return true;
+    }
+
+    // Everything `is_parser_grammar_code` covers, by construction. That
+    // predicate's contract is "tsc emits this from the checker via
+    // `grammarErrorOnNode`, tsz emits it from the parser instead" — and a code
+    // tsc raises from the checker is never in `sourceFile.parseDiagnostics`, so
+    // `hasParseDiagnostics(sourceFile)` stays false and tsc's other checker
+    // grammar checks in the same file still run. Anything in that list must
+    // therefore be non-suppressing here too; the two predicates were disagreeing
+    // on ~65 codes, each of which silently deleted the rest of its file's
+    // checker grammar diagnostics.
+    if is_parser_grammar_code(code) {
         return true;
     }
 
@@ -1677,3 +1710,7 @@ mod for_in_of_single_declaration_grammar_tests;
 #[cfg(test)]
 #[path = "check_utils/audit_round_3_grammar_tests.rs"]
 mod audit_round_3_grammar_tests;
+
+#[cfg(test)]
+#[path = "check_utils/parser_grammar_non_suppressing_tests.rs"]
+mod parser_grammar_non_suppressing_tests;
