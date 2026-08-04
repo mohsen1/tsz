@@ -4,6 +4,7 @@ use super::check_module_graph::*;
 use super::check_utils::*;
 use super::*;
 use tsz::checker::context::RequestCacheCounters;
+use tsz::checker::diagnostics::RelatedInformationKind;
 use tsz_common::checker_options::JsxMode;
 
 const fn checker_resolution_mode_override(
@@ -274,6 +275,7 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                         length: 0,
                         message_text: "The file is in the program because:".to_string(),
                         depth: 0,
+                        kind: RelatedInformationKind::ChainLink,
                     });
                 ts6504
                     .related_information
@@ -287,6 +289,7 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                         // Second link of tsc's file-inclusion-reason chain, so
                         // it indents one level deeper than the header above it.
                         depth: 1,
+                        kind: RelatedInformationKind::ChainLink,
                     });
                 diagnostics.push(ts6504);
             }

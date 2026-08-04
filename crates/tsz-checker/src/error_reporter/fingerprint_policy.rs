@@ -7,8 +7,8 @@
 //! - related-information normalization
 
 use crate::diagnostics::{
-    Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
-    diagnostic_messages, format_message,
+    Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, RelatedInformationKind,
+    diagnostic_codes, diagnostic_messages, format_message,
 };
 use crate::error_reporter::assignability::is_object_prototype_method;
 use crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole;
@@ -400,6 +400,7 @@ impl<'a> CheckerState<'a> {
                         &[&prop_name, &src_str, &tgt_str],
                     ),
                     depth: 0,
+                    kind: RelatedInformationKind::ChainLink,
                 }]
             }
             SubtypeFailureReason::MissingProperties {
@@ -461,6 +462,7 @@ impl<'a> CheckerState<'a> {
                             &[&src_str, &tgt_str, &names.join(", ")],
                         ),
                         depth: 0,
+                        kind: RelatedInformationKind::ChainLink,
                     }]
                 } else {
                     let shown: Vec<&str> = names.iter().take(4).map(|s| s.as_str()).collect();
@@ -476,6 +478,7 @@ impl<'a> CheckerState<'a> {
                             &[&src_str, &tgt_str, &shown.join(", "), &more.to_string()],
                         ),
                                             depth: 0,
+                    kind: RelatedInformationKind::ChainLink,
                     }]
                 }
             }
@@ -534,6 +537,7 @@ impl<'a> CheckerState<'a> {
                             &[&self.ctx.types.resolve_atom_ref(*property_name)],
                         ),
                         depth: 0,
+                        kind: RelatedInformationKind::ChainLink,
                     },
                     DiagnosticRelatedInformation {
                         category: DiagnosticCategory::Message,
@@ -550,6 +554,7 @@ impl<'a> CheckerState<'a> {
                         // `normalize_related_information` for why the chain
                         // order depends on this.
                         depth: 1,
+                        kind: RelatedInformationKind::ChainLink,
                     },
                 ];
                 // When the property type fails because a union member is not
@@ -594,6 +599,7 @@ impl<'a> CheckerState<'a> {
                         ],
                     ),
                     depth: 0,
+                    kind: RelatedInformationKind::ChainLink,
                 }]
             }
             SubtypeFailureReason::ReturnTypeMismatch {
@@ -628,6 +634,7 @@ impl<'a> CheckerState<'a> {
                         &[&source_str, &target_str],
                     ),
                     depth: 0,
+                    kind: RelatedInformationKind::ChainLink,
                 }];
                 // Drill into nested reason to produce elaboration diagnostics
                 // (e.g. TS2741 "Property 'x' is missing..." when the return type
@@ -675,6 +682,7 @@ impl<'a> CheckerState<'a> {
                             "{index_kind} index signature is incompatible: '{source_str}' is not assignable to '{target_str}'."
                         ),
                         depth: 0,
+                        kind: RelatedInformationKind::ChainLink,
                     },
                     DiagnosticRelatedInformation {
                         category: DiagnosticCategory::Message,
@@ -687,6 +695,7 @@ impl<'a> CheckerState<'a> {
                             &[&source_str, &target_str],
                         ),
                         depth: 1,
+                        kind: RelatedInformationKind::ChainLink,
                     },
                 ]
             }
@@ -732,6 +741,7 @@ impl<'a> CheckerState<'a> {
                         ],
                     ),
                     depth: 0,
+                    kind: RelatedInformationKind::ChainLink,
                 }]
             }
             SubtypeFailureReason::AbstractConstructorAssignment => {
@@ -744,6 +754,7 @@ impl<'a> CheckerState<'a> {
                     message_text: diagnostic_messages::CANNOT_ASSIGN_AN_ABSTRACT_CONSTRUCTOR_TYPE_TO_A_NON_ABSTRACT_CONSTRUCTOR_TYPE
                         .to_string(),
                                     depth: 0,
+                kind: RelatedInformationKind::ChainLink,
                 }]
             }
             SubtypeFailureReason::UnionSourceMismatch { .. }
@@ -937,6 +948,7 @@ impl<'a> CheckerState<'a> {
                 &[&member_str, &target_str],
             ),
             depth,
+            kind: RelatedInformationKind::ChainLink,
         })
     }
 
@@ -956,6 +968,7 @@ impl<'a> CheckerState<'a> {
                 length: diag.length,
                 message_text: diag.message_text.clone(),
                 depth: 0,
+                kind: RelatedInformationKind::ChainLink,
             });
         }
 

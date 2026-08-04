@@ -130,6 +130,19 @@ pub struct CachedRelatedInformation {
     pub message_text: String,
     pub category: u8,
     pub code: u32,
+    /// Elaboration nesting depth, mirroring
+    /// `DiagnosticRelatedInformation::depth`. Defaults to the first
+    /// elaboration level so build-info files written before this field
+    /// existed still deserialize.
+    #[serde(default)]
+    pub depth: u8,
+    /// `true` when the entry is a cross-location pointer (`tsc`:
+    /// `relatedInformation`) rather than an elaboration chain link. Drives
+    /// plain-mode suppression, so it has to survive the cache round trip or a
+    /// cached diagnostic renders differently from a freshly checked one.
+    /// Defaults to `false` (chain link) for older build-info files.
+    #[serde(default)]
+    pub location_pointer: bool,
 }
 
 impl Default for BuildInfo {

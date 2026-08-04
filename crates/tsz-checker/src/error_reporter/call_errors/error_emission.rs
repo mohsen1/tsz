@@ -1,8 +1,8 @@
 //! Call error emission functions (TS2345, TS2554, TS2769, etc.).
 
 use crate::diagnostics::{
-    DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes, diagnostic_messages,
-    format_message,
+    DiagnosticCategory, DiagnosticRelatedInformation, RelatedInformationKind, diagnostic_codes,
+    diagnostic_messages, format_message,
 };
 use crate::error_reporter::fingerprint_policy::{
     DiagnosticAnchorKind, DiagnosticRenderRequest, RelatedInformationPolicy,
@@ -1250,6 +1250,7 @@ impl<'a> CheckerState<'a> {
                     category: DiagnosticCategory::Message,
                     code,
                     depth,
+                    kind: RelatedInformationKind::ChainLink,
                 }
             };
 
