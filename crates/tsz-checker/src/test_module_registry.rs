@@ -610,6 +610,8 @@ mod non_strict_nullish_return_widening_tests;
 mod nonstrict_nullish_widening_generic_call_tests;
 #[path = "tests/nonstrict_nullish_widening_mutable_binding_tests.rs"]
 mod nonstrict_nullish_widening_mutable_binding_tests;
+#[path = "tests/nonstrict_nullish_widening_nested_leaf_tests.rs"]
+mod nonstrict_nullish_widening_nested_leaf_tests;
 #[path = "tests/nonunique_symbol_property_access_tests.rs"]
 mod nonunique_symbol_property_access_tests;
 #[path = "tests/noUIA_any_index_emits_ts2322_tests.rs"]
