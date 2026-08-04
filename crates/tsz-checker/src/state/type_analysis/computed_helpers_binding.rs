@@ -1818,13 +1818,23 @@ impl<'a> CheckerState<'a> {
         );
     }
 
+    /// `tsc`'s `checkPrivateIdentifierPropertyAccess` attaches two related-info
+    /// pointers to this diagnostic: TS18017 at the shadowing declaration (the
+    /// closest `#name` in lexical scope) and TS18018 at the declaration the
+    /// access probably intended (the outer `#name` actually present on the
+    /// object's type). Either pointer is skipped, not guessed, when its
+    /// declaration node cannot be resolved.
     pub(crate) fn report_private_identifier_shadowed(
         &mut self,
         name_idx: NodeIndex,
         property_name: &str,
         object_type: TypeId,
+        shadowing_sym_id: SymbolId,
+        intended_sym_id: SymbolId,
     ) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::diagnostics::{
+            Diagnostic, diagnostic_codes, diagnostic_messages, format_message,
+        };
         let type_string = self
             .get_class_display_name_from_type(object_type)
             .unwrap_or_else(|| self.format_type_diagnostic(object_type));
@@ -1832,11 +1842,79 @@ impl<'a> CheckerState<'a> {
             diagnostic_messages::THE_PROPERTY_CANNOT_BE_ACCESSED_ON_TYPE_WITHIN_THIS_CLASS_BECAUSE_IT_IS_SHADOWED,
             &[property_name, &type_string],
         );
-        self.error_at_node(
+        let mut related = Vec::new();
+        if let Some(name_node) = self.private_identifier_declaration_name(shadowing_sym_id)
+            && let Some((start, length)) = self.private_identifier_span(name_node)
+        {
+            related.push(Diagnostic::related_pointer(
+                diagnostic_codes::THE_SHADOWING_DECLARATION_OF_IS_DEFINED_HERE,
+                self.ctx.file_name.clone(),
+                start,
+                length,
+                format_message(
+                    diagnostic_messages::THE_SHADOWING_DECLARATION_OF_IS_DEFINED_HERE,
+                    &[property_name],
+                ),
+            ));
+        }
+        if let Some(name_node) = self.private_identifier_declaration_name(intended_sym_id)
+            && let Some((start, length)) = self.private_identifier_span(name_node)
+        {
+            related.push(Diagnostic::related_pointer(
+                diagnostic_codes::THE_DECLARATION_OF_THAT_YOU_PROBABLY_INTENDED_TO_USE_IS_DEFINED_HERE,
+                self.ctx.file_name.clone(),
+                start,
+                length,
+                format_message(
+                    diagnostic_messages::THE_DECLARATION_OF_THAT_YOU_PROBABLY_INTENDED_TO_USE_IS_DEFINED_HERE,
+                    &[property_name],
+                ),
+            ));
+        }
+        self.error_at_node_with_related(
             name_idx,
             &message,
             diagnostic_codes::THE_PROPERTY_CANNOT_BE_ACCESSED_ON_TYPE_WITHIN_THIS_CLASS_BECAUSE_IT_IS_SHADOWED,
+            related,
         );
+    }
+
+    /// The name node (a `PrivateIdentifier`) of `sym_id`'s own declaration —
+    /// the first of its `PROPERTY_DECLARATION`/`METHOD_DECLARATION`/accessor
+    /// declarations that carries one.
+    fn private_identifier_declaration_name(&self, sym_id: SymbolId) -> Option<NodeIndex> {
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        for &decl_idx in &symbol.declarations {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+            let name = if node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                self.ctx.arena.get_property_decl(node).map(|d| d.name)
+            } else if node.kind == syntax_kind_ext::METHOD_DECLARATION {
+                self.ctx.arena.get_method_decl(node).map(|d| d.name)
+            } else if node.kind == syntax_kind_ext::GET_ACCESSOR
+                || node.kind == syntax_kind_ext::SET_ACCESSOR
+            {
+                self.ctx.arena.get_accessor(node).map(|d| d.name)
+            } else {
+                None
+            };
+            if let Some(name_idx) = name
+                && name_idx.is_some()
+            {
+                return Some(name_idx);
+            }
+        }
+        None
+    }
+
+    /// `(start, length)` of a `PrivateIdentifier` name node, narrowed to its
+    /// own written text (`#name`) rather than the raw node span, which runs to
+    /// the start of the next token.
+    fn private_identifier_span(&self, name_idx: NodeIndex) -> Option<(u32, u32)> {
+        let node = self.ctx.arena.get(name_idx)?;
+        let identifier = self.ctx.arena.get_identifier(node)?;
+        Some((node.pos, identifier.escaped_text.len() as u32))
     }
 
     /// Returns true if `sym_id` is a merged interface+value symbol.
