@@ -2224,17 +2224,20 @@ impl ParserState {
 
         // Emit errors for all regex flag issues detected by scanner
         if !self.regex_literal_follows_invalid_shebang(start_pos) {
+            use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
             for error in flag_errors {
                 let (message, code) = match error.kind {
-                    tsz_scanner::scanner_impl::RegexFlagErrorKind::Duplicate => {
-                        ("Duplicate regular expression flag.", 1500)
-                    }
-                    tsz_scanner::scanner_impl::RegexFlagErrorKind::InvalidFlag => {
-                        ("Unknown regular expression flag.", 1499)
-                    }
+                    tsz_scanner::scanner_impl::RegexFlagErrorKind::Duplicate => (
+                        diagnostic_messages::DUPLICATE_REGULAR_EXPRESSION_FLAG,
+                        diagnostic_codes::DUPLICATE_REGULAR_EXPRESSION_FLAG,
+                    ),
+                    tsz_scanner::scanner_impl::RegexFlagErrorKind::InvalidFlag => (
+                        diagnostic_messages::UNKNOWN_REGULAR_EXPRESSION_FLAG,
+                        diagnostic_codes::UNKNOWN_REGULAR_EXPRESSION_FLAG,
+                    ),
                     tsz_scanner::scanner_impl::RegexFlagErrorKind::IncompatibleFlags => (
-                        "The Unicode 'u' flag and the Unicode Sets 'v' flag cannot be set simultaneously.",
-                        1502,
+                        diagnostic_messages::THE_UNICODE_U_FLAG_AND_THE_UNICODE_SETS_V_FLAG_CANNOT_BE_SET_SIMULTANEOUSLY,
+                        diagnostic_codes::THE_UNICODE_U_FLAG_AND_THE_UNICODE_SETS_V_FLAG_CANNOT_BE_SET_SIMULTANEOUSLY,
                     ),
                 };
                 self.parse_error_at(self.u32_from_usize(error.pos), 1, message, code);

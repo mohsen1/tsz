@@ -117,6 +117,39 @@ fn d_flag_ts1501_points_to_flag() {
 }
 
 #[test]
+fn v_flag_that_loses_the_uv_conflict_check_does_not_also_report_ts1501() {
+    // `u` is accepted first, so `v` immediately conflicts (TS1502, scanner-
+    // side) and never reaches tsc's `checkRegularExpressionFlagAvailability`
+    // — the TS1502 diagnostic itself is asserted in
+    // `tsz-core/tests/regex_flag_tests.rs`.
+    assert!(!has_ts1501("const r = /x/uv;", ScriptTarget::ES2022));
+    assert!(!has_ts1501("const r = /x/uv;", ScriptTarget::ESNext));
+}
+
+#[test]
+fn v_flag_accepted_before_a_later_conflicting_u_still_reports_ts1501() {
+    // `v` is accepted first (no `u` seen yet), so it still gets the
+    // availability check; the later `u` is what conflicts (TS1502).
+    assert!(has_ts1501("const r = /x/vu;", ScriptTarget::ES2022));
+    let diagnostic = ts1501_diagnostic("const r = /x/vu;", ScriptTarget::ES2022);
+    assert_eq!(diagnostic.start, 13);
+    assert_eq!(
+        diagnostic.message_text,
+        "This regular expression flag is only available when targeting 'es2024' or later."
+    );
+}
+
+#[test]
+fn duplicate_v_flag_second_occurrence_does_not_also_report_ts1501() {
+    // The first `v` is accepted (and gated); the second is a plain
+    // duplicate (TS1500, no `u` involved) and does not re-check availability.
+    assert_eq!(
+        ts1501_diagnostics("const r = /x/vv;", ScriptTarget::ES2022).len(),
+        1
+    );
+}
+
+#[test]
 fn multiple_offending_flags_each_report_at_their_own_position_in_source_order() {
     let diagnostics = ts1501_diagnostics("var a = /foo/dsv;", ScriptTarget::ES2015);
 

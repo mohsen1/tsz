@@ -7,6 +7,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+use tsz_scanner::regex_flags::{RegexFlagScan, RegexFlagVerdict};
 use tsz_solver::TypeId;
 
 use super::ExpressionDispatcher;
@@ -53,7 +54,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
     /// regex flags on the target that introduced them; `u` and `y` require
     /// only ES2015, which every reachable target already satisfies. Each
     /// offending flag is reported at its own position, in source order,
-    /// mirroring tsc's per-flag scan.
+    /// mirroring tsc's per-flag scan. A flag that lost the scanner's
+    /// duplicate/`u`-`v`-conflict check (TS1500/TS1502) never reaches tsc's
+    /// `checkRegularExpressionFlagAvailability`, so `RegexFlagScan` is
+    /// replayed here to skip those positions too.
     fn check_regular_expression_target_gated_flags(
         &mut self,
         node_pos: u32,
@@ -66,11 +70,19 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             return;
         };
 
+        let mut flag_scan = RegexFlagScan::new();
         for (offset, &flag) in flags.iter().enumerate() {
+            let verdict = flag_scan.advance(flag);
             let min_target = match flag {
-                b's' if !target.supports_es2018() => "es2018",
-                b'd' if !target.supports_es2022() => "es2022",
-                b'v' if !target.supports_es2024() => "es2024",
+                b's' if verdict == RegexFlagVerdict::Accepted && !target.supports_es2018() => {
+                    "es2018"
+                }
+                b'd' if verdict == RegexFlagVerdict::Accepted && !target.supports_es2022() => {
+                    "es2022"
+                }
+                b'v' if verdict == RegexFlagVerdict::Accepted && !target.supports_es2024() => {
+                    "es2024"
+                }
                 _ => continue,
             };
 

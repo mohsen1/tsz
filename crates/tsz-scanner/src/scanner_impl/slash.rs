@@ -59,11 +59,12 @@ impl ScannerState {
                 // Consume the closing /
                 self.pos += 1;
 
-                // Scan and validate regex flags (g, i, m, s, u, v, y, d)
-                // Track seen flags as a bitmask for duplicate detection
-                let mut seen_flags: u8 = 0;
-                let mut has_u = false;
-                let mut has_v = false;
+                // Scan and validate regex flags (g, i, m, s, u, v, y, d).
+                // `RegexFlagScan` mirrors tsc's per-position verdict: a
+                // `u`/`v` conflict is checked and reported AS EACH FLAG IS
+                // ACCEPTED (not once after the whole run), and wins over a
+                // plain duplicate at that same position.
+                let mut flag_scan = crate::regex_flags::RegexFlagScan::new();
 
                 while self.pos < self.end {
                     let ch = self.char_code_unchecked(self.pos);
@@ -71,36 +72,24 @@ impl ScannerState {
                         break;
                     }
 
-                    // Check for valid flags and detect errors
-                    let flag_bit = match ch {
-                        CharacterCodes::LOWER_G => Some(0),
-                        CharacterCodes::LOWER_I => Some(1),
-                        CharacterCodes::LOWER_M => Some(2),
-                        CharacterCodes::LOWER_S => Some(3),
-                        CharacterCodes::LOWER_U => {
-                            has_u = true;
-                            Some(4)
-                        }
-                        CharacterCodes::LOWER_V => {
-                            has_v = true;
-                            Some(5)
-                        }
-                        CharacterCodes::LOWER_Y => Some(6),
-                        CharacterCodes::LOWER_D => Some(7),
-                        _ => None,
-                    };
-
-                    if let Some(bit) = flag_bit {
-                        let mask = 1 << bit;
-                        if seen_flags & mask != 0 {
-                            // Duplicate flag - emit error for each duplicate
+                    if is_regex_flag(ch) {
+                        // `is_regex_flag` only matches the ASCII flag letters, so this is lossless.
+                        let kind = match flag_scan.advance(ch as u8) {
+                            crate::regex_flags::RegexFlagVerdict::Accepted => None,
+                            crate::regex_flags::RegexFlagVerdict::Duplicate => {
+                                Some(RegexFlagErrorKind::Duplicate)
+                            }
+                            crate::regex_flags::RegexFlagVerdict::Conflict => {
+                                Some(RegexFlagErrorKind::IncompatibleFlags)
+                            }
+                        };
+                        if let Some(kind) = kind {
                             self.regex_flag_errors.push(RegexFlagError {
-                                kind: RegexFlagErrorKind::Duplicate,
+                                kind,
                                 pos: self.pos,
                             });
                         }
-                        seen_flags |= mask;
-                    } else if is_identifier_part(ch) {
+                    } else {
                         // Invalid flag character (identifier char but not a valid flag)
                         self.regex_flag_errors.push(RegexFlagError {
                             kind: RegexFlagErrorKind::InvalidFlag,
@@ -110,15 +99,6 @@ impl ScannerState {
 
                     // Use char_len_at for proper UTF-8 handling (handles non-ASCII flags)
                     self.pos += self.char_len_at(self.pos);
-                }
-
-                // Check for incompatible u and v flags
-                if has_u && has_v {
-                    // Emit error at the end of flags (similar to TypeScript)
-                    self.regex_flag_errors.push(RegexFlagError {
-                        kind: RegexFlagErrorKind::IncompatibleFlags,
-                        pos: self.pos,
-                    });
                 }
             }
 
