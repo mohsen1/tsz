@@ -744,7 +744,7 @@ impl<'a> CheckerState<'a> {
         };
 
         if !types_compatible {
-            let shadowed = symbols.iter().skip(1).any(|sym_id| {
+            let intended = symbols.iter().skip(1).find(|sym_id| {
                 // The first symbol (symbols[0]) is the *closest* private identifier
                 // in scope — the one that shadows the outer access. Each outer
                 // symbol must be evaluated with its own static-ness, not the
@@ -753,12 +753,12 @@ impl<'a> CheckerState<'a> {
                 // static members fail the subsequent access-compat check and
                 // the shadowing diagnostic is dropped, producing a confusing
                 // "does not exist" (TS2339) instead of TS18014.
-                let outer_is_static = self.ctx.binder.get_symbol(*sym_id).is_some_and(|sym| {
+                let outer_is_static = self.ctx.binder.get_symbol(**sym_id).is_some_and(|sym| {
                     sym.declarations
                         .iter()
                         .any(|&decl_idx| self.class_member_is_static(decl_idx))
                 });
-                self.private_member_declaring_type(*sym_id)
+                self.private_member_declaring_type(**sym_id)
                     .is_some_and(|ty| {
                         if outer_is_static {
                             self.static_private_member_access_compatible(
@@ -774,11 +774,13 @@ impl<'a> CheckerState<'a> {
                         }
                     })
             });
-            if shadowed {
+            if let Some(&intended_sym_id) = intended {
                 self.report_private_identifier_shadowed(
                     name_idx,
                     &property_name,
                     original_object_type,
+                    symbols[0],
+                    intended_sym_id,
                 );
                 return TypeId::ERROR;
             }
