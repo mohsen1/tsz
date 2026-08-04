@@ -141,6 +141,7 @@ impl<'a> CheckerState<'a> {
             length,
             message_text: message.to_string(),
             depth: 0,
+            kind: crate::diagnostics::RelatedInformationKind::LocationPointer,
         }
     }
 

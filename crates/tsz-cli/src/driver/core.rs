@@ -18,7 +18,8 @@ use tsz::binder::{SymbolId, SymbolTable};
 use tsz::checker::TypeCache;
 use tsz::checker::context::LibContext;
 use tsz::checker::diagnostics::{
-    Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
+    Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, RelatedInformationKind,
+    diagnostic_codes,
 };
 use tsz::checker::state::CheckerState;
 use tsz::lib_loader::LibFile;
@@ -585,6 +586,8 @@ fn compilation_cache_to_build_info(
                                 message_text: r.message_text.clone(),
                                 category: r.category as u8,
                                 code: r.code,
+                                depth: r.depth,
+                                location_pointer: r.is_location_pointer(),
                             }
                         })
                         .collect(),
@@ -695,7 +698,12 @@ fn build_info_to_compilation_cache(build_info: &BuildInfo, base_dir: &Path) -> C
                         message_text: r.message_text.clone(),
                         category: DiagnosticCategory::from_cache_index(r.category),
                         code: r.code,
-                        depth: 0,
+                        depth: r.depth,
+                        kind: if r.location_pointer {
+                            RelatedInformationKind::LocationPointer
+                        } else {
+                            RelatedInformationKind::ChainLink
+                        },
                     })
                     .collect(),
             })

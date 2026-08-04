@@ -300,4 +300,16 @@ const elem = <div className={class1, class2}/>;
             vec![(1348, 11, 6)],
             "TS1347 must keep its parameter pointer: {ts1347:?}"
         );
+
+        // Both are `tsc` `relatedInformation` (cross-location pointers), not
+        // `messageText` chain links, so they must survive the driver tagged as
+        // such — that tag is what keeps them out of plain-mode output.
+        assert!(
+            ts1346.related_information.iter().all(|r| r.is_location_pointer()),
+            "TS1346's pointer must survive tagged as a pointer: {ts1346:?}"
+        );
+        assert!(
+            ts1347.related_information.iter().all(|r| r.is_location_pointer()),
+            "TS1347's pointer must survive tagged as a pointer: {ts1347:?}"
+        );
     }

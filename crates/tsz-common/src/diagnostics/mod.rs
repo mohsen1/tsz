@@ -70,6 +70,34 @@ pub mod internal_elaboration_messages {
         "Types have separate declarations of a protected property '{0}'.";
 }
 
+/// Which of `tsc`'s two distinct diagnostic concepts a related entry models.
+///
+/// `tsc` keeps these in *separate* fields and renders them in different modes;
+/// `tsz` carries both in one `related_information` vector, so the distinction
+/// has to travel with the entry:
+///
+/// - a message-chain link lives in `tsc`'s `messageText`
+///   (`DiagnosticMessageChain`) and is flattened into the message body, so it
+///   prints in **both** pretty and plain output;
+/// - a cross-location pointer lives in `tsc`'s `relatedInformation` and is
+///   rendered only by `formatDiagnosticsWithColorAndContext`, so it prints in
+///   **pretty output only**.
+///
+/// Without this field the two are indistinguishable — an elaboration link
+/// carries a real file and the primary's own anchor, exactly like a pointer
+/// would — and the plain-mode renderer has to print both or neither.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RelatedInformationKind {
+    /// A link in the primary diagnostic's elaboration message chain. Rendered
+    /// as `2 * (depth + 1)`-indented text in pretty and plain output alike.
+    #[default]
+    ChainLink,
+    /// A genuine cross-location pointer such as `'y' is declared here.`.
+    /// Rendered with its own file/line/col header and source snippet in pretty
+    /// output, and suppressed entirely in plain output.
+    LocationPointer,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiagnosticRelatedInformation {
     pub category: DiagnosticCategory,
@@ -84,9 +112,26 @@ pub struct DiagnosticRelatedInformation {
     /// deeper level adds 2 more spaces. Genuine cross-location related
     /// information (not part of an elaboration chain) stays at `0`.
     pub depth: u8,
+    /// Whether this entry is an elaboration chain link or a cross-location
+    /// pointer. See [`RelatedInformationKind`]; drives plain-mode suppression.
+    pub kind: RelatedInformationKind,
 }
 
 impl DiagnosticRelatedInformation {
+    /// Whether this entry models `tsc`'s `relatedInformation` (a cross-location
+    /// pointer) rather than a `messageText` chain link.
+    #[must_use]
+    pub const fn is_location_pointer(&self) -> bool {
+        matches!(self.kind, RelatedInformationKind::LocationPointer)
+    }
+
+    /// Re-tag this entry as a cross-location pointer.
+    #[must_use]
+    pub const fn into_location_pointer(mut self) -> Self {
+        self.kind = RelatedInformationKind::LocationPointer;
+        self
+    }
+
     /// Return this related entry with its elaboration `depth` shifted by `delta`
     /// and clamped into the `u8` rendering range (saturating at both ends).
     ///
@@ -185,7 +230,24 @@ impl Diagnostic {
             length,
             message_text: message_text.into(),
             depth: 0,
+            kind: RelatedInformationKind::ChainLink,
         }
+    }
+
+    /// Build a cross-location "declared here"-style pointer (`tsc`:
+    /// `relatedInformation`) at `file`/`start`/`length`.
+    ///
+    /// Same shape as [`Diagnostic::related_message`] but tagged
+    /// [`RelatedInformationKind::LocationPointer`], so plain output suppresses
+    /// it the way `tsc`'s non-pretty formatter does.
+    pub fn related_pointer(
+        code: u32,
+        file: impl Into<String>,
+        start: u32,
+        length: u32,
+        message_text: impl Into<String>,
+    ) -> DiagnosticRelatedInformation {
+        Self::related_message(code, file, start, length, message_text).into_location_pointer()
     }
 
     #[must_use]

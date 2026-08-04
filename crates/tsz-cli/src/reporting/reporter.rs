@@ -129,8 +129,15 @@ impl Reporter {
         let message = self.translate_message(diagnostic.code, &diagnostic.message_text);
         out.push_str(&message);
 
-        // Non-pretty: related info is shown inline
+        // Non-pretty: elaboration chain links are shown inline, cross-location
+        // pointers are not. `tsc`'s non-pretty formatter renders only
+        // `flattenDiagnosticMessageText(messageText)` — `relatedInformation` is
+        // rendered exclusively by the pretty formatter, so a `'y' is declared
+        // here.` pointer has no plain-mode line at all.
         for related in &diagnostic.related_information {
+            if related.is_location_pointer() {
+                continue;
+            }
             out.push('\n');
             self.format_related_plain(out, related);
         }
@@ -706,6 +713,128 @@ mod tests {
         reporter
     }
 
+    use tsz::checker::diagnostics::RelatedInformationKind;
+
+    /// A cross-location pointer (`tsc`: `relatedInformation`) at `file`.
+    fn pointer_at(
+        file: &str,
+        start: u32,
+        length: u32,
+        message: &str,
+    ) -> DiagnosticRelatedInformation {
+        related_at(file, start, length, message).into_location_pointer()
+    }
+
+    /// #16316: `tsc`'s non-pretty formatter renders only the flattened
+    /// `messageText`; `relatedInformation` is rendered exclusively by the
+    /// pretty formatter. Oracled on `typescript@7.0.2`:
+    ///
+    /// ```text
+    /// $ tsc --noEmit --strict --pretty false rel.ts
+    /// rel.ts(2,7): error TS2741: Property 'y' is missing in type '{ x: number; }' but required in type 'Point'.
+    /// ```
+    ///
+    /// — one line, no `'y' is declared here.` beneath it, even though the
+    /// pretty run prints that pointer with its own location and snippet.
+    #[test]
+    fn plain_output_suppresses_cross_location_pointers() {
+        let source = "interface Point { x: number; y: number; }\nconst p: Point = { x: 1 };\n";
+        let mut reporter = reporter_with_source("rel.ts", source);
+        reporter.set_pretty(false);
+
+        let mut diagnostic = Diagnostic::error(
+            "rel.ts",
+            48,
+            1,
+            "Property 'y' is missing in type '{ x: number; }' but required in type 'Point'.",
+            2741,
+        );
+        diagnostic
+            .related_information
+            .push(pointer_at("rel.ts", 29, 1, "'y' is declared here."));
+
+        let mut out = String::new();
+        reporter.format_diagnostic_plain(&mut out, &diagnostic);
+
+        assert_eq!(
+            out,
+            "rel.ts(2,7): error TS2741: Property 'y' is missing in type '{ x: number; }' but \
+             required in type 'Point'."
+        );
+    }
+
+    /// The suppression is keyed on the entry's kind, not on whether it names a
+    /// file: an elaboration chain link carries a real file and the primary's
+    /// own anchor, and `tsc` flattens it into `messageText`, so plain output
+    /// must keep printing it.
+    #[test]
+    fn plain_output_keeps_elaboration_chain_links() {
+        let source = "declare const a: string;\nconst b: number = a;\n";
+        let mut reporter = reporter_with_source("chain.ts", source);
+        reporter.set_pretty(false);
+
+        let mut diagnostic = Diagnostic::error(
+            "chain.ts",
+            31,
+            1,
+            "Type 'string' is not assignable to type 'number'.",
+            2322,
+        );
+        diagnostic
+            .related_information
+            .push(related_at("chain.ts", 31, 1, "First elaboration."));
+        diagnostic.related_information.push({
+            let mut deeper = related_at("chain.ts", 31, 1, "Nested elaboration.");
+            deeper.depth = 1;
+            deeper
+        });
+
+        let mut out = String::new();
+        reporter.format_diagnostic_plain(&mut out, &diagnostic);
+
+        assert_eq!(
+            out,
+            "chain.ts(2,7): error TS2322: Type 'string' is not assignable to type 'number'.\n  \
+             First elaboration.\n    Nested elaboration."
+        );
+    }
+
+    /// A diagnostic carrying both kinds keeps only the chain link in plain
+    /// output and renders both in pretty output — the two modes must not agree.
+    #[test]
+    fn pretty_output_still_renders_pointers_that_plain_output_drops() {
+        let source = "interface Point { x: number; y: number; }\nconst p: Point = { x: 1 };\n";
+        let mut diagnostic = Diagnostic::error(
+            "rel.ts",
+            48,
+            1,
+            "Property 'y' is missing in type '{ x: number; }' but required in type 'Point'.",
+            2741,
+        );
+        diagnostic
+            .related_information
+            .push(related_at("rel.ts", 48, 1, "Chain link."));
+        diagnostic
+            .related_information
+            .push(pointer_at("rel.ts", 29, 1, "'y' is declared here."));
+
+        let mut plain = reporter_with_source("rel.ts", source);
+        plain.set_pretty(false);
+        let mut plain_out = String::new();
+        plain.format_diagnostic_plain(&mut plain_out, &diagnostic);
+        assert!(plain_out.contains("Chain link."), "{plain_out}");
+        assert!(!plain_out.contains("declared here"), "{plain_out}");
+
+        let mut pretty = reporter_with_source("rel.ts", source);
+        let mut pretty_out = String::new();
+        pretty.format_diagnostic_pretty(&mut pretty_out, &diagnostic);
+        assert!(pretty_out.contains("Chain link."), "{pretty_out}");
+        assert!(
+            pretty_out.contains("rel.ts:1:30 - 'y' is declared here."),
+            "{pretty_out}"
+        );
+    }
+
     fn related_at(
         file: &str,
         start: u32,
@@ -720,6 +849,7 @@ mod tests {
             length,
             message_text: message.to_string(),
             depth: 0,
+            kind: RelatedInformationKind::ChainLink,
         }
     }
 

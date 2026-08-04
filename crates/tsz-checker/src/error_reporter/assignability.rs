@@ -1,8 +1,8 @@
 //! Type assignability error reporting (TS2322 and related).
 
 use crate::diagnostics::{
-    Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
-    diagnostic_messages, format_message,
+    Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, RelatedInformationKind,
+    diagnostic_codes, diagnostic_messages, format_message,
 };
 use crate::error_reporter::assignability_literal_display::display_has_boolean_member_literal_assignability;
 use crate::error_reporter::fingerprint_policy::{
@@ -834,6 +834,7 @@ impl<'a> CheckerState<'a> {
                 length: anchor.length,
                 message_text: detail,
                 depth: 0,
+                kind: RelatedInformationKind::ChainLink,
             }];
 
             self.emit_render_request_at_anchor(

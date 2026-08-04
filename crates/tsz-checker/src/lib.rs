@@ -87,8 +87,8 @@ pub use types_domain::{
 pub mod diagnostics {
     pub use crate::jsdoc::diagnostics_typedef_name::jsdoc_typedef_missing_name_anchors;
     pub use tsz_common::diagnostics::{
-        Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
-        diagnostic_messages, format_message, internal_elaboration_messages,
+        Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, RelatedInformationKind,
+        diagnostic_codes, diagnostic_messages, format_message, internal_elaboration_messages,
         is_js_grammar_diagnostic, is_parser_grammar_diagnostic,
     };
 }
