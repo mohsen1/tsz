@@ -195,6 +195,32 @@ fn a_private_name_declared_on_the_target_itself_keeps_the_standalone_ts2741() {
     );
 }
 
+/// A source interface that declares only a METHOD of its own is not
+/// member-less, so it neither renames to its base class nor promotes the head.
+///
+/// This is `compiler/interfaceExtendsClassWithPrivate1.ts` reduced to its
+/// line 24 (`d = i;`). Reading "declares nothing of its own" off the resolved
+/// property set instead of the declaration's member list misses the method,
+/// renames the source `I` to `C`, and promotes a correct `TS2741` into a
+/// false-positive `TS2322`.
+#[test]
+fn a_source_interface_declaring_only_a_method_is_named_by_the_endpoint() {
+    assert_standalone_ts2741(
+        "class Shared { pass(v: number) { return v; } private tag = 1; }\ninterface Widened extends Shared { extra(v: number): number; }\nclass Full extends Shared implements Widened { extra(v: number) { return v; } only() {} }\ndeclare const w: Widened;\ndeclare let f: Full;\nf = w;\n",
+        "Property 'only' is missing in type 'Widened' but required in type 'Full'.",
+    );
+}
+
+/// The same shape one step simpler: an own method alone blocks the source-side
+/// substitution, with no shared base and no `implements` involved.
+#[test]
+fn an_own_method_alone_blocks_the_source_side_substitution() {
+    assert_standalone_ts2741(
+        "class Rooted {}\ninterface Speaks extends Rooted { talk(): void }\ndeclare const s: Speaks;\ninterface Demands { talk(): void; listen(): void }\nconst t: Demands = s;\n",
+        "Property 'listen' is missing in type 'Speaks' but required in type 'Demands'.",
+    );
+}
+
 /// A source that declares a member of its own is named by the endpoint even
 /// when it also has a base class.
 #[test]

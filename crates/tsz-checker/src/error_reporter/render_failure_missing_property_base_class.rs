@@ -108,26 +108,51 @@ impl<'a> CheckerState<'a> {
 
     /// The base class a source type inherits its whole member surface from.
     ///
-    /// Only a source that declares no property of its own substitutes: once it
+    /// Only a source that declares nothing of its own substitutes: once it
     /// contributes a member, `tsc` names the source endpoint. The base must be
     /// a class — an `extends` clause naming an interface keeps the endpoint.
+    ///
+    /// "Declares nothing of its own" is read off the declaration's own member
+    /// list, NOT off the resolved shape's property set: a method
+    /// (`interface I extends C { other(x: any): any }`) is an own member that
+    /// the resolved property set does not report as one, and treating such an
+    /// interface as member-less both renamed the source to `C` and promoted the
+    /// head, turning a correct `TS2741` into a false-positive `TS2322` on
+    /// `compiler/interfaceExtendsClassWithPrivate1.ts`. Every declaration of a
+    /// merged symbol must be empty for the symbol to count as member-less.
     fn source_shape_base_class_display(&mut self, source: TypeId) -> Option<String> {
         let shape = diagnostic_query::object_shape_for_type(self.ctx.types, source)?;
         let own_symbol = shape.symbol?;
-        if shape
-            .properties
+        let symbol = self.ctx.binder.get_symbol(own_symbol)?;
+        let declarations = symbol.declarations.clone();
+        if declarations
             .iter()
-            .any(|property| property.parent_id == Some(own_symbol))
+            .any(|&decl_idx| self.declaration_has_own_members(decl_idx))
         {
             return None;
         }
-        let symbol = self.ctx.binder.get_symbol(own_symbol)?;
-        for decl_idx in symbol.declarations.clone() {
+        for decl_idx in declarations {
             if let Some(base_type) = self.heritage_base_class_instance_type(decl_idx) {
                 return Some(self.format_type_diagnostic(base_type));
             }
         }
         None
+    }
+
+    /// Whether an interface or class declaration lists any member of its own.
+    /// A declaration that is neither reports no members and cannot make its
+    /// symbol non-member-less on its own.
+    fn declaration_has_own_members(&self, decl_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+        if let Some(interface) = self.ctx.arena.get_interface(node) {
+            return !interface.members.nodes.is_empty();
+        }
+        if let Some(class) = self.ctx.arena.get_class(node) {
+            return !class.members.nodes.is_empty();
+        }
+        false
     }
 
     /// The instance type of the first `extends` base of `decl_idx` that
