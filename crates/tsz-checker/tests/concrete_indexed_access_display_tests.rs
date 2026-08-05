@@ -350,19 +350,12 @@ const m1: M["outer"]["mid"] = { z: 1 };
     assert_reduced_member(&messages[0], "{ z: number; y: string; }");
 }
 
-/// Non-literal key, still unreduced by design (`tsc` reduces it — the
-/// remaining #16443 non-literal-key residual). Widening the shared display
-/// key gate to admit bare `KeyOf` reduces `Q[keyof Q]` correctly in
-/// isolation, but the reduced result can land on the same `TypeId` a
-/// *different*, aliased expression already stamped with its own display
-/// alias (a generic alias `Pair<T> = Pairs<T>[keyof T]` interns to the same
-/// evaluated union as the raw `Pairs<FooBar>[keyof FooBar]` once both are
-/// concrete), and the general formatter then paints that unrelated alias
-/// name over this reference —
-/// `mapped_indexed_access_discriminated_union_reports_outer_assignment`
-/// caught this as a real regression. Closing this row needs a route that
-/// skips the shared, `TypeId`-keyed display-alias lookup for a freshly
-/// reduced indexed access, not just admitting the key shape.
+/// `keyof`-keyed access in the **missing-property (TS2741) target** message.
+/// The assignment display gate now admits a concrete `keyof` key, but a
+/// TS2741 target renders through a *different* path than the reduced type it
+/// receives, so this row still prints the access as written. The source-role
+/// and TS2322-whole-type keyof rows below *are* reduced; this is the residual
+/// TS2741-target cell (tsc reduces it — tracked with the wider #16443 family).
 #[test]
 fn keyof_rooted_indexed_access_target_prints_as_written() {
     let messages = strict_messages(
@@ -645,4 +638,112 @@ const h: { k: number; extra: number } = bad;
     );
     assert_eq!(messages.len(), 1, "exactly one TS2741: {messages:?}");
     assert_reduced_member(&messages[0], "{ k: number; }");
+}
+
+// ---------------------------------------------------------------------------
+// `keyof`-keyed access in the source / TS2322-whole-type roles.
+//
+// `tsc` resolves a concrete `Obj[keyof Obj]` through `getIndexedAccessType`
+// during type construction, so the reduced member/union is what a diagnostic
+// renders — never the `Obj[keyof Obj]` surface. The assignment display gate now
+// admits a concrete `keyof` key. Because a reduced `keyof` access can intern
+// onto the same `TypeId` a *sibling* generic alias (`type Alias<T> =
+// Src<T>[keyof T]`) also stamps a `display_alias` on, the reduction is only
+// used when the result carries no alias — otherwise the access is left as
+// written (the safe fallback), and the target role's union member-splitting
+// path renders the aliased case (see
+// `mapped_indexed_access_discriminated_union_reports_outer_assignment`).
+// ---------------------------------------------------------------------------
+
+/// `Obj[keyof Obj]` over a primitive-valued interface reduces to the key-set's
+/// value union in a TS2322 whole-type source message, matching `tsc`
+/// (`string | number`, never `Obj[keyof Obj]`).
+#[test]
+fn concrete_keyof_indexed_access_source_reduces_in_ts2322_whole_type() {
+    let messages = strict_messages(
+        r#"
+interface Q { a: number; b: string }
+declare const x: Q[keyof Q];
+const t: boolean = x;
+"#,
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("Type 'string | number' is not assignable to type 'boolean'")),
+        "keyof source must reduce to the value union: {messages:?}"
+    );
+    assert!(
+        !messages.iter().any(|m| m.contains("[keyof ")),
+        "no unreduced keyof indexed-access surface may survive: {messages:?}"
+    );
+}
+
+/// Anti-hardcoding: the reduction keys on the concrete `keyof`-access structure,
+/// not on the identifiers `Q`/`a`/`b`. Renamed binders behave identically.
+#[test]
+fn concrete_keyof_source_reduction_is_binder_name_independent() {
+    let messages = strict_messages(
+        r#"
+interface Registry { alpha: number; beta: string }
+declare const item: Registry[keyof Registry];
+const flag: boolean = item;
+"#,
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("Type 'string | number' is not assignable to type 'boolean'")),
+        "keyof source must reduce regardless of binder names: {messages:?}"
+    );
+    assert!(
+        !messages.iter().any(|m| m.contains("Registry[keyof")),
+        "no unreduced keyof indexed-access surface may survive: {messages:?}"
+    );
+}
+
+/// An object-valued `keyof` access reduces to the full member union in the
+/// source role. The reduced union carries no alias here (the sibling
+/// `type Boxed<T> = Boxes<T>[keyof T]` is never instantiated), so the display
+/// gate reduces it and the members render structurally — matching `tsc`, and
+/// never repainting with the sibling alias name.
+#[test]
+fn concrete_keyof_object_union_source_reduces_to_full_union() {
+    let messages = strict_messages(
+        r#"
+type Boxes<T> = { [K in keyof T]: { tag: K; val: T[K] } };
+type Boxed<T> = Boxes<T>[keyof T];
+type FB = { a: string; b: number };
+declare const raw: Boxes<FB>[keyof FB];
+const bad: boolean = raw;
+"#,
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("{ tag: \"a\"; val: string; } | { tag: \"b\"; val: number; }")),
+        "keyof object-union source must reduce to the full member union: {messages:?}"
+    );
+    assert!(
+        !messages.iter().any(|m| m.contains("Boxed")),
+        "the reduced access must never be repainted with the sibling alias name: {messages:?}"
+    );
+}
+
+/// Negative control: a *generic* `keyof` access carries a free type parameter,
+/// so it is legitimately deferred — `tsc` renders `T[keyof T]` too — and the
+/// free-type-parameter guard keeps it as written.
+#[test]
+fn deferred_generic_keyof_indexed_access_source_stays_opaque() {
+    let messages = strict_messages(
+        r#"
+function f<T extends { a: number; b: string }>(x: T[keyof T]) {
+  const t: boolean = x;
+}
+"#,
+    );
+    assert!(
+        messages.iter().any(|m| m.contains("T[keyof T]")),
+        "a deferred generic keyof access keeps its written spelling: {messages:?}"
+    );
 }
