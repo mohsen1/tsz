@@ -350,12 +350,45 @@ impl ParserState {
         if self.look_ahead_is_accessor_declaration() {
             use tsz_common::diagnostics::diagnostic_codes;
             // tsc emits TS1275 via grammarErrorOnNode for the `accessor` modifier
-            // on any non-property-declaration node (top-level class/interface/var/...).
+            // on any non-property-declaration node (top-level class/interface/var/...) —
+            // but like the `static`/`readonly` family (#16403 slices 1-2), a stray
+            // `accessor` before `export ...` takes the SAME `ModifiedExportForm`
+            // container split rather than reporting TS1275 unconditionally
+            // (#16403 slice 5, oracle-pinned): `export {}`/`export *` and
+            // `export namespace`/`export module` are silenced by their own
+            // placement diagnostic inside a Block; `export =`/`export default`
+            // are silenced there AND in a namespace body; `export as namespace`
+            // gets the uniform TS1184 every sibling family reports, not TS1275;
+            // every other export form (`export const`/`class`/`function`/...)
+            // keeps TS1275 outside a Block and swaps to the generic TS1184
+            // inside one, exactly like `static`/`readonly`.
             let start_pos = self.token_pos();
-            self.parse_error_at_current_token(
-                "'accessor' modifier can only appear on a property declaration.",
-                diagnostic_codes::ACCESSOR_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION,
-            );
+            let export_form = self.modified_export_form();
+            let block_context = self.in_block_context() || self.in_static_block_context();
+            let export_silences_modifier = match export_form {
+                Some(
+                    ModifiedExportForm::ExportDeclaration | ModifiedExportForm::ModuleDeclaration,
+                ) => block_context,
+                Some(ModifiedExportForm::ExportAssignment) => {
+                    block_context || self.in_module_body_context()
+                }
+                _ => false,
+            };
+            if export_silences_modifier {
+                self.next_token();
+                return self.parse_statement();
+            }
+            if export_form == Some(ModifiedExportForm::NamespaceExport) || block_context {
+                self.parse_error_at_current_token(
+                    "Modifiers cannot appear here.",
+                    diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+                );
+            } else {
+                self.parse_error_at_current_token(
+                    "'accessor' modifier can only appear on a property declaration.",
+                    diagnostic_codes::ACCESSOR_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION,
+                );
+            }
             let accessor_start = self.token_pos();
             self.parse_expected(SyntaxKind::AccessorKeyword);
             let accessor_end = self.token_end();
