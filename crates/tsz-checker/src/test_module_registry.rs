@@ -61,6 +61,8 @@ mod assignability_reporter_relation_routing_arch_tests;
 mod assignability_type_comparability_relation_routing_arch_tests;
 #[path = "tests/assignment_ops_relation_routing_arch_tests.rs"]
 mod assignment_ops_relation_routing_arch_tests;
+#[path = "tests/async_export_modifier_order_ts1042_dedup_tests.rs"]
+mod async_export_modifier_order_ts1042_dedup_tests;
 #[path = "tests/async_generator_yieldstar_contribution_tests.rs"]
 mod async_generator_yieldstar_contribution_tests;
 #[path = "tests/async_generator_yieldstar_union_delegate_tests.rs"]
