@@ -38,6 +38,14 @@ pub(crate) enum ModifiedExportForm {
     /// `export const`, `export class`, `export function`, ... — an ordinary
     /// modified declaration, which takes the container split.
     ModifiedDeclaration,
+    /// `export function f() {}` specifically — split out from
+    /// `ModifiedDeclaration` because it is the one form where a preceding
+    /// `async` is a *legal* modifier. Existing callers of
+    /// `modified_export_form()` (the `static`/`readonly` family) fold this
+    /// back into their own generic handling via the catch-all match arm, so
+    /// adding this variant does not change their behavior; only `async`
+    /// distinguishes it (#16403 slice 3).
+    FunctionDeclaration,
 }
 
 /// Which grammar diagnostic `checkGrammarModifiers` picks for the modifier run
@@ -65,6 +73,8 @@ impl ParserState {
     pub(crate) fn parse_statement_async_declaration_or_expression(&mut self) -> NodeIndex {
         if self.look_ahead_is_async_function() {
             self.parse_async_function_declaration()
+        } else if let Some(export_form) = self.modified_export_form() {
+            self.parse_async_before_export(export_form)
         } else if self.look_ahead_is_async_declaration() {
             let start_pos = self.token_pos();
             let async_start = self.token_pos();
@@ -77,6 +87,193 @@ impl ParserState {
         } else {
             self.parse_expression_statement()
         }
+    }
+
+    /// Parse `async export <declaration>` — the one modifier order tsc's grammar
+    /// check (`checkGrammarModifiers`) actually reports differently depending on
+    /// whether `async` is a *legal* modifier for the node `export` decorates
+    /// (#16403 slice 3, mirroring `look_ahead_abstract_before_export_target`'s
+    /// design, but with a different split: `async` is legal only on a function).
+    ///
+    /// `export function f() {}` / `export default function f() {}` / `export
+    /// default async function f() {}` — a `FunctionDeclaration`, on which
+    /// `async` is a legal modifier — take tsc's ordering violation (TS1029) in
+    /// *every* container, and the function stays genuinely async (`is_async:
+    /// true` below) regardless: `await` inside it is not itself an error
+    /// (oracle-confirmed).
+    ///
+    /// Everything else — `export const`/`class`/`interface`/`type`/`enum`,
+    /// `export namespace`/`module`, `export {}`/`export * from`, `export =`,
+    /// `export default <expr>` — takes the same container split every other
+    /// stray-modifier family in this file uses: inside a `Block`, `async` is
+    /// silently dropped and the trailing `export ...` is re-parsed exactly as
+    /// if it were never there, because the Block's own placement/modifier
+    /// check on the bare `export ...` form is *already* the right diagnostic on
+    /// its own, oracle-confirmed identical with or without a preceding stray
+    /// modifier (unlike `abstract`, `async` never wins over that check). Outside
+    /// a Block (source file top level, namespace body) the diagnostic is TS1029
+    /// (modifier order) when the target is itself a declaration-with-modifiers
+    /// node that would otherwise trigger `check_async_modifier_on_declaration`'s
+    /// own "'async' modifier cannot be used here" check for the SAME node
+    /// (class/interface/enum/namespace, plus `export default class` which is a
+    /// `ClassDeclaration` in tsc's grammar, not an `ExportAssignment`, despite
+    /// `modified_export_form()` folding it into that bucket for the shared
+    /// callers) — TS1042 otherwise (`export {}`/`export *`/`export =`/`export
+    /// default <expr>`). The async modifier itself is never attached to the
+    /// resulting declaration in either branch: it has no legitimate semantic use
+    /// on any of these node kinds, and attaching it would make the existing
+    /// per-kind checker validity check fire a second, duplicate diagnostic.
+    fn parse_async_before_export(&mut self, export_form: ModifiedExportForm) -> NodeIndex {
+        use tsz_common::diagnostics::diagnostic_messages;
+
+        if export_form == ModifiedExportForm::NamespaceExport {
+            // `export as namespace Foo;` admits no modifiers in any container
+            // (mirrors `look_ahead_is_abstract_before_export_as_namespace`'s arm).
+            let start_pos = self.token_pos();
+            self.parse_expected(SyntaxKind::AsyncKeyword);
+            self.parse_expected(SyntaxKind::ExportKeyword);
+            let node = self.parse_namespace_export_declaration(start_pos);
+            if let Some(n) = self.arena.get(node) {
+                let (span_start, span_end) = (n.pos, n.end);
+                self.parse_error_at(
+                    span_start,
+                    span_end - span_start,
+                    "Modifiers cannot appear here.",
+                    diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+                );
+            }
+            return node;
+        }
+
+        if export_form == ModifiedExportForm::FunctionDeclaration
+            || self.look_ahead_async_export_default_is_function()
+        {
+            let async_start = self.token_pos();
+            let async_end = self.token_end();
+            self.parse_expected(SyntaxKind::AsyncKeyword);
+            let async_modifier =
+                self.arena
+                    .add_token(SyntaxKind::AsyncKeyword as u16, async_start, async_end);
+            // tsc anchors TS1029 on the later of the two modifiers, i.e. the
+            // `export` keyword now sitting at the current token.
+            let export_start = self.token_pos();
+            let export_end = self.token_end();
+            self.parse_error_at(
+                export_start,
+                export_end - export_start,
+                &diagnostic_messages::MODIFIER_MUST_PRECEDE_MODIFIER
+                    .replace("{0}", "export")
+                    .replace("{1}", "async"),
+                diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
+            );
+            self.parse_expected(SyntaxKind::ExportKeyword);
+            let export_modifier =
+                self.arena
+                    .add_token(SyntaxKind::ExportKeyword as u16, export_start, export_end);
+            let modifiers = Some(Self::make_node_list(vec![async_modifier, export_modifier]));
+            return if self.is_token(SyntaxKind::DefaultKeyword) {
+                self.next_token(); // skip `default`
+                // A redundant, legally-placed second `async` directly before
+                // `function` (`export default async function`) reads the same
+                // modifier run and tsc's own diagnostic set for it is still
+                // exactly one TS1029 (oracle-confirmed) — consume it here so
+                // it is not left dangling before `function`.
+                if self.is_token(SyntaxKind::AsyncKeyword) {
+                    self.next_token();
+                }
+                self.parse_function_declaration_with_async_optional_name(true, modifiers)
+            } else {
+                self.parse_function_declaration_with_async(true, modifiers)
+            };
+        }
+
+        let block_context = self.in_block_context() || self.in_static_block_context();
+        let is_default_class = export_form == ModifiedExportForm::ExportAssignment
+            && self.look_ahead_async_export_default_is_class();
+        // `export =` / `export default <expr>` draw their own placement
+        // diagnostic (TS1231/TS1258 in a Block, TS1063/TS1319 in a namespace
+        // body) that wins in *both* containers, not just a Block — unlike
+        // `export {}`/`export * from`, whose own placement diagnostic
+        // (TS1233) wins only inside a Block (oracle-pinned, #16403). A
+        // `default class` is excluded here: it takes the modifier-order
+        // treatment below in both containers, not this silencing.
+        let silence_in_namespace_body = export_form == ModifiedExportForm::ExportAssignment
+            && !is_default_class
+            && self.in_module_body_context();
+        if block_context || silence_in_namespace_body {
+            self.next_token(); // drop `async`; the trailing `export ...` form's
+            // own placement/modifier check already reports correctly on its
+            // own (oracle-confirmed identical with or without this modifier).
+            return self.parse_statement();
+        }
+
+        let use_order_violation = is_default_class
+            || matches!(
+                export_form,
+                ModifiedExportForm::ModifiedDeclaration | ModifiedExportForm::ModuleDeclaration
+            );
+
+        if use_order_violation {
+            self.next_token(); // consume `async`
+            let export_start = self.token_pos();
+            let export_end = self.token_end();
+            self.parse_error_at(
+                export_start,
+                export_end - export_start,
+                &diagnostic_messages::MODIFIER_MUST_PRECEDE_MODIFIER
+                    .replace("{0}", "export")
+                    .replace("{1}", "async"),
+                diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
+            );
+        } else {
+            self.parse_error_at_current_token(
+                "'async' modifier cannot be used here.",
+                diagnostic_codes::MODIFIER_CANNOT_BE_USED_HERE,
+            );
+            self.next_token(); // consume `async`
+        }
+        self.parse_statement()
+    }
+
+    /// Look ahead to see whether `async export default` is followed by
+    /// `class` — the one `ExportAssignment`-shaped form (per
+    /// `modified_export_form()`) that is actually a `ClassDeclaration` in
+    /// tsc's grammar and so takes the modifier-order treatment, not the
+    /// assignment placement rule (mirrors the `DefaultKeyword` arm of
+    /// `look_ahead_abstract_before_export_target`).
+    fn look_ahead_async_export_default_is_class(&mut self) -> bool {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token(); // skip `async`
+        self.next_token(); // skip `export`
+        let result = self.is_token(SyntaxKind::DefaultKeyword) && {
+            self.next_token();
+            self.is_token(SyntaxKind::ClassKeyword)
+        };
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        result
+    }
+
+    /// Look ahead to see whether `async export default` is followed by
+    /// `function` or `async function` — the one `ExportAssignment`-shaped form
+    /// (per `modified_export_form()`) that is actually a `FunctionDeclaration`
+    /// on which the leading `async` is a legal modifier.
+    fn look_ahead_async_export_default_is_function(&mut self) -> bool {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token(); // skip `async`
+        self.next_token(); // skip `export`
+        let result = self.is_token(SyntaxKind::DefaultKeyword) && {
+            self.next_token();
+            if self.is_token(SyntaxKind::AsyncKeyword) {
+                self.next_token();
+            }
+            self.is_token(SyntaxKind::FunctionKeyword)
+        };
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        result
     }
 
     pub(crate) fn parse_statement_abstract_keyword(&mut self) -> NodeIndex {
@@ -840,6 +1037,7 @@ impl ParserState {
                 SyntaxKind::NamespaceKeyword
                 | SyntaxKind::ModuleKeyword
                 | SyntaxKind::GlobalKeyword => ModifiedExportForm::ModuleDeclaration,
+                SyntaxKind::FunctionKeyword => ModifiedExportForm::FunctionDeclaration,
                 _ => ModifiedExportForm::ModifiedDeclaration,
             })
         };
