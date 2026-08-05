@@ -35,6 +35,7 @@ mod core_alias_display;
 mod core_formatting;
 pub(crate) mod display_budget;
 mod emitters;
+mod expected_type_from_property;
 mod fingerprint_policy;
 mod generic_display_helpers;
 mod generics;

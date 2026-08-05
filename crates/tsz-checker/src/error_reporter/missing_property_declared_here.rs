@@ -288,6 +288,30 @@ impl<'a> CheckerState<'a> {
         property: &str,
         property_display: &str,
     ) -> Option<DiagnosticRelatedInformation> {
+        let (start, length, file) = self.member_declaration_anchor_for_owner(owner, property)?;
+        Some(Diagnostic::related_pointer(
+            diagnostic_codes::IS_DECLARED_HERE,
+            file.unwrap_or_else(|| self.ctx.file_name.clone()),
+            start,
+            length,
+            format_message(diagnostic_messages::IS_DECLARED_HERE, &[property_display]),
+        ))
+    }
+
+    /// `(start, length, file)` of the anchor tsc underlines for `property`'s own
+    /// declaration on `owner`, or `None` when `owner` does not resolve to a
+    /// declaration carrying that member.
+    ///
+    /// Shared by every pointer that names a member declaration — TS2728's
+    /// `'x' is declared here.` and TS6500's `The expected type comes from
+    /// property 'x' …` anchor identically, so the walk lives here once rather
+    /// than being re-derived per diagnostic. Only the code, message, and
+    /// name rendering differ between them, and those belong to the caller.
+    pub(super) fn member_declaration_anchor_for_owner(
+        &mut self,
+        owner: TypeId,
+        property: &str,
+    ) -> Option<(u32, u32, Option<String>)> {
         let owner_symbol = self.ctx.resolve_type_to_symbol_id(owner).or_else(|| {
             crate::query_boundaries::common::type_shape_symbol(self.ctx.types, owner)
         })?;
@@ -368,13 +392,7 @@ impl<'a> CheckerState<'a> {
             else {
                 continue;
             };
-            return Some(Diagnostic::related_pointer(
-                diagnostic_codes::IS_DECLARED_HERE,
-                file.unwrap_or_else(|| self.ctx.file_name.clone()),
-                start,
-                length,
-                format_message(diagnostic_messages::IS_DECLARED_HERE, &[property_display]),
-            ));
+            return Some((start, length, file));
         }
         for location in member_locations {
             let Some((start, length, file)) =
@@ -382,13 +400,7 @@ impl<'a> CheckerState<'a> {
             else {
                 continue;
             };
-            return Some(Diagnostic::related_pointer(
-                diagnostic_codes::IS_DECLARED_HERE,
-                file.unwrap_or_else(|| self.ctx.file_name.clone()),
-                start,
-                length,
-                format_message(diagnostic_messages::IS_DECLARED_HERE, &[property_display]),
-            ));
+            return Some((start, length, file));
         }
         None
     }
