@@ -610,13 +610,22 @@ fn format_readonly_type() {
     assert_eq!(fmt.format(ro), "readonly number");
 }
 
+/// `string[number]` is a concrete indexed access (no free type parameters in
+/// either operand) with the bare `number` primitive as its key — the
+/// array/string element idiom `resolve_concrete_index_access_for_display`
+/// now reduces, matching tsc's own `getIndexedAccessType`: `declare const s:
+/// string[number]` displays as `string` in a real diagnostic (oracled against
+/// `typescript@7.0.2`). `TypeFormatter::format` already reduced a concrete
+/// *literal*-keyed access unconditionally (not gated on a diagnostic-only
+/// mode) before this widening, so extending that same unconditional reduction
+/// to the bare-primitive key is consistent, not a new carve-out.
 #[test]
 fn format_index_access_type() {
     let db = TypeInterner::new();
     let mut fmt = TypeFormatter::new(&db);
 
     let idx = db.index_access(TypeId::STRING, TypeId::NUMBER);
-    assert_eq!(fmt.format(idx), "string[number]");
+    assert_eq!(fmt.format(idx), "string");
 }
 
 /// Helper for the homomorphic-mapped indexed-access tests below: builds a

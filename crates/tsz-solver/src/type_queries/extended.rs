@@ -102,6 +102,51 @@ pub fn classify_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> LiteralT
     }
 }
 
+/// True when `type_id` is an index-access key shape tsc reduces eagerly
+/// during type construction (`getIndexedAccessType`): a literal, a union (of
+/// any key-shaped members — reduction distributes per member and each is
+/// re-checked), a unique symbol, a `typeof` query, or the bare
+/// `string`/`number` primitive (the array/tuple/index-signature element
+/// idiom, `Arr[number]`).
+///
+/// `keyof` is deliberately excluded even though tsc reduces `Q[keyof Q]`
+/// too: the reduced result can land on a `TypeId` some *other*, aliased
+/// expression already stamped with its own display alias (e.g. `Pairs<T>[keyof
+/// T]` and a separate generic alias `Pair<T> = Pairs<T>[keyof T]` intern to
+/// the same evaluated union once both are concrete), and the general
+/// formatter's alias-preference logic then paints that unrelated alias name
+/// onto this reference — a real regression, not a hypothetical
+/// (`mapped_indexed_access_discriminated_union_reports_outer_assignment`).
+/// Closing the `keyof` row needs a route that skips the shared, `TypeId`-keyed
+/// display-alias lookup for a freshly reduced indexed access, not just this
+/// classifier; left as the remaining #16443 non-literal-key residual.
+///
+/// Excludes deferred shapes (`TypeParameter`, `Infer`, `Conditional`,
+/// `IndexAccess`, `TemplateLiteral`, `Intersection`, `Application`, `Lazy`,
+/// `ThisType`, `BoundParameter`, `KeyOf`) — tsc keeps those indexed accesses
+/// opaque, and so must the display reduction. Callers must separately confirm
+/// the whole key is free of type parameters (`contains_type_parameters_db`):
+/// this predicate only classifies the key's outer shape, a union member can
+/// still carry one (`K | "a"`).
+pub fn is_display_reducible_index_key(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id == TypeId::STRING || type_id == TypeId::NUMBER {
+        return true;
+    }
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    matches!(
+        db.lookup(type_id),
+        Some(
+            TypeData::Literal(_)
+                | TypeData::Union(_)
+                | TypeData::UniqueSymbol(_)
+                | TypeData::TypeQuery(_)
+                | TypeData::Intrinsic(crate::IntrinsicKind::String | crate::IntrinsicKind::Number)
+        )
+    )
+}
+
 /// Check if a type is a string literal type.
 pub fn is_string_literal(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(

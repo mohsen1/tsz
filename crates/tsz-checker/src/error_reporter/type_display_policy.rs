@@ -96,23 +96,29 @@ impl<'a> CheckerState<'a> {
         let Some(indexed) = common::get_indexed_access_type(db, ty) else {
             return ty;
         };
-        // Only a single string/number literal key reduces to one member;
-        // `keyof`/union keys keep the indexed-access form in tsc too. A literal
-        // key also structurally carries no free type parameters, so only the
-        // object side is checked for deferral below.
-        if !matches!(
-            common::classify_literal_type(db, indexed.index_type),
-            common::LiteralTypeKind::String(_) | common::LiteralTypeKind::Number(_)
-        ) {
+        // The key must be a shape tsc reduces eagerly (literal, union, unique
+        // symbol, typeof query, or the bare string/number primitive — the
+        // array/tuple element idiom `Arr[number]`); a still-deferred key
+        // shape (type parameter, conditional, another indexed access, keyof,
+        // ...) keeps tsc's own indexed access deferred too. `keyof` is
+        // excluded deliberately, not just unimplemented — see
+        // `is_display_reducible_index_key`'s doc comment.
+        if !common::is_display_reducible_index_key(db, indexed.index_type) {
             return ty;
         }
-        // A free type parameter in the object means the access is legitimately
-        // deferred (tsc renders `T["m"]`); never force-evaluate those.
-        if common::contains_free_type_parameters(db, indexed.object_type) {
+        // A free type parameter anywhere in the object or index means the
+        // access is legitimately deferred (tsc renders `T["m"]`); never
+        // force-evaluate those. The index check matters now that the shape
+        // gate above admits unions, which can still carry a type parameter
+        // member (`K | "a"`).
+        if common::contains_free_type_parameters(db, indexed.object_type)
+            || common::contains_free_type_parameters(db, indexed.index_type)
+        {
             return ty;
         }
         let resolved = self.evaluate_type_with_env(ty);
         if resolved == ty
+            || resolved == tsz_solver::TypeId::ERROR
             || crate::query_boundaries::diagnostics::is_unresolved_for_display(
                 self.ctx.types.as_type_database(),
                 resolved,
