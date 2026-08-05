@@ -339,10 +339,28 @@ impl<'a> CheckerState<'a> {
         }
         let evaluated = self.evaluate_type_with_env(instantiated);
         if evaluated == TypeId::ERROR {
-            instantiated
-        } else {
-            evaluated
+            return instantiated;
         }
+        // Record the display back-reference from the evaluated structural form
+        // to the nominal `Application` it came from, mirroring the solver's
+        // `store_parametric_structural_back_reference` on the ordinary
+        // application-evaluation path. This path materializes a cross-file
+        // generic interface/class receiver (`application` is `Name<args>` over a
+        // program-file `Interface`/`Class` base — the caller has already
+        // excluded lib/`declare`/same-file and non-nominal bases), so the
+        // evaluated body carries the base's nominal `symbol` but no type
+        // arguments of its own. Without the provenance the printer renders it as
+        // a bare `Name`, dropping every argument — the shape #16191 observes
+        // when an unannotated named generator's `AsyncGenerator<Y, R, N>`
+        // container is eagerly reduced at its call site and shows as a bare
+        // `AsyncGenerator`. `store_display_alias_preferring_application` applies
+        // its own alloc-order/intrinsic/self-reference gates, so a result that
+        // already owns a stable spelling is left untouched.
+        self.ctx
+            .types
+            .as_type_database()
+            .store_display_alias_preferring_application(evaluated, application);
+        evaluated
     }
 
     /// Recover a property-access receiver whose cross-arena type-parameter push

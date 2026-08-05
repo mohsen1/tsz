@@ -74,11 +74,13 @@
 //! anonymous   AsyncGenerator<AsyncGenerator<number>>   (no diagnostic)
 //! ```
 //!
-//! `tsc` renders the full application for both forms, so the **anonymous** form
-//! is the one holding the correct container type — it is not the broken half,
-//! it is the half where only the relation loses. Making anonymous match named
-//! would be chasing a second defect, not fixing this one. That degradation is
-//! its own row below.
+//! `tsc` renders the full application for both forms. The named form's bare
+//! rendering is fixed in #16191 (see
+//! `named_form_container_keeps_its_type_arguments_in_the_message` below): the
+//! container was reduced to its structural shape at the call return without a
+//! display back-reference to its `AsyncGenerator<...>` application. The
+//! anonymous form always held the correct container type; the relation-side
+//! self-similar loss on both forms is the separate, still-open #16125 defect.
 //!
 //! Three directions are measured dead, so they are not worth re-attempting
 //! without new evidence (each was built, measured on this suite, and reverted;
@@ -481,13 +483,17 @@ wants(d());
 /// `AsyncGenerator<AsyncGenerator<string, any, any>, void, unknown>` here; tsz
 /// renders a bare `AsyncGenerator`, dropping every type argument.
 ///
-/// This is the failure mode `unannotated_generator_return_type`'s own comment
-/// says its `evaluate_type_with_env` cache-warming exists to prevent (#16119),
-/// so the warming is not holding on the named path. Kept red rather than
-/// asserting today's wrong text, so a fix for it cannot land unnoticed.
+/// Fixed in #16191: the named form's container reached the diagnostic through
+/// `finalize_call_return_like_success`, which eagerly reduces a monomorphic
+/// `Application` return type to its structural shape at the call site. That
+/// reduction (`instantiate_application_body_for_property_access`) dropped the
+/// display back-reference to the originating `AsyncGenerator<...>` application,
+/// so the printer showed a bare `AsyncGenerator`. Recording the back-reference
+/// on that path — the checker-side counterpart to the solver's
+/// `store_parametric_structural_back_reference` — restores the type arguments
+/// without touching the structural type, so this is display-only and the
+/// self-similar relation rows above (the separate #16125 defect) are unmoved.
 #[test]
-#[ignore = "#16125 open, separate defect: the named form's container degrades \
-            to a bare unsubstituted `AsyncGenerator` in the message text"]
 fn named_form_container_keeps_its_type_arguments_in_the_message() {
     let libs = load_default_lib_files();
     let messages = crate::test_utils::check_source_with_libs_code_messages(
@@ -515,5 +521,75 @@ wants(d());
     assert!(
         text.contains("AsyncGenerator<AsyncGenerator<string"),
         "the named form must keep its type arguments the way tsc renders them: {text:?}"
+    );
+}
+
+/// Adjacent case for #16191: the **sync** `Generator` named form keeps its
+/// type arguments too. The fix is on the container's display provenance, not on
+/// anything async-specific, so `Generator<...>` must recover its arguments the
+/// same way `AsyncGenerator<...>` does. Renders `Generator<string, ...>` on a
+/// non-self-similar target so the relation genuinely rejects and the message is
+/// the artifact under test.
+#[test]
+fn sync_named_form_container_keeps_its_type_arguments_in_the_message() {
+    let libs = load_default_lib_files();
+    let messages = crate::test_utils::check_source_with_libs_code_messages(
+        r#"
+export {};
+declare function wants(h: Generator<{ x: number }>): void;
+function* d() {
+    yield "s";
+}
+wants(d());
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+    let text = messages
+        .iter()
+        .find(|(code, _)| *code == 2345)
+        .map(|(_, message)| message.clone())
+        .unwrap_or_default();
+    assert!(
+        text.contains("Generator<string"),
+        "the sync named form must keep its type arguments: {text:?}"
+    );
+}
+
+/// Adjacent case for #16191: the binder names must not matter. A renamed
+/// callee/target still recovers the container's type arguments, since the fix
+/// keys on the nominal `Application` provenance and never on any identifier.
+#[test]
+fn renamed_binder_named_form_container_keeps_its_type_arguments_in_the_message() {
+    let libs = load_default_lib_files();
+    let messages = crate::test_utils::check_source_with_libs_code_messages(
+        r#"
+export {};
+declare const zzOther: AsyncGenerator<string>;
+declare function accept(container: AsyncGenerator<{ y: number }>): void;
+async function* produce() {
+    yield zzOther;
+}
+accept(produce());
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    );
+    let text = messages
+        .iter()
+        .find(|(code, _)| *code == 2345)
+        .map(|(_, message)| message.clone())
+        .unwrap_or_default();
+    assert!(
+        text.contains("AsyncGenerator<AsyncGenerator<string"),
+        "renamed binders must not change the recovered display: {text:?}"
     );
 }
