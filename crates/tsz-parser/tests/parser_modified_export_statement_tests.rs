@@ -833,3 +833,259 @@ fn plain_async_function_declaration_reports_no_parser_diagnostic() {
     assert_no_parser_diagnostics("async function build() {}");
     assert_no_parser_diagnostics("function collect() {\n  async function build() {}\n}");
 }
+
+// --------------------------------------------------------------------------
+// `export default class` / `export default function` — a `ClassDeclaration` /
+// `FunctionDeclaration` carrying a `default` modifier, NOT an
+// `ExportAssignment` node (#16403 slice 4).
+//
+// The whole `default` arm used to be one `ExportAssignment` bucket, which
+// silences the modifier in a namespace body (the assignment's own TS1319 wins)
+// and in a Block (TS1258). Only a bare `export default <expr>` is that node;
+// with a declaration keyword after `default` tsc keeps the ordinary container
+// split instead — TS1044/TS1024 outside a Block, TS1184 inside one.
+//
+// Oracle-pinned against `typescript@7.0.2`
+// (`--noEmit --strict --pretty false --target es2022 --module es2022`) across
+// `static`/`public`/`protected`/`private`/`readonly` x 3 containers; the rows
+// below are the representatives of each distinct answer.
+// --------------------------------------------------------------------------
+
+#[test]
+fn modifier_before_export_default_class_in_namespace_body_reports_ts1044() {
+    assert_only_diagnostic(
+        "namespace Outer {\n  public export default class Widget {}\n}",
+        "public",
+        diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT,
+    );
+}
+
+#[test]
+fn modifier_before_export_default_function_in_namespace_body_reports_ts1044() {
+    assert_only_diagnostic(
+        "namespace Outer {\n  public export default function build() {}\n}",
+        "public",
+        diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT,
+    );
+}
+
+#[test]
+fn modifier_before_export_default_class_in_function_body_reports_ts1184() {
+    assert_only_diagnostic(
+        "function collect() {\n  public export default class Widget {}\n}",
+        "public",
+        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+    );
+}
+
+#[test]
+fn modifier_before_export_default_function_in_function_body_reports_ts1184() {
+    assert_only_diagnostic(
+        "function collect() {\n  public export default function build() {}\n}",
+        "public",
+        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+    );
+}
+
+/// The top-level answer was already right (this arm fell through to the
+/// container gate there) — pinned so the fix cannot move it.
+#[test]
+fn modifier_before_export_default_class_at_top_level_still_reports_ts1044() {
+    assert_only_diagnostic(
+        "public export default class Widget {}",
+        "public",
+        diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT,
+    );
+}
+
+/// `readonly` carries its own fixed-message TS1024 rather than the formatted
+/// TS1044, so the family's second message shape needs its own row.
+#[test]
+fn readonly_before_export_default_class_in_namespace_body_reports_ts1024() {
+    assert_only_diagnostic(
+        "namespace Outer {\n  readonly export default class Widget {}\n}",
+        "readonly",
+        diagnostic_codes::READONLY_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION_OR_INDEX_SIGNATURE,
+    );
+}
+
+/// The answer is keyed on the node the `export default` begins, never on which
+/// modifier was written — every member of the TS1044 family lands identically.
+#[test]
+fn every_ts1044_family_modifier_before_export_default_class_reports_ts1044() {
+    for modifier in ["public", "private", "protected", "static"] {
+        let source =
+            format!("namespace Outer {{\n  {modifier} export default class Widget {{}}\n}}");
+        assert_eq!(
+            diagnostic_codes_at(&source, modifier),
+            vec![diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT],
+            "modifier {modifier:?} must not change the answer — it is the \
+             ClassDeclaration node kind that decides it"
+        );
+    }
+}
+
+/// Renamed binder, to pin that nothing keys on the declared name — and the
+/// anonymous form, which is the shape the `default` arm exists for.
+#[test]
+fn export_default_class_diagnostic_does_not_depend_on_the_class_name() {
+    assert_only_diagnostic(
+        "namespace Enclosing {\n  static export default class QuiteDifferentName {}\n}",
+        "static",
+        diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT,
+    );
+    assert_only_diagnostic(
+        "namespace Enclosing {\n  static export default class {}\n}",
+        "static",
+        diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT,
+    );
+}
+
+/// `default` may carry further modifiers of its own before the declaration
+/// keyword; tsc gives those the same declaration answer.
+#[test]
+fn modifier_before_export_default_abstract_class_reports_the_declaration_answer() {
+    assert_only_diagnostic(
+        "namespace Outer {\n  public export default abstract class Widget {}\n}",
+        "public",
+        diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT,
+    );
+    assert_only_diagnostic(
+        "function collect() {\n  public export default abstract class Widget {}\n}",
+        "public",
+        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+    );
+}
+
+#[test]
+fn modifier_before_export_default_async_function_reports_the_declaration_answer() {
+    assert_only_diagnostic(
+        "namespace Outer {\n  public export default async function build() {}\n}",
+        "public",
+        diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT,
+    );
+    assert_only_diagnostic(
+        "function collect() {\n  public export default async function build() {}\n}",
+        "public",
+        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+    );
+}
+
+// --------------------------------------------------------------------------
+// The negative half of the same arm — a bare `export default <expr>` IS an
+// `ExportAssignment` and keeps its silence. These are the rows a
+// "reclassify the whole `default` arm" fix would break.
+// --------------------------------------------------------------------------
+
+#[test]
+fn modifier_before_bare_export_default_expression_stays_silent_outside_top_level() {
+    assert_no_parser_diagnostics("namespace Outer {\n  public export default 1;\n}");
+    assert_no_parser_diagnostics("function collect() {\n  public export default 1;\n}");
+}
+
+/// The modifier-skipping lookahead must not swallow an `async` that begins an
+/// arrow *expression* rather than a function declaration.
+#[test]
+fn modifier_before_export_default_async_arrow_stays_an_export_assignment() {
+    assert_no_parser_diagnostics("namespace Outer {\n  public export default async () => 1;\n}");
+    assert_no_parser_diagnostics("function collect() {\n  public export default async () => 1;\n}");
+}
+
+/// `abstract` / `async` used as a plain identifier expression after `default`
+/// is an assignment too — the lookahead stops at the `;`.
+///
+/// The `abstract` row is anchored on the modifier rather than asserting a
+/// diagnostic-free parse: `export default abstract;` already draws two
+/// unrelated TS1005s with *no* preceding modifier at all (probed on this
+/// branch's parent), a pre-existing recovery defect in the `export default
+/// <expr>` path that is out of this slice's scope. What this row pins is the
+/// classification — no modifier diagnostic is attributed to `public`.
+#[test]
+fn modifier_before_export_default_modifier_keyword_as_identifier_stays_silent() {
+    assert!(
+        diagnostic_codes_at(
+            "namespace Outer {\n  public export default abstract;\n}",
+            "public"
+        )
+        .is_empty(),
+        "`export default abstract;` is an ExportAssignment — its own TS1319 wins \
+         and no modifier diagnostic is attributed to `public`"
+    );
+    assert_no_parser_diagnostics("namespace Outer {\n  public export default async;\n}");
+}
+
+// --------------------------------------------------------------------------
+// `export type { x } from "m"` / `export type * from "m"` — a type-only
+// `ExportDeclaration`, not the type-alias declaration (#16403 slice 4).
+//
+// The classifier had no `type` arm at all, so both fell into the ordinary
+// declaration bucket and drew TS1184 inside a Block, where tsc reports only
+// the export declaration's own TS1233 and no modifier diagnostic. Outside a
+// Block both buckets agree on TS1044/TS1024, so only the Block rows move.
+// --------------------------------------------------------------------------
+
+#[test]
+fn modifier_before_type_only_export_list_in_function_body_reports_no_parser_diagnostic() {
+    assert_no_parser_diagnostics(
+        "function collect() {\n  public export type { Widget } from \"./source\";\n}",
+    );
+}
+
+#[test]
+fn modifier_before_type_only_export_star_in_function_body_reports_no_parser_diagnostic() {
+    assert_no_parser_diagnostics(
+        "function collect() {\n  public export type * from \"./source\";\n}",
+    );
+}
+
+#[test]
+fn modifier_before_type_only_export_list_at_top_level_reports_ts1044() {
+    assert_only_diagnostic(
+        "public export type { Widget } from \"./source\";",
+        "public",
+        diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT,
+    );
+}
+
+#[test]
+fn modifier_before_type_only_export_list_in_namespace_body_reports_ts1044() {
+    assert_only_diagnostic(
+        "namespace Outer {\n  public export type { Widget } from \"./source\";\n}",
+        "public",
+        diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT,
+    );
+}
+
+/// The type-alias form is an ordinary declaration and must keep the container
+/// split — this is the row the new `type` lookahead has to leave alone.
+#[test]
+fn modifier_before_export_type_alias_keeps_the_declaration_answer() {
+    assert_only_diagnostic(
+        "public export type Widget = 1;",
+        "public",
+        diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT,
+    );
+    assert_only_diagnostic(
+        "namespace Outer {\n  public export type Widget = 1;\n}",
+        "public",
+        diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT,
+    );
+    assert_only_diagnostic(
+        "function collect() {\n  public export type Widget = 1;\n}",
+        "public",
+        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+    );
+}
+
+/// `readonly`'s own message shape for the type-only forms.
+#[test]
+fn readonly_before_type_only_export_star_splits_by_container() {
+    assert_only_diagnostic(
+        "readonly export type * from \"./source\";",
+        "readonly",
+        diagnostic_codes::READONLY_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION_OR_INDEX_SIGNATURE,
+    );
+    assert_no_parser_diagnostics(
+        "function collect() {\n  readonly export type * from \"./source\";\n}",
+    );
+}

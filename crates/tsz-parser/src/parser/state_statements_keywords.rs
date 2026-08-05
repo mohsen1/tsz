@@ -455,14 +455,29 @@ impl ParserState {
         let snapshot = self.scanner.save_state();
         let current = self.current_token;
         self.next_token();
-        let result = matches!(
-            self.token(),
+        let result = match self.token() {
             SyntaxKind::OpenBraceToken
-                | SyntaxKind::DefaultKeyword
-                | SyntaxKind::AsteriskToken
-                | SyntaxKind::EqualsToken
-                | SyntaxKind::AsKeyword
-        );
+            | SyntaxKind::DefaultKeyword
+            | SyntaxKind::AsteriskToken
+            | SyntaxKind::EqualsToken
+            | SyntaxKind::AsKeyword => true,
+            // `export type { x } from "m"` / `export type * from "m"` is a
+            // type-only export declaration and has to reach
+            // `parse_export_declaration` like its untyped siblings above.
+            // Without this the `export` is consumed as a modifier and the
+            // recursion lands on `parse_type_alias_declaration_with_modifiers`,
+            // which reads the `{` as a malformed alias body and adds TS1003 /
+            // TS1005 noise tsc never reports. `export type T = ...` is the
+            // genuine alias form and must stay on that path.
+            SyntaxKind::TypeKeyword => {
+                self.next_token();
+                matches!(
+                    self.token(),
+                    SyntaxKind::OpenBraceToken | SyntaxKind::AsteriskToken
+                )
+            }
+            _ => false,
+        };
         self.scanner.restore_state(snapshot);
         self.current_token = current;
         result
@@ -940,8 +955,58 @@ impl ParserState {
                 SyntaxKind::OpenBraceToken | SyntaxKind::AsteriskToken => {
                     ModifiedExportForm::ExportDeclaration
                 }
-                SyntaxKind::DefaultKeyword | SyntaxKind::EqualsToken => {
-                    ModifiedExportForm::ExportAssignment
+                SyntaxKind::EqualsToken => ModifiedExportForm::ExportAssignment,
+                // `export default class ...` / `export default function ...`
+                // are a `ClassDeclaration` / `FunctionDeclaration` carrying a
+                // `default` modifier, not an `ExportAssignment` node — only a
+                // bare `export default <expr>` is the assignment. The
+                // distinction is load-bearing: an `ExportAssignment`'s own
+                // placement diagnostic silences the modifier in a namespace
+                // body (TS1319) and in a Block (TS1258), where a declaration
+                // keeps the ordinary container split (TS1044/TS1024 outside a
+                // Block, TS1184 inside one). Oracle-pinned across
+                // `static`/`public`/`protected`/`private`/`readonly` x 3
+                // containers (#16403); the sibling `async` dispatch already
+                // draws this same line in `look_ahead_async_before_export_target`.
+                SyntaxKind::DefaultKeyword => {
+                    self.next_token(); // skip `default`
+                    // `default` may carry further modifiers of its own before
+                    // the declaration keyword (`export default abstract class`,
+                    // `export default async function`), and those take the same
+                    // declaration answer. Skipping them is safe precisely
+                    // because the classification still turns on a `class`/
+                    // `function` keyword actually following: `export default
+                    // async () => 1` stops at `(` and stays an assignment.
+                    while matches!(
+                        self.token(),
+                        SyntaxKind::AbstractKeyword
+                            | SyntaxKind::AsyncKeyword
+                            | SyntaxKind::DeclareKeyword
+                    ) {
+                        self.next_token();
+                    }
+                    match self.token() {
+                        SyntaxKind::ClassKeyword | SyntaxKind::FunctionKeyword => {
+                            ModifiedExportForm::ModifiedDeclaration
+                        }
+                        _ => ModifiedExportForm::ExportAssignment,
+                    }
+                }
+                // `export type { x } from "m"` / `export type * from "m"` is a
+                // type-only `ExportDeclaration`, which draws its own TS1233 in
+                // a Block and silences the modifier there; only the type-alias
+                // form (`export type T = ...`) is an ordinary declaration. The
+                // `async` dispatch uses the identical lookahead.
+                SyntaxKind::TypeKeyword => {
+                    self.next_token(); // skip `type`
+                    if matches!(
+                        self.token(),
+                        SyntaxKind::OpenBraceToken | SyntaxKind::AsteriskToken
+                    ) {
+                        ModifiedExportForm::ExportDeclaration
+                    } else {
+                        ModifiedExportForm::ModifiedDeclaration
+                    }
                 }
                 SyntaxKind::NamespaceKeyword
                 | SyntaxKind::ModuleKeyword
