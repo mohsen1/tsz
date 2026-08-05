@@ -36,9 +36,17 @@ impl<'a> CheckerState<'a> {
             .binder
             .get_symbol(sym_id)
             .filter(|symbol| !self.reference_symbol_is_import_alias(symbol));
+        // The registered file target answers the right file but is indexed by
+        // the *consuming* file's raw `SymbolId`, which per-file binders mint
+        // from zero: `import { Shape }` in one file and an unrelated `Unused`
+        // in the imported one routinely share an id. Reading the declaring
+        // binder at that ordinal is right only by coincidence, so it may drive
+        // this reference's declaration metadata only when the imported name
+        // agrees.
         let registered_non_import_symbol = self
             .get_symbol_from_registered_file_target(sym_id)
-            .filter(|symbol| !self.reference_symbol_is_import_alias(symbol));
+            .filter(|symbol| !self.reference_symbol_is_import_alias(symbol))
+            .filter(|symbol| self.registered_file_target_matches_import_alias(sym_id, symbol));
         let symbol_meta = local_alias_symbol
             .or(registered_non_import_symbol)
             .or(current_non_import_symbol)
