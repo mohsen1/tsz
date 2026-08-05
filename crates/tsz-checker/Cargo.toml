@@ -1101,6 +1101,9 @@ path = "tests/wide_symbol_computed_member_index_signature_tests.rs"
 name = "well_known_symbol_type_query_alias_key_tests"
 path = "tests/well_known_symbol_type_query_alias_key_tests.rs"
 [[test]]
+name = "cross_file_symbol_keyed_member_instantiation_tests"
+path = "tests/cross_file_symbol_keyed_member_instantiation_tests.rs"
+[[test]]
 name = "relational_operator_type_display_tests"
 path = "tests/relational_operator_type_display_tests.rs"
 [[test]]
