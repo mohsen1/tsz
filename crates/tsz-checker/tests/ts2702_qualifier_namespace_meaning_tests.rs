@@ -23,7 +23,9 @@
 //! `--noEmit --strict --target es2015`; the residual rows at the bottom are
 //! pinned as they behave today rather than left to drift.
 
-use crate::test_utils::{check_multi_file, check_source_diagnostics};
+use crate::test_utils::{
+    check_multi_file, check_multi_file_with_global_index, check_source_diagnostics,
+};
 use tsz_common::CheckerOptions;
 
 fn codes(source: &str) -> Vec<u32> {
@@ -46,6 +48,27 @@ fn multi_file_codes(files: &[(&str, &str)], entry: &str) -> Vec<u32> {
         ..CheckerOptions::default()
     };
     check_multi_file(files, entry, options)
+        .into_iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect()
+}
+
+/// Like `multi_file_codes`, but wires the production `global_symbol_file_index`
+/// before checking, matching the real CLI driver instead of the plain
+/// in-memory `check_multi_file` pipeline's dynamic overlay. #16465/#16486's
+/// own test suite (`qualified_name_default_import_namespace_meaning_tests.rs`,
+/// #16479) established this as the harness for a default-import qualifier's
+/// namespace-meaning gate — the no-lib `check_multi_file` overlay does not
+/// reliably surface the downstream missing-member `TS2694` in this shape, so
+/// the load-bearing assertion for the regression is "does not report
+/// `TS2702`", not "reports `TS2694`" (see the comment on
+/// `export_default_namespace_keeps_namespace_meaning` in that suite).
+fn multi_file_codes_global_index(files: &[(&str, &str)], entry: &str) -> Vec<u32> {
+    let options = CheckerOptions {
+        strict: true,
+        ..CheckerOptions::default()
+    };
+    check_multi_file_with_global_index(files, entry, options)
         .into_iter()
         .map(|diagnostic| diagnostic.code)
         .collect()
@@ -307,5 +330,125 @@ fn namespace_import_qualifier_keeps_the_member_lookup_path() {
             "/p2.ts",
         ),
         vec![2694]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// `export default <identifier>` re-exporting a namespace/enum keeps namespace
+// meaning through the default import (closes #16486, a regression from
+// #16480: that PR's alias-target check stopped at the synthesized `default`
+// wrapper symbol's own flags, which are always bare `ALIAS` regardless of
+// what the identifier denotes)
+// ---------------------------------------------------------------------------
+
+/// `export default m;` where `m` is a previously-declared namespace: `tsc`
+/// resolves `D.foo` as a member lookup, never `TS2702` — the default export is
+/// an alias to `m`'s own declaration, not a fresh symbol with its own
+/// (non-namespace) meaning. As `qualified_name_default_import_namespace_meaning_tests`'s
+/// own `export_default_namespace_keeps_namespace_meaning` control documents,
+/// the no-lib multi-file harness does not reliably surface the downstream
+/// missing-member `TS2694` for this shape; the load-bearing assertion for this
+/// regression is the absence of `TS2702` on both a present and a missing
+/// member.
+#[test]
+fn default_exported_namespace_identifier_keeps_namespace_meaning() {
+    let present = multi_file_codes_global_index(
+        &[
+            (
+                "dep.ts",
+                "namespace m { export interface foo { a: number } }\nexport default m;\n",
+            ),
+            ("main.ts", "import D from './dep';\nvar q: D.foo;\n"),
+        ],
+        "main.ts",
+    );
+    assert!(
+        !present.contains(&2702),
+        "a present member of an export-default namespace must not be TS2702, got: {present:?}"
+    );
+
+    let missing = multi_file_codes_global_index(
+        &[
+            (
+                "dep.ts",
+                "namespace m { export interface foo { a: number } }\nexport default m;\n",
+            ),
+            ("main.ts", "import D from './dep';\nvar bad: D.Missing;\n"),
+        ],
+        "main.ts",
+    );
+    assert!(
+        !missing.contains(&2702),
+        "a missing member of an export-default namespace must not become TS2702, got: {missing:?}"
+    );
+}
+
+/// `export default Color;` where `Color` is a previously-declared enum: an
+/// enum carries `SymbolFlags.Namespace` (`Enum` is in the set), so it must
+/// never report `TS2702` through a default-exported identifier alias, matching
+/// the namespace case above.
+#[test]
+fn default_exported_enum_identifier_keeps_namespace_meaning() {
+    let codes = multi_file_codes_global_index(
+        &[
+            ("e.ts", "enum Color { Red, Green }\nexport default Color;\n"),
+            ("main.ts", "import C from './e';\nvar bad: C.Nope;\n"),
+        ],
+        "main.ts",
+    );
+    assert!(
+        !codes.contains(&2702),
+        "an enum default export keeps namespace meaning (no TS2702), got: {codes:?}"
+    );
+}
+
+/// The local binding name at the import site is irrelevant — resolution goes
+/// through the `default` export slot's own target, not the local spelling.
+#[test]
+fn renamed_default_import_of_namespace_identifier_keeps_namespace_meaning() {
+    let codes = multi_file_codes_global_index(
+        &[
+            (
+                "dep2.ts",
+                "namespace m { export interface foo { a: number } }\nexport default m;\n",
+            ),
+            (
+                "main2.ts",
+                "import Renamed from './dep2';\nvar bad: Renamed.Missing;\n",
+            ),
+        ],
+        "main2.ts",
+    );
+    assert!(
+        !codes.contains(&2702),
+        "renaming the local binding must not affect the default export's namespace meaning, got: {codes:?}"
+    );
+}
+
+/// Negative control, restated from `default_imported_class_used_as_namespace_reports_type_used_as_namespace`:
+/// a default-exported class *merged* with a same-named namespace still
+/// reports `TS2702` through the `default` slot specifically — tsc only folds
+/// the merge into the *named* binding (`Decl`), never the synthetic `default`
+/// wrapper. This must NOT regress when the identifier-hop above is added: the
+/// hop only fires when `default`'s own `value_declaration` is a bare
+/// `Identifier`, and `export default class Decl {}` makes it the class
+/// declaration node itself.
+#[test]
+fn default_exported_class_merged_with_namespace_still_reports_ts2702() {
+    assert_eq!(
+        multi_file_codes(
+            &[
+                (
+                    "/dep3.ts",
+                    "export default class Decl {}\nexport namespace Decl { export interface I { q: number } }\n",
+                ),
+                (
+                    "/main3.ts",
+                    "import Entity from \"./dep3\";\nvar y: Entity.I;\n"
+                ),
+            ],
+            "/main3.ts",
+        ),
+        vec![2702]
     );
 }

@@ -217,6 +217,55 @@ impl<'a> CheckerState<'a> {
                         // (`import * as X`, no single named target) or when
                         // `name` isn't a local import alias at all — callers
                         // fall back to their own, more conservative answer.
+                        // `export default <expr>` always synthesizes a fresh
+                        // "default" symbol with hardcoded `ALIAS` flags — see
+                        // `bind_export_declaration` in
+                        // `crates/tsz-binder/src/modules/import_export.rs` —
+                        // regardless of what the clause actually denotes.
+                        // When the clause is an inline declaration (`export
+                        // default class Decl {}`), that wrapper's meaning IS
+                        // the declaration's own kind, and a class merged with
+                        // a same-named namespace elsewhere in the file still
+                        // reports TS2702 through `default` (tsc only folds the
+                        // merge into the *named* binding, never the synthetic
+                        // default slot) — see
+                        // `default_imported_class_used_as_namespace_reports_type_used_as_namespace`.
+                        // But when the clause is a bare identifier reference
+                        // (`export default m;`, `m` declared elsewhere in the
+                        // same file), the wrapper is a true alias and tsc asks
+                        // the referenced declaration for its own (possibly
+                        // merged) namespace meaning — #16486. Detect that case
+                        // by reading the wrapper's own `value_declaration`
+                        // from its own file's arena: an `Identifier` node
+                        // means "alias to a same-file declaration", so resolve
+                        // that identifier one hop further in the *target's own*
+                        // file scope before giving up on it.
+                        let default_export_alias_target_has_namespace_meaning =
+                            |target_id: SymbolId, target: &tsz_binder::Symbol| -> Option<bool> {
+                                if !target.has_any_flags(symbol_flags::ALIAS)
+                                    || target.import_module().is_some()
+                                {
+                                    return None;
+                                }
+                                let file_idx = self.ctx.resolve_symbol_file_index(target_id)?;
+                                let decl_node = self
+                                    .ctx
+                                    .get_arena_for_file(file_idx as u32)
+                                    .get(target.value_declaration)?;
+                                if decl_node.kind != SyntaxKind::Identifier as u16 {
+                                    return None;
+                                }
+                                let ref_name = self
+                                    .ctx
+                                    .get_arena_for_file(file_idx as u32)
+                                    .get_identifier(decl_node)?
+                                    .escaped_text
+                                    .as_str();
+                                let target_binder = self.ctx.get_binder_for_file(file_idx)?;
+                                let ref_id = target_binder.file_locals.get(ref_name)?;
+                                let ref_symbol = target_binder.get_symbol(ref_id)?;
+                                Some(ref_symbol.has_any_flags(valid_namespace_flags))
+                            };
                         let resolve_import_target_has_namespace_meaning =
                             |name: &str| -> Option<bool> {
                                 let local_id = self.ctx.binder.file_locals.get(name)?;
@@ -230,7 +279,17 @@ impl<'a> CheckerState<'a> {
                                     self.ctx.resolve_import_alias_and_register(local_id)?;
                                 let target =
                                     self.get_symbol_from_registered_file_target(target_id)?;
-                                Some(target.has_any_flags(valid_namespace_flags))
+                                if target.has_any_flags(valid_namespace_flags) {
+                                    return Some(true);
+                                }
+                                if let Some(has_meaning) =
+                                    default_export_alias_target_has_namespace_meaning(
+                                        target_id, target,
+                                    )
+                                {
+                                    return Some(has_meaning);
+                                }
+                                Some(false)
                             };
                         let alias_target_lacks_namespace_meaning = is_alias
                             && resolve_import_target_has_namespace_meaning(&left_name)
