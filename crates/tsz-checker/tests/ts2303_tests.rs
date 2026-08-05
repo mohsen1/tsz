@@ -38,7 +38,69 @@ fn get_diagnostics(source: &str, file_name: &str) -> Vec<(u32, String)> {
         .collect()
 }
 
-fn get_project_diagnostics(files: &[(&str, &str)]) -> Vec<(String, u32, String)> {
+/// Asserts the `TS2303` set for an `import self = require(...)` / `export = self`
+/// cycle matches what `tsc` reports.
+///
+/// `tsc` treats the import declaration and the `export =` assignment as two
+/// independent circular-alias sites, so every module participating in the cycle
+/// is reported exactly twice — once at each. Modules outside the cycle are
+/// reported not at all.
+fn assert_self_alias_cycle_sites(
+    files: &[(&str, &str)],
+    diagnostics: &[(String, u32, u32, String)],
+    cycle_members: &[&str],
+) {
+    let ts2303: Vec<_> = diagnostics
+        .iter()
+        .filter(|(_, code, _, _)| *code == 2303)
+        .collect();
+
+    for member in cycle_members {
+        let source = files
+            .iter()
+            .find_map(|(name, source)| (name == member).then_some(*source))
+            .unwrap_or_else(|| panic!("cycle member {member} is not in the fixture"));
+        let import_site = u32::try_from(source.find("import self").expect("import site")).unwrap();
+        let export_site =
+            u32::try_from(source.find("export = self").expect("export site")).unwrap();
+
+        let sites: Vec<u32> = ts2303
+            .iter()
+            .filter(|(file, _, _, message)| file == member && message.contains("'self'"))
+            .map(|(_, _, start, _)| *start)
+            .collect();
+
+        assert!(
+            sites.contains(&import_site),
+            "Expected TS2303 on {member}'s `import self = require(...)` declaration (offset {import_site}). Actual TS2303: {ts2303:#?}"
+        );
+        assert!(
+            sites.contains(&export_site),
+            "Expected TS2303 on {member}'s `export = self;` assignment (offset {export_site}). Actual TS2303: {ts2303:#?}"
+        );
+        assert_eq!(
+            sites.len(),
+            2,
+            "Expected exactly two TS2303 sites in {member}, with no duplicate at either. Actual TS2303: {ts2303:#?}"
+        );
+    }
+
+    assert_eq!(
+        ts2303.len(),
+        cycle_members.len() * 2,
+        "Only the {} cycle members may report TS2303, twice each. Actual diagnostics: {diagnostics:#?}",
+        cycle_members.len()
+    );
+}
+
+/// Checks a multi-file project, returning `(file, code, start, message)` per
+/// diagnostic.
+///
+/// A bare `(file, code, message)` triple cannot tell two reports at the same
+/// site apart from two reports at different sites, which is exactly the
+/// distinction `tsc` draws for a circular import alias: it reports `TS2303`
+/// once on the `import` declaration and once on the `export =` assignment.
+fn get_project_diagnostics_positioned(files: &[(&str, &str)]) -> Vec<(String, u32, u32, String)> {
     let mut arenas = Vec::with_capacity(files.len());
     let mut binders = Vec::with_capacity(files.len());
     let mut roots = Vec::with_capacity(files.len());
@@ -88,7 +150,7 @@ fn get_project_diagnostics(files: &[(&str, &str)]) -> Vec<(String, u32, String)>
                 .ctx
                 .diagnostics
                 .iter()
-                .map(|d| (file_name.clone(), d.code, d.message_text.clone())),
+                .map(|d| (file_name.clone(), d.code, d.start, d.message_text.clone())),
         );
     }
 
@@ -181,7 +243,7 @@ export as namespace N;
 
 #[test]
 fn recursive_export_assignment_self_import_reports_ts2303() {
-    let diagnostics = get_project_diagnostics(&[
+    const FILES: &[(&str, &str)] = &[
         (
             "recursiveExportAssignmentAndFindAliasedType4_moduleC.ts",
             r#"import self = require("./recursiveExportAssignmentAndFindAliasedType4_moduleC");
@@ -198,29 +260,20 @@ export = ClassB;"#,
 import ClassB = require("./recursiveExportAssignmentAndFindAliasedType4_moduleB");
 export var b: ClassB;"#,
         ),
-    ]);
+    ];
 
-    let ts2303: Vec<_> = diagnostics
-        .iter()
-        .filter(|(_, code, _)| *code == 2303)
-        .collect();
-    assert_eq!(
-        ts2303.len(),
-        1,
-        "Expected one TS2303 for recursive export assignment self-import. Actual diagnostics: {diagnostics:#?}"
-    );
-    assert!(
-        ts2303.iter().any(|(file, _, message)| {
-            file == "recursiveExportAssignmentAndFindAliasedType4_moduleC.ts"
-                && message.contains("'self'")
-        }),
-        "Expected TS2303 on moduleC's `self` alias. Actual TS2303 diagnostics: {ts2303:#?}"
+    let diagnostics = get_project_diagnostics_positioned(FILES);
+
+    assert_self_alias_cycle_sites(
+        FILES,
+        &diagnostics,
+        &["recursiveExportAssignmentAndFindAliasedType4_moduleC.ts"],
     );
 }
 
 #[test]
 fn recursive_export_assignment_two_file_cycle_reports_ts2303() {
-    let diagnostics = get_project_diagnostics(&[
+    const FILES: &[(&str, &str)] = &[
         (
             "recursiveExportAssignmentAndFindAliasedType5_moduleC.ts",
             r#"import self = require("./recursiveExportAssignmentAndFindAliasedType5_moduleD");
@@ -242,24 +295,23 @@ export = ClassB;"#,
 import ClassB = require("./recursiveExportAssignmentAndFindAliasedType5_moduleB");
 export var b: ClassB;"#,
         ),
-    ]);
+    ];
 
-    let ts2303: Vec<_> = diagnostics
-        .iter()
-        .filter(|(_, code, _)| *code == 2303)
-        .collect();
-    assert!(
-        ts2303.iter().any(|(file, _, message)| {
-            file == "recursiveExportAssignmentAndFindAliasedType5_moduleD.ts"
-                && message.contains("'self'")
-        }),
-        "Expected TS2303 on moduleD's `self` alias. Actual TS2303 diagnostics: {ts2303:#?}"
+    let diagnostics = get_project_diagnostics_positioned(FILES);
+
+    assert_self_alias_cycle_sites(
+        FILES,
+        &diagnostics,
+        &[
+            "recursiveExportAssignmentAndFindAliasedType5_moduleC.ts",
+            "recursiveExportAssignmentAndFindAliasedType5_moduleD.ts",
+        ],
     );
 }
 
 #[test]
 fn recursive_export_assignment_three_file_cycle_reports_ts2303() {
-    let diagnostics = get_project_diagnostics(&[
+    const FILES: &[(&str, &str)] = &[
         (
             "recursiveExportAssignmentAndFindAliasedType6_moduleC.ts",
             r#"import self = require("./recursiveExportAssignmentAndFindAliasedType6_moduleD");
@@ -286,17 +338,17 @@ export = ClassB;"#,
 import ClassB = require("./recursiveExportAssignmentAndFindAliasedType6_moduleB");
 export var b: ClassB;"#,
         ),
-    ]);
+    ];
 
-    let ts2303: Vec<_> = diagnostics
-        .iter()
-        .filter(|(_, code, _)| *code == 2303)
-        .collect();
-    assert!(
-        ts2303.iter().any(|(file, _, message)| {
-            file == "recursiveExportAssignmentAndFindAliasedType6_moduleE.ts"
-                && message.contains("'self'")
-        }),
-        "Expected TS2303 on moduleE's `self` alias. Actual TS2303 diagnostics: {ts2303:#?}"
+    let diagnostics = get_project_diagnostics_positioned(FILES);
+
+    assert_self_alias_cycle_sites(
+        FILES,
+        &diagnostics,
+        &[
+            "recursiveExportAssignmentAndFindAliasedType6_moduleC.ts",
+            "recursiveExportAssignmentAndFindAliasedType6_moduleD.ts",
+            "recursiveExportAssignmentAndFindAliasedType6_moduleE.ts",
+        ],
     );
 }

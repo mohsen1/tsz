@@ -14,8 +14,70 @@ const result = parse(42);
         "Did not expect overloaded call initializer to use the first overload return type: {output}"
     );
     assert!(
-        output.contains("declare const result = 42;"),
-        "Expected overloaded call initializer to fall back without first-overload poisoning: {output}"
+        output.contains("declare const result: number;"),
+        "Expected overloaded call initializer to use the MATCHING overload return type: {output}"
+    );
+}
+
+#[test]
+fn test_overloaded_call_initializer_picks_each_matching_signature_return_type() {
+    let output = emit_dts_with_binding(
+        r#"
+function parse(input: string): string;
+function parse(input: number): number;
+function parse(input: string | number): string | number { return input; }
+const fromString = parse("hi");
+const fromNumber = parse(42);
+"#,
+    );
+
+    assert!(
+        output.contains("declare const fromString: string;"),
+        "Expected the string overload to drive the string-argument call: {output}"
+    );
+    assert!(
+        output.contains("declare const fromNumber: number;"),
+        "Expected the number overload to drive the number-argument call: {output}"
+    );
+}
+
+#[test]
+fn test_overloaded_call_initializer_reaches_past_the_first_two_signatures() {
+    let output = emit_dts_with_binding(
+        r#"
+function pick(v: boolean): boolean;
+function pick(v: string): string;
+function pick(v: number): number;
+function pick(v: unknown): unknown { return v; }
+const third = pick(7);
+const first = pick(true);
+"#,
+    );
+
+    assert!(
+        output.contains("declare const third: number;"),
+        "Expected the THIRD overload to drive a number-argument call: {output}"
+    );
+    assert!(
+        output.contains("declare const first: boolean;"),
+        "Expected the first overload to still win when it is the matching one: {output}"
+    );
+}
+
+#[test]
+fn test_overloaded_call_initializer_return_type_is_independent_of_binder_names() {
+    let output = emit_dts_with_binding(
+        r#"
+function renamedOverload(zzInput: string): string;
+function renamedOverload(zzInput: number): number;
+function renamedOverload(zzInput: string | number): string | number { return zzInput; }
+const zzResult = renamedOverload(42);
+"#,
+    );
+
+    assert!(
+        output.contains("declare const zzResult: number;"),
+        "Expected overload selection to be structural, not keyed on binder spelling: {output}"
     );
 }
 
