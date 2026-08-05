@@ -55,11 +55,13 @@ impl<'a> CheckerState<'a> {
                         .get(stmt_idx)
                         .is_some_and(|n| n.kind == syntax_kind_ext::EXPORT_ASSIGNMENT);
                     if is_export_assign && !is_ambient_external_module {
-                        self.error_at_node(
-                            stmt_idx,
-                            diagnostic_messages::AN_EXPORT_ASSIGNMENT_CANNOT_BE_USED_IN_A_NAMESPACE,
-                            diagnostic_codes::AN_EXPORT_ASSIGNMENT_CANNOT_BE_USED_IN_A_NAMESPACE,
-                        );
+                        if !self.ctx.has_parse_errors {
+                            self.error_at_node(
+                                stmt_idx,
+                                diagnostic_messages::AN_EXPORT_ASSIGNMENT_CANNOT_BE_USED_IN_A_NAMESPACE,
+                                diagnostic_codes::AN_EXPORT_ASSIGNMENT_CANNOT_BE_USED_IN_A_NAMESPACE,
+                            );
+                        }
                         continue;
                     }
                     if is_ambient_body

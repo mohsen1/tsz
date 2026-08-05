@@ -127,7 +127,8 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             // diagnostics like TS1194 or TS1319.
             let in_non_module_context = self.is_in_non_module_element_context(export_idx);
 
-            if !in_non_module_context
+            if !self.ctx.has_parse_errors
+                && !in_non_module_context
                 && export_decl.is_default_export
                 && self.is_inside_namespace_declaration(export_idx)
             {
