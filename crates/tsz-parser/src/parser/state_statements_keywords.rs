@@ -61,10 +61,116 @@ pub(crate) enum AbstractExportTarget {
     PositionErrorWins,
 }
 
+/// Which grammar diagnostic `checkGrammarModifiers` picks for a stray `async`
+/// before `export ...` — distinct from every sibling modifier family because
+/// `async` is legal on a function declaration in *every* container, including
+/// a Block (a nested async function declaration is ordinarily fine there),
+/// so a Block cannot uniformly silence it the way it does for the other
+/// families (#16403 slice 3).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AsyncExportTarget {
+    /// `async export function f() {}`, `async export default function
+    /// (f)() {}` — `async` is legal here in every container, so the only
+    /// violation is modifier order: TS1029 on `export`, unconditionally,
+    /// outranking the container check that silences every other modifier
+    /// family inside a Block.
+    Function,
+    /// `async export {}`, `async export * from "m"`, `async export { a }
+    /// from "m"` — an `ExportDeclaration` node, which admits no modifiers at
+    /// all (a structural mismatch, not an ordering one): TS1042 wherever the
+    /// declaration's own placement diagnostic does not already win outright
+    /// (a Block, where TS1233 wins alone).
+    ExportDeclaration,
+    /// `async export =`, `async export default <expr>` — an
+    /// `ExportAssignment` node, the same structural mismatch as above but
+    /// wider silencing: its own placement diagnostic (TS1231/TS1258 in a
+    /// Block, TS1063/TS1319 in a namespace body) wins in *both* of those
+    /// containers, and TS1042 survives only at the source file's own top
+    /// level.
+    ExportAssignment,
+    /// `async export namespace N {}`, `async export module M {}` — `export`
+    /// is a legal modifier position here, so this takes the same
+    /// order-vs-container-split answer as `ModifierRun` below, except a
+    /// Block silences it completely through the nested module declaration's
+    /// own TS1235, the same way the sibling modifier families' own
+    /// `ModuleDeclaration` handling does.
+    ModuleDeclaration,
+    /// `async export const/class/interface/type/enum ...` — an ordinary
+    /// modified declaration. `async` is not legal on any of these, but
+    /// `export` is a legal modifier at this container, so tsc's modifier
+    /// order check reports TS1029 outside a Block; inside one the generic
+    /// "modifiers not allowed on a block-scoped statement" TS1184 wins
+    /// instead — the block gate runs first and does not special-case
+    /// `async` the way it does for an actual function declaration.
+    ModifierRun,
+    /// `async export as namespace Foo;` — a `NamespaceExportDeclaration`,
+    /// which like every other modifier family admits no modifiers in any
+    /// container: TS1184 unconditionally.
+    NamespaceExport,
+}
+
 impl ParserState {
     pub(crate) fn parse_statement_async_declaration_or_expression(&mut self) -> NodeIndex {
+        use tsz_common::diagnostics::diagnostic_codes;
+
         if self.look_ahead_is_async_function() {
             self.parse_async_function_declaration()
+        } else if let Some(target) = self.look_ahead_async_before_export_target() {
+            // A stray `async` directly before `export ...` (#16403 slice 3):
+            // see `AsyncExportTarget` for the structural rule per form.
+            let start_pos = self.token_pos();
+            let async_start = self.token_pos();
+            let in_block = self.in_block_context() || self.in_static_block_context();
+            let mut emit_order_diagnostic = false;
+            match target {
+                AsyncExportTarget::Function => emit_order_diagnostic = true,
+                AsyncExportTarget::NamespaceExport => {
+                    self.parse_error_at_current_token(
+                        "Modifiers cannot appear here.",
+                        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+                    );
+                }
+                AsyncExportTarget::ExportDeclaration | AsyncExportTarget::ModuleDeclaration
+                    if in_block => {}
+                AsyncExportTarget::ExportAssignment
+                    if in_block || self.in_module_body_context() => {}
+                AsyncExportTarget::ModifierRun if in_block => {
+                    self.parse_error_at_current_token(
+                        "Modifiers cannot appear here.",
+                        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+                    );
+                }
+                AsyncExportTarget::ExportDeclaration | AsyncExportTarget::ExportAssignment => {
+                    self.parse_error_at_current_token(
+                        "'async' modifier cannot be used here.",
+                        diagnostic_codes::MODIFIER_CANNOT_BE_USED_HERE,
+                    );
+                }
+                AsyncExportTarget::ModuleDeclaration | AsyncExportTarget::ModifierRun => {
+                    emit_order_diagnostic = true;
+                }
+            }
+            self.parse_expected(SyntaxKind::AsyncKeyword);
+            let async_end = self.token_end();
+            if emit_order_diagnostic {
+                // tsc anchors TS1029 on the *later* of the two modifiers,
+                // i.e. the `export` keyword now sitting at the current token
+                // (same anchor `abstract`'s sibling ordering check uses).
+                let export_start = self.token_pos();
+                let export_end = self.token_end();
+                self.parse_error_at(
+                    export_start,
+                    export_end - export_start,
+                    &tsz_common::diagnostics::diagnostic_messages::MODIFIER_MUST_PRECEDE_MODIFIER
+                        .replace("{0}", "export")
+                        .replace("{1}", "async"),
+                    diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
+                );
+            }
+            let async_modifier =
+                self.arena
+                    .add_token(SyntaxKind::AsyncKeyword as u16, async_start, async_end);
+            self.parse_accessor_modified_statement(start_pos, vec![async_modifier])
         } else if self.look_ahead_is_async_declaration() {
             let start_pos = self.token_pos();
             let async_start = self.token_pos();
@@ -991,6 +1097,75 @@ impl ParserState {
                 | SyntaxKind::FunctionKeyword
                 | SyntaxKind::InterfaceKeyword
                 | SyntaxKind::EnumKeyword => Some(AbstractExportTarget::ModifierRun),
+                _ => None,
+            };
+        }
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        target
+    }
+
+    /// Classify `async export <declaration>` by the node kind that `export`
+    /// decorates, mirroring `look_ahead_abstract_before_export_target` — see
+    /// `AsyncExportTarget` for the structural rule per form. Returns `None`
+    /// when the current token is not `async` immediately followed by
+    /// `export` (every other `async ...` shape is left to its existing
+    /// path).
+    pub(crate) fn look_ahead_async_before_export_target(&mut self) -> Option<AsyncExportTarget> {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token(); // skip `async`
+        let mut target = None;
+        if self.is_token(SyntaxKind::ExportKeyword) {
+            self.next_token(); // skip `export`
+            target = match self.token() {
+                SyntaxKind::AsKeyword => Some(AsyncExportTarget::NamespaceExport),
+                SyntaxKind::OpenBraceToken | SyntaxKind::AsteriskToken => {
+                    Some(AsyncExportTarget::ExportDeclaration)
+                }
+                SyntaxKind::EqualsToken => Some(AsyncExportTarget::ExportAssignment),
+                // `export default function ...` reads the same "async legal
+                // in every container" answer as a bare `export function`.
+                // `export default class ...` is the `ModifierRun` node kind
+                // instead — `async` is not legal on a class either, so it
+                // takes the ordinary container split, not the always-legal
+                // answer. Only a bare, non-declaration `export default
+                // <expr>` is the `ExportAssignment` node (#16403).
+                SyntaxKind::DefaultKeyword => {
+                    self.next_token(); // skip `default`
+                    Some(match self.token() {
+                        SyntaxKind::FunctionKeyword => AsyncExportTarget::Function,
+                        SyntaxKind::ClassKeyword => AsyncExportTarget::ModifierRun,
+                        _ => AsyncExportTarget::ExportAssignment,
+                    })
+                }
+                SyntaxKind::NamespaceKeyword
+                | SyntaxKind::ModuleKeyword
+                | SyntaxKind::GlobalKeyword => self
+                    .look_ahead_is_module_declaration()
+                    .then_some(AsyncExportTarget::ModuleDeclaration),
+                SyntaxKind::FunctionKeyword => Some(AsyncExportTarget::Function),
+                // `export type { x }` / `export type * from "m"` is a
+                // type-only export declaration, not the type-alias form —
+                // same lookahead the `abstract` path above uses.
+                SyntaxKind::TypeKeyword => {
+                    self.next_token();
+                    Some(
+                        if self.is_token(SyntaxKind::OpenBraceToken)
+                            || self.is_token(SyntaxKind::AsteriskToken)
+                        {
+                            AsyncExportTarget::ExportDeclaration
+                        } else {
+                            AsyncExportTarget::ModifierRun
+                        },
+                    )
+                }
+                SyntaxKind::ConstKeyword
+                | SyntaxKind::LetKeyword
+                | SyntaxKind::VarKeyword
+                | SyntaxKind::ClassKeyword
+                | SyntaxKind::InterfaceKeyword
+                | SyntaxKind::EnumKeyword => Some(AsyncExportTarget::ModifierRun),
                 _ => None,
             };
         }
