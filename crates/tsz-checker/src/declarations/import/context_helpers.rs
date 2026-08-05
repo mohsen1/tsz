@@ -196,6 +196,66 @@ impl<'a> CheckerState<'a> {
         true
     }
 
+    /// Whether a position-invalid `export ... from "m"` still resolves its module
+    /// specifier, refining [`Self::position_invalid_module_element_resolves_specifier`]
+    /// with the export side's own demand model.
+    ///
+    /// [`Self::position_invalid_module_element_resolves_specifier`] answers whether a
+    /// *declaration scope* encloses the declaration. When one does, nothing resolves
+    /// and that answer is final. When one does not — a top-level bare block, an
+    /// `if`/loop/`try` body, a labeled statement, a `switch` clause — the declaration
+    /// is left in the source file's own scope, and the export side then diverges from
+    /// the import side: `checkExportDeclaration` has already returned at the placement
+    /// diagnostic, so whatever resolution still happens comes from a *later* pass over
+    /// whichever symbol table the binder put the declaration in, and which table that
+    /// is depends on the file.
+    ///
+    /// In an external module the file symbol carries an export table, so `export *`
+    /// binds as an export-star entry that computing that table resolves eagerly, while
+    /// a named or namespace export clause binds an alias resolved only on reference —
+    /// and a position-invalid one is never referenced. In a file that is *not* a
+    /// module there is no export table to compute, so the export-star is never
+    /// resolved at all, and only the individual specifiers of a named clause bind as
+    /// ordinary aliases that a later pass reaches.
+    ///
+    /// The two forms therefore swap roles across that one axis, measured against the
+    /// pinned oracle (#16495):
+    ///
+    /// | clause | external module | not a module |
+    /// | --- | --- | --- |
+    /// | `export * from "m"` | resolves | silent |
+    /// | `export * as ns from "m"` | silent | silent |
+    /// | `export { a } from "m"` | silent | resolves |
+    ///
+    /// Only the export side consults this. `import`/`import =` keep resolving in every
+    /// one of these containers, which is why the rule cannot be shared with them.
+    pub(crate) fn position_invalid_export_declaration_resolves_specifier(
+        &self,
+        export_idx: NodeIndex,
+        export_clause: NodeIndex,
+    ) -> bool {
+        if !self.position_invalid_module_element_resolves_specifier(export_idx) {
+            return false;
+        }
+
+        if export_clause.is_none() {
+            // Bare `export * from "m"`: an export-star entry, resolved only when the
+            // file actually has a module export table to compute.
+            return self.ctx.is_external_module_file();
+        }
+
+        let is_named_exports = self
+            .ctx
+            .arena
+            .get(export_clause)
+            .is_some_and(|n| n.kind == syntax_kind_ext::NAMED_EXPORTS);
+
+        // A named clause's specifiers bind as plain aliases outside a module; inside
+        // one they land in the export table and stay lazy. `export * as ns` is an
+        // alias either way, so it never resolves here.
+        is_named_exports && !self.ctx.is_external_module_file()
+    }
+
     /// Check if a node is inside a module augmentation
     /// (`declare module "string" { ... }`).  Module augmentations have a
     /// `MODULE_DECLARATION` ancestor whose name is a string literal.

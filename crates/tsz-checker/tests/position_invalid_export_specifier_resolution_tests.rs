@@ -10,11 +10,21 @@
 //! clause) leaves the declaration in the source file's own scope, and tsc keeps
 //! resolving there.
 //!
-//! Every expectation below is a row where `typescript@7.0.2` returns the same
-//! answer in **both** threading modes (default and `--singleThreaded`). The
-//! top-level-block family, where the two modes disagree, is deliberately left
-//! alone — see #16413 — and is pinned here as a control asserting the behavior
-//! `main` already has.
+//! Outside a declaration scope that answer is not the whole rule. The check has
+//! already returned, so whatever still resolves comes from a later pass over the
+//! symbol table the binder used — and which table that is depends on the file. In
+//! an external module the file symbol carries an export table whose computation
+//! resolves an `export *` entry eagerly, while a named or namespace clause stays a
+//! lazily-resolved alias nothing references; in a file that is not a module there
+//! is no export table to compute, so `export *` is never resolved and only a named
+//! clause's specifiers bind as aliases a later pass reaches. The two forms swap
+//! roles across that one axis (#16495).
+//!
+//! Every expectation below is measured against the pinned `typescript@7.0.2`
+//! oracle through `scripts/conformance/oracle.sh`, which pins the
+//! `--singleThreaded --stableTypeOrdering` invocation the conformance cache
+//! generator uses — the disagreement recorded here as #16413 was an artifact of
+//! comparing against a bare `tsc` run, and is settled.
 
 use crate::context::CheckerOptions;
 use crate::state::CheckerState;
@@ -318,6 +328,213 @@ fn a_nested_bare_block_at_top_level_keeps_resolving_unchanged() {
 }"#,
         &[1233, 2307],
         "nesting plain blocks never crosses a declaration scope",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Outside a declaration scope, the export clause and the file's module-ness
+// decide together (#16495).
+//
+// The check has already returned at the placement diagnostic, so anything that
+// still resolves comes from a later pass over whichever symbol table the binder
+// used. In an external module the file symbol has an export table, and computing
+// it resolves the export-star entry eagerly while a named/namespace clause stays
+// a lazily-resolved alias nothing references. With no export table to compute,
+// the export-star is never resolved at all and only a named clause's individual
+// specifiers bind as ordinary aliases a later pass reaches.
+//
+// So the two forms swap roles across that one axis. Every row below is measured
+// against the pinned `typescript@7.0.2` oracle through `scripts/conformance/oracle.sh`.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn export_star_in_a_bare_top_level_block_of_a_script_reports_ts1233_alone() {
+    assert_codes(
+        r#"{
+  export * from "nonexistent-module";
+}"#,
+        &[1233],
+        "no export table to compute, so the export-star entry is never resolved",
+    );
+}
+
+#[test]
+fn export_star_in_an_if_body_of_a_script_reports_ts1233_alone() {
+    assert_codes(
+        r#"if (1) {
+  export * from "nonexistent-module";
+}"#,
+        &[1233],
+        "an `if` body opens no declaration scope, but the file is not a module",
+    );
+}
+
+#[test]
+fn export_star_in_a_loop_body_of_a_script_reports_ts1233_alone() {
+    assert_codes(
+        r#"for (;;) {
+  export * from "nonexistent-module";
+}"#,
+        &[1233],
+        "a loop body opens no declaration scope, but the file is not a module",
+    );
+}
+
+#[test]
+fn export_star_in_a_while_body_of_a_script_reports_ts1233_alone() {
+    assert_codes(
+        r#"while (1) {
+  export * from "nonexistent-module";
+}"#,
+        &[1233],
+        "a `while` body behaves as the `for` body does",
+    );
+}
+
+#[test]
+fn export_star_in_a_try_body_of_a_script_reports_ts1233_alone() {
+    assert_codes(
+        r#"try {
+  export * from "nonexistent-module";
+} catch {}"#,
+        &[1233],
+        "a `try` body behaves as any other non-declaration-scope container",
+    );
+}
+
+#[test]
+fn export_star_in_a_labeled_block_of_a_script_reports_ts1233_alone() {
+    assert_codes(
+        r#"lbl: {
+  export * from "nonexistent-module";
+}"#,
+        &[1233],
+        "a labeled statement opens no declaration scope",
+    );
+}
+
+#[test]
+fn export_star_in_a_nested_bare_block_of_a_script_reports_ts1233_alone() {
+    assert_codes(
+        r#"{
+  {
+    export * from "nonexistent-module";
+  }
+}"#,
+        &[1233],
+        "nesting plain blocks never crosses a declaration scope, and never \
+         creates an export table either",
+    );
+}
+
+#[test]
+fn export_star_as_ns_in_a_bare_top_level_block_of_a_script_reports_ts1233_alone() {
+    assert_codes(
+        r#"{
+  export * as ns from "nonexistent-module";
+}"#,
+        &[1233],
+        "a namespace export clause is an alias, so it resolves in neither file kind",
+    );
+}
+
+#[test]
+fn a_renamed_namespace_export_binder_does_not_change_the_verdict() {
+    assert_codes(
+        r#"{
+  export * as zzQq from "nonexistent-module";
+}"#,
+        &[1233],
+        "the verdict is over the clause kind, never over the binder's spelling",
+    );
+}
+
+#[test]
+fn export_star_in_a_bare_top_level_block_of_a_module_reports_ts2307() {
+    assert_codes(
+        r#"export {};
+{
+  export * from "nonexistent-module";
+}"#,
+        &[1233, 2307],
+        "THE DISCRIMINATOR: the same block in a module has an export table, and \
+         computing it resolves the export-star entry",
+    );
+}
+
+#[test]
+fn export_star_in_an_if_body_of_a_module_reports_ts2307() {
+    assert_codes(
+        r#"export {};
+if (1) {
+  export * from "nonexistent-module";
+}"#,
+        &[1233, 2307],
+        "the module-ness axis is independent of which non-declaration container it is",
+    );
+}
+
+#[test]
+fn a_module_indicator_other_than_export_braces_also_flips_the_export_star() {
+    assert_codes(
+        r#"export const q = 1;
+{
+  export * from "nonexistent-module";
+}"#,
+        &[1233, 2307],
+        "the gate reads the file's module-ness, not the `export {}` spelling",
+    );
+}
+
+#[test]
+fn export_named_in_a_bare_top_level_block_of_a_module_reports_ts1233_alone() {
+    assert_codes(
+        r#"export {};
+{
+  export { a } from "nonexistent-module";
+}"#,
+        &[1233],
+        "THE INVERSION: a named clause resolves in a script and stays silent in a \
+         module — exactly the opposite of the export-star above",
+    );
+}
+
+#[test]
+fn export_star_as_ns_in_a_bare_top_level_block_of_a_module_reports_ts1233_alone() {
+    assert_codes(
+        r#"export {};
+{
+  export * as ns from "nonexistent-module";
+}"#,
+        &[1233],
+        "a namespace export clause stays an unreferenced alias in a module too",
+    );
+}
+
+#[test]
+fn a_declaration_scope_still_wins_over_module_ness() {
+    assert_codes(
+        r#"export {};
+function f() {
+  export * from "nonexistent-module";
+}"#,
+        &[1233],
+        "the declaration-scope answer is final; module-ness only refines the case \
+         where no declaration scope encloses the declaration",
+    );
+}
+
+#[test]
+fn a_class_static_block_in_a_module_still_wins_over_module_ness() {
+    assert_codes(
+        r#"export {};
+class C {
+  static {
+    export * from "nonexistent-module";
+  }
+}"#,
+        &[1233],
+        "a `static { }` block is a declaration scope in a module as well",
     );
 }
 
