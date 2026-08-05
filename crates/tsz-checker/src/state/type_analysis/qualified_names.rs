@@ -228,8 +228,43 @@ impl<'a> CheckerState<'a> {
                                 }
                                 let target_id =
                                     self.ctx.resolve_import_alias_and_register(local_id)?;
-                                let target =
-                                    self.get_symbol_from_registered_file_target(target_id)?;
+                                let target_file_idx =
+                                    self.ctx.resolve_symbol_file_index(target_id)?;
+                                let target_binder =
+                                    self.ctx.get_binder_for_file(target_file_idx)?;
+                                let target = target_binder.get_symbol(target_id)?;
+                                // `export default <identifier>` synthesizes its own
+                                // ALIAS symbol whose declaration points at the
+                                // referenced identifier — it never carries that
+                                // identifier's own namespace/module/enum flags.
+                                // One default import hop lands on this synthetic
+                                // symbol, not on the identifier itself, so a
+                                // default-exported namespace or enum reads as a
+                                // plain alias unless that extra hop is chased here
+                                // too (#16486). Read the true target directly from
+                                // its own owning binder — never register it into
+                                // the cross-file overlay here, since the raw
+                                // referenced-symbol id can collide with an
+                                // unrelated same-numbered local in a later,
+                                // unrelated lookup (the raw-`SymbolId`-collision
+                                // hazard from #16465).
+                                let target = if target.has_any_flags(symbol_flags::ALIAS)
+                                    && target.import_module().is_none()
+                                    && (target.escaped_name == "default"
+                                        || target.import_name() == Some("default"))
+                                    && let Some(decl_idx) = target.primary_declaration()
+                                    && let Some(ident) = self
+                                        .ctx
+                                        .get_arena_for_file(target_file_idx as u32)
+                                        .get_identifier_at(decl_idx)
+                                    && let Some(real_id) =
+                                        target_binder.file_locals.get(&ident.escaped_text)
+                                    && let Some(real_target) = target_binder.get_symbol(real_id)
+                                {
+                                    real_target
+                                } else {
+                                    target
+                                };
                                 Some(target.has_any_flags(valid_namespace_flags))
                             };
                         let alias_target_lacks_namespace_meaning = is_alias

@@ -309,3 +309,39 @@ fn namespace_import_qualifier_keeps_the_member_lookup_path() {
         vec![2694]
     );
 }
+
+// ---------------------------------------------------------------------------
+// `export default <namespace identifier>`: unlike a default-exported class or
+// interface, the default export *is* the referenced declaration and carries
+// its `SymbolFlags.Namespace` meaning through the default import (closes
+// #16486 — a regression from #16480's fix for #16465, which only chased the
+// local `D` alias one hop into the target file's synthetic `default` symbol
+// and stopped there instead of following that symbol's own
+// `export default m` declaration to `m` itself).
+// ---------------------------------------------------------------------------
+
+/// `export default m;` for an existing `namespace m` keeps namespace meaning:
+/// `D.foo` resolves cleanly through the default import.
+///
+/// This pins the qualifier-meaning gate only (the `TS2702`/`TS2713` decision
+/// in `resolve_qualified_name`) — not full member-lookup fidelity through a
+/// default-exported namespace, which has its own separate, pre-existing gap
+/// tracked in #16503 (a genuinely missing member here still silently passes
+/// instead of `TS2694`).
+#[test]
+fn export_default_namespace_keeps_namespace_meaning() {
+    assert_eq!(
+        multi_file_codes(
+            &[
+                (
+                    "/dep.ts",
+                    "namespace m { export interface foo { a: number } }\nexport default m;\n",
+                ),
+                ("/main.ts", "import D from \"./dep\";\nvar q: D.foo;\n"),
+            ],
+            "/main.ts",
+        ),
+        Vec::<u32>::new(),
+        "a default-exported namespace keeps its namespace meaning through the import"
+    );
+}
