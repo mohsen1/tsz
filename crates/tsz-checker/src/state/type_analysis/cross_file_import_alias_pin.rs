@@ -25,4 +25,34 @@ impl<'a> CheckerState<'a> {
         (local.has_any_flags(symbol_flags::ALIAS) && local.import_module().is_some())
             .then_some(local)
     }
+
+    /// `true` when a symbol read out of the *declaring* file's binder at the
+    /// raw id `sym_id` is genuinely the entity a local import alias at that
+    /// same id refers to.
+    ///
+    /// `get_symbol_from_registered_file_target` answers the right *file* — the
+    /// overlay records where the alias's target lives — but then indexes that
+    /// file's binder with the **consuming** file's raw `SymbolId`. Raw ids are
+    /// minted per binder from zero with no `base_offset`, so the read lands on
+    /// whichever declaration of the declaring file happens to sit at that
+    /// ordinal. It is right only by coincidence, when the imported entity is
+    /// also that file's Nth declaration.
+    ///
+    /// The imported name is what ties the two ends together, so require it to
+    /// match: `import { Shape }` may only accept a declaring-file symbol named
+    /// `Shape`, and `import { Shape as S }` likewise (the alias's
+    /// `import_name` is the module-side name, `escaped_name` the local one).
+    /// When `sym_id` is not a local import alias there is no alias for the
+    /// read to disagree with and it stands unchanged.
+    pub(crate) fn registered_file_target_matches_import_alias(
+        &self,
+        sym_id: SymbolId,
+        candidate: &tsz_binder::Symbol,
+    ) -> bool {
+        let Some(alias) = self.local_import_alias(sym_id) else {
+            return true;
+        };
+        let imported_name = alias.import_name().unwrap_or(alias.escaped_name.as_str());
+        candidate.escaped_name == imported_name
+    }
 }
