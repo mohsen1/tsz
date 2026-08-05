@@ -107,6 +107,15 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
     /// therefore legal. This runs the declaration scan to completion first,
     /// then validates references in a second pass, instead of checking each
     /// reference against only the names seen so far in one combined walk.
+    ///
+    /// Both passes also track character-class nesting (`[...]`): a `(`
+    /// inside a class is a literal character, never a group open, and a
+    /// `\k<name>` inside one is not a backreference at all — tsc's own regex
+    /// grammar routes it to a different check entirely (`checkGroupName` is
+    /// never reached from inside `characterClassEscape`). Without that
+    /// tracking `/(?<g>x)[\k<h>]/u` misread the class body as an ordinary
+    /// reference and reported the group-name lookup's own TS1532 instead of
+    /// leaving it to whatever the class-escape check decides.
     fn check_regular_expression_named_groups(
         &mut self,
         node_pos: u32,
@@ -136,6 +145,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
     ) -> BTreeSet<String> {
         let mut group_names = BTreeSet::new();
         let mut i = 1usize;
+        let mut in_character_class = false;
 
         while i < body_end {
             if bytes[i] == b'\\' {
@@ -143,7 +153,19 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 continue;
             }
 
-            if i + 3 < body_end
+            if bytes[i] == b'[' && !in_character_class {
+                in_character_class = true;
+                i += 1;
+                continue;
+            }
+            if bytes[i] == b']' && in_character_class {
+                in_character_class = false;
+                i += 1;
+                continue;
+            }
+
+            if !in_character_class
+                && i + 3 < body_end
                 && bytes[i] == b'('
                 && bytes[i + 1] == b'?'
                 && bytes[i + 2] == b'<'
@@ -185,10 +207,15 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         group_names: &BTreeSet<String>,
     ) {
         let mut i = 1usize;
+        let mut in_character_class = false;
 
         while i < body_end {
             if bytes[i] == b'\\' {
-                if i + 2 < body_end && bytes[i + 1] == b'k' && bytes[i + 2] == b'<' {
+                if !in_character_class
+                    && i + 2 < body_end
+                    && bytes[i + 1] == b'k'
+                    && bytes[i + 2] == b'<'
+                {
                     let name_start = i + 3;
                     let mut name_end = name_start;
                     while name_end < body_end && bytes[name_end] != b'>' {
@@ -214,6 +241,12 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 }
                 i += 2;
                 continue;
+            }
+
+            if bytes[i] == b'[' && !in_character_class {
+                in_character_class = true;
+            } else if bytes[i] == b']' && in_character_class {
+                in_character_class = false;
             }
 
             i += 1;
