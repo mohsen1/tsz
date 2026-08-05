@@ -626,6 +626,17 @@ impl<'a> CheckerState<'a> {
                                 body_node.end,
                                 tsz_common::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                             ) {
+                                // The body's own contextual return check already
+                                // reported here, so this frame owns no emit of
+                                // its own — but it is still the frame tsc
+                                // attaches TS6502 to, and the pointer's owner
+                                // is only known at this level.
+                                self.attach_expected_type_from_return_pointer(
+                                    0,
+                                    &expected_type_owners,
+                                    &prop_name,
+                                    body_idx,
+                                );
                                 elaborated = true;
                                 continue;
                             }
@@ -636,9 +647,16 @@ impl<'a> CheckerState<'a> {
                             elaborated = true;
                             continue;
                         }
+                        let before = self.ctx.diagnostics.len();
                         self.error_type_not_assignable_at_with_anchor(
                             body_type,
                             expected_ret,
+                            body_idx,
+                        );
+                        self.attach_expected_type_from_return_pointer(
+                            before,
+                            &expected_type_owners,
+                            &prop_name,
                             body_idx,
                         );
                     } else {
