@@ -2637,3 +2637,6 @@ path = "tests/ts1501_tests.rs"
 [[test]]
 name = "ts18036_class_decorator_static_private_identifier_tests"
 path = "tests/ts18036_class_decorator_static_private_identifier_tests.rs"
+[[test]]
+name = "namespace_export_assignment_default_parse_error_gate_tests"
+path = "tests/namespace_export_assignment_default_parse_error_gate_tests.rs"

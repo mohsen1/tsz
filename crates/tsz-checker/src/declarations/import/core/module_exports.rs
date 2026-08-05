@@ -49,12 +49,18 @@ impl<'a> CheckerState<'a> {
                     // TS1063: export assignment cannot be used in a namespace.
                     // Emit the error and skip further checking of the statement
                     // (tsc does not resolve the expression when it's invalid).
+                    // Suppressed when the file has a real syntax error (matches
+                    // `check_grammar_module_element_context`'s policy): a statement
+                    // with its own genuine parse error reports that error alone.
                     let is_export_assign = self
                         .ctx
                         .arena
                         .get(stmt_idx)
                         .is_some_and(|n| n.kind == syntax_kind_ext::EXPORT_ASSIGNMENT);
-                    if is_export_assign && !is_ambient_external_module {
+                    if is_export_assign
+                        && !is_ambient_external_module
+                        && !self.ctx.has_syntax_parse_errors
+                    {
                         self.error_at_node(
                             stmt_idx,
                             diagnostic_messages::AN_EXPORT_ASSIGNMENT_CANNOT_BE_USED_IN_A_NAMESPACE,

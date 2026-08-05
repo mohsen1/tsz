@@ -127,7 +127,13 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             // diagnostics like TS1194 or TS1319.
             let in_non_module_context = self.is_in_non_module_element_context(export_idx);
 
-            if !in_non_module_context
+            // TS1319: like the TS1194 check above, this is a check-time grammar
+            // diagnostic suppressed when the program has a real parse error (the
+            // campaign's `has_parse_errors` policy gate) — e.g. a genuine syntax
+            // error elsewhere on the same statement (`override export default 1;`
+            // in a namespace) reports that parse error alone, not TS1319 too.
+            if !self.ctx.has_parse_errors
+                && !in_non_module_context
                 && export_decl.is_default_export
                 && self.is_inside_namespace_declaration(export_idx)
             {
