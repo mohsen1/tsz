@@ -1712,13 +1712,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
                 // If source is a CallableShape with properties, check structural compatibility
                 if let Some(ref s_shape) = source_props {
-                    return self.check_object_subtype(
+                    let result = self.check_object_subtype(
                         s_shape,
                         None,
                         Some(source),
                         &t_shape,
                         Some(target),
                     );
+                    return self.or_global_function_interface_surface(target, &t_shape, result);
                 }
                 // A bare `FunctionShape` has no user-declared properties, so model
                 // it as an object whose only members are the function's stable
@@ -1742,13 +1743,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // *required* property likewise still fails inside
                 // `check_object_subtype`.
                 let apparent_source = self.function_apparent_object_shape(source);
-                return self.check_object_subtype(
+                let result = self.check_object_subtype(
                     &apparent_source,
                     None,
                     Some(source),
                     &t_shape,
                     Some(target),
                 );
+                return self.or_global_function_interface_surface(target, &t_shape, result);
             }
             if let Some(t_shape_id) = object_with_index_shape_id(self.interner, target) {
                 let t_shape = self.interner.object_shape(t_shape_id);
@@ -1981,6 +1983,55 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
+        result
+    }
+
+    /// Second opinion for a function-like source that a synthesized apparent
+    /// shape just rejected: relate the registered global `Function` interface to
+    /// the same target.
+    ///
+    /// `tsc` compares a function value against its *apparent type* — the call
+    /// and construct signatures plus every member of the global `Function`
+    /// interface (`length`, `name`, `bind`, `call`, `apply`, `toString`,
+    /// `arguments`, `caller`, `prototype`). The shapes built above carry only
+    /// the source's own declared properties plus the two synthesized names the
+    /// weak-type rule needs, so a target requiring any other `Function` member
+    /// reads as unsatisfied even though every function provides it.
+    ///
+    /// Asking the boxed-type registry for the real interface (the same
+    /// binder/global-builtin id `visitor.rs` uses for the intersection-member
+    /// arm) keeps the member *types* honest too: `{ length: string }` still
+    /// fails, because the interface declares `length: number`.
+    ///
+    /// This is purely a second opinion — it can only turn a rejection into
+    /// acceptance:
+    ///
+    /// * A **weak** target (all-optional, no index signature) is left to the
+    ///   verdict it already has. That verdict is owned by the weak-type rule in
+    ///   `check_object_subtype`, which deliberately scans the synthesized names
+    ///   and nothing else; widening the surface underneath it would silently
+    ///   accept `{ length?: number }`, which `tsc` rejects with `TS2559`.
+    /// * With no lib loaded the registry is empty and the synthesized verdict
+    ///   stands unchanged.
+    fn or_global_function_interface_surface(
+        &mut self,
+        target: TypeId,
+        target_shape: &ObjectShape,
+        result: SubtypeResult,
+    ) -> SubtypeResult {
+        if result.is_true() || Self::is_weak_type_shape(target_shape) {
+            return result;
+        }
+        let Some(boxed_function) = self
+            .resolver
+            .get_boxed_type(IntrinsicKind::Function)
+            .or_else(|| self.interner.get_boxed_type(IntrinsicKind::Function))
+        else {
+            return result;
+        };
+        if self.check_subtype(boxed_function, target).is_true() {
+            return SubtypeResult::True;
+        }
         result
     }
 
