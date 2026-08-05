@@ -1157,10 +1157,47 @@ impl<'a> CheckerContext<'a> {
             // `self.ctx.arena`.
             self.arena
         };
-        let node_idx = arena.nodes.iter().enumerate().find_map(|(i, node)| {
-            (node.pos == loc.pos && node.end == loc.end).then_some(NodeIndex(i as u32))
-        })?;
+        let node_idx = Self::node_with_span(arena, loc)?;
         Some((node_idx, arena))
+    }
+
+    /// Resolve a [`StableLocation`] against the file that is known to declare
+    /// it, rather than against the current arena.
+    ///
+    /// [`node_at_stable_location`](Self::node_at_stable_location) matches by
+    /// `(pos, end)` and falls back to the *current* arena whenever the location
+    /// carries no stamped `file_idx`. A location is only stamped when the
+    /// binder that produced it was given a driver-assigned file index, so a
+    /// foreign declaration reached through an unstamped binder resolves to
+    /// whichever node in the checking file happens to share those byte offsets
+    /// — a different declaration entirely, at a plausible-looking span.
+    ///
+    /// Callers that already know the declaring file (from
+    /// [`resolve_symbol_file_index`](Self::resolve_symbol_file_index) on the
+    /// owning symbol) pass it here so the unstamped case resolves against real
+    /// information instead of a coincidence. The stamped case is unchanged: the
+    /// location's own `file_idx` stays authoritative.
+    pub fn node_at_stable_location_in_file(
+        &self,
+        loc: StableLocation,
+        declaring_file_idx: Option<usize>,
+    ) -> Option<(NodeIndex, &NodeArena)> {
+        if !loc.is_known() {
+            return None;
+        }
+        let Some(file_idx) = declaring_file_idx.filter(|_| !loc.has_file_idx()) else {
+            return self.node_at_stable_location(loc);
+        };
+        let arena = self.get_arena_for_file(file_idx as u32);
+        let node_idx = Self::node_with_span(arena, loc)?;
+        Some((node_idx, arena))
+    }
+
+    /// First node in `arena` whose span is exactly `loc`'s.
+    fn node_with_span(arena: &NodeArena, loc: StableLocation) -> Option<NodeIndex> {
+        arena.nodes.iter().enumerate().find_map(|(i, node)| {
+            (node.pos == loc.pos && node.end == loc.end).then_some(NodeIndex(i as u32))
+        })
     }
 
     /// Get the file index that owns a specific arena.

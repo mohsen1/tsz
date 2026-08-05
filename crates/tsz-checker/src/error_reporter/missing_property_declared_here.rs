@@ -35,6 +35,13 @@ impl<'a> CheckerState<'a> {
 
     /// Resolve `owner` to its declaring symbol, find the member declaration
     /// with this name inside that symbol's own declaration, and anchor there.
+    ///
+    /// The symbol is read out of the binder that *declares* it, not the
+    /// checking file's own binder. Per-file binders hand out raw `SymbolId`s
+    /// from `0`, so an imported target's id names an unrelated local symbol —
+    /// or nothing at all — in `self.ctx.binder`, and the walk below then finds
+    /// no member list to anchor in. This is why a target declared in another
+    /// file produced no pointer at all.
     fn declared_here_related_for_owner(
         &mut self,
         owner: TypeId,
@@ -44,7 +51,12 @@ impl<'a> CheckerState<'a> {
         let owner_symbol = self.ctx.resolve_type_to_symbol_id(owner).or_else(|| {
             crate::query_boundaries::common::type_shape_symbol(self.ctx.types, owner)
         })?;
-        let symbol = self.ctx.binder.get_symbol(owner_symbol)?;
+        let declaring_file_idx = self.ctx.resolve_symbol_file_index(owner_symbol);
+        let binder = declaring_file_idx
+            .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
+            .filter(|binder| binder.get_symbol(owner_symbol).is_some())
+            .unwrap_or(self.ctx.binder);
+        let symbol = binder.get_symbol(owner_symbol)?;
         let locations: Vec<tsz_binder::StableLocation> =
             std::iter::once(symbol.stable_value_declaration)
                 .chain(symbol.stable_declarations.iter().copied())
@@ -54,7 +66,7 @@ impl<'a> CheckerState<'a> {
             .members
             .as_ref()
             .and_then(|members| members.get(property))
-            .and_then(|member_id| self.ctx.binder.get_symbol(member_id))
+            .and_then(|member_id| binder.get_symbol(member_id))
             .map(|member| {
                 std::iter::once(member.stable_value_declaration)
                     .chain(member.stable_declarations.iter().copied())
@@ -63,7 +75,9 @@ impl<'a> CheckerState<'a> {
             })
             .unwrap_or_default();
         for location in locations {
-            let Some((start, length, file)) = self.declared_here_anchor(location, property) else {
+            let Some((start, length, file)) =
+                self.declared_here_anchor(location, property, declaring_file_idx)
+            else {
                 continue;
             };
             return Some(Diagnostic::related_pointer(
@@ -75,7 +89,8 @@ impl<'a> CheckerState<'a> {
             ));
         }
         for location in member_locations {
-            let Some((start, length, file)) = self.declared_here_member_anchor(location, property)
+            let Some((start, length, file)) =
+                self.declared_here_member_anchor(location, property, declaring_file_idx)
             else {
                 continue;
             };
@@ -95,17 +110,20 @@ impl<'a> CheckerState<'a> {
     /// read.
     ///
     /// A `StableLocation` resolves by `(pos, end)` against whichever arena the
-    /// stamped file index names, and falls back to the current arena when the
-    /// location carries no file index — so the node it lands on is only trusted
-    /// here when it really is a member declaration whose written name is the
-    /// property being reported. Anything else declines rather than anchoring a
-    /// pointer at an unrelated span.
+    /// stamped file index names, falling back to `declaring_file_idx` — the
+    /// owning symbol's own file — when the location carries no file index. The
+    /// node it lands on is still only trusted here when it really is a member
+    /// declaration whose written name is the property being reported. Anything
+    /// else declines rather than anchoring a pointer at an unrelated span.
     fn declared_here_member_anchor(
         &self,
         location: tsz_binder::StableLocation,
         property: &str,
+        declaring_file_idx: Option<usize>,
     ) -> Option<(u32, u32, Option<String>)> {
-        let (decl_idx, arena) = self.ctx.node_at_stable_location(location)?;
+        let (decl_idx, arena) = self
+            .ctx
+            .node_at_stable_location_in_file(location, declaring_file_idx)?;
         let name_idx = Self::member_name_node(arena, decl_idx)?;
         if crate::types_domain::queries::core::get_literal_property_name(arena, name_idx)
             .is_none_or(|name| name != property)
@@ -123,8 +141,11 @@ impl<'a> CheckerState<'a> {
         &self,
         location: tsz_binder::StableLocation,
         property: &str,
+        declaring_file_idx: Option<usize>,
     ) -> Option<(u32, u32, Option<String>)> {
-        let (decl_idx, arena) = self.ctx.node_at_stable_location(location)?;
+        let (decl_idx, arena) = self
+            .ctx
+            .node_at_stable_location_in_file(location, declaring_file_idx)?;
         let members = Self::declaration_member_list(arena, decl_idx)?;
         let anchor_idx = Self::member_anchor_node(arena, &members, property)?;
         let (start, length) = Self::anchor_span(arena, anchor_idx)?;

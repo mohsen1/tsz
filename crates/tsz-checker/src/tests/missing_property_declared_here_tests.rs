@@ -8,11 +8,12 @@
 //! it. When more than one property is unmatched the diagnostic is TS2739 /
 //! TS2740 and tsc attaches no pointer at all.
 //!
-//! Two shapes are deliberately *not* covered yet and produce no pointer at all
-//! (unchanged output, never a wrong anchor): a class-typed target, whose
-//! members the owner declaration walk below does not reach, and a target whose
-//! declaration lives in another file, whose `StableLocation` does not resolve
-//! to the declaring arena from here. Both are written up as the next slice.
+//! Three cross-file shapes are deliberately *not* covered and produce no
+//! pointer at all (unchanged output, never a wrong anchor): an imported
+//! *class*, an imported type alias whose body is a type literal, and a target
+//! reached through a re-exporting hub file. All three are blocked upstream of
+//! this renderer on raw-`SymbolId` ambiguity between per-file binders, and are
+//! written up with reduced repros in #16415.
 //!
 //! tsz builds the pointer in the assignability renderer
 //! (`error_reporter/missing_property_declared_here.rs`), reached from the one
@@ -240,4 +241,181 @@ fn missing_class_method_member_points_at_the_method_name_only() {
     let (_, start, length, message) = declared_here(&diagnostic);
     assert_eq!(message, "'run' is declared here.");
     assert_eq!(span_text(source, start, length), "run");
+}
+
+// ---------------------------------------------------------------------------
+// Cross-file targets.
+//
+// The pointer anchors in the file that *declares* the property, which is not
+// the file the primary diagnostic lives in. Every row below is pinned against
+// `typescript@7.0.2` (`--noEmit --strict --pretty --target es2022 --lib
+// es2022`); the reported line/column is quoted on each case.
+//
+// Both harnesses are exercised deliberately.
+// `check_multi_file_with_libs_stamped` is production-faithful: each binder is
+// given its file index before binding, so `StableLocation::file_idx` is
+// stamped. `check_multi_file` leaves it unassigned, which is the shape that
+// makes a stable location resolve by `(pos, end)` against whichever arena the
+// caller happens to be holding. The owning symbol's declaring file is the
+// authoritative answer in both.
+// ---------------------------------------------------------------------------
+
+/// Diagnostics for `entry_file` with each binder stamped with its file index,
+/// exactly as the driver does.
+fn check_stamped(files: &[(&str, &str)], entry_file: &str) -> Vec<Diagnostic> {
+    crate::test_utils::check_multi_file_with_libs_stamped(
+        files,
+        entry_file,
+        crate::context::CheckerOptions::default(),
+        &[],
+    )
+}
+
+/// Diagnostics for `entry_file` with every `StableLocation::file_idx` left
+/// unassigned.
+fn check_unstamped(files: &[(&str, &str)], entry_file: &str) -> Vec<Diagnostic> {
+    crate::test_utils::check_multi_file(
+        files,
+        entry_file,
+        crate::context::CheckerOptions::default(),
+    )
+}
+
+const CROSS_DEP: &str = "export interface Cross { one: number; two: number; }\n";
+const CROSS_ENTRY: &str = "import { Cross } from \"./dep\";\nconst c: Cross = { one: 1 };\n";
+
+/// `dep.ts:1:39 - 'two' is declared here.`, underlining `two`.
+///
+/// The owner symbol is read out of the binder that declares it. Per-file
+/// binders hand out raw `SymbolId`s from `0`, so reading an imported target's
+/// id out of the *checking* file's binder names an unrelated local symbol —
+/// which is why this produced no pointer at all rather than a wrong one.
+#[test]
+fn cross_file_declaration_points_at_the_declaring_file() {
+    let diagnostic = only(
+        &check_stamped(
+            &[("dep.ts", CROSS_DEP), ("test.ts", CROSS_ENTRY)],
+            "test.ts",
+        ),
+        TS2741,
+    );
+    let (file, start, length, message) = declared_here(&diagnostic);
+    assert_eq!(message, "'two' is declared here.");
+    assert_eq!(file, "dep.ts");
+    assert_eq!(span_text(CROSS_DEP, start, length), "two");
+}
+
+/// Same row with unstamped stable locations: the declaring file resolved from
+/// the owning symbol carries the anchor when the location cannot.
+#[test]
+fn cross_file_declaration_resolves_without_a_stamped_file_index() {
+    let diagnostic = only(
+        &check_unstamped(
+            &[("dep.ts", CROSS_DEP), ("test.ts", CROSS_ENTRY)],
+            "test.ts",
+        ),
+        TS2741,
+    );
+    let (file, start, length, message) = declared_here(&diagnostic);
+    assert_eq!(message, "'two' is declared here.");
+    assert_eq!(file, "dep.ts");
+    assert_eq!(span_text(CROSS_DEP, start, length), "two");
+}
+
+/// The pointer must still be tagged as a cross-location pointer across files,
+/// so `--pretty false` suppresses it exactly as tsc does: the oracle's plain
+/// run on this pair prints the `TS2741` line alone.
+#[test]
+fn cross_file_pointer_is_tagged_as_a_cross_location_pointer() {
+    let diagnostic = only(
+        &check_stamped(
+            &[("dep.ts", CROSS_DEP), ("test.ts", CROSS_ENTRY)],
+            "test.ts",
+        ),
+        TS2741,
+    );
+    let pointer = diagnostic
+        .related_information
+        .iter()
+        .find(|info| info.code == TS2728)
+        .expect("TS2728 pointer");
+    assert!(
+        pointer.is_location_pointer(),
+        "cross-file TS2728 must be a cross-location pointer: {pointer:?}"
+    );
+}
+
+/// Binder names must not matter across files either: the same shape under
+/// different identifiers, imported under a local alias, resolves through the
+/// target's own member table.
+///
+/// `dep.ts:1:41 - 'gamma' is declared here.`
+#[test]
+fn renamed_cross_file_binders_point_at_the_renamed_declaration() {
+    let dep = "export interface Payload { beta: number; gamma: number; }\n";
+    let entry = "import { Payload as Local } from \"./dep\";\nconst value: Local = { beta: 1 };\n";
+    let diagnostic = only(
+        &check_stamped(&[("dep.ts", dep), ("test.ts", entry)], "test.ts"),
+        TS2741,
+    );
+    let (file, start, length, message) = declared_here(&diagnostic);
+    assert_eq!(message, "'gamma' is declared here.");
+    assert_eq!(file, "dep.ts");
+    assert_eq!(span_text(dep, start, length), "gamma");
+}
+
+/// A local declaration in the checking file carrying a member with the *same*
+/// name must not capture the foreign pointer, and its own diagnostic must
+/// still anchor locally. tsc reports both, each in its own file
+/// (`dep.ts:1:39` and `test.ts:2:34`) — so this discriminates "resolved the
+/// declaring arena" from "found something plausible in the arena I had".
+#[test]
+fn a_same_named_local_member_does_not_capture_the_cross_file_pointer() {
+    let entry = "import { Cross } from \"./dep\";\ninterface Decoy { alpha: number; two: number; }\nconst c: Cross = { one: 1 };\nconst d: Decoy = { alpha: 1 };\n";
+    let diagnostics = check_stamped(&[("dep.ts", CROSS_DEP), ("test.ts", entry)], "test.ts");
+    let pointers: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == TS2741)
+        .map(declared_here)
+        .collect();
+    assert_eq!(
+        pointers.len(),
+        2,
+        "expected both TS2741 rows: {diagnostics:?}"
+    );
+
+    let foreign = pointers
+        .iter()
+        .find(|(file, ..)| file == "dep.ts")
+        .expect("the imported target points into dep.ts");
+    assert_eq!(foreign.3, "'two' is declared here.");
+    assert_eq!(span_text(CROSS_DEP, foreign.1, foreign.2), "two");
+
+    let local = pointers
+        .iter()
+        .find(|(file, ..)| file == "test.ts")
+        .expect("the local target still points into test.ts");
+    assert_eq!(local.3, "'two' is declared here.");
+    assert_eq!(span_text(entry, local.1, local.2), "two");
+}
+
+/// The negative arm survives the cross-file path: two unmatched properties is
+/// `TS2739`, and tsc attaches no pointer to it
+/// (`main5.ts(2,7): error TS2739: ... from type 'Cross': one, two`).
+#[test]
+fn multiple_missing_cross_file_properties_carry_no_pointer() {
+    let entry = "import { Cross } from \"./dep\";\nconst c: Cross = {};\n";
+    let diagnostics = check_stamped(&[("dep.ts", CROSS_DEP), ("test.ts", entry)], "test.ts");
+    let diagnostic = only(&diagnostics, TS2739);
+    assert!(
+        diagnostic
+            .related_information
+            .iter()
+            .all(|info| info.code != TS2728),
+        "TS2739 carries no declared-here pointer: {diagnostic:?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|d| d.code == TS2741),
+        "the two-missing form is TS2739, not TS2741: {diagnostics:?}"
+    );
 }
