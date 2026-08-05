@@ -152,6 +152,9 @@ path = "tests/cross_file_delegation_lookup_consolidation_tests.rs"
 name = "cross_file_generic_alias_call_inference_tests"
 path = "tests/cross_file_generic_alias_call_inference_tests.rs"
 [[test]]
+name = "cross_file_generic_class_implements_tests"
+path = "tests/cross_file_generic_class_implements_tests.rs"
+[[test]]
 name = "cross_file_generic_interface_mapped_filter_tests"
 path = "tests/cross_file_generic_interface_mapped_filter_tests.rs"
 [[test]]
