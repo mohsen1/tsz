@@ -493,6 +493,9 @@ mod for_of_self_reference_operand_spelling_tests;
 #[path = "../tests/fresh_object_literal_union_array_member_drill_in_tests.rs"]
 mod fresh_object_literal_union_array_member_drill_in_tests;
 #[cfg(test)]
+#[path = "../tests/function_source_apparent_function_surface_tests.rs"]
+mod function_source_apparent_function_surface_tests;
+#[cfg(test)]
 #[path = "../tests/function_source_numeric_index_target_tests.rs"]
 mod function_source_numeric_index_target_tests;
 #[cfg(test)]
