@@ -557,6 +557,7 @@ const fn is_parser_grammar_code(code: u32) -> bool {
         | 1210 // Code contained in a class is evaluated in strict mode
         | 1212 // Identifier expected. '{0}' is a reserved word in strict mode
         | 1213 // Identifier expected. '{0}' is a reserved word in strict mode. Class definitions are automatically in strict mode.
+        | 1024 // 'readonly' modifier can only appear on a property declaration or index signature
         | 1242 // 'abstract' modifier can only appear on a class, method, or property declaration
         | 1243 // '{0}' modifier cannot be used with '{1}' modifier
         | 1246 // An interface property cannot have an initializer

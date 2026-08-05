@@ -382,15 +382,25 @@ fn modifier_before_export_namespace_declaration_in_namespace_body_reports_ts1044
 }
 
 // --------------------------------------------------------------------------
-// Containment: `readonly`/`override` are a different diagnostic family
-// (TS1024 always-fixed-text, TS1434 unconditional-of-container) and stay on
-// the pre-existing silent-drop behavior for these four export forms outside
-// a Block until their own slice — this PR must not change their answer.
+// `readonly` — TS1024, oracle-pinned to the exact same container/form
+// silencing shape as the TS1044 family (#16403 slice 2).
 // --------------------------------------------------------------------------
 
 #[test]
-fn readonly_before_export_list_at_top_level_reports_no_parser_diagnostic() {
-    assert_no_parser_diagnostics("readonly export {};");
+fn readonly_before_export_list_at_top_level_reports_ts1024() {
+    assert_only_diagnostic(
+        "readonly export {};",
+        "readonly",
+        diagnostic_codes::READONLY_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION_OR_INDEX_SIGNATURE,
+    );
+}
+
+#[test]
+fn readonly_before_export_list_in_function_body_reports_only_ts1233() {
+    // Silenced the same way the TS1044 family is: the export declaration's
+    // own placement diagnostic wins inside a Block and the modifier is
+    // dropped silently.
+    assert_no_parser_diagnostics("function f() {\n  readonly export {};\n}");
 }
 
 #[test]
@@ -399,22 +409,99 @@ fn readonly_before_export_assignment_in_namespace_body_reports_no_parser_diagnos
 }
 
 #[test]
-fn override_before_export_default_at_top_level_reports_no_parser_diagnostic() {
-    assert_no_parser_diagnostics("override export default 1;");
+fn readonly_before_export_class_at_top_level_reports_ts1024() {
+    assert_only_diagnostic(
+        "readonly export class C {}",
+        "readonly",
+        diagnostic_codes::READONLY_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION_OR_INDEX_SIGNATURE,
+    );
 }
 
-/// `override` classifies this form as an ordinary `ModifiedDeclaration`
-/// (unlike `static`/`public`/`protected`/`private`, for which #16403 slice 1
-/// adds a Block-only silent path) — this PR must not touch that routing, so
-/// the pre-existing catchall diagnostic still fires here. tsc's real answer
-/// is TS1434 unconditionally, a separate, still-open gap (#16403 slice 2).
 #[test]
-fn override_before_export_namespace_declaration_at_top_level_reports_pre_existing_diagnostic() {
+fn readonly_before_export_class_in_function_body_reports_ts1184() {
+    assert_only_diagnostic(
+        "function f() {\n  readonly export class C {}\n}",
+        "readonly",
+        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+    );
+}
+
+// --------------------------------------------------------------------------
+// `override` — never a valid statement/declaration modifier outside a class
+// member, so tsc's parser reports a single unconditional TS1434 at the
+// `override` token regardless of container or of what follows, `export` or
+// otherwise (#16403 slice 2). This is a different mechanism from every other
+// modifier in this file: it never reaches `modified_export_form`'s
+// container/form split at all.
+// --------------------------------------------------------------------------
+
+#[test]
+fn override_before_export_default_at_top_level_reports_ts1434() {
+    assert_only_diagnostic(
+        "override export default 1;",
+        "override",
+        diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+    );
+}
+
+#[test]
+fn override_before_export_namespace_declaration_at_top_level_reports_ts1434() {
     assert_only_diagnostic(
         "override export namespace N {}",
         "override",
-        diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT,
+        diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
     );
+}
+
+#[test]
+fn override_before_export_class_in_function_body_reports_ts1434_not_ts1184() {
+    assert_only_diagnostic(
+        "function f() {\n  override export class C {}\n}",
+        "override",
+        diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+    );
+}
+
+#[test]
+fn override_before_export_list_in_namespace_body_reports_ts1434_not_ts1194() {
+    assert_only_diagnostic(
+        "namespace Outer {\n  override export {};\n}",
+        "override",
+        diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+    );
+}
+
+#[test]
+fn override_before_export_as_namespace_reports_ts1434_not_ts1184() {
+    // `export as namespace` is TS1184-unconditional for every other
+    // modifier in this file; `override` still short-circuits to its own
+    // TS1434 before the `NamespaceExport` arm is ever reached.
+    assert_only_diagnostic(
+        "override export as namespace Foo;",
+        "override",
+        diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+    );
+}
+
+#[test]
+fn override_before_non_export_declaration_reports_ts1434() {
+    // Confirms the rule is about `override` itself, not about `export`:
+    // the same unconditional TS1434 fires with no `export` involved at all.
+    assert_only_diagnostic(
+        "override class C {}",
+        "override",
+        diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+    );
+}
+
+#[test]
+fn override_on_its_own_line_is_still_an_identifier_expression() {
+    // A line break before the next token takes the same ASI path every
+    // other modifier in this file takes — `override` is parsed as a
+    // standalone identifier expression, not specially. No parser diagnostic:
+    // `override` resolving as a name is a checker-level TS2304, out of this
+    // file's reach.
+    assert_no_parser_diagnostics("override\nexport class C {}\n");
 }
 
 // --------------------------------------------------------------------------

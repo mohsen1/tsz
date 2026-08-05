@@ -67,19 +67,27 @@ fn modifier_before_declaration_in_nested_block_inside_method_reports_single_ts11
 fn every_class_modifier_keyword_before_a_declaration_reports_single_ts1184_in_a_method_body() {
     // `abstract` is deliberately excluded: `parse_statement_abstract_keyword`
     // reports TS1242 unconditionally regardless of container, a separate,
-    // pre-existing bug unrelated to this heuristic (#16380).
-    for keyword in [
-        "public",
-        "private",
-        "protected",
-        "static",
-        "override",
-        "readonly",
-    ] {
+    // pre-existing bug unrelated to this heuristic (#16380). `override` is
+    // also excluded: it is never a valid statement/declaration modifier
+    // outside a class member, so a method body (itself a Block) gets the
+    // same unconditional TS1434 as every other container, not TS1184
+    // (oracle-pinned, #16403 slice 2; see the dedicated test below).
+    for keyword in ["public", "private", "protected", "static", "readonly"] {
         let source = format!("class C {{ method() {{ {keyword} const z = 1; }} }}");
         let pos = source.find(keyword).unwrap() as u32;
         assert_single_diagnostic(&source, diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE, pos);
     }
+}
+
+#[test]
+fn override_before_a_declaration_in_a_method_body_reports_ts1434_not_ts1184() {
+    let source = "class C { method() { override const z = 1; } }";
+    let pos = source.find("override").unwrap() as u32;
+    assert_single_diagnostic(
+        source,
+        diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+        pos,
+    );
 }
 
 #[test]
