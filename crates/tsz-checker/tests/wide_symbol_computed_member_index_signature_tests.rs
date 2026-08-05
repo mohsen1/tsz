@@ -454,3 +454,127 @@ export const bad: Other = h;
          unrelated interface via a symbol index signature, got: {diags:?}"
     );
 }
+
+// ── Distinct-value symbol members fold into a UNION index (#16307 residual) ────
+//
+// tsc folds several plain-`symbol` computed members on one interface into a
+// single `[key: symbol]` index whose value type is the UNION of the members'
+// value types. tsz's interface lowerer used to collapse a value-type mismatch
+// to `error` (assignable to anything), producing a false TS7053 on the read and
+// losing the union. These cases pin the corrected behavior; every one is
+// `tsc` 6.0.2 exit 0 (or the reported TS2322) on the same source.
+
+/// Read of a `symbol`-keyed member on an interface carrying two distinct-value
+/// symbol members yields the union of both value types.
+#[test]
+fn interface_distinct_value_symbol_members_read_yields_union() {
+    assert_clean(
+        r#"
+declare const s1: symbol;
+declare const s2: symbol;
+declare const other: symbol;
+interface Implicit { [s1]: number; [s2]: string }
+declare const i: Implicit;
+export const readUnion: number | string = i[other];
+"#,
+    );
+}
+
+/// The folded index is a real `[key: symbol]` signature, so `keyof` surfaces
+/// `symbol` and the interface is mutually assignable with an explicit
+/// union-valued symbol index signature — in both directions.
+#[test]
+fn interface_distinct_value_symbol_members_mutual_with_explicit_index() {
+    assert_clean(
+        r#"
+declare const s1: symbol;
+declare const s2: symbol;
+interface Implicit { [s1]: number; [s2]: string }
+interface Explicit { [key: symbol]: number | string }
+declare const i: Implicit;
+declare const e: Explicit;
+export const iToE: Explicit = i;
+export const eToI: Implicit = e;
+export const k: symbol = null as unknown as keyof Implicit;
+"#,
+    );
+}
+
+/// The fold is a genuine union, not an unconditional widen: reading and
+/// assigning to a SINGLE member's narrow type is the TS2322 tsc reports, and
+/// tsz must report it too (the pre-fix `error` collapse silently accepted it).
+#[test]
+fn interface_distinct_value_symbol_members_narrow_read_reports_ts2322() {
+    let diags = check_source_diagnostics(
+        r#"
+declare const s1: symbol;
+declare const s2: symbol;
+interface Implicit { [s1]: number; [s2]: string }
+declare const i: Implicit;
+export const narrow: number = i[s1];
+"#,
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2322),
+        "reading a folded `number | string` symbol index into `number` must \
+         report TS2322 like tsc, got: {diags:?}"
+    );
+}
+
+/// Three distinct-value members fold into the three-way union, and the fold is
+/// insensitive to the binder names (renamed identifiers must behave identically).
+#[test]
+fn interface_three_distinct_value_symbol_members_renamed_binders_union() {
+    assert_clean(
+        r#"
+declare const alpha: symbol;
+declare const beta: symbol;
+declare const gamma: symbol;
+interface Three { [alpha]: number; [beta]: string; [gamma]: boolean }
+declare const t: Three;
+export const r: number | string | boolean = t[alpha];
+"#,
+    );
+}
+
+/// An ordinary named member coexisting with the folded symbol index keeps its
+/// own type; the symbol index still unions independently.
+#[test]
+fn interface_named_member_alongside_folded_symbol_index() {
+    assert_clean(
+        r#"
+declare const s1: symbol;
+declare const s2: symbol;
+declare const other: symbol;
+interface Mixed { readonly tag: boolean; [s1]: number; [s2]: string }
+declare const m: Mixed;
+export const viaSymbol: number | string = m[other];
+export const viaName: boolean = m.tag;
+"#,
+    );
+}
+
+/// Method-signature members keyed by plain symbols fold the same way as
+/// property members (the lowerer routes both through the implicit-symbol path).
+#[test]
+fn interface_distinct_value_symbol_method_members_union() {
+    assert_clean(
+        r#"
+declare const s1: symbol;
+declare const s2: symbol;
+declare const other: symbol;
+interface Callable { [s1](): number; [s2](): string }
+declare const c: Callable;
+export const via: (() => number) | (() => string) = c[other];
+"#,
+    );
+}
+
+// NOTE: the mixed case — an explicit `[key: symbol]: T` signature coexisting
+// with an implicit computed-`symbol` member of a different value type
+// (`interface M { [key: symbol]: number; [s1]: string }`) — is intentionally
+// NOT covered here. tsc accepts it (exit 0), but tsz reports a separate,
+// pre-existing false-positive `TS2411` from the checker-side index-member
+// compatibility check (which reads the explicit `number` index directly),
+// unrelated to the implicit-fold union this change owns. That divergence is
+// left to its own fix so this suite pins only the implicit-fold behavior.
