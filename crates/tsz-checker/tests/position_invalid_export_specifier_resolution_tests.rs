@@ -270,12 +270,12 @@ fn an_export_directly_in_an_ambient_module_body_still_reports_ts2307() {
 
 #[test]
 fn a_bare_top_level_block_keeps_resolving_unchanged() {
-    // The top-level-block family is where typescript@7.0.2's two threading modes
-    // disagree (#16413): the default scheduler reports TS1233 alone, and
-    // `--singleThreaded` — the mode `generate-tsc-cache.rs` uses, and therefore
-    // the mode the conformance corpus is scored in — reports TS1233 + TS2307.
-    // This fix changes nothing here; the row is pinned so a later widening of the
-    // gate cannot silently move it without the disagreement being settled first.
+    // A named clause in a file that is not a module is the one cell of the
+    // #16495 table that really does resolve: with no export table to compute,
+    // the specifiers bind as ordinary aliases that a later pass reaches. This
+    // row was previously pinned on the belief that typescript@7.0.2's two
+    // threading modes disagree about it (#16413) — they do not, and it is
+    // oracle-measured now rather than pinned to whatever `main` happened to do.
     assert_codes(
         r#"{
   export { a } from "nonexistent-module";
