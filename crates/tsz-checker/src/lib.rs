@@ -169,6 +169,9 @@ mod generator_union_return_type_tests;
 #[path = "../tests/heritage_type_only_tests.rs"]
 mod heritage_type_only_tests;
 #[cfg(test)]
+#[path = "../tests/import_equals_referenced_alias_resolution_tests.rs"]
+mod import_equals_referenced_alias_resolution_tests;
+#[cfg(test)]
 #[path = "../tests/imported_generator_iterable_tests.rs"]
 mod imported_generator_iterable_tests;
 #[cfg(test)]
