@@ -1113,6 +1113,38 @@ impl<'a> CheckerState<'a> {
     // Type Literal Resolution
     // =========================================================================
 
+    /// Merge one wide-`symbol`-keyed computed member's value into a type
+    /// literal's symbol index signature. Several `symbol`-keyed members
+    /// contribute to ONE `[key: symbol]: V` signature whose value type is the
+    /// UNION of their values, matching tsc: `{ [s1]: number; [s2]: string }`
+    /// reads as `[key: symbol]: string | number`, and the index is `readonly`
+    /// only when every contributor is (a getter contributes readonly, a setter
+    /// or property writable). Unlike two EXPLICIT `[k: symbol]` index signatures
+    /// — a genuine duplicate — distinct computed keys never collide.
+    fn merge_type_literal_symbol_index(
+        &self,
+        symbol_index: &mut Option<tsz_solver::IndexSignature>,
+        value_type: TypeId,
+        readonly: bool,
+    ) {
+        let info = crate::query_boundaries::type_construction::declared_index_signature(
+            TypeId::SYMBOL,
+            value_type,
+            readonly,
+            None,
+        );
+        match symbol_index.as_mut() {
+            None => *symbol_index = Some(info),
+            Some(existing) => {
+                super::interface_type::merge_string_index_by_union(
+                    existing,
+                    info,
+                    self.ctx.types.factory(),
+                );
+            }
+        }
+    }
+
     /// Get type from a type literal node (anonymous object types).
     ///
     /// Type literals represent inline object types like `{ x: string; y: number }` or
@@ -1264,6 +1296,56 @@ impl<'a> CheckerState<'a> {
                         self.pop_type_parameters(type_param_updates);
                     }
                     METHOD_SIGNATURE | PROPERTY_SIGNATURE => {
+                        // A computed key whose expression is a plain (non-unique)
+                        // `symbol` binding contributes a `[key: symbol]: V` index
+                        // signature to the containing type, exactly like tsc
+                        // (#16307) — never a synthetic named member. The interface
+                        // lowering and object-literal paths already route this way;
+                        // this checker-side type-literal builder must match, or a
+                        // `type`/inline `{ [s]: T }` mints a `__symbol_<file>_<sym>`
+                        // named member instead, and two independently `symbol`-keyed
+                        // type literals become mutually unassignable (TS2741) with
+                        // the placeholder key leaking into diagnostic text. Well-known
+                        // `[Symbol.x]` syntax, `typeof Symbol.x` aliases, and genuine
+                        // `unique symbol` keys are excluded by
+                        // `computed_member_key_is_wide_symbol` and keep named identity.
+                        if self.computed_member_key_is_wide_symbol(sig.name) {
+                            let readonly = self.has_readonly_modifier(&sig.modifiers);
+                            let value_type = if member.kind == METHOD_SIGNATURE {
+                                let (type_params, type_param_updates) =
+                                    self.push_type_parameters(&sig.type_parameters);
+                                let (params, this_type) =
+                                    self.extract_params_from_signature_in_type_literal(sig);
+                                let (return_type, type_predicate) = self
+                                    .return_type_and_predicate_in_type_literal(
+                                        sig.type_annotation,
+                                        &params,
+                                        crate::signature_builder::signature_param_nodes(
+                                            &sig.parameters,
+                                        ),
+                                    );
+                                let call_sig = signature_building_boundary::call_signature(
+                                    type_params,
+                                    params,
+                                    this_type,
+                                    return_type,
+                                    type_predicate,
+                                    true,
+                                );
+                                self.pop_type_parameters(type_param_updates);
+                                method_function_type_from_call_signature(self.ctx.types, &call_sig)
+                            } else if sig.type_annotation.is_some() {
+                                self.get_type_from_type_node_in_type_literal(sig.type_annotation)
+                            } else {
+                                TypeId::ANY
+                            };
+                            self.merge_type_literal_symbol_index(
+                                &mut symbol_index,
+                                value_type,
+                                readonly,
+                            );
+                            continue;
+                        }
                         let Some(name) = self.get_property_name_resolved(sig.name) else {
                             if self
                                 .ctx
@@ -1512,6 +1594,41 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
+                continue;
+            }
+
+            // A get/set accessor keyed by a plain `symbol` binding routes into
+            // the symbol index signature (getter contributes a readonly value,
+            // setter a writable one) exactly like the interface-lowering path
+            // (#16307), rather than minting a synthetic `__symbol_` named member.
+            if (member.kind == tsz_parser::parser::syntax_kind_ext::GET_ACCESSOR
+                || member.kind == tsz_parser::parser::syntax_kind_ext::SET_ACCESSOR)
+                && let Some(accessor) = self.ctx.arena.get_accessor(member)
+                && self.computed_member_key_is_wide_symbol(accessor.name)
+            {
+                let is_getter = member.kind == tsz_parser::parser::syntax_kind_ext::GET_ACCESSOR;
+                let value_type = if is_getter {
+                    if accessor.type_annotation.is_some() {
+                        self.get_type_from_type_node_in_type_literal(accessor.type_annotation)
+                    } else {
+                        TypeId::ANY
+                    }
+                } else {
+                    accessor
+                        .parameters
+                        .nodes
+                        .first()
+                        .and_then(|&param_idx| self.ctx.arena.get(param_idx))
+                        .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
+                        .map_or(TypeId::UNKNOWN, |param| {
+                            if param.type_annotation.is_some() {
+                                self.get_type_from_type_node_in_type_literal(param.type_annotation)
+                            } else {
+                                TypeId::ANY
+                            }
+                        })
+                };
+                self.merge_type_literal_symbol_index(&mut symbol_index, value_type, is_getter);
                 continue;
             }
 
