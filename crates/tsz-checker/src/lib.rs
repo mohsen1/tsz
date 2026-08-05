@@ -531,7 +531,6 @@ mod jsdoc_enum_circular_tests;
 #[cfg(test)]
 #[path = "../tests/jsdoc_function_return_type_anchor_tests.rs"]
 mod jsdoc_function_return_type_anchor_tests;
-
 #[cfg(test)]
 #[path = "../tests/position_invalid_export_specifier_resolution_tests.rs"]
 mod position_invalid_export_specifier_resolution_tests;
