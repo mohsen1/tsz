@@ -227,6 +227,18 @@ impl<'a> CheckerState<'a> {
         if self.declared_source_annotation_alias_displayed_as_underlying(expr_idx) {
             return None;
         }
+        // A *concrete* indexed access (`Obj["m"]`) is resolved to its member
+        // type during type construction in tsc, so the written access never
+        // reaches a diagnostic — `source_display` already carries the reduced
+        // member. Repainting it with the annotation as written would restore
+        // the unreduced surface. Same rule, same owner helper as the
+        // missing-property path's guard in
+        // `should_prefer_declared_source_annotation_display`; a deferred
+        // `T["m"]` still declines and keeps its written spelling.
+        let declared_source_type = self.get_type_of_node(expr_idx);
+        if self.source_declared_type_reduces_as_concrete_indexed_access(declared_source_type) {
+            return None;
+        }
         if annotation_text == source_display
             || annotation_text.trim_start().starts_with("typeof ")
             // No structural query for module-import types yet; keep as display fallback.

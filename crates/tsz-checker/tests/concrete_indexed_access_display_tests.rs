@@ -371,3 +371,257 @@ const a2: Arr["list"][number] = { w: 1 };
         messages[0]
     );
 }
+
+// ---------------------------------------------------------------------------
+// Source role reached through an *identifier* whose declaration carries the
+// indexed-access annotation.
+//
+// The source-role rows at the top of this file all reach the access through a
+// call return, a property access or an argument — positions where the type is
+// evaluated before the diagnostic is built, so the reduced member is what the
+// display policy receives. A bare identifier is different: the assignment
+// display policy prefers the declaration's annotation *as written* over the
+// computed type, which painted the unreduced `Obj["m"]` surface straight back
+// over the member the role dispatch had already reduced.
+//
+// `tsc` resolves a concrete indexed access in `getIndexedAccessType`, during
+// type construction, so no diagnostic ever sees the access — the annotation
+// surface is not something it can prefer. Both annotation-repaint gates (the
+// missing-property one and the TS2322 alias-pair one) now decline for a
+// declared type the shared display policy reduces. Deferred accesses keep
+// their spelling in both, because the same policy declines for them.
+//
+// Every expectation below is oracle-pinned against `typescript@7.0.2` with the
+// conformance gate's own flags (`--singleThreaded --stableTypeOrdering true`,
+// see #16457).
+// ---------------------------------------------------------------------------
+
+/// The witness: a `const` annotated with a concrete indexed access renders the
+/// reduced member, not the annotation as written.
+#[test]
+fn concrete_indexed_access_identifier_source_renders_reduced_member() {
+    let messages = ts2741_messages(
+        r#"
+interface Missing { only: { k: number } }
+declare const bad: Missing["only"];
+const h: { k: number; extra: number } = bad;
+"#,
+    );
+    assert_eq!(messages.len(), 1, "exactly one TS2741: {messages:?}");
+    assert_reduced_member(&messages[0], "{ k: number; }");
+}
+
+/// Anti-hardcoding: the gate keys on the declared type being a reducible
+/// concrete access, never on the binder spellings.
+#[test]
+fn concrete_indexed_access_identifier_source_is_binder_name_independent() {
+    let messages = ts2741_messages(
+        r#"
+interface Wrapper { payload: { alpha: number } }
+declare const value: Wrapper["payload"];
+const dest: { alpha: number; beta: number } = value;
+"#,
+    );
+    assert_eq!(messages.len(), 1, "exactly one TS2741: {messages:?}");
+    assert_reduced_member(&messages[0], "{ alpha: number; }");
+}
+
+/// A `return` statement is the same assignment-source role reached through a
+/// different anchor.
+#[test]
+fn concrete_indexed_access_identifier_source_reduces_in_a_return_statement() {
+    let messages = ts2741_messages(
+        r#"
+interface Missing { only: { k: number } }
+declare const bad: Missing["only"];
+function f(): { k: number; extra: number } { return bad; }
+"#,
+    );
+    assert_eq!(messages.len(), 1, "exactly one TS2741: {messages:?}");
+    assert_reduced_member(&messages[0], "{ k: number; }");
+}
+
+/// A function parameter's annotation is the same declaration shape as a
+/// variable's.
+#[test]
+fn concrete_indexed_access_parameter_source_renders_reduced_member() {
+    let messages = ts2741_messages(
+        r#"
+interface Missing { only: { k: number } }
+function g(bad: Missing["only"]) {
+  const h: { k: number; extra: number } = bad;
+}
+"#,
+    );
+    assert_eq!(messages.len(), 1, "exactly one TS2741: {messages:?}");
+    assert_reduced_member(&messages[0], "{ k: number; }");
+}
+
+/// A class member reached through `Class["field"]` in the annotation.
+#[test]
+fn concrete_indexed_access_identifier_source_reduces_a_class_member() {
+    let messages = ts2741_messages(
+        r#"
+class Holder { slot!: { k: number }; }
+declare const bad: Holder["slot"];
+const h: { k: number; extra: number } = bad;
+"#,
+    );
+    assert_eq!(messages.len(), 1, "exactly one TS2741: {messages:?}");
+    assert_reduced_member(&messages[0], "{ k: number; }");
+}
+
+/// Numeric-literal key in the declared annotation.
+#[test]
+fn concrete_numeric_indexed_access_identifier_source_renders_reduced_member() {
+    let messages = ts2741_messages(
+        r#"
+interface Wrap { 0: { a: number } }
+declare const bad: Wrap[0];
+const h: { a: number; b: number } = bad;
+"#,
+    );
+    assert_eq!(messages.len(), 1, "exactly one TS2741: {messages:?}");
+    assert_reduced_member(&messages[0], "{ a: number; }");
+}
+
+/// A three-link chain in the annotation reduces all the way, never to a hybrid
+/// of a resolved inner object and the remaining written keys.
+#[test]
+fn chained_indexed_access_identifier_source_reduces_to_a_fixed_point() {
+    let messages = ts2741_messages(
+        r#"
+interface A1 { p: { q: { leaf: number } } }
+declare const bad: A1["p"]["q"];
+const h: { leaf: number; extra: number } = bad;
+"#,
+    );
+    assert_eq!(messages.len(), 1, "exactly one TS2741: {messages:?}");
+    assert_reduced_member(&messages[0], "{ leaf: number; }");
+}
+
+/// An instantiated generic object operand arrives as an `Application` and
+/// reduces the same way.
+#[test]
+fn concrete_indexed_access_identifier_source_reduces_an_instantiated_generic() {
+    let messages = ts2741_messages(
+        r#"
+interface Box<T> { item: T }
+declare const bad: Box<{ k: number }>["item"];
+const h: { k: number; extra: number } = bad;
+"#,
+    );
+    assert_eq!(messages.len(), 1, "exactly one TS2741: {messages:?}");
+    assert_reduced_member(&messages[0], "{ k: number; }");
+}
+
+/// An alias that merely renames the object is transparent.
+#[test]
+fn concrete_indexed_access_identifier_source_reduces_through_an_alias_chain() {
+    let messages = ts2741_messages(
+        r#"
+interface Missing { only: { k: number } }
+type Alias = Missing;
+declare const bad: Alias["only"];
+const h: { k: number; extra: number } = bad;
+"#,
+    );
+    assert_eq!(messages.len(), 1, "exactly one TS2741: {messages:?}");
+    assert_reduced_member(&messages[0], "{ k: number; }");
+}
+
+/// The TS2322 whole-type message takes a *different* annotation-repaint gate
+/// (the generic-alias assignment-pair rewrite), so it needs its own row: a
+/// property-type mismatch renders the reduced member too.
+#[test]
+fn concrete_indexed_access_identifier_source_reduces_in_a_ts2322_message() {
+    let messages = strict_messages(
+        r#"
+interface Missing { only: { k: string } }
+declare const bad: Missing["only"];
+const h: { k: number } = bad;
+"#,
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("Type '{ k: string; }' is not assignable")),
+        "TS2322 source must render the reduced member: {messages:?}"
+    );
+    assert!(
+        !messages.iter().any(|m| m.contains("[\"")),
+        "no unreduced indexed-access surface may survive: {messages:?}"
+    );
+}
+
+/// Negative control for the missing-property gate. A *deferred* access over a
+/// free type parameter is opaque in tsc too, so the annotation surface stays.
+#[test]
+fn deferred_generic_indexed_access_identifier_source_stays_opaque() {
+    let messages = ts2741_messages(
+        r#"
+interface Missing { only: { k: number } }
+function f<T extends Missing>(bad: T["only"]) {
+  const h: { k: number; extra: number } = bad;
+}
+"#,
+    );
+    assert_eq!(messages.len(), 1, "exactly one TS2741: {messages:?}");
+    assert!(
+        messages[0].contains("T[\"only\"]"),
+        "a deferred access keeps its written spelling: {}",
+        messages[0]
+    );
+}
+
+/// Negative control for the TS2322 gate, same deferred shape.
+#[test]
+fn deferred_generic_indexed_access_identifier_source_stays_opaque_in_ts2322() {
+    let messages = strict_messages(
+        r#"
+interface Missing { only: { k: string } }
+function f<T extends Missing>(bad: T["only"]) {
+  const h: { k: number } = bad;
+}
+"#,
+    );
+    assert!(
+        messages.iter().any(|m| m.contains("T[\"only\"]")),
+        "a deferred access keeps its written spelling: {messages:?}"
+    );
+}
+
+/// Negative control. The reduction is display-only: an annotation the target
+/// really does accept stays clean.
+#[test]
+fn concrete_indexed_access_identifier_source_assignable_stays_clean() {
+    let messages = strict_messages(
+        r#"
+interface Missing { only: { k: number } }
+declare const bad: Missing["only"];
+const h: { k: number } = bad;
+"#,
+    );
+    assert!(messages.is_empty(), "must stay clean: {messages:?}");
+}
+
+/// Residual, pinned rather than assumed fixed: a non-literal key declines the
+/// shared display policy one guard earlier, so the annotation surface is kept
+/// and the whole chain prints as written. `tsc` reduces this one (recorded on
+/// #16443 as the non-literal-key residual).
+#[test]
+fn nonliteral_key_indexed_access_identifier_source_prints_as_written() {
+    let messages = ts2741_messages(
+        r#"
+interface Arr { list: { k: number }[] }
+declare const bad: Arr["list"][number];
+const h: { k: number; extra: number } = bad;
+"#,
+    );
+    assert_eq!(messages.len(), 1, "exactly one TS2741: {messages:?}");
+    assert!(
+        messages[0].contains("Arr[\"list\"][number]"),
+        "an unreduced chain must print as written, never half-resolved: {}",
+        messages[0]
+    );
+}
