@@ -669,6 +669,13 @@ pub(crate) fn classify_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> L
     tsz_solver::type_queries::extended::classify_literal_type(db, type_id)
 }
 
+/// True when an indexed-access key is a shape tsc's `getIndexedAccessType`
+/// resolves eagerly on its own: a single string/number literal, a union of
+/// such literals, or a `keyof` query.
+pub(crate) fn is_literal_shaped_index_key(db: &dyn TypeDatabase, index_type: TypeId) -> bool {
+    tsz_solver::type_queries::is_literal_shaped_index_key(db, index_type)
+}
+
 /// Check if a type is a generic type application.
 pub(crate) fn is_generic_application(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::query::is_generic_application(db, type_id)

@@ -9,10 +9,12 @@
 //! `Obj["m"]` surface in `TS2741`/`TS2322` assignability messages.
 //!
 //! The display policy now reduces a bare, type-parameter-free indexed access
-//! with a literal key to its member type for the assignment source/target
-//! roles, matching `tsc`. Generic/deferred accesses (a free type parameter in
-//! the object or key) stay opaque — `tsc` renders `T["m"]` there too — and are
-//! guarded by the existing `deferred_keyof_index_access_assignability_tests` /
+//! with a literal-shaped key — a single literal, a union of literals, a
+//! `keyof` query, or `number` against an array/tuple-shaped object — to its
+//! member type for the assignment source/target roles, matching `tsc`.
+//! Generic/deferred accesses (a free type parameter in the object or key)
+//! stay opaque — `tsc` renders `T["m"]` there too — and are guarded by the
+//! existing `deferred_keyof_index_access_assignability_tests` /
 //! `deferred_conditional_indexed_access_tests` suites.
 
 use tsz_checker::test_utils::check_source_strict_messages;
@@ -323,11 +325,20 @@ const m1: M["outer"]["mid"] = { z: 1 };
     assert_reduced_member(&messages[0], "{ z: number; y: string; }");
 }
 
-/// Non-literal key, still unreduced (`tsc` reduces it — a named residual on
-/// #16443). `keyof Q` reaches the formatter as a deferred key operator rather
-/// than a literal union, so the reduction declines one guard earlier than the
-/// one this suite exercises. Pinned so the residual is visible rather than
-/// silently assumed fixed.
+/// Non-literal key, still unreduced in the *target* role (`tsc` reduces it —
+/// the one piece of #16443's non-literal-key residual this PR leaves open).
+/// This is a genuinely different gate than the one this suite otherwise
+/// exercises: for a target annotation, `keyof Q` never reaches
+/// `resolve_concrete_indexed_access_for_display` at all — the annotation's
+/// `TypeId` is already the reduced object shape by the time it gets there
+/// (confirmed by direct inspection), so the unreduced `Q[keyof Q]` text comes
+/// from a separate declared-annotation-text preference specific to the
+/// target/assignment-pair display, not from the key-shape gate this PR
+/// widens. The identifier-source twin below
+/// (`keyof_indexed_access_identifier_source_renders_reduced_member`) *is*
+/// closed by this PR, because a source identifier's declared annotation
+/// reaches the widened gate as the written (still-deferred) access. Pinned so
+/// the remaining gap is visible rather than silently assumed fixed.
 #[test]
 fn keyof_rooted_indexed_access_target_prints_as_written() {
     let messages = strict_messages(
@@ -348,28 +359,24 @@ const q1: Q[keyof Q] = { c: 1 };
     );
 }
 
-/// Non-literal key, still unreduced (tsc reduces it — a named residual on
-/// #16443). What this pins is the *no-hybrid* invariant: because the outer link
-/// declines, the inner link must decline too, so the chain prints exactly as
-/// written rather than as a resolved array carrying a written key.
+/// Numeric index into an array-typed member (#16443's non-literal-key
+/// residual, closed) in the target role: `Arr["list"][number]` reduces to
+/// the element type. What this also pins is the *no-hybrid* invariant: the
+/// inner link (`Arr["list"]`, a literal-string key) must resolve to a fixed
+/// point before the outer numeric index can inspect its array shape, so the
+/// chain either reduces all the way or (per the deferred-generic negative
+/// controls elsewhere in this suite) not at all — never a half-resolved
+/// hybrid.
 #[test]
-fn unreduced_chained_indexed_access_target_prints_as_written() {
-    let messages = strict_messages(
+fn numeric_index_into_array_member_target_renders_reduced_element() {
+    let messages = ts2741_messages(
         r#"
 interface Arr { list: { w: number; z: string }[] }
 const a2: Arr["list"][number] = { w: 1 };
 "#,
     );
-    assert_eq!(
-        messages.len(),
-        1,
-        "exactly one assignability error: {messages:?}"
-    );
-    assert!(
-        messages[0].contains("Arr[\"list\"][number]"),
-        "an unreduced chain must print as written, never half-resolved: {}",
-        messages[0]
-    );
+    assert_eq!(messages.len(), 1, "exactly one TS2741: {messages:?}");
+    assert_reduced_member(&messages[0], "{ w: number; z: string; }");
 }
 
 // ---------------------------------------------------------------------------
@@ -605,12 +612,14 @@ const h: { k: number } = bad;
     assert!(messages.is_empty(), "must stay clean: {messages:?}");
 }
 
-/// Residual, pinned rather than assumed fixed: a non-literal key declines the
-/// shared display policy one guard earlier, so the annotation surface is kept
-/// and the whole chain prints as written. `tsc` reduces this one (recorded on
-/// #16443 as the non-literal-key residual).
+/// Numeric index into an array-typed member (#16443's non-literal-key
+/// residual, closed): `Arr["list"][number]` reduces to the element type
+/// instead of printing the written chain. The outer link's key is the
+/// `number` intrinsic, not a literal — it only reduces because the inner
+/// link (`Arr["list"]`, a literal-string key) is resolved to a fixed point
+/// first, exposing the array shape the outer numeric index needs.
 #[test]
-fn nonliteral_key_indexed_access_identifier_source_prints_as_written() {
+fn numeric_index_into_array_member_identifier_source_renders_reduced_element() {
     let messages = ts2741_messages(
         r#"
 interface Arr { list: { k: number }[] }
@@ -619,9 +628,40 @@ const h: { k: number; extra: number } = bad;
 "#,
     );
     assert_eq!(messages.len(), 1, "exactly one TS2741: {messages:?}");
-    assert!(
-        messages[0].contains("Arr[\"list\"][number]"),
-        "an unreduced chain must print as written, never half-resolved: {}",
-        messages[0]
+    assert_reduced_member(&messages[0], "{ k: number; }");
+}
+
+/// `keyof` key (#16443's non-literal-key residual, closed): `Q[keyof Q]`
+/// reduces to `Q`'s own member type, matching tsc's eager
+/// `getIndexedAccessType`.
+#[test]
+fn keyof_indexed_access_identifier_source_renders_reduced_member() {
+    let messages = ts2741_messages(
+        r#"
+interface Q { only: { c: number; d: string } }
+declare const bad: Q[keyof Q];
+const h: { c: number; extra: number } = bad;
+"#,
     );
+    assert_eq!(messages.len(), 1, "exactly one TS2741: {messages:?}");
+    assert_reduced_member(&messages[0], "{ c: number; d: string; }");
+}
+
+/// Literal-union key (#16443's non-literal-key residual, closed) in the
+/// identifier-source role — the target-role twin
+/// (`concrete_union_key_indexed_access_target_renders_reduced_members`,
+/// above) already reduced before this change; the source role reached the
+/// same guard through the declared-annotation preference gate and needed the
+/// same widening.
+#[test]
+fn union_key_indexed_access_identifier_source_renders_reduced_member() {
+    let messages = ts2741_messages(
+        r#"
+interface UnionKey { x: { s: number }; y: { s: number } }
+declare const bad: UnionKey["x" | "y"];
+const h: { s: number; extra: number } = bad;
+"#,
+    );
+    assert_eq!(messages.len(), 1, "exactly one TS2741: {messages:?}");
+    assert_reduced_member(&messages[0], "{ s: number; }");
 }

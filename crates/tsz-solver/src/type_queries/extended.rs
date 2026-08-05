@@ -102,6 +102,44 @@ pub fn classify_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> LiteralT
     }
 }
 
+/// True when `index_type` is a key shape tsc's `getIndexedAccessType`
+/// resolves eagerly at type-construction time on its own — independent of
+/// the object operand's shape: a single string/number literal, a union
+/// whose members are all such literals (`"a" | "b"`), or a `keyof` query.
+///
+/// `number` against an array/tuple-shaped object is also eagerly resolved by
+/// tsc, but that pairing is a joint fact about both operands, not the key
+/// alone — callers that need it check the object's shape separately (see
+/// `is_array_type`/`is_tuple_type` in this module's parent) rather than
+/// through this classification.
+pub fn is_literal_shaped_index_key(db: &dyn TypeDatabase, index_type: TypeId) -> bool {
+    if matches!(
+        classify_literal_type(db, index_type),
+        LiteralTypeKind::String(_) | LiteralTypeKind::Number(_)
+    ) {
+        return true;
+    }
+    if is_keyof_type(db, index_type) {
+        return true;
+    }
+    if index_type.is_intrinsic() {
+        return false;
+    }
+    match db.lookup(index_type) {
+        Some(TypeData::Union(list_id)) => {
+            let members = db.type_list(list_id);
+            !members.is_empty()
+                && members.iter().all(|&m| {
+                    matches!(
+                        classify_literal_type(db, m),
+                        LiteralTypeKind::String(_) | LiteralTypeKind::Number(_)
+                    )
+                })
+        }
+        _ => false,
+    }
+}
+
 /// Check if a type is a string literal type.
 pub fn is_string_literal(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(

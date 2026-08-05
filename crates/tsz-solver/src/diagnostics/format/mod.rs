@@ -358,15 +358,22 @@ impl<'a> TypeFormatter<'a> {
         }
         // Idx must be a literal (or union of literals) for tsc's unfold —
         // a generic key would also be deferred even when the obj is concrete.
-        if !matches!(
+        // `keyof` joins the family here (`Q[keyof Q]`); `number` against an
+        // array/tuple object is the one shape tsc also unfolds without a
+        // literal key at all, checked separately below once the object
+        // operand is resolved, since a chained access's object is itself
+        // unresolved at this point.
+        let idx_is_literal_shaped = matches!(
             self.interner.lookup(idx),
             Some(
                 TypeData::Literal(_)
                     | TypeData::Union(_)
                     | TypeData::UniqueSymbol(_)
                     | TypeData::TypeQuery(_)
+                    | TypeData::KeyOf(_)
             )
-        ) {
+        );
+        if !idx_is_literal_shaped && idx != TypeId::NUMBER {
             return arg;
         }
         // A chained access (`A["p"]["q"]`) nests one indexed access inside the
@@ -378,6 +385,18 @@ impl<'a> TypeFormatter<'a> {
         // wrote and grows with nesting depth.
         let object_for_eval = self
             .materialize_reference_for_display(self.resolve_concrete_index_access_for_display(obj));
+        if !idx_is_literal_shaped {
+            // `idx == TypeId::NUMBER`: only a numeric index into an
+            // array/tuple-shaped object reduces for display. An intrinsic
+            // `number` key on any other object shape (e.g. a `[k: number]:
+            // V` index signature) stays deferred — that is a decision about
+            // index signatures with its own negative half, out of scope here.
+            if !crate::type_queries::is_array_type(self.interner, object_for_eval)
+                && !crate::type_queries::is_tuple_type(self.interner, object_for_eval)
+            {
+                return arg;
+            }
+        }
         let resolved =
             crate::evaluation::evaluate::evaluate_index_access(self.interner, object_for_eval, idx);
         if resolved == arg || resolved == TypeId::ERROR {

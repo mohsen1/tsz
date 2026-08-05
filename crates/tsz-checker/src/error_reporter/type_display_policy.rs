@@ -86,7 +86,9 @@ impl<'a> CheckerState<'a> {
     /// generic forms — so those are left opaque. This mirrors the deliberate
     /// exclusion of [`Self::resolve_indexed_access_alias_for_display`] from the
     /// assignment roles, but is strictly narrower: only a bare,
-    /// type-parameter-free indexed access with a literal key is touched.
+    /// type-parameter-free indexed access with a literal-shaped key (a single
+    /// literal, a union of literals, a `keyof` query, or `number` against an
+    /// array/tuple object) is touched.
     pub(in crate::error_reporter) fn resolve_concrete_indexed_access_for_display(
         &mut self,
         ty: TypeId,
@@ -96,23 +98,38 @@ impl<'a> CheckerState<'a> {
         let Some(indexed) = common::get_indexed_access_type(db, ty) else {
             return ty;
         };
-        // Only a single string/number literal key reduces to one member;
-        // `keyof`/union keys keep the indexed-access form in tsc too. A literal
-        // key also structurally carries no free type parameters, so only the
-        // object side is checked for deferral below.
-        if !matches!(
-            common::classify_literal_type(db, indexed.index_type),
-            common::LiteralTypeKind::String(_) | common::LiteralTypeKind::Number(_)
-        ) {
+        // A free type parameter anywhere in the key means the access is
+        // legitimately deferred (tsc renders `Obj[T]`/`Obj[keyof U]` with a
+        // free `U` as written); never force-evaluate those.
+        if common::contains_free_type_parameters(db, indexed.object_type)
+            || common::contains_free_type_parameters(db, indexed.index_type)
+        {
             return ty;
         }
-        // A free type parameter in the object means the access is legitimately
-        // deferred (tsc renders `T["m"]`); never force-evaluate those.
-        if common::contains_free_type_parameters(db, indexed.object_type) {
+        let key_is_literal_shaped = common::is_literal_shaped_index_key(db, indexed.index_type);
+        if !key_is_literal_shaped && indexed.index_type != TypeId::NUMBER {
             return ty;
+        }
+        if !key_is_literal_shaped {
+            // `index_type == TypeId::NUMBER`: only a numeric index into an
+            // array/tuple-shaped object reduces for display. A chained
+            // access's object (e.g. `Arr["list"]` inside `Arr["list"][number]`)
+            // is itself an unresolved indexed access at this point, so it must
+            // be evaluated before its shape can be inspected. An intrinsic
+            // `number` key on any other object shape (e.g. a `[k: number]: V`
+            // index signature) stays deferred — that is a decision about index
+            // signatures with its own negative half, out of scope here.
+            let evaluated_object = self.evaluate_type_with_env(indexed.object_type);
+            let db = self.ctx.types.as_type_database();
+            if !common::is_array_type(db, evaluated_object)
+                && !common::is_tuple_type(db, evaluated_object)
+            {
+                return ty;
+            }
         }
         let resolved = self.evaluate_type_with_env(ty);
         if resolved == ty
+            || resolved == TypeId::ERROR
             || crate::query_boundaries::diagnostics::is_unresolved_for_display(
                 self.ctx.types.as_type_database(),
                 resolved,
