@@ -111,6 +111,152 @@ export const called: number = h[other]();
 }
 
 #[test]
+fn type_alias_wide_symbol_computed_member_routes_to_symbol_index() {
+    // #16307 type-literal leg: the interface, object-literal and class paths
+    // route a plain-`symbol`-keyed computed member into the containing type's
+    // symbol index signature, but the CHECKER-side type-literal builder
+    // (`get_type_from_type_literal`) minted a synthetic `__symbol_<file>_<sym>`
+    // NAMED member instead — so a `type` alias with a `symbol`-keyed member was
+    // NOT mutually assignable with an explicit `[k: symbol]` alias, the
+    // placeholder key leaked into TS2741 text, and `t[other]` reported TS7053.
+    // tsc 7.0.2: exit 0 on every line below.
+    assert_clean(
+        r#"
+declare const s: symbol;
+declare const other: symbol;
+type Implicit = { [s]: number };
+type Explicit = { [k: symbol]: number };
+declare const i: Implicit;
+declare const e: Explicit;
+export const readImplicit: number = i[other];
+export const implicitToExplicit: Explicit = i;
+export const explicitToImplicit: Implicit = e;
+"#,
+    );
+}
+
+#[test]
+fn inline_type_literal_wide_symbol_computed_member_routes_to_symbol_index() {
+    // Same rule for an inline `{ [s]: T }` annotation written directly (no
+    // alias), both assignability directions.
+    assert_clean(
+        r#"
+declare const s: symbol;
+declare const ex: { [k: symbol]: number };
+declare const im: { [s]: number };
+export const toExplicit: { [k: symbol]: number } = im;
+export const toImplicit: { [s]: number } = ex;
+"#,
+    );
+}
+
+#[test]
+fn two_independent_wide_symbol_keyed_type_aliases_are_mutually_assignable() {
+    // Type-literal counterpart of the interface case: two aliases each keyed by
+    // a DIFFERENT `symbol`-typed const still describe the same member set.
+    assert_clean(
+        r#"
+declare const symA: symbol;
+declare const symB: symbol;
+type FromA = { [symA]: number };
+type FromB = { [symB]: number };
+declare const a: FromA;
+declare const b: FromB;
+export const aToB: FromB = a;
+export const bToA: FromA = b;
+"#,
+    );
+}
+
+#[test]
+fn type_alias_wide_symbol_index_alongside_named_members() {
+    // A `symbol`-keyed computed member and ordinary named members coexist on the
+    // same type literal: the named members stay named, the symbol member becomes
+    // the symbol index signature.
+    assert_clean(
+        r#"
+declare const s: symbol;
+declare const other: symbol;
+type Mixed = { name: string; [s]: number };
+declare const m: Mixed;
+export const nameRead: string = m.name;
+export const symbolRead: number = m[other];
+"#,
+    );
+}
+
+#[test]
+fn type_alias_wide_symbol_computed_member_renamed_binders() {
+    // Anti-hardcoding: rename every identifier so nothing keys off a specific
+    // binder name.
+    assert_clean(
+        r#"
+declare const registryKey: symbol;
+declare const lookupKey: symbol;
+type Registry = { [registryKey]: string };
+type SymbolBag = { [pk: symbol]: string };
+declare const reg: Registry;
+declare const bag: SymbolBag;
+export const readReg: string = reg[lookupKey];
+export const regToBag: SymbolBag = reg;
+export const bagToReg: Registry = bag;
+"#,
+    );
+}
+
+#[test]
+fn type_alias_distinct_wide_symbols_union_their_value_types() {
+    // Distinct `symbol`-keyed computed members contribute to ONE symbol index
+    // signature whose value type is the UNION of their values — they do not
+    // collide. tsc reads `t[other]` here as `string | number` (exit 0); the
+    // element access must not report TS7053.
+    assert_clean(
+        r#"
+declare const s1: symbol;
+declare const s2: symbol;
+declare const other: symbol;
+type T = { [s1]: number; [s2]: string };
+declare const t: T;
+export const r: string | number = t[other];
+"#,
+    );
+}
+
+#[test]
+fn type_alias_wide_symbol_method_member_routes_to_symbol_index() {
+    // Method form of the type-literal computed `symbol` key.
+    assert_clean(
+        r#"
+declare const s: symbol;
+declare const other: symbol;
+type HasMethod = { [s](): number };
+declare const h: HasMethod;
+export const called: number = h[other]();
+"#,
+    );
+}
+
+#[test]
+fn inline_type_literal_unique_symbol_member_keeps_named_identity() {
+    // Negative control for the type-literal leg: a genuine `unique symbol` key
+    // must NOT fold into a symbol index signature. Assigning a `[k: symbol]`
+    // index-signature value to a `unique`-keyed type literal is a real mismatch,
+    // exactly as tsc reports (the `unique symbol` member is missing).
+    let source = r#"
+declare const u: unique symbol;
+type Unique = { [u]: number };
+declare const ex: { [k: symbol]: number };
+export const bad: Unique = ex;
+"#;
+    let diags = check_source_diagnostics(source);
+    assert!(
+        diags.iter().any(|d| d.code == 2322 || d.code == 2741),
+        "a `unique symbol`-keyed type literal must keep its named identity, not \
+         accept an arbitrary symbol index signature, got: {diags:?}"
+    );
+}
+
+#[test]
 fn unique_symbol_computed_member_keeps_distinct_identity_not_index() {
     // Negative control: a genuine `unique symbol` key must NOT be folded
     // into a symbol index signature — it keeps its own named identity, so
