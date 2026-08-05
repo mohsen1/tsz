@@ -270,3 +270,104 @@ const ok: Clean["part"] = { only: 1 };
         "an assignable indexed-access target must not error: {messages:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Chained access.
+//
+// A chain nests one access inside the next, so reducing only the innermost link
+// would leave a hybrid: a resolved inner object carrying the remaining written
+// keys, which corresponds to nothing in the source and grows with nesting
+// depth. The reduction therefore runs to a fixed point over the object operand,
+// and when the outer link cannot reduce, the whole chain prints as written.
+// ---------------------------------------------------------------------------
+
+/// A three-link chain rooted at an interface reduces all the way.
+#[test]
+fn chained_indexed_access_target_reduces_to_a_fixed_point() {
+    let messages = ts2741_messages(
+        r#"
+interface A1 { p: { q: { r: { leaf: number; miss: string } } } }
+const a1: A1["p"]["q"]["r"] = { leaf: 1 };
+"#,
+    );
+    assert_eq!(messages.len(), 1, "exactly one TS2741: {messages:?}");
+    assert_reduced_member(&messages[0], "{ leaf: number; miss: string; }");
+}
+
+/// A chain that indexes an array member by a numeric literal reduces to the
+/// element type, not to `Elem[][0]`.
+#[test]
+fn chained_indexed_access_target_reduces_an_array_element() {
+    let messages = ts2741_messages(
+        r#"
+interface L { items: { k1: number; k2: string }[] }
+const l1: L["items"][0] = { k1: 1 };
+"#,
+    );
+    assert_eq!(messages.len(), 1, "exactly one TS2741: {messages:?}");
+    assert_reduced_member(&messages[0], "{ k1: number; k2: string; }");
+}
+
+/// An alias-rooted chain already reduced before this change and must keep
+/// doing so — the alias arrives materialized, so it never needed the fixed
+/// point.
+#[test]
+fn alias_rooted_chained_indexed_access_target_still_reduces() {
+    let messages = ts2741_messages(
+        r#"
+type M = { outer: { mid: { z: number; y: string } } };
+const m1: M["outer"]["mid"] = { z: 1 };
+"#,
+    );
+    assert_eq!(messages.len(), 1, "exactly one TS2741: {messages:?}");
+    assert_reduced_member(&messages[0], "{ z: number; y: string; }");
+}
+
+/// Non-literal key, still unreduced (`tsc` reduces it — a named residual on
+/// #16443). `keyof Q` reaches the formatter as a deferred key operator rather
+/// than a literal union, so the reduction declines one guard earlier than the
+/// one this suite exercises. Pinned so the residual is visible rather than
+/// silently assumed fixed.
+#[test]
+fn keyof_rooted_indexed_access_target_prints_as_written() {
+    let messages = strict_messages(
+        r#"
+interface Q { only: { c: number; d: string } }
+const q1: Q[keyof Q] = { c: 1 };
+"#,
+    );
+    assert_eq!(
+        messages.len(),
+        1,
+        "exactly one assignability error: {messages:?}"
+    );
+    assert!(
+        messages[0].contains("Q[keyof Q]"),
+        "an unreduced access must print as written: {}",
+        messages[0]
+    );
+}
+
+/// Non-literal key, still unreduced (tsc reduces it — a named residual on
+/// #16443). What this pins is the *no-hybrid* invariant: because the outer link
+/// declines, the inner link must decline too, so the chain prints exactly as
+/// written rather than as a resolved array carrying a written key.
+#[test]
+fn unreduced_chained_indexed_access_target_prints_as_written() {
+    let messages = strict_messages(
+        r#"
+interface Arr { list: { w: number; z: string }[] }
+const a2: Arr["list"][number] = { w: 1 };
+"#,
+    );
+    assert_eq!(
+        messages.len(),
+        1,
+        "exactly one assignability error: {messages:?}"
+    );
+    assert!(
+        messages[0].contains("Arr[\"list\"][number]"),
+        "an unreduced chain must print as written, never half-resolved: {}",
+        messages[0]
+    );
+}

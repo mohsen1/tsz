@@ -641,7 +641,16 @@ impl<'a> TypeFormatter<'a> {
                         .collect();
                     format!("{}<{}>", self.format_def_name(&def), params.join(", "))
                 } else {
-                    self.format(obj_for_display).into_owned()
+                    // This access did not reduce, so the object operand must
+                    // print as the user wrote it. Without the guard a nested
+                    // access whose own root *is* reducible would resolve on the
+                    // way down and leave a hybrid — a resolved inner object
+                    // carrying the remaining written keys.
+                    let outer = self.render_index_access_object_as_written;
+                    self.render_index_access_object_as_written = true;
+                    let rendered = self.format(obj_for_display).into_owned();
+                    self.render_index_access_object_as_written = outer;
+                    rendered
                 };
                 // Parenthesize the object when it's a union or intersection AND
                 // the formatted string actually shows the compound form (contains

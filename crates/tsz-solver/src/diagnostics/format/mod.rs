@@ -130,6 +130,12 @@ pub struct TypeFormatter<'a> {
     /// `Partial<T>[keyof T]` instead of simplifying the nested access to
     /// `T[keyof T] | undefined`.
     preserve_application_arg_index_alias_surface: bool,
+    /// Internal guard used while rendering the object operand of an indexed
+    /// access that could **not** be reduced. Reference materialization is
+    /// suppressed underneath it, so an access whose outer link stays deferred
+    /// prints the whole chain as written (`A["p"]["q"]`) rather than a hybrid
+    /// of a resolved inner object and the remaining written keys.
+    render_index_access_object_as_written: bool,
     /// Specific non-generic type aliases whose name should not be used for
     /// diagnostic display. This is used for `typeof` aliases in assignability
     /// messages where tsc prints the target's structural type rather than the
@@ -363,7 +369,15 @@ impl<'a> TypeFormatter<'a> {
         ) {
             return arg;
         }
-        let object_for_eval = self.materialize_reference_for_display(obj);
+        // A chained access (`A["p"]["q"]`) nests one indexed access inside the
+        // next, and the inner link's own object may be a reference. Reduce the
+        // object operand to a fixed point first: either the whole chain
+        // resolves, or this returns `arg` and the render path below prints it
+        // as written. A partially reduced chain is never produced — it would
+        // render an internal intermediate that corresponds to nothing the user
+        // wrote and grows with nesting depth.
+        let object_for_eval = self
+            .materialize_reference_for_display(self.resolve_concrete_index_access_for_display(obj));
         let resolved =
             crate::evaluation::evaluate::evaluate_index_access(self.interner, object_for_eval, idx);
         if resolved == arg || resolved == TypeId::ERROR {
@@ -383,6 +397,9 @@ impl<'a> TypeFormatter<'a> {
     /// anywhere in the access is rejected before this runs, so an instantiation
     /// here is always fully concrete.
     fn materialize_reference_for_display(&self, obj: TypeId) -> TypeId {
+        if self.render_index_access_object_as_written {
+            return obj;
+        }
         let Some(def_store) = self.def_store else {
             return obj;
         };
@@ -537,6 +554,7 @@ impl<'a> TypeFormatter<'a> {
             skip_application_alias_names: false,
             skip_application_display_alias_chase: false,
             preserve_application_arg_index_alias_surface: false,
+            render_index_access_object_as_written: false,
             skip_type_alias_def_ids: FxHashSet::default(),
             skipped_type_alias_expansion_visiting: FxHashSet::default(),
             builtin_iterator_return_type: None,
@@ -585,6 +603,7 @@ impl<'a> TypeFormatter<'a> {
             skip_application_alias_names: false,
             skip_application_display_alias_chase: false,
             preserve_application_arg_index_alias_surface: false,
+            render_index_access_object_as_written: false,
             skip_type_alias_def_ids: FxHashSet::default(),
             skipped_type_alias_expansion_visiting: FxHashSet::default(),
             builtin_iterator_return_type: None,
