@@ -149,12 +149,35 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     });
                 if clause_is_declaration {
                     if let Some(default_pos) = export_decl.default_keyword_pos {
-                        self.error_at_position(
-                            default_pos,
-                            7, // length of "default"
-                            crate::diagnostics::diagnostic_messages::A_DEFAULT_EXPORT_CAN_ONLY_BE_USED_IN_AN_ECMASCRIPT_STYLE_MODULE,
-                            crate::diagnostics::diagnostic_codes::A_DEFAULT_EXPORT_CAN_ONLY_BE_USED_IN_AN_ECMASCRIPT_STYLE_MODULE,
-                        );
+                        // tsc's `checkGrammarModifiers` reports a modifier-order
+                        // violation (e.g. TS1029 for `declare export default class
+                        // {}`, where `export` must precede `declare`) and returns
+                        // early, so this namespace-placement check never runs for
+                        // the same node. tsz's parser emits that modifier-order
+                        // diagnostic during parsing — before this class/function's
+                        // `ExportDeclData` wrapper even exists — so there is no AST
+                        // field to read it back from; re-derive "did it already
+                        // fire" from position instead. Any parse diagnostic
+                        // strictly between the export node's start and its
+                        // `default` keyword can only be the modifier-prefix
+                        // grammar check tsc already reported for this exact node,
+                        // since the class/function body (where an unrelated parse
+                        // error could otherwise land) starts after `default`.
+                        let modifier_order_error_already_reported =
+                            self.ctx.arena.get(export_idx).is_some_and(|node| {
+                                self.ctx
+                                    .all_parse_error_positions
+                                    .iter()
+                                    .any(|&pos| pos >= node.pos && pos < default_pos)
+                            });
+                        if !modifier_order_error_already_reported {
+                            self.error_at_position(
+                                default_pos,
+                                7, // length of "default"
+                                crate::diagnostics::diagnostic_messages::A_DEFAULT_EXPORT_CAN_ONLY_BE_USED_IN_AN_ECMASCRIPT_STYLE_MODULE,
+                                crate::diagnostics::diagnostic_codes::A_DEFAULT_EXPORT_CAN_ONLY_BE_USED_IN_AN_ECMASCRIPT_STYLE_MODULE,
+                            );
+                        }
                     } else {
                         self.error_at_node(
                             export_idx,

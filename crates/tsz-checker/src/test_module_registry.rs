@@ -219,6 +219,8 @@ mod cross_module_class_self_member_tests;
 mod cross_module_generic_interface_heritage_tests;
 #[path = "tests/declaration_extract_key_path_tests.rs"]
 mod declaration_extract_key_path_tests;
+#[path = "tests/declare_export_default_modifier_order_ts1319_dedup_tests.rs"]
+mod declare_export_default_modifier_order_ts1319_dedup_tests;
 #[path = "tests/declare_private_member_implicit_any_tests.rs"]
 mod declare_private_member_implicit_any_tests;
 #[path = "tests/declared_signature_return_literal_display_tests.rs"]
