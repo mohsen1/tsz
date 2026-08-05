@@ -495,11 +495,10 @@ impl<'a> CheckerState<'a> {
     /// TS7022: report a for-in loop variable whose own operand references it.
     ///
     /// The for-of twin (`check_for_of_self_reference_circularity`) additionally
-    /// walks iterator-protocol return sites and falls back to an identifier-name
-    /// match; neither applies here. for-in has no iterator protocol, and the
-    /// name fallback would misfire on a member name that merely spells the loop
-    /// variable — `for (const v in o.v) {}` is clean in tsc — so this path is
-    /// symbol-identity only.
+    /// walks iterator-protocol return sites; that does not apply here, because
+    /// for-in has no iterator protocol. Both paths decide the reference itself
+    /// through binder symbol identity only, never through the identifier's
+    /// spelling — `for (const v in o.v) {}` is clean in tsc.
     pub(crate) fn check_for_in_self_reference_circularity(
         &mut self,
         decl_list_idx: NodeIndex,
@@ -1026,10 +1025,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
             let has_direct_reference = self.expression_references_symbol(expression_idx, sym_id);
-            let has_name_reference = var_name.as_ref().is_some_and(|name| {
-                self.expression_references_identifier_name(expression_idx, name)
-            });
-            if circular_return_sites.is_empty() && !has_direct_reference && !has_name_reference {
+            if circular_return_sites.is_empty() && !has_direct_reference {
                 continue;
             }
 
@@ -1601,51 +1597,28 @@ impl<'a> CheckerState<'a> {
             return self.expression_references_symbol(access.expression, target_sym);
         }
 
-        // Recurse into children
-        for child_idx in self.ctx.arena.get_children(node_idx) {
-            if self.expression_references_symbol(child_idx, target_sym) {
-                return true;
-            }
-        }
-
-        false
-    }
-
-    fn expression_references_identifier_name(
-        &self,
-        node_idx: NodeIndex,
-        target_name: &str,
-    ) -> bool {
-        let Some(node) = self.ctx.arena.get(node_idx) else {
-            return false;
-        };
-
-        if node.kind == SyntaxKind::Identifier as u16
+        // A *written* property name in an object literal is a name, not a value
+        // binding either — `pick({ v: 1 })` reads nothing called `v`, so only
+        // the initializer side is walked. Two neighbours deliberately keep
+        // their default recursion because they really do read the binding: a
+        // computed name (`{ [v]: 1 }`) evaluates `v`, and a shorthand
+        // (`{ v }`) is a `ShorthandPropertyAssignment` whose name *is* the
+        // reference. `tsc` reports the circularity for both and not for the
+        // written name.
+        if node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
+            && let Some(assignment) = self.ctx.arena.get_property_assignment(node)
             && self
                 .ctx
                 .arena
-                .get_identifier(node)
-                .is_some_and(|ident| ident.escaped_text.as_str() == target_name)
+                .get(assignment.name)
+                .is_some_and(|name| name.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME)
         {
-            return true;
+            return self.expression_references_symbol(assignment.initializer, target_sym);
         }
 
-        if matches!(
-            node.kind,
-            syntax_kind_ext::FUNCTION_DECLARATION
-                | syntax_kind_ext::FUNCTION_EXPRESSION
-                | syntax_kind_ext::ARROW_FUNCTION
-                | syntax_kind_ext::METHOD_DECLARATION
-                | syntax_kind_ext::GET_ACCESSOR
-                | syntax_kind_ext::SET_ACCESSOR
-                | syntax_kind_ext::CLASS_DECLARATION
-                | syntax_kind_ext::CLASS_EXPRESSION
-        ) {
-            return false;
-        }
-
+        // Recurse into children
         for child_idx in self.ctx.arena.get_children(node_idx) {
-            if self.expression_references_identifier_name(child_idx, target_name) {
+            if self.expression_references_symbol(child_idx, target_sym) {
                 return true;
             }
         }

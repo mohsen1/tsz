@@ -152,6 +152,9 @@ path = "tests/cross_file_delegation_lookup_consolidation_tests.rs"
 name = "cross_file_generic_alias_call_inference_tests"
 path = "tests/cross_file_generic_alias_call_inference_tests.rs"
 [[test]]
+name = "cross_file_generic_class_implements_tests"
+path = "tests/cross_file_generic_class_implements_tests.rs"
+[[test]]
 name = "cross_file_generic_interface_mapped_filter_tests"
 path = "tests/cross_file_generic_interface_mapped_filter_tests.rs"
 [[test]]
@@ -2640,3 +2643,15 @@ path = "tests/ts18036_class_decorator_static_private_identifier_tests.rs"
 [[test]]
 name = "import_namespace_ts1147_tests"
 path = "tests/import_namespace_ts1147_tests.rs"
+
+[[test]]
+name = "position_invalid_import_equals_container_scope_tests"
+path = "tests/position_invalid_import_equals_container_scope_tests.rs"
+
+[[test]]
+name = "import_equals_alias_duplicate_container_tests"
+path = "tests/import_equals_alias_duplicate_container_tests.rs"
+
+[[test]]
+name = "import_equals_alias_duplicate_function_container_tests"
+path = "tests/import_equals_alias_duplicate_function_container_tests.rs"

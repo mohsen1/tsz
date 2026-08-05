@@ -854,6 +854,48 @@ fn export_assignment_with_export_declare_modifiers_emits_ts1120() {
     assert_eq!(ts1120.start, 7, "TS1120 should start at `export` position");
 }
 
+// `declare export = x` outside the top level: tsc's own placement diagnostic
+// for the `ExportAssignment` node wins instead of TS1120 — TS1063 ("An export
+// assignment cannot be used in a namespace.") in a namespace body, TS1231
+// ("An export assignment must be at the top level of a file or module
+// declaration.") in a Block. Both are checker-emitted (this crate only
+// verifies the parser stays silent), oracle-pinned against `typescript@7.0.2`
+// (`--strict --target es2022 --module es2022`). Residual left by #16440 for
+// the sibling `default <expr>` assignment form on this same match arm.
+
+#[test]
+fn export_assignment_with_declare_modifier_in_namespace_emits_no_ts1120() {
+    let source = "namespace N { declare export = 1; }";
+    let (parser, _root) = parse_source(source);
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&1120),
+        "Expected no TS1120 for `declare export = x` in a namespace body (tsc: TS1063 alone), got: {codes:?}"
+    );
+}
+
+#[test]
+fn export_assignment_with_declare_modifier_in_nested_namespace_emits_no_ts1120() {
+    let source = "namespace Outer { namespace Inner { declare export = 1; } }";
+    let (parser, _root) = parse_source(source);
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&1120),
+        "Expected no TS1120 for `declare export = x` in a nested namespace body, got: {codes:?}"
+    );
+}
+
+#[test]
+fn export_assignment_with_declare_modifier_in_block_emits_no_ts1120() {
+    let source = "function outer() { declare export = 1; }";
+    let (parser, _root) = parse_source(source);
+    let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&1120),
+        "Expected no TS1120 for `declare export = x` in a Block (tsc: TS1231 alone), got: {codes:?}"
+    );
+}
+
 /// `import\nimport { foo } from './0';` — the first `import` has no clause and a reserved
 /// keyword (`import`) follows on the next line. tsc emits TS1109 "Expression expected" at
 /// the second `import` position (the module specifier path fails to find a string literal)

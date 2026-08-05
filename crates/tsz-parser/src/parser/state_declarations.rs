@@ -1720,6 +1720,33 @@ impl ParserState {
                     self.current_token = current;
                     is_type_only
                 };
+                // `declare export default <expr>` where `default` is followed
+                // by neither a class nor a function declaration is an
+                // `ExportAssignment` node (a value expression carrying
+                // `default`), not a `ClassDeclaration`/`FunctionDeclaration`
+                // carrying a `default` modifier — the same class-vs-expression
+                // split the sibling `async` family already draws for `default`
+                // (`look_ahead_async_before_export_target`, #16403). tsc's
+                // modifier-order check (TS1029) never applies to that
+                // assignment form; only `AN_EXPORT_ASSIGNMENT_CANNOT_HAVE_MODIFIERS`
+                // (TS1120) does, handled below alongside the declaration match
+                // (residual #16432 disclosed and left unfixed).
+                let is_export_default_assignment_form = self.is_token(SyntaxKind::DefaultKeyword)
+                    && {
+                        let snapshot = self.scanner.save_state();
+                        let current = self.current_token;
+                        self.next_token(); // skip `default`
+                        let starts_declaration = matches!(
+                            self.token(),
+                            SyntaxKind::ClassKeyword
+                                | SyntaxKind::AbstractKeyword
+                                | SyntaxKind::FunctionKeyword
+                        ) || (self.token() == SyntaxKind::AsyncKeyword
+                            && self.look_ahead_is_async_function());
+                        self.scanner.restore_state(snapshot);
+                        self.current_token = current;
+                        !starts_declaration
+                    };
                 // TS1029: 'export' modifier must precede 'declare' modifier.
                 // Skip for `declare export as namespace` (valid UMD pattern) and
                 // `declare export = expr` (export assignment — TS1120 handles it).
@@ -1732,7 +1759,9 @@ impl ParserState {
                 // form without TS1029 for ambient module/namespace declarations.
                 // Also skip for a plain export declaration (`{ }` / `*` / type-only
                 // `type { }` / `type *`) — tsc emits TS1193 alone there, never TS1029
-                // alongside it (oracle-confirmed).
+                // alongside it (oracle-confirmed). Also skip for the `default <expr>`
+                // assignment form above — TS1120 handles it below, the same way
+                // `EqualsToken` is skipped here.
                 if !self.in_block_context()
                     && !self.is_token(SyntaxKind::AsKeyword)
                     && !self.is_token(SyntaxKind::EqualsToken)
@@ -1741,6 +1770,7 @@ impl ParserState {
                     && !self.is_token(SyntaxKind::OpenBraceToken)
                     && !self.is_token(SyntaxKind::AsteriskToken)
                     && !is_type_only_export
+                    && !is_export_default_assignment_form
                     && (saved_flags & crate::parser::state::CONTEXT_FLAG_AMBIENT) == 0
                 {
                     self.parse_error_at(
@@ -1786,19 +1816,28 @@ impl ParserState {
                         .parse_variable_statement_with_modifiers(Some(start_pos), Some(modifiers)),
                     SyntaxKind::EqualsToken => {
                         // `declare export = expr` or `export declare export = expr`
-                        // tsc reports TS1120: An export assignment cannot have modifiers.
+                        // tsc reports TS1120: An export assignment cannot have modifiers —
+                        // but only at the top level. In a namespace body or a Block, the
+                        // `ExportAssignment` node's own placement diagnostic (TS1063 in a
+                        // namespace, TS1231 in a Block) wins instead and TS1120 does not
+                        // fire alongside it — the same "own placement diagnostic silences
+                        // the modifier diagnostic outside top level" shape the sibling
+                        // `default <expr>` assignment form already implements below
+                        // (#16403/#16440).
                         // Error span starts from the first modifier (export if present, else declare).
-                        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
                         let error_start = all_modifiers
                             .first()
                             .and_then(|idx| self.arena.get(*idx))
                             .map_or(start_pos, |node| node.pos);
-                        self.parse_error_at(
-                            error_start,
-                            self.token_pos() - error_start,
-                            diagnostic_messages::AN_EXPORT_ASSIGNMENT_CANNOT_HAVE_MODIFIERS,
-                            diagnostic_codes::AN_EXPORT_ASSIGNMENT_CANNOT_HAVE_MODIFIERS,
-                        );
+                        if !self.in_block_context() && !self.in_module_body_context() {
+                            use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+                            self.parse_error_at(
+                                error_start,
+                                self.token_pos() - error_start,
+                                diagnostic_messages::AN_EXPORT_ASSIGNMENT_CANNOT_HAVE_MODIFIERS,
+                                diagnostic_codes::AN_EXPORT_ASSIGNMENT_CANNOT_HAVE_MODIFIERS,
+                            );
+                        }
                         self.parse_export_assignment(error_start)
                     }
                     SyntaxKind::ImportKeyword => {
@@ -1884,6 +1923,46 @@ impl ParserState {
                     SyntaxKind::EnumKeyword => {
                         // `declare export enum X { ... }`
                         self.parse_enum_declaration_with_modifiers(start_pos, Some(modifiers))
+                    }
+                    SyntaxKind::DefaultKeyword => {
+                        // `declare export default class {}` / `declare export
+                        // default function f() {}` — tsc reads the whole
+                        // thing as a `ClassDeclaration`/`FunctionDeclaration`
+                        // carrying `declare`+`export`+`default` modifiers
+                        // (the same node kind the ordinary `export default`
+                        // path in `parse_export_default` builds), not the
+                        // `export =`-style assignment the `EqualsToken` arm
+                        // above handles. `self.context_flags` already carries
+                        // `CONTEXT_FLAG_AMBIENT` here (set at the top of this
+                        // function), so the reused declaration/expression
+                        // classification `parse_export_default` performs
+                        // still parses class/function bodies as ambient.
+                        //
+                        // `declare export default <expr>` (no class/function
+                        // following `default`) is instead the `ExportAssignment`
+                        // node the `EqualsToken` arm handles, and tsc reports
+                        // its modifier violation the same way: TS1120 at the
+                        // source file's own top level, silenced everywhere
+                        // else by the node's own placement diagnostic (TS1258
+                        // in a Block, TS1319 in a namespace body) — oracle-
+                        // pinned residual #16432 disclosed and left for this.
+                        if is_export_default_assignment_form
+                            && !self.in_block_context()
+                            && !self.in_module_body_context()
+                        {
+                            use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+                            let error_start = all_modifiers
+                                .first()
+                                .and_then(|idx| self.arena.get(*idx))
+                                .map_or(start_pos, |node| node.pos);
+                            self.parse_error_at(
+                                error_start,
+                                self.token_pos() - error_start,
+                                diagnostic_messages::AN_EXPORT_ASSIGNMENT_CANNOT_HAVE_MODIFIERS,
+                                diagnostic_codes::AN_EXPORT_ASSIGNMENT_CANNOT_HAVE_MODIFIERS,
+                            );
+                        }
+                        self.parse_export_default(start_pos)
                     }
                     _ => {
                         self.error_declaration_expected();

@@ -835,6 +835,195 @@ fn plain_async_function_declaration_reports_no_parser_diagnostic() {
 }
 
 // --------------------------------------------------------------------------
+// `accessor` before `export ...` (#16403 slice 5). Unlike every sibling
+// family, `accessor` is parsed on its own dedicated statement-entry path
+// (`parse_statement_accessor_keyword`), not through
+// `parse_statement_top_level_modifier`'s dispatch — but it takes the exact
+// same `ModifiedExportForm` container split: `export {}` / `export *` and
+// `export namespace` / `export module` are silenced by their own placement
+// diagnostic inside a Block; `export =` / `export default <expr>` are
+// silenced there AND in a namespace body (like `readonly`, not like
+// `async`'s function exception); `export as namespace` gets the uniform
+// TS1184 every sibling family reports, not TS1275; every other export form
+// keeps TS1275 outside a Block and swaps to the generic TS1184 inside one.
+// --------------------------------------------------------------------------
+
+#[test]
+fn accessor_before_export_const_at_top_level_reports_ts1275() {
+    assert_only_diagnostic(
+        "accessor export const seeded = 1;",
+        "accessor",
+        diagnostic_codes::ACCESSOR_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION,
+    );
+}
+
+#[test]
+fn accessor_before_export_class_in_namespace_body_reports_ts1275() {
+    assert_only_diagnostic(
+        "namespace Outer {\n  accessor export class Widget {}\n}",
+        "accessor",
+        diagnostic_codes::ACCESSOR_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION,
+    );
+}
+
+#[test]
+fn accessor_before_export_function_in_function_body_reports_ts1184_not_ts1275() {
+    assert_only_diagnostic(
+        "function collect() {\n  accessor export function build() {}\n}",
+        "accessor",
+        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+    );
+}
+
+#[test]
+fn accessor_before_export_type_alias_in_function_body_reports_ts1184() {
+    assert_only_diagnostic(
+        "function collect() {\n  accessor export type T = 1;\n}",
+        "accessor",
+        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+    );
+}
+
+#[test]
+fn accessor_before_export_interface_at_top_level_reports_ts1275() {
+    assert_only_diagnostic(
+        "accessor export interface Widget {}",
+        "accessor",
+        diagnostic_codes::ACCESSOR_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION,
+    );
+}
+
+/// `export {}` / `export *` — an `ExportDeclaration` node: TS1275 survives at
+/// the source file's own top level and in a namespace body, but is silenced
+/// entirely inside a Block by the form's own placement diagnostic (TS1233, a
+/// checker check out of this parser-only harness's reach).
+#[test]
+fn accessor_before_export_list_at_top_level_reports_ts1275() {
+    assert_only_diagnostic(
+        "accessor export {};",
+        "accessor",
+        diagnostic_codes::ACCESSOR_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION,
+    );
+}
+
+#[test]
+fn accessor_before_export_star_in_namespace_body_reports_ts1275() {
+    assert_only_diagnostic(
+        "namespace Outer {\n  accessor export * from \"./source\";\n}",
+        "accessor",
+        diagnostic_codes::ACCESSOR_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION,
+    );
+}
+
+#[test]
+fn accessor_before_export_list_in_function_body_reports_no_parser_diagnostic() {
+    assert_no_parser_diagnostics("function collect() {\n  accessor export {};\n}");
+}
+
+/// `export =` / `export default <expr>` — an `ExportAssignment` node: unlike
+/// the `ExportDeclaration` form above, silencing extends to a namespace body
+/// too, not just a Block (the same wider shape `readonly`/`override` use).
+#[test]
+fn accessor_before_export_assignment_at_top_level_reports_ts1275() {
+    assert_only_diagnostic(
+        "accessor export = 1;",
+        "accessor",
+        diagnostic_codes::ACCESSOR_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION,
+    );
+}
+
+#[test]
+fn accessor_before_export_assignment_in_namespace_body_reports_no_parser_diagnostic() {
+    assert_no_parser_diagnostics("namespace Outer {\n  accessor export = 1;\n}");
+}
+
+#[test]
+fn accessor_before_export_assignment_in_function_body_reports_no_parser_diagnostic() {
+    assert_no_parser_diagnostics("function collect() {\n  accessor export = 1;\n}");
+}
+
+#[test]
+fn accessor_before_export_default_expr_in_namespace_body_reports_no_parser_diagnostic() {
+    assert_no_parser_diagnostics("namespace Outer {\n  accessor export default 1;\n}");
+}
+
+/// `export namespace` / `export module` — a nested module declaration is
+/// itself illegal inside a Block (TS1235) independent of any modifier, and
+/// that placement diagnostic wins there the same way `ExportDeclaration`
+/// does; outside a Block this takes the ordinary container split.
+#[test]
+fn accessor_before_export_namespace_declaration_at_top_level_reports_ts1275() {
+    assert_only_diagnostic(
+        "accessor export namespace N {}",
+        "accessor",
+        diagnostic_codes::ACCESSOR_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION,
+    );
+}
+
+#[test]
+fn accessor_before_export_namespace_declaration_in_namespace_body_reports_ts1275() {
+    assert_only_diagnostic(
+        "namespace Outer {\n  accessor export namespace N {}\n}",
+        "accessor",
+        diagnostic_codes::ACCESSOR_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION,
+    );
+}
+
+#[test]
+fn accessor_before_export_namespace_declaration_in_function_body_reports_no_parser_diagnostic() {
+    assert_no_parser_diagnostics("function collect() {\n  accessor export namespace N {}\n}");
+}
+
+// --------------------------------------------------------------------------
+// `export as namespace Foo;` — a `NamespaceExportDeclaration`, which like
+// every other modifier family admits no modifiers in any container: TS1184,
+// not TS1275, unconditionally.
+// --------------------------------------------------------------------------
+
+#[test]
+fn accessor_before_export_as_namespace_at_top_level_reports_ts1184_not_ts1275() {
+    assert_only_diagnostic(
+        "accessor export as namespace Telemetry;",
+        "accessor",
+        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+    );
+}
+
+#[test]
+fn accessor_before_export_as_namespace_in_namespace_body_reports_ts1184() {
+    assert_only_diagnostic(
+        "namespace Outer {\n  accessor export as namespace Telemetry;\n}",
+        "accessor",
+        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+    );
+}
+
+#[test]
+fn accessor_before_export_as_namespace_in_function_body_reports_ts1184() {
+    assert_only_diagnostic(
+        "function collect() {\n  accessor export as namespace Telemetry;\n}",
+        "accessor",
+        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+    );
+}
+
+// --------------------------------------------------------------------------
+// Negative control — `accessor` outside any export/class-member position
+// (e.g. a bare top-level declaration) is unaffected by this change; it still
+// reports the same unconditional TS1275 it did before this class ever
+// touched `export`.
+// --------------------------------------------------------------------------
+
+#[test]
+fn accessor_before_non_export_class_reports_ts1275() {
+    assert_only_diagnostic(
+        "accessor class Widget {}",
+        "accessor",
+        diagnostic_codes::ACCESSOR_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION,
+    );
+}
+
+// --------------------------------------------------------------------------
 // `export default class` / `export default function` — a `ClassDeclaration` /
 // `FunctionDeclaration` carrying a `default` modifier, NOT an
 // `ExportAssignment` node (#16403 slice 4).
@@ -1087,5 +1276,59 @@ fn readonly_before_type_only_export_star_splits_by_container() {
     );
     assert_no_parser_diagnostics(
         "function collect() {\n  readonly export type * from \"./source\";\n}",
+    );
+}
+
+// --------------------------------------------------------------------------
+// `accessor` x the two forms this slice reclassifies.
+//
+// Slice 5 routes `accessor` through the same `ModifiedExportForm` classifier
+// as the TS1044/TS1024 families, so the `default class`/`default function` and
+// type-only-export arms above move `accessor` too — in the same direction, and
+// with `accessor`'s own TS1275 message. Landed after slice 4 was opened, so
+// these rows are pinned here rather than left to the merge.
+//
+// Oracle (`typescript@7.0.2`): `accessor export default class {}` is TS1275 at
+// top level and in a namespace body, TS1184 in a Block; a bare `accessor
+// export default 1;` keeps the assignment's silence in both non-top
+// containers; `accessor export type { x } from "m"` is TS1275 outside a Block
+// and silent inside one.
+// --------------------------------------------------------------------------
+
+#[test]
+fn accessor_before_export_default_class_in_namespace_body_reports_ts1275() {
+    assert_only_diagnostic(
+        "namespace Outer {\n  accessor export default class Widget {}\n}",
+        "accessor",
+        diagnostic_codes::ACCESSOR_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION,
+    );
+}
+
+#[test]
+fn accessor_before_export_default_function_in_function_body_reports_ts1184() {
+    assert_only_diagnostic(
+        "function collect() {\n  accessor export default function build() {}\n}",
+        "accessor",
+        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+    );
+}
+
+/// The negative half — a bare `export default <expr>` is still the assignment
+/// node for `accessor` too, so its own TS1319/TS1258 wins.
+#[test]
+fn accessor_before_bare_export_default_expression_stays_silent_outside_top_level() {
+    assert_no_parser_diagnostics("namespace Outer {\n  accessor export default 1;\n}");
+    assert_no_parser_diagnostics("function collect() {\n  accessor export default 1;\n}");
+}
+
+#[test]
+fn accessor_before_type_only_export_splits_by_container() {
+    assert_only_diagnostic(
+        "namespace Outer {\n  accessor export type { Widget } from \"./source\";\n}",
+        "accessor",
+        diagnostic_codes::ACCESSOR_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION,
+    );
+    assert_no_parser_diagnostics(
+        "function collect() {\n  accessor export type * from \"./source\";\n}",
     );
 }

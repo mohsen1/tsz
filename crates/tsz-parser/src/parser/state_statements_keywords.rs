@@ -59,6 +59,15 @@ pub(crate) enum AbstractExportTarget {
     /// (TS1235), `export { }` and `export * from "m"` (TS1233). Outside a Block
     /// the modifier diagnostic is reported as usual.
     PositionErrorWins,
+    /// `abstract export default <expr>` where `default` decorates a value
+    /// expression rather than a class/function declaration — an
+    /// `ExportAssignment` node, on which `abstract` is illegal everywhere.
+    /// Its own placement diagnostic wins in *both* a Block (TS1258) and a
+    /// namespace body (TS1319), wider than `PositionErrorWins`'s Block-only
+    /// silencing, so TS1242 survives only at the source file's own top
+    /// level — the same shape the sibling `async`/`accessor` families give
+    /// their own `ExportAssignment` variant.
+    ExportAssignment,
 }
 
 /// Which grammar diagnostic `checkGrammarModifiers` picks for a stray `async`
@@ -255,6 +264,11 @@ impl ParserState {
                 // The trailing form reports its own position error inside a
                 // Block (TS1235 / TS1233) and no modifier error at all.
                 AbstractExportTarget::PositionErrorWins if in_block => {}
+                // `export default <expr>`'s own placement diagnostic
+                // (TS1258 in a Block, TS1319 in a namespace body) wins in
+                // both containers, not just a Block.
+                AbstractExportTarget::ExportAssignment
+                    if in_block || self.in_module_body_context() => {}
                 // Everything else follows the same container split the sibling
                 // `abstract` var/function path uses (#16368/#16375): a Block
                 // body gets the generic TS1184, a module/namespace body or the
@@ -350,12 +364,45 @@ impl ParserState {
         if self.look_ahead_is_accessor_declaration() {
             use tsz_common::diagnostics::diagnostic_codes;
             // tsc emits TS1275 via grammarErrorOnNode for the `accessor` modifier
-            // on any non-property-declaration node (top-level class/interface/var/...).
+            // on any non-property-declaration node (top-level class/interface/var/...) —
+            // but like the `static`/`readonly` family (#16403 slices 1-2), a stray
+            // `accessor` before `export ...` takes the SAME `ModifiedExportForm`
+            // container split rather than reporting TS1275 unconditionally
+            // (#16403 slice 5, oracle-pinned): `export {}`/`export *` and
+            // `export namespace`/`export module` are silenced by their own
+            // placement diagnostic inside a Block; `export =`/`export default`
+            // are silenced there AND in a namespace body; `export as namespace`
+            // gets the uniform TS1184 every sibling family reports, not TS1275;
+            // every other export form (`export const`/`class`/`function`/...)
+            // keeps TS1275 outside a Block and swaps to the generic TS1184
+            // inside one, exactly like `static`/`readonly`.
             let start_pos = self.token_pos();
-            self.parse_error_at_current_token(
-                "'accessor' modifier can only appear on a property declaration.",
-                diagnostic_codes::ACCESSOR_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION,
-            );
+            let export_form = self.modified_export_form();
+            let block_context = self.in_block_context() || self.in_static_block_context();
+            let export_silences_modifier = match export_form {
+                Some(
+                    ModifiedExportForm::ExportDeclaration | ModifiedExportForm::ModuleDeclaration,
+                ) => block_context,
+                Some(ModifiedExportForm::ExportAssignment) => {
+                    block_context || self.in_module_body_context()
+                }
+                _ => false,
+            };
+            if export_silences_modifier {
+                self.next_token();
+                return self.parse_statement();
+            }
+            if export_form == Some(ModifiedExportForm::NamespaceExport) || block_context {
+                self.parse_error_at_current_token(
+                    "Modifiers cannot appear here.",
+                    diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+                );
+            } else {
+                self.parse_error_at_current_token(
+                    "'accessor' modifier can only appear on a property declaration.",
+                    diagnostic_codes::ACCESSOR_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION,
+                );
+            }
             let accessor_start = self.token_pos();
             self.parse_expected(SyntaxKind::AccessorKeyword);
             let accessor_end = self.token_end();
@@ -1127,16 +1174,34 @@ impl ParserState {
                 // `export default abstract class` tail that
                 // `parse_export_declaration` already parses standalone, and
                 // tsc's own diagnostic set for that shape is still exactly
-                // one TS1029 (oracle-confirmed). Every other
-                // `export default <expr>` form admits no `abstract` modifier
-                // at all and is left to its existing, unaffected path.
+                // one TS1029 (oracle-confirmed). `export default function`
+                // (named, anonymous, or async) admits no `abstract` either,
+                // but `export` is still a legal modifier position on a
+                // function declaration, so it takes the ordinary
+                // `ModifierRun` container split rather than `Class`'s
+                // unconditional TS1029 (oracle-confirmed: TS1242 outside a
+                // Block, TS1184 inside one, unaffected by a namespace body).
+                // Every other `export default <expr>` form is a value
+                // expression, which takes `ExportAssignment`'s wider
+                // silencing instead (oracle-confirmed). A second `abstract`
+                // is only ever legal directly before `class`; anywhere else
+                // it is a separate, pre-existing gap (`abstract export
+                // default abstract;`, #16425) and left untouched here.
                 SyntaxKind::DefaultKeyword => {
                     self.next_token(); // skip `default`
-                    if self.is_token(SyntaxKind::AbstractKeyword) {
-                        self.next_token(); // skip a second, legal `abstract`
+                    match self.token() {
+                        SyntaxKind::AbstractKeyword => {
+                            self.next_token(); // skip a second, legal `abstract`
+                            matches!(self.token(), SyntaxKind::ClassKeyword)
+                                .then_some(AbstractExportTarget::Class)
+                        }
+                        SyntaxKind::ClassKeyword => Some(AbstractExportTarget::Class),
+                        SyntaxKind::FunctionKeyword => Some(AbstractExportTarget::ModifierRun),
+                        SyntaxKind::AsyncKeyword => self
+                            .look_ahead_is_async_function()
+                            .then_some(AbstractExportTarget::ModifierRun),
+                        _ => Some(AbstractExportTarget::ExportAssignment),
                     }
-                    matches!(self.token(), SyntaxKind::ClassKeyword)
-                        .then_some(AbstractExportTarget::Class)
                 }
                 // `export type { x }` / `export type * from "m"` is a type-only
                 // export declaration, not the type-alias form — same lookahead

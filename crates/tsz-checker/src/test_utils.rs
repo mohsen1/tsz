@@ -236,6 +236,14 @@ pub fn check_source_codes_with_parse_health(source: &str) -> Vec<u32> {
     parse_codes.into_iter().chain(checker_codes).collect()
 }
 
+/// Grammar-only (TS1029-and-siblings) parse-health helpers. Extracted to
+/// [`grammar_only_parse_health`] to keep this module under the file-size cap
+/// (§19); re-exported so existing call sites are unchanged.
+mod grammar_only_parse_health;
+pub use grammar_only_parse_health::{
+    check_source_codes_with_grammar_only_parse_health, check_source_with_grammar_only_parse_health,
+};
+
 /// Types that expose a diagnostic code for code-only test assertions.
 pub trait HasDiagnosticCode {
     fn diagnostic_code(&self) -> u32;
