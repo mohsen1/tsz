@@ -211,6 +211,8 @@ mod cross_file_generic_implements_type_param_arena_tests;
 mod cross_file_in_operator_indexed_element_narrowing_tests;
 #[path = "tests/cross_file_interface_property_access_tests.rs"]
 mod cross_file_interface_property_access_tests;
+#[path = "tests/cross_file_lib_generic_heritage_fuel_tests.rs"]
+mod cross_file_lib_generic_heritage_fuel_tests;
 #[path = "tests/cross_file_merged_symbol_value_computed_key_tests.rs"]
 mod cross_file_merged_symbol_value_computed_key_tests;
 #[path = "tests/cross_file_type_param_decl_identity_tests.rs"]

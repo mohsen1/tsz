@@ -980,6 +980,12 @@ impl<'a> CheckerState<'a> {
                     // For interfaces/type aliases, resolve through symbol type
                     if base_type.is_none() {
                         let resolved = self.get_type_of_symbol(base_sym_id);
+                        tracing::debug!(
+                            target: "tsz_16308_probe",
+                            base_name = %base_symbol_name,
+                            resolved_type_id = resolved.0,
+                            "merge_interface_heritage_types_inner base resolution",
+                        );
                         if resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN {
                             base_type = Some(resolved);
                         } else if !self.ctx.lib_contexts.is_empty() {
