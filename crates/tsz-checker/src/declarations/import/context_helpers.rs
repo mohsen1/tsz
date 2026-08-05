@@ -130,6 +130,72 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Whether a module element that has *already* drawn a placement diagnostic
+    /// still resolves its module specifier.
+    ///
+    /// Only meaningful for a node in a non-module-element context — i.e. one for
+    /// which [`Self::is_in_non_module_element_context`] is true. A declaration in a
+    /// valid context (`SourceFile`, or the `ModuleBlock` of an ambient module)
+    /// always resolves and must not consult this.
+    ///
+    /// tsc's `checkExportDeclaration` reports the placement diagnostic and then
+    /// `return`s, so `resolveExternalModuleName` — the only TS2307/TS2305 site — is
+    /// never reached. That return is reached only when a *declaration scope*
+    /// encloses the declaration: a function-like body, or a namespace/ambient-module
+    /// body it does not directly belong to. A container that opens no declaration
+    /// scope — a bare block, an `if`/loop/`try` body, a labeled statement, a
+    /// `switch` clause — leaves the declaration in the source file's own scope, and
+    /// resolution still runs there.
+    ///
+    /// The walk therefore stops at the first scope-opening ancestor and answers
+    /// from its kind, rather than testing for any single container shape.
+    ///
+    /// One measured exception is deliberately not encoded: a block inside
+    /// `declare global { }` keeps resolving, because a global augmentation re-opens
+    /// the global scope rather than introducing one. tsz reports no diagnostic at
+    /// all for that shape today, so the branch would be unreachable and untestable;
+    /// it is recorded here instead of written as dead code.
+    pub(crate) fn position_invalid_module_element_resolves_specifier(
+        &self,
+        node_idx: NodeIndex,
+    ) -> bool {
+        let mut current = node_idx;
+        while current.is_some() {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            current = ext.parent;
+            if current.is_none() {
+                break;
+            }
+            let Some(node) = self.ctx.arena.get(current) else {
+                break;
+            };
+            match node.kind {
+                // Function-like ancestors are the same set `is_inside_function_body`
+                // walks, including a class `static { }` block (#16450).
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::ARROW_FUNCTION
+                    || k == syntax_kind_ext::METHOD_DECLARATION
+                    || k == syntax_kind_ext::CONSTRUCTOR
+                    || k == syntax_kind_ext::GET_ACCESSOR
+                    || k == syntax_kind_ext::SET_ACCESSOR
+                    || k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION =>
+                {
+                    return false;
+                }
+                // Reaching a `ModuleBlock` from a position-invalid node means the
+                // node is nested *inside* a namespace/module body rather than being
+                // one of its own elements, so the body is a scope it sits within.
+                k if k == syntax_kind_ext::MODULE_BLOCK => return false,
+                k if k == syntax_kind_ext::SOURCE_FILE => return true,
+                _ => continue,
+            }
+        }
+        true
+    }
+
     /// Check if a node is inside a module augmentation
     /// (`declare module "string" { ... }`).  Module augmentations have a
     /// `MODULE_DECLARATION` ancestor whose name is a string literal.
