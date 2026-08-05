@@ -419,3 +419,230 @@ fn multiple_missing_cross_file_properties_carry_no_pointer() {
         "the two-missing form is TS2739, not TS2741: {diagnostics:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Anonymous (type-literal) targets — #16443.
+//
+// These targets resolve to no binder symbol, and cannot be made to: the
+// interner's `ObjectShape.symbol` participates in `Hash`/`PartialEq`, so giving
+// a type literal its own symbol would de-intern every structurally identical
+// anonymous object in the program, and hanging the declaration on the interned
+// shape instead would share one location across every occurrence of that shape.
+// The anchor therefore comes from the annotation *written at the failure site*,
+// which is per-occurrence by construction.
+//
+// Every expectation below is pinned against `typescript@7.0.2` with
+// `--noEmit --strict --pretty --target es2022 --lib es2022`.
+// ---------------------------------------------------------------------------
+
+/// The alias body is a type literal, so the alias declaration carries the
+/// member list and the pointer anchors on the signature as written.
+#[test]
+fn alias_to_type_literal_points_into_the_alias_body() {
+    let source = "type Lit = { alpha: string; beta: string };\nconst a: Lit = { alpha: \"a\" };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (file, start, length, message) = declared_here(&diagnostic);
+    assert_eq!(message, "'beta' is declared here.");
+    assert_eq!(span_text(source, start, length), "beta");
+    assert_eq!(file, "test.ts");
+}
+
+/// Binder names must not matter here either — the same shape under different
+/// identifiers anchors on whatever the annotation actually declares.
+#[test]
+fn alias_to_type_literal_renamed_binders_point_at_the_renamed_declaration() {
+    let source = "type Zed = { qux: string; wob: string };\nconst r: Zed = { qux: \"a\" };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, message) = declared_here(&diagnostic);
+    assert_eq!(message, "'wob' is declared here.");
+    assert_eq!(span_text(source, start, length), "wob");
+}
+
+/// An inline annotation has no declaration of its own anywhere — the written
+/// type literal *is* the declaration, and it is the one this binding was
+/// annotated with rather than any other literal of the same shape.
+#[test]
+fn inline_type_literal_annotation_points_into_itself() {
+    let source = "const b: { one: number; two: number } = { one: 1 };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, message) = declared_here(&diagnostic);
+    assert_eq!(message, "'two' is declared here.");
+    assert_eq!(span_text(source, start, length), "two");
+}
+
+/// Two structurally identical inline annotations intern to one `TypeId`. Each
+/// must still point at *its own* text — this is the case that any
+/// location-on-the-interned-shape design gets wrong, and it is why the anchor
+/// is taken from the annotation node.
+#[test]
+fn identical_inline_annotations_each_point_at_their_own_text() {
+    let source = "const first: { one: number; two: number } = { one: 1 };\n\
+                  const second: { one: number; two: number } = { one: 2 };\n";
+    let diagnostics = check_source_diagnostics(source);
+    let anchors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == TS2741)
+        .map(declared_here)
+        .collect();
+    assert_eq!(anchors.len(), 2, "both rows report: {diagnostics:?}");
+    let starts: Vec<u32> = anchors.iter().map(|(_, start, ..)| *start).collect();
+    assert_ne!(
+        starts[0], starts[1],
+        "each annotation anchors on its own `two`, not on a shared interned one: {anchors:?}"
+    );
+    for (_, start, length, message) in &anchors {
+        assert_eq!(message, "'two' is declared here.");
+        assert_eq!(span_text(source, *start, *length), "two");
+    }
+    assert!(
+        (starts[0] as usize) < source.find('\n').expect("two lines"),
+        "the first row anchors on the first line: {anchors:?}"
+    );
+}
+
+/// A parenthesized annotation is the same type literal with wrappers; the walk
+/// peels them rather than declining.
+#[test]
+fn parenthesized_type_literal_annotation_points_into_the_literal() {
+    let source = "const p: ({ mm: number; nn: number }) = { mm: 1 };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, message) = declared_here(&diagnostic);
+    assert_eq!(message, "'nn' is declared here.");
+    assert_eq!(span_text(source, start, length), "nn");
+}
+
+/// An alias chain declares no member list of its own, so the walk continues
+/// through the alias body until it reaches the literal that does.
+#[test]
+fn alias_chain_to_type_literal_points_at_the_final_body() {
+    let source = "type Zed = { qux: string; wob: string };\n\
+                  type Indirect = Zed;\n\
+                  const r: Indirect = { qux: \"a\" };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, message) = declared_here(&diagnostic);
+    assert_eq!(message, "'wob' is declared here.");
+    assert_eq!(span_text(source, start, length), "wob");
+    assert!(
+        (start as usize)
+            < source
+                .find("type Indirect")
+                .expect("the chain's middle link"),
+        "the anchor is in `Zed`'s body, not the alias that forwards to it"
+    );
+}
+
+/// A generic alias applied at the annotation still anchors on the type
+/// parameter's own signature as written in the alias body.
+#[test]
+fn generic_alias_application_points_into_the_uninstantiated_body() {
+    let source = "type Gen<TParam> = { gee: TParam; aitch: TParam };\n\
+                  const g: Gen<string> = { gee: \"a\" };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, message) = declared_here(&diagnostic);
+    assert_eq!(message, "'aitch' is declared here.");
+    assert_eq!(span_text(source, start, length), "aitch");
+}
+
+/// An indexed access resolves its written key against the object type's
+/// members and continues into that member's own type node.
+#[test]
+fn indexed_access_annotation_points_into_the_member_type_literal() {
+    let source = "interface Nest { inner: { p: number; q: number }; }\n\
+                  const c: Nest[\"inner\"] = { p: 1 };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, message) = declared_here(&diagnostic);
+    assert_eq!(message, "'q' is declared here.");
+    assert_eq!(span_text(source, start, length), "q");
+}
+
+/// A `return` is checked against the enclosing function's declared return
+/// type, so an anonymous return annotation anchors there.
+#[test]
+fn anonymous_return_type_annotation_points_into_itself() {
+    let source = "function ret(): { rp: number; rq: number } { return { rp: 1 }; }\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, message) = declared_here(&diagnostic);
+    assert_eq!(message, "'rq' is declared here.");
+    assert_eq!(span_text(source, start, length), "rq");
+}
+
+/// An assignment to an already-annotated binding anchors on that binding's
+/// annotation, not on the assignment.
+#[test]
+fn assignment_to_annotated_binding_points_into_the_declaration_annotation() {
+    let source = "let target: { ap: number; aq: number };\ntarget = { ap: 1 };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, message) = declared_here(&diagnostic);
+    assert_eq!(message, "'aq' is declared here.");
+    assert_eq!(span_text(source, start, length), "aq");
+}
+
+/// Negative arm: two unmatched properties is `TS2739`, which tsc leaves with
+/// no pointer — the anonymous route must not add one.
+#[test]
+fn anonymous_target_missing_two_properties_carries_no_pointer() {
+    let source =
+        "type Multi = { m1: string; m2: string; m3: string };\nconst m: Multi = { m1: \"a\" };\n";
+    let diagnostics = check_source_diagnostics(source);
+    let diagnostic = only(&diagnostics, TS2739);
+    assert!(
+        diagnostic
+            .related_information
+            .iter()
+            .all(|info| info.code != TS2728),
+        "TS2739 carries no declared-here pointer: {diagnostic:?}"
+    );
+}
+
+/// Negative arm: an argument's parameter annotation is not reachable from the
+/// call site's annotation walk, which stops at the statement boundary. tsc
+/// *does* point here (`fam.ts:1:38`), so this pins today's decline as a known
+/// remaining slice of #16443 rather than a wrong anchor — the assertion is
+/// that no pointer appears, never that a wrong one does.
+#[test]
+fn call_argument_against_anonymous_parameter_declines_rather_than_guessing() {
+    let source = "declare function f(arg: { u: number; v: number }): void;\nf({ u: 1 });\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    assert!(
+        diagnostic
+            .related_information
+            .iter()
+            .all(|info| info.code != TS2728),
+        "no pointer is produced for this shape today, and never a wrong one: {diagnostic:?}"
+    );
+}
+
+/// The annotation route is a *fallback*: a target that does resolve to a
+/// binder symbol must still anchor through the symbol route, so adding the
+/// fallback cannot shadow or relocate an existing pointer.
+#[test]
+fn named_target_still_anchors_through_the_symbol_route() {
+    let source = "type Src = { one: number };\n\
+                  interface Want { one: number; two: number }\n\
+                  declare const s: Src;\n\
+                  const w: Want = s;\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, message) = declared_here(&diagnostic);
+    assert_eq!(message, "'two' is declared here.");
+    assert_eq!(span_text(source, start, length), "two");
+    assert!(
+        (start as usize) > source.find("interface Want").expect("the interface"),
+        "the anchor is `Want`'s own member, not anything in `Src`"
+    );
+}
+
+/// A cross-file imported alias whose body is a type literal — one of the three
+/// shapes the module header above recorded as producing no pointer. The
+/// annotation route resolves the alias through its *declaring* file's arena, so
+/// this now anchors in `dep.ts`, oracle-exact.
+#[test]
+fn imported_alias_to_type_literal_points_into_the_declaring_file() {
+    let dep = "export type Remote = { rone: string; rtwo: string };\n";
+    let entry = "import { Remote } from \"./dep\";\nconst m: Remote = { rone: \"a\" };\n";
+    let diagnostics = check_stamped(&[("dep.ts", dep), ("test.ts", entry)], "test.ts");
+    let diagnostic = only(&diagnostics, TS2741);
+    let (file, start, length, message) = declared_here(&diagnostic);
+    assert_eq!(message, "'rtwo' is declared here.");
+    assert_eq!(file, "dep.ts");
+    assert_eq!(span_text(dep, start, length), "rtwo");
+}

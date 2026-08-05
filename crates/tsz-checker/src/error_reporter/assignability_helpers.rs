@@ -652,7 +652,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Resolve the assignment target's type-annotation node from an anchor.
-    fn target_annotation_node(&self, anchor_idx: NodeIndex) -> Option<NodeIndex> {
+    pub(super) fn target_annotation_node(&self, anchor_idx: NodeIndex) -> Option<NodeIndex> {
         use tsz_parser::parser::syntax_kind_ext;
         // The anchor may be the annotated declaration itself or, more commonly, a
         // descendant such as the initializer expression. Walk up the ancestor

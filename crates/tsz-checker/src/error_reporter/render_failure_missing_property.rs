@@ -626,6 +626,7 @@ impl<'a> CheckerState<'a> {
         if depth == 0
             && let Some(related) = self.missing_property_declared_here_related(
                 &[target, target_type],
+                idx,
                 property_name,
                 &prop_name_display,
             )
