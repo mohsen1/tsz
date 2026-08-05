@@ -12,7 +12,7 @@
 //! tsz already modelled this for a namespace body
 //! (`namespace_import_alias_is_referenced`). A function body, a method body and a
 //! class static block took a different path — an unqualified early return under the
-//! comment *"tsc doesn't resolve require() inside functions"*. It does, when the
+//! comment *"tsc doesn't resolve `require()` inside functions"*. It does, when the
 //! alias is referenced, so that arm **swallowed** a TS2307 tsc reports.
 //!
 //! The scope test is what keeps the rule narrow, and it is the half that is easy to
