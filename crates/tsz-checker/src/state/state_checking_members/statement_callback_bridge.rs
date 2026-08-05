@@ -229,6 +229,17 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                         crate::diagnostics::diagnostic_messages::EXPORT_DECLARATIONS_ARE_NOT_PERMITTED_IN_A_NAMESPACE,
                         crate::diagnostics::diagnostic_codes::EXPORT_DECLARATIONS_ARE_NOT_PERMITTED_IN_A_NAMESPACE,
                     );
+                    if has_from {
+                        // tsc reports TS1194 from `checkExternalImportOrExportDeclaration`,
+                        // which then returns `false`; the caller gates module resolution
+                        // on that result, so the specifier is never resolved and no
+                        // TS2307 follows. Only the `from` form reaches the resolution
+                        // path at all, and only a declaration whose parent is a
+                        // *namespace* body reaches here — inside `declare module "m"`
+                        // the parent is that module's own block, which is a valid
+                        // module-element context, so resolution still runs there.
+                        return;
+                    }
                 }
             }
 
@@ -245,14 +256,24 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             self.check_import_attributes_grammar(export_decl.attributes, export_decl.is_type_only);
 
             // Check module specifier for unresolved modules (TS2792)
-            if export_decl.module_specifier.is_some() {
+            //
+            // A declaration whose placement is already invalid resolves its
+            // specifier only when no declaration scope encloses it: tsc's
+            // `checkExportDeclaration` returns at the placement diagnostic, and
+            // everything downstream — TS2307, the re-exported-member validation
+            // (TS2305) and TS2498 — goes with it. See
+            // `position_invalid_module_element_resolves_specifier` for which
+            // containers open a scope and which do not.
+            let resolves_specifier = !in_non_module_context
+                || self.position_invalid_module_element_resolves_specifier(export_idx);
+            if export_decl.module_specifier.is_some() && resolves_specifier {
                 self.check_export_module_specifier(export_idx);
                 // TS2498: export * from a module that uses export =
                 self.check_export_star_of_export_equals_module(export_idx);
             }
 
             // TS2498: `export *` (or `export * as ns`) from a module that uses `export =`
-            if export_decl.module_specifier.is_some() {
+            if export_decl.module_specifier.is_some() && resolves_specifier {
                 let is_star_export = export_decl.export_clause.is_none()
                     || self
                         .ctx
