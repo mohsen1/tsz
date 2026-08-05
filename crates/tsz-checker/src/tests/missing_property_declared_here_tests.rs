@@ -846,21 +846,55 @@ fn anonymous_target_missing_two_properties_carries_no_pointer() {
     );
 }
 
-/// Negative arm: an argument's parameter annotation is not reachable from the
-/// call site's annotation walk, which stops at the statement boundary. tsc
-/// *does* point here (`fam.ts:1:38`), so this pins today's decline as a known
-/// remaining slice of #16443 rather than a wrong anchor — the assertion is
-/// that no pointer appears, never that a wrong one does.
+/// Row 3 of #16443: a call argument's missing property points at the matched
+/// parameter's own anonymous type-literal annotation, one call/new-expression
+/// hop past the statement boundary `target_annotation_node` otherwise stops
+/// at. The callee must resolve to a single (non-overloaded) same-file
+/// `function` declaration and the matched parameter must not be a rest
+/// parameter; see `call_argument_annotation_node`'s doc comment for why.
 #[test]
-fn call_argument_against_anonymous_parameter_declines_rather_than_guessing() {
+fn call_argument_against_anonymous_parameter_points_at_the_parameter_annotation() {
     let source = "declare function f(arg: { u: number; v: number }): void;\nf({ u: 1 });\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, message) = declared_here(&diagnostic);
+    assert_eq!(message, "'v' is declared here.");
+    assert_eq!(span_text(source, start, length), "v");
+}
+
+/// Negative control: an overloaded callee reports `TS2769` ("No overload
+/// matches this call"), not a bare `TS2741`, so the single-declaration guard
+/// in `call_argument_annotation_node` is never even reached here — this pins
+/// that no `TS2728` pointer leaks in from it regardless.
+#[test]
+fn call_argument_against_overloaded_callee_reports_no_overload_matches() {
+    let source = "declare function f(arg: { u: number; v: number }): void;\n\
+                  declare function f(arg: string): void;\n\
+                  f({ u: 1 });\n";
+    let diags = check_source_diagnostics(source);
+    assert!(
+        diags.iter().any(|d| d.code == 2769),
+        "expected TS2769 (no overload matches): {diags:?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .all(|d| d.related_information.iter().all(|info| info.code != TS2728)),
+        "an overloaded callee must not leak a TS2728 pointer: {diags:?}"
+    );
+}
+
+/// Negative control: a rest parameter is not a sound positional match — the
+/// argument index does not name one declared parameter.
+#[test]
+fn call_argument_against_rest_parameter_declines_rather_than_guessing() {
+    let source = "declare function f(...args: { u: number; v: number }[]): void;\nf({ u: 1 });\n";
     let diagnostic = only(&check_source_diagnostics(source), TS2741);
     assert!(
         diagnostic
             .related_information
             .iter()
             .all(|info| info.code != TS2728),
-        "no pointer is produced for this shape today, and never a wrong one: {diagnostic:?}"
+        "a rest parameter is not a positional match: {diagnostic:?}"
     );
 }
 
