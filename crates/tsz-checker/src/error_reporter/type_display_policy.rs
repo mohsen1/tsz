@@ -97,13 +97,31 @@ impl<'a> CheckerState<'a> {
             return ty;
         };
         // The key must be a shape tsc reduces eagerly (literal, union, unique
-        // symbol, typeof query, or the bare string/number primitive — the
-        // array/tuple element idiom `Arr[number]`); a still-deferred key
-        // shape (type parameter, conditional, another indexed access, keyof,
-        // ...) keeps tsc's own indexed access deferred too. `keyof` is
-        // excluded deliberately, not just unimplemented — see
-        // `is_display_reducible_index_key`'s doc comment.
-        if !common::is_display_reducible_index_key(db, indexed.index_type) {
+        // symbol, typeof query, the bare string/number primitive — the
+        // array/tuple element idiom `Arr[number]` — or a `keyof` operator over a
+        // concrete operand). A still-deferred key shape (type parameter,
+        // conditional, another indexed access) keeps tsc's own indexed access
+        // deferred too, and the free-type-parameter guard below rejects a
+        // generic `keyof T`.
+        //
+        // `keyof` is admitted here rather than in the shared
+        // `is_display_reducible_index_key` classifier for two reasons. First, it
+        // confines the widening to the assignment-display gate and leaves the
+        // solver's application-argument / index-object display paths (which share
+        // the narrower classifier) untouched. Second, a reduced `keyof` access
+        // can intern onto the very `TypeId` that a *sibling* expression already
+        // stamped with a `display_alias` — `type Pair<T> = Pairs<T>[keyof T]`
+        // reduces `Pairs<FooBar>[keyof FooBar]` onto the same union `Pair<FooBar>`
+        // instantiates to, and the members can equally carry their *own* alias
+        // (`Q[keyof Q]` where every member is `Partial<X>`). tsz's
+        // `TypeId`-keyed `display_alias` table cannot tell tsc's per-reference
+        // `aliasSymbol` apart from either, so the reduced result is only used
+        // when it carries *no* alias at all (the `keyof`-only guard below).
+        // Otherwise the access is left as written — tsc's safe fallback, matching
+        // the residual policy #16461 / #16469 already established for the deferred
+        // rows — rather than risk repainting it with an unrelated name.
+        let index_is_keyof = common::is_keyof_type(db, indexed.index_type);
+        if !common::is_display_reducible_index_key(db, indexed.index_type) && !index_is_keyof {
             return ty;
         }
         // A free type parameter anywhere in the object or index means the
@@ -124,6 +142,16 @@ impl<'a> CheckerState<'a> {
                 resolved,
             )
         {
+            return ty;
+        }
+        // `keyof`-only conservative guard: only reduce when the result carries no
+        // ambiguous `display_alias`. When it does (a sibling alias, or the
+        // members' own), leave the access as written so the reduction never
+        // repaints it with the wrong name and never pre-empts the target role's
+        // union member-splitting path (which already renders these correctly).
+        // The literal / union / primitive-key reductions are unaffected — they
+        // keep reducing unconditionally, exactly as before.
+        if index_is_keyof && self.ctx.types.get_display_alias(resolved).is_some() {
             return ty;
         }
         resolved
