@@ -36,6 +36,7 @@ mod core_formatting;
 pub(crate) mod display_budget;
 mod emitters;
 mod expected_type_from_property;
+mod expected_type_from_return;
 mod fingerprint_policy;
 mod generic_display_helpers;
 mod generics;

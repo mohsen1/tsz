@@ -596,7 +596,7 @@ impl<'a> CheckerState<'a> {
     /// The member list a type's declaration owns: interfaces and classes carry
     /// theirs directly, a type alias carries its body's when that body is a
     /// type literal.
-    fn declaration_member_list(
+    pub(super) fn declaration_member_list(
         arena: &NodeArena,
         decl_idx: NodeIndex,
     ) -> Option<tsz_parser::parser::NodeList> {
@@ -654,7 +654,7 @@ impl<'a> CheckerState<'a> {
     /// (`PROPERTY_DECLARATION`/`METHOD_DECLARATION`) stores it on the
     /// distinct `PropertyDeclData`/`MethodDeclData` instead, so each kind
     /// needs its own accessor rather than one shared `get_signature` call.
-    fn member_name_node(arena: &NodeArena, member_idx: NodeIndex) -> Option<NodeIndex> {
+    pub(super) fn member_name_node(arena: &NodeArena, member_idx: NodeIndex) -> Option<NodeIndex> {
         use tsz_parser::parser::syntax_kind_ext;
 
         let node = arena.get(member_idx)?;
@@ -680,7 +680,7 @@ impl<'a> CheckerState<'a> {
     /// is done here against the declaration's own arena: an identifier is its
     /// escaped text, a string-literal name is its text plus the two quotes it
     /// was written with, and anything else keeps the node span.
-    fn anchor_span(arena: &NodeArena, anchor_idx: NodeIndex) -> Option<(u32, u32)> {
+    pub(super) fn anchor_span(arena: &NodeArena, anchor_idx: NodeIndex) -> Option<(u32, u32)> {
         use tsz_scanner::SyntaxKind;
 
         let node = arena.get(anchor_idx)?;
@@ -721,7 +721,7 @@ impl<'a> CheckerState<'a> {
     /// File name owning `idx` in `arena`, walked from the node itself so a
     /// cross-file declaration reports its own file rather than the file the
     /// primary diagnostic lives in.
-    fn arena_file_name(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+    pub(super) fn arena_file_name(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
         let mut current = idx;
         while current.is_some() {
             let node = arena.get(current)?;
