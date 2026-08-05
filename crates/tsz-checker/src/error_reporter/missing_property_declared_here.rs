@@ -28,9 +28,62 @@ impl<'a> CheckerState<'a> {
         property_display: &str,
     ) -> Option<DiagnosticRelatedInformation> {
         let property = self.ctx.types.resolve_atom(property_name);
-        owner_candidates.iter().find_map(|&owner| {
-            self.declared_here_related_for_owner(owner, &property, property_display)
-        })
+        owner_candidates
+            .iter()
+            .find_map(|&owner| {
+                self.declared_here_related_for_owner(owner, &property, property_display)
+            })
+            .or_else(|| {
+                owner_candidates.iter().find_map(|&owner| {
+                    self.declared_here_related_for_anonymous_property(
+                        owner,
+                        &property,
+                        property_display,
+                    )
+                })
+            })
+    }
+
+    /// Fallback for an owner with no declaring symbol at all — an anonymous
+    /// object type such as a type literal, reached directly or through a
+    /// type alias / indexed access that resolves to one.
+    ///
+    /// `declared_here_related_for_owner` above declines immediately for these:
+    /// `resolve_type_to_symbol_id` and `type_shape_symbol` both bottom out in
+    /// `ObjectShape.symbol`, and a type literal never gets one (tsz's binder
+    /// mints no symbol for `TYPE_LITERAL` nodes). The property itself still
+    /// carries its own declaration span when it came from
+    /// `get_type_from_type_literal`, so this reads that directly instead of
+    /// walking a symbol's member table.
+    ///
+    /// Known gap (#16443 follow-up): `declared_location` is deliberately
+    /// identity-exempt in `PropertyInfo`'s `Eq`/`Hash` (it is diagnostic-only,
+    /// not structural), so the type interner's structural hash-consing can
+    /// return an earlier-cached copy of an equal-shaped object that carries no
+    /// location — e.g. an interface member whose own type is a type literal,
+    /// reached again through an indexed access. Direct type-alias, inline, and
+    /// parameter-position type literals are unaffected; this only declines
+    /// (never anchors wrong) when it happens.
+    fn declared_here_related_for_anonymous_property(
+        &self,
+        owner: TypeId,
+        property: &str,
+        property_display: &str,
+    ) -> Option<DiagnosticRelatedInformation> {
+        let info = crate::query_boundaries::common::find_property_by_str(
+            self.ctx.types.as_type_database(),
+            owner,
+            property,
+        )?;
+        let (start, length, file) =
+            self.declared_here_member_anchor(info.declared_location, property, None)?;
+        Some(Diagnostic::related_pointer(
+            diagnostic_codes::IS_DECLARED_HERE,
+            file.unwrap_or_else(|| self.ctx.file_name.clone()),
+            start,
+            length,
+            format_message(diagnostic_messages::IS_DECLARED_HERE, &[property_display]),
+        ))
     }
 
     /// Resolve `owner` to its declaring symbol, find the member declaration

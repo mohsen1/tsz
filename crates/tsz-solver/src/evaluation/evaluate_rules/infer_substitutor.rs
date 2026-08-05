@@ -202,6 +202,7 @@ impl<'a> InferSubstitutor<'a> {
                         is_symbol_named: prop.is_symbol_named,
                         single_quoted_name: prop.single_quoted_name,
                         non_widening: false,
+                        declared_location: prop.declared_location,
                     });
                 }
                 if changed {
@@ -239,6 +240,7 @@ impl<'a> InferSubstitutor<'a> {
                         is_symbol_named: prop.is_symbol_named,
                         single_quoted_name: prop.single_quoted_name,
                         non_widening: false,
+                        declared_location: prop.declared_location,
                     });
                 }
                 let string_index = shape.string_index.as_ref().map(|index| {
@@ -575,6 +577,7 @@ impl<'a> InferSubstitutor<'a> {
                             is_symbol_named: prop.is_symbol_named,
                             single_quoted_name: prop.single_quoted_name,
                             non_widening: false,
+                            declared_location: prop.declared_location,
                         }
                     })
                     .collect();

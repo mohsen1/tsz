@@ -136,6 +136,7 @@ impl<'a> NarrowingContext<'a> {
                 is_symbol_named: false,
                 single_quoted_name: false,
                 non_widening: false,
+                declared_location: tsz_binder::StableLocation::NONE,
             };
             let filter_obj = self.db.object(vec![required_prop]);
             let narrowed = self.db.intersection2(TypeId::OBJECT, filter_obj);
@@ -396,6 +397,7 @@ impl<'a> NarrowingContext<'a> {
             is_symbol_named,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         };
         self.db
             .object_with_flags(vec![required_prop], ObjectFlags::IN_OPERATOR_RECORD)

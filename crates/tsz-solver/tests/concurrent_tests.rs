@@ -86,6 +86,7 @@ fn test_concurrent_object_creation() {
                     is_symbol_named: false,
                     single_quoted_name: false,
                     non_widening: false,
+                    declared_location: tsz_binder::StableLocation::NONE,
                 },
             ];
             interner.object(props)
@@ -216,6 +217,7 @@ fn test_concurrent_property_map_building() {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         })
         .collect();
 

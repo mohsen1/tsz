@@ -1006,6 +1006,7 @@ fn test_intersection_with_primitive_weak_type_check_not_suppressed() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     let obj_two = interner.object(vec![PropertyInfo {
@@ -1022,6 +1023,7 @@ fn test_intersection_with_primitive_weak_type_check_not_suppressed() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     let source = interner.intersection(vec![obj_two, TypeId::STRING]);

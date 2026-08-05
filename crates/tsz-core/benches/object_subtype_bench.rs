@@ -26,6 +26,7 @@ fn make_object(interner: &TypeInterner, count: usize) -> TypeId {
             parent_id: None,
             declaration_order: 0,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         });
     }
 

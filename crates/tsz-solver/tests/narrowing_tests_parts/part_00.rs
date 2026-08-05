@@ -325,6 +325,7 @@ fn test_negative_in_property_narrowing_reuses_required_property_cache() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     };
     let optional_prop = PropertyInfo {
         name: kind_name,
@@ -340,6 +341,7 @@ fn test_negative_in_property_narrowing_reuses_required_property_cache() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     };
 
     let required_obj = interner.object(vec![required_prop]);

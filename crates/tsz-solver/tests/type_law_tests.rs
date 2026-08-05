@@ -579,6 +579,7 @@ fn test_coinductive_recursive_type_reflexivity() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // Register the type in the environment
@@ -621,6 +622,7 @@ fn test_coinductive_mutually_recursive_types() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // B = { a: A }
@@ -639,6 +641,7 @@ fn test_coinductive_mutually_recursive_types() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     env.insert(sym_a, type_a);

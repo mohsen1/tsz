@@ -1096,6 +1096,7 @@ fn test_variance_method_bivariant_params() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false, non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         }],
         string_index: None,
         number_index: None,
@@ -1134,6 +1135,7 @@ fn test_variance_method_bivariant_params() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false, non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         }],
         string_index: None,
         number_index: None,
@@ -1180,6 +1182,7 @@ fn test_variance_function_property_contravariant() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // Object with function property taking wide param
@@ -1210,6 +1213,7 @@ fn test_variance_function_property_contravariant() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // Wide param function <: narrow param function (contravariant)

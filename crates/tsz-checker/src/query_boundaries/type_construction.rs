@@ -5,7 +5,7 @@
 //! over direct `TypeInterner` access. Test code may use the re-exported
 //! `TypeInterner` type for scaffolding.
 
-use tsz_binder::SymbolId;
+use tsz_binder::{StableLocation, SymbolId};
 use tsz_common::Atom;
 use tsz_solver::construction::TypeDatabase;
 #[cfg(test)]
@@ -26,6 +26,10 @@ pub(crate) struct DeclaredSurfaceProperty {
     pub(crate) is_string_named: bool,
     pub(crate) is_symbol_named: bool,
     pub(crate) single_quoted_name: bool,
+    /// Source span of the property signature itself, for the `'x' is
+    /// declared here.` pointer. `StableLocation::NONE` when the caller has
+    /// no declaration to anchor (e.g. a synthesized property).
+    pub(crate) declared_location: StableLocation,
 }
 
 pub(crate) const fn declared_surface_property(input: DeclaredSurfaceProperty) -> PropertyInfo {
@@ -44,6 +48,7 @@ pub(crate) const fn declared_surface_property(input: DeclaredSurfaceProperty) ->
         is_symbol_named: input.is_symbol_named,
         single_quoted_name: input.single_quoted_name,
         non_widening: false,
+        declared_location: input.declared_location,
     }
 }
 

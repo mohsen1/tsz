@@ -419,3 +419,86 @@ fn multiple_missing_cross_file_properties_carry_no_pointer() {
         "the two-missing form is TS2739, not TS2741: {diagnostics:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Anonymous object targets (type literals).
+//
+// `missing_property_declared_here_related`'s owner-symbol walk declines
+// immediately for these: both `resolve_type_to_symbol_id` and
+// `type_shape_symbol` bottom out in `ObjectShape.symbol`, and tsz's binder
+// mints no symbol for a `TYPE_LITERAL` node (`symbol_flags::TYPE_LITERAL` is
+// reserved but never set). `get_type_from_type_literal` now stamps each
+// property's own `declared_location` at construction time, and a fallback
+// reads that directly instead of walking a symbol's member table. Three
+// shapes pinned against `typescript@7.0.2`; split out of #16415 row 2 as
+// #16443.
+//
+// A fourth shape from #16443 — an indexed access into an interface member
+// whose own type is a type literal (`Nest["inner"]`) — is NOT covered here.
+// The type interner hash-conses `ObjectShape` structurally, and
+// `declared_location` is deliberately identity-exempt (diagnostic-only, not
+// structural — see the field's doc comment on `PropertyInfo`), so this shape
+// can come back from the intern cache via a path that never stamped a
+// location. Output is unchanged (still no pointer, never a wrong one); left
+// as a follow-up rather than widening this slice into the interner's caching
+// order.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn type_alias_type_literal_target_points_at_the_underlying_property() {
+    let source = "type Lit = { alpha: string; beta: string };\nconst a: Lit = { alpha: \"a\" };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, message) = declared_here(&diagnostic);
+    assert_eq!(message, "'beta' is declared here.");
+    assert_eq!(span_text(source, start, length), "beta");
+}
+
+#[test]
+fn inline_type_literal_annotation_points_at_the_property() {
+    let source = "const b: { one: number; two: number } = { one: 1 };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, message) = declared_here(&diagnostic);
+    assert_eq!(message, "'two' is declared here.");
+    assert_eq!(span_text(source, start, length), "two");
+}
+
+#[test]
+fn parameter_type_literal_annotation_points_at_the_property() {
+    let source = "declare function f(arg: { u: number; v: number }): void;\nf({ u: 1 });\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, message) = declared_here(&diagnostic);
+    assert_eq!(message, "'v' is declared here.");
+    assert_eq!(span_text(source, start, length), "v");
+}
+
+/// Renamed binders must not matter for a type literal either: the property is
+/// found by name in the shape's own member list, not through any identifier.
+#[test]
+fn renamed_type_literal_property_points_at_the_renamed_declaration() {
+    let source = "type Coord = { alpha: number; omega: number };\nconst c: Coord = { alpha: 1 };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, message) = declared_here(&diagnostic);
+    assert_eq!(message, "'omega' is declared here.");
+    assert_eq!(span_text(source, start, length), "omega");
+}
+
+/// Negative control: two or more unmatched properties on a type-literal
+/// target is still TS2739, still with no pointer, exactly as the
+/// symbol-backed case above.
+#[test]
+fn multiple_missing_type_literal_properties_carry_no_pointer() {
+    let source = "type P3 = { x: number; y: number; z: number };\nconst q: P3 = { x: 1 };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2739);
+    assert!(
+        diagnostic
+            .related_information
+            .iter()
+            .all(|info| info.code != TS2728),
+        "TS2739 must not carry a declared-here pointer: {:?}",
+        diagnostic
+            .related_information
+            .iter()
+            .map(|info| (info.code, info.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}

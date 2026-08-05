@@ -745,6 +745,7 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                 is_symbol_named: key.is_symbol_named,
                 single_quoted_name: false,
                 non_widening: false,
+                declared_location: tsz_binder::StableLocation::NONE,
             });
         }
 
@@ -898,6 +899,7 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
                         is_symbol_named: prop.is_symbol_named,
                         single_quoted_name: prop.single_quoted_name,
                         non_widening: false,
+                        declared_location: prop.declared_location,
                     });
                 }
             }

@@ -407,6 +407,7 @@ fn test_indexed_access_intersection_with_unconstrained_type_param() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // Create intersection S & State<T>

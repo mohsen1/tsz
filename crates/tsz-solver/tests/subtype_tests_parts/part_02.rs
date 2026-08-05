@@ -936,6 +936,7 @@ fn test_method_source_is_strict_against_function_property() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     let target = interner.object(vec![PropertyInfo {
@@ -952,6 +953,7 @@ fn test_method_source_is_strict_against_function_property() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     assert!(!checker.is_subtype_of(source, target));
@@ -1010,6 +1012,7 @@ fn test_function_source_bivariant_against_method_property() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     let target = interner.object(vec![PropertyInfo {
@@ -1026,6 +1029,7 @@ fn test_function_source_bivariant_against_method_property() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     assert!(checker.is_subtype_of(source, target));

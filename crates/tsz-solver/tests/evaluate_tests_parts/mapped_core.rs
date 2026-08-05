@@ -537,6 +537,7 @@ fn test_mapped_type_key_remap_filters_keys() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     assert_eq!(result, expected);
@@ -619,6 +620,7 @@ fn test_mapped_type_remove_readonly_modifier() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false, non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo::new(b_name, TypeId::STRING),
     ]);
@@ -673,6 +675,7 @@ fn test_mapped_type_remove_optional_modifier() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false, non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo::new(b_name, TypeId::NUMBER),
     ]);
@@ -727,6 +730,7 @@ fn test_mapped_type_add_readonly_modifier() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false, non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo::readonly(y_name, TypeId::BOOLEAN),
     ]);
@@ -781,6 +785,7 @@ fn test_mapped_type_add_optional_modifier() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false, non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo::opt(foo_name, TypeId::STRING),
     ]);
@@ -831,6 +836,7 @@ fn test_mapped_type_both_modifiers() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     assert_eq!(result, expected);
@@ -879,6 +885,7 @@ fn test_mapped_type_both_remove_modifiers() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     assert_eq!(result, expected);
@@ -927,6 +934,7 @@ fn test_mapped_type_add_readonly_remove_optional() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     assert_eq!(result, expected);
@@ -975,6 +983,7 @@ fn test_mapped_type_remove_readonly_add_optional() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     assert_eq!(result, expected);
@@ -1030,6 +1039,7 @@ fn test_mapped_type_minus_readonly_on_readonly_source() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false, non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo::new(b_name, TypeId::STRING),
     ]);
@@ -1083,6 +1093,7 @@ fn test_mapped_type_plus_optional_on_required_source() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false, non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo::opt(y_name, TypeId::NUMBER),
     ]);
@@ -1254,6 +1265,7 @@ fn test_mapped_type_add_both_modifiers_on_source() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     assert_eq!(result, expected);

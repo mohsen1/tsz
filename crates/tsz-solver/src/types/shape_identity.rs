@@ -43,6 +43,9 @@ impl PartialEq for PropertyInfo {
             // still widen. tsc encodes this as a fresh-vs-regular literal-type
             // split; tsz carries it on the property so the two intern apart.
             non_widening,
+            // Identity-exempt: diagnostic-only anchor for the `'x' is declared
+            // here.` pointer, not part of the property's structural shape.
+            declared_location: _,
         } = self;
         *name == other.name
             && *type_id == other.type_id
@@ -84,6 +87,8 @@ impl std::hash::Hash for PropertyInfo {
             single_quoted_name: _,
             // Identity-bearing: see the `PartialEq` impl above.
             non_widening,
+            // Identity-exempt: see the `PartialEq` impl above.
+            declared_location: _,
         } = self;
         name.hash(state);
         type_id.hash(state);

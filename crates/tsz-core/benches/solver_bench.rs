@@ -32,6 +32,7 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
             parent_id: None,
             declaration_order: 0,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo {
             name: name_y,
@@ -48,6 +49,7 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
             parent_id: None,
             declaration_order: 0,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
     ]);
 
@@ -66,6 +68,7 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
         parent_id: None,
         declaration_order: 0,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     let extra_required = interner.object(vec![
@@ -84,6 +87,7 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
             parent_id: None,
             declaration_order: 0,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo {
             name: name_z,
@@ -100,6 +104,7 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
             parent_id: None,
             declaration_order: 0,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
     ]);
 
@@ -119,6 +124,7 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
             parent_id: None,
             declaration_order: 0,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo {
             name: name_y,
@@ -135,6 +141,7 @@ fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
             parent_id: None,
             declaration_order: 0,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
     ]);
 
@@ -213,6 +220,7 @@ fn build_property_lookup_fixture(interner: &TypeInterner) -> (ObjectShapeId, Ato
             parent_id: None,
             declaration_order: 0,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         });
     }
 

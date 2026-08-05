@@ -82,6 +82,7 @@ pub(super) fn public_export_property(
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }
 }
 
@@ -126,6 +127,7 @@ fn commonjs_export_property_with_write(
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }
 }
 
@@ -633,6 +635,7 @@ impl JsExportSurface {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: existing.declared_location,
         }
     }
 
@@ -1518,6 +1521,7 @@ impl<'a> CheckerState<'a> {
                     is_symbol_named: false,
                     single_quoted_name: false,
                     non_widening: false,
+                    declared_location: tsz_binder::StableLocation::NONE,
                 });
             }
         }
@@ -1813,6 +1817,7 @@ mod tests {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         }
     }
 

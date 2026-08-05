@@ -1325,6 +1325,7 @@ fn test_property_with_divergent_write_type() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     };
     let obj = interner.object(vec![prop]);
 

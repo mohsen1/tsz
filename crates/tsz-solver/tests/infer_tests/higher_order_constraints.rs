@@ -1648,6 +1648,7 @@ fn test_default_recursive_type() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
     ctx.add_upper_bound(var_t, node);
     ctx.add_lower_bound(var_t, node);

@@ -109,6 +109,7 @@ fn test_this_parameter_method_source_is_strict_against_function_property() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     let target = interner.object(vec![PropertyInfo {
@@ -125,6 +126,7 @@ fn test_this_parameter_method_source_is_strict_against_function_property() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     assert!(!checker.is_subtype_of(source, target));
@@ -173,6 +175,7 @@ fn test_this_parameter_function_source_bivariant_against_method_property() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     let target = interner.object(vec![PropertyInfo {
@@ -189,6 +192,7 @@ fn test_this_parameter_function_source_bivariant_against_method_property() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     assert!(checker.is_subtype_of(source, target));
@@ -1118,6 +1122,7 @@ fn test_mapped_type_over_number_keys_optional_readonly_add_subtyping() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
     let required_readonly =
         interner.object(vec![PropertyInfo::readonly(to_fixed, TypeId::BOOLEAN)]);
@@ -1464,6 +1469,7 @@ fn test_mapped_type_optional_readonly_add_subtyping() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false, non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo {
             name: name_b,
@@ -1479,6 +1485,7 @@ fn test_mapped_type_optional_readonly_add_subtyping() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false, non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
     ]);
     let mutable_required_target = interner.object(vec![
@@ -1529,6 +1536,7 @@ fn test_mapped_type_optional_readonly_remove_subtyping() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     assert!(checker.is_subtype_of(mapped, mutable_required_target));

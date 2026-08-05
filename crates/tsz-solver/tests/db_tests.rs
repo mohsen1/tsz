@@ -307,6 +307,7 @@ fn query_cache_caches_object_spread_properties() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     let second_obj = db.object_with_flags(
@@ -325,6 +326,7 @@ fn query_cache_caches_object_spread_properties() {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         }],
         ObjectFlags::FRESH_LITERAL,
     );
@@ -505,6 +507,7 @@ fn prune_impossible_object_union_members_memo_is_byte_identical_and_reused() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     };
 
     let lit_a = interner.literal_string("a");

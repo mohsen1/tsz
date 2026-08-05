@@ -820,6 +820,7 @@ fn test_resolve_bounds_object_readonly_property_missing_ok() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
     let lower = interner.object(Vec::new());
 

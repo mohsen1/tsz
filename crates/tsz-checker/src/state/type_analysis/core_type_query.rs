@@ -1066,6 +1066,7 @@ impl<'a> CheckerState<'a> {
                     is_symbol_named: false,
                     single_quoted_name: false,
                     non_widening: false,
+                    declared_location: tsz_binder::StableLocation::NONE,
                 }
             })
             .collect();
@@ -1610,6 +1611,7 @@ impl<'a> CheckerState<'a> {
                     is_symbol_named: false,
                     single_quoted_name: false,
                     non_widening: false,
+                    declared_location: tsz_binder::StableLocation::NONE,
                 });
             }
             let export_equals_import_type_module = self

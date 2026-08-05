@@ -75,6 +75,7 @@ fn classify_source_plain_object() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
     assert_eq!(
         classify_mapped_source(&interner, obj),
@@ -297,6 +298,7 @@ fn collect_source_props_from_object() {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo {
             name: b_name,
@@ -313,6 +315,7 @@ fn collect_source_props_from_object() {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
     ]);
     let props = collect_homomorphic_source_properties(&interner, obj);

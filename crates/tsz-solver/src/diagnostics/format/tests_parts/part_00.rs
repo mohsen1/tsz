@@ -250,6 +250,7 @@ fn object_type_with_hyphenated_property_quoted() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     };
     let obj = db.object(vec![prop]);
     let mut fmt = TypeFormatter::new(&db);

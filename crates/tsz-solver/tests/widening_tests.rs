@@ -108,6 +108,7 @@ fn test_widen_object_properties() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }];
     let obj_type = interner.object(props);
 
@@ -175,6 +176,7 @@ fn test_widen_nested_object_properties() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }];
     let inner_obj = interner.object(inner_props);
 
@@ -193,6 +195,7 @@ fn test_widen_nested_object_properties() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }];
     let outer_obj = interner.object(outer_props);
 
@@ -244,6 +247,7 @@ fn test_widen_readonly_property_preserved() {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo {
             name: interner.intern_string("b"),
@@ -260,6 +264,7 @@ fn test_widen_readonly_property_preserved() {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
     ];
     let obj_type = interner.object(props);
@@ -311,6 +316,7 @@ fn test_widen_readonly_nested_object_widens_inner_literals() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }];
     let inner_obj = interner.object(inner_props);
 
@@ -329,6 +335,7 @@ fn test_widen_readonly_nested_object_widens_inner_literals() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }];
     let outer_obj = interner.object(outer_props);
 
@@ -379,6 +386,7 @@ fn test_widen_readonly_array_widens_element_type() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }];
     let outer_obj = interner.object(outer_props);
 
@@ -714,6 +722,7 @@ fn mutable_lit_prop(interner: &TypeInterner, name: &str, lit: TypeId) -> Propert
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }
 }
 
@@ -793,6 +802,7 @@ fn test_widen_object_literal_properties_preserves_readonly() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }];
     let obj = interner.object(props);
     let widened = widen_object_literal_properties(&interner, obj);
@@ -931,6 +941,7 @@ fn test_get_base_type_for_comparison_passthrough_for_unrelated() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }];
     let obj = interner.object(props);
     assert_eq!(get_base_type_for_comparison(&interner, obj), obj);
@@ -1048,6 +1059,7 @@ fn test_widen_literal_type_object_passthrough() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }];
     let obj = interner.object(props);
     assert_eq!(widen_literal_type(&interner, obj), obj);
@@ -1178,6 +1190,7 @@ fn test_apply_const_assertion_object_marks_props_readonly() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }];
     let obj = interner.object(props);
     let result = apply_const_assertion(&interner, obj);

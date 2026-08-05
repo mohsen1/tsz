@@ -350,6 +350,7 @@ fn test_variance_invariant_explicit_write_type() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     let t_atom = interner.intern_string("T");

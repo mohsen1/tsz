@@ -221,6 +221,7 @@ fn test_union_not_assignable_to_mixed_optional_required() {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo::opt(interner.intern_string("b"), TypeId::STRING),
     ]);
@@ -270,6 +271,7 @@ fn test_union_with_type_mismatch_not_assignable() {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo::opt(interner.intern_string("b"), TypeId::STRING),
     ]);
@@ -493,6 +495,7 @@ fn test_discriminated_union_narrowing() {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo::opt(interner.intern_string("radius"), TypeId::NUMBER),
         PropertyInfo::opt(interner.intern_string("side"), TypeId::NUMBER),
@@ -544,6 +547,7 @@ fn test_union_with_common_discriminant_property() {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo::opt(interner.intern_string("a"), TypeId::STRING),
         PropertyInfo::opt(interner.intern_string("b"), TypeId::NUMBER),
@@ -778,6 +782,7 @@ fn test_discriminated_union_optional_property_narrowing() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // Target member 1: { foo?: undefined }
@@ -796,6 +801,7 @@ fn test_discriminated_union_optional_property_narrowing() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // Target member 2: { foo: number }

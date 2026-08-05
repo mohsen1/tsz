@@ -1138,6 +1138,7 @@ fn object_readonly_property() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
     let rw = i.object(vec![PropertyInfo::new(
         i.intern_string("x"),

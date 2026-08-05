@@ -105,6 +105,7 @@ fn test_property(interner: &TypeInterner, name: &str, type_id: TypeId) -> Proper
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }
 }
 
@@ -162,6 +163,7 @@ fn test_collect_properties_single_object() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }];
 
     let obj_type = interner.object(props);
@@ -199,6 +201,7 @@ fn test_collect_properties_intersection() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // Create object { y: number }
@@ -217,6 +220,7 @@ fn test_collect_properties_intersection() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // Create intersection obj1 & obj2
@@ -264,6 +268,7 @@ fn test_collect_properties_any_commutative() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // Test: obj & any
@@ -298,6 +303,7 @@ fn test_collect_properties_conflicting_property_types() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // Create object { x: number }
@@ -316,6 +322,7 @@ fn test_collect_properties_conflicting_property_types() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // Create intersection obj1 & obj2
@@ -356,6 +363,7 @@ fn test_collect_properties_optionality_merging() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // Create object { x: number }
@@ -374,6 +382,7 @@ fn test_collect_properties_optionality_merging() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // Create intersection obj1 & obj2
@@ -413,6 +422,7 @@ fn test_collect_properties_readonly_mutable_wins() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // Create object { readonly x: string }
@@ -431,6 +441,7 @@ fn test_collect_properties_readonly_mutable_wins() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // Create intersection obj1 & obj2
@@ -471,6 +482,7 @@ fn test_collect_properties_nested_intersections() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     let obj2 = interner.object(vec![PropertyInfo {
@@ -488,6 +500,7 @@ fn test_collect_properties_nested_intersections() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     let obj3 = interner.object(vec![PropertyInfo {
@@ -505,6 +518,7 @@ fn test_collect_properties_nested_intersections() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // Create nested intersections: (obj1 & obj2) & obj3
@@ -543,6 +557,7 @@ fn test_collect_properties_deep_intersection_chain_is_iterative() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     for i in 1..4096 {
@@ -562,6 +577,7 @@ fn test_collect_properties_deep_intersection_chain_is_iterative() {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         }]);
         ty = interner.intersection2(ty, next);
     }

@@ -144,6 +144,7 @@ fn test_generic_callback_rest_annotation_infers_fixed_target_type_parameter() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
     let d_type = interner.object(vec![
         PropertyInfo {
@@ -160,6 +161,7 @@ fn test_generic_callback_rest_annotation_infers_fixed_target_type_parameter() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false, non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo {
             name: test2_name,
@@ -175,6 +177,7 @@ fn test_generic_callback_rest_annotation_infers_fixed_target_type_parameter() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false, non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
     ]);
 

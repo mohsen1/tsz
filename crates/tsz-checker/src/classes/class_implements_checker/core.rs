@@ -265,6 +265,7 @@ impl<'a> CheckerState<'a> {
                     is_symbol_named: false,
                     single_quoted_name: false,
                     non_widening: false,
+                    declared_location: tsz_binder::StableLocation::NONE,
                 };
                 let is_method = member_node.kind == syntax_kind_ext::METHOD_SIGNATURE;
                 if rebuilt_member_names.insert(member_atom) {

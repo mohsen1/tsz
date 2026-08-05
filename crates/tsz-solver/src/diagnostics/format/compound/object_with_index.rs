@@ -241,6 +241,7 @@ mod tests {
             is_symbol_named: true,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         });
 
         let shape = crate::types::ObjectShape {

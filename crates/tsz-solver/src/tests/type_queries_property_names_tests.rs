@@ -25,6 +25,7 @@ fn object_with_property(interner: &TypeInterner, name: &str) -> TypeId {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }])
 }
 
@@ -87,6 +88,7 @@ fn keyof_object_properties_excludes_non_public_members() {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo {
             name: interner.intern_string("#hidden"),
@@ -103,6 +105,7 @@ fn keyof_object_properties_excludes_non_public_members() {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo {
             name: interner.intern_string("secret"),
@@ -119,6 +122,7 @@ fn keyof_object_properties_excludes_non_public_members() {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
     ]);
 
@@ -171,6 +175,7 @@ fn keyof_object_properties_uses_string_literal_value_order() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     };
     // Pass declaration_order explicitly to defeat the per-shape "auto-assign
     // 1..n in input order" fallback in the object constructor.
@@ -214,6 +219,7 @@ fn homomorphic_source_display_properties_preserve_declaration_order() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     };
     let source_first = make_prop(source_first_atom, 1);
     let storage_first = make_prop(storage_first_atom, 2);
@@ -246,6 +252,7 @@ fn homomorphic_array_source_prefers_es5_display_head() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     };
     let array_base = interner.object(vec![
         make_prop("includes", 1),

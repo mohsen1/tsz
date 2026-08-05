@@ -29,6 +29,7 @@ fn display_properties_equal(left: &[PropertyInfo], right: &[PropertyInfo]) -> bo
                 is_symbol_named,
                 single_quoted_name,
                 non_widening,
+                declared_location,
             } = left;
             *name == right.name
                 && *type_id == right.type_id
@@ -44,6 +45,7 @@ fn display_properties_equal(left: &[PropertyInfo], right: &[PropertyInfo]) -> bo
                 && *is_symbol_named == right.is_symbol_named
                 && *single_quoted_name == right.single_quoted_name
                 && *non_widening == right.non_widening
+                && *declared_location == right.declared_location
         })
 }
 

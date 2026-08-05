@@ -1522,6 +1522,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         is_symbol_named: false,
                         single_quoted_name: false,
                         non_widening: false,
+                        declared_location: tsz_binder::StableLocation::NONE,
                     });
                 }
             }
@@ -1837,6 +1838,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         is_symbol_named: false,
                         single_quoted_name: false,
                         non_widening: false,
+                        declared_location: tsz_binder::StableLocation::NONE,
                     });
                 }
             }

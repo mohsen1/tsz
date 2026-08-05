@@ -1048,6 +1048,7 @@ fn format_no_infer_in_union_with_function_member() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
     let no_infer_obj = db.no_infer(obj);
     let return_no_infer = db.no_infer(obj);

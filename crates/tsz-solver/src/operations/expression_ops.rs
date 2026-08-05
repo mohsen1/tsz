@@ -424,6 +424,7 @@ pub fn merge_object_spread_property(
         is_symbol_named: spread.is_symbol_named,
         single_quoted_name: spread.single_quoted_name,
         non_widening: spread.non_widening,
+        declared_location: spread.declared_location,
     }
 }
 

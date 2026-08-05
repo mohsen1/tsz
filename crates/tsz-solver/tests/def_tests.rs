@@ -222,6 +222,7 @@ fn test_definition_store_interface() {
                 is_symbol_named: false,
                 single_quoted_name: false,
                 non_widening: false,
+                declared_location: tsz_binder::StableLocation::NONE,
             },
             PropertyInfo {
                 name: y_name,
@@ -238,6 +239,7 @@ fn test_definition_store_interface() {
                 is_symbol_named: false,
                 single_quoted_name: false,
                 non_widening: false,
+                declared_location: tsz_binder::StableLocation::NONE,
             },
         ],
     );
@@ -670,6 +672,7 @@ fn test_find_def_by_shape_via_register() {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo {
             name: y_name,
@@ -686,6 +689,7 @@ fn test_find_def_by_shape_via_register() {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
     ];
 
@@ -777,6 +781,7 @@ fn test_find_def_by_shape_via_set_instance_shape() {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         }],
         string_index: None,
         number_index: None,

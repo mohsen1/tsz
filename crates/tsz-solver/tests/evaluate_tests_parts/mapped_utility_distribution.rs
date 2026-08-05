@@ -122,6 +122,7 @@ fn test_pick_preserves_optional() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false, non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo::new(key_b, TypeId::STRING),
     ]);
@@ -643,6 +644,7 @@ fn test_omit_preserves_readonly() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false, non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo::new(key_b, TypeId::STRING),
     ]);
@@ -717,6 +719,7 @@ fn test_omit_preserves_optional_via_subset_homomorphic() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false, non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo {
             name: key_c,
@@ -732,6 +735,7 @@ fn test_omit_preserves_optional_via_subset_homomorphic() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false, non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
     ]);
 

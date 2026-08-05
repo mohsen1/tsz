@@ -85,6 +85,7 @@ fn bench_concurrent_objects(c: &mut Criterion) {
                                 parent_id: None,
                                 declaration_order: 0,
                                 non_widening: false,
+                                declared_location: tsz_binder::StableLocation::NONE,
                             }]);
                         });
                     });
@@ -212,6 +213,7 @@ fn bench_property_lookup(c: &mut Criterion) {
                 parent_id: None,
                 declaration_order: 0,
                 non_widening: false,
+                declared_location: tsz_binder::StableLocation::NONE,
             })
             .collect::<Vec<_>>();
 
@@ -251,6 +253,7 @@ fn bench_property_lookup(c: &mut Criterion) {
                 parent_id: None,
                 declaration_order: 0,
                 non_widening: false,
+                declared_location: tsz_binder::StableLocation::NONE,
             })
             .collect::<Vec<_>>();
 

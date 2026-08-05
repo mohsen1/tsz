@@ -762,6 +762,7 @@ fn test_noinfer_with_object_property() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // Object preserves NoInfer in property types (structurally unchanged)
@@ -1225,6 +1226,7 @@ fn test_partial_simple_object() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false, non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo {
             name: b_name,
@@ -1240,6 +1242,7 @@ fn test_partial_simple_object() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false, non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
     ]);
 
@@ -1276,6 +1279,7 @@ fn test_partial_nested_object() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     let partial_outer = interner.object(vec![PropertyInfo {
@@ -1292,6 +1296,7 @@ fn test_partial_nested_object() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     match interner.lookup(partial_outer) {
@@ -1337,6 +1342,7 @@ fn test_partial_deep_nesting() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false, non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo {
             name: y_name,
@@ -1352,6 +1358,7 @@ fn test_partial_deep_nesting() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false, non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
     ]);
 
@@ -1400,6 +1407,7 @@ fn test_required_simple_object() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false, non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo {
             name: b_name,
@@ -1415,6 +1423,7 @@ fn test_required_simple_object() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false, non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
     ]);
 
@@ -1451,6 +1460,7 @@ fn test_required_nested_optionals() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     let required_outer = interner.object(vec![PropertyInfo {
@@ -1467,6 +1477,7 @@ fn test_required_nested_optionals() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     match interner.lookup(required_outer) {
@@ -1543,6 +1554,7 @@ fn test_readonly_simple_object() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false, non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo {
             name: b_name,
@@ -1558,6 +1570,7 @@ fn test_readonly_simple_object() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false, non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
     ]);
 
@@ -1644,6 +1657,7 @@ fn test_readonly_nested() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     match interner.lookup(readonly_obj) {
@@ -1758,6 +1772,7 @@ fn test_partial_with_methods() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     match interner.lookup(partial_obj) {

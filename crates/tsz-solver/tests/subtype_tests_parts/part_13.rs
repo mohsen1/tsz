@@ -1676,6 +1676,7 @@ fn test_overload_constructor_overloads() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false, non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo {
             name: interner.intern_string("toISOString"),
@@ -1699,6 +1700,7 @@ fn test_overload_constructor_overloads() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false, non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
     ]);
 

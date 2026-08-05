@@ -22,6 +22,8 @@ mod rest_binder_queries;
 mod signatures_and_advanced;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_extra;
 mod type_id_list;
 
 pub use accessors::*;

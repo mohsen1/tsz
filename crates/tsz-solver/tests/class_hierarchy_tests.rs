@@ -24,6 +24,7 @@ fn test_merge_properties() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }];
 
     let own_props = vec![
@@ -42,6 +43,7 @@ fn test_merge_properties() {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo {
             name: age_atom, // New
@@ -58,6 +60,7 @@ fn test_merge_properties() {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
     ];
 

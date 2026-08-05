@@ -1342,6 +1342,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                     is_string_named,
                                     is_symbol_named,
                                     single_quoted_name,
+                                    declared_location: tsz_binder::StableLocation::new(
+                                        self.ctx.current_file_idx as u32,
+                                        member.pos,
+                                        member.end,
+                                    ),
                                 },
                             ));
                         }
@@ -1550,6 +1555,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 is_string_named,
                                 is_symbol_named,
                                 single_quoted_name,
+                                declared_location: tsz_binder::StableLocation::NONE,
                             },
                         ));
                     }
@@ -1582,6 +1588,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 is_string_named,
                                 is_symbol_named,
                                 single_quoted_name,
+                                declared_location: tsz_binder::StableLocation::NONE,
                             },
                         ));
                     }
@@ -1624,6 +1631,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             is_string_named: key.is_string_named,
                             is_symbol_named,
                             single_quoted_name: key.single_quoted_name,
+                            declared_location: tsz_binder::StableLocation::NONE,
                         },
                     ));
                 }

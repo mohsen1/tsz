@@ -1065,6 +1065,7 @@ fn test_readonly_with_optional() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     let obj_readonly_required =
@@ -1125,6 +1126,7 @@ fn test_readonly_method_property() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     let obj_mutable_method = interner.object(vec![PropertyInfo::method(method_name, method)]);

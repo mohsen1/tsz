@@ -1403,6 +1403,7 @@ fn test_infer_return_promise_like() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     let source_fn = interner.function(FunctionShape {

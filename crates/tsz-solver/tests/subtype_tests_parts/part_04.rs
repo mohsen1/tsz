@@ -52,6 +52,7 @@ fn test_mapped_type_key_remap_optional_readonly_add_subtyping() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
     let required_readonly_b =
         interner.object(vec![PropertyInfo::readonly(prop_b.name, TypeId::NUMBER)]);
@@ -83,6 +84,7 @@ fn test_mapped_type_key_remap_optional_readonly_remove_subtyping() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     };
     let obj = interner.object(vec![prop_a, prop_b.clone()]);
 
@@ -566,6 +568,7 @@ fn test_generic_covariant_return_position() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     let producer_union = interner.object(vec![PropertyInfo {
@@ -582,6 +585,7 @@ fn test_generic_covariant_return_position() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // Covariant: Producer<string> <: Producer<string | number>
@@ -695,6 +699,7 @@ fn test_generic_mixed_variance_positions() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     let transform_b = interner.object(vec![PropertyInfo {
@@ -711,6 +716,7 @@ fn test_generic_mixed_variance_positions() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // Transform with wider input and narrower output is subtype
@@ -968,6 +974,7 @@ fn test_mutable_property_split_accessor_wider_write() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     let obj_normal = interner.object(vec![PropertyInfo::new(prop_name, TypeId::STRING)]);

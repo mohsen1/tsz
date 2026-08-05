@@ -5,7 +5,7 @@
 
 use crate::def::DefId;
 use serde::Serialize;
-use tsz_binder::SymbolId;
+use tsz_binder::{StableLocation, SymbolId};
 use tsz_common::define_id;
 use tsz_common::interner::Atom;
 
@@ -791,6 +791,15 @@ pub struct PropertyInfo {
     /// identical and would intern to the same `TypeId`; the first must not widen
     /// while the second must. See `crates/tsz-solver/src/types/shape_identity.rs`.
     pub non_widening: bool,
+    /// Where this property was written in source, for diagnostics only
+    /// (`'x' is declared here.`). `StableLocation::NONE` when unpopulated —
+    /// most construction sites leave it unset and callers must treat that as
+    /// "no anchor available", not "declared at offset 0". Currently populated
+    /// only for a type literal's own property signatures
+    /// (`get_type_from_type_literal`), which mint no binder symbol to hang a
+    /// declaration pointer on any other way. Identity-exempt: see
+    /// `crates/tsz-solver/src/types/shape_identity.rs`.
+    pub declared_location: StableLocation,
 }
 
 impl PropertyInfo {
@@ -812,6 +821,7 @@ impl PropertyInfo {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: StableLocation::NONE,
         }
     }
 

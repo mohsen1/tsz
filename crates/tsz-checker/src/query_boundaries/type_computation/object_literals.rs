@@ -44,6 +44,7 @@ pub(crate) const fn object_literal_member_property(
         is_symbol_named: input.is_symbol_named,
         single_quoted_name: input.single_quoted_name,
         non_widening: input.non_widening,
+        declared_location: tsz_binder::StableLocation::NONE,
     }
 }
 

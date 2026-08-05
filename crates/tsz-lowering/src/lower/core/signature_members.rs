@@ -268,6 +268,7 @@ impl<'a> TypeLowering<'a> {
                                 is_symbol_named,
                                 single_quoted_name,
                                 non_widening: false,
+                                declared_location: tsz_binder::StableLocation::NONE,
                             }));
                         }
                     }
@@ -307,6 +308,7 @@ impl<'a> TypeLowering<'a> {
                                 is_symbol_named,
                                 single_quoted_name,
                                 non_widening: false,
+                                declared_location: tsz_binder::StableLocation::NONE,
                             }));
                         }
                     }
@@ -454,6 +456,7 @@ impl<'a> TypeLowering<'a> {
                     is_symbol_named: methods.is_symbol_named,
                     single_quoted_name: methods.single_quoted_name,
                     non_widening: false,
+                    declared_location: tsz_binder::StableLocation::NONE,
                 });
             } else if let PropertyMerge::Property(mut prop) = entry {
                 if let Some(order) = forward_order {
@@ -872,6 +875,7 @@ impl<'a> TypeLowering<'a> {
                 is_symbol_named,
                 single_quoted_name,
                 non_widening: false,
+                declared_location: tsz_binder::StableLocation::NONE,
             })
         } else {
             None

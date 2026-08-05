@@ -246,6 +246,7 @@ pub(crate) const fn class_member_property(surface: ClassMemberProperty) -> Prope
         is_symbol_named: surface.flag(ClassMemberProperty::IS_SYMBOL_NAMED),
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }
 }
 

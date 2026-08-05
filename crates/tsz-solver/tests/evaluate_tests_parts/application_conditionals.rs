@@ -1574,6 +1574,7 @@ fn test_application_ref_expansion_with_readonly_property() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // Create Ref(1) for ReadonlyBox type alias
@@ -1636,6 +1637,7 @@ fn test_application_ref_expansion_with_optional_property() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // Create Ref(1) for OptionalBox type alias

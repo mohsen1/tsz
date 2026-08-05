@@ -423,6 +423,7 @@ impl<'a> CheckerState<'a> {
                             is_symbol_named,
                             single_quoted_name,
                             non_widening: false,
+                            declared_location: tsz_binder::StableLocation::NONE,
                         });
                     }
                 }
@@ -679,6 +680,7 @@ impl<'a> CheckerState<'a> {
                 is_symbol_named: entry.is_symbol_named,
                 single_quoted_name: entry.single_quoted_name,
                 non_widening: false,
+                declared_location: tsz_binder::StableLocation::NONE,
             });
         }
 
@@ -711,6 +713,7 @@ impl<'a> CheckerState<'a> {
                 is_symbol_named: accessor.is_symbol_named,
                 single_quoted_name: accessor.single_quoted_name,
                 non_widening: false,
+                declared_location: tsz_binder::StableLocation::NONE,
             });
         }
 

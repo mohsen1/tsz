@@ -82,6 +82,7 @@ fn obj_with_method(interner: &TypeInterner, method_name: &str, method: TypeId) -
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }])
 }
 
@@ -103,6 +104,7 @@ fn obj_with_prop(interner: &TypeInterner, prop_name: &str, prop: TypeId) -> Type
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }])
 }
 
@@ -124,6 +126,7 @@ fn animal_type(interner: &TypeInterner) -> TypeId {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }])
 }
 
@@ -147,6 +150,7 @@ fn cat_type(interner: &TypeInterner) -> TypeId {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo::new(breed, TypeId::STRING),
     ])
@@ -809,6 +813,7 @@ fn test_object_prototype_fallback_for_missing_property() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // NotNumber: { doStuff(): string }
@@ -827,6 +832,7 @@ fn test_object_prototype_fallback_for_missing_property() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // Number (merged): { doStuff(); toLocaleString(locales?, options?) }
@@ -846,6 +852,7 @@ fn test_object_prototype_fallback_for_missing_property() {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo {
             name: to_locale_string_atom,
@@ -862,6 +869,7 @@ fn test_object_prototype_fallback_for_missing_property() {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
     ]);
 

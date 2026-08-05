@@ -22,6 +22,7 @@ fn test_build_object_type() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }];
 
     let obj_type = builder.build_object_type(properties);
@@ -51,6 +52,7 @@ fn test_merge_spread() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }];
 
     // Create spread object { y: string, x: boolean }
@@ -70,6 +72,7 @@ fn test_merge_spread() {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo {
             name: db.intern_string("x"),
@@ -86,6 +89,7 @@ fn test_merge_spread() {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
     ];
     let spread_type = db.object(spread_props);
@@ -129,6 +133,7 @@ fn test_apply_contextual_types() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // Create properties { x: 1 } (where 1 is a literal number type)
@@ -148,6 +153,7 @@ fn test_apply_contextual_types() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }];
 
     let contextualized = builder.apply_contextual_types(properties, ctx_type);
@@ -177,6 +183,7 @@ fn test_extract_properties_from_intersection() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     let type2 = db.object(vec![PropertyInfo {
@@ -194,6 +201,7 @@ fn test_extract_properties_from_intersection() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     let intersection = db.intersection2(type1, type2);
@@ -234,6 +242,7 @@ fn test_collect_spread_properties() {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         }],
         ObjectFlags::FRESH_LITERAL,
     );

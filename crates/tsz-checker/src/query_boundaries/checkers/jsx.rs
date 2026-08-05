@@ -224,6 +224,7 @@ pub(crate) const fn property_info_with_write_type(
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }
 }
 

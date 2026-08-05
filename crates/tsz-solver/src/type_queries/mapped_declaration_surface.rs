@@ -175,6 +175,7 @@ fn mapped_surface_with_optional_undefined_inner(
                 is_symbol_named: true,
                 single_quoted_name: false,
                 non_widening: false,
+                declared_location: tsz_binder::StableLocation::NONE,
             });
             changed = true;
         }

@@ -1140,6 +1140,7 @@ fn test_symbol_keyed_object_property() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     assert!(iterable_obj != TypeId::ERROR);
@@ -1295,6 +1296,7 @@ fn test_iterable_protocol_types() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // Iterator is valid object type
@@ -1331,6 +1333,7 @@ fn test_async_iterable_protocol_types() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // AsyncIterator<number> = { next(): Promise<AsyncIteratorResult<number>> }
@@ -1358,6 +1361,7 @@ fn test_async_iterable_protocol_types() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // AsyncIterator is valid object type

@@ -666,6 +666,7 @@ fn optional_property_shows_undefined() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
     let result = fmt.format(obj);
     assert_eq!(
@@ -695,6 +696,7 @@ fn optional_property_never_shows_as_undefined() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
     let result = fmt.format(obj);
     assert_eq!(
@@ -724,6 +726,7 @@ fn optional_property_with_union_undefined_keeps_it() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
     let result = fmt.format(obj);
     assert_eq!(

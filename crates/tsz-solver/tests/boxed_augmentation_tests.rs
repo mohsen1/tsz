@@ -28,6 +28,7 @@ fn prop(interner: &TypeInterner, name: &str, type_id: TypeId) -> PropertyInfo {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }
 }
 

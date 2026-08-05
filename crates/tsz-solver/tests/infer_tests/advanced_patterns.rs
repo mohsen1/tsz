@@ -702,6 +702,7 @@ fn test_circular_constraint_linked_list_generic() {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo {
             name: interner.intern_string("next"),
@@ -718,6 +719,7 @@ fn test_circular_constraint_linked_list_generic() {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
     ]);
 

@@ -840,6 +840,7 @@ fn test_indexed_access_optional_property() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     let key_a = interner.literal_string("a");
@@ -872,6 +873,7 @@ fn test_indexed_access_mixed_optional_required() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false, non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo {
             name: interner.intern_string("b"),
@@ -887,6 +889,7 @@ fn test_indexed_access_mixed_optional_required() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false, non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
     ]);
 
@@ -1024,6 +1027,7 @@ fn test_indexed_access_readonly_property() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     let key_a = interner.literal_string("a");
@@ -1156,6 +1160,7 @@ fn test_generator_function_async_return() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     let cond = ConditionalType {
@@ -1184,6 +1189,7 @@ fn test_generator_function_async_return() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
     subst.insert(t_name, input_obj);
 
@@ -1488,6 +1494,7 @@ fn test_module_augmentation_class_extension() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // T extends { new: ... } ? T : never

@@ -1772,6 +1772,7 @@ fn test_constructor_with_static_properties() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false, non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         }],
         string_index: None,
         number_index: None,

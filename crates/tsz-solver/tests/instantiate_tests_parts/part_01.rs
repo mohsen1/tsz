@@ -72,6 +72,7 @@ fn test_object_property_does_not_contaminate_method_type_param() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false, non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
     ]);
 

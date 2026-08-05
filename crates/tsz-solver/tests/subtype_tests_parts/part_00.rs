@@ -181,6 +181,7 @@ fn test_generic_remapped_mapped_type_does_not_expand_to_source_keys() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false, non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo {
             name: atom_b,
@@ -196,6 +197,7 @@ fn test_generic_remapped_mapped_type_does_not_expand_to_source_keys() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false, non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
     ]);
 
@@ -697,6 +699,7 @@ fn test_apparent_symbol_member_subtyping() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
     let mismatch = interner.object(vec![PropertyInfo {
         name,
@@ -712,6 +715,7 @@ fn test_apparent_symbol_member_subtyping() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     assert!(checker.is_subtype_of(TypeId::SYMBOL, target));
@@ -1191,6 +1195,7 @@ fn test_weak_type_detection_not_weak_if_has_required() {
             is_string_named: false,
             is_symbol_named: false,
             single_quoted_name: false, non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
     ]);
 
@@ -1224,6 +1229,7 @@ fn test_split_accessor_variance() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     let narrow_accessor = interner.object(vec![PropertyInfo {
@@ -1240,6 +1246,7 @@ fn test_split_accessor_variance() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     assert!(checker.is_subtype_of(wide_accessor, narrow_accessor));
@@ -1277,6 +1284,7 @@ fn test_exact_optional_property_types_toggle() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
     let source = interner.object(vec![PropertyInfo {
         name,
@@ -1292,6 +1300,7 @@ fn test_exact_optional_property_types_toggle() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     assert!(checker.is_subtype_of(source, target));
@@ -1651,6 +1660,7 @@ fn test_readonly_property_subtyping() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
     let mutable_obj = interner.object(vec![PropertyInfo {
         name,
@@ -1666,6 +1676,7 @@ fn test_readonly_property_subtyping() {
         is_string_named: false,
         is_symbol_named: false,
         single_quoted_name: false, non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // TypeScript allows readonly property → mutable property assignment

@@ -75,6 +75,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     is_symbol_named: prop.is_symbol_named,
                     single_quoted_name: prop.single_quoted_name,
                     non_widening: false,
+                    declared_location: prop.declared_location,
                 }
             })
             .collect();

@@ -751,6 +751,7 @@ fn test_variance_computation_covariant() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     let (covariant, contravariant, invariant, bivariant) = ctx.compute_variance(box_type, t_name);

@@ -220,6 +220,7 @@ impl<'a> CheckerState<'a> {
                 is_symbol_named,
                 single_quoted_name,
                 non_widening: false,
+                declared_location: tsz_binder::StableLocation::NONE,
             });
         }
 

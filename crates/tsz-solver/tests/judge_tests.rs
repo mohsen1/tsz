@@ -176,6 +176,7 @@ fn test_get_property_object() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     match judge.get_property(obj, foo_atom) {

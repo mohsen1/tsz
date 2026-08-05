@@ -810,6 +810,7 @@ fn test_intersection_private_public_property_conflict_reduces_to_never() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // Create object { x: string } with public visibility
@@ -843,6 +844,7 @@ fn test_intersection_protected_public_property_merges_as_public() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
     let obj_public = interner.object(vec![PropertyInfo::new(name, TypeId::STRING)]);
 
@@ -942,6 +944,7 @@ fn test_visibility_interning_distinct_shape_ids() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // These should have different TypeIds because visibility differs
@@ -988,6 +991,7 @@ fn test_parent_id_interning_distinct_shape_ids() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     let obj_class2 = interner.object(vec![PropertyInfo {
@@ -1005,6 +1009,7 @@ fn test_parent_id_interning_distinct_shape_ids() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // These should have different TypeIds because parent_id differs
@@ -1134,6 +1139,7 @@ fn test_partial_object_merging_in_intersection() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     let obj2 = interner.object(vec![PropertyInfo {
@@ -1151,6 +1157,7 @@ fn test_partial_object_merging_in_intersection() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // Create a primitive type
@@ -1251,6 +1258,7 @@ fn test_partial_object_and_callable_merging() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     let obj2 = interner.object(vec![PropertyInfo {
@@ -1268,6 +1276,7 @@ fn test_partial_object_and_callable_merging() {
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }]);
 
     // Create callable types
@@ -1887,6 +1896,7 @@ fn test_estimated_size_bytes_grows_with_object_shapes() {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         };
         interner.object(vec![prop]);
     }

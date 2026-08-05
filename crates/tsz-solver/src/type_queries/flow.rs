@@ -1553,6 +1553,7 @@ mod tests {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         }]);
 
         // Target has Lazy property type — solver cannot resolve it
@@ -1572,6 +1573,7 @@ mod tests {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         }]);
 
         // Solver returns false because Lazy types are opaque here.
@@ -1608,6 +1610,7 @@ mod tests {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         }]);
 
         // Target: { mode: AutomationMode } (enum with string members)
@@ -1632,6 +1635,7 @@ mod tests {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         }]);
 
         // When both sides are resolved, the comparable check succeeds
@@ -1700,6 +1704,7 @@ mod tests {
                 is_symbol_named: false,
                 single_quoted_name: false,
                 non_widening: false,
+                declared_location: tsz_binder::StableLocation::NONE,
             }],
             string_index: None,
             number_index: None,
@@ -1820,6 +1825,7 @@ mod tests {
                 is_symbol_named: false,
                 single_quoted_name: false,
                 non_widening: false,
+                declared_location: tsz_binder::StableLocation::NONE,
             }],
             string_index: None,
             number_index: None,
@@ -1903,6 +1909,7 @@ mod tests {
                 is_symbol_named: false,
                 single_quoted_name: false,
                 non_widening: false,
+                declared_location: tsz_binder::StableLocation::NONE,
             }],
             string_index: None,
             number_index: None,
@@ -1970,6 +1977,7 @@ mod tests {
                     is_symbol_named: false,
                     single_quoted_name: false,
                     non_widening: false,
+                    declared_location: tsz_binder::StableLocation::NONE,
                 }],
                 string_index: None,
                 number_index: None,
@@ -2036,6 +2044,7 @@ mod tests {
                 is_symbol_named: false,
                 single_quoted_name: false,
                 non_widening: false,
+                declared_location: tsz_binder::StableLocation::NONE,
             }],
             string_index: None,
             number_index: None,

@@ -26,6 +26,7 @@ fn make_optional_object(interner: &TypeInterner, name: &str, type_id: TypeId) ->
         is_symbol_named: false,
         single_quoted_name: false,
         non_widening: false,
+        declared_location: tsz_binder::StableLocation::NONE,
     }];
     interner.object(props)
 }
@@ -50,6 +51,7 @@ fn make_two_optional_object(interner: &TypeInterner) -> TypeId {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
         PropertyInfo {
             name: y_atom,
@@ -66,6 +68,7 @@ fn make_two_optional_object(interner: &TypeInterner) -> TypeId {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         },
     ];
     props.sort_by_key(|p| p.name);
@@ -194,6 +197,7 @@ fn test_global_object_interface_exempt_from_weak_type_check() {
             is_symbol_named: false,
             single_quoted_name: false,
             non_widening: false,
+            declared_location: tsz_binder::StableLocation::NONE,
         }
     };
 
@@ -228,6 +232,7 @@ fn test_global_object_interface_exempt_from_weak_type_check() {
                 is_symbol_named: false,
                 single_quoted_name: false,
                 non_widening: false,
+                declared_location: tsz_binder::StableLocation::NONE,
             },
             PropertyInfo {
                 name: legs,
@@ -244,6 +249,7 @@ fn test_global_object_interface_exempt_from_weak_type_check() {
                 is_symbol_named: false,
                 single_quoted_name: false,
                 non_widening: false,
+                declared_location: tsz_binder::StableLocation::NONE,
             },
         ];
         interner.object(props)
