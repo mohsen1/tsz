@@ -1885,6 +1885,21 @@ impl ParserState {
                         // `declare export enum X { ... }`
                         self.parse_enum_declaration_with_modifiers(start_pos, Some(modifiers))
                     }
+                    SyntaxKind::DefaultKeyword => {
+                        // `declare export default class {}` / `declare export
+                        // default function f() {}` — tsc reads the whole
+                        // thing as a `ClassDeclaration`/`FunctionDeclaration`
+                        // carrying `declare`+`export`+`default` modifiers
+                        // (the same node kind the ordinary `export default`
+                        // path in `parse_export_default` builds), not the
+                        // `export =`-style assignment the `EqualsToken` arm
+                        // above handles. `self.context_flags` already carries
+                        // `CONTEXT_FLAG_AMBIENT` here (set at the top of this
+                        // function), so the reused declaration/expression
+                        // classification `parse_export_default` performs
+                        // still parses class/function bodies as ambient.
+                        self.parse_export_default(start_pos)
+                    }
                     _ => {
                         self.error_declaration_expected();
                         self.parse_expression_statement()

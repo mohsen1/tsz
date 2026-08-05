@@ -94,6 +94,9 @@ mod parser_async_arrow_context_tests;
 #[path = "../../tests/parser_class_body_modifier_recovery_tests.rs"]
 mod parser_class_body_modifier_recovery_tests;
 #[cfg(test)]
+#[path = "../../tests/parser_declare_export_default_tests.rs"]
+mod parser_declare_export_default_tests;
+#[cfg(test)]
 #[path = "../../tests/parser_export_specifier_from_tests.rs"]
 mod parser_export_specifier_from_tests;
 #[cfg(test)]
