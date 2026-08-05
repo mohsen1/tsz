@@ -1752,11 +1752,14 @@ impl ParserState {
                 // `declare export = expr` (export assignment — TS1120 handles it).
                 // Also skip when already in an ambient context (e.g. inside `declare module`),
                 // because the checker will emit TS1038 instead and tsc does not emit both.
-                // Also skip in block context: tsc emits TS1029 via grammarErrorOnNode
-                // in the checker, which is suppressed by hasParseDiagnostics when
-                // TS1184 (Modifiers cannot appear here) is already emitted.
-                // Also skip for `declare export module/namespace` — tsc 6.0 accepts this
-                // form without TS1029 for ambient module/namespace declarations.
+                // Also skip in block context: `declare export namespace N {}` inside a
+                // Block reports the nested-module-declaration's own TS1235 alone
+                // (oracle-confirmed) — `declare export module/namespace` at the
+                // source file's own top level or inside a namespace body keeps
+                // TS1029 like every other `declare export <declaration>` form
+                // (oracle-confirmed against `typescript@7.0.2`; a stale prior
+                // comment here claimed tsc accepted this form without TS1029,
+                // which no longer holds against the pinned version, #16403).
                 // Also skip for a plain export declaration (`{ }` / `*` / type-only
                 // `type { }` / `type *`) — tsc emits TS1193 alone there, never TS1029
                 // alongside it (oracle-confirmed). Also skip for the `default <expr>`
@@ -1765,8 +1768,6 @@ impl ParserState {
                 if !self.in_block_context()
                     && !self.is_token(SyntaxKind::AsKeyword)
                     && !self.is_token(SyntaxKind::EqualsToken)
-                    && !self.is_token(SyntaxKind::ModuleKeyword)
-                    && !self.is_token(SyntaxKind::NamespaceKeyword)
                     && !self.is_token(SyntaxKind::OpenBraceToken)
                     && !self.is_token(SyntaxKind::AsteriskToken)
                     && !is_type_only_export
@@ -1838,7 +1839,13 @@ impl ParserState {
                                 diagnostic_codes::AN_EXPORT_ASSIGNMENT_CANNOT_HAVE_MODIFIERS,
                             );
                         }
-                        self.parse_export_assignment(error_start)
+                        // Carry `declare` (+ `export`) onto the node itself so
+                        // `is_ambient_declaration` sees it: TS1203 (ESM export=)
+                        // must stay suppressed and TS2714 (ambient export=
+                        // expression shape) must fire instead, the same way an
+                        // ambient `export =` written without a leading `declare`
+                        // modifier already does (#16403).
+                        self.parse_export_assignment_with_modifiers(error_start, Some(modifiers))
                     }
                     SyntaxKind::ImportKeyword => {
                         // `declare export import a = x.c;`

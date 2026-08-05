@@ -327,6 +327,21 @@ impl ParserState {
 
     // Parse export = expression (CommonJS-style default export)
     pub(crate) fn parse_export_assignment(&mut self, start_pos: u32) -> NodeIndex {
+        self.parse_export_assignment_with_modifiers(start_pos, None)
+    }
+
+    /// [`parse_export_assignment`], carrying the statement's leading modifier
+    /// run (`declare`, a misplaced `abstract`/`static`/..., or both) onto the
+    /// resulting node. A plain `export = expr` has none; a modifier-prefixed
+    /// one (`declare export = expr`, `abstract export = expr`) needs its
+    /// `declare` modifier attached so `is_in_ambient_context`'s walk over
+    /// `get_declaration_modifiers` can see it — that gate is what silences
+    /// TS1203 and enables TS2714 in an ambient `export =` (#16403).
+    pub(crate) fn parse_export_assignment_with_modifiers(
+        &mut self,
+        start_pos: u32,
+        modifiers: Option<crate::parser::NodeList>,
+    ) -> NodeIndex {
         self.parse_expected(SyntaxKind::EqualsToken);
         let expression = self.parse_assignment_expression();
         if expression == NodeIndex::NONE {
@@ -341,7 +356,7 @@ impl ParserState {
             start_pos,
             end_pos,
             ExportAssignmentData {
-                modifiers: None,
+                modifiers,
                 is_export_equals: true,
                 expression,
             },

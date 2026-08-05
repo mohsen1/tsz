@@ -456,3 +456,54 @@ fn abstract_export_default_expression_reports_ts1242_only_outside_a_block_or_nam
         }
     }
 }
+
+// -- `abstract export = <expr>`: #16403's residual. `export = ...` was
+//    deliberately excluded from the original lookahead (routed instead to
+//    `abstract` degrading to a bare identifier expression, then `export =
+//    <expr>` re-parsed as an unrelated, unmodified top-level statement) —
+//    silently dropping TS1242 everywhere and, at the source file's own top
+//    level, also mis-anchoring the checker's TS1203 at `export` instead of
+//    `abstract` (oracle-confirmed against `typescript@7.0.2`; TS1203 itself
+//    is checker-side and outside this parser-only harness). `export =` is
+//    the same `ExportAssignment` node kind as `export default <expr>`, so it
+//    takes the identical container split: TS1242 wins outright at the
+//    source file's own top level, and is silenced by the assignment's own
+//    placement diagnostic in both a Block (TS1231) and a namespace body
+//    (TS1063).
+#[test]
+fn abstract_export_equals_assignment_reports_ts1242_only_outside_a_block_or_namespace() {
+    for index in 0..CONTAINERS.len() {
+        let source = in_container(index, "abstract export = 1;");
+        if is_block(index) || index == 3 {
+            assert_eq!(
+                codes(&source),
+                Vec::<u32>::new(),
+                "expected no modifier diagnostic for {source:?}, got {:?}",
+                codes(&source)
+            );
+        } else {
+            assert_diag_at_abstract(
+                &source,
+                diagnostic_codes::ABSTRACT_MODIFIER_CAN_ONLY_APPEAR_ON_A_CLASS_METHOD_OR_PROPERTY_DECLARATION,
+            );
+        }
+        assert_no_cannot_find_name(&source);
+    }
+}
+
+#[test]
+fn a_line_break_between_abstract_and_export_equals_is_not_a_modifier_run() {
+    let source = "abstract\nexport = 1;";
+    assert!(
+        !codes(source).contains(
+            &diagnostic_codes::ABSTRACT_MODIFIER_CAN_ONLY_APPEAR_ON_A_CLASS_METHOD_OR_PROPERTY_DECLARATION
+        ),
+        "ASI must cut `abstract` off into its own statement, got {:?}",
+        codes(source)
+    );
+}
+
+#[test]
+fn a_valid_export_equals_assignment_stays_clean() {
+    assert_eq!(codes("export = 1;"), Vec::<u32>::new());
+}

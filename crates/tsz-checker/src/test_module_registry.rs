@@ -839,6 +839,8 @@ mod ts1318_abstract_accessor_implementation_tests;
 mod ts1361_ambient_computed_property_name_tests;
 #[path = "tests/ts1539_bigint_literal_property_name_tests.rs"]
 mod ts1539_bigint_literal_property_name_tests;
+#[path = "tests/ts16403_declare_abstract_export_equals_residual_tests.rs"]
+mod ts16403_declare_abstract_export_equals_residual_tests;
 #[path = "tests/ts18010_jsdoc_tag_anchor_tests.rs"]
 mod ts18010_jsdoc_tag_anchor_tests;
 #[path = "tests/ts18017_ts18018_private_identifier_shadow_related_info_tests.rs"]

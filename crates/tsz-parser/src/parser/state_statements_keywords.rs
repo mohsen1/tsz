@@ -480,6 +480,35 @@ impl ParserState {
             SyntaxKind::DeclareKeyword => self.parse_ambient_declaration_with_modifiers(modifiers),
             SyntaxKind::ExportKeyword => {
                 if self.look_ahead_export_starts_export_declaration() {
+                    // `export = expr` specifically needs the statement's own
+                    // leading modifiers (already collected in `modifiers`,
+                    // e.g. a misplaced `declare`/`static`/`abstract`) folded
+                    // onto the resulting node and its start position pinned
+                    // to `start_pos` — the node's own structural checks
+                    // (TS1203's ESM gate, TS1120's dedup, TS2714's ambient
+                    // shape check) all read `is_ambient_declaration`/the
+                    // node's own span, which `parse_export_declaration`
+                    // cannot supply: it recomputes `start_pos` from the
+                    // current `export` token and passes no modifiers through
+                    // at all (#16403). Every other export form's own
+                    // placement diagnostic doesn't depend on either, so it
+                    // keeps delegating.
+                    if self.look_ahead_export_is_assignment() {
+                        let export_start = self.token_pos();
+                        self.parse_expected(SyntaxKind::ExportKeyword);
+                        let export_end = self.token_end();
+                        let export_modifier = self.arena.add_token(
+                            SyntaxKind::ExportKeyword as u16,
+                            export_start,
+                            export_end,
+                        );
+                        let mut export_modifiers = modifiers;
+                        export_modifiers.push(export_modifier);
+                        return self.parse_export_assignment_with_modifiers(
+                            start_pos,
+                            Some(Self::make_node_list(export_modifiers)),
+                        );
+                    }
                     return self.parse_export_declaration();
                 }
                 let export_start = self.token_pos();
@@ -496,6 +525,20 @@ impl ParserState {
             }
             _ => self.parse_statement(),
         }
+    }
+
+    /// Look ahead to see if `export` is immediately followed by `=` — the
+    /// `export = expr` assignment form specifically, as opposed to every
+    /// other export form `look_ahead_export_starts_export_declaration` also
+    /// recognizes.
+    fn look_ahead_export_is_assignment(&mut self) -> bool {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token();
+        let result = self.is_token(SyntaxKind::EqualsToken);
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        result
     }
 
     fn look_ahead_export_starts_export_declaration(&mut self) -> bool {
@@ -1157,12 +1200,18 @@ impl ParserState {
                 | SyntaxKind::GlobalKeyword => self
                     .look_ahead_is_module_declaration()
                     .then_some(AbstractExportTarget::PositionErrorWins),
-                // A named or star export declaration. `export = ...` is
-                // deliberately not here: tsc routes it through TS1120, not
-                // this modifier run.
+                // A named or star export declaration.
                 SyntaxKind::OpenBraceToken | SyntaxKind::AsteriskToken => {
                     Some(AbstractExportTarget::PositionErrorWins)
                 }
+                // `abstract export = expr` — an `ExportAssignment` node, the
+                // same structural mismatch `abstract export default <expr>`
+                // below already models (`abstract` is illegal on it in every
+                // container): TS1242 wins outright at the source file's own
+                // top level, silenced by the assignment's own placement
+                // diagnostic in both a Block (TS1231) and a namespace body
+                // (TS1063) — oracle-confirmed, #16403.
+                SyntaxKind::EqualsToken => Some(AbstractExportTarget::ExportAssignment),
                 // `export default class C {}` (named or anonymous) reads the
                 // same modifier run `[abstract, export, default]` as the bare
                 // `export class` arm above, and `abstract` is legal on a
