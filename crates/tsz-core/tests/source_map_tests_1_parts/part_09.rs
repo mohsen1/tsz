@@ -1336,7 +1336,7 @@ fn test_sourcemap_parity_computed_property_names_es6() {
 
     // Track parity progress: fail if we regress (more missing than expected).
     // Update EXPECTED_MISSING as we fix more mappings.
-    const EXPECTED_MISSING: usize = 4;
+    const EXPECTED_MISSING: usize = 3;
     let num_missing = missing.len();
     if num_missing > EXPECTED_MISSING {
         let mut msg = format!(
