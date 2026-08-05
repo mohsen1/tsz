@@ -2644,3 +2644,7 @@ path = "tests/import_namespace_ts1147_tests.rs"
 [[test]]
 name = "position_invalid_import_equals_container_scope_tests"
 path = "tests/position_invalid_import_equals_container_scope_tests.rs"
+
+[[test]]
+name = "import_equals_alias_duplicate_container_tests"
+path = "tests/import_equals_alias_duplicate_container_tests.rs"
