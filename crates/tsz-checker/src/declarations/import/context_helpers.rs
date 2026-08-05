@@ -91,6 +91,11 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a node is inside a function/method body.
     /// Walks up the parent chain to find a function-like ancestor.
+    ///
+    /// A class `static { }` block is function-like for this purpose: tsc's
+    /// binder gives it its own `container` cursor, same as a function body,
+    /// and it never resolves a position-invalid `import`/`import =` module
+    /// specifier inside one (#16450).
     pub(crate) fn is_inside_function_body(&self, node_idx: NodeIndex) -> bool {
         let mut current = node_idx;
         while current.is_some() {
@@ -111,7 +116,8 @@ impl<'a> CheckerState<'a> {
                     || k == syntax_kind_ext::METHOD_DECLARATION
                     || k == syntax_kind_ext::CONSTRUCTOR
                     || k == syntax_kind_ext::GET_ACCESSOR
-                    || k == syntax_kind_ext::SET_ACCESSOR =>
+                    || k == syntax_kind_ext::SET_ACCESSOR
+                    || k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION =>
                 {
                     return true;
                 }

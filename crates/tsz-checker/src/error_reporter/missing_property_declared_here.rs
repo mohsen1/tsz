@@ -341,8 +341,12 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// The member-declaration anchor for a symbol that is expected to own the
-    /// member list directly, with no alias following.
+    /// The `(start, length, file)` anchor for a symbol that is expected to own
+    /// the member list directly, with no alias following.
+    ///
+    /// Returns the raw anchor rather than a built diagnostic because both
+    /// `TS2728` and `TS6500` underline the same span and differ only in code,
+    /// message, and name rendering — those belong to the caller.
     fn member_declaration_anchor_for_declared_symbol(
         &mut self,
         owner_symbol: tsz_binder::SymbolId,

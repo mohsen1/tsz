@@ -286,17 +286,81 @@ fn class_static_block_alias_does_not_escape_the_class() {
     // A class static block is function-like in tsc, so it is a container even
     // though tsz gives its body a `ContainerKind::Block` scope. The carve-out
     // in `nearest_declaration_container_scope` is what keeps TS2304 here.
-    let actual = check(
+    assert_codes(
         r#"class Quebec {
   static {
     import romeo = require("nonexistent-module");
   }
 }
 romeo;"#,
+        &[1232, 2304],
+        "a static block must not leak into the class body, and (#16450) must not resolve the specifier either",
     );
-    assert!(
-        actual.contains(&2304),
-        "a static block must not leak into the class body, got {actual:?}"
+}
+
+// ---------------------------------------------------------------------------
+// #16450: a class static block must not resolve a position-invalid `import =`
+// specifier, same as any other function-like container. `tsc` reports TS1232
+// alone in every row below; tsz additionally reported a spurious TS2307
+// because `is_inside_function_body` did not recognize
+// `CLASS_STATIC_BLOCK_DECLARATION` as a function-like ancestor, so the
+// `in_wrong_context && is_inside_function_body` short-circuit in
+// `check_import_equals_declaration` never fired for a static block.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn static_block_single_alias_does_not_resolve_the_specifier() {
+    assert_codes(
+        r#"class E {
+  static {
+    import sierra = require("nonexistent-module");
+  }
+}"#,
+        &[1232],
+        "#16450: one alias, unreferenced",
+    );
+}
+
+#[test]
+fn static_block_referenced_alias_still_does_not_resolve_the_specifier() {
+    assert_codes(
+        r#"class E {
+  static {
+    import tango = require("nonexistent-module");
+    tango;
+  }
+}"#,
+        &[1232],
+        "#16450: referencing the alias must not trigger resolution either",
+    );
+}
+
+#[test]
+fn nested_block_inside_a_static_block_still_does_not_resolve_the_specifier() {
+    assert_codes(
+        r#"class E {
+  static {
+    {
+      import uniform = require("nonexistent-module");
+    }
+  }
+}"#,
+        &[1232],
+        "#16450: a plain block nested inside the static block is still part of that container",
+    );
+}
+
+#[test]
+fn static_block_two_colliding_aliases_do_not_resolve_the_specifier() {
+    assert_codes(
+        r#"class E {
+  static {
+    import victor = require("nonexistent-a");
+    import victor = require("nonexistent-b");
+  }
+}"#,
+        &[1232, 1232, 2300, 2300],
+        "#16450: the duplicate-alias TS2300 pair (#16437) rides along, but neither specifier resolves",
     );
 }
 
