@@ -455,6 +455,17 @@ fn is_hard_keyword_interface_name_2427_parse_diagnostic(diagnostic: &ParseDiagno
 /// list's concern), and TS18024 (`an enum member cannot be named with a
 /// private identifier`, `state_declarations.rs`).
 ///
+/// #16279 audit round 4: `checkGrammarForInOrForOfStatement` also reports
+/// TS1493/TS1494 (`for...in` left-hand side cannot be a `using`/`await
+/// using` declaration) from the same tsc function as the already-listed
+/// TS1091/TS1188, and both are parser-emitted in tsz
+/// (`state_declarations_exports.rs`). Both were entirely absent from this
+/// list — oracle-confirmed (`typescript@7.0.2`): a `let a: = 1;` syntax
+/// error elsewhere in the file drops TS1493/TS1494 on the real compiler,
+/// and, mirroring TS1091/TS1188's own discovery, an unlisted TS1493/TS1494
+/// counted as a "real" non-grammar parse error and could silently delete an
+/// unrelated *listed* sibling (e.g. TS1091 itself) from the same file.
+///
 /// Three adjacent candidates from the same scan were investigated and
 /// deliberately left OUT of this round, each for a different reason —
 /// worth reading before extending this list, since none of the three
@@ -549,6 +560,8 @@ const fn is_parser_grammar_code(code: u32) -> bool {
         | 1182 // A destructuring declaration must have an initializer
         | 1184 // Modifiers cannot appear here
         | 1188 // Only a single variable declaration is allowed in a 'for...of' statement
+        | 1493 // The left-hand side of a 'for...in' statement cannot be a 'using' declaration
+        | 1494 // The left-hand side of a 'for...in' statement cannot be an 'await using' declaration
         | 1191 // An import declaration cannot have modifiers
         | 1193 // An export declaration cannot have modifiers
         | 1197 // Catch clause variable cannot have an initializer
@@ -1715,3 +1728,7 @@ mod audit_round_3_grammar_tests;
 #[cfg(test)]
 #[path = "check_utils/parser_grammar_non_suppressing_tests.rs"]
 mod parser_grammar_non_suppressing_tests;
+
+#[cfg(test)]
+#[path = "check_utils/for_in_using_declaration_grammar_tests.rs"]
+mod for_in_using_declaration_grammar_tests;
