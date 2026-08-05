@@ -137,6 +137,9 @@ fn abstract_export_modifier_run_splits_ts1242_and_ts1184_by_container() {
         "abstract export interface II {}",
         "abstract export type TT = number;",
         "abstract export enum EE { A }",
+        "abstract export default function f() {}",
+        "abstract export default function() {}",
+        "abstract export default async function g() {}",
     ];
     for statement in statements {
         for index in 0..CONTAINERS.len() {
@@ -395,19 +398,61 @@ fn a_valid_export_default_class_stays_clean() {
 
 #[test]
 fn abstract_export_default_non_class_forms_are_not_read_as_the_class_arm() {
-    // `abstract` admits no other `export default <expr>` form at all — this
-    // fix must not widen the classification past `class`. Left to its
-    // existing (separately tracked) path.
+    // None of `abstract`'s other `export default <expr>` forms are legal on
+    // a class, so this fix must never widen the ordering-violation TS1029
+    // classification past `class`, in any container.
     for statement in [
         "abstract export default function f() {}",
         "abstract export default 1;",
         "abstract export default (class {});",
     ] {
-        let source = in_container(0, statement);
-        assert!(
-            !codes(&source).contains(&diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER),
-            "must not report the class-ordering TS1029 for {source:?}: {:?}",
-            codes(&source)
-        );
+        for index in 0..CONTAINERS.len() {
+            let source = in_container(index, statement);
+            assert!(
+                !codes(&source).contains(&diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER),
+                "must not report the class-ordering TS1029 for {source:?}: {:?}",
+                codes(&source)
+            );
+        }
+    }
+}
+
+// -- `abstract export default <expr>`: previously a completely silent parse
+//    (`abstract` degraded to an identifier expression with no modifier
+//    diagnostic at all, in every container). `function`/`async function`
+//    take the ordinary `ModifierRun` container split (covered above, folded
+//    into `abstract_export_modifier_run_splits_ts1242_and_ts1184_by_container`);
+//    every other expression takes the `ExportAssignment` node's own, wider
+//    silencing. --
+
+#[test]
+fn abstract_export_default_expression_reports_ts1242_only_outside_a_block_or_namespace() {
+    // `export default <expr>` is an `ExportAssignment` node — its own
+    // placement diagnostic (TS1258 in a Block, TS1319 in a namespace body,
+    // both checker-side and outside this parser-only harness) wins in both
+    // containers, so the parser's TS1242 modifier error survives only at
+    // the source file's own top level. Oracle-confirmed against
+    // `typescript@7.0.2`.
+    for statement in [
+        "abstract export default 1;",
+        "abstract export default (class {});",
+    ] {
+        for index in 0..CONTAINERS.len() {
+            let source = in_container(index, statement);
+            if is_block(index) || index == 3 {
+                assert_eq!(
+                    codes(&source),
+                    Vec::<u32>::new(),
+                    "expected no modifier diagnostic for {source:?}, got {:?}",
+                    codes(&source)
+                );
+            } else {
+                assert_diag_at_abstract(
+                    &source,
+                    diagnostic_codes::ABSTRACT_MODIFIER_CAN_ONLY_APPEAR_ON_A_CLASS_METHOD_OR_PROPERTY_DECLARATION,
+                );
+            }
+            assert_no_cannot_find_name(&source);
+        }
     }
 }
