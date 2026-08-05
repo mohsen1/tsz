@@ -554,6 +554,16 @@ impl<'a> CheckerState<'a> {
         if self.source_declared_type_is_displayed_as_underlying(expr_type) {
             return false;
         }
+        // A *concrete* indexed access (`Obj["m"]`: no free type parameters, a
+        // single string/number literal key) is resolved to its member type
+        // during type construction in tsc (`getIndexedAccessType`), so the
+        // written access is never what a diagnostic renders. The assignment
+        // roles already perform that reduction in `format_type_for_diagnostic_role`;
+        // preferring the annotation as written here would paint the unreduced
+        // surface straight back over the reduced member.
+        if self.source_declared_type_reduces_as_concrete_indexed_access(expr_type) {
+            return false;
+        }
         if annotation.contains("`${") {
             return true;
         }
@@ -619,6 +629,22 @@ impl<'a> CheckerState<'a> {
     /// [`crate::query_boundaries::assignability_alias_display::type_displayed_as_underlying`],
     /// which owns the `Lazy(DefId)` / resolved-shape resolution behind the query
     /// boundary.
+    /// Whether a declared source type is a concrete indexed access that the
+    /// shared display policy reduces to its member type.
+    ///
+    /// The reducibility decision is delegated wholesale to
+    /// [`Self::resolve_concrete_indexed_access_for_display`], which owns the
+    /// "tsc resolved this at construction time" rule: it declines for a
+    /// non-literal key, for a free type parameter anywhere in the object, and
+    /// for anything that fails to evaluate. So a deferred `T["m"]` — which tsc
+    /// also renders as written — still keeps its annotation surface here.
+    pub(in crate::error_reporter) fn source_declared_type_reduces_as_concrete_indexed_access(
+        &mut self,
+        ty: TypeId,
+    ) -> bool {
+        self.resolve_concrete_indexed_access_for_display(ty) != ty
+    }
+
     fn source_declared_type_is_displayed_as_underlying(&self, ty: TypeId) -> bool {
         crate::query_boundaries::assignability_alias_display::type_displayed_as_underlying(
             self.ctx.types.as_type_database(),
