@@ -1245,7 +1245,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // `required_props.is_empty()` let `{ apply(..): any; [n: number]: T }`
                 // — the shape a user augmentation gives the global `Function`
                 // interface — take the bridge and answer assignable.
-                if t_shape.number_index.is_some() {
+                //
+                // The one exception is the exemption `check_number_index_compatibility`
+                // already encodes for object sources: an `any`-valued number index is
+                // waived when the target carries a co-present `any`-valued string
+                // index, because `tsc`'s `indexSignaturesRelatedTo` short-circuits
+                // *every* index info of such a target. So
+                // `{ [k: string]: any; [n: number]: any }` accepts a function source
+                // even though `{ [n: number]: any }` alone rejects it. Delegating to
+                // the shared helper keeps the two paths from drifting.
+                if t_shape.number_index.is_some()
+                    && !self.target_dual_any_index_waives_missing_number_index(&t_shape)
+                {
                     return SubtypeResult::False;
                 }
                 let required_props: Vec<_> =
@@ -1748,6 +1759,35 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if let Some(ref s_shape) = source_props {
                     return self.check_object_subtype(
                         s_shape,
+                        None,
+                        Some(source),
+                        &t_shape,
+                        Some(target),
+                    );
+                }
+                // A bare `FunctionShape` declares no index signature of its own, so
+                // a target that requires one rejects it — with the single exception
+                // `tsc` encodes in `indexSignaturesRelatedTo` (checker.ts ~24828):
+                // when the target carries a string index whose value type is `any`,
+                // every index obligation of that target is waived for a
+                // non-primitive source, so `() => void` IS assignable to
+                // `{ [k: string]: any }` / `Record<string, any>`. A concrete value
+                // type (`unknown`, `string`, …) is never waived, and a target whose
+                // only index is numeric is handled by the function-like branch above.
+                //
+                // The waiver covers only the *index* obligation, so the remaining
+                // property and call/construct-signature obligations still have to be
+                // adjudicated. Route them through the same apparent-shape structural
+                // comparison the property-less object arm above uses: a function's
+                // apparent members satisfy `length`/`name`/`bind`-shaped targets, and
+                // a required property it does not carry (`{ zzz: string; … }`) still
+                // fails inside `check_object_subtype` exactly as `tsc` reports it.
+                if let Some(ref t_string_idx) = t_shape.string_index
+                    && self.target_string_index_any_waives_missing_index(t_string_idx.value_type)
+                {
+                    let apparent_source = self.function_apparent_object_shape(source);
+                    return self.check_object_subtype(
+                        &apparent_source,
                         None,
                         Some(source),
                         &t_shape,
