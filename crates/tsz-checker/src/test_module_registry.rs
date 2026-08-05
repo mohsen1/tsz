@@ -703,6 +703,8 @@ mod parameter_checker_tests;
 mod partial_pick_indexed_access_write_tests;
 #[path = "tests/polymorphic_this_relation_routing_arch_tests.rs"]
 mod polymorphic_this_relation_routing_arch_tests;
+#[path = "tests/position_invalid_default_export_expression_tests.rs"]
+mod position_invalid_default_export_expression_tests;
 #[path = "tests/predicate_narrowed_lib_union_access_tests.rs"]
 mod predicate_narrowed_lib_union_access_tests;
 #[path = "tests/predicate_narrowed_top_type_source_display_tests.rs"]

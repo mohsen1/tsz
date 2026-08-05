@@ -1395,6 +1395,23 @@ impl CheckerState<'_> {
                 }
             }
 
+            // A position-invalid `export default [ expr ]` binds a symbol whose type
+            // tsc never computes: `checkExportAssignment` bails at
+            // `checkGrammarModuleElementContext`, and nothing can reference the
+            // default of a declaration that never took effect. Typing it here walks
+            // the exported expression and reports its unresolved names, which tsc
+            // does not. The declaration is still bound — only the eager demand for
+            // its type is dropped.
+            if self
+                .ctx
+                .binder
+                .get_symbol(sym_id)
+                .map(|s| s.value_declaration)
+                .is_some_and(|decl| self.is_unchecked_position_invalid_default_export(decl))
+            {
+                continue;
+            }
+
             // IMPORTANT: get_type_of_symbol internally calls compute_type_of_symbol which
             // returns both the type AND the correct type_params, then inserts them into
             // ctx.type_env. We MUST NOT separately call get_type_params_for_symbol because
