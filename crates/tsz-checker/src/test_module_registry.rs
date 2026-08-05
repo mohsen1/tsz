@@ -203,6 +203,8 @@ mod contextual_return_wrapper_tests;
 mod cross_file_class_instance_publication_tests;
 #[path = "tests/cross_file_generic_alias_union_implements_tests.rs"]
 mod cross_file_generic_alias_union_implements_tests;
+#[path = "tests/cross_file_generic_implements_type_param_arena_tests.rs"]
+mod cross_file_generic_implements_type_param_arena_tests;
 #[path = "tests/cross_file_in_operator_indexed_element_narrowing_tests.rs"]
 mod cross_file_in_operator_indexed_element_narrowing_tests;
 #[path = "tests/cross_file_interface_property_access_tests.rs"]
