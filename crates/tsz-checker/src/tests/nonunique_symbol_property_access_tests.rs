@@ -61,8 +61,36 @@ const _v: string = o[myKey];
 // ── multiple non-unique symbol properties on the same type ────────────────────
 
 #[test]
-fn multiple_nonunique_symbol_props_resolved_independently() {
-    let diags = check_source_diagnostics(
+fn multiple_nonunique_symbol_props_fold_into_union_index() {
+    // tsc folds several plain-`symbol` computed members into ONE `[key: symbol]`
+    // index whose value is the UNION of the members' value types, so any
+    // `symbol`-keyed read yields `number | string`. Reading into that union is
+    // clean; reading into a single member's narrow type is a genuine TS2322
+    // (issue #16307 — tsz used to error-collapse the mismatched value types to
+    // `error` and wrongly accepted the narrow reads).
+    let clean = check_source_diagnostics(
+        r#"
+declare const k1: symbol;
+declare const k2: symbol;
+interface Multi {
+  [k1]: number;
+  [k2]: string;
+}
+declare const m: Multi;
+const _u: number | string = m[k1];
+"#,
+    );
+    assert!(
+        clean.iter().all(|d| d.code != 2322),
+        "reading the folded symbol index into its own `number | string` union \
+         must not report TS2322; got: {:?}",
+        clean
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+
+    let narrow = check_source_diagnostics(
         r#"
 declare const k1: symbol;
 declare const k2: symbol;
@@ -72,14 +100,13 @@ interface Multi {
 }
 declare const m: Multi;
 const _n: number = m[k1];
-const _s: string = m[k2];
 "#,
     );
-    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
     assert!(
-        ts2322.is_empty(),
-        "each non-unique symbol property should resolve to its own type; got: {:?}",
-        diags
+        narrow.iter().any(|d| d.code == 2322),
+        "reading the folded `number | string` symbol index into `number` must \
+         report TS2322 like tsc; got: {:?}",
+        narrow
             .iter()
             .map(|d| (d.code, &d.message_text))
             .collect::<Vec<_>>()
