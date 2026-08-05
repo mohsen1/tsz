@@ -181,12 +181,63 @@ impl<'a> CheckerState<'a> {
                             | symbol_flags::CONST_ENUM
                             | symbol_flags::ENUM_MEMBER;
 
-                        // Skip TS2713 for ALIAS symbols (imports) - they may target
-                        // namespaces in other files. Also skip when the resolved
-                        // export has an alias_partner (TYPE_ALIAS+ALIAS merge), as
-                        // the partner provides namespace access. Skip when parse
-                        // errors exist, as the qualified name may be malformed.
-                        let is_alias = symbol.has_any_flags(symbol_flags::ALIAS);
+                        // Determine `sym_id`'s own binder deterministically
+                        // rather than guessing from the raw id alone —
+                        // `resolve_symbol_file_index` is a flat map keyed by
+                        // `SymbolId`, so trusting it for an id that was not
+                        // *just* produced by a matching cross-file resolution
+                        // risks reading whichever other file's symbol last
+                        // registered under the same colliding ordinal.
+                        //
+                        // A nested qualifier (`b.a` as the LHS of `b.a.T`)
+                        // resolves `sym_id` through `resolve_qualified_symbol_
+                        // in_type_position`, which reaches cross-file members
+                        // via `resolve_export_in_target_file` and registers
+                        // the result moments before `sym_id` reaches here —
+                        // safe to read back immediately. A plain identifier
+                        // LHS may already have been walked past its alias by
+                        // `resolve_identifier_symbol_as_qualified_type_anchor`
+                        // (which calls `resolve_alias_symbol` upstream), which
+                        // has the same collision risk in the other direction —
+                        // so start fresh from `file_locals`, the raw file-scope
+                        // binding, instead of trusting that resolution here.
+                        let (alias_probe_sym_id, alias_probe_file) =
+                            if left_node.kind == syntax_kind_ext::QUALIFIED_NAME {
+                                (
+                                    sym_id,
+                                    self.ctx
+                                        .resolve_symbol_file_index(sym_id)
+                                        .unwrap_or(self.ctx.current_file_idx),
+                                )
+                            } else {
+                                (
+                                    self.ctx
+                                        .binder
+                                        .file_locals
+                                        .get(&left_name)
+                                        .unwrap_or(sym_id),
+                                    self.ctx.current_file_idx,
+                                )
+                            };
+                        let is_alias = self
+                            .ctx
+                            .get_binder_for_file(alias_probe_file)
+                            .and_then(|b| b.get_symbol(alias_probe_sym_id))
+                            .is_some_and(|s| s.has_any_flags(symbol_flags::ALIAS));
+                        // An ALIAS symbol (import) may target a namespace in
+                        // another file, so resolve it and ask the *target* —
+                        // in its own declaring binder — for namespace meaning
+                        // instead of skipping the check wholesale. Also skip
+                        // when the resolved export has an alias_partner
+                        // (TYPE_ALIAS+ALIAS merge), as the partner provides
+                        // namespace access. Skip when parse errors exist, as
+                        // the qualified name may be malformed.
+                        let alias_has_namespace_meaning = is_alias
+                            && self.alias_target_has_namespace_meaning(
+                                alias_probe_sym_id,
+                                alias_probe_file,
+                                valid_namespace_flags,
+                            );
                         let has_alias_partner =
                             self.ctx.alias_partners_contains(self.ctx.binder, sym_id)
                                 || self.ctx.binder.resolve_import_symbol(sym_id).is_some_and(
@@ -203,30 +254,38 @@ impl<'a> CheckerState<'a> {
                         // second, so re-ask the file scope for a namespace-meaning
                         // declaration before treating the qualifier as unusable.
                         // Same fallback shape as the type-parameter case above.
-                        let outer_namespace_meaning_exists = self
-                            .ctx
-                            .binder
-                            .file_locals
-                            .get(&left_name)
-                            .map(|file_sym| {
-                                let mut visited = AliasCycleTracker::new();
-                                self.resolve_alias_symbol(file_sym, &mut visited)
-                                    .unwrap_or(file_sym)
-                            })
-                            .and_then(|resolved| {
-                                let lib_binders = self.get_lib_binders();
-                                self.ctx
-                                    .binder
-                                    .get_symbol_with_libs(resolved, &lib_binders)
-                                    .map(|outer| {
-                                        outer.has_any_flags(
-                                            valid_namespace_flags | symbol_flags::ALIAS,
-                                        )
-                                    })
-                            })
-                            .unwrap_or(false);
+                        //
+                        // Skip for ALIAS symbols: `file_locals.get(&left_name)`
+                        // finds this same alias, and `resolve_alias_symbol`
+                        // reads a resolved cross-file id through *this* file's
+                        // binder — exactly the raw-`SymbolId` collision
+                        // `alias_target_has_namespace_meaning` above already
+                        // resolves correctly through the declaring binder.
+                        let outer_namespace_meaning_exists = !is_alias
+                            && self
+                                .ctx
+                                .binder
+                                .file_locals
+                                .get(&left_name)
+                                .map(|file_sym| {
+                                    let mut visited = AliasCycleTracker::new();
+                                    self.resolve_alias_symbol(file_sym, &mut visited)
+                                        .unwrap_or(file_sym)
+                                })
+                                .and_then(|resolved| {
+                                    let lib_binders = self.get_lib_binders();
+                                    self.ctx
+                                        .binder
+                                        .get_symbol_with_libs(resolved, &lib_binders)
+                                        .map(|outer| {
+                                            outer.has_any_flags(
+                                                valid_namespace_flags | symbol_flags::ALIAS,
+                                            )
+                                        })
+                                })
+                                .unwrap_or(false);
                         if !symbol.has_any_flags(valid_namespace_flags)
-                            && !is_alias
+                            && !alias_has_namespace_meaning
                             && !has_alias_partner
                             && !outer_namespace_meaning_exists
                             && !self.ctx.has_parse_errors
@@ -722,6 +781,110 @@ impl<'a> CheckerState<'a> {
             self.error_cannot_find_namespace_with_suggestion(ident.escaped_text.as_str(), qn.left);
         }
         TypeId::ERROR
+    }
+
+    /// Whether an `ALIAS` symbol's ultimate target has tsc's
+    /// `SymbolFlags.Namespace` meaning (`ValueModule | NamespaceModule |
+    /// Enum`, passed in as `valid_namespace_flags`).
+    ///
+    /// Per-file binders mint raw `SymbolId`s from zero, so a resolved
+    /// cross-file id is only meaningful when read from the binder that
+    /// minted it — this walks `(file, export name)` hops via
+    /// [`crate::context::CheckerContext::resolve_export_in_target_file`],
+    /// the same program-aware, binder-correct primitive
+    /// [`Self::resolve_member_through_namespace_import_chain`] uses, rather
+    /// than indexing a resolved id into the wrong binder.
+    ///
+    /// A namespace import (`import * as Ns`) always denotes a module
+    /// namespace object. Otherwise this follows re-export hops while the
+    /// landed symbol is itself an alias with a module specifier to follow;
+    /// it stops and reads that symbol's own flags once the trail runs out
+    /// (no further module to resolve) or a concrete declaration is reached.
+    /// A default export (`export default class D {}`) is bound as a
+    /// synthetic alias distinct from any same-named local declaration, so a
+    /// merge partner (`namespace D {}`) never contributes flags here — the
+    /// synthetic symbol's own flags (`ALIAS | EXPORT_VALUE` at most) settle
+    /// the question without needing a separate default-export rule.
+    ///
+    /// `sym_id`'s binder is `starting_file`, chosen deterministically by the
+    /// caller rather than guessed here: `resolve_symbol_file_index` is a flat
+    /// map keyed by raw `SymbolId`, so re-deriving a file from the id alone
+    /// risks landing on whichever *other* file's symbol last registered under
+    /// the same colliding ordinal. The caller either just obtained `sym_id`
+    /// from a matching cross-file resolution (safe to look up immediately) or
+    /// knows it is local to the checking file.
+    fn alias_target_has_namespace_meaning(
+        &self,
+        sym_id: SymbolId,
+        starting_file: usize,
+        valid_namespace_flags: u32,
+    ) -> bool {
+        const MAX_HOPS: usize = 32;
+
+        let Some(mut symbol) = self
+            .ctx
+            .get_binder_for_file(starting_file)
+            .and_then(|b| b.get_symbol(sym_id))
+        else {
+            return false;
+        };
+        let mut cur_file = starting_file;
+        let mut visited_files: FxHashSet<usize> = FxHashSet::default();
+
+        for _ in 0..MAX_HOPS {
+            if !symbol.has_any_flags(symbol_flags::ALIAS) {
+                return symbol.has_any_flags(valid_namespace_flags);
+            }
+
+            let Some(module_specifier) = symbol.import_module() else {
+                // No further module to chase (a local, same-file alias, or a
+                // synthetic wrapper like the `default`-export symbol): settle
+                // on this symbol's own flags rather than risk indexing a
+                // resolved id into the wrong file's binder.
+                return symbol.has_any_flags(valid_namespace_flags);
+            };
+            // `import_name` is unset for a namespace/require-style binding
+            // (`import * as X` sets it to `"*"`, but `import X = require(m)`
+            // never sets it at all) — both denote the module's namespace
+            // object as a whole, which always has namespace meaning.
+            let Some(export_name) = symbol.import_name() else {
+                return true;
+            };
+            if export_name == "*" {
+                return true;
+            }
+
+            let Some(target_file) = self
+                .ctx
+                .resolve_import_target_from_file(cur_file, module_specifier)
+            else {
+                return false;
+            };
+            if !visited_files.insert(target_file) {
+                return false;
+            }
+            let mut visited_exports = FxHashSet::default();
+            let Some(next_sym_id) = self.ctx.resolve_export_in_target_file(
+                target_file,
+                export_name,
+                &mut visited_exports,
+            ) else {
+                return false;
+            };
+            let next_file = self
+                .ctx
+                .resolve_symbol_file_index(next_sym_id)
+                .unwrap_or(target_file);
+            let Some(next_binder) = self.ctx.get_binder_for_file(next_file) else {
+                return false;
+            };
+            let Some(next_symbol) = next_binder.get_symbol(next_sym_id) else {
+                return false;
+            };
+            symbol = next_symbol;
+            cur_file = next_file;
+        }
+        false
     }
 
     /// Resolve `member_name` for a qualified-type-name anchor that is an import
