@@ -4,6 +4,53 @@ use crate::state::CheckerState;
 use std::collections::HashMap;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 
+/// Whether `kind` starts a new declaration container for an `import X = ...`
+/// alias.
+///
+/// `tsc`'s binder advances its `container` cursor at the source file, a module
+/// (namespace) body, a class body, and every function-like node — never at a
+/// plain `Block` or other block-scope-only construct, because an alias is not
+/// block-scoped. Grouping duplicate aliases therefore has to key on these
+/// nodes, and the set is exactly the complement of the transparent statements
+/// [`CheckerState::collect_import_equals_transparently`] walks through.
+const fn is_alias_declaration_container(kind: u16) -> bool {
+    matches!(
+        kind,
+        syntax_kind_ext::SOURCE_FILE
+            | syntax_kind_ext::MODULE_DECLARATION
+            | syntax_kind_ext::MODULE_BLOCK
+            | syntax_kind_ext::CLASS_DECLARATION
+            | syntax_kind_ext::CLASS_EXPRESSION
+            | syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
+            | syntax_kind_ext::FUNCTION_DECLARATION
+            | syntax_kind_ext::FUNCTION_EXPRESSION
+            | syntax_kind_ext::ARROW_FUNCTION
+            | syntax_kind_ext::METHOD_DECLARATION
+            | syntax_kind_ext::CONSTRUCTOR
+            | syntax_kind_ext::GET_ACCESSOR
+            | syntax_kind_ext::SET_ACCESSOR
+    )
+}
+
+/// Whether a container of `kind` already has its own
+/// [`CheckerState::check_import_alias_duplicates`] call site.
+///
+/// The source file and namespace bodies are scanned directly from
+/// `check_source_file` / the module-declaration bridge; re-grouping them in the
+/// nested-container sweep would report every duplicate twice. A class body is
+/// listed here too — an `import X = ...` cannot be a direct class member, so an
+/// alias whose nearest container is the class itself does not exist.
+const fn container_has_dedicated_scan(kind: u16) -> bool {
+    matches!(
+        kind,
+        syntax_kind_ext::SOURCE_FILE
+            | syntax_kind_ext::MODULE_DECLARATION
+            | syntax_kind_ext::MODULE_BLOCK
+            | syntax_kind_ext::CLASS_DECLARATION
+            | syntax_kind_ext::CLASS_EXPRESSION
+    )
+}
+
 impl<'a> CheckerState<'a> {
     /// Collect every `import X = ...` declaration reachable from `stmt_idx`
     /// without crossing a declaration-container boundary.
@@ -137,44 +184,153 @@ impl<'a> CheckerState<'a> {
         }
 
         for (alias_name, indices) in alias_map {
-            if indices.len() <= 1 {
+            self.report_duplicate_alias_group(&alias_name, &indices);
+        }
+    }
+
+    /// Report TS2300 (or the wrong-meaning diagnostic) at every alias in one
+    /// same-name group. A group of one is not a duplicate and reports nothing.
+    fn report_duplicate_alias_group(&mut self, alias_name: &str, indices: &[NodeIndex]) {
+        if indices.len() <= 1 {
+            return;
+        }
+
+        for &import_idx in indices {
+            let Some(import_node) = self.ctx.arena.get(import_idx) else {
+                continue;
+            };
+            let Some(import_decl) = self.ctx.arena.get_import_decl(import_node) else {
+                continue;
+            };
+
+            let alias_node = import_decl.import_clause;
+            let Some(sym_id) = self.resolve_identifier_symbol(alias_node) else {
+                tracing::trace!("Could not resolve identifier symbol");
+                continue;
+            };
+            let symbol = self
+                .ctx
+                .binder
+                .symbols
+                .get(sym_id)
+                .expect("sym_id resolved from resolve_identifier_symbol");
+            tracing::trace!("Symbol flags: {:?}", symbol.flags);
+            if self.symbol_is_value_only(sym_id, Some(alias_name)) {
+                self.report_wrong_meaning_diagnostic(
+                    alias_name,
+                    import_decl.import_clause,
+                    crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                );
+            } else {
+                self.error_at_node(
+                    import_decl.import_clause,
+                    &format!("Duplicate identifier '{alias_name}'."),
+                    crate::diagnostics::diagnostic_codes::DUPLICATE_IDENTIFIER,
+                );
+            }
+        }
+    }
+
+    /// The nearest enclosing declaration container of `idx`, or `None` when the
+    /// parent chain is incomplete.
+    fn nearest_alias_container(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        let mut cursor = self.ctx.arena.parent_of(idx)?;
+        while cursor.is_some() {
+            let kind = self.ctx.arena.get(cursor)?.kind;
+            if is_alias_declaration_container(kind) {
+                return Some(cursor);
+            }
+            cursor = self.ctx.arena.parent_of(cursor)?;
+        }
+        None
+    }
+
+    /// TS2300 for duplicate `import X = ...` aliases inside a function-like
+    /// body or a class static block.
+    ///
+    /// [`Self::check_import_alias_duplicates`] is only ever invoked with a
+    /// source file's or a namespace body's statement list, and its transparent
+    /// walk deliberately stops at a function body — so two same-name aliases
+    /// directly inside `function f() { ... }`, a method, a constructor, an
+    /// accessor, an arrow/function expression body, or a `static { ... }` block
+    /// were never grouped by anything and reported only TS1232. `tsc` reports
+    /// TS1232 *and* TS2300 at each of them, because its binder records a
+    /// non-block-scoped alias in the enclosing container and the redeclaration
+    /// collides there.
+    ///
+    /// This sweep closes that gap for every such container at once by grouping
+    /// each alias under [`Self::nearest_alias_container`] instead of relying on
+    /// a call site per container kind — arrow and function-expression bodies
+    /// hang off expressions, so no statement-list-driven pass reaches them.
+    /// Containers that already have a dedicated scan are skipped, so nothing is
+    /// reported twice.
+    pub(crate) fn check_import_alias_duplicates_in_nested_containers(&mut self) {
+        // Aliases are rare and the pools are per-file; skip the sweep entirely
+        // when the file parsed no import-like declaration at all.
+        if self.ctx.arena.import_decls.is_empty() {
+            return;
+        }
+
+        // One sequential pass over the thin node headers. Aliases are rare, so
+        // the parent walk and the grouping below only run for the few hits;
+        // everything else costs a single `u16` compare over contiguous memory.
+        let alias_nodes: Vec<NodeIndex> = self
+            .ctx
+            .arena
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION)
+            .map(|(raw, _)| NodeIndex(raw as u32))
+            .collect();
+        if alias_nodes.is_empty() {
+            return;
+        }
+
+        let mut groups: HashMap<(NodeIndex, String), Vec<NodeIndex>> = HashMap::new();
+        // Grouping keys are recorded in arena order so the diagnostics this
+        // sweep emits do not depend on `HashMap` iteration order.
+        let mut group_order: Vec<(NodeIndex, String)> = Vec::new();
+
+        for idx in alias_nodes {
+            let Some(node) = self.ctx.arena.get(idx) else {
+                continue;
+            };
+            let Some(container) = self.nearest_alias_container(idx) else {
+                continue;
+            };
+            let Some(container_kind) = self.ctx.arena.get(container).map(|n| n.kind) else {
+                continue;
+            };
+            if container_has_dedicated_scan(container_kind) {
                 continue;
             }
 
-            for &import_idx in &indices {
-                let Some(import_node) = self.ctx.arena.get(import_idx) else {
-                    continue;
-                };
-                let Some(import_decl) = self.ctx.arena.get_import_decl(import_node) else {
-                    continue;
-                };
+            let Some(import_decl) = self.ctx.arena.get_import_decl(node) else {
+                continue;
+            };
+            let Some(alias_node) = self.ctx.arena.get(import_decl.import_clause) else {
+                continue;
+            };
+            let Some(alias_id) = self.ctx.arena.get_identifier(alias_node) else {
+                continue;
+            };
 
-                let alias_node = import_decl.import_clause;
-                let Some(sym_id) = self.resolve_identifier_symbol(alias_node) else {
-                    tracing::trace!("Could not resolve identifier symbol");
-                    continue;
-                };
-                let symbol = self
-                    .ctx
-                    .binder
-                    .symbols
-                    .get(sym_id)
-                    .expect("sym_id resolved from resolve_identifier_symbol");
-                tracing::trace!("Symbol flags: {:?}", symbol.flags);
-                if self.symbol_is_value_only(sym_id, Some(&alias_name)) {
-                    self.report_wrong_meaning_diagnostic(
-                        &alias_name,
-                        import_decl.import_clause,
-                        crate::query_boundaries::name_resolution::NameLookupKind::Value,
-                    );
-                } else {
-                    self.error_at_node(
-                        import_decl.import_clause,
-                        &format!("Duplicate identifier '{alias_name}'."),
-                        crate::diagnostics::diagnostic_codes::DUPLICATE_IDENTIFIER,
-                    );
-                }
-            }
+            let key = (container, alias_id.escaped_text.to_string());
+            groups
+                .entry(key.clone())
+                .or_insert_with(|| {
+                    group_order.push(key.clone());
+                    Vec::new()
+                })
+                .push(idx);
+        }
+
+        for key in group_order {
+            let Some(indices) = groups.remove(&key) else {
+                continue;
+            };
+            self.report_duplicate_alias_group(&key.1, &indices);
         }
     }
 
