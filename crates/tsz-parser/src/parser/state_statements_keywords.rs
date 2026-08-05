@@ -367,16 +367,40 @@ impl ParserState {
 
         if self.next_token_is_on_new_line() {
             self.parse_expression_statement()
+        } else if self.token() == SyntaxKind::OverrideKeyword {
+            // `override` is never a valid statement/declaration modifier
+            // outside a class member — tsc's parser does not recognize it as
+            // starting a declaration there at all, so it reports a single,
+            // unconditional "Unexpected keyword or identifier." at the
+            // `override` token and continues parsing the remainder as if
+            // `override` were never there. Unlike the sibling modifiers this
+            // does not depend on the container or on what follows (`export`
+            // or otherwise): oracle-pinned across 3 containers x 11 export
+            // forms plus the non-export control, all 34 rows report TS1434
+            // alone (#16403). Consuming the token and re-dispatching through
+            // `parse_statement()` reproduces that: whatever follows parses as
+            // an ordinary statement with no leftover modifier, so it draws no
+            // diagnostic of its own — matching tsc, which still binds the
+            // trailing declaration (confirmed: a reference to the declared
+            // name after this statement resolves, not TS2304) while
+            // suppressing its grammar diagnostics for the file, the same
+            // file-wide effect #16367 documented for a genuine parse error.
+            self.parse_error_at_current_token(
+                "Unexpected keyword or identifier.",
+                diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+            );
+            self.next_token();
+            self.parse_statement()
         } else if self.look_ahead_is_modifier_before_declaration() {
-            // `static`/`public`/`protected`/`private` share one modifier
-            // diagnostic family (TS1044, "'{0}' modifier cannot appear on a
-            // module or namespace element") and the container split below is
-            // oracle-pinned for exactly those four (#16403 slice 1).
-            // `readonly` needs its own code (TS1024) and `override` its own
-            // unconditional one (TS1434) regardless of container — both stay
-            // on the pre-existing silent-drop behavior for the three forms
-            // below until their own slice lands, rather than adopting this
-            // family's TS1044 by sharing the same dispatch.
+            // `static`/`public`/`protected`/`private`/`readonly` share the
+            // same container split (#16403 slices 1-2): a Block body gets
+            // the generic TS1184; a module/namespace body or the source
+            // file's own top level, neither of which is a Block, keeps a
+            // module/namespace-specific diagnostic — TS1044 for the first
+            // four (formatted with the actual modifier text), TS1024 for
+            // `readonly` (its own fixed message, oracle-pinned identical to
+            // the TS1044 family's silencing shape in every other position).
+            // `override` never reaches here (short-circuited above).
             let is_ts1044_family_modifier = matches!(
                 self.token(),
                 SyntaxKind::StaticKeyword
@@ -384,6 +408,8 @@ impl ParserState {
                     | SyntaxKind::ProtectedKeyword
                     | SyntaxKind::PrivateKeyword
             );
+            let is_readonly_modifier = self.token() == SyntaxKind::ReadonlyKeyword;
+            let takes_container_split = is_ts1044_family_modifier || is_readonly_modifier;
             let export_form = self.modified_export_form();
             // `in_static_block_context()` covers the static-block case
             // directly rather than through `in_block_context()`
@@ -396,7 +422,7 @@ impl ParserState {
             let block_context = self.in_block_context() || self.in_static_block_context();
             match export_form {
                 Some(ModifiedExportForm::ExportDeclaration)
-                    if !is_ts1044_family_modifier || block_context =>
+                    if !takes_container_split || block_context =>
                 {
                     // `export {}` / `export * from` after a stray modifier,
                     // inside a Block: tsc reports the form's own placement
@@ -406,9 +432,7 @@ impl ParserState {
                     self.parse_statement()
                 }
                 Some(ModifiedExportForm::ExportAssignment)
-                    if !is_ts1044_family_modifier
-                        || block_context
-                        || self.in_module_body_context() =>
+                    if !takes_container_split || block_context || self.in_module_body_context() =>
                 {
                     // `export =` / `export default` after a stray modifier,
                     // inside a Block *or* a namespace body: the assignment's
@@ -421,17 +445,15 @@ impl ParserState {
                     self.parse_statement()
                 }
                 Some(ModifiedExportForm::ModuleDeclaration)
-                    if is_ts1044_family_modifier && block_context =>
+                    if takes_container_split && block_context =>
                 {
                     // `export namespace N {}` / `export module M {}` inside
                     // a Block: a nested module declaration is itself illegal
                     // there (TS1235) independent of any modifier, and that
                     // placement diagnostic wins the same way the two forms
-                    // above do. Gated to the TS1044 family (unlike the two
-                    // arms above, `readonly`/`override` classified this form
-                    // as an ordinary `ModifiedDeclaration` before this PR —
-                    // preserve that catchall routing for them rather than
-                    // newly silencing it, since it was never silent).
+                    // above do. Gated to the modifiers that take the
+                    // container split (#16403 slices 1-2) — `override` never
+                    // reaches this match at all (short-circuited above).
                     self.next_token();
                     self.parse_statement()
                 }
@@ -460,14 +482,23 @@ impl ParserState {
                     // ordinary modified declaration: a Block body gets the
                     // generic TS1184; a module/namespace body or the source
                     // file's own top level, neither of which is a Block,
-                    // keeps the module/namespace-specific TS1044 (#16368,
-                    // #16403).
+                    // keeps a module/namespace-specific diagnostic — TS1044
+                    // (formatted with the modifier text) for the
+                    // `static`/`public`/`protected`/`private` family,
+                    // `readonly`'s own fixed-message TS1024 otherwise
+                    // (#16368, #16403).
                     let modifier_start = self.token_pos();
                     let modifier_text = self.scanner.get_token_text();
+                    let modifier_kind = self.token();
                     if block_context {
                         self.parse_error_at_current_token(
                             "Modifiers cannot appear here.",
                             diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+                        );
+                    } else if modifier_kind == SyntaxKind::ReadonlyKeyword {
+                        self.parse_error_at_current_token(
+                            "'readonly' modifier can only appear on a property declaration or index signature.",
+                            diagnostic_codes::READONLY_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION_OR_INDEX_SIGNATURE,
                         );
                     } else {
                         self.parse_error_at_current_token(
@@ -477,7 +508,6 @@ impl ParserState {
                             diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT,
                         );
                     }
-                    let modifier_kind = self.token();
                     self.next_token();
                     let modifier = self.arena.add_token(
                         modifier_kind as u16,

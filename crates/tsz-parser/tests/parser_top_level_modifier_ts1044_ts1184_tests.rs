@@ -1,12 +1,16 @@
 //! A misplaced class-modifier keyword (`public`, `private`, `protected`,
-//! `static`, `override`, `readonly`) at the start of a statement is a grammar
-//! error in every container, but tsc picks its diagnostic from the
-//! *container*, not the modifier: a `Block` body (function body, a nested
-//! block, or a class static block) reports the generic TS1184 ("Modifiers
-//! cannot appear here"); a module/namespace body or the source file's own
-//! top level — neither of which is a `Block` — keeps the module/namespace-
-//! specific TS1044 ("'{0}' modifier cannot appear on a module or namespace
-//! element."). #16368.
+//! `static`, `readonly`) at the start of a statement is a grammar error in
+//! every container, but tsc picks its diagnostic from the *container*, not
+//! the modifier: a `Block` body (function body, a nested block, or a class
+//! static block) reports the generic TS1184 ("Modifiers cannot appear
+//! here"); a module/namespace body or the source file's own top level —
+//! neither of which is a `Block` — keeps a module/namespace-specific
+//! diagnostic (TS1044 "'{0}' modifier cannot appear on a module or namespace
+//! element." for the first four, `readonly`'s own fixed-message TS1024).
+//! #16368, #16403.
+//!
+//! `override` is a different rule entirely — see this file's own note above
+//! `every_top_level_modifier_keyword_reports_ts1184_in_a_block`.
 
 use crate::parser::test_fixture::parse_source;
 use tsz_common::diagnostics::diagnostic_codes;
@@ -79,14 +83,12 @@ fn modifier_before_namespace_nested_in_function_body_still_reports_ts1044() {
 
 #[test]
 fn every_top_level_modifier_keyword_reports_ts1184_in_a_block() {
-    for keyword in [
-        "public",
-        "private",
-        "protected",
-        "static",
-        "override",
-        "readonly",
-    ] {
+    // `override` is deliberately excluded: unlike these five, tsc's parser
+    // does not recognize it as a statement/declaration modifier at all
+    // outside a class member, so it never reaches the container split and
+    // instead reports an unconditional TS1434 (see the `override_*` tests
+    // in `parser_modified_export_statement_tests.rs`, #16403).
+    for keyword in ["public", "private", "protected", "static", "readonly"] {
         let source = format!("function mm() {{ {keyword} const z = 1; }}");
         let pos = source.find(keyword).unwrap() as u32;
         assert_single_diagnostic(&source, diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE, pos);
