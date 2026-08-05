@@ -797,6 +797,10 @@ impl SubtypeCheckerCacheStatistics {
 // module to keep this shard under the §19 file-size cap; see `core_dispatch`.
 #[path = "core_dispatch.rs"]
 mod core_dispatch;
+// Function-apparent shape construction + the global-`Function` "second opinion",
+// split from `core_dispatch` to keep that shard under the §19 file-size cap.
+#[path = "function_apparent.rs"]
+mod function_apparent;
 
 impl<'a> SubtypeChecker<'a, NoopResolver> {
     /// Create a new `SubtypeChecker` without a resolver (basic mode).
