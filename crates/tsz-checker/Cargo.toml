@@ -2640,3 +2640,7 @@ path = "tests/ts18036_class_decorator_static_private_identifier_tests.rs"
 [[test]]
 name = "import_namespace_ts1147_tests"
 path = "tests/import_namespace_ts1147_tests.rs"
+
+[[test]]
+name = "position_invalid_import_equals_container_scope_tests"
+path = "tests/position_invalid_import_equals_container_scope_tests.rs"
