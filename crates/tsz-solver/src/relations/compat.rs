@@ -342,65 +342,44 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
     }
 
-    fn function_like_weak_type_properties(
+    /// Declared properties of `source` for the weak-type common-name scan, plus
+    /// whether an index signature waives the rule and whether the source is
+    /// function-like (has a call or construct signature).
+    ///
+    /// tsc's weak-type rule (`hasCommonProperties` in `checker.ts`) walks
+    /// `getPropertiesOfType(source)` — the source's own *declared* members —
+    /// and separately triggers on `typeHasCallOrConstructSignatures(source)`.
+    /// The apparent `Function` surface (`call`, `apply`, `prototype`) never
+    /// enters that scan, so a bare function's declared-property set is empty:
+    /// it triggers the rule but shares no name with anything, and every
+    /// all-optional target — `{ call?: any }` included — is rejected. Earlier
+    /// tsz synthesized `call`/`apply`/`prototype` into this scan to give a
+    /// bare function *some* declared-looking name to match against, which let
+    /// a weak target naming one of those three names wrongly short-circuit to
+    /// accepted (#16485) — and, once `has_common_property_name`'s merge scan
+    /// assumed those synthesized names arrived pre-sorted by `Atom` and they
+    /// did not, made `call` and `apply` diverge from each other on top of
+    /// diverging from `tsc`.
+    fn weak_type_source_properties(
         &self,
-        mut props: Vec<PropertyInfo>,
-        has_call_signatures: bool,
-        has_construct_signatures: bool,
-    ) -> Vec<PropertyInfo> {
-        let mut ensure_prop = |name: &str| {
-            let atom = self.interner.intern_string(name);
-            if !props.iter().any(|prop| prop.name == atom) {
-                props.push(PropertyInfo::new(atom, TypeId::ANY));
-            }
-        };
-
-        if has_call_signatures {
-            // Function-like values expose Function members even when the callable
-            // shape itself does not materialize them. Weak-type overlap checks need
-            // to see those stable property names so unrelated weak object targets
-            // don't incorrectly accept function/class values.
-            ensure_prop("call");
-            ensure_prop("apply");
-        }
-
-        if has_construct_signatures {
-            ensure_prop("prototype");
-        }
-
-        props
-    }
-
-    fn weak_type_source_properties(&self, source: TypeId) -> Option<(Vec<PropertyInfo>, bool)> {
+        source: TypeId,
+    ) -> Option<(Vec<PropertyInfo>, bool, bool)> {
         if source == TypeId::FUNCTION {
-            return Some((
-                self.function_like_weak_type_properties(Vec::new(), true, false),
-                false,
-            ));
+            return Some((Vec::new(), false, true));
         }
 
         match self.interner.lookup(source) {
             Some(TypeData::Callable(shape_id)) => {
                 let shape = self.interner.callable_shape(shape_id);
-                let props = self.function_like_weak_type_properties(
-                    shape.properties.clone(),
-                    !shape.call_signatures.is_empty(),
-                    !shape.construct_signatures.is_empty(),
-                );
+                let is_function_like =
+                    !shape.call_signatures.is_empty() || !shape.construct_signatures.is_empty();
                 Some((
-                    props,
+                    shape.properties.clone(),
                     shape.string_index.is_some() || shape.number_index.is_some(),
+                    is_function_like,
                 ))
             }
-            Some(TypeData::Function(shape_id)) => {
-                let shape = self.interner.function_shape(shape_id);
-                let props = self.function_like_weak_type_properties(
-                    Vec::new(),
-                    !shape.is_constructor,
-                    shape.is_constructor,
-                );
-                Some((props, false))
-            }
+            Some(TypeData::Function(_)) => Some((Vec::new(), false, true)),
             _ => {
                 let mut extractor = ShapeExtractor::new(self.interner, self.subtype.resolver);
                 let source_shape_id = extractor.extract(source)?;
@@ -410,6 +389,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 Some((
                     source_shape.properties.clone(),
                     source_shape.string_index.is_some() || source_shape.number_index.is_some(),
+                    false,
                 ))
             }
         }

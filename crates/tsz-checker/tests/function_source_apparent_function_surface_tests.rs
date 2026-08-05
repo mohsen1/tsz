@@ -177,6 +177,70 @@ fn function_does_not_satisfy_a_weak_target_naming_no_function_member() {
     assert!(!is_clean("var w3: { zzz?: string } = () => {};"));
 }
 
+// -------------------------------------------------------------------------
+// #16485: `call`/`apply` are synthesized apparent names, not declared
+// properties — a weak target naming either one must reject exactly like
+// `length`/`zzz` above, not short-circuit to accepted because the name
+// happens to match the synthesized pair the non-weak side uses.
+// -------------------------------------------------------------------------
+
+#[test]
+fn function_does_not_satisfy_a_weak_target_naming_call() {
+    assert!(
+        !is_clean("var w4: { call?: any } = () => {};"),
+        "`call` is a synthesized apparent name, not a declared property — the weak scan must still reject"
+    );
+}
+
+#[test]
+fn function_does_not_satisfy_a_weak_target_naming_apply() {
+    assert!(!is_clean("var w6: { apply?: any } = () => {};"));
+}
+
+#[test]
+fn a_declared_function_does_not_satisfy_a_weak_target_naming_call() {
+    // Binder-name variation: a `function` declaration, not an arrow.
+    assert!(!is_clean(
+        r#"
+function renamedFn() {}
+var w5: { call?: any } = renamedFn;
+"#
+    ));
+}
+
+#[test]
+fn a_callable_interface_with_no_declared_call_property_does_not_satisfy_a_weak_call_target() {
+    // Generic/concrete form: a `Callable` interface's call signature must not
+    // leak a synthesized `call` name into the weak scan either — only its own
+    // declared properties count.
+    assert!(!is_clean(
+        r#"
+interface Copyable {
+    (x: number): number;
+}
+declare const c: Copyable;
+var w10: { call?: any } = c;
+"#
+    ));
+}
+
+#[test]
+fn a_callable_interface_with_a_real_declared_property_satisfies_a_matching_weak_target() {
+    // Positive control: the fix must not turn every callable source into a
+    // blanket weak-type rejection — a genuinely declared property shared with
+    // the target still passes.
+    assert!(is_clean(
+        r#"
+interface Copyable {
+    (x: number): number;
+    tag?: string;
+}
+declare const c: Copyable;
+var w11: { tag?: string } = c;
+"#
+    ));
+}
+
 #[test]
 fn function_stays_a_member_of_an_intersection_with_a_weak_object_part() {
     // The intersection-member arm suppresses the weak rule; tsc accepts.
