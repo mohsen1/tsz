@@ -1131,10 +1131,24 @@ impl<'a> CheckerState<'a> {
                     let mut any_inaccessible_privates = false;
                     let mut any_accessible_privates = false;
 
+                    // A heritage target's declarations may live in a different file's
+                    // arena than the one currently being checked (`self.ctx.arena`).
+                    // Reading a foreign `NodeIndex` against the wrong arena silently
+                    // finds nothing (or, worse, an unrelated node at the same index),
+                    // which is why a cross-file generic interface previously fell
+                    // through to an empty `interface_type_params` and an
+                    // uninstantiated (`T`, not the real type argument) member
+                    // comparison. Resolve each declaration's own arena first, same
+                    // as the rest of the checker (#16434).
                     for &decl_idx in &symbol_declarations {
-                        if let Some(node) = self.ctx.arena.get(decl_idx) {
+                        let decl_arena = self.ctx.binder.arena_for_declaration_or(
+                            sym_id,
+                            decl_idx,
+                            self.ctx.arena,
+                        );
+                        if let Some(node) = decl_arena.get(decl_idx) {
                             if node.kind == tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION {
-                                if let Some(base_class_data) = self.ctx.arena.get_class(node) {
+                                if let Some(base_class_data) = decl_arena.get_class(node) {
                                     if self.class_has_private_or_protected_members(base_class_data)
                                     {
                                         has_private_members = true;
@@ -1146,7 +1160,7 @@ impl<'a> CheckerState<'a> {
                                 }
                             } else if node.kind
                                 == tsz_parser::parser::syntax_kind_ext::INTERFACE_DECLARATION
-                                && let Some(interface_decl) = self.ctx.arena.get_interface(node)
+                                && let Some(interface_decl) = decl_arena.get_interface(node)
                             {
                                 if self.interface_extends_class_with_inaccessible_members(
                                     decl_idx,
@@ -1205,19 +1219,19 @@ impl<'a> CheckerState<'a> {
                     let (mut interface_type_params, interface_type_param_updates) =
                         self.push_type_parameters(&interface_type_params);
 
-                    // Fallback: when the interface declaration's AST lives in a different
-                    // arena (e.g. lib types like `AsyncIterator<T, TReturn, TNext>`), the
-                    // local arena walk above leaves `interface_type_params` empty. Look up
-                    // the canonical type parameters via the solver-side definition store
-                    // so the substitution we build below correctly maps interface type
-                    // parameters to the supplied type arguments.
-                    if interface_type_params.is_empty()
-                        && let Some(def_id) = self.ctx.definition_store.find_def_by_symbol(sym_id.0)
-                        && let Some(store_params) =
-                            self.ctx.definition_store.get_type_params(def_id)
-                        && !store_params.is_empty()
-                    {
-                        interface_type_params = store_params;
+                    // Last resort: the canonical cross-file-aware type-param resolver
+                    // the rest of the checker uses (e.g. for lib types like
+                    // `AsyncIterator<T, TReturn, TNext>`, where the declaration's AST
+                    // lives outside any arena reachable from this file at all). NOT
+                    // `definition_store.find_def_by_symbol`: that lookup is keyed on
+                    // the raw `SymbolId` alone, so it can silently resolve to an
+                    // unrelated file's definition once two per-file binders reuse the
+                    // same id.
+                    if interface_type_params.is_empty() {
+                        let store_params = self.get_type_params_for_symbol(sym_id);
+                        if !store_params.is_empty() {
+                            interface_type_params = store_params;
+                        }
                     }
 
                     // Fill in missing type arguments with defaults/constraints/unknown
