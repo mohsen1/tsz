@@ -480,7 +480,7 @@ impl ParserState {
             SyntaxKind::DeclareKeyword => self.parse_ambient_declaration_with_modifiers(modifiers),
             SyntaxKind::ExportKeyword => {
                 if self.look_ahead_export_starts_export_declaration() {
-                    return self.parse_export_declaration();
+                    return self.parse_export_declaration_from(start_pos);
                 }
                 let export_start = self.token_pos();
                 self.parse_expected(SyntaxKind::ExportKeyword);
@@ -1157,12 +1157,19 @@ impl ParserState {
                 | SyntaxKind::GlobalKeyword => self
                     .look_ahead_is_module_declaration()
                     .then_some(AbstractExportTarget::PositionErrorWins),
-                // A named or star export declaration. `export = ...` is
-                // deliberately not here: tsc routes it through TS1120, not
-                // this modifier run.
+                // A named or star export declaration.
                 SyntaxKind::OpenBraceToken | SyntaxKind::AsteriskToken => {
                     Some(AbstractExportTarget::PositionErrorWins)
                 }
+                // `abstract export = expr` — an `ExportAssignment` node, same
+                // as `abstract export default <expr>` below: `abstract` is
+                // never legal on it, so tsc reports the modifier's own
+                // "can only appear on a class, method, or property
+                // declaration" message (TS1242) rather than an ordering
+                // violation, silenced the same wider way — a Block or a
+                // namespace body, not just a Block — by the assignment's own
+                // placement diagnostic (oracle-confirmed, #16403 residual).
+                SyntaxKind::EqualsToken => Some(AbstractExportTarget::ExportAssignment),
                 // `export default class C {}` (named or anonymous) reads the
                 // same modifier run `[abstract, export, default]` as the bare
                 // `export class` arm above, and `abstract` is legal on a

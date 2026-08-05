@@ -97,6 +97,9 @@ mod parser_class_body_modifier_recovery_tests;
 #[path = "../../tests/parser_declare_export_default_tests.rs"]
 mod parser_declare_export_default_tests;
 #[cfg(test)]
+#[path = "../../tests/parser_declare_export_module_namespace_ts1029_tests.rs"]
+mod parser_declare_export_module_namespace_ts1029_tests;
+#[cfg(test)]
 #[path = "../../tests/parser_export_specifier_from_tests.rs"]
 mod parser_export_specifier_from_tests;
 #[cfg(test)]

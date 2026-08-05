@@ -1755,8 +1755,11 @@ impl ParserState {
                 // Also skip in block context: tsc emits TS1029 via grammarErrorOnNode
                 // in the checker, which is suppressed by hasParseDiagnostics when
                 // TS1184 (Modifiers cannot appear here) is already emitted.
-                // Also skip for `declare export module/namespace` — tsc 6.0 accepts this
-                // form without TS1029 for ambient module/namespace declarations.
+                // `declare export module/namespace` DOES still get TS1029 on current
+                // pinned tsc (7.0.2, oracle-confirmed both at the source-file top level
+                // and inside a namespace body) — an earlier version of this comment
+                // claimed tsc 6.0 silenced it, which is no longer true and was never
+                // re-verified against the current pin (#16403 residual).
                 // Also skip for a plain export declaration (`{ }` / `*` / type-only
                 // `type { }` / `type *`) — tsc emits TS1193 alone there, never TS1029
                 // alongside it (oracle-confirmed). Also skip for the `default <expr>`
@@ -1765,8 +1768,6 @@ impl ParserState {
                 if !self.in_block_context()
                     && !self.is_token(SyntaxKind::AsKeyword)
                     && !self.is_token(SyntaxKind::EqualsToken)
-                    && !self.is_token(SyntaxKind::ModuleKeyword)
-                    && !self.is_token(SyntaxKind::NamespaceKeyword)
                     && !self.is_token(SyntaxKind::OpenBraceToken)
                     && !self.is_token(SyntaxKind::AsteriskToken)
                     && !is_type_only_export
@@ -1838,7 +1839,7 @@ impl ParserState {
                                 diagnostic_codes::AN_EXPORT_ASSIGNMENT_CANNOT_HAVE_MODIFIERS,
                             );
                         }
-                        self.parse_export_assignment(error_start)
+                        self.parse_export_assignment(error_start, Some(modifiers))
                     }
                     SyntaxKind::ImportKeyword => {
                         // `declare export import a = x.c;`

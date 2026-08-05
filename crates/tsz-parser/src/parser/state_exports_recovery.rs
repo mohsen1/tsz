@@ -136,7 +136,7 @@ impl ParserState {
                         diagnostic_messages::AN_EXPORT_ASSIGNMENT_CANNOT_HAVE_MODIFIERS,
                         diagnostic_codes::AN_EXPORT_ASSIGNMENT_CANNOT_HAVE_MODIFIERS,
                     );
-                    self.parse_export_assignment(start_pos)
+                    self.parse_export_assignment(start_pos, None)
                 } else {
                     // Genuine duplicate export modifier
                     self.parse_error_at(
