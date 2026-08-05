@@ -130,6 +130,12 @@ pub struct TypeFormatter<'a> {
     /// `Partial<T>[keyof T]` instead of simplifying the nested access to
     /// `T[keyof T] | undefined`.
     preserve_application_arg_index_alias_surface: bool,
+    /// Internal guard used while rendering the object operand of an indexed
+    /// access that could **not** be reduced. Reference materialization is
+    /// suppressed underneath it, so an access whose outer link stays deferred
+    /// prints the whole chain as written (`A["p"]["q"]`) rather than a hybrid
+    /// of a resolved inner object and the remaining written keys.
+    render_index_access_object_as_written: bool,
     /// Specific non-generic type aliases whose name should not be used for
     /// diagnostic display. This is used for `typeof` aliases in assignability
     /// messages where tsc prints the target's structural type rather than the
@@ -363,11 +369,69 @@ impl<'a> TypeFormatter<'a> {
         ) {
             return arg;
         }
-        let resolved = crate::evaluation::evaluate::evaluate_index_access(self.interner, obj, idx);
+        // A chained access (`A["p"]["q"]`) nests one indexed access inside the
+        // next, and the inner link's own object may be a reference. Reduce the
+        // object operand to a fixed point first: either the whole chain
+        // resolves, or this returns `arg` and the render path below prints it
+        // as written. A partially reduced chain is never produced — it would
+        // render an internal intermediate that corresponds to nothing the user
+        // wrote and grows with nesting depth.
+        let object_for_eval = self
+            .materialize_reference_for_display(self.resolve_concrete_index_access_for_display(obj));
+        let resolved =
+            crate::evaluation::evaluate::evaluate_index_access(self.interner, object_for_eval, idx);
         if resolved == arg || resolved == TypeId::ERROR {
             return arg;
         }
         resolved
+    }
+
+    /// A semantic reference (`Lazy(DefId)`, or an `Application` over one)
+    /// carries no members of its own, so `evaluate_index_access` cannot reduce
+    /// `Iface["m"]` while the object operand is still that reference. Swap in
+    /// the definition's own body — instantiated with the written arguments when
+    /// the reference is an application — so the evaluation has members to index.
+    ///
+    /// Display-only: the returned `TypeId` is never handed back to the caller,
+    /// only used as the evaluation's object operand. A free type parameter
+    /// anywhere in the access is rejected before this runs, so an instantiation
+    /// here is always fully concrete.
+    fn materialize_reference_for_display(&self, obj: TypeId) -> TypeId {
+        if self.render_index_access_object_as_written {
+            return obj;
+        }
+        let Some(def_store) = self.def_store else {
+            return obj;
+        };
+        let materialized = match self.interner.lookup(obj) {
+            Some(TypeData::Lazy(def_id)) => def_store.get(def_id).and_then(|def| {
+                // A bare reference to a generic definition has no arguments to
+                // substitute, so its body still mentions the type parameters
+                // and the access stays deferred — as tsc renders it.
+                def.type_params.is_empty().then_some(def.body).flatten()
+            }),
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner.type_application(app_id);
+                let Some(TypeData::Lazy(def_id)) = self.interner.lookup(app.base) else {
+                    return obj;
+                };
+                def_store.get(def_id).and_then(|def| {
+                    def.body.map(|body| {
+                        crate::computation::instantiate_generic(
+                            self.interner,
+                            body,
+                            &def.type_params,
+                            &app.args,
+                        )
+                    })
+                })
+            }
+            _ => return obj,
+        };
+        match materialized {
+            Some(body) if body != obj => body,
+            _ => obj,
+        }
     }
 
     /// If `obj` is a homomorphic identity mapped type
@@ -490,6 +554,7 @@ impl<'a> TypeFormatter<'a> {
             skip_application_alias_names: false,
             skip_application_display_alias_chase: false,
             preserve_application_arg_index_alias_surface: false,
+            render_index_access_object_as_written: false,
             skip_type_alias_def_ids: FxHashSet::default(),
             skipped_type_alias_expansion_visiting: FxHashSet::default(),
             builtin_iterator_return_type: None,
@@ -538,6 +603,7 @@ impl<'a> TypeFormatter<'a> {
             skip_application_alias_names: false,
             skip_application_display_alias_chase: false,
             preserve_application_arg_index_alias_surface: false,
+            render_index_access_object_as_written: false,
             skip_type_alias_def_ids: FxHashSet::default(),
             skipped_type_alias_expansion_visiting: FxHashSet::default(),
             builtin_iterator_return_type: None,
