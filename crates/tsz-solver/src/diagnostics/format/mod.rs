@@ -363,11 +363,58 @@ impl<'a> TypeFormatter<'a> {
         ) {
             return arg;
         }
-        let resolved = crate::evaluation::evaluate::evaluate_index_access(self.interner, obj, idx);
+        let object_for_eval = self.materialize_reference_for_display(obj);
+        let resolved =
+            crate::evaluation::evaluate::evaluate_index_access(self.interner, object_for_eval, idx);
         if resolved == arg || resolved == TypeId::ERROR {
             return arg;
         }
         resolved
+    }
+
+    /// A semantic reference (`Lazy(DefId)`, or an `Application` over one)
+    /// carries no members of its own, so `evaluate_index_access` cannot reduce
+    /// `Iface["m"]` while the object operand is still that reference. Swap in
+    /// the definition's own body — instantiated with the written arguments when
+    /// the reference is an application — so the evaluation has members to index.
+    ///
+    /// Display-only: the returned `TypeId` is never handed back to the caller,
+    /// only used as the evaluation's object operand. A free type parameter
+    /// anywhere in the access is rejected before this runs, so an instantiation
+    /// here is always fully concrete.
+    fn materialize_reference_for_display(&self, obj: TypeId) -> TypeId {
+        let Some(def_store) = self.def_store else {
+            return obj;
+        };
+        let materialized = match self.interner.lookup(obj) {
+            Some(TypeData::Lazy(def_id)) => def_store.get(def_id).and_then(|def| {
+                // A bare reference to a generic definition has no arguments to
+                // substitute, so its body still mentions the type parameters
+                // and the access stays deferred — as tsc renders it.
+                def.type_params.is_empty().then_some(def.body).flatten()
+            }),
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner.type_application(app_id);
+                let Some(TypeData::Lazy(def_id)) = self.interner.lookup(app.base) else {
+                    return obj;
+                };
+                def_store.get(def_id).and_then(|def| {
+                    def.body.map(|body| {
+                        crate::computation::instantiate_generic(
+                            self.interner,
+                            body,
+                            &def.type_params,
+                            &app.args,
+                        )
+                    })
+                })
+            }
+            _ => return obj,
+        };
+        match materialized {
+            Some(body) if body != obj => body,
+            _ => obj,
+        }
     }
 
     /// If `obj` is a homomorphic identity mapped type

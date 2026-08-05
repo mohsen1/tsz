@@ -96,3 +96,177 @@ const ok: { foo: string } = get();
         "an assignable indexed-access member must not error: {messages:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Target role.
+//
+// The source-role reduction above worked because the value's type had already
+// been evaluated by the time it reached the formatter. A *target* annotation
+// reaches the formatter as the written indexed access, and when its object
+// operand is still an unresolved semantic reference — which is what every
+// interface and class name is until it is materialized — the reduction had no
+// members to index and declined, so the unreduced `Iface["m"]` surface survived
+// into the message. Same tsc rule, same display policy; the solver now
+// materializes the object operand for the reduction.
+// ---------------------------------------------------------------------------
+
+fn strict_messages(source: &str) -> Vec<String> {
+    check_source_strict_messages(source)
+        .into_iter()
+        .filter(|(code, _)| *code == 2741 || *code == 2322)
+        .map(|(_, message)| message)
+        .collect()
+}
+
+/// An interface member reached through a target annotation renders the reduced
+/// member shape, exactly as the source role already did.
+#[test]
+fn concrete_indexed_access_target_renders_reduced_member() {
+    let messages = ts2741_messages(
+        r#"
+interface Nest { inner: { p: number; q: number } }
+const c: Nest["inner"] = { p: 1 };
+"#,
+    );
+    assert_eq!(messages.len(), 1, "exactly one TS2741: {messages:?}");
+    assert_reduced_member(&messages[0], "{ p: number; q: number; }");
+}
+
+/// Anti-hardcoding: the target-role reduction keys on the structural condition
+/// (non-generic definition, literal key), never on the binder names.
+#[test]
+fn concrete_indexed_access_target_reduction_is_binder_name_independent() {
+    let messages = ts2741_messages(
+        r#"
+interface Renamed { payload: { alpha: number; beta: number } }
+const b: Renamed["payload"] = { alpha: 1 };
+"#,
+    );
+    assert_eq!(messages.len(), 1, "exactly one TS2741: {messages:?}");
+    assert_reduced_member(&messages[0], "{ alpha: number; beta: number; }");
+}
+
+/// A class field reached through `Class["field"]` reduces the same way — the
+/// object operand is a semantic reference for classes as well as interfaces.
+#[test]
+fn concrete_indexed_access_target_reduces_a_class_member() {
+    let messages = ts2741_messages(
+        r#"
+class Holder { field: { u: string; v: string } = { u: "", v: "" } }
+const c: Holder["field"] = { u: "x" };
+"#,
+    );
+    assert_eq!(messages.len(), 1, "exactly one TS2741: {messages:?}");
+    assert_reduced_member(&messages[0], "{ u: string; v: string; }");
+}
+
+/// Numeric-literal key in target position.
+#[test]
+fn concrete_numeric_indexed_access_target_renders_reduced_member() {
+    let messages = ts2741_messages(
+        r#"
+interface Num { 0: { a: number; b: number } }
+const d: Num[0] = { a: 1 };
+"#,
+    );
+    assert_eq!(messages.len(), 1, "exactly one TS2741: {messages:?}");
+    assert_reduced_member(&messages[0], "{ a: number; b: number; }");
+}
+
+/// A union key reduces to the union of the members, which tsc reports as
+/// `TS2322` with the reduced constituents rather than `TS2741`.
+#[test]
+fn concrete_union_key_indexed_access_target_renders_reduced_members() {
+    let messages = strict_messages(
+        r#"
+interface UnionKey { x: { s: 1; t: 2 }; y: { s: 1; t: 2 } }
+const e: UnionKey["x" | "y"] = { s: 1 };
+"#,
+    );
+    assert_eq!(
+        messages.len(),
+        1,
+        "exactly one assignability error: {messages:?}"
+    );
+    assert!(
+        messages[0].contains("{ s: 1; t: 2; }"),
+        "target must render the reduced member shape: {}",
+        messages[0]
+    );
+    assert!(
+        !messages[0].contains("[\""),
+        "target must not render the unreduced indexed-access surface: {}",
+        messages[0]
+    );
+}
+
+/// An alias that merely renames the object (`type A = Iface`) is transparent:
+/// the access still reduces.
+#[test]
+fn concrete_indexed_access_target_reduces_through_an_alias_chain() {
+    let messages = ts2741_messages(
+        r#"
+interface Chain { deep: { g: boolean; h: boolean } }
+type ChainAlias = Chain;
+const f: ChainAlias["deep"] = { g: true };
+"#,
+    );
+    assert_eq!(messages.len(), 1, "exactly one TS2741: {messages:?}");
+    assert_reduced_member(&messages[0], "{ g: boolean; h: boolean; }");
+}
+
+/// An *instantiated* generic object operand reduces too — it arrives as an
+/// `Application`, not a `Lazy`, so it never needed the materialization step and
+/// must keep working.
+#[test]
+fn concrete_indexed_access_target_reduces_an_instantiated_generic() {
+    let messages = ts2741_messages(
+        r#"
+interface GenBox<T> { v: { one: T; two: T } }
+const g: GenBox<number>["v"] = { one: 1 };
+"#,
+    );
+    assert_eq!(messages.len(), 1, "exactly one TS2741: {messages:?}");
+    assert_reduced_member(&messages[0], "{ one: number; two: number; }");
+}
+
+/// Negative control. A *deferred* access over a free type parameter is opaque
+/// in tsc too, so it must keep printing `T["m"]` — the materialization is gated
+/// on the definition being non-generic precisely so this row cannot move.
+#[test]
+fn deferred_generic_indexed_access_target_stays_opaque() {
+    let messages = strict_messages(
+        r#"
+function generic<T extends { m: { i: number; j: number } }>(t: T) {
+  const i: T["m"] = { i: 1 };
+  return i;
+}
+"#,
+    );
+    assert_eq!(
+        messages.len(),
+        1,
+        "exactly one assignability error: {messages:?}"
+    );
+    assert!(
+        messages[0].contains("T[\"m\"]"),
+        "a deferred generic access must stay opaque: {}",
+        messages[0]
+    );
+}
+
+/// Negative control. The reduction is display-only: a target the source really
+/// does satisfy stays clean, and a genuinely missing member still errors.
+#[test]
+fn concrete_indexed_access_target_assignable_stays_clean() {
+    let messages = ts2741_messages(
+        r#"
+interface Clean { part: { only: number } }
+const ok: Clean["part"] = { only: 1 };
+"#,
+    );
+    assert!(
+        messages.is_empty(),
+        "an assignable indexed-access target must not error: {messages:?}"
+    );
+}
