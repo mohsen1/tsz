@@ -704,9 +704,78 @@ impl<'a> CheckerState<'a> {
             {
                 return None;
             }
-            current = self.ctx.arena.get_extended(current).map(|ext| ext.parent)?;
+            let parent = self.ctx.arena.get_extended(current).map(|ext| ext.parent)?;
+            if let Some(annotation) = self.call_argument_annotation_node(current, parent) {
+                return Some(annotation);
+            }
+            current = parent;
         }
         None
+    }
+
+    /// Type-annotation node of the declared parameter a call argument is
+    /// checked against, when `current` is one of `parent`'s own arguments and
+    /// `parent` is a call/new expression.
+    ///
+    /// Deliberately narrow: the callee must be a plain identifier resolving to
+    /// a symbol with exactly one declaration (no overloads — which specific
+    /// overload matched is a resolved-signature fact this syntactic walk does
+    /// not have), that declaration must be an ordinary `function` declared in
+    /// the file being checked (not an arrow/method/imported/ambient binding),
+    /// and the matched parameter must not be a rest parameter (a positional
+    /// match against `...args` would name the wrong element type). Any of
+    /// those declines rather than guessing, leaving output exactly as it was.
+    fn call_argument_annotation_node(
+        &self,
+        current: NodeIndex,
+        parent: NodeIndex,
+    ) -> Option<NodeIndex> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let parent_node = self.ctx.arena.get(parent)?;
+        if parent_node.kind != syntax_kind_ext::CALL_EXPRESSION
+            && parent_node.kind != syntax_kind_ext::NEW_EXPRESSION
+        {
+            return None;
+        }
+        let call_data = self.ctx.arena.get_call_expr(parent_node)?;
+        let args = call_data.arguments.as_ref()?;
+        let position = args.nodes.iter().position(|&arg| arg == current)?;
+
+        let callee_symbol = self.resolve_identifier_symbol(call_data.expression)?;
+        let symbol = self.ctx.binder.get_symbol(callee_symbol)?;
+        let locations: Vec<tsz_binder::StableLocation> =
+            std::iter::once(symbol.stable_value_declaration)
+                .chain(symbol.stable_declarations.iter().copied())
+                .filter(tsz_binder::StableLocation::is_known)
+                .collect();
+        let mut decl_idx = None;
+        for location in locations {
+            let (idx, arena) = self.ctx.node_at_stable_location(location)?;
+            if !std::ptr::eq(arena, self.ctx.arena) {
+                continue;
+            }
+            match decl_idx {
+                None => decl_idx = Some(idx),
+                // A second distinct declaration means an overloaded function;
+                // which overload resolved the call is not derivable here.
+                Some(existing) if existing != idx => return None,
+                Some(_) => {}
+            }
+        }
+        let decl_idx = decl_idx?;
+        let decl_node = self.ctx.arena.get(decl_idx)?;
+        if decl_node.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+            return None;
+        }
+        let func = self.ctx.arena.get_function(decl_node)?;
+        let param_idx = *func.parameters.nodes.get(position)?;
+        let param_node = self.ctx.arena.get(param_idx)?;
+        let param_data = self.ctx.arena.get_parameter(param_node)?;
+        if param_data.dot_dot_dot_token {
+            return None;
+        }
+        self.declaration_type_annotation_node(param_node)
     }
 
     /// Return-type annotation node of the function-like that directly encloses
