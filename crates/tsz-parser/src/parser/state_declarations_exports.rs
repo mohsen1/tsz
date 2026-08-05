@@ -8,7 +8,7 @@ use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
 use super::state::{CONTEXT_FLAG_DISALLOW_IN, ParserState};
 use crate::parser::parse_rules::look_ahead_is;
 use crate::parser::{
-    NodeIndex,
+    NodeIndex, NodeList,
     node::{
         BlockData, ExportAssignmentData, ExportDeclData, IfStatementData, LiteralData, LoopData,
         NamedImportsData, ReturnData, SwitchData, VariableData, VariableDeclarationData,
@@ -28,7 +28,18 @@ impl ParserState {
     // export function `f()` {}
     // export class C {}
     pub(crate) fn parse_export_declaration(&mut self) -> NodeIndex {
-        let start_pos = self.token_pos();
+        self.parse_export_declaration_from(self.token_pos())
+    }
+
+    /// Same as [`Self::parse_export_declaration`], but lets the caller supply the
+    /// node's start position instead of defaulting to the `export` keyword's own
+    /// position. Needed when `export` is reached after a stray modifier
+    /// (`abstract export = 1`, `static export = 1`, ...) that the caller already
+    /// consumed: tsc anchors the resulting declaration's span — and therefore any
+    /// position-sensitive diagnostic that reads it, e.g. TS1203 for `export =`
+    /// under an ECMAScript module target — at the *first* modifier, not at
+    /// `export` (oracle-confirmed across every modifier family, #16403 residual).
+    pub(crate) fn parse_export_declaration_from(&mut self, start_pos: u32) -> NodeIndex {
         self.seen_module_indicator = true;
         self.parse_expected(SyntaxKind::ExportKeyword);
 
@@ -98,7 +109,7 @@ impl ParserState {
 
         // export = expression (CommonJS-style export)
         if self.is_token(SyntaxKind::EqualsToken) {
-            return self.parse_export_assignment(start_pos);
+            return self.parse_export_assignment(start_pos, None);
         }
 
         // export as namespace Foo (UMD global namespace declaration)
@@ -326,7 +337,11 @@ impl ParserState {
     }
 
     // Parse export = expression (CommonJS-style default export)
-    pub(crate) fn parse_export_assignment(&mut self, start_pos: u32) -> NodeIndex {
+    pub(crate) fn parse_export_assignment(
+        &mut self,
+        start_pos: u32,
+        modifiers: Option<NodeList>,
+    ) -> NodeIndex {
         self.parse_expected(SyntaxKind::EqualsToken);
         let expression = self.parse_assignment_expression();
         if expression == NodeIndex::NONE {
@@ -341,7 +356,7 @@ impl ParserState {
             start_pos,
             end_pos,
             ExportAssignmentData {
-                modifiers: None,
+                modifiers,
                 is_export_equals: true,
                 expression,
             },

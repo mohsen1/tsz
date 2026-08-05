@@ -456,3 +456,34 @@ fn abstract_export_default_expression_reports_ts1242_only_outside_a_block_or_nam
         }
     }
 }
+
+// -- `abstract export = expr`: #16403's residual. Same `ExportAssignment`
+//    node kind as `abstract export default <expr>` above, and oracle-
+//    confirmed (`typescript@7.0.2`) to take the identical single-diagnostic
+//    answer — TS1242 alone outside a Block/namespace body, silenced inside
+//    both by the assignment's own placement diagnostic (TS1231/TS1063,
+//    checker-side). Before this fix `export =` was not recognized as a
+//    target at all, so `abstract` fell through to a bare identifier
+//    expression and the trailing `export = 1;` was parsed as its own
+//    statement — spurious TS2304 on `abstract`, no TS1242. --
+
+#[test]
+fn abstract_export_equals_reports_ts1242_only_outside_a_block_or_namespace() {
+    for index in 0..CONTAINERS.len() {
+        let source = in_container(index, "abstract export = 1;");
+        if is_block(index) || index == 3 {
+            assert_eq!(
+                codes(&source),
+                Vec::<u32>::new(),
+                "expected no modifier diagnostic for {source:?}, got {:?}",
+                codes(&source)
+            );
+        } else {
+            assert_diag_at_abstract(
+                &source,
+                diagnostic_codes::ABSTRACT_MODIFIER_CAN_ONLY_APPEAR_ON_A_CLASS_METHOD_OR_PROPERTY_DECLARATION,
+            );
+        }
+        assert_no_cannot_find_name(&source);
+    }
+}
