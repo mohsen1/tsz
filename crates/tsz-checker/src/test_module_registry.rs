@@ -275,6 +275,8 @@ mod error_reporter_assignability_display_boundary_arch_tests;
 mod excess_prop_object_union_display_tests;
 #[path = "tests/expando_annotated_receiver_tests.rs"]
 mod expando_annotated_receiver_tests;
+#[path = "tests/expected_type_from_property_tests.rs"]
+mod expected_type_from_property_tests;
 #[path = "tests/explicit_alias_constraint_relation_routing_arch_tests.rs"]
 mod explicit_alias_constraint_relation_routing_arch_tests;
 #[path = "tests/explicit_type_arg_overload_pruning_tests.rs"]
