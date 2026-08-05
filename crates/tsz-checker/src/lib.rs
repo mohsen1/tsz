@@ -372,6 +372,9 @@ mod ts2589_tests;
 #[path = "../tests/ts2683_tests.rs"]
 mod ts2683_tests;
 #[cfg(test)]
+#[path = "../tests/ts2702_qualifier_namespace_meaning_tests.rs"]
+mod ts2702_qualifier_namespace_meaning_tests;
+#[cfg(test)]
 #[path = "../tests/ts2774_tests.rs"]
 mod ts2774_tests;
 #[cfg(test)]

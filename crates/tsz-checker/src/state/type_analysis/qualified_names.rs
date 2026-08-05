@@ -165,10 +165,17 @@ impl<'a> CheckerState<'a> {
                     let lib_binders = self.get_lib_binders();
                     if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
                     {
+                        // tsc's `SymbolFlags.Namespace` is `ValueModule |
+                        // NamespaceModule | Enum` — a *class* is not in it. A
+                        // class declaration alone therefore has no namespace
+                        // meaning, and `C.m` in type position is
+                        // TS2713/TS2702, not a member lookup. A class merged
+                        // with a namespace declaration carries the module flags
+                        // in the merged symbol, so the merge keeps working
+                        // through those flags rather than through `CLASS`.
                         let valid_namespace_flags = symbol_flags::MODULE
                             | symbol_flags::NAMESPACE_MODULE
                             | symbol_flags::VALUE_MODULE
-                            | symbol_flags::CLASS
                             | symbol_flags::ENUM
                             | symbol_flags::REGULAR_ENUM
                             | symbol_flags::CONST_ENUM
@@ -187,9 +194,41 @@ impl<'a> CheckerState<'a> {
                                         self.ctx.alias_partners_contains(self.ctx.binder, resolved)
                                     },
                                 );
+                        // tsc resolves the left name with `SymbolFlags.Namespace`
+                        // as the requested meaning, so a nearer declaration that
+                        // has no namespace meaning does not shadow an outer one
+                        // that does — `var x = class C { prop: C.type }` finds the
+                        // outer `namespace C`, not the class expression's own
+                        // name. tsz resolves the name first and filters by meaning
+                        // second, so re-ask the file scope for a namespace-meaning
+                        // declaration before treating the qualifier as unusable.
+                        // Same fallback shape as the type-parameter case above.
+                        let outer_namespace_meaning_exists = self
+                            .ctx
+                            .binder
+                            .file_locals
+                            .get(&left_name)
+                            .map(|file_sym| {
+                                let mut visited = AliasCycleTracker::new();
+                                self.resolve_alias_symbol(file_sym, &mut visited)
+                                    .unwrap_or(file_sym)
+                            })
+                            .and_then(|resolved| {
+                                let lib_binders = self.get_lib_binders();
+                                self.ctx
+                                    .binder
+                                    .get_symbol_with_libs(resolved, &lib_binders)
+                                    .map(|outer| {
+                                        outer.has_any_flags(
+                                            valid_namespace_flags | symbol_flags::ALIAS,
+                                        )
+                                    })
+                            })
+                            .unwrap_or(false);
                         if !symbol.has_any_flags(valid_namespace_flags)
                             && !is_alias
                             && !has_alias_partner
+                            && !outer_namespace_meaning_exists
                             && !self.ctx.has_parse_errors
                         {
                             let right_name = if let Some(right_node) = self.ctx.arena.get(qn.right)
@@ -226,12 +265,27 @@ impl<'a> CheckerState<'a> {
                             //
                             // For type parameters, get_type_of_symbol may not return the
                             // TypeParameter type. Check the type_parameter_scope first.
+                            //
+                            // The question this branch asks is the one tsc asks in
+                            // `getTypeFromTypeReference`: does the type *the left name
+                            // denotes in type space* have this property? For a class
+                            // that is the instance side, so the probe resolves the
+                            // type-reference type rather than the symbol's value type
+                            // — `class C { m: number }` makes `C.m` a TS2713
+                            // indexed-access suggestion, while a static-only member
+                            // stays TS2702 because the instance side does not carry it.
+                            // The type-reference type of an interface is a
+                            // `Lazy(DefId)` semantic ref, which carries no member
+                            // surface of its own; evaluate before asking.
                             let left_type_id = self
                                 .ctx
                                 .type_parameter_scope
                                 .get(&left_name)
                                 .copied()
-                                .unwrap_or_else(|| self.get_type_of_symbol(sym_id));
+                                .unwrap_or_else(|| {
+                                    let referenced = self.type_reference_symbol_type(sym_id);
+                                    self.evaluate_type_with_env(referenced)
+                                });
                             let prop_exists =
                                 crate::query_boundaries::property_access::type_has_property(
                                     self.ctx.types,
