@@ -531,3 +531,305 @@ fn plain_export_as_namespace_reports_no_parser_diagnostic() {
     assert_no_parser_diagnostics("export as namespace Telemetry;");
     assert_no_parser_diagnostics("function collect() {\n  export as namespace Telemetry;\n}");
 }
+
+// --------------------------------------------------------------------------
+// `async` before `export ...` (#16403 slice 3) — distinct from every sibling
+// modifier family because `async` is legal on a function declaration in
+// *every* container, including a Block, so a Block cannot uniformly silence
+// it. Every row pinned against `typescript@7.0.2`
+// (`--strict --lib es2022 --target es2022 --module es2022`).
+// --------------------------------------------------------------------------
+
+/// `async export function f() {}` — legal in every container, so the only
+/// violation is modifier order: TS1029 on `export`, unconditionally,
+/// including inside a Block where a nested async function declaration is
+/// otherwise completely legal.
+#[test]
+fn async_before_export_function_at_top_level_reports_ts1029() {
+    assert_only_diagnostic(
+        "async export function build() {}",
+        "export",
+        diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
+    );
+}
+
+#[test]
+fn async_before_export_function_in_function_body_reports_ts1029_not_ts1184() {
+    assert_only_diagnostic(
+        "function collect() {\n  async export function build() {}\n}",
+        "export",
+        diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
+    );
+}
+
+#[test]
+fn async_before_export_function_in_namespace_body_reports_ts1029() {
+    assert_only_diagnostic(
+        "namespace Outer {\n  async export function build() {}\n}",
+        "export",
+        diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
+    );
+}
+
+/// `export default function` reads the same always-legal answer as a bare
+/// `export function`, named or anonymous alike.
+#[test]
+fn async_before_export_default_function_in_function_body_reports_ts1029() {
+    assert_only_diagnostic(
+        "function collect() {\n  async export default function f() {}\n}",
+        "export",
+        diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
+    );
+}
+
+#[test]
+fn async_before_export_default_anonymous_function_at_top_level_reports_ts1029() {
+    assert_only_diagnostic(
+        "async export default function () {}",
+        "export",
+        diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
+    );
+}
+
+/// The message anchors on `export` (the later of the two out-of-order
+/// modifiers), naming both — same convention `abstract`'s sibling ordering
+/// check uses.
+#[test]
+fn async_before_export_function_reports_message_naming_both_modifiers() {
+    let source = "async export function build() {}";
+    let (parser, _root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+    assert_eq!(diagnostics.len(), 1, "got {diagnostics:?}");
+    assert_eq!(
+        diagnostics[0].code,
+        diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER
+    );
+    assert_eq!(
+        diagnostics[0].message,
+        "'export' modifier must precede 'async' modifier."
+    );
+}
+
+/// `async export const/class/interface/type/enum ...` — `async` is not legal
+/// on any of these, but `export` is a legal modifier at this container, so
+/// the answer is TS1029 (order) outside a Block, TS1184 inside one — the
+/// block gate does not special-case `async` the way it does for a function.
+#[test]
+fn async_before_export_const_at_top_level_reports_ts1029() {
+    assert_only_diagnostic(
+        "async export const seeded = 1;",
+        "export",
+        diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
+    );
+}
+
+#[test]
+fn async_before_export_class_in_namespace_body_reports_ts1029() {
+    assert_only_diagnostic(
+        "namespace Outer {\n  async export class Widget {}\n}",
+        "export",
+        diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
+    );
+}
+
+#[test]
+fn async_before_export_interface_in_function_body_reports_ts1184_not_ts1029() {
+    assert_only_diagnostic(
+        "function collect() {\n  async export interface Widget {}\n}",
+        "async",
+        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+    );
+}
+
+#[test]
+fn async_before_export_type_alias_in_function_body_reports_ts1184() {
+    assert_only_diagnostic(
+        "function collect() {\n  async export type T = 1;\n}",
+        "async",
+        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+    );
+}
+
+#[test]
+fn async_before_export_enum_at_top_level_reports_ts1029() {
+    assert_only_diagnostic(
+        "async export enum E {}",
+        "export",
+        diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
+    );
+}
+
+/// `export default class` is the same "not legal on async" declaration
+/// answer as a bare `export class` — not the `ExportAssignment` node kind
+/// the plain-expression `export default 1` form uses.
+#[test]
+fn async_before_export_default_class_in_function_body_reports_ts1184() {
+    assert_only_diagnostic(
+        "function collect() {\n  async export default class {}\n}",
+        "async",
+        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+    );
+}
+
+#[test]
+fn async_before_export_default_class_at_top_level_reports_ts1029() {
+    assert_only_diagnostic(
+        "async export default class {}",
+        "export",
+        diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
+    );
+}
+
+// --------------------------------------------------------------------------
+// `export {}` / `export *` / `export { a } from` — an `ExportDeclaration`
+// node, which admits no modifiers at all (a structural mismatch, not an
+// ordering one): TS1042, not TS1029/TS1044, wherever the form's own
+// placement diagnostic does not already win outright.
+// --------------------------------------------------------------------------
+
+#[test]
+fn async_before_export_list_at_top_level_reports_ts1042() {
+    assert_only_diagnostic(
+        "async export {};",
+        "async",
+        diagnostic_codes::MODIFIER_CANNOT_BE_USED_HERE,
+    );
+}
+
+#[test]
+fn async_before_export_star_at_top_level_reports_ts1042() {
+    assert_only_diagnostic(
+        "async export * from \"./source\";",
+        "async",
+        diagnostic_codes::MODIFIER_CANNOT_BE_USED_HERE,
+    );
+}
+
+#[test]
+fn async_before_export_list_in_namespace_body_reports_ts1042() {
+    assert_only_diagnostic(
+        "namespace Outer {\n  async export {};\n}",
+        "async",
+        diagnostic_codes::MODIFIER_CANNOT_BE_USED_HERE,
+    );
+}
+
+/// Inside a Block the `ExportDeclaration` node's own placement diagnostic
+/// (TS1233, a checker check out of this parser-only harness's reach) wins
+/// alone — same silencing shape the sibling modifier families use.
+#[test]
+fn async_before_export_list_in_function_body_reports_no_parser_diagnostic() {
+    assert_no_parser_diagnostics("function collect() {\n  async export {};\n}");
+}
+
+// --------------------------------------------------------------------------
+// `export =` / `export default <expr>` — an `ExportAssignment` node, the
+// same structural mismatch as `ExportDeclaration` but wider silencing: its
+// own placement diagnostic wins in a Block *and* a namespace body, so TS1042
+// survives only at the source file's own top level.
+// --------------------------------------------------------------------------
+
+#[test]
+fn async_before_export_assignment_at_top_level_reports_ts1042() {
+    assert_only_diagnostic(
+        "async export = 1;",
+        "async",
+        diagnostic_codes::MODIFIER_CANNOT_BE_USED_HERE,
+    );
+}
+
+#[test]
+fn async_before_export_default_expression_at_top_level_reports_ts1042() {
+    assert_only_diagnostic(
+        "async export default 1;",
+        "async",
+        diagnostic_codes::MODIFIER_CANNOT_BE_USED_HERE,
+    );
+}
+
+#[test]
+fn async_before_export_assignment_in_function_body_reports_no_parser_diagnostic() {
+    assert_no_parser_diagnostics("function collect() {\n  async export = 1;\n}");
+}
+
+#[test]
+fn async_before_export_assignment_in_namespace_body_reports_no_parser_diagnostic() {
+    assert_no_parser_diagnostics("namespace Outer {\n  async export = 1;\n}");
+}
+
+#[test]
+fn async_before_export_default_expression_in_namespace_body_reports_no_parser_diagnostic() {
+    assert_no_parser_diagnostics("namespace Outer {\n  async export default 1;\n}");
+}
+
+// --------------------------------------------------------------------------
+// `export namespace N {}` / `export module M {}` — a nested module
+// declaration is itself illegal in a Block (TS1235), independent of any
+// modifier, so that placement diagnostic wins there; outside a Block it
+// nests validly and takes the ordinary TS1029 order answer.
+// --------------------------------------------------------------------------
+
+#[test]
+fn async_before_export_namespace_declaration_in_function_body_reports_no_parser_diagnostic() {
+    assert_no_parser_diagnostics("function collect() {\n  async export namespace N {}\n}");
+}
+
+#[test]
+fn async_before_export_namespace_declaration_at_top_level_reports_ts1029() {
+    assert_only_diagnostic(
+        "async export namespace N {}",
+        "export",
+        diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
+    );
+}
+
+#[test]
+fn async_before_export_namespace_declaration_in_namespace_body_reports_ts1029() {
+    assert_only_diagnostic(
+        "namespace Outer {\n  async export namespace N {}\n}",
+        "export",
+        diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
+    );
+}
+
+// --------------------------------------------------------------------------
+// `async export as namespace Foo;` — a `NamespaceExportDeclaration`, which
+// like every other modifier family admits no modifiers in any container.
+// --------------------------------------------------------------------------
+
+#[test]
+fn async_before_export_as_namespace_at_top_level_reports_ts1184() {
+    assert_only_diagnostic(
+        "async export as namespace Telemetry;",
+        "async",
+        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+    );
+}
+
+#[test]
+fn async_before_export_as_namespace_in_function_body_reports_ts1184() {
+    assert_only_diagnostic(
+        "function collect() {\n  async export as namespace Telemetry;\n}",
+        "async",
+        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+    );
+}
+
+#[test]
+fn async_before_export_as_namespace_in_namespace_body_reports_ts1184() {
+    assert_only_diagnostic(
+        "namespace Outer {\n  async export as namespace Telemetry;\n}",
+        "async",
+        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+    );
+}
+
+// --------------------------------------------------------------------------
+// Negative control — `async function` (no `export`) is unaffected.
+// --------------------------------------------------------------------------
+
+#[test]
+fn plain_async_function_declaration_reports_no_parser_diagnostic() {
+    assert_no_parser_diagnostics("async function build() {}");
+    assert_no_parser_diagnostics("function collect() {\n  async function build() {}\n}");
+}
