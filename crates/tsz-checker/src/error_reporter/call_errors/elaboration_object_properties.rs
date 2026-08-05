@@ -228,6 +228,12 @@ impl<'a> CheckerState<'a> {
         let mut emitted_duplicate_primary: rustc_hash::FxHashSet<String> =
             rustc_hash::FxHashSet::default();
 
+        // The object type that DECLARES the members being elaborated. tsc's
+        // TS6500 pointer names this type and anchors in its declaration, so the
+        // candidates are the target as narrowed for elaboration first, then the
+        // target as written — never a property's own type.
+        let expected_type_owners = [effective_param_type, param_type];
+
         for &elem_idx in &obj.elements.nodes {
             let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
                 continue;
@@ -465,10 +471,16 @@ impl<'a> CheckerState<'a> {
                             first_name_idx,
                         );
                     }
-                    self.error_type_not_assignable_at_with_display_types(
-                        source_prop_type_for_diagnostic,
-                        target_for_diag,
-                        prop_name_idx,
+                    self.with_expected_type_from_property_pointer(
+                        &expected_type_owners,
+                        &prop_name,
+                        |this| {
+                            this.error_type_not_assignable_at_with_display_types(
+                                source_prop_type_for_diagnostic,
+                                target_for_diag,
+                                prop_name_idx,
+                            );
+                        },
                     );
                     elaborated = true;
                     continue;
@@ -516,10 +528,16 @@ impl<'a> CheckerState<'a> {
                     // Keep the source/target display types stable for duplicate
                     // properties; anchor at the property name so both duplicate
                     // declarations can surface their own TS2322 positions.
-                    self.error_type_not_assignable_at_with_display_types(
-                        source_prop_type_for_diagnostic,
-                        target_for_diag,
-                        prop_name_idx,
+                    self.with_expected_type_from_property_pointer(
+                        &expected_type_owners,
+                        &prop_name,
+                        |this| {
+                            this.error_type_not_assignable_at_with_display_types(
+                                source_prop_type_for_diagnostic,
+                                target_for_diag,
+                                prop_name_idx,
+                            );
+                        },
                     );
                     elaborated = true;
                     continue;
@@ -542,10 +560,16 @@ impl<'a> CheckerState<'a> {
                     .get(prop_value_idx)
                     .is_some_and(|n| n.kind == syntax_kind_ext::METHOD_DECLARATION);
                 if is_method {
-                    self.error_type_not_assignable_at_with_anchor(
-                        source_prop_type_for_diagnostic,
-                        target_for_diag,
-                        prop_name_idx,
+                    self.with_expected_type_from_property_pointer(
+                        &expected_type_owners,
+                        &prop_name,
+                        |this| {
+                            this.error_type_not_assignable_at_with_anchor(
+                                source_prop_type_for_diagnostic,
+                                target_for_diag,
+                                prop_name_idx,
+                            );
+                        },
                     );
                 } else {
                     // For arrow/function expression property values, try deeper
@@ -618,10 +642,16 @@ impl<'a> CheckerState<'a> {
                             body_idx,
                         );
                     } else {
-                        self.error_type_not_assignable_at_with_anchor(
-                            source_prop_type_for_diagnostic,
-                            target_for_diag,
-                            prop_name_idx,
+                        self.with_expected_type_from_property_pointer(
+                            &expected_type_owners,
+                            &prop_name,
+                            |this| {
+                                this.error_type_not_assignable_at_with_anchor(
+                                    source_prop_type_for_diagnostic,
+                                    target_for_diag,
+                                    prop_name_idx,
+                                );
+                            },
                         );
                     }
                 }
@@ -873,18 +903,30 @@ impl<'a> CheckerState<'a> {
                         None
                     };
                     if target_prop_type != target_prop_type_for_diagnostic {
-                        self.error_type_not_assignable_at_with_display_types(
-                            source_prop_type_for_diagnostic,
-                            target_prop_type_for_diagnostic,
-                            prop_name_idx,
+                        self.with_expected_type_from_property_pointer(
+                            &expected_type_owners,
+                            &prop_name,
+                            |this| {
+                                this.error_type_not_assignable_at_with_display_types(
+                                    source_prop_type_for_diagnostic,
+                                    target_prop_type_for_diagnostic,
+                                    prop_name_idx,
+                                );
+                            },
                         );
                     } else {
-                        self.error_type_not_assignable_at_with_anchor_elaboration_inner_with_value_anchor(
-                            source_prop_type_for_diagnostic,
-                            target_prop_type_for_diagnostic,
-                            prop_name_idx,
-                            value_anchor_for_missing_props,
-                            value_is_this_keyword,
+                        self.with_expected_type_from_property_pointer(
+                            &expected_type_owners,
+                            &prop_name,
+                            |this| {
+                                this.error_type_not_assignable_at_with_anchor_elaboration_inner_with_value_anchor(
+                                    source_prop_type_for_diagnostic,
+                                    target_prop_type_for_diagnostic,
+                                    prop_name_idx,
+                                    value_anchor_for_missing_props,
+                                    value_is_this_keyword,
+                                );
+                            },
                         );
                     }
                 }
