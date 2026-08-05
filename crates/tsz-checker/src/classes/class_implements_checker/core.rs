@@ -1131,10 +1131,24 @@ impl<'a> CheckerState<'a> {
                     let mut any_inaccessible_privates = false;
                     let mut any_accessible_privates = false;
 
+                    // A heritage target's declarations may live in a different file's
+                    // arena than the one currently being checked (`self.ctx.arena`).
+                    // Reading a foreign `NodeIndex` against the wrong arena silently
+                    // finds nothing (or, worse, an unrelated node at the same index),
+                    // which is why a cross-file generic interface previously fell
+                    // through to an empty `interface_type_params` and an
+                    // uninstantiated (`T`, not the real type argument) member
+                    // comparison. Resolve each declaration's own arena first, same
+                    // as the rest of the checker (#16434).
                     for &decl_idx in &symbol_declarations {
-                        if let Some(node) = self.ctx.arena.get(decl_idx) {
+                        let decl_arena = self.ctx.binder.arena_for_declaration_or(
+                            sym_id,
+                            decl_idx,
+                            self.ctx.arena,
+                        );
+                        if let Some(node) = decl_arena.get(decl_idx) {
                             if node.kind == tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION {
-                                if let Some(base_class_data) = self.ctx.arena.get_class(node) {
+                                if let Some(base_class_data) = decl_arena.get_class(node) {
                                     if self.class_has_private_or_protected_members(base_class_data)
                                     {
                                         has_private_members = true;
@@ -1146,7 +1160,7 @@ impl<'a> CheckerState<'a> {
                                 }
                             } else if node.kind
                                 == tsz_parser::parser::syntax_kind_ext::INTERFACE_DECLARATION
-                                && let Some(interface_decl) = self.ctx.arena.get_interface(node)
+                                && let Some(interface_decl) = decl_arena.get_interface(node)
                             {
                                 if self.interface_extends_class_with_inaccessible_members(
                                     decl_idx,

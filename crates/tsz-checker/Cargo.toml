@@ -1104,6 +1104,9 @@ path = "tests/wide_symbol_computed_member_index_signature_tests.rs"
 name = "well_known_symbol_type_query_alias_key_tests"
 path = "tests/well_known_symbol_type_query_alias_key_tests.rs"
 [[test]]
+name = "cross_file_symbol_keyed_member_instantiation_tests"
+path = "tests/cross_file_symbol_keyed_member_instantiation_tests.rs"
+[[test]]
 name = "relational_operator_type_display_tests"
 path = "tests/relational_operator_type_display_tests.rs"
 [[test]]
@@ -2651,3 +2654,7 @@ path = "tests/position_invalid_import_equals_container_scope_tests.rs"
 [[test]]
 name = "import_equals_alias_duplicate_container_tests"
 path = "tests/import_equals_alias_duplicate_container_tests.rs"
+
+[[test]]
+name = "import_equals_alias_duplicate_function_container_tests"
+path = "tests/import_equals_alias_duplicate_function_container_tests.rs"

@@ -567,6 +567,11 @@ impl CheckerState<'_> {
         // TS7: JS `module.exports = X` mixed with sibling property exports (2309)
         self.check_js_commonjs_export_assignment_conflict();
         self.check_import_alias_duplicates(&sf.statements.nodes);
+        // Function-like bodies and class static blocks are declaration
+        // containers with no statement-list call site of their own; sweep them
+        // from here so `function f() { import a = ...; import a = ...; }` gets
+        // its TS2300 alongside the two TS1232s.
+        self.check_import_alias_duplicates_in_nested_containers();
         self.check_import_declaration_duplicate_bindings(&sf.statements.nodes);
 
         // TS4094: exported `export default <call-returning-anonymous-class>` patterns.

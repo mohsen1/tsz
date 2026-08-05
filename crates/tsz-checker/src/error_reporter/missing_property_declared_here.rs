@@ -5,6 +5,15 @@ use crate::state::CheckerState;
 use tsz_parser::parser::{NodeArena, NodeIndex};
 use tsz_solver::TypeId;
 
+/// Alias edges followed from the reported target before giving up.
+///
+/// One hop covers `import { X } from "./hub"` reaching a hub's own
+/// `export { X } from "./dep"`, which is the shape tsc's `resolveAlias`
+/// terminates on. A small bound above that leaves room for an alias whose
+/// target is itself locally re-aliased, while keeping a cyclic re-export graph
+/// from spinning; the equal-hop check below catches a self-edge immediately.
+const MAX_ALIAS_HOPS: usize = 4;
+
 impl<'a> CheckerState<'a> {
     /// Build tsc's `'{0}' is declared here.` (TS2728) pointer for the single
     /// unmatched property of a `TS2741` failure.
@@ -74,29 +83,26 @@ impl<'a> CheckerState<'a> {
         property_display: &str,
     ) -> Option<DiagnosticRelatedInformation> {
         let annotation_idx = self.target_annotation_node(anchor_idx)?;
-        let (start, length, file) = self.annotation_property_anchor(annotation_idx, property, 0)?;
-        Some(Diagnostic::related_pointer(
-            diagnostic_codes::IS_DECLARED_HERE,
-            file.unwrap_or_else(|| self.ctx.file_name.clone()),
-            start,
-            length,
-            format_message(diagnostic_messages::IS_DECLARED_HERE, &[property_display]),
-        ))
+        self.annotation_property_anchor(annotation_idx, property, property_display, 0)
     }
 
-    /// `(start, length, file)` for `property`'s declaration inside the type
-    /// annotation node `idx`, following the annotation's own syntax.
+    /// The `TS2728` pointer for `property` inside the type annotation node
+    /// `idx`, following the annotation's own syntax.
     ///
-    /// Parentheses are peeled, a type literal is anchored directly, a type
-    /// reference hands off to the symbol route (which owns cross-file arena
-    /// resolution), and an indexed access resolves its key against the object
-    /// type's written members and continues into that member's type node.
+    /// Parentheses are peeled and a type literal is anchored directly, both in
+    /// the checking file's own arena. A type *reference* is handed to
+    /// [`Self::declared_here_related_following_aliases`], which owns cross-file
+    /// arena resolution and re-export following — an annotation naming a
+    /// re-exported alias must reach the original declaration exactly as a
+    /// resolved target does. An indexed access resolves its written key against
+    /// the object type's members and continues into that member's type node.
     fn annotation_property_anchor(
         &mut self,
         idx: NodeIndex,
         property: &str,
+        property_display: &str,
         depth: u32,
-    ) -> Option<(u32, u32, Option<String>)> {
+    ) -> Option<DiagnosticRelatedInformation> {
         use tsz_parser::parser::syntax_kind_ext;
 
         if depth > Self::ANNOTATION_WALK_MAX_DEPTH {
@@ -105,37 +111,54 @@ impl<'a> CheckerState<'a> {
         let node = self.ctx.arena.get(idx)?;
         if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE {
             let inner = self.ctx.arena.get_wrapped_type(node)?.type_node;
-            return self.annotation_property_anchor(inner, property, depth + 1);
+            return self.annotation_property_anchor(inner, property, property_display, depth + 1);
         }
         if node.kind == syntax_kind_ext::TYPE_LITERAL {
             let arena = self.ctx.arena;
             let members = Self::declaration_member_list(arena, idx)?;
             let anchor_idx = Self::member_anchor_node(arena, &members, property)?;
             let (start, length) = Self::anchor_span(arena, anchor_idx)?;
-            return Some((start, length, Self::arena_file_name(arena, anchor_idx)));
+            return Some(Diagnostic::related_pointer(
+                diagnostic_codes::IS_DECLARED_HERE,
+                Self::arena_file_name(arena, anchor_idx)
+                    .unwrap_or_else(|| self.ctx.file_name.clone()),
+                start,
+                length,
+                format_message(diagnostic_messages::IS_DECLARED_HERE, &[property_display]),
+            ));
         }
         if node.kind == syntax_kind_ext::TYPE_REFERENCE {
             let name_idx = self.ctx.arena.get_type_ref(node)?.type_name;
             let owner_symbol = self.type_position_symbol(name_idx)?;
-            let (locations, declaring_file_idx) = self.owner_declaration_locations(owner_symbol)?;
-            let from_declaration = locations.into_iter().find_map(|location| {
-                self.declared_here_anchor(location, property, declaring_file_idx)
-            });
-            if from_declaration.is_some() {
-                return from_declaration;
+            if let Some(related) = self.declared_here_related_following_aliases(
+                owner_symbol,
+                property,
+                property_display,
+            ) {
+                return Some(related);
             }
             // An alias chain (`type Indirect = Zed`) declares no member list of
             // its own, so the walk above finds nothing to anchor in. Continue
             // through the alias body, which is itself annotation syntax.
             let body_idx = self.local_type_alias_body(owner_symbol)?;
-            return self.annotation_property_anchor(body_idx, property, depth + 1);
+            return self.annotation_property_anchor(
+                body_idx,
+                property,
+                property_display,
+                depth + 1,
+            );
         }
         if node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE {
             let data = self.ctx.arena.get_indexed_access_type(node)?;
             let (object_idx, index_idx) = (data.object_type, data.index_type);
             let key = self.written_index_key(index_idx)?;
             let member_type_idx = self.annotation_member_type_node(object_idx, &key, depth)?;
-            return self.annotation_property_anchor(member_type_idx, property, depth + 1);
+            return self.annotation_property_anchor(
+                member_type_idx,
+                property,
+                property_display,
+                depth + 1,
+            );
         }
         None
     }
@@ -268,13 +291,65 @@ impl<'a> CheckerState<'a> {
         let owner_symbol = self.ctx.resolve_type_to_symbol_id(owner).or_else(|| {
             crate::query_boundaries::common::type_shape_symbol(self.ctx.types, owner)
         })?;
-        let declaring_file_idx = self.ctx.resolve_symbol_file_index(owner_symbol);
+        self.declared_here_related_following_aliases(owner_symbol, property, property_display)
+    }
+
+    /// The `TS2728` pointer for `owner_symbol`, following alias edges to the
+    /// original declaration when the symbol itself owns no member list.
+    ///
+    /// Shared by the two entry points that reach a declaring symbol: the type's
+    /// own resolution, and a type *reference* written in an annotation. Both
+    /// need the same re-export following, and both must carry the file index
+    /// forward from the hop rather than re-deriving it — the id and the file it
+    /// is valid in are one unit, since per-file binders mint colliding ids
+    /// from `0`.
+    fn declared_here_related_following_aliases(
+        &mut self,
+        owner_symbol: tsz_binder::SymbolId,
+        property: &str,
+        property_display: &str,
+    ) -> Option<DiagnosticRelatedInformation> {
+        let mut symbol_id = owner_symbol;
+        let mut declaring_file_idx = self.ctx.resolve_symbol_file_index(symbol_id);
+        for _ in 0..MAX_ALIAS_HOPS {
+            if let Some(related) = self.declared_here_related_for_declared_symbol(
+                symbol_id,
+                declaring_file_idx,
+                property,
+                property_display,
+            ) {
+                return Some(related);
+            }
+            let (next_symbol, next_file_idx) =
+                self.alias_target_symbol(symbol_id, declaring_file_idx)?;
+            if next_symbol == symbol_id && declaring_file_idx == Some(next_file_idx) {
+                return None;
+            }
+            symbol_id = next_symbol;
+            declaring_file_idx = Some(next_file_idx);
+        }
+        None
+    }
+
+    /// The `TS2728` pointer for a symbol that is expected to own the member
+    /// list directly, with no alias following.
+    fn declared_here_related_for_declared_symbol(
+        &mut self,
+        owner_symbol: tsz_binder::SymbolId,
+        declaring_file_idx: Option<usize>,
+        property: &str,
+        property_display: &str,
+    ) -> Option<DiagnosticRelatedInformation> {
         let binder = declaring_file_idx
             .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
             .filter(|binder| binder.get_symbol(owner_symbol).is_some())
             .unwrap_or(self.ctx.binder);
         let symbol = binder.get_symbol(owner_symbol)?;
-        let (locations, _) = self.owner_declaration_locations(owner_symbol)?;
+        let locations: Vec<tsz_binder::StableLocation> =
+            std::iter::once(symbol.stable_value_declaration)
+                .chain(symbol.stable_declarations.iter().copied())
+                .filter(tsz_binder::StableLocation::is_known)
+                .collect();
         let member_locations: Vec<tsz_binder::StableLocation> = symbol
             .members
             .as_ref()
@@ -318,27 +393,156 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// The declaration locations of `owner_symbol` paired with the file index
-    /// they resolve against.
+    /// Follow one alias edge from `symbol_id` to the symbol the alias names in
+    /// the module it imports from, returning it with the file index that
+    /// declares it.
     ///
-    /// The symbol is read out of the binder that *declares* it, not the
-    /// checking file's own binder, for the reason given on
-    /// [`Self::declared_here_related_for_owner`].
-    fn owner_declaration_locations(
+    /// A target reached through `export { X } from "./dep"` resolves to the
+    /// *hub's own export specifier*, which owns no member list, so the walk
+    /// above declines. tsc's `resolveAlias` follows the alias to the original
+    /// declaration; the pointer must anchor there and never on the re-export
+    /// clause.
+    ///
+    /// The hop is deliberately made through the module graph — module specifier
+    /// resolved from the *alias's own* file, then the exported **name** looked
+    /// up in the target module's public surface — and not by following a raw
+    /// `SymbolId`. Per-file binders mint colliding ids from `0`, so both the
+    /// hub's specifier and the original declaration are `SymbolId(0)` in their
+    /// own binders and a symbol-level alias resolution is a measured no-op
+    /// (#16415). `resolve_export_in_target_file` is program-aware and already
+    /// walks named and wildcard re-export edges, so a chain of hubs terminates
+    /// in one hop.
+    fn alias_target_symbol(
         &self,
-        owner_symbol: tsz_binder::SymbolId,
-    ) -> Option<(Vec<tsz_binder::StableLocation>, Option<usize>)> {
-        let declaring_file_idx = self.ctx.resolve_symbol_file_index(owner_symbol);
-        let binder = declaring_file_idx
-            .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
-            .filter(|binder| binder.get_symbol(owner_symbol).is_some())
-            .unwrap_or(self.ctx.binder);
-        let symbol = binder.get_symbol(owner_symbol)?;
-        let locations = std::iter::once(symbol.stable_value_declaration)
-            .chain(symbol.stable_declarations.iter().copied())
-            .filter(tsz_binder::StableLocation::is_known)
-            .collect();
-        Some((locations, declaring_file_idx))
+        symbol_id: tsz_binder::SymbolId,
+        declaring_file_idx: Option<usize>,
+    ) -> Option<(tsz_binder::SymbolId, usize)> {
+        let source_file_idx = declaring_file_idx?;
+        let binder = self.ctx.get_binder_for_file(source_file_idx)?;
+        let symbol = binder.get_symbol(symbol_id)?;
+        let locations: Vec<tsz_binder::StableLocation> =
+            std::iter::once(symbol.stable_value_declaration)
+                .chain(symbol.stable_declarations.iter().copied())
+                .filter(tsz_binder::StableLocation::is_known)
+                .collect();
+        for location in locations {
+            let Some((decl_idx, arena)) = self
+                .ctx
+                .node_at_stable_location_in_file(location, Some(source_file_idx))
+            else {
+                continue;
+            };
+            let Some((imported_name, module_specifier)) = Self::alias_import_edge(arena, decl_idx)
+            else {
+                continue;
+            };
+            let Some(target_idx) = self
+                .ctx
+                .resolve_import_target_from_file(source_file_idx, &module_specifier)
+            else {
+                continue;
+            };
+            let mut visited = rustc_hash::FxHashSet::default();
+            let Some(target_symbol) =
+                self.ctx
+                    .resolve_export_in_target_file(target_idx, &imported_name, &mut visited)
+            else {
+                continue;
+            };
+            // The resolver registers the terminal symbol's own file; keep
+            // `target_idx` only as the fallback for a same-file answer.
+            let target_file_idx = self
+                .ctx
+                .resolve_symbol_file_index(target_symbol)
+                .filter(|&idx| {
+                    self.ctx
+                        .get_binder_for_file(idx)
+                        .is_some_and(|binder| binder.get_symbol(target_symbol).is_some())
+                })
+                .unwrap_or(target_idx);
+            // Guard the hop the same way the anchor walk guards its span: a
+            // resolved id whose symbol does not exist in the file it was
+            // resolved to, or names something else, is a collision, not a
+            // target. `default` is exempt — the exported name and the declared
+            // name legitimately differ there.
+            let names_the_target = self
+                .ctx
+                .get_binder_for_file(target_file_idx)
+                .and_then(|binder| binder.get_symbol(target_symbol))
+                .is_some_and(|symbol| {
+                    imported_name == "default" || symbol.escaped_name == imported_name
+                });
+            if !names_the_target {
+                continue;
+            }
+            return Some((target_symbol, target_file_idx));
+        }
+        None
+    }
+
+    /// `(imported name, module specifier)` for an alias declaration that names
+    /// exactly one export of another module.
+    ///
+    /// A named specifier imports its `property_name` when it was renamed
+    /// (`export { Cross as Renamed }` names `Cross` in the target module) and
+    /// its own name otherwise; a default import clause names `default`. A
+    /// namespace import binds the whole module rather than one export and is
+    /// deliberately not an edge here.
+    fn alias_import_edge(arena: &NodeArena, decl_idx: NodeIndex) -> Option<(String, String)> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let node = arena.get(decl_idx)?;
+        let imported_name = if node.kind == syntax_kind_ext::IMPORT_SPECIFIER
+            || node.kind == syntax_kind_ext::EXPORT_SPECIFIER
+        {
+            let specifier = arena.get_specifier(node)?;
+            Self::identifier_text(arena, specifier.property_name)
+                .or_else(|| Self::identifier_text(arena, specifier.name))?
+        } else if node.kind == syntax_kind_ext::IMPORT_CLAUSE {
+            "default".to_string()
+        } else {
+            return None;
+        };
+        Some((
+            imported_name,
+            Self::alias_module_specifier(arena, decl_idx)?,
+        ))
+    }
+
+    /// The module specifier of the import/export declaration `decl_idx` sits
+    /// inside, as written.
+    fn alias_module_specifier(arena: &NodeArena, decl_idx: NodeIndex) -> Option<String> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let mut current = decl_idx;
+        while current.is_some() {
+            let node = arena.get(current)?;
+            let specifier_idx = if node.kind == syntax_kind_ext::IMPORT_DECLARATION {
+                arena.get_import_decl(node)?.module_specifier
+            } else if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                arena.get_export_decl(node)?.module_specifier
+            } else {
+                let ext = arena.get_extended(current)?;
+                if ext.parent.is_none() {
+                    break;
+                }
+                current = ext.parent;
+                continue;
+            };
+            return arena
+                .get(specifier_idx)
+                .and_then(|node| arena.get_literal(node))
+                .map(|literal| literal.text.clone());
+        }
+        None
+    }
+
+    /// Escaped text of an identifier node, when `idx` is one.
+    fn identifier_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+        arena
+            .get(idx)
+            .and_then(|node| arena.get_identifier(node))
+            .map(|identifier| identifier.escaped_text.to_string())
     }
 
     /// `(start, length, file)` for a member symbol's own declaration, used when

@@ -421,6 +421,258 @@ fn multiple_missing_cross_file_properties_carry_no_pointer() {
 }
 
 // ---------------------------------------------------------------------------
+// Re-export hubs (#16415 row 3).
+//
+// A target reached through `export { X } from "./dep"` resolves to the *hub's*
+// export specifier, which owns no member list, so the walk declined and no
+// pointer was produced. tsc's `resolveAlias` follows the alias to the original
+// declaration and anchors there, never on the re-export clause.
+//
+// Every row is pinned against `typescript@7.0.2` (`--noEmit --strict --pretty
+// --target es2022 --lib es2022`) and the oracle's reported location is quoted
+// on each case. In all four the pointer lands in `dep.ts` and `hub.ts` is
+// never mentioned.
+// ---------------------------------------------------------------------------
+
+const HUB_DEP: &str = "export interface Cross { one: number; two: number; }\nexport class Shape { held: number = 0; away: number = 0; }\n";
+
+/// `dep.ts:1:39 - 'two' is declared here.`, underlining `two`.
+#[test]
+fn reexport_hub_points_at_the_original_declaration() {
+    let diagnostic = only(
+        &check_stamped(
+            &[
+                ("dep.ts", HUB_DEP),
+                ("hub.ts", "export { Cross } from \"./dep\";\n"),
+                (
+                    "test.ts",
+                    "import { Cross } from \"./hub\";\nconst c: Cross = { one: 1 };\n",
+                ),
+            ],
+            "test.ts",
+        ),
+        TS2741,
+    );
+    let (file, start, length, message) = declared_here(&diagnostic);
+    assert_eq!(message, "'two' is declared here.");
+    assert_eq!(file, "dep.ts");
+    assert_eq!(span_text(HUB_DEP, start, length), "two");
+}
+
+/// A renamed re-export names the *original* export in the target module, and
+/// the pointer still lands on that original name:
+/// `dep.ts:1:39 - 'two' is declared here.` for `export { Cross as Renamed }`.
+#[test]
+fn renamed_reexport_hub_points_at_the_original_declaration() {
+    let diagnostic = only(
+        &check_stamped(
+            &[
+                ("dep.ts", HUB_DEP),
+                ("hub.ts", "export { Cross as Renamed } from \"./dep\";\n"),
+                (
+                    "test.ts",
+                    "import { Renamed } from \"./hub\";\nconst r: Renamed = { one: 1 };\n",
+                ),
+            ],
+            "test.ts",
+        ),
+        TS2741,
+    );
+    let (file, start, length, message) = declared_here(&diagnostic);
+    assert_eq!(message, "'two' is declared here.");
+    assert_eq!(file, "dep.ts");
+    assert_eq!(span_text(HUB_DEP, start, length), "two");
+}
+
+/// A wildcard hub carries no specifier for the name at all, so the edge is the
+/// re-export index rather than a written clause. Oracle:
+/// `dep.ts:2:40 - 'away' is declared here.`, underlining `away`. A *class*
+/// target through the hub also pins that the member-list walk reaches class
+/// members, not only interface ones.
+#[test]
+fn wildcard_reexport_hub_points_at_the_original_declaration() {
+    let diagnostic = only(
+        &check_stamped(
+            &[
+                ("dep.ts", HUB_DEP),
+                ("hub.ts", "export * from \"./dep\";\n"),
+                (
+                    "test.ts",
+                    "import { Shape } from \"./hub\";\nconst s: Shape = { held: 1 };\n",
+                ),
+            ],
+            "test.ts",
+        ),
+        TS2741,
+    );
+    let (file, start, length, message) = declared_here(&diagnostic);
+    assert_eq!(message, "'away' is declared here.");
+    assert_eq!(file, "dep.ts");
+    assert_eq!(span_text(HUB_DEP, start, length), "away");
+}
+
+/// Two hubs in a row: `test.ts -> hub2.ts -> hub.ts -> dep.ts`. Oracle points
+/// at `dep.ts:1:39` — neither hub is ever mentioned.
+#[test]
+fn two_hop_reexport_chain_points_at_the_original_declaration() {
+    let diagnostic = only(
+        &check_stamped(
+            &[
+                ("dep.ts", HUB_DEP),
+                ("hub.ts", "export { Cross } from \"./dep\";\n"),
+                ("hub2.ts", "export { Cross } from \"./hub\";\n"),
+                (
+                    "test.ts",
+                    "import { Cross } from \"./hub2\";\nconst c: Cross = { one: 1 };\n",
+                ),
+            ],
+            "test.ts",
+        ),
+        TS2741,
+    );
+    let (file, start, length, message) = declared_here(&diagnostic);
+    assert_eq!(message, "'two' is declared here.");
+    assert_eq!(file, "dep.ts");
+    assert_eq!(span_text(HUB_DEP, start, length), "two");
+}
+
+/// The same shape with every binder renamed: the hop is driven by the module
+/// graph and the exported name, so nothing about it may depend on the
+/// particular identifiers a user chose.
+#[test]
+fn renamed_hub_binders_point_at_the_renamed_original_declaration() {
+    let dep = "export interface Widget { alpha: number; omega: number; }\n";
+    let diagnostic = only(
+        &check_stamped(
+            &[
+                ("catalog.ts", dep),
+                ("barrel.ts", "export { Widget } from \"./catalog\";\n"),
+                (
+                    "test.ts",
+                    "import { Widget } from \"./barrel\";\nconst w: Widget = { alpha: 1 };\n",
+                ),
+            ],
+            "test.ts",
+        ),
+        TS2741,
+    );
+    let (file, start, length, message) = declared_here(&diagnostic);
+    assert_eq!(message, "'omega' is declared here.");
+    assert_eq!(file, "catalog.ts");
+    assert_eq!(span_text(dep, start, length), "omega");
+}
+
+/// The negative arm holds through a hub: two unmatched properties is `TS2739`
+/// and tsc attaches no pointer to it.
+#[test]
+fn multiple_missing_properties_through_a_hub_carry_no_pointer() {
+    let diagnostics = check_stamped(
+        &[
+            ("dep.ts", HUB_DEP),
+            ("hub.ts", "export { Cross } from \"./dep\";\n"),
+            (
+                "test.ts",
+                "import { Cross } from \"./hub\";\nconst c: Cross = {};\n",
+            ),
+        ],
+        "test.ts",
+    );
+    let diagnostic = only(&diagnostics, TS2739);
+    assert!(
+        diagnostic
+            .related_information
+            .iter()
+            .all(|info| info.code != TS2728),
+        "TS2739 carries no declared-here pointer: {diagnostic:?}"
+    );
+}
+
+/// The pointer through a hub is still a cross-location pointer, so
+/// `--pretty false` suppresses it exactly as tsc does.
+#[test]
+fn reexport_hub_pointer_is_tagged_as_a_cross_location_pointer() {
+    let diagnostic = only(
+        &check_stamped(
+            &[
+                ("dep.ts", HUB_DEP),
+                ("hub.ts", "export { Cross } from \"./dep\";\n"),
+                (
+                    "test.ts",
+                    "import { Cross } from \"./hub\";\nconst c: Cross = { one: 1 };\n",
+                ),
+            ],
+            "test.ts",
+        ),
+        TS2741,
+    );
+    let pointer = diagnostic
+        .related_information
+        .iter()
+        .find(|info| info.code == TS2728)
+        .expect("a TS2728 pointer");
+    assert!(
+        pointer.is_location_pointer(),
+        "the hub pointer is a cross-location pointer, not a message-chain link: {pointer:?}"
+    );
+}
+
+/// A hub does not make the *primary* diagnostic move: the reported target is
+/// still the name the entry file wrote, and the message is untouched.
+#[test]
+fn reexport_hub_leaves_the_primary_diagnostic_unchanged() {
+    let diagnostic = only(
+        &check_stamped(
+            &[
+                ("dep.ts", HUB_DEP),
+                ("hub.ts", "export { Cross } from \"./dep\";\n"),
+                (
+                    "test.ts",
+                    "import { Cross } from \"./hub\";\nconst c: Cross = { one: 1 };\n",
+                ),
+            ],
+            "test.ts",
+        ),
+        TS2741,
+    );
+    assert_eq!(
+        diagnostic.message_text,
+        "Property 'two' is missing in type '{ one: number; }' but required in type 'Cross'."
+    );
+}
+
+/// #16415 row 2: an imported type alias whose body is a type literal. #16430
+/// pinned this as *declining* — correct for the code as it stood, since the
+/// target resolves to no symbol and there is therefore no alias edge to follow.
+///
+/// The annotation route reaches it a different way: the type reference written
+/// in the annotation resolves to the alias symbol, which the shared alias walk
+/// then follows into its declaring file. tsc points here
+/// (`dep.ts(1,36)`: `'beta' is declared here.`, oracled on `typescript@7.0.2`
+/// with `--module commonjs`), so the expectation moves from tsz's old decline
+/// to tsc's own anchor.
+#[test]
+fn imported_type_literal_alias_points_into_the_declaring_file() {
+    const ALIAS_DEP: &str = "export type Lit = { alpha: string; beta: string };\n";
+    let diagnostic = only(
+        &check_stamped(
+            &[
+                ("dep.ts", ALIAS_DEP),
+                (
+                    "test.ts",
+                    "import { Lit } from \"./dep\";\nconst l: Lit = { alpha: \"a\" };\n",
+                ),
+            ],
+            "test.ts",
+        ),
+        TS2741,
+    );
+    let (file, start, length, message) = declared_here(&diagnostic);
+    assert_eq!(message, "'beta' is declared here.");
+    assert_eq!(file, "dep.ts");
+    assert_eq!(span_text(ALIAS_DEP, start, length), "beta");
+}
+
+// ---------------------------------------------------------------------------
 // Anonymous (type-literal) targets — #16443.
 //
 // These targets resolve to no binder symbol, and cannot be made to: the
@@ -629,20 +881,4 @@ fn named_target_still_anchors_through_the_symbol_route() {
         (start as usize) > source.find("interface Want").expect("the interface"),
         "the anchor is `Want`'s own member, not anything in `Src`"
     );
-}
-
-/// A cross-file imported alias whose body is a type literal — one of the three
-/// shapes the module header above recorded as producing no pointer. The
-/// annotation route resolves the alias through its *declaring* file's arena, so
-/// this now anchors in `dep.ts`, oracle-exact.
-#[test]
-fn imported_alias_to_type_literal_points_into_the_declaring_file() {
-    let dep = "export type Remote = { rone: string; rtwo: string };\n";
-    let entry = "import { Remote } from \"./dep\";\nconst m: Remote = { rone: \"a\" };\n";
-    let diagnostics = check_stamped(&[("dep.ts", dep), ("test.ts", entry)], "test.ts");
-    let diagnostic = only(&diagnostics, TS2741);
-    let (file, start, length, message) = declared_here(&diagnostic);
-    assert_eq!(message, "'rtwo' is declared here.");
-    assert_eq!(file, "dep.ts");
-    assert_eq!(span_text(dep, start, length), "rtwo");
 }
