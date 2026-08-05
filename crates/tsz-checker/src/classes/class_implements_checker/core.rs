@@ -1205,19 +1205,37 @@ impl<'a> CheckerState<'a> {
                     let (mut interface_type_params, interface_type_param_updates) =
                         self.push_type_parameters(&interface_type_params);
 
-                    // Fallback: when the interface declaration's AST lives in a different
-                    // arena (e.g. lib types like `AsyncIterator<T, TReturn, TNext>`), the
-                    // local arena walk above leaves `interface_type_params` empty. Look up
-                    // the canonical type parameters via the solver-side definition store
-                    // so the substitution we build below correctly maps interface type
-                    // parameters to the supplied type arguments.
-                    if interface_type_params.is_empty()
-                        && let Some(def_id) = self.ctx.definition_store.find_def_by_symbol(sym_id.0)
-                        && let Some(store_params) =
-                            self.ctx.definition_store.get_type_params(def_id)
-                        && !store_params.is_empty()
-                    {
-                        interface_type_params = store_params;
+                    // Fallback: when the interface/class declaration's AST lives in a
+                    // different arena (a lib type like `AsyncIterator<T, TReturn, TNext>`,
+                    // or any interface/class declared in another *user* file), the local
+                    // arena walk above leaves `interface_type_params` empty because it
+                    // always reads `self.ctx.arena` (the CURRENT file), never a foreign
+                    // heritage declaration's own arena.
+                    //
+                    // Previously this fell back to `definition_store.find_def_by_symbol`,
+                    // a raw-`SymbolId`-keyed lookup that only succeeds if some earlier,
+                    // unrelated reference to the same name had already warmed the
+                    // definition store's cache for this exact `SymbolId` — and, since
+                    // `DefinitionInfo::type_params` defaults to empty on first
+                    // registration, a `Plain<number>` type annotation resolved anywhere
+                    // else in the file (e.g. a sibling function signature) could win that
+                    // race and permanently pin an empty entry before the implements-clause
+                    // check ever ran, independent of source order. Re-derive the declared
+                    // type parameters instead through the same reference-aware,
+                    // arena-correct path heritage `extends` clauses already use for TS2314
+                    // arity (`get_reference_type_params_for_symbol` /
+                    // `extract_declared_type_params_for_reference_symbol`), keyed off the
+                    // heritage clause's own written name so a renamed re-export still
+                    // resolves. Without this, the substitution built below degenerates to
+                    // the identity for a cross-file generic heritage target and every
+                    // member compares against its own unsubstituted type parameter instead
+                    // of the supplied type argument (#16434).
+                    if interface_type_params.is_empty() {
+                        let resolved =
+                            self.get_reference_type_params_for_symbol(raw_sym_id, &interface_name);
+                        if !resolved.is_empty() {
+                            interface_type_params = resolved;
+                        }
                     }
 
                     // Fill in missing type arguments with defaults/constraints/unknown
