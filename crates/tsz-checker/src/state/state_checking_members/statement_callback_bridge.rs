@@ -197,6 +197,19 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 return;
             }
 
+            // `export default [ expr ]` in a non-module-element context: tsc's
+            // `checkExportAssignment` reports the placement diagnostic (TS1258) from
+            // `checkGrammarModuleElementContext` and `return`s before it ever types
+            // the exported expression, so an unresolved name draws no second
+            // diagnostic. The one container where it still does is a body tsc
+            // revisits through its deferred queue — see
+            // `nearest_function_like_body_is_deferred_checked`.
+            if in_non_module_context
+                && self.is_unchecked_position_invalid_default_export(export_idx)
+            {
+                return;
+            }
+
             // TS1194: Export declarations are not permitted in a namespace.
             // `export { } from "mod"` is NEVER allowed in any namespace (even declare);
             // `export { }` (no from) is only disallowed in non-ambient namespaces.

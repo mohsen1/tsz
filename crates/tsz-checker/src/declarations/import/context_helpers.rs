@@ -130,6 +130,144 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Whether the nearest enclosing function-like body is one tsc revisits through
+    /// its *deferred* queue instead of the eager statement walk.
+    ///
+    /// `checkExportAssignment` opens with `checkGrammarModuleElementContext` and
+    /// `return`s the moment the context is invalid, so a position-invalid
+    /// `export default [ expr ]` never resolves its exported expression — the
+    /// placement diagnostic is the whole answer. The exception is a body tsc reaches
+    /// a second time through `checkFunctionExpressionOrObjectLiteralMethodDeferred`:
+    /// a function expression, an arrow function, or an object-literal method. Inside
+    /// one of those the expression *is* resolved, and an unresolved name still
+    /// reports.
+    ///
+    /// The object-literal **accessor** is the row that pins this to the deferred set
+    /// rather than to "is inside some function": tsc does not defer accessors
+    /// (`checkAccessorDeclaration` runs eagerly from `checkObjectLiteral`), and an
+    /// object-literal getter suppresses exactly like a class method does, while the
+    /// object-literal method one line away does not.
+    ///
+    /// Only meaningful for a node in a non-module-element context.
+    pub(crate) fn nearest_function_like_body_is_deferred_checked(
+        &self,
+        node_idx: NodeIndex,
+    ) -> bool {
+        let mut current = node_idx;
+        while current.is_some() {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            current = ext.parent;
+            if current.is_none() {
+                break;
+            }
+            let Some(node) = self.ctx.arena.get(current) else {
+                break;
+            };
+            match node.kind {
+                k if k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::ARROW_FUNCTION =>
+                {
+                    return true;
+                }
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    // An object-literal method is deferred; a class method is not.
+                    return self
+                        .ctx
+                        .arena
+                        .parent_of(current)
+                        .and_then(|p| self.ctx.arena.get(p))
+                        .is_some_and(|p| p.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION);
+                }
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::CONSTRUCTOR
+                    || k == syntax_kind_ext::GET_ACCESSOR
+                    || k == syntax_kind_ext::SET_ACCESSOR
+                    || k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION =>
+                {
+                    return false;
+                }
+                k if k == syntax_kind_ext::SOURCE_FILE || k == syntax_kind_ext::MODULE_BLOCK => {
+                    return false;
+                }
+                _ => continue,
+            }
+        }
+        false
+    }
+
+    /// Whether `node_idx` is, or is the exported expression of, an
+    /// `export default [ expr ]` whose placement diagnostic is the whole answer.
+    ///
+    /// tsc never types the expression of such a declaration, so no walker may
+    /// demand it. tsz has two demand sites: `build_type_environment`, which types
+    /// every file symbol up front, and the statement walk in
+    /// `check_export_declaration`. Both consult this.
+    pub(crate) fn is_unchecked_position_invalid_default_export(&self, node_idx: NodeIndex) -> bool {
+        if node_idx.is_none() {
+            return false;
+        }
+        let export_idx = if self
+            .ctx
+            .arena
+            .kind_at(node_idx)
+            .is_some_and(|k| k == syntax_kind_ext::EXPORT_DECLARATION)
+        {
+            node_idx
+        } else {
+            match self.ctx.arena.parent_of(node_idx) {
+                Some(parent)
+                    if self
+                        .ctx
+                        .arena
+                        .kind_at(parent)
+                        .is_some_and(|k| k == syntax_kind_ext::EXPORT_DECLARATION) =>
+                {
+                    parent
+                }
+                _ => return false,
+            }
+        };
+
+        let Some(export_decl) = self
+            .ctx
+            .arena
+            .get(export_idx)
+            .and_then(|node| self.ctx.arena.get_export_decl(node))
+        else {
+            return false;
+        };
+        if !export_decl.is_default_export || export_decl.export_clause.is_none() {
+            return false;
+        }
+        let clause_idx = export_decl.export_clause;
+
+        self.is_in_non_module_element_context(export_idx)
+            && self.export_default_clause_is_expression(clause_idx)
+            && !self.nearest_function_like_body_is_deferred_checked(export_idx)
+    }
+
+    /// Whether an `export default` wraps a bare expression rather than a declaration.
+    ///
+    /// tsc parses `export default class C {}` / `export default function f() {}` in a
+    /// statement position as the declaration itself carrying an illegal `export`
+    /// modifier (TS1184, `checkGrammarModifiers`), not as an `ExportAssignment`, so
+    /// `checkExportAssignment`'s bail never applies and the declaration is checked
+    /// normally. Only the expression form reaches TS1258 and the bail.
+    pub(crate) fn export_default_clause_is_expression(&self, clause_idx: NodeIndex) -> bool {
+        !self.ctx.arena.kind_at(clause_idx).is_some_and(|k| {
+            k == syntax_kind_ext::CLASS_DECLARATION
+                || k == syntax_kind_ext::CLASS_EXPRESSION
+                || k == syntax_kind_ext::FUNCTION_DECLARATION
+                || k == syntax_kind_ext::VARIABLE_STATEMENT
+                || k == syntax_kind_ext::INTERFACE_DECLARATION
+                || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                || k == syntax_kind_ext::ENUM_DECLARATION
+                || k == syntax_kind_ext::MODULE_DECLARATION
+        })
+    }
+
     /// Whether a module element that has *already* drawn a placement diagnostic
     /// still resolves its module specifier.
     ///
