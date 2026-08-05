@@ -1304,9 +1304,20 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             }
         }
 
-        // Function interface
+        // Function interface. A callable value satisfies the Function surface
+        // (apply/call/bind) — unless the target additionally declares a numeric
+        // index signature (a user `interface Function { [n: number]: T }`
+        // augmentation), which a function's apparent type cannot satisfy. Such a
+        // target defers to the full structural comparison below, which rejects a
+        // bare function and still accepts a source that provides a numeric index.
+        // The intrinsic `Function` and the un-augmented global interface carry no
+        // such index and keep the fast-path. Mirror of the subtype-checker guard
+        // in `core_dispatch`/`visitor`. Companion to #16473.
         if self.is_function_target_member(target)
             && crate::type_queries::is_callable_type(self.interner, source)
+            && !self
+                .subtype
+                .function_structural_target_has_unwaived_number_index(target)
         {
             return true;
         }
