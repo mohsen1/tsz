@@ -30,12 +30,26 @@ Artifacts: `conformance-detail.json`, `conformance-snapshot.json`,
 
 ## Oracle
 
-Semantics come from the **pinned** compiler, not from any other copy on the box:
+Semantics come from the **pinned** compiler, not from any other copy on the box.
+Run manual spot-checks through the wrapper so they match what the gate scores:
 
 ```bash
+scripts/conformance/oracle.sh case.ts --strict --lib es2022 --target es2022
 node scripts/node_modules/typescript/lib/tsc.js --version   # Version 7.0.2
 ```
 
+- **Use `oracle.sh`, not a bare `tsc.js` invocation.** It runs the pinned
+  `typescript@7.0.2` with the same `--singleThreaded --stableTypeOrdering true`
+  flags `generate-tsc-cache.rs` uses for TypeScript 7+. This is not just about
+  ordering: `typescript@7.0.2` (typescript-go) reports a *different diagnostic
+  set* under `--singleThreaded`. A position-invalid import in a bare `{ }` block
+  (or `if`/loop/`try` body) gets `TS2307`/`TS2305` only single-threaded, not
+  under the default concurrent scheduler; the same import in a function, class
+  `static { }`, or namespace body gets neither, in both modes (#16413).
+  `compare-to-parent.sh`/`conformance.sh` score the single-threaded cache, so a
+  plain `tsc.js case.ts` silently disagrees with the gate — hand-oracling
+  without the flag reads a fix as passing that the gate then fails (this
+  mis-scoped #16409/#16411).
 - `TypeScript/` (submodule) and any container-global
   `/opt/**/node_modules/typescript` are the **6.0** line. They are corpus and
   test *cases* only — never the source of a semantic rule.
