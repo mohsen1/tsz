@@ -240,6 +240,22 @@ impl<'a> CheckerState<'a> {
                         // means "alias to a same-file declaration", so resolve
                         // that identifier one hop further in the *target's own*
                         // file scope before giving up on it.
+                        //
+                        // One exception, oracle-verified against
+                        // `typescript@7.0.2`: a resolved `Class` bit overrides
+                        // an accompanying `NamespaceModule`/`Enum` bit here
+                        // specifically. `class C {} namespace C {...}` keeps
+                        // namespace meaning through this same bare-identifier
+                        // hop when accessed via a *named* import or same-file
+                        // reference (unaffected, already covered above and
+                        // by `class_merged_with_namespace_resolves_its_exported_member`),
+                        // but tsc's *default*-export slot still denies it
+                        // (`TS2702`) for the identical merge even when the
+                        // default clause is a bare reference to it rather
+                        // than the inline declaration this hop already
+                        // excludes — the merge with a `function` does not
+                        // lose it the same way, so the override is keyed on
+                        // `Class` specifically, not "any merge."
                         let default_export_alias_target_has_namespace_meaning =
                             |target_id: SymbolId, target: &tsz_binder::Symbol| -> Option<bool> {
                                 if !target.has_any_flags(symbol_flags::ALIAS)
@@ -264,7 +280,10 @@ impl<'a> CheckerState<'a> {
                                 let target_binder = self.ctx.get_binder_for_file(file_idx)?;
                                 let ref_id = target_binder.file_locals.get(ref_name)?;
                                 let ref_symbol = target_binder.get_symbol(ref_id)?;
-                                Some(ref_symbol.has_any_flags(valid_namespace_flags))
+                                Some(
+                                    !ref_symbol.has_any_flags(symbol_flags::CLASS)
+                                        && ref_symbol.has_any_flags(valid_namespace_flags),
+                                )
                             };
                         let resolve_import_target_has_namespace_meaning =
                             |name: &str| -> Option<bool> {
