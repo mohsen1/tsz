@@ -36,13 +36,67 @@ impl<'a> CheckerState<'a> {
         modifiers: &Option<tsz_parser::parser::NodeList>,
     ) {
         use crate::diagnostics::diagnostic_codes;
-        if let Some(async_mod_idx) = self.find_async_modifier(modifiers) {
-            self.error_at_node(
-                async_mod_idx,
-                "'async' modifier cannot be used here.",
-                diagnostic_codes::MODIFIER_CANNOT_BE_USED_HERE,
-            );
+        let Some(async_mod_idx) = self.find_async_modifier(modifiers) else {
+            return;
+        };
+        // tsc's `checkGrammarModifiers` reports at most one diagnostic per
+        // modifier list and returns immediately after: for `async export
+        // class C {}` (`async` misordered before `export`) it reports only
+        // the order violation (TS1029, anchored on `export`) and never goes
+        // on to ask whether `async` is legal on this declaration kind at
+        // all. tsz's parser reports that same TS1029 eagerly during parsing
+        // (`look_ahead_async_before_export_target` /
+        // `parse_statement_async_declaration_or_expression`, #16403 slice
+        // 3) — before this class/interface/enum/namespace's own modifier
+        // list even exists as a checked unit — so this independent checker
+        // pass has no AST field to read "did it already fire" back from.
+        // Re-derive it from position instead, the same way
+        // `check_export_declaration`'s TS1319 dedup does for the sibling
+        // `declare export default` shape: any parse-diagnostic position
+        // strictly inside this modifier list's own span can only be the
+        // order-violation grammar check tsc already reported for this exact
+        // node, since the declaration body (where an unrelated parse error
+        // could otherwise land) starts only after the last modifier.
+        if self.modifier_run_already_has_parse_error(modifiers) {
+            return;
         }
+        self.error_at_node(
+            async_mod_idx,
+            "'async' modifier cannot be used here.",
+            diagnostic_codes::MODIFIER_CANNOT_BE_USED_HERE,
+        );
+    }
+
+    /// Whether any parse-time diagnostic landed strictly inside `modifiers`'
+    /// own span (first modifier's start through last modifier's end).
+    /// `NodeList::pos`/`end` are not populated for a modifier list built from
+    /// individually-parsed tokens (`Parser::make_node_list` always zeroes
+    /// them), so the span is recomputed from the member nodes' own
+    /// positions rather than trusted from the list itself.
+    fn modifier_run_already_has_parse_error(
+        &self,
+        modifiers: &Option<tsz_parser::parser::NodeList>,
+    ) -> bool {
+        let Some(modifiers) = modifiers else {
+            return false;
+        };
+        let mut span: Option<(u32, u32)> = None;
+        for &mod_idx in &modifiers.nodes {
+            let Some(node) = self.ctx.arena.get(mod_idx) else {
+                continue;
+            };
+            span = Some(match span {
+                Some((start, end)) => (start.min(node.pos), end.max(node.end)),
+                None => (node.pos, node.end),
+            });
+        }
+        let Some((start, end)) = span else {
+            return false;
+        };
+        self.ctx
+            .all_parse_error_positions
+            .iter()
+            .any(|&pos| pos >= start && pos < end)
     }
 
     /// TS1277: `const` modifier can only appear on function, method, or class type parameters.
