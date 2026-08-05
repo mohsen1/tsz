@@ -173,6 +173,34 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // TS1147: Import declarations in a namespace cannot reference a module.
+        // Mirrors tsc's `checkExternalImportOrExportDeclaration`: when the
+        // enclosing module element is a non-ambient namespace, tsc reports this
+        // at the module specifier and returns immediately — nothing downstream
+        // runs, including module resolution (no TS2307/TS2305) and binder-level
+        // checks like the reserved-word TS1214 gate (oracle-confirmed:
+        // `namespace N { import { eval } from "m"; }` is TS1147 alone).
+        // `is_inside_namespace_declaration` already excludes string-literal
+        // ambient modules (`declare module "m"`), which stay a valid
+        // module-element context and keep resolving normally; `declare global`
+        // augmentations are excluded here too since they report TS2667 via
+        // `is_inside_global_augmentation` instead. `!in_wrong_context` defers to
+        // the TS1232 placement diagnostic when the import is further nested in
+        // a block within the namespace (oracle-confirmed: TS1232 alone there).
+        if !self.ctx.has_parse_errors
+            && !in_wrong_context
+            && self.is_inside_namespace_declaration(stmt_idx)
+            && !self.is_inside_global_augmentation(stmt_idx)
+        {
+            use crate::diagnostics::diagnostic_messages;
+            self.error_at_node(
+                import.module_specifier,
+                diagnostic_messages::IMPORT_DECLARATIONS_IN_A_NAMESPACE_CANNOT_REFERENCE_A_MODULE,
+                diagnostic_codes::IMPORT_DECLARATIONS_IN_A_NAMESPACE_CANNOT_REFERENCE_A_MODULE,
+            );
+            return;
+        }
+
         // TS18058/TS18059: Validate deferred import binding restrictions.
         // Deferred imports only allow namespace imports: `import defer * as ns from "..."`
         self.check_deferred_import_restrictions(import.import_clause);
