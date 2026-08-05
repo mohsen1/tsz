@@ -222,19 +222,15 @@ fn named_imported_class_qualifier_takes_both_branches() {
 }
 
 // ---------------------------------------------------------------------------
-// Residuals — pinned as they behave today, tracked in their own issue
+// Cross-file: an import alias resolves to its target's namespace meaning,
+// not the local binding's ALIAS flag (closes #16465)
 // ---------------------------------------------------------------------------
 
 /// A *default*-imported class used as a namespace qualifier. `export default`
 /// carries only the class's type/value meaning — never a merged namespace's —
 /// so `tsc` reports `TS2702` on the qualifier for every row here.
-///
-/// tsz still reports `TS2694`: the qualifier is an `ALIAS` symbol, and this
-/// rule's gate skips alias symbols wholesale rather than resolving the alias and
-/// asking its target for namespace meaning. Pinned as today's behaviour, not as
-/// the correct one.
 #[test]
-fn default_imported_class_used_as_namespace_is_a_known_residual() {
+fn default_imported_class_used_as_namespace_reports_type_used_as_namespace() {
     for (files, entry) in [
         (
             vec![
@@ -269,19 +265,17 @@ fn default_imported_class_used_as_namespace_is_a_known_residual() {
     ] {
         assert_eq!(
             multi_file_codes(&files, entry),
-            vec![2694],
-            "residual: tsc reports TS2702 for {entry}"
+            vec![2702],
+            "tsc reports TS2702 for {entry}"
         );
     }
 }
 
-/// A named-imported class *merged* with a namespace loses the namespace meaning
-/// across the file boundary: `tsc` accepts `Named.I` and reports `TS2694` for
-/// `Named.Missing`, while tsz reports a single `TS2702`. Same alias gate as
-/// above, seen from the opposite side — here it costs a false positive on valid
-/// code. Pinned so the follow-up has a failing witness to flip.
+/// A named-imported class *merged* with a namespace keeps its namespace
+/// meaning across the file boundary: `tsc` accepts `Named.I` and reports
+/// `TS2694` for `Named.Missing`.
 #[test]
-fn cross_file_class_namespace_merge_is_a_known_residual() {
+fn cross_file_class_namespace_merge_keeps_the_member_lookup_path() {
     assert_eq!(
         multi_file_codes(
             &[
@@ -296,8 +290,8 @@ fn cross_file_class_namespace_merge_is_a_known_residual() {
             ],
             "/n2.ts",
         ),
-        vec![2702],
-        "residual: tsc accepts `Named.I` and reports TS2694 for `Named.Missing`"
+        vec![2694],
+        "tsc accepts `Named.I` and reports TS2694 for `Named.Missing`"
     );
 }
 

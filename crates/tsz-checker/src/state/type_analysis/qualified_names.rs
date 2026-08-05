@@ -163,8 +163,19 @@ impl<'a> CheckerState<'a> {
             match sym_res {
                 TypeSymbolResolution::Type(sym_id) => {
                     let lib_binders = self.get_lib_binders();
-                    if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
-                    {
+                    // Prefer the cross-file-registered owner when `sym_id` was
+                    // pinned to a foreign file by an earlier resolution step
+                    // (e.g. a cross-file alias target): per-file binders mint
+                    // raw `SymbolId`s from zero, so reading `sym_id` from the
+                    // *current* file's binder can silently collide with an
+                    // unrelated local declaration at the same numeric id —
+                    // see #16465. A `sym_id` never registered cross-file (the
+                    // common, purely-local case) falls back to the plain
+                    // local/lib read unchanged.
+                    let symbol_lookup = self
+                        .get_symbol_from_registered_file_target(sym_id)
+                        .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders));
+                    if let Some(symbol) = symbol_lookup {
                         // tsc's `SymbolFlags.Namespace` is `ValueModule |
                         // NamespaceModule | Enum` — a *class* is not in it. A
                         // class declaration alone therefore has no namespace
@@ -181,12 +192,49 @@ impl<'a> CheckerState<'a> {
                             | symbol_flags::CONST_ENUM
                             | symbol_flags::ENUM_MEMBER;
 
-                        // Skip TS2713 for ALIAS symbols (imports) - they may target
-                        // namespaces in other files. Also skip when the resolved
-                        // export has an alias_partner (TYPE_ALIAS+ALIAS merge), as
-                        // the partner provides namespace access. Skip when parse
+                        // Skip TS2713/TS2702 for ALIAS symbols (imports) - a
+                        // namespace import (`import * as X`) may target a
+                        // namespace in another file with no single member to
+                        // resolve here. Also skip when the resolved export has
+                        // an alias_partner (TYPE_ALIAS+ALIAS merge), as the
+                        // partner provides namespace access. Skip when parse
                         // errors exist, as the qualified name may be malformed.
                         let is_alias = symbol.has_any_flags(symbol_flags::ALIAS);
+                        // A *named* or *default* import has one specific
+                        // target, and it is the target's own namespace
+                        // meaning — not "is this local binding an alias" —
+                        // that decides TS2702/TS2713. `sym_id`/`symbol` above
+                        // may already be misread: per-file binders mint raw
+                        // `SymbolId`s from zero, so a cross-file-resolved id
+                        // can collide with an unrelated local declaration when
+                        // read back from the *current* file's binder (`self.
+                        // ctx.binder`) — see #16465. Re-derive the alias from
+                        // `name`'s own local binding in the current file (a
+                        // same-file, unambiguous lookup) and resolve it
+                        // through the owner-carrying cross-file path, which
+                        // reads the target from *its own* declaring binder.
+                        // Returns `None` for a namespace/require import
+                        // (`import * as X`, no single named target) or when
+                        // `name` isn't a local import alias at all — callers
+                        // fall back to their own, more conservative answer.
+                        let resolve_import_target_has_namespace_meaning =
+                            |name: &str| -> Option<bool> {
+                                let local_id = self.ctx.binder.file_locals.get(name)?;
+                                let local = self.ctx.binder.get_symbol(local_id)?;
+                                if !local.has_any_flags(symbol_flags::ALIAS)
+                                    || local.import_name().is_none()
+                                {
+                                    return None;
+                                }
+                                let target_id =
+                                    self.ctx.resolve_import_alias_and_register(local_id)?;
+                                let target =
+                                    self.get_symbol_from_registered_file_target(target_id)?;
+                                Some(target.has_any_flags(valid_namespace_flags))
+                            };
+                        let alias_target_lacks_namespace_meaning = is_alias
+                            && resolve_import_target_has_namespace_meaning(&left_name)
+                                == Some(false);
                         let has_alias_partner =
                             self.ctx.alias_partners_contains(self.ctx.binder, sym_id)
                                 || self.ctx.binder.resolve_import_symbol(sym_id).is_some_and(
@@ -203,6 +251,12 @@ impl<'a> CheckerState<'a> {
                         // second, so re-ask the file scope for a namespace-meaning
                         // declaration before treating the qualifier as unusable.
                         // Same fallback shape as the type-parameter case above.
+                        // When the outer declaration is itself a named/default
+                        // import alias, ask its resolved target for namespace
+                        // meaning (same rule as above) rather than assuming
+                        // every ALIAS qualifies; fall back to the old
+                        // conservative `true` when that can't be determined
+                        // (a namespace import, or resolution failure).
                         let outer_namespace_meaning_exists = self
                             .ctx
                             .binder
@@ -219,14 +273,17 @@ impl<'a> CheckerState<'a> {
                                     .binder
                                     .get_symbol_with_libs(resolved, &lib_binders)
                                     .map(|outer| {
-                                        outer.has_any_flags(
-                                            valid_namespace_flags | symbol_flags::ALIAS,
-                                        )
+                                        outer.has_any_flags(valid_namespace_flags)
+                                            || (outer.has_any_flags(symbol_flags::ALIAS)
+                                                && resolve_import_target_has_namespace_meaning(
+                                                    &left_name,
+                                                )
+                                                .unwrap_or(true))
                                     })
                             })
                             .unwrap_or(false);
                         if !symbol.has_any_flags(valid_namespace_flags)
-                            && !is_alias
+                            && (!is_alias || alias_target_lacks_namespace_meaning)
                             && !has_alias_partner
                             && !outer_namespace_meaning_exists
                             && !self.ctx.has_parse_errors
