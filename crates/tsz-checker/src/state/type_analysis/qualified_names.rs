@@ -230,7 +230,31 @@ impl<'a> CheckerState<'a> {
                                     self.ctx.resolve_import_alias_and_register(local_id)?;
                                 let target =
                                     self.get_symbol_from_registered_file_target(target_id)?;
-                                Some(target.has_any_flags(valid_namespace_flags))
+                                if target.has_any_flags(valid_namespace_flags) {
+                                    return Some(true);
+                                }
+                                // `export default <identifier>` (e.g. `export
+                                // default m;` re-exporting a namespace/enum
+                                // `m`) synthesizes a fresh "default" ALIAS
+                                // symbol whose own flags never carry the
+                                // referenced declaration's meaning — only its
+                                // identifier-reference declaration does. This
+                                // is distinct from an actual cross-file import
+                                // alias (which does carry `import_module()`),
+                                // so follow the synthetic default's own
+                                // identifier-reference declaration one more
+                                // hop before concluding "no namespace
+                                // meaning".
+                                if target.has_any_flags(symbol_flags::ALIAS)
+                                    && target.import_module().is_none()
+                                    && let Some(referenced_id) =
+                                        self.default_export_identifier_target(target_id)
+                                    && let Some(referenced) =
+                                        self.get_symbol_from_registered_file_target(referenced_id)
+                                {
+                                    return Some(referenced.has_any_flags(valid_namespace_flags));
+                                }
+                                Some(false)
                             };
                         let alias_target_lacks_namespace_meaning = is_alias
                             && resolve_import_target_has_namespace_meaning(&left_name)

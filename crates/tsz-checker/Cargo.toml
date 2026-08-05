@@ -2665,3 +2665,7 @@ path = "tests/import_equals_alias_duplicate_container_tests.rs"
 [[test]]
 name = "import_equals_alias_duplicate_function_container_tests"
 path = "tests/import_equals_alias_duplicate_function_container_tests.rs"
+
+[[test]]
+name = "ts16486_default_export_namespace_meaning_regression_tests"
+path = "tests/ts16486_default_export_namespace_meaning_regression_tests.rs"
