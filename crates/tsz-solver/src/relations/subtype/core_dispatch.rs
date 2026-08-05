@@ -1214,6 +1214,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if source_function_like {
             if let Some(t_callable_id) = callable_shape_id(self.interner, target) {
                 let t_shape = self.interner.callable_shape(t_callable_id);
+                // tsc: a function value provides no numeric index signature, so a
+                // numeric index on the target is unsatisfiable no matter which
+                // members the target also requires. This precedes the
+                // `call`/`apply` bridge below, which models the apparent-type
+                // members a function DOES provide and must not be read as a
+                // blanket "function fits this shape" answer.
+                if t_shape.number_index.is_some() {
+                    return SubtypeResult::False;
+                }
                 if t_shape.call_signatures.is_empty() && t_shape.construct_signatures.is_empty() {
                     let required_props: Vec<_> =
                         t_shape.properties.iter().filter(|p| !p.optional).collect();
@@ -1229,6 +1238,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 .or_else(|| object_with_index_shape_id(self.interner, target))
             {
                 let t_shape = self.interner.object_shape(t_shape_id);
+                // Same rule as the callable branch above: the numeric-index
+                // verdict does not depend on the target's property list, so it
+                // is decided before the `call`/`apply` bridge rather than only
+                // when the target requires nothing else. Gating it on
+                // `required_props.is_empty()` let `{ apply(..): any; [n: number]: T }`
+                // — the shape a user augmentation gives the global `Function`
+                // interface — take the bridge and answer assignable.
+                if t_shape.number_index.is_some() {
+                    return SubtypeResult::False;
+                }
                 let required_props: Vec<_> =
                     t_shape.properties.iter().filter(|p| !p.optional).collect();
                 if required_props.len() == 1 {
@@ -1236,15 +1255,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     if name == "call" || name == "apply" {
                         return SubtypeResult::True;
                     }
-                }
-                // tsc: a function value provides no number index signature, so
-                // `(s: string) => void` is NOT assignable to `{ [x: number]: T }`.
-                // The plain object-vs-object subtype path
-                // (`check_number_index_compatibility`) already fails this case
-                // correctly, but functions reach here through the function-like
-                // branch and otherwise fall through to default-allow.
-                if t_shape.number_index.is_some() && required_props.is_empty() {
-                    return SubtypeResult::False;
                 }
             }
         }
