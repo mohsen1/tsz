@@ -68,6 +68,9 @@ path = "tests/predicate_callback_any_inference_tests.rs"
 name = "qualified_alias_default_fill_tests"
 path = "tests/qualified_alias_default_fill_tests.rs"
 [[test]]
+name = "qualified_name_default_import_namespace_meaning_tests"
+path = "tests/qualified_name_default_import_namespace_meaning_tests.rs"
+[[test]]
 name = "enum_literal_comparison_overlap_tests"
 path = "tests/enum_literal_comparison_overlap_tests.rs"
 [[test]]

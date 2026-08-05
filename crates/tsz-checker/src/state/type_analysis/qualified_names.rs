@@ -187,10 +187,30 @@ impl<'a> CheckerState<'a> {
                                         self.ctx.alias_partners_contains(self.ctx.binder, resolved)
                                     },
                                 );
-                        if !symbol.has_any_flags(valid_namespace_flags)
+                        // A *default* import binds transparently to the imported
+                        // declaration, so the anchor resolver follows it to that
+                        // symbol whose CLASS/ENUM/MODULE flag would otherwise
+                        // satisfy `valid_namespace_flags`. When the flag-based skip
+                        // does not already apply, recover the unfollowed local
+                        // `import D from "./m"` alias from `file_locals` and ask
+                        // whether its `default` export denotes a namespace: a
+                        // default export of a class/interface/function does not, so
+                        // `D.Member` is TS2702 ("used as a namespace"), never a
+                        // spurious TS2694 from navigating into the class's exports.
+                        // Named/namespace imports keep the historical `is_alias`
+                        // skip — their namespace half is provided by the
+                        // alias-partner path above. The cross-file resolution runs
+                        // only for a parse-clean identifier qualifier the flag skip
+                        // did not already cover.
+                        let flag_skip_applies = !symbol.has_any_flags(valid_namespace_flags)
                             && !is_alias
-                            && !has_alias_partner
-                            && !self.ctx.has_parse_errors
+                            && !has_alias_partner;
+                        if !self.ctx.has_parse_errors
+                            && (flag_skip_applies
+                                || (left_node.kind == SyntaxKind::Identifier as u16
+                                    && self.qualifier_default_import_lacks_namespace_meaning(
+                                        &left_name, sym_id,
+                                    )))
                         {
                             let right_name = if let Some(right_node) = self.ctx.arena.get(qn.right)
                                 && let Some(id) = self.ctx.arena.get_identifier(right_node)
@@ -668,6 +688,225 @@ impl<'a> CheckerState<'a> {
             self.error_cannot_find_namespace_with_suggestion(ident.escaped_text.as_str(), qn.left);
         }
         TypeId::ERROR
+    }
+
+    /// Whether the leftmost identifier of a qualified type name is a
+    /// namespace-less **default** import — an `import D from "./m"` whose
+    /// default export denotes no namespace — recovered from `file_locals`
+    /// because a default import of a class/interface binds transparently to the
+    /// imported declaration (leaving no distinct alias at the resolved id).
+    ///
+    /// Scoped deliberately to default imports: their semantics are unambiguous
+    /// (a default export never carries a merge partner), whereas a named or
+    /// namespace import's namespace half is supplied by the alias-partner path
+    /// and must keep its historical `is_alias` skip. `resolved_sym_id` is the
+    /// symbol the qualifier resolved to *after* following the alias; requiring
+    /// the local alias to actually reach it guards against a more-local binding
+    /// shadowing the import at the use site.
+    ///
+    /// The `default` export is resolved and asked — in *its own* declaring
+    /// binder, never through a raw `SymbolId` read against the current binder —
+    /// whether it denotes a namespace/enum. Returns `false` (keep the historical
+    /// skip, no diagnostic) whenever the default carries namespace meaning or
+    /// cannot be resolved confidently; only a positively-confirmed
+    /// namespace-less default returns `true`, so this can add a `TS2702` but
+    /// never invent one on code it failed to analyze.
+    fn qualifier_default_import_lacks_namespace_meaning(
+        &self,
+        qualifier_name: &str,
+        resolved_sym_id: SymbolId,
+    ) -> bool {
+        let Some(alias_id) = self.ctx.binder.file_locals.get(qualifier_name) else {
+            return false;
+        };
+        let Some(alias) = self.ctx.binder.get_symbol(alias_id) else {
+            return false;
+        };
+        // Must be a default ES import (`import D from "..."`). Named and
+        // namespace imports keep the historical `is_alias` skip.
+        if !alias.has_any_flags(symbol_flags::ALIAS) || alias.import_name() != Some("default") {
+            return false;
+        }
+        let Some(module) = alias.import_module() else {
+            return false;
+        };
+        // The qualifier must resolve through this very alias, or a same-named
+        // local binding shadowing the import at the use site would borrow the
+        // import's (missing) namespace meaning.
+        let mut visited = AliasCycleTracker::new();
+        let followed = self
+            .resolve_alias_symbol(alias_id, &mut visited)
+            .unwrap_or(alias_id);
+        if alias_id != resolved_sym_id && followed != resolved_sym_id {
+            return false;
+        }
+        // Resolve the module's `default` export from the alias's *own* declaring
+        // file (a re-export hub's specifier is relative to that hub) and ask it
+        // for namespace meaning.
+        let source_file = if alias.decl_file_idx == u32::MAX {
+            self.ctx.current_file_idx
+        } else {
+            alias.decl_file_idx as usize
+        };
+        let Some(target_file) = self
+            .ctx
+            .resolve_import_target_from_file(source_file, module)
+        else {
+            return false;
+        };
+        let mut visited_files = FxHashSet::default();
+        let Some(export_sym) =
+            self.ctx
+                .resolve_export_in_target_file(target_file, "default", &mut visited_files)
+        else {
+            return false;
+        };
+        !self.export_denotes_namespace(export_sym, target_file, 0, true)
+    }
+
+    /// Whether a resolved export symbol denotes a namespace, reading its flags
+    /// from the binder of the file that actually declares it and following one
+    /// alias hop at a time for re-export chains.
+    ///
+    /// `via_default` marks that the export was reached through a module's
+    /// `default` slot. A default export contributes only the *default-exported
+    /// declaration's* own meaning, never a same-named merge partner's, so a
+    /// merged `export default class Decl {} / export namespace Decl {}` is not a
+    /// namespace when imported by `import D from …` — even though its symbol
+    /// carries the merged `NamespaceModule` flag. The only default with
+    /// namespace meaning is `export default <identifier>` naming a namespace/enum
+    /// (`export default namespace`/`enum` is not legal syntax), so under
+    /// `via_default` the merged flags are ignored and only an `ExportAssignment`'s
+    /// target is followed.
+    ///
+    /// Conservative on any failure to resolve, returning `true` so a diagnostic
+    /// is never invented on code that could not be analyzed.
+    fn export_denotes_namespace(
+        &self,
+        sym_id: SymbolId,
+        hint_file: usize,
+        depth: usize,
+        via_default: bool,
+    ) -> bool {
+        // Bound the alias walk; chains this long are pathological (mirrors the
+        // re-export guard in `resolve_member_through_namespace_import_chain`).
+        const MAX_ALIAS_HOPS: usize = 16;
+        if depth > MAX_ALIAS_HOPS {
+            return true;
+        }
+
+        let file = self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .unwrap_or(hint_file);
+        let Some(binder) = self.ctx.get_binder_for_file(file) else {
+            return true;
+        };
+        let Some(sym) = binder.get_symbol(sym_id) else {
+            return true;
+        };
+
+        // Follow a re-export alias hop first (`export { default } from "./m"`,
+        // `export * from …`), preserving the `default` context.
+        if sym.has_any_flags(symbol_flags::ALIAS)
+            && let Some(inner_module) = sym.import_module()
+        {
+            let inner_name = sym.import_name().unwrap_or(sym.escaped_name.as_str());
+            if inner_name == "*" {
+                return true;
+            }
+            let hop_via_default = via_default || inner_name == "default";
+            if let Some(inner_file) = self.ctx.resolve_import_target_from_file(file, inner_module) {
+                let mut visited_files = FxHashSet::default();
+                if let Some(inner_sym) = self.ctx.resolve_export_in_target_file(
+                    inner_file,
+                    inner_name,
+                    &mut visited_files,
+                ) {
+                    return self.export_denotes_namespace(
+                        inner_sym,
+                        inner_file,
+                        depth + 1,
+                        hop_via_default,
+                    );
+                }
+            }
+            // Could not follow the import chain: stay conservative.
+            return true;
+        }
+
+        let arena = self.ctx.get_arena_for_file(file as u32);
+
+        // Under the `default` slot, a same-named namespace/enum that merely
+        // *merges* with the default-exported class/interface/function is not
+        // part of the default export (`export default class Decl {}` beside
+        // `export namespace Decl {}` — the illegal merge tsc flags TS2652).
+        // Namespace meaning under a default therefore requires the default
+        // entity to be a namespace/enum in its own right, not a merge partner.
+        if via_default {
+            // `export default <identifier>` — resolve the referenced entity in
+            // the declaring file and ask for ITS own meaning (no longer via the
+            // default slot). A non-identifier default (`export default C.x`, a
+            // literal) resolves to nothing here and has no namespace meaning.
+            let assignment_target = sym.declarations.iter().find_map(|&decl| {
+                let node = arena.get(decl)?;
+                if node.kind != syntax_kind_ext::EXPORT_ASSIGNMENT {
+                    return None;
+                }
+                let export_assign = arena.get_export_assignment(node)?;
+                if export_assign.is_export_equals {
+                    return None;
+                }
+                let name = arena
+                    .get_identifier_at(export_assign.expression)?
+                    .escaped_text
+                    .as_str();
+                binder.file_locals.get(name)
+            });
+            if let Some(target_sym) = assignment_target {
+                return self.export_denotes_namespace(target_sym, file, depth + 1, false);
+            }
+            // A namespace/enum reached directly through the default slot
+            // (`export default m` resolving straight to `m`) keeps its meaning,
+            // but only when it is *not* competing with a default-exported
+            // class/interface/function of the same name — the merge case above.
+            let competing_default_entity = symbol_flags::CLASS
+                | symbol_flags::INTERFACE
+                | symbol_flags::FUNCTION
+                | symbol_flags::TYPE_ALIAS;
+            if sym.has_any_flags(competing_default_entity) {
+                return false;
+            }
+        }
+
+        Self::symbol_denotes_namespace(sym, arena)
+    }
+
+    /// A symbol denotes a namespace when it carries a module/enum flag or one of
+    /// its declarations is a `namespace`/`enum` declaration in `arena` (a
+    /// namespace whose export symbol did not inherit the module flag is still a
+    /// namespace anchor).
+    fn symbol_denotes_namespace(
+        sym: &tsz_binder::Symbol,
+        arena: &tsz_parser::parser::NodeArena,
+    ) -> bool {
+        let namespace_flags = symbol_flags::MODULE
+            | symbol_flags::NAMESPACE_MODULE
+            | symbol_flags::VALUE_MODULE
+            | symbol_flags::ENUM
+            | symbol_flags::REGULAR_ENUM
+            | symbol_flags::CONST_ENUM;
+        if sym.has_any_flags(namespace_flags) {
+            return true;
+        }
+        sym.declarations.iter().any(|&decl| {
+            arena.get(decl).is_some_and(|node| {
+                matches!(
+                    node.kind,
+                    syntax_kind_ext::MODULE_DECLARATION | syntax_kind_ext::ENUM_DECLARATION
+                )
+            })
+        })
     }
 
     /// Resolve `member_name` for a qualified-type-name anchor that is an import
