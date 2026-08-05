@@ -549,6 +549,9 @@ path = "tests/instanceof_loop_generic_any_fill_tests.rs"
 name = "weak_callable_target_assignability_tests"
 path = "tests/weak_callable_target_assignability_tests.rs"
 [[test]]
+name = "function_apparent_object_target_tests"
+path = "tests/function_apparent_object_target_tests.rs"
+[[test]]
 name = "for_await_promise_array_tests"
 path = "tests/for_await_promise_array_tests.rs"
 [[test]]
