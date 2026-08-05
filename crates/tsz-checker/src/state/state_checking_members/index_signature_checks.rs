@@ -205,6 +205,17 @@ impl<'a> CheckerState<'a> {
         // vs from another merged body of the same interface.
         let has_extends_clause = self.container_has_extends_clause(container_node);
 
+        // A class's own symbol-keyed members are always checked against a
+        // declared symbol index signature; the late-bound exemption below
+        // (a plain, non-`unique` `symbol`-typed computed key) applies only to
+        // interfaces and type literals. Measured against tsc 7.0.2: the same
+        // `[s1]: string` member alongside `[key: symbol]: number` is clean in
+        // an interface/type literal but still reports TS2411 in a class.
+        let is_class_container = self.ctx.arena.get(container_node).is_some_and(|n| {
+            n.kind == syntax_kind_ext::CLASS_DECLARATION
+                || n.kind == syntax_kind_ext::CLASS_EXPRESSION
+        });
+
         let mut inherited_symbol_value_type =
             index_info.symbol_index.as_ref().map(|idx| idx.value_type);
         // Keep accepting older encoded shapes that carried a `symbol` index in
@@ -772,9 +783,13 @@ impl<'a> CheckerState<'a> {
 
             // Symbol-keyed properties are NOT checked against string or number
             // index signatures, but they ARE checked against symbol index
-            // signatures (TS2411).
+            // signatures (TS2411) -- unless the key itself is late-bound (see
+            // `is_late_bound_symbol_key`), in which case it contributes to the
+            // symbol index rather than being independently checked against it.
             if self.is_symbol_named_property(name_idx) {
-                if !self.type_contains_error(prop_type) {
+                if !self.type_contains_error(prop_type)
+                    && (is_class_container || !self.is_late_bound_symbol_key(name_idx))
+                {
                     let applicable_symbol_value = if is_static_member {
                         static_symbol_value_type
                     } else {
@@ -1373,6 +1388,33 @@ impl<'a> CheckerState<'a> {
             }
             _ => false,
         }
+    }
+
+    /// Whether a symbol-keyed computed member's key has no fixed compile-time
+    /// identity: a plain identifier of type `symbol` (not `unique symbol`).
+    ///
+    /// `[Symbol.iterator]` and a `unique symbol`-typed key both denote a
+    /// specific, statically known symbol and are always checked against a
+    /// declared symbol index signature. A plain `symbol`-typed variable's
+    /// runtime identity is unknown, so tsc folds its contribution into the
+    /// index instead of requiring the member itself to satisfy it (#16477).
+    fn is_late_bound_symbol_key(&mut self, name_idx: NodeIndex) -> bool {
+        let Some(name_node) = self.ctx.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+        let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
+            return false;
+        };
+        let Some(expr_node) = self.ctx.arena.get(computed.expression) else {
+            return false;
+        };
+        if expr_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        self.get_type_of_node(computed.expression) == TypeId::SYMBOL
     }
 
     fn is_symbol_or_unique_symbol(&self, type_id: TypeId) -> bool {

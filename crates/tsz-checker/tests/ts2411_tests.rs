@@ -753,3 +753,147 @@ class C {
         get_diagnostics(source)
     );
 }
+
+// =========================================================================
+// #16477: an explicit `[key: symbol]` index does not dominate an implicit
+// computed member keyed by a plain (non-`unique`) `symbol`-typed variable.
+//
+// Structural rule: when a computed property's key expression is a plain
+// identifier of type `symbol` (not `unique symbol`), its runtime identity is
+// unknown, so tsc treats the member as an implicit, late-bound contribution
+// to the containing interface/type-literal's symbol index rather than a
+// property independently checked against it. Members with a *fixed* symbol
+// identity -- `unique symbol`, or a well-known `Symbol.x` access -- keep the
+// TS2411 check. Classes never get this exemption, even for a plain `symbol`
+// key: tsc still reports TS2411 there (measured against tsc 7.0.2).
+// =========================================================================
+
+#[test]
+fn explicit_symbol_index_dominates_implicit_member_implicit_first() {
+    let source = r#"
+declare const s1: symbol;
+declare const other: symbol;
+interface M { [s1]: string; [key: symbol]: number }
+declare const m: M;
+export const r: number = m[other];
+"#;
+    assert!(
+        !has_error_with_code(source, 2411),
+        "a plain symbol-keyed member is late-bound and is not checked \
+         against the interface's own explicit symbol index: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn explicit_symbol_index_dominates_implicit_member_explicit_first() {
+    // Order-independence: swapping which member comes first must not change
+    // the outcome.
+    let source = r#"
+declare const s1: symbol;
+interface M { [key: symbol]: number; [s1]: string; }
+declare const m: M;
+"#;
+    assert!(
+        !has_error_with_code(source, 2411),
+        "declaration order of the index signature vs. the late-bound member \
+         must not matter: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn explicit_symbol_index_dominates_implicit_member_type_literal() {
+    // Adjacent container form: a type literal follows the same rule as an
+    // interface (both are non-class object types).
+    let source = r#"
+declare const s1: symbol;
+type M = { [s1]: string; [key: symbol]: number };
+declare const m: M;
+"#;
+    assert!(
+        !has_error_with_code(source, 2411),
+        "a type literal exempts a late-bound symbol-keyed member the same \
+         way an interface does: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn explicit_symbol_index_dominates_implicit_member_renamed_binder() {
+    // Prove the rule is structural (any plain-`symbol`-typed variable), not
+    // tied to a specific identifier spelling.
+    let source = r#"
+declare const myOwnKey: symbol;
+interface M { [myOwnKey]: boolean; [key: symbol]: number }
+declare const m: M;
+"#;
+    assert!(
+        !has_error_with_code(source, 2411),
+        "the exemption must not be keyed to the identifier's name: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn class_symbol_keyed_member_still_checks_explicit_symbol_index() {
+    // Negative case: unlike an interface/type-literal, a class's own
+    // plain-symbol-keyed member is still checked against a declared symbol
+    // index -- tsc reports TS2411 here (measured against tsc 7.0.2).
+    let source = r#"
+declare const s1: symbol;
+class C { [s1]: string = ""; [key: symbol]: number; }
+"#;
+    assert!(
+        has_error_with_code(source, 2411),
+        "a class does not get the late-bound exemption an interface gets: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn class_static_symbol_keyed_member_still_checks_explicit_symbol_index() {
+    // Adjacent form: the static side of a class follows the same rule as the
+    // instance side.
+    let source = r#"
+declare const s1: symbol;
+class C { static [s1]: string = ""; static [key: symbol]: number; }
+"#;
+    assert!(
+        has_error_with_code(source, 2411),
+        "a class's static side does not get the late-bound exemption either: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn unique_symbol_keyed_member_still_checks_explicit_symbol_index() {
+    // Negative case: a `unique symbol` has a fixed compile-time identity, so
+    // it keeps the strict TS2411 check even in an interface (measured against
+    // tsc 7.0.2).
+    let source = r#"
+declare const s1: unique symbol;
+interface M { [s1]: string; [key: symbol]: number }
+declare const m: M;
+"#;
+    assert!(
+        has_error_with_code(source, 2411),
+        "a unique symbol key has a fixed identity and is not late-bound: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn well_known_symbol_keyed_member_still_checks_explicit_symbol_index() {
+    // Negative case: a well-known symbol access (`Symbol.iterator`) also has a
+    // fixed identity and keeps the strict check (measured against tsc 7.0.2).
+    let source = r#"
+interface M { [Symbol.iterator]: string; [key: symbol]: number }
+declare const m: M;
+"#;
+    assert!(
+        has_error_with_code(source, 2411),
+        "a well-known symbol key has a fixed identity and is not late-bound: {:?}",
+        get_diagnostics(source)
+    );
+}
