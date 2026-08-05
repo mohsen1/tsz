@@ -1145,6 +1145,27 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Does this type-literal member's name node key off a plain (non-unique)
+    /// `symbol` binding — `type T = { [s]: V }` with `declare const s: symbol`?
+    ///
+    /// Classifying the key evaluates its expression in VALUE position (see
+    /// `computed_member_key_is_wide_symbol`), and a value-position evaluation
+    /// reports its own diagnostics. Several of those are suppressed only inside
+    /// a computed-property-name context — `is_in_ambient_computed_property_context`
+    /// reads `ctx.checking_computed_property_name` and returns early for an
+    /// interface/type-literal member. Publishing that context here, exactly like
+    /// `class_member_computed_key_is_wide_symbol` does for classes, is what keeps
+    /// a type-only-imported key from spuriously reporting TS1361 on
+    /// `type T = { [key]: any }` (#16466: this call site went in unwrapped when
+    /// #16462 wired the type-literal builder into the shared classifier).
+    fn type_literal_member_computed_key_is_wide_symbol(&mut self, name_idx: NodeIndex) -> bool {
+        let prev_checking = self.ctx.checking_computed_property_name;
+        self.ctx.checking_computed_property_name = Some(name_idx);
+        let is_wide = self.computed_member_key_is_wide_symbol(name_idx);
+        self.ctx.checking_computed_property_name = prev_checking;
+        is_wide
+    }
+
     /// Get type from a type literal node (anonymous object types).
     ///
     /// Type literals represent inline object types like `{ x: string; y: number }` or
@@ -1309,7 +1330,7 @@ impl<'a> CheckerState<'a> {
                         // `[Symbol.x]` syntax, `typeof Symbol.x` aliases, and genuine
                         // `unique symbol` keys are excluded by
                         // `computed_member_key_is_wide_symbol` and keep named identity.
-                        if self.computed_member_key_is_wide_symbol(sig.name) {
+                        if self.type_literal_member_computed_key_is_wide_symbol(sig.name) {
                             let readonly = self.has_readonly_modifier(&sig.modifiers);
                             let value_type = if member.kind == METHOD_SIGNATURE {
                                 let (type_params, type_param_updates) =
@@ -1604,7 +1625,7 @@ impl<'a> CheckerState<'a> {
             if (member.kind == tsz_parser::parser::syntax_kind_ext::GET_ACCESSOR
                 || member.kind == tsz_parser::parser::syntax_kind_ext::SET_ACCESSOR)
                 && let Some(accessor) = self.ctx.arena.get_accessor(member)
-                && self.computed_member_key_is_wide_symbol(accessor.name)
+                && self.type_literal_member_computed_key_is_wide_symbol(accessor.name)
             {
                 let is_getter = member.kind == tsz_parser::parser::syntax_kind_ext::GET_ACCESSOR;
                 let value_type = if is_getter {
