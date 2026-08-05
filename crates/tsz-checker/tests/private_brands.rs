@@ -100,23 +100,45 @@ const c: C = a;
         },
     );
 
-    let ts2741: Vec<_> = diagnostics
+    // The source is named by its base class `A1`, and naming a base class on
+    // either side of the missing-property line puts that line UNDER a TS2322
+    // head naming the relation's own endpoints. Oracled on `typescript@7.0.2`
+    // (this is `conformance/classes/members/privateNames/privateNamesUnique-4`,
+    // whose committed expectation is `TS2322`, not `TS2741`):
+    //   Type 'A2' is not assignable to type 'C'.
+    //     Property '#something' is missing in type 'A1' but required in type 'C'.
+    let ts2322: Vec<_> = diagnostics
         .iter()
-        .filter(|diagnostic| diagnostic.code == 2741)
+        .filter(|diagnostic| diagnostic.code == 2322)
         .collect();
     assert_eq!(
-        ts2741.len(),
+        ts2322.len(),
         1,
-        "expected exactly one TS2741 diagnostic, got: {diagnostics:#?}"
+        "expected exactly one TS2322 diagnostic, got: {diagnostics:#?}"
     );
-    let message = &ts2741[0].message_text;
+    assert_eq!(
+        ts2322[0].message_text, "Type 'A2' is not assignable to type 'C'.",
+        "the head names the relation's own endpoints"
+    );
+    let nested: Vec<_> = ts2322[0]
+        .related_information
+        .iter()
+        .filter(|info| info.code == 2741)
+        .collect();
+    assert_eq!(
+        nested.len(),
+        1,
+        "expected exactly one nested missing-property line, got: {:#?}",
+        ts2322[0].related_information
+    );
+    let message = &nested[0].message_text;
     assert!(
         message.contains("Property '#something' is missing in type 'A1' but required in type 'C'."),
-        "TS2741 should use the interface's base class in the source display. Got: {message:?}"
+        "the nested line should use the interface's base class in the source display. Got: {message:?}"
     );
     assert!(
         !message.contains("type 'A2'"),
-        "TS2741 should not use the derived interface name for this private-name mismatch. Got: {message:?}"
+        "the nested line should not use the derived interface name for this private-name mismatch. Got: {message:?}"
     );
 }
 
