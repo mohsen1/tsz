@@ -83,26 +83,33 @@ impl<'a> CheckerState<'a> {
         property_display: &str,
     ) -> Option<DiagnosticRelatedInformation> {
         let annotation_idx = self.target_annotation_node(anchor_idx)?;
-        self.annotation_property_anchor(annotation_idx, property, property_display, 0)
+        let (start, length, file) = self.annotation_property_anchor(annotation_idx, property, 0)?;
+        Some(Diagnostic::related_pointer(
+            diagnostic_codes::IS_DECLARED_HERE,
+            file.unwrap_or_else(|| self.ctx.file_name.clone()),
+            start,
+            length,
+            format_message(diagnostic_messages::IS_DECLARED_HERE, &[property_display]),
+        ))
     }
 
-    /// The `TS2728` pointer for `property` inside the type annotation node
-    /// `idx`, following the annotation's own syntax.
+    /// `(start, length, file)` for `property`'s declaration inside the type
+    /// annotation node `idx`, following the annotation's own syntax.
     ///
     /// Parentheses are peeled and a type literal is anchored directly, both in
     /// the checking file's own arena. A type *reference* is handed to
-    /// [`Self::declared_here_related_following_aliases`], which owns cross-file
-    /// arena resolution and re-export following — an annotation naming a
-    /// re-exported alias must reach the original declaration exactly as a
-    /// resolved target does. An indexed access resolves its written key against
-    /// the object type's members and continues into that member's type node.
+    /// [`Self::member_declaration_anchor_following_aliases`], which owns
+    /// cross-file arena resolution and re-export following — an annotation
+    /// naming a re-exported alias must reach the original declaration exactly
+    /// as a resolved target does. An indexed access resolves its written key
+    /// against the object type's members and continues into that member's type
+    /// node.
     fn annotation_property_anchor(
         &mut self,
         idx: NodeIndex,
         property: &str,
-        property_display: &str,
         depth: u32,
-    ) -> Option<DiagnosticRelatedInformation> {
+    ) -> Option<(u32, u32, Option<String>)> {
         use tsz_parser::parser::syntax_kind_ext;
 
         if depth > Self::ANNOTATION_WALK_MAX_DEPTH {
@@ -111,54 +118,35 @@ impl<'a> CheckerState<'a> {
         let node = self.ctx.arena.get(idx)?;
         if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE {
             let inner = self.ctx.arena.get_wrapped_type(node)?.type_node;
-            return self.annotation_property_anchor(inner, property, property_display, depth + 1);
+            return self.annotation_property_anchor(inner, property, depth + 1);
         }
         if node.kind == syntax_kind_ext::TYPE_LITERAL {
             let arena = self.ctx.arena;
             let members = Self::declaration_member_list(arena, idx)?;
             let anchor_idx = Self::member_anchor_node(arena, &members, property)?;
             let (start, length) = Self::anchor_span(arena, anchor_idx)?;
-            return Some(Diagnostic::related_pointer(
-                diagnostic_codes::IS_DECLARED_HERE,
-                Self::arena_file_name(arena, anchor_idx)
-                    .unwrap_or_else(|| self.ctx.file_name.clone()),
-                start,
-                length,
-                format_message(diagnostic_messages::IS_DECLARED_HERE, &[property_display]),
-            ));
+            return Some((start, length, Self::arena_file_name(arena, anchor_idx)));
         }
         if node.kind == syntax_kind_ext::TYPE_REFERENCE {
             let name_idx = self.ctx.arena.get_type_ref(node)?.type_name;
             let owner_symbol = self.type_position_symbol(name_idx)?;
-            if let Some(related) = self.declared_here_related_following_aliases(
-                owner_symbol,
-                property,
-                property_display,
-            ) {
-                return Some(related);
+            if let Some(anchor) =
+                self.member_declaration_anchor_following_aliases(owner_symbol, property)
+            {
+                return Some(anchor);
             }
             // An alias chain (`type Indirect = Zed`) declares no member list of
             // its own, so the walk above finds nothing to anchor in. Continue
             // through the alias body, which is itself annotation syntax.
             let body_idx = self.local_type_alias_body(owner_symbol)?;
-            return self.annotation_property_anchor(
-                body_idx,
-                property,
-                property_display,
-                depth + 1,
-            );
+            return self.annotation_property_anchor(body_idx, property, depth + 1);
         }
         if node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE {
             let data = self.ctx.arena.get_indexed_access_type(node)?;
             let (object_idx, index_idx) = (data.object_type, data.index_type);
             let key = self.written_index_key(index_idx)?;
             let member_type_idx = self.annotation_member_type_node(object_idx, &key, depth)?;
-            return self.annotation_property_anchor(
-                member_type_idx,
-                property,
-                property_display,
-                depth + 1,
-            );
+            return self.annotation_property_anchor(member_type_idx, property, depth + 1);
         }
         None
     }
@@ -315,34 +303,32 @@ impl<'a> CheckerState<'a> {
         let owner_symbol = self.ctx.resolve_type_to_symbol_id(owner).or_else(|| {
             crate::query_boundaries::common::type_shape_symbol(self.ctx.types, owner)
         })?;
-        self.declared_here_related_following_aliases(owner_symbol, property, property_display)
+        self.member_declaration_anchor_following_aliases(owner_symbol, property)
     }
 
-    /// The `TS2728` pointer for `owner_symbol`, following alias edges to the
-    /// original declaration when the symbol itself owns no member list.
+    /// The member-declaration anchor for `owner_symbol`, following alias edges
+    /// to the original declaration when the symbol itself owns no member list.
     ///
     /// Shared by the two entry points that reach a declaring symbol: the type's
-    /// own resolution, and a type *reference* written in an annotation. Both
-    /// need the same re-export following, and both must carry the file index
-    /// forward from the hop rather than re-deriving it — the id and the file it
-    /// is valid in are one unit, since per-file binders mint colliding ids
-    /// from `0`.
-    fn declared_here_related_following_aliases(
+    /// own resolution (which serves both `TS2728` and `TS6500`), and a type
+    /// *reference* written in an annotation. All of them need the same
+    /// re-export following, and all must carry the file index forward from the
+    /// hop rather than re-deriving it — the id and the file it is valid in are
+    /// one unit, since per-file binders mint colliding ids from `0`.
+    fn member_declaration_anchor_following_aliases(
         &mut self,
         owner_symbol: tsz_binder::SymbolId,
         property: &str,
-        property_display: &str,
-    ) -> Option<DiagnosticRelatedInformation> {
+    ) -> Option<(u32, u32, Option<String>)> {
         let mut symbol_id = owner_symbol;
         let mut declaring_file_idx = self.ctx.resolve_symbol_file_index(symbol_id);
         for _ in 0..MAX_ALIAS_HOPS {
-            if let Some(related) = self.declared_here_related_for_declared_symbol(
+            if let Some(anchor) = self.member_declaration_anchor_for_declared_symbol(
                 symbol_id,
                 declaring_file_idx,
                 property,
-                property_display,
             ) {
-                return Some(related);
+                return Some(anchor);
             }
             let (next_symbol, next_file_idx) =
                 self.alias_target_symbol(symbol_id, declaring_file_idx)?;
@@ -355,15 +341,14 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// The `TS2728` pointer for a symbol that is expected to own the member
-    /// list directly, with no alias following.
-    fn declared_here_related_for_declared_symbol(
+    /// The member-declaration anchor for a symbol that is expected to own the
+    /// member list directly, with no alias following.
+    fn member_declaration_anchor_for_declared_symbol(
         &mut self,
         owner_symbol: tsz_binder::SymbolId,
         declaring_file_idx: Option<usize>,
         property: &str,
-        property_display: &str,
-    ) -> Option<DiagnosticRelatedInformation> {
+    ) -> Option<(u32, u32, Option<String>)> {
         let binder = declaring_file_idx
             .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
             .filter(|binder| binder.get_symbol(owner_symbol).is_some())
