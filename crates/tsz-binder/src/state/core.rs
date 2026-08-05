@@ -629,6 +629,56 @@ impl BinderState {
             .map(|scope| &mut scope.table)
     }
 
+    /// The nearest enclosing scope that is a *declaration container*, i.e. the
+    /// scope `tsc` would record a non-block-scoped declaration in.
+    ///
+    /// `tsc` keeps two separate cursors while binding: `container` (source
+    /// file, module body, class body, or any function-like node) and
+    /// `blockScopeContainer` (additionally every plain `Block`). Only
+    /// block-scoped declarations — `let`, `const`, `class`, and friends — land
+    /// in the block scope; everything else is declared in the container. tsz
+    /// models both cursors with the single `current_scope_id`, so a caller that
+    /// needs the container half asks for it here.
+    ///
+    /// The walk skips `ContainerKind::Block` scopes, with one exception: a
+    /// class static block is function-like in `tsc` and therefore *is* a
+    /// container, even though tsz gives its body a block scope. Stopping there
+    /// keeps a declaration inside a static block out of the class body's table.
+    pub(crate) fn nearest_declaration_container_scope(&self, arena: &NodeArena) -> ScopeId {
+        let mut scope_id = self.current_scope_id;
+        while let Some(scope) = self.scopes.get(scope_id.0 as usize) {
+            if scope.kind != ContainerKind::Block || scope.parent.is_none() {
+                break;
+            }
+            let is_static_block = arena
+                .get(scope.container_node)
+                .is_some_and(|node| node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION);
+            if is_static_block {
+                break;
+            }
+            scope_id = scope.parent;
+        }
+        scope_id
+    }
+
+    /// Run `f` with the declaration cursor retargeted to `scope_id`.
+    ///
+    /// Every declaration path reads `current_scope_id` — `current_scope`,
+    /// `current_scope_mut`, `current_container_symbol` and
+    /// `declare_in_persistent_scope_with_atom` all resolve through it — so
+    /// swapping it for the duration of `f` retargets the whole path, including
+    /// the merge/duplicate lookup, rather than only the final table write.
+    pub(crate) fn with_declaration_scope<R>(
+        &mut self,
+        scope_id: ScopeId,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let saved = std::mem::replace(&mut self.current_scope_id, scope_id);
+        let result = f(self);
+        self.current_scope_id = saved;
+        result
+    }
+
     /// Symbol of the container node owning the current persistent scope
     /// (namespace, class, function, ...), if one has been bound.
     pub(crate) fn current_container_symbol(&self) -> Option<SymbolId> {

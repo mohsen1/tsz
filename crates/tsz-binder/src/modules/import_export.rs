@@ -200,9 +200,20 @@ impl BinderState {
                     self.file_import_sources.push(spec.clone());
                 }
 
-                // Create symbol with ALIAS flag
-                let sym_id =
-                    self.declare_symbol(arena, name, symbol_flags::ALIAS, idx, is_exported);
+                // Create symbol with ALIAS flag.
+                //
+                // An alias is not a block-scoped declaration, so it belongs to
+                // the nearest declaration container, never to a plain `Block`
+                // that happens to enclose it. That only matters for a
+                // *position-invalid* `import x = ...` (TS1232) — anywhere it is
+                // legal the container already is the current scope and the
+                // retarget is a no-op — but it is what makes the alias visible
+                // to the rest of the container the way `tsc` binds it, instead
+                // of dying with the block.
+                let container_scope = self.nearest_declaration_container_scope(arena);
+                let sym_id = self.with_declaration_scope(container_scope, |binder| {
+                    binder.declare_symbol(arena, name, symbol_flags::ALIAS, idx, is_exported)
+                });
 
                 if let Some(sym) = self.symbols.get_mut(sym_id) {
                     let span = arena.get(idx).map(|node| (node.pos, node.end));
