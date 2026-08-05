@@ -87,13 +87,12 @@ impl<'a> CheckerState<'a> {
         let mut symbol_id = owner_symbol;
         let mut declaring_file_idx = self.ctx.resolve_symbol_file_index(symbol_id);
         for _ in 0..MAX_ALIAS_HOPS {
-            if let Some(related) = self.declared_here_related_for_declared_symbol(
+            if let Some(anchor) = self.member_declaration_anchor_for_declared_symbol(
                 symbol_id,
                 declaring_file_idx,
                 property,
-                property_display,
             ) {
-                return Some(related);
+                return Some(anchor);
             }
             let (next_symbol, next_file_idx) =
                 self.alias_target_symbol(symbol_id, declaring_file_idx)?;
@@ -106,15 +105,18 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// The `TS2728` pointer for a symbol that is expected to own the member
-    /// list directly, with no alias following.
-    fn declared_here_related_for_declared_symbol(
+    /// The `(start, length, file)` anchor for a symbol that is expected to own
+    /// the member list directly, with no alias following.
+    ///
+    /// Returns the raw anchor rather than a built diagnostic because both
+    /// `TS2728` and `TS6500` underline the same span and differ only in code,
+    /// message, and name rendering — those belong to the caller.
+    fn member_declaration_anchor_for_declared_symbol(
         &mut self,
         owner_symbol: tsz_binder::SymbolId,
         declaring_file_idx: Option<usize>,
         property: &str,
-        property_display: &str,
-    ) -> Option<DiagnosticRelatedInformation> {
+    ) -> Option<(u32, u32, Option<String>)> {
         let binder = declaring_file_idx
             .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
             .filter(|binder| binder.get_symbol(owner_symbol).is_some())
