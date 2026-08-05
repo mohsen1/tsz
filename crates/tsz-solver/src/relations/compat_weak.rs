@@ -213,7 +213,8 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return false;
         }
 
-        let Some((source_props, has_index_signature)) = self.weak_type_source_properties(source)
+        let Some((source_props, has_index_signature, has_call_or_construct)) =
+            self.weak_type_source_properties(source)
         else {
             // No extractable object/function-like shape. For primitive types
             // (string/number/boolean/bigint/symbol literals, enum members, etc.),
@@ -231,8 +232,11 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
 
         // Empty objects are assignable to weak types (all optional properties).
-        // Only trigger weak type violation if source has properties that don't overlap.
-        !source_props.is_empty() && !self.has_common_property(source_props.as_slice(), target_props)
+        // A call/construct-signature source (e.g. a bare function) triggers the
+        // rule even with zero declared properties — tsc's `typeHasCallOrConstructSignatures`
+        // half of the trigger, independent of `getPropertiesOfType` being empty.
+        (has_call_or_construct || !source_props.is_empty())
+            && !self.has_common_property(source_props.as_slice(), target_props)
     }
 
     /// Check if a primitive source type violates a weak type target by having
@@ -428,7 +432,8 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
 
         // Use visitor for Object types
-        let Some((source_props, has_index_signature)) = self.weak_type_source_properties(source)
+        let Some((source_props, has_index_signature, has_call_or_construct)) =
+            self.weak_type_source_properties(source)
         else {
             // Array/Tuple types are objects but not extractable. They rarely
             // share property names with arbitrary union members, so treat as
@@ -444,7 +449,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return false;
         }
 
-        if source_props.is_empty() {
+        if source_props.is_empty() && !has_call_or_construct {
             return false;
         }
 
