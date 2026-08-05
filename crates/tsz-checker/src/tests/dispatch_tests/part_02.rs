@@ -104,3 +104,58 @@ const Status = {
         diagnostic_messages(&ts2322)
     );
 }
+
+#[test]
+fn regex_named_group_backreference_inside_character_class_is_not_a_reference() {
+    // `\k<h>` inside a character class is a literal escape, not a
+    // backreference -- tsc routes it through `characterClassEscape`, which
+    // never calls `checkGroupName`, so there is no TS1532 lookup at all
+    // (tsc reports a different code, TS1535, not yet implemented in tsz;
+    // the false TS1532 from misreading class contents as a reference is the
+    // bug this test pins). Oracle-confirmed (typescript@7.0.2): no TS1532.
+    let diags = check_source_diagnostics(
+        r#"
+const regex = /(?<g>x)[\k<h>]/u;
+"#,
+    );
+    let codes = diagnostic_codes(&diags);
+    assert!(
+        !codes.contains(&1532),
+        "Expected no TS1532 for `\\k<...>` inside a character class, got {codes:?}"
+    );
+}
+
+#[test]
+fn regex_named_group_declaration_syntax_inside_character_class_is_not_a_group() {
+    // Symmetric case on the declaration side: `(` inside a class is a
+    // literal character, never a group open, so this must not be read as
+    // declaring a group named `g` (which would then hide the real
+    // undeclared-name diagnostic on the `\k<g>` reference below).
+    let diags = check_source_diagnostics(
+        r#"
+const regex = /[(?<g>]\k<g>/u;
+"#,
+    );
+    let codes = diagnostic_codes(&diags);
+    assert!(
+        codes.contains(&1532),
+        "Expected TS1532: `(?<g>` inside a character class must not count as a group declaration, got {codes:?}"
+    );
+}
+
+#[test]
+fn regex_named_group_backreference_outside_class_still_resolves_when_pattern_also_has_a_class() {
+    // Regression net: character-class tracking must not suppress a
+    // perfectly normal backreference that merely follows a class earlier in
+    // the pattern.
+    let diags = check_source_diagnostics(
+        r#"
+const regex = /[a-z](?<g>x)\k<g>/u;
+"#,
+    );
+    let codes = diagnostic_codes(&diags);
+    assert!(
+        !codes.contains(&1532),
+        "Expected no TS1532 for a real backreference after an unrelated character class, got {codes:?}"
+    );
+}

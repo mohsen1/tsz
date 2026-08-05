@@ -321,7 +321,6 @@ mod generator_inferred_yield_star_array_generic_call_tests;
 mod generator_yield_identity_tests;
 #[path = "tests/generator_yield_invalid_thenable_tests.rs"]
 mod generator_yield_invalid_thenable_tests;
-
 #[path = "tests/generator_yield_literal_widening_tests.rs"]
 mod generator_yield_literal_widening_tests;
 #[path = "tests/generator_yield_self_similar_nesting_tests.rs"]
