@@ -120,15 +120,54 @@ const _x: number = obj[k];
 // ── Multiple non-unique symbol members ────────────────────────────────────────
 
 #[test]
-fn interface_multiple_non_unique_symbol_members_no_false_positive() {
+fn interface_multiple_non_unique_symbol_members_union_read_no_false_positive() {
+    // tsc folds several plain-`symbol` computed members into ONE `[key: symbol]`
+    // index whose value is the UNION of their value types, so a `symbol`-keyed
+    // read yields `number | string`. Assigning that union to a `number | string`
+    // annotation must NOT produce a false positive.
     assert!(!has_2322(
         r#"
 const a: symbol = Symbol("a");
 const b: symbol = Symbol("b");
 interface Multi { [a]: number; [b]: string; }
 declare const obj: Multi;
+const _x: number | string = obj[a];
+const _y: number | string = obj[b];
+"#
+    ));
+}
+
+#[test]
+fn interface_multiple_non_unique_symbol_members_narrow_read_reports_ts2322() {
+    // The other side of the union fold (issue #16307): because the members
+    // union into `[key: symbol]: number | string`, reading and assigning to a
+    // single member's type is a genuine TS2322 under tsc — NOT clean. tsz used
+    // to collapse the mismatched value types to `error` (which is assignable to
+    // anything) and wrongly accepted this; the fix must report the error tsc
+    // reports here.
+    assert!(has_2322(
+        r#"
+const a: symbol = Symbol("a");
+const b: symbol = Symbol("b");
+interface Multi { [a]: number; [b]: string; }
+declare const obj: Multi;
 const _x: number = obj[a];
-const _y: string = obj[b];
+"#
+    ));
+}
+
+#[test]
+fn interface_multiple_non_unique_symbol_members_same_value_type_stays_narrow() {
+    // When every plain-`symbol` member shares one value type the union folds
+    // back to that single type, so a narrow read stays clean — proving the fold
+    // is a real union, not an unconditional widen-to-error.
+    assert!(!has_2322(
+        r#"
+const a: symbol = Symbol("a");
+const b: symbol = Symbol("b");
+interface Multi { [a]: number; [b]: number; }
+declare const obj: Multi;
+const _x: number = obj[a];
 "#
     ));
 }

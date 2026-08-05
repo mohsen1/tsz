@@ -356,17 +356,9 @@ impl<'a> TypeFormatter<'a> {
         {
             return arg;
         }
-        // Idx must be a literal (or union of literals) for tsc's unfold —
-        // a generic key would also be deferred even when the obj is concrete.
-        if !matches!(
-            self.interner.lookup(idx),
-            Some(
-                TypeData::Literal(_)
-                    | TypeData::Union(_)
-                    | TypeData::UniqueSymbol(_)
-                    | TypeData::TypeQuery(_)
-            )
-        ) {
+        // Idx must be a display-reducible key shape for tsc's unfold — a
+        // generic key would also be deferred even when the obj is concrete.
+        if !crate::type_queries::extended::is_display_reducible_index_key(self.interner, idx) {
             return arg;
         }
         // A chained access (`A["p"]["q"]`) nests one indexed access inside the

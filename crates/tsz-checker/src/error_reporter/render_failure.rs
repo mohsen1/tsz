@@ -18,6 +18,8 @@ mod nested_application_property_mismatch;
 mod render_failure_index_access;
 #[path = "render_failure_missing_property.rs"]
 mod render_failure_missing_property;
+#[path = "render_failure_missing_property_base_class.rs"]
+mod render_failure_missing_property_base_class;
 #[path = "render_failure_property_helpers.rs"]
 mod render_failure_property_helpers;
 mod type_mismatch;

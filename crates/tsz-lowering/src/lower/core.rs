@@ -145,6 +145,17 @@ pub(super) struct ObjectTypeParts {
     /// type can carry a `symbol` index alongside `string`/`number` ones
     /// (e.g. `{ [k: string]: A; [k: symbol]: B }`) without the two colliding.
     pub(super) symbol_index: Option<IndexSignature>,
+    /// Additional symbol-keyed index signatures beyond the first, collected for
+    /// a deferred value-type union in `finish_object_type_parts` (the type
+    /// interner is unavailable at merge time). tsc folds several computed
+    /// members keyed by a plain `symbol` (`interface T { [s1]: A; [s2]: B }`)
+    /// into one `[key: symbol]` index whose value is the UNION of their value
+    /// types (`[key: symbol]: A | B`) — mirroring the `extra_string_indices`
+    /// deferral for distinct string-key patterns. Only the implicit-from-
+    /// computed-name form routes here (via `merge_implicit_symbol_index`); two
+    /// *explicit* `[k: symbol]: T` declarations keep the duplicate-index
+    /// error-collapse in `merge_index_signature` that pairs with TS2374.
+    pub(super) extra_symbol_indices: Vec<IndexSignature>,
     /// True when at least one member has a computed property name that could not
     /// be resolved to a literal string/symbol key (e.g. `[sym]` where `sym` has
     /// type `symbol` rather than a unique-symbol type).  The resulting object
@@ -193,6 +204,7 @@ impl ObjectTypeParts {
             extra_string_indices: Vec::new(),
             number_index: None,
             symbol_index: None,
+            extra_symbol_indices: Vec::new(),
             has_late_bound_members: false,
             current_pass_base: 0,
             // 1-based: declaration_order 0 is the interner constructors'
@@ -384,6 +396,28 @@ impl ObjectTypeParts {
             }
         } else {
             self.string_index = Some(index);
+        }
+    }
+
+    /// Merge an *implicit* symbol index signature — one synthesized from a
+    /// computed member whose key is a plain `symbol` (`[s]: V`). Unlike an
+    /// explicit `[k: symbol]: T` declaration (which goes through
+    /// `merge_index_signature` and error-collapses on a duplicate), tsc folds
+    /// several such members into one `[key: symbol]` index by UNIONING their
+    /// value types. The interner is not available at merge time, so extras are
+    /// collected and unioned in `finish_object_type_parts` — the same deferral
+    /// `extra_string_indices` uses for distinct string-key patterns.
+    pub(super) fn merge_implicit_symbol_index(&mut self, value_type: TypeId, readonly: bool) {
+        let index = IndexSignature {
+            key_type: TypeId::SYMBOL,
+            value_type,
+            readonly,
+            param_name: None,
+        };
+        if self.symbol_index.is_none() {
+            self.symbol_index = Some(index);
+        } else {
+            self.extra_symbol_indices.push(index);
         }
     }
 }

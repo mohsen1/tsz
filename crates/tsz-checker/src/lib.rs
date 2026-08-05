@@ -372,6 +372,9 @@ mod ts2589_tests;
 #[path = "../tests/ts2683_tests.rs"]
 mod ts2683_tests;
 #[cfg(test)]
+#[path = "../tests/ts2702_qualifier_namespace_meaning_tests.rs"]
+mod ts2702_qualifier_namespace_meaning_tests;
+#[cfg(test)]
 #[path = "../tests/ts2774_tests.rs"]
 mod ts2774_tests;
 #[cfg(test)]
@@ -489,6 +492,9 @@ mod for_of_self_reference_operand_spelling_tests;
 #[cfg(test)]
 #[path = "../tests/fresh_object_literal_union_array_member_drill_in_tests.rs"]
 mod fresh_object_literal_union_array_member_drill_in_tests;
+#[cfg(test)]
+#[path = "../tests/function_source_numeric_index_target_tests.rs"]
+mod function_source_numeric_index_target_tests;
 #[cfg(test)]
 #[path = "../tests/generic_inference_manual.rs"]
 mod generic_inference_manual;

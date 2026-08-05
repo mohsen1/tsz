@@ -1508,6 +1508,28 @@ type T = { [key]: any; };
     }
 
     #[test]
+    fn suppresses_ts1361_for_computed_accessor_in_type_literal() {
+        // Adjacent case to `suppresses_ts1361_for_computed_property_in_type_literal`:
+        // the get/set-accessor member arm in `get_type_from_type_literal` is a
+        // separate call site of the same wide-symbol classifier and needs the
+        // same `checking_computed_property_name` context published around it.
+        // Renamed binder from the property-signature test (#16466 adjacent-case
+        // discipline: don't let the fix look coupled to one identifier).
+        let diagnostics = check_source_diagnostics(
+            r#"
+import type { propId } from './ids';
+type WithAccessor = { get [propId](): any; };
+"#,
+        );
+
+        let ts1361_count = diagnostics.iter().filter(|d| d.code == 1361).count();
+        assert_eq!(
+            ts1361_count, 0,
+            "Should not emit TS1361 for computed accessor in type literal, got: {diagnostics:?}",
+        );
+    }
+
+    #[test]
     fn alias_merges_with_local_value_suppresses_ts1361() {
         // When import type is followed by a local const with the same name,
         // the const should shadow the import type in value position.

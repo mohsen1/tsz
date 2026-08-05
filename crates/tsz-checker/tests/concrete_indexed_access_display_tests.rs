@@ -255,6 +255,33 @@ function generic<T extends { m: { i: number; j: number } }>(t: T) {
     );
 }
 
+/// Negative control: `keyof` is not an admitted key shape at all (see
+/// `keyof_rooted_indexed_access_target_prints_as_written`), so a generic
+/// `keyof` access stays deferred the same way a bare type-parameter object
+/// does — this row just confirms the widened gate didn't accidentally let
+/// `T[keyof T]` slip through some other path.
+#[test]
+fn deferred_generic_keyof_indexed_access_target_stays_opaque() {
+    let messages = strict_messages(
+        r#"
+function generic<T extends { m: number; n: number }>(t: T) {
+  const i: T[keyof T] = 1;
+  return i;
+}
+"#,
+    );
+    assert_eq!(
+        messages.len(),
+        1,
+        "exactly one assignability error: {messages:?}"
+    );
+    assert!(
+        messages[0].contains("T[keyof T]"),
+        "a deferred generic keyof access must stay opaque: {}",
+        messages[0]
+    );
+}
+
 /// Negative control. The reduction is display-only: a target the source really
 /// does satisfy stays clean, and a genuinely missing member still errors.
 #[test]
@@ -323,11 +350,19 @@ const m1: M["outer"]["mid"] = { z: 1 };
     assert_reduced_member(&messages[0], "{ z: number; y: string; }");
 }
 
-/// Non-literal key, still unreduced (`tsc` reduces it — a named residual on
-/// #16443). `keyof Q` reaches the formatter as a deferred key operator rather
-/// than a literal union, so the reduction declines one guard earlier than the
-/// one this suite exercises. Pinned so the residual is visible rather than
-/// silently assumed fixed.
+/// Non-literal key, still unreduced by design (`tsc` reduces it — the
+/// remaining #16443 non-literal-key residual). Widening the shared display
+/// key gate to admit bare `KeyOf` reduces `Q[keyof Q]` correctly in
+/// isolation, but the reduced result can land on the same `TypeId` a
+/// *different*, aliased expression already stamped with its own display
+/// alias (a generic alias `Pair<T> = Pairs<T>[keyof T]` interns to the same
+/// evaluated union as the raw `Pairs<FooBar>[keyof FooBar]` once both are
+/// concrete), and the general formatter then paints that unrelated alias
+/// name over this reference —
+/// `mapped_indexed_access_discriminated_union_reports_outer_assignment`
+/// caught this as a real regression. Closing this row needs a route that
+/// skips the shared, `TypeId`-keyed display-alias lookup for a freshly
+/// reduced indexed access, not just admitting the key shape.
 #[test]
 fn keyof_rooted_indexed_access_target_prints_as_written() {
     let messages = strict_messages(
@@ -348,28 +383,19 @@ const q1: Q[keyof Q] = { c: 1 };
     );
 }
 
-/// Non-literal key, still unreduced (tsc reduces it — a named residual on
-/// #16443). What this pins is the *no-hybrid* invariant: because the outer link
-/// declines, the inner link must decline too, so the chain prints exactly as
-/// written rather than as a resolved array carrying a written key.
+/// A chain that indexes an array member by `number` now reduces for the
+/// target role too, matching tsc — closes this row of the #16443 non-literal
+/// -key residual (was pinned as `unreduced_chained_indexed_access_target_prints_as_written`).
 #[test]
-fn unreduced_chained_indexed_access_target_prints_as_written() {
-    let messages = strict_messages(
+fn chained_numeric_indexed_access_target_renders_reduced_member() {
+    let messages = ts2741_messages(
         r#"
 interface Arr { list: { w: number; z: string }[] }
 const a2: Arr["list"][number] = { w: 1 };
 "#,
     );
-    assert_eq!(
-        messages.len(),
-        1,
-        "exactly one assignability error: {messages:?}"
-    );
-    assert!(
-        messages[0].contains("Arr[\"list\"][number]"),
-        "an unreduced chain must print as written, never half-resolved: {}",
-        messages[0]
-    );
+    assert_eq!(messages.len(), 1, "exactly one TS2741: {messages:?}");
+    assert_reduced_member(&messages[0], "{ w: number; z: string; }");
 }
 
 // ---------------------------------------------------------------------------
@@ -605,12 +631,11 @@ const h: { k: number } = bad;
     assert!(messages.is_empty(), "must stay clean: {messages:?}");
 }
 
-/// Residual, pinned rather than assumed fixed: a non-literal key declines the
-/// shared display policy one guard earlier, so the annotation surface is kept
-/// and the whole chain prints as written. `tsc` reduces this one (recorded on
-/// #16443 as the non-literal-key residual).
+/// A non-literal (array/number chain) key now reduces for an identifier
+/// source too, matching `tsc`. Closes this row of the #16443 non-literal-key
+/// residual (was pinned as `nonliteral_key_indexed_access_identifier_source_prints_as_written`).
 #[test]
-fn nonliteral_key_indexed_access_identifier_source_prints_as_written() {
+fn nonliteral_key_indexed_access_identifier_source_renders_reduced_member() {
     let messages = ts2741_messages(
         r#"
 interface Arr { list: { k: number }[] }
@@ -619,9 +644,5 @@ const h: { k: number; extra: number } = bad;
 "#,
     );
     assert_eq!(messages.len(), 1, "exactly one TS2741: {messages:?}");
-    assert!(
-        messages[0].contains("Arr[\"list\"][number]"),
-        "an unreduced chain must print as written, never half-resolved: {}",
-        messages[0]
-    );
+    assert_reduced_member(&messages[0], "{ k: number; }");
 }
