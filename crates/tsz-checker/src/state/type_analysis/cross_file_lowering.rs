@@ -311,37 +311,8 @@ impl CheckerState<'_> {
                         };
 
                         let mut base_type = self.get_type_of_symbol(base_sym_id);
-                        tracing::debug!(
-                            target: "tsz_16308_probe",
-                            base_name = %name,
-                            base_type_id = base_type.0,
-                            is_error = (base_type == TypeId::ERROR),
-                            is_unknown = (base_type == TypeId::UNKNOWN),
-                            "merge_cross_file_heritage base resolution",
-                        );
                         if base_type == TypeId::ERROR || base_type == TypeId::UNKNOWN {
-                            // `get_type_of_symbol` caches `ERROR` for a symbol once the
-                            // shared per-file `type_resolution_fuel` budget is exhausted
-                            // (`context/core.rs`), regardless of which symbol happened to
-                            // be mid-resolution when the budget ran out. For a *lib* base
-                            // (`Array`, `Map`, ...) that is not a genuine gap: the
-                            // dedicated `resolve_lib_type_by_name` path has its own
-                            // cycle-safe resolution (the #12299 in-progress/incomplete
-                            // machinery) independent of this fuel counter. The same-file
-                            // heritage merge (`merge_interface_heritage_types_inner`,
-                            // `interface_type.rs`) already falls back to it on ERROR/
-                            // UNKNOWN; mirror that here so a lib base reached through a
-                            // *cross-file* interface heritage clause is not silently
-                            // dropped (#16308, e.g. `interface X<T> extends Array<T>`
-                            // imported into another module).
-                            let lib_fallback = (!self.ctx.lib_contexts.is_empty())
-                                .then(|| self.resolve_lib_type_by_name(&name))
-                                .flatten()
-                                .filter(|&ty| ty != TypeId::ERROR && ty != TypeId::UNKNOWN);
-                            let Some(lib_type) = lib_fallback else {
-                                continue;
-                            };
-                            base_type = lib_type;
+                            continue;
                         }
                         if let Some(type_arguments) = type_arguments {
                             let base_params = self.get_type_params_for_symbol(base_sym_id);
