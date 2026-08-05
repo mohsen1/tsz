@@ -162,14 +162,21 @@ impl<'a> CheckerState<'a> {
         // statement has parse errors. A wrong module-element context is a grammar
         // diagnostic, not a reason to skip module/member validation: tsc still
         // reports missing modules and missing named exports for imports in a bare
-        // block after TS1232.
+        // block after TS1232 — UNLESS a declaration scope (a function-like body,
+        // or a namespace/module body the import does not directly belong to)
+        // encloses the import, in which case tsc's `checkExternalImportOrExportDeclaration`
+        // returns at the placement diagnostic and nothing downstream runs. A bare
+        // block, `if`/loop/`try` body, labeled statement or `switch` clause opens
+        // no such scope, so resolution still runs there even nested arbitrarily
+        // deep, as long as no function/namespace ancestor sits between it and the
+        // import (oracle-confirmed, `typescript@7.0.2`, both scheduler modes).
         let in_wrong_context = self.is_in_non_module_element_context(stmt_idx);
         let wrong_context_allows_module_semantics = in_wrong_context
             && !self.is_inside_function_body(stmt_idx)
             && !self.is_inside_namespace_declaration(stmt_idx);
         let has_parse_errors = node.this_or_subtree_has_error()
             || (self.ctx.has_real_syntax_errors && !wrong_context_allows_module_semantics);
-        if in_wrong_context && self.is_inside_function_body(stmt_idx) {
+        if in_wrong_context && !wrong_context_allows_module_semantics {
             return;
         }
 
