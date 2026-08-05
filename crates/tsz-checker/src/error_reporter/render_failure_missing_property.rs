@@ -1,3 +1,6 @@
+use super::render_failure_missing_property_base_class::{
+    MissingPropertyBaseClassNames, MissingPropertyMessageParts,
+};
 use super::*;
 use crate::query_boundaries::diagnostics::IndexKind;
 
@@ -608,16 +611,36 @@ impl<'a> CheckerState<'a> {
             tgt_str_qualified = display;
         }
         let prop_name_display = self.missing_property_name_for_display(property_name, target);
-        let message = format_message(
-            diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
-            &[&prop_name_display, &src_str, &tgt_str_qualified],
-        );
-        let mut diagnostic = Diagnostic::error(
-            file_name,
-            start,
-            length,
-            message,
-            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+        // A base class named on either side of the message takes the TS2322
+        // head with this line nested beneath it; see
+        // `render_failure_missing_property_base_class`. Nested renderings
+        // already sit under a head, so only the top level decides.
+        let base_class_names = if depth == 0 {
+            self.missing_property_base_class_names(source, &[target_type, target], property_name)
+        } else {
+            MissingPropertyBaseClassNames::default()
+        };
+        let endpoint_src_str = if base_class_names.source.is_some() {
+            self.format_type_for_diagnostic_role(
+                source,
+                DiagnosticTypeDisplayRole::AssignmentSource {
+                    target,
+                    anchor_idx: idx,
+                },
+            )
+        } else {
+            src_str.clone()
+        };
+        let mut diagnostic = self.missing_property_diagnostic_with_base_class_head(
+            (file_name, start, length),
+            &base_class_names,
+            MissingPropertyMessageParts {
+                property: &prop_name_display,
+                endpoint_source: &endpoint_src_str,
+                endpoint_target: &tgt_str_qualified,
+                nested_source: &src_str,
+                nested_target: &tgt_str_qualified,
+            },
         );
         // tsc's `reportUnmatchedProperty` pairs the one-missing-property form
         // with a TS2728 pointer at that property's own declaration. The
@@ -1466,16 +1489,43 @@ impl<'a> CheckerState<'a> {
                 self.property_declaring_type_name(target_type, filtered_names[0])
                     .unwrap_or_else(|| self.format_type_diagnostic(target_type))
             };
-            let message = format_message(
-                diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
-                &[&prop_name, &src_str, &tgt_str],
-            );
-            return Diagnostic::error(
-                file_name,
-                start,
-                length,
-                message,
-                diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+            // Same head rule as the singular path: a base class named on
+            // either side demotes this line under a TS2322.
+            let base_class_names = if depth == 0 {
+                self.missing_property_base_class_names(
+                    source,
+                    &[target_type, target],
+                    filtered_names[0],
+                )
+            } else {
+                MissingPropertyBaseClassNames::default()
+            };
+            let endpoint_src_str = if base_class_names.source.is_some() {
+                self.format_type_for_diagnostic_role(
+                    source,
+                    DiagnosticTypeDisplayRole::AssignmentSource {
+                        target,
+                        anchor_idx: idx,
+                    },
+                )
+            } else {
+                src_str.clone()
+            };
+            let endpoint_tgt_str = if base_class_names.target.is_some() {
+                self.format_assignability_type_for_message(target, source)
+            } else {
+                tgt_str.clone()
+            };
+            return self.missing_property_diagnostic_with_base_class_head(
+                (file_name, start, length),
+                &base_class_names,
+                MissingPropertyMessageParts {
+                    property: &prop_name,
+                    endpoint_source: &endpoint_src_str,
+                    endpoint_target: &endpoint_tgt_str,
+                    nested_source: &src_str,
+                    nested_target: &tgt_str,
+                },
             );
         }
 

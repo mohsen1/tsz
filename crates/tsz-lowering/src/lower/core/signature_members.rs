@@ -145,12 +145,7 @@ impl<'a> TypeLowering<'a> {
                                 tsz_scanner::SyntaxKind::ReadonlyKeyword,
                             );
                             let value_type = self.lower_method_signature(sig);
-                            parts.merge_index_signature(IndexSignature {
-                                key_type: TypeId::SYMBOL,
-                                value_type,
-                                readonly,
-                                param_name: None,
-                            });
+                            parts.merge_implicit_symbol_index(value_type, readonly);
                         } else if let Some(name) = self.lower_signature_name(sig.name) {
                             let is_symbol_named =
                                 self.lower_signature_name_is_symbol_named(sig.name);
@@ -182,12 +177,7 @@ impl<'a> TypeLowering<'a> {
                                 tsz_scanner::SyntaxKind::ReadonlyKeyword,
                             );
                             let value_type = self.lower_type(sig.type_annotation);
-                            parts.merge_index_signature(IndexSignature {
-                                key_type: TypeId::SYMBOL,
-                                value_type,
-                                readonly,
-                                param_name: None,
-                            });
+                            parts.merge_implicit_symbol_index(value_type, readonly);
                         } else if let Some(prop) = self.lower_type_element(idx) {
                             parts.merge_property(prop);
                         } else if self.is_unresolved_computed_property_name(sig.name) {
@@ -224,12 +214,7 @@ impl<'a> TypeLowering<'a> {
                             self.lower_type(param.type_annotation)
                         })
                 };
-                parts.merge_index_signature(IndexSignature {
-                    key_type: TypeId::SYMBOL,
-                    value_type,
-                    readonly: is_getter,
-                    param_name: None,
-                });
+                parts.merge_implicit_symbol_index(value_type, is_getter);
             } else if member.is_accessor()
                 && let Some(accessor) = self.arena.get_accessor(member)
                 && let Some(name) = self.lower_signature_name(accessor.name)
@@ -425,6 +410,23 @@ impl<'a> TypeLowering<'a> {
                 existing.readonly &= extra.readonly;
             } else {
                 parts.string_index = Some(extra);
+            }
+        }
+
+        // When an interface (or merged group) carries several computed members
+        // keyed by a plain `symbol` (`interface T { [s1]: A; [s2]: B }`), tsc
+        // folds them into a single `[key: symbol]` index whose value is the
+        // UNION of the members' value types. Do that fold here, where the type
+        // interner is available — mirroring the string-index deferral above.
+        for extra in parts.extra_symbol_indices.drain(..) {
+            if let Some(ref mut existing) = parts.symbol_index {
+                if existing.value_type != extra.value_type {
+                    existing.value_type =
+                        self.interner.union2(existing.value_type, extra.value_type);
+                }
+                existing.readonly &= extra.readonly;
+            } else {
+                parts.symbol_index = Some(extra);
             }
         }
 

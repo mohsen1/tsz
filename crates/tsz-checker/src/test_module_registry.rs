@@ -585,6 +585,8 @@ mod member_name_source_quote_fidelity_tests;
 mod merged_interface_constraint_relation_routing_arch_tests;
 #[path = "tests/method_return_type_elaboration_tests.rs"]
 mod method_return_type_elaboration_tests;
+#[path = "tests/missing_property_base_class_head_tests.rs"]
+mod missing_property_base_class_head_tests;
 #[path = "tests/missing_property_declared_here_tests.rs"]
 mod missing_property_declared_here_tests;
 #[path = "tests/module_scoped_var_shadows_lib_global_ts2300_tests.rs"]
