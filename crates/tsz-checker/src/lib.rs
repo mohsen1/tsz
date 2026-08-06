@@ -490,6 +490,9 @@ mod for_in_narrowing_tests;
 #[path = "../tests/for_in_self_reference_and_nullable_operand_tests.rs"]
 mod for_in_self_reference_and_nullable_operand_tests;
 #[cfg(test)]
+#[path = "../tests/for_in_union_operand_tests.rs"]
+mod for_in_union_operand_tests;
+#[cfg(test)]
 #[path = "../tests/for_of_self_reference_operand_spelling_tests.rs"]
 mod for_of_self_reference_operand_spelling_tests;
 #[cfg(test)]

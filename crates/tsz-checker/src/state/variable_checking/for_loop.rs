@@ -166,11 +166,10 @@ impl<'a> CheckerState<'a> {
                 || query::is_object_like_type(self.ctx.types, evaluated_base);
         }
 
-        if let Some(members) = query::union_members(self.ctx.types, expr_type) {
-            return members
-                .iter()
-                .any(|&member| self.is_deferred_object_like_for_in(member));
-        }
+        // No union arm: a union operand is quantified with ALL, not ANY, and is
+        // owned by `for_in_expr_type_is_valid_union`. An ANY arm here would
+        // re-accept `string | object` through the leaf path and silently
+        // bypass that predicate.
 
         if let Some(members) = query::intersection_members(self.ctx.types, expr_type) {
             return members
@@ -556,26 +555,118 @@ impl<'a> CheckerState<'a> {
             && (ty == TypeId::NULL || ty == TypeId::UNDEFINED)
     }
 
-    /// Helper for TS2407: Check if a union type contains at least one valid for-in expression type.
+    /// Helper for TS2407: whether a *union* operand is a valid for-in RHS.
+    ///
+    /// `tsc` quantifies over a union with ALL, not ANY: `allTypesAssignableToKind`
+    /// recurses into a union with `every`, so a single non-object constituent
+    /// rejects the whole operand — `declare const u: string | object` reports
+    /// TS2407 even though `object` on its own would be a fine operand. This
+    /// predicate used to return on the FIRST valid member, which silently
+    /// accepted every mixed union.
+    ///
+    /// Two constituent-level rules come with the quantifier and are not
+    /// optional; both are oracle-verified against `tsc` 7.0.2 in
+    /// `for_in_union_operand_tests.rs`:
+    ///
+    /// - `null` and `undefined` constituents are STRIPPED, not judged.
+    ///   `checkForInStatement` reads
+    ///   `getNonNullableTypeIfNeeded(checkExpression(...))`, so
+    ///   `{ a: number } | undefined` is clean (and `string | undefined` reports
+    ///   with type `'string'`). Without the strip, turning ANY into ALL would
+    ///   invent a false positive on every optional object operand.
+    /// - A type variable is accepted as a WHOLE operand by the type-parameter
+    ///   arm of [`Self::for_in_leaf_type_is_valid`], but as a CONSTITUENT only
+    ///   through an object-like base constraint. `function f<T>(u: T)` is clean
+    ///   while `function f<T>(u: T | { a: number })` reports; adding a
+    ///   constraint (`T extends object`, `T extends { a: number }`,
+    ///   `T extends unknown[]`) makes the union clean again, and
+    ///   `T extends string` keeps it reporting.
+    ///
+    /// A union with every constituent stripped (`null | undefined`) is `never`
+    /// after the strip, which is not a valid operand — hence the
+    /// `saw_unstripped_member` result rather than a vacuous `true`.
     fn for_in_expr_type_is_valid_union(&mut self, expr_type: TypeId) -> bool {
         use crate::query_boundaries::dispatch as query;
 
-        if let Some(members) = query::union_members(self.ctx.types, expr_type) {
-            for &member in &members {
-                if member == TypeId::ANY
-                    || query::is_type_parameter_like(self.ctx.types, member)
-                    || query::is_object_like_type(self.ctx.types, member)
-                    || self.is_deferred_object_like_for_in(member)
-                {
-                    return true;
-                }
-                // Recursively check nested unions
-                if self.for_in_expr_type_is_valid_union(member) {
-                    return true;
-                }
+        let Some(members) = query::union_members(self.ctx.types, expr_type) else {
+            return false;
+        };
+
+        let mut saw_unstripped_member = false;
+        for &member in &members {
+            if member == TypeId::NULL || member == TypeId::UNDEFINED {
+                continue;
+            }
+            saw_unstripped_member = true;
+            if !self.for_in_union_member_is_valid(member, &mut Vec::new()) {
+                return false;
             }
         }
-        false
+        saw_unstripped_member
+    }
+
+    /// Whether one constituent of a union for-in operand is itself acceptable.
+    ///
+    /// `tsc` reaches each constituent through
+    /// `isTypeAssignableToKind(member, NonPrimitive | InstantiableNonPrimitive)`,
+    /// whose object arm is plain assignability to `object`. So the test here is
+    /// "is this member object-like", with a type variable contributing only its
+    /// base constraint — deliberately stricter than
+    /// [`Self::for_in_leaf_type_is_valid`], which judges the operand as a whole.
+    ///
+    /// `constraint_chain` records the type variables already walked so a
+    /// mutually-recursive constraint (`T extends U`, `U extends T` — itself a
+    /// TS2313 error) terminates instead of recursing forever.
+    fn for_in_union_member_is_valid(
+        &mut self,
+        member: TypeId,
+        constraint_chain: &mut Vec<TypeId>,
+    ) -> bool {
+        if self.for_in_union_member_is_valid_shallow(member, constraint_chain) {
+            return true;
+        }
+        // Deferred members (aliases, generic applications like `Box<number>`)
+        // expose their object shape only after resolution. Resolved
+        // individually, exactly as `for_in_expr_type_is_valid_intersection`
+        // does, so one member's resolution cannot collapse the whole union.
+        let resolved = self.resolve_type_for_property_access(member);
+        resolved != member && self.for_in_union_member_is_valid_shallow(resolved, constraint_chain)
+    }
+
+    /// One resolution-free step of [`Self::for_in_union_member_is_valid`].
+    fn for_in_union_member_is_valid_shallow(
+        &mut self,
+        member: TypeId,
+        constraint_chain: &mut Vec<TypeId>,
+    ) -> bool {
+        use crate::query_boundaries::dispatch as query;
+
+        if member == TypeId::ANY {
+            return true;
+        }
+        // A nested union carries the same all-constituents rule (including the
+        // nullable strip), so route it back through the union predicate.
+        if query::union_members(self.ctx.types, member).is_some() {
+            return self.for_in_expr_type_is_valid_union(member);
+        }
+        if query::is_type_parameter_like(self.ctx.types, member) {
+            if constraint_chain.contains(&member) {
+                return false;
+            }
+            constraint_chain.push(member);
+            let constraint = query::get_base_constraint_of_type(self.ctx.types, member);
+            // An unconstrained type parameter answers `unknown` here, which is
+            // not object-like — matching `tsc`, which reports on `T | { a }`.
+            let valid = constraint != member
+                && self.for_in_union_member_is_valid(constraint, constraint_chain);
+            constraint_chain.pop();
+            return valid;
+        }
+        query::is_object_like_type(self.ctx.types, member)
+            // `A & B` is a subtype of each member, so an intersection
+            // constituent is assignable to `object` as soon as ANY of its own
+            // members is — the quantifier flips back for intersections.
+            || self.for_in_expr_type_is_valid_intersection(member)
     }
 
     /// Helper for TS2407: Check if an intersection type is a valid for-in operand.
