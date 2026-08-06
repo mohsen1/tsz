@@ -17,6 +17,7 @@ pub(crate) mod explain_function;
 pub(crate) mod explain_guard;
 pub(crate) mod explain_indexes;
 pub(crate) mod explain_tuple;
+pub(crate) mod explain_union_order;
 pub(crate) mod helpers;
 pub(crate) mod overlap;
 pub(crate) mod rules;

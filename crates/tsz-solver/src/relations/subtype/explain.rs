@@ -9,6 +9,7 @@ use crate::diagnostics::SubtypeFailureReason;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::relations::subtype::SubtypeChecker;
 use crate::relations::subtype::explain_guard::{ExplainFuelState, ExplainRecursionEntryState};
+use crate::relations::subtype::explain_union_order::reorder_union_members_nullish_first;
 use crate::type_queries::data::get_object_symbol;
 use crate::types::{
     IntrinsicKind, LiteralValue, ObjectShape, ObjectShapeId, PropertyInfo, TupleElement,
@@ -33,35 +34,6 @@ use crate::visitor::{
 /// magnitude mirrors the proven eval-fuel bound added to the diagnostic display
 /// pass in PR #13176.
 pub(crate) const EXPLAIN_EVAL_BUDGET: u32 = 16_000;
-
-/// Reorder a source union's members into tsc's relation-iteration order for
-/// error elaboration.
-///
-/// `eachTypeRelatedToType` walks `source.types` in ascending type-id order, and
-/// the intrinsic `undefined` and `null` types are allocated before any user
-/// type — so tsc examines them first and elaborates a failing nullish member
-/// ahead of the others. tsz stores union members with `undefined`/`null` last
-/// (that is tsc's *printer* order, keyed by `builtin_sort_key`), so this
-/// restores the relation order used to pick the first failing member:
-/// `undefined`, then `null`, then the remaining members unchanged. Non-nullish
-/// unions keep their stored order, which already matches tsc's relation order.
-fn reorder_union_members_nullish_first(members: &[TypeId]) -> Vec<TypeId> {
-    let mut ordered = Vec::with_capacity(members.len());
-    // `undefined` before `null` (their intrinsic allocation order), then the
-    // remaining members in their stored order.
-    for nullish in [TypeId::UNDEFINED, TypeId::NULL] {
-        if members.contains(&nullish) {
-            ordered.push(nullish);
-        }
-    }
-    ordered.extend(
-        members
-            .iter()
-            .copied()
-            .filter(|&m| m != TypeId::UNDEFINED && m != TypeId::NULL),
-    );
-    ordered
-}
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Array element type, transparently peeling a single `readonly` array
@@ -1254,7 +1226,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // first), not tsz's stored *printer* order (nullish last) — see
             // `reorder_union_members_nullish_first`. Example: `number | undefined`
             // -> `string` drills the `undefined` member, matching tsc.
-            let ordered = reorder_union_members_nullish_first(&members);
+            let mut ordered = reorder_union_members_nullish_first(&members);
+            // Same-rank enum members: `sort_union_members` orders the interned
+            // list by allocation identity (needed so `E1 | E2` and `E2 | E1`
+            // intern to one canonical `TypeId`), which does not track
+            // declaration order — an enum's `DefId`/`TypeId` can be allocated
+            // lazily, in whatever order the checker first requests its type,
+            // independent of source position (issue #16513). tsc always
+            // elaborates the union's first-declared failing member, and the
+            // printer's own tie-break already keeps enum members in
+            // declaration order (`order_union_members_by_source`). Reorder
+            // just the enum members among themselves — by declaration
+            // position, in place, leaving every other member's slot and the
+            // rest of the nullish-first order untouched — so elaboration
+            // selection agrees with what the union header already displays.
+            self.reorder_enum_members_by_declaration(&mut ordered);
             for &member in ordered.iter() {
                 if member == source || member == union_member_source {
                     // Defensive: avoid self-recursion on a degenerate union.
