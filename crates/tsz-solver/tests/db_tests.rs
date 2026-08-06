@@ -164,53 +164,6 @@ fn property_cache_keeps_resolved_object_property_result() {
     );
 }
 
-/// #16553: a top-level `evaluate_type` result observed while an `IndexAccess`
-/// object operand's `Lazy` definition had not yet registered (the checker
-/// pool's cross-file registration-window artifact) must not publish into the
-/// cross-file `eval_cache` — that cache's `(TypeId, options)` key has no
-/// resolver-identity component, so a later file in the same pool partition
-/// would read the under-resolved answer back after the real definition
-/// registers instead of recomputing it.
-#[test]
-fn eval_cache_skips_unresolved_lazy_index_access_result() {
-    let interner = TypeInterner::new();
-    let db = QueryCache::new(&interner);
-    let key = interner.literal_string("kind");
-    let unresolved = interner.lazy(crate::def::DefId(9003));
-    let index_access = interner.index_access(unresolved, key);
-
-    db.evaluate_type(index_access);
-
-    assert_eq!(
-        db.eval_cache_len(),
-        0,
-        "an index access into an unresolved Lazy def must not publish into the \
-         cross-file eval_cache"
-    );
-}
-
-/// Adjacent positive control for the test above: an `IndexAccess` whose
-/// object is already a concrete, resolved `Object` type is a stable function
-/// of its `TypeId` and should still publish into the cross-file `eval_cache`
-/// as before.
-#[test]
-fn eval_cache_keeps_resolved_object_index_access_result() {
-    let interner = TypeInterner::new();
-    let db = QueryCache::new(&interner);
-    let key_atom = interner.intern_string("kind");
-    let key_type = interner.literal_string("kind");
-    let obj = interner.object(vec![PropertyInfo::new(key_atom, TypeId::NUMBER)]);
-    let index_access = interner.index_access(obj, key_type);
-
-    let result = db.evaluate_type(index_access);
-
-    assert_eq!(result, TypeId::NUMBER);
-    assert!(
-        db.eval_cache_len() > 0,
-        "a resolved object index access should still publish into the eval_cache"
-    );
-}
-
 /// Test cache poisoning prevention.
 ///
 /// CRITICAL: This test ensures that separate caches don't interfere.

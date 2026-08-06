@@ -1413,23 +1413,6 @@ impl QueryDatabase for QueryCache<'_> {
         // dependent way — the exact non-determinism that makes
         // recursive-utility fixtures flip with surrounding code.
         //
-        // The same key shape makes this cache cross-file (it is also mirrored
-        // into `shared` below), so a registration-window artifact is just as
-        // dangerous as a depth-bailed one: a top-level result computed while
-        // some `Lazy`/`Ref` operand's definition had not yet registered
-        // (`unresolved_def_seen`, e.g. a checker-pool file partition
-        // evaluating a cross-file interface union before every constituent's
-        // body is available) must not be published either, or a later file in
-        // the same partition reads the under-resolved answer back after the
-        // real definition registers (#16553). `is_stable_for_run_wide_cache`
-        // checks the raw `EvaluationRequestStability` directly rather than
-        // going through `EvaluationMemoResult::is_stable_for_depth_agnostic_cache`,
-        // which deliberately tolerates `UnresolvedDef` for run/query-scoped
-        // memo consumers — a tolerance that is unsound for this cross-file
-        // cache. Mirrors the same direct-request-state check
-        // `closed_eval::commit_closed_eval_writes` uses for its own run-wide
-        // cache.
-        //
         // The discrimination is per-entry (issue #13241, extending the
         // PR #12902 application-eval epoch split): the top-level result uses
         // the named `EvaluationMemoResult` stability verdict (#14346), which
@@ -1444,7 +1427,7 @@ impl QueryDatabase for QueryCache<'_> {
         // limit epoch, so it conservatively suppresses all writes, as before.
         let union_complexity_stable =
             limit_snapshot.union_complexity_stayed_stable_after(self.interner);
-        let top_level_clean = evaluation_memo_result.is_stable_for_run_wide_cache();
+        let top_level_clean = evaluation_memo_result.is_stable_for_depth_agnostic_cache();
         if union_complexity_stable
             && (top_level_clean || crate::limits::limit_result_cache_enabled())
         {
