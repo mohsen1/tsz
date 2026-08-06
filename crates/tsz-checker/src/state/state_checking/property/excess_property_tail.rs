@@ -1181,14 +1181,23 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // Get the property name from this element
+            // Get the property name from this element. A computed key backed by
+            // a `const` (`[door]: {...}` for `const door = "room"`) has no
+            // syntactic name, so this must resolve it through the same
+            // type-based path `get_property_name_resolved` uses elsewhere —
+            // otherwise a computed-keyed nested object literal never matches
+            // `prop_name` and its own excess properties go unchecked (#16443).
             let elem_prop_name = match elem_node.kind {
-                syntax_kind_ext::PROPERTY_ASSIGNMENT => self
-                    .ctx
-                    .arena
-                    .get_property_assignment(elem_node)
-                    .and_then(|prop| self.get_property_name(prop.name))
-                    .map(|name| self.ctx.types.intern_string(&name)),
+                syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                    let name_idx = self
+                        .ctx
+                        .arena
+                        .get_property_assignment(elem_node)
+                        .map(|prop| prop.name);
+                    name_idx
+                        .and_then(|idx| self.get_property_name_resolved(idx))
+                        .map(|name| self.ctx.types.intern_string(&name))
+                }
                 syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => self
                     .ctx
                     .arena
