@@ -334,6 +334,48 @@ impl<'a> CheckerState<'a> {
         true
     }
 
+    /// Whether a position-invalid `import ... from "m"` or `import x =
+    /// require("m")` — already outside a function body and a namespace body,
+    /// i.e. still left in the source file's own scope by
+    /// [`Self::position_invalid_module_element_resolves_specifier`] — still
+    /// resolves its module specifier.
+    ///
+    /// The import side does not share `export ... from`'s per-clause table
+    /// story (#16504): every clause-bearing form (`import { a }`, `import a`,
+    /// `import * as ns`, `import a, { b }`, `import type { a }`, and
+    /// `import x = require(...)`) binds the same way regardless of which
+    /// clause it is, so there is only one axis here — whether the file is an
+    /// external module — not a clause-kind split. `tsc`'s
+    /// `checkImportDeclaration` has already returned at the placement
+    /// diagnostic (TS1232), so whatever still resolves comes from a later
+    /// pass; a script file still runs that pass, an external module's does
+    /// not (measured against the pinned oracle, #16505).
+    ///
+    /// A bare `import "m"` (no clause at all) is the one form that answers
+    /// differently: its resolution diagnostic (TS2882/TS2307) never fires
+    /// outside a declaration scope, in a script or a module alike — the
+    /// opposite of every clause-bearing form.
+    ///
+    /// Deliberately not covered by this predicate, and not by its caller
+    /// either: a plain import nested inside a namespace body's own block
+    /// (`namespace N { { import { a } from "m"; } }`) turns on whether the
+    /// imported binding is later *referenced*, the same discriminator
+    /// `import x = require(...)` already applies through
+    /// `namespace_import_alias_is_referenced` — not on module-ness. tsz has
+    /// no equivalent reference check for the plain-import clause forms yet,
+    /// so that shape is left exactly as it already was rather than folded
+    /// into this predicate; both call sites guard this out via
+    /// `!is_inside_namespace_declaration`.
+    pub(crate) fn position_invalid_import_declaration_resolves_specifier(
+        &self,
+        has_import_clause: bool,
+    ) -> bool {
+        if !has_import_clause {
+            return false;
+        }
+        !self.ctx.is_external_module_file()
+    }
+
     /// Check if a node is inside a module augmentation
     /// (`declare module "string" { ... }`).  Module augmentations have a
     /// `MODULE_DECLARATION` ancestor whose name is a string literal.
