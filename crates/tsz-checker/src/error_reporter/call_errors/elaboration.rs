@@ -1356,13 +1356,49 @@ impl<'a> CheckerState<'a> {
     }
 
     fn first_callable_return_type(&mut self, ty: TypeId) -> Option<TypeId> {
-        use crate::query_boundaries::diagnostics::{
-            callable_shape_for_type, function_shape, type_application,
-        };
+        use crate::query_boundaries::diagnostics::type_application;
 
         if let (Some(non_nullish), Some(_nullish_cause)) = self.split_nullish_type(ty) {
             return self.first_callable_return_type(non_nullish);
         }
+
+        if let Some(return_type) = self.resolved_callable_return_type(ty) {
+            return Some(return_type);
+        }
+
+        // An alias reference (`type Fn = () => string`) or a generic
+        // application (`G<string>` for `type G<T> = () => T`) exposes a
+        // callable only after evaluation. Evaluation also *instantiates*, so
+        // the application yields the instantiated return type (`string`), not
+        // the bare type parameter (`T`) an uninstantiated base would hand back
+        // — the distinction between a correct message and `not assignable to
+        // 'T'`. Only the return type crosses this boundary; the arrow-body
+        // drill's pointer is anchored from syntax, so a shared interned
+        // callable never leaks a foreign declaration here.
+        let evaluated = self.judge_evaluate(ty);
+        if evaluated != ty
+            && let Some(return_type) = self.resolved_callable_return_type(evaluated)
+        {
+            return Some(return_type);
+        }
+
+        // An application whose instantiation did not resolve to a callable
+        // still carries its base's signature (e.g. a partially applied or
+        // deferred form): fall back to the uninstantiated base.
+        if let Some(app) = type_application(self.ctx.types, ty) {
+            return self.first_callable_return_type(app.base);
+        }
+
+        None
+    }
+
+    /// The return type of `ty`'s first call signature, when `ty` is *already* a
+    /// materialized callable — a bare function type, a callable object, or an
+    /// interface with call signatures. Declines for a reference or application
+    /// that has not been evaluated to its callable form yet; those are resolved
+    /// by [`Self::first_callable_return_type`] through evaluation.
+    fn resolved_callable_return_type(&mut self, ty: TypeId) -> Option<TypeId> {
+        use crate::query_boundaries::diagnostics::{callable_shape_for_type, function_shape};
 
         if let Some(shape) = function_shape(self.ctx.types, ty) {
             return Some(shape.return_type);
@@ -1376,10 +1412,6 @@ impl<'a> CheckerState<'a> {
 
         if let Some(shape) = callable_shape_for_type(self.ctx.types, ty) {
             return shape.call_signatures.first().map(|sig| sig.return_type);
-        }
-
-        if let Some(app) = type_application(self.ctx.types, ty) {
-            return self.first_callable_return_type(app.base);
         }
 
         None

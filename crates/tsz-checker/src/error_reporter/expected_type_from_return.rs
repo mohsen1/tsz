@@ -273,14 +273,24 @@ impl<'a> CheckerState<'a> {
     }
 
     /// `(start, length, file)` of the function or constructor type `idx`
-    /// denotes, peeling parentheses.
+    /// denotes, peeling parentheses and following a type-alias reference into
+    /// its body.
     ///
-    /// Anything else — a union, an object type, a type reference — yields no
-    /// signature of its own for tsc to point at, so it declines. A reference is
-    /// deliberately *not* followed here: the arrow-body drill this pointer hangs
-    /// off never fires for an alias-annotated member in the first place (see the
-    /// `type_reference_annotation_*` test), so a hop at this site would be
-    /// unreachable complexity on a diagnostic path.
+    /// A member typed through an alias (`cb: Fn` for `type Fn = () => string`,
+    /// or a generic `cb: G<string>` for `type G<T> = () => T`) reaches here as a
+    /// type reference. Once the arrow-body drill fires for such a member — which
+    /// it now does, sourcing the *instantiated* return type through evaluation —
+    /// tsc anchors the pointer inside the alias's *own* declaration, at the
+    /// function type written there. So the reference is followed one alias hop:
+    /// `get_type_ref(..).type_name` resolves the alias regardless of any type
+    /// arguments, and the body is anchored **uninstantiated** (`() => T`, never
+    /// `() => string`) — the instantiated type the message names was already
+    /// sourced separately at the drill gate. The hop stays checking-file-local
+    /// (`local_type_alias_body`); an alias declared in another file declines
+    /// here rather than reading a foreign arena's `NodeIndex`.
+    ///
+    /// Anything else — a union, an object type, an unresolved reference — yields
+    /// no signature of its own for tsc to point at, so it declines.
     fn callable_type_node_anchor(
         &mut self,
         idx: NodeIndex,
@@ -295,6 +305,12 @@ impl<'a> CheckerState<'a> {
         if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE {
             let inner = self.ctx.arena.get_wrapped_type(node)?.type_node;
             return self.callable_type_node_anchor(inner, depth + 1);
+        }
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            let name_idx = self.ctx.arena.get_type_ref(node)?.type_name;
+            let owner_symbol = self.type_position_symbol(name_idx)?;
+            let body_idx = self.local_type_alias_body(owner_symbol)?;
+            return self.callable_type_node_anchor(body_idx, depth + 1);
         }
         if node.kind != syntax_kind_ext::FUNCTION_TYPE
             && node.kind != syntax_kind_ext::CONSTRUCTOR_TYPE

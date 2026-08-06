@@ -214,11 +214,11 @@ fn block_bodied_function_expression_keeps_the_property_pointer() {
     );
 }
 
-/// A member annotated with a type *reference* still declines, and the reason is
-/// **not** in the pointer walk — recorded here because the obvious fix (hop the
-/// alias when anchoring) is a dead end that would add unreachable code.
+/// A member typed through a *type alias* (`cb: Fn` for `type Fn = () => string`)
+/// drills to the arrow body exactly as the inline form does, and the `TS6502`
+/// anchors inside the alias's own body — the frame tsz#16542 pinned as wrong.
 ///
-/// tsc anchors inside the alias body:
+/// tsc, oracle `d.ts` (`typescript@7.0.2 --strict --pretty`):
 ///
 /// ```text
 /// d.ts:3:29 - error TS2322: Type 'number' is not assignable to type 'string'.
@@ -227,29 +227,122 @@ fn block_bodied_function_expression_keeps_the_property_pointer() {
 ///                 ~~~~~~~~~~~~
 /// ```
 ///
-/// `Ref` resolves to a real binder symbol, so the symbol route reaches `cb`
-/// fine. The gap is a whole frame earlier: the arrow-body drill in
-/// `elaboration_object_properties` never fires for an alias-annotated member,
-/// so no `TS6502` attach site is reached at all. The witness is the pointer this
-/// diagnostic *does* carry — `TS6500`, which is only attached on the
-/// **undrilled** branch. Whatever makes that branch win for a member typed
-/// through an alias owns this row.
+/// The message names `string` (the alias's resolved return type), the primary
+/// lands on the offending `6`, and the pointer underlines `() => string` inside
+/// `Fn`, not `Fn` and not `cb`. The sibling `TS6500` — the witness of the old
+/// undrilled member frame — must be gone.
 #[test]
-fn type_reference_annotation_declines_because_the_arrow_body_is_never_drilled() {
+fn a_type_reference_annotated_member_drills_into_the_alias_body() {
     let source =
         "type Fn = () => string;\ninterface Ref { cb: Fn; }\nconst rf: Ref = { cb: () => 6 };\n";
     let diagnostic = only(&check_source_diagnostics(source), TS2322);
-    assert!(
-        !has_return_pointer(&diagnostic),
-        "an alias-annotated member is never drilled, so no TS6502 site is reached: {diagnostic:?}"
+    assert_eq!(
+        diagnostic.message_text, "Type 'number' is not assignable to type 'string'.",
+        "the drilled body names the alias's resolved return type: {diagnostic:?}"
     );
+    assert_eq!(
+        span_text(source, diagnostic.start, diagnostic.length),
+        "6",
+        "the primary anchors at the offending body expression: {diagnostic:?}"
+    );
+    let (start, length, _) = return_pointer(&diagnostic);
+    assert_eq!(span_text(source, start, length), "() => string");
+    assert_eq!(start, 10, "the anchor is inside Fn's body, not at Fn or cb");
     assert!(
         diagnostic
             .related_information
             .iter()
-            .any(|info| info.code == TS6500),
-        "the TS6500 pointer is the witness that the undrilled branch ran: {diagnostic:?}"
+            .all(|info| info.code != TS6500),
+        "the drilled frame drops the undrilled-branch TS6500 pointer: {diagnostic:?}"
     );
+}
+
+/// The generic-application form of the row above (tsz#16548): `cb: G<string>`
+/// for `type G<T> = () => T`. The trap that split it out is that the two halves
+/// disagree on instantiation — the message must name the *instantiated* return
+/// type `string`, while the pointer anchors in the alias body *uninstantiated*,
+/// underlining `() => T` (not `() => string`).
+///
+/// tsc, oracle `r6.ts`:
+///
+/// ```text
+/// r6.ts:3:28 - error TS2322: Type 'number' is not assignable to type 'string'.
+///   r6.ts:1:13 - The expected type comes from the return type of this signature.
+///     1 type G<T> = () => T;
+///                   ~~~~~~~
+/// ```
+#[test]
+fn a_generic_alias_application_drills_with_instantiated_return_and_uninstantiated_anchor() {
+    let source =
+        "type G<T> = () => T;\ninterface R6 { cb: G<string>; }\nconst v6: R6 = { cb: () => 6 };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2322);
+    assert_eq!(
+        diagnostic.message_text, "Type 'number' is not assignable to type 'string'.",
+        "the message names the instantiated return type, not the bare parameter T: {diagnostic:?}"
+    );
+    assert_eq!(span_text(source, diagnostic.start, diagnostic.length), "6");
+    let (start, length, _) = return_pointer(&diagnostic);
+    assert_eq!(
+        span_text(source, start, length),
+        "() => T",
+        "the pointer anchors the alias body uninstantiated"
+    );
+    assert_eq!(start, 12);
+    assert!(
+        diagnostic
+            .related_information
+            .iter()
+            .all(|info| info.code != TS6500),
+    );
+}
+
+/// Renamed binders: the alias-drill rule is structural, not keyed on any user
+/// name. Every binder is renamed and the anchor still lands inside the alias
+/// body, only the span moving. Oracled by construction from the row above.
+#[test]
+fn a_renamed_alias_reference_keeps_the_drill_rule() {
+    let source = "type Zed = () => string;\ninterface Zref { qux: Zed; }\nconst zz: Zref = { qux: () => 6 };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2322);
+    assert_eq!(
+        diagnostic.message_text,
+        "Type 'number' is not assignable to type 'string'."
+    );
+    let (start, length, _) = return_pointer(&diagnostic);
+    assert_eq!(span_text(source, start, length), "() => string");
+    assert_eq!(start, 11);
+}
+
+/// An alias *chain* (`type B = A` for `type A = () => string`): the drill
+/// resolves `B` to `A`'s function signature, and the anchor follows both hops to
+/// the function type declared in `A`'s body.
+#[test]
+fn an_alias_chain_reference_is_followed_to_the_declaring_alias_body() {
+    let source = "type A = () => string;\ntype B = A;\ninterface Rc { cb: B; }\nconst rc: Rc = { cb: () => 6 };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2322);
+    assert_eq!(
+        diagnostic.message_text,
+        "Type 'number' is not assignable to type 'string'."
+    );
+    let (start, length, _) = return_pointer(&diagnostic);
+    assert_eq!(span_text(source, start, length), "() => string");
+    assert_eq!(start, 9, "the anchor is in A's body, the chain's terminus");
+}
+
+/// A two-parameter generic application (`G2<number, string>` for
+/// `type G2<A, B> = () => B`): instantiation must select the *second* argument
+/// for the return type, so the message names `string` while the uninstantiated
+/// anchor underlines `() => B`.
+#[test]
+fn a_multi_parameter_generic_application_instantiates_the_right_argument() {
+    let source = "type G2<A, B> = () => B;\ninterface R2 { cb: G2<number, string>; }\nconst v2: R2 = { cb: () => 6 };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2322);
+    assert_eq!(
+        diagnostic.message_text, "Type 'number' is not assignable to type 'string'.",
+        "the return type is instantiated to the second argument: {diagnostic:?}"
+    );
+    let (start, length, _) = return_pointer(&diagnostic);
+    assert_eq!(span_text(source, start, length), "() => B");
+    assert_eq!(start, 16);
 }
 
 /// An alias chain in the *owner* position is followed — a different shape from
