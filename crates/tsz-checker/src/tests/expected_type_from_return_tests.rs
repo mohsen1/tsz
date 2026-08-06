@@ -214,19 +214,156 @@ fn block_bodied_function_expression_keeps_the_property_pointer() {
     );
 }
 
-/// A member annotated with a type *reference* declines. tsc anchors inside the
-/// alias body (`type Fn = () => string` → the `() => string` there), which
-/// needs an alias hop this walk deliberately does not take; declining leaves
-/// output exactly as it was rather than anchoring at `Fn` or at `cb`. Pinned so
-/// the day the hop lands, this row's move is visible.
+/// A member annotated with a type *reference* still declines, and the reason is
+/// **not** in the pointer walk — recorded here because the obvious fix (hop the
+/// alias when anchoring) is a dead end that would add unreachable code.
+///
+/// tsc anchors inside the alias body:
+///
+/// ```text
+/// d.ts:3:29 - error TS2322: Type 'number' is not assignable to type 'string'.
+///   d.ts:1:11 - The expected type comes from the return type of this signature.
+///     1 type Fn = () => string;
+///                 ~~~~~~~~~~~~
+/// ```
+///
+/// `Ref` resolves to a real binder symbol, so the symbol route reaches `cb`
+/// fine. The gap is a whole frame earlier: the arrow-body drill in
+/// `elaboration_object_properties` never fires for an alias-annotated member,
+/// so no `TS6502` attach site is reached at all. The witness is the pointer this
+/// diagnostic *does* carry — `TS6500`, which is only attached on the
+/// **undrilled** branch. Whatever makes that branch win for a member typed
+/// through an alias owns this row.
 #[test]
-fn type_reference_annotation_declines_rather_than_anchoring_at_the_reference() {
+fn type_reference_annotation_declines_because_the_arrow_body_is_never_drilled() {
     let source =
         "type Fn = () => string;\ninterface Ref { cb: Fn; }\nconst rf: Ref = { cb: () => 6 };\n";
     let diagnostic = only(&check_source_diagnostics(source), TS2322);
     assert!(
         !has_return_pointer(&diagnostic),
-        "an alias-annotated member must decline: {diagnostic:?}"
+        "an alias-annotated member is never drilled, so no TS6502 site is reached: {diagnostic:?}"
+    );
+    assert!(
+        diagnostic
+            .related_information
+            .iter()
+            .any(|info| info.code == TS6500),
+        "the TS6500 pointer is the witness that the undrilled branch ran: {diagnostic:?}"
+    );
+}
+
+/// An alias chain in the *owner* position is followed — a different shape from
+/// the row above, where the alias sits on the member. `Ind`'s own declaration
+/// carries no member list, so the walk must continue through its body to reach
+/// the literal that declares `cb`. Oracled: `k.ts:1:18`, inside `Zed`.
+#[test]
+fn an_alias_chain_in_the_owner_position_is_followed_to_the_declaring_literal() {
+    let source =
+        "type Zed = { cb: () => string };\ntype Ind = Zed;\nconst q: Ind = { cb: () => 6 };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2322);
+    let (start, length, _) = return_pointer(&diagnostic);
+    assert_eq!(span_text(source, start, length), "() => string");
+    assert_eq!(start, 17, "the anchor is Zed's member, not Ind's body");
+}
+
+/// A type alias whose body is a type literal owns no interface declaration for
+/// the symbol route to walk, so this is the anonymous-owner shape reached
+/// through the annotation instead. Oracled: `a.ts:1:18`.
+#[test]
+fn a_type_alias_to_a_type_literal_anchors_at_its_member_signature() {
+    let source = "type Lit = { cb: () => string };\nconst rt: Lit = { cb: () => 6 };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2322);
+    let (start, length, _) = return_pointer(&diagnostic);
+    assert_eq!(span_text(source, start, length), "() => string");
+    assert_eq!(start, 17);
+}
+
+/// The method-signature shape of the row above: no separate annotation node, so
+/// the whole member is underlined, trailing `;` included. Oracled: `e.ts:1:15`,
+/// 12 columns.
+#[test]
+fn a_method_signature_inside_a_type_alias_is_underlined_whole() {
+    let source = "type Lit2 = { m(): string; };\nconst rt2: Lit2 = { m: () => 6 };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2322);
+    let (start, length, _) = return_pointer(&diagnostic);
+    assert_eq!(span_text(source, start, length), "m(): string;");
+}
+
+/// Renamed binders: the same annotation shape under different user names keeps
+/// the same anchor rule and only moves the span, so no identifier text can be
+/// driving the decision. Oracled: `f.ts:1:20`.
+#[test]
+fn renamed_binders_keep_the_anchor_rule_and_only_move_the_span() {
+    let source = "type Zeta = { qux: () => string };\nconst zz: Zeta = { qux: () => 6 };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2322);
+    let (start, length, _) = return_pointer(&diagnostic);
+    assert_eq!(span_text(source, start, length), "() => string");
+    assert_eq!(start, 19);
+}
+
+/// A *nested* member's owner is an inner type literal, which mints no binder
+/// symbol at all (tsz#16443) — the shape every owner candidate declines on.
+/// Oracled: `b.ts:1:32`, inside the inner literal.
+#[test]
+fn a_nested_type_literal_owner_anchors_through_the_written_path() {
+    let source = "interface Outer { inner: { cb: () => string }; }\nconst o: Outer = { inner: { cb: () => 6 } };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2322);
+    let (start, length, _) = return_pointer(&diagnostic);
+    assert_eq!(span_text(source, start, length), "() => string");
+    assert_eq!(start, 31);
+}
+
+/// Two hops rather than one, so the walk is following the written path and not
+/// merely unwrapping a single level. Oracled: `g.ts:1:41`.
+#[test]
+fn a_twice_nested_owner_walks_every_hop_of_the_written_path() {
+    let source = "interface Outer2 { inner: { deep: { cb: () => string } }; }\nconst o2: Outer2 = { inner: { deep: { cb: () => 6 } } };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2322);
+    let (start, length, _) = return_pointer(&diagnostic);
+    assert_eq!(span_text(source, start, length), "() => string");
+    assert_eq!(start, 40);
+}
+
+/// An inline annotation names no type at all, so the annotation node *is* the
+/// owner and the path needs no hop. Oracled: `c.ts:1:17`.
+#[test]
+fn an_inline_type_literal_annotation_anchors_at_its_own_member() {
+    let source = "const rt: { cb: () => string } = { cb: () => 6 };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2322);
+    let (start, length, _) = return_pointer(&diagnostic);
+    assert_eq!(span_text(source, start, length), "() => string");
+    assert_eq!(start, 16);
+}
+
+/// Parentheses are peeled: tsc underlines the function type itself, not the
+/// parenthesized wrapper. Oracled: `j.ts:1:19`, 12 columns — the `(` at column
+/// 18 is outside the underline.
+#[test]
+fn a_parenthesized_function_type_annotation_anchors_inside_the_parentheses() {
+    let source = "type Par = { cb: (() => string) };\nconst pp: Par = { cb: () => 6 };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2322);
+    let (start, length, _) = return_pointer(&diagnostic);
+    assert_eq!(span_text(source, start, length), "() => string");
+}
+
+/// The negative control for the paren peel: a member whose annotation merely
+/// *contains* a signature must never borrow one. `callable_type_node_anchor`
+/// peels the parentheses, finds a union, and declines because a union declares
+/// no signature of its own.
+///
+/// tsz drills this body where tsc does not — tsc reports the whole function
+/// type at the member with a `TS6500` pointer, tsz reports at the `6` — a
+/// pre-existing primary divergence this diff neither causes nor moves. Asserted
+/// only as "no `TS6502`", so the row pins the walk's own decision and stays
+/// honest about the frame disagreement above it.
+#[test]
+fn a_union_annotation_takes_no_return_pointer() {
+    let source =
+        "type Uni = { cb: (() => string) | undefined };\nconst uu: Uni = { cb: () => 6 };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2322);
+    assert!(
+        !has_return_pointer(&diagnostic),
+        "a union annotation declares no signature to point at: {diagnostic:?}"
     );
 }
 
