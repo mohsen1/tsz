@@ -192,6 +192,7 @@ struct DeferredPropertyMemoKey {
     allow_private_identifier_properties: bool,
     no_unchecked_indexed_access: bool,
     exact_optional_property_types: bool,
+    strict_null_checks: bool,
 }
 
 /// Memo entry for the deferred-property cache.
@@ -216,6 +217,14 @@ pub struct PropertyAccessEvaluator<'a> {
     resolver: Option<&'a dyn TypeResolver>,
     pub(crate) no_unchecked_indexed_access: bool,
     pub(crate) exact_optional_property_types: bool,
+    /// Whether `strictNullChecks` is enabled.
+    ///
+    /// Gates tsc's `getApparentType` tail
+    /// (`t.flags & TypeFlags.Unknown && !strictNullChecks ? emptyObjectType : t`):
+    /// with the flag off, an `unknown` receiver — including the implicit
+    /// constraint of an unconstrained type parameter — looks up members on the
+    /// empty object type, so the global `Object` members resolve.
+    pub(crate) strict_null_checks: bool,
     /// Unified recursion guard for cycle detection and depth limiting.
     pub(crate) guard: RefCell<crate::recursion::RecursionGuard<TypeId>>,
     /// When true, `bind_object_receiver_this` is a no-op. Set when resolving
@@ -267,6 +276,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             resolver: None,
             no_unchecked_indexed_access: false,
             exact_optional_property_types: TypeCompilerOptions::exact_optional_property_types(db),
+            strict_null_checks: TypeCompilerOptions::strict_null_checks(db),
             guard: RefCell::new(crate::recursion::RecursionGuard::with_profile(
                 crate::recursion::RecursionProfile::PropertyAccess,
             )),
@@ -290,6 +300,10 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
     pub const fn set_exact_optional_property_types(&mut self, enabled: bool) {
         self.exact_optional_property_types = enabled;
+    }
+
+    pub const fn set_strict_null_checks(&mut self, enabled: bool) {
+        self.strict_null_checks = enabled;
     }
 
     /// Skip `this` binding during property resolution. When set, raw `ThisType`
@@ -531,6 +545,26 @@ impl<'a> PropertyAccessEvaluator<'a> {
             })
     }
 
+    /// Members visible on an `unknown` apparent type.
+    ///
+    /// tsc's `getApparentType` ends with
+    /// `t.flags & TypeFlags.Unknown && !strictNullChecks ? emptyObjectType : t`,
+    /// so with `strictNullChecks` off an `unknown` receiver — including the
+    /// implicit constraint of an unconstrained type parameter, which
+    /// `getBaseConstraintOfType` reduces to `unknown` — looks its members up on
+    /// the empty object type and therefore finds the global `Object` members
+    /// (`toString`, `valueOf`, `hasOwnProperty`, ...). With the flag on,
+    /// `unknown` keeps no members at all.
+    ///
+    /// `None` means "no apparent member": the caller keeps whatever result it
+    /// produced before, so only successful lookups change.
+    fn unknown_apparent_object_member(&self, prop_atom: Atom) -> Option<PropertyAccessResult> {
+        if self.strict_null_checks {
+            return None;
+        }
+        self.resolve_object_member(prop_atom)
+    }
+
     pub(crate) fn is_deferred_any_fallback_member(&self, type_id: TypeId) -> bool {
         if type_id.is_intrinsic() {
             return false;
@@ -653,6 +687,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             allow_private_identifier_properties: self.allow_private_identifier_properties.get(),
             no_unchecked_indexed_access: self.no_unchecked_indexed_access,
             exact_optional_property_types: self.exact_optional_property_types,
+            strict_null_checks: self.strict_null_checks,
         }
     }
 
@@ -764,7 +799,9 @@ impl<'a> PropertyAccessEvaluator<'a> {
             TypeData::Intrinsic(kind) => {
                 match kind {
                     IntrinsicKind::Any => PropertyAccessResult::simple(TypeId::ANY),
-                    IntrinsicKind::Unknown => PropertyAccessResult::IsUnknown,
+                    IntrinsicKind::Unknown => self
+                        .unknown_apparent_object_member(prop_atom)
+                        .unwrap_or(PropertyAccessResult::IsUnknown),
                     IntrinsicKind::Void => {
                         // In tsc, accessing a property on `void` produces TS2339
                         // ("Property 'X' does not exist on type 'void'"), NOT TS2532
@@ -1090,15 +1127,18 @@ impl<'a> PropertyAccessEvaluator<'a> {
                     self.skip_this_binding.set(prev);
                     result
                 } else {
-                    // Unconstrained type parameters have no properties in tsc.
-                    // In TypeScript 6.0+, an unconstrained T is treated as `{}`
-                    // which does NOT include Object prototype methods (toString,
-                    // valueOf, hasOwnProperty, etc.). Accessing any property on
-                    // bare T emits TS2339 "Property X does not exist on type T".
-                    PropertyAccessResult::PropertyNotFound {
-                        type_id: obj_type,
-                        property_name: prop_atom,
-                    }
+                    // An unconstrained type parameter has no base constraint, so
+                    // tsc's `getApparentType` reduces it to `unknown` — which
+                    // carries the empty object type's members when
+                    // `strictNullChecks` is off, and none at all when it is on.
+                    // A genuinely absent member stays TS2339 against `T` itself,
+                    // never against the substituted apparent type.
+                    self.unknown_apparent_object_member(prop_atom).unwrap_or(
+                        PropertyAccessResult::PropertyNotFound {
+                            type_id: obj_type,
+                            property_name: prop_atom,
+                        },
+                    )
                 }
             }
 

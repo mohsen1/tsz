@@ -20,11 +20,13 @@ impl QueryCache<'_> {
         // PropertyAccessEvaluator with the current QueryDatabase.
         let exact_optional_property_types =
             crate::caches::db::TypeCompilerOptions::exact_optional_property_types(self);
+        let strict_null_checks = crate::caches::db::TypeCompilerOptions::strict_null_checks(self);
         let key = (
             object_type,
             prop_atom,
             no_unchecked_indexed_access,
             exact_optional_property_types,
+            strict_null_checks,
         );
         if let Some(result) = self.check_property_cache(key) {
             return result;
@@ -33,6 +35,7 @@ impl QueryCache<'_> {
         let mut evaluator = crate::operations::property::PropertyAccessEvaluator::new(self);
         evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
         evaluator.set_exact_optional_property_types(exact_optional_property_types);
+        evaluator.set_strict_null_checks(strict_null_checks);
         let result = evaluator.resolve_property_access_atom(object_type, prop_atom);
         if evaluator.property_result_cacheable() {
             self.insert_property_cache(key, result);
