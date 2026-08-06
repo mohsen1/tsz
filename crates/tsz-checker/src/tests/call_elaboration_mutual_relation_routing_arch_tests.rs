@@ -178,7 +178,11 @@ fn call_elaboration_object_array_helpers_use_relation_outcome_boundary() {
 
     assert_eq!(
         helpers.matches("call_arg_relation_outcome(").count(),
-        6,
+        // One probe moved out with `all_object_literal_properties_assignable_with_literals`
+        // when it was split into `elaboration_object_literal_completeness.rs` to
+        // hold the file under the 2000-line cap; that helper's boundary usage is
+        // asserted against its own file below.
+        5,
         "object/array call elaboration helper probes should route through call_arg_relation_outcome"
     );
     assert_eq!(
@@ -195,5 +199,22 @@ fn call_elaboration_object_array_helpers_use_relation_outcome_boundary() {
     assert!(
         !helpers.contains("diagnostic_relation_boolean_guard("),
         "object/array elaboration helpers should not use raw relation guards"
+    );
+
+    // The split-out object-literal-completeness helper carries the moved probe,
+    // and must keep routing it through the same boundary rather than a raw guard.
+    let completeness = fs::read_to_string(
+        "src/error_reporter/call_errors/elaboration_object_literal_completeness.rs",
+    )
+    .expect("failed to read elaboration_object_literal_completeness.rs");
+    assert_eq!(
+        completeness.matches("call_arg_relation_outcome(").count(),
+        1,
+        "the split-out completeness helper should route its per-property probe through call_arg_relation_outcome"
+    );
+    assert!(
+        !completeness.contains("assign_relation_outcome(")
+            && !completeness.contains("diagnostic_relation_boolean_guard("),
+        "the split-out completeness helper should not use generic or raw relation guards"
     );
 }

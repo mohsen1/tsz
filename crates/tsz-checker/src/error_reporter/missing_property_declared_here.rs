@@ -85,16 +85,7 @@ impl<'a> CheckerState<'a> {
             let Some(node) = self.ctx.arena.get(current) else {
                 break;
             };
-            if node.kind == syntax_kind_ext::VARIABLE_DECLARATION
-                || node.kind == syntax_kind_ext::PARAMETER
-                || node.kind == syntax_kind_ext::PROPERTY_DECLARATION
-                || node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                || node.kind == syntax_kind_ext::ARROW_FUNCTION
-                || node.kind == syntax_kind_ext::METHOD_DECLARATION
-                || node.kind == syntax_kind_ext::BLOCK
-                || node.kind == syntax_kind_ext::SOURCE_FILE
-            {
+            if Self::is_contextual_walk_boundary(node.kind) {
                 break;
             }
             let name_idx = if node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
@@ -124,6 +115,61 @@ impl<'a> CheckerState<'a> {
         }
         path.reverse();
         path
+    }
+
+    /// The declaration/function/block boundary an upward contextual walk stops
+    /// at, so it never crosses out of the assignment being described. Shared by
+    /// [`Self::contextual_property_path`] and
+    /// [`Self::contextual_tuple_element_index`] so the two walks provably agree
+    /// on where one assignment ends.
+    const fn is_contextual_walk_boundary(kind: u16) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        kind == syntax_kind_ext::VARIABLE_DECLARATION
+            || kind == syntax_kind_ext::PARAMETER
+            || kind == syntax_kind_ext::PROPERTY_DECLARATION
+            || kind == syntax_kind_ext::FUNCTION_DECLARATION
+            || kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            || kind == syntax_kind_ext::ARROW_FUNCTION
+            || kind == syntax_kind_ext::METHOD_DECLARATION
+            || kind == syntax_kind_ext::BLOCK
+            || kind == syntax_kind_ext::SOURCE_FILE
+    }
+
+    /// The index of the failing element inside its nearest enclosing array
+    /// literal, or `None` when the failure is not an array-literal element.
+    ///
+    /// A missing-property failure on a tuple element is reported per element, so
+    /// each diagnostic anchors at its own element literal; that literal's
+    /// position is the tuple index tsc points its `'x' is declared here.` at when
+    /// two elements declare the same property and uniqueness cannot choose. The
+    /// walk stops at the same declaration/function boundaries
+    /// [`Self::contextual_property_path`] uses so an array literal from an
+    /// unrelated outer assignment is never attributed here. A parenthesized
+    /// element (`[({ ... })]`) is handled by the plain parent walk: the paren
+    /// node is itself the array literal's element, so it matches directly.
+    pub(super) fn contextual_tuple_element_index(&self, anchor_idx: NodeIndex) -> Option<usize> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let mut current = anchor_idx;
+        let mut guard = 0u32;
+        while current.is_some() {
+            guard += 1;
+            if guard > 32 {
+                return None;
+            }
+            let parent = self.ctx.arena.get_extended(current).map(|ext| ext.parent)?;
+            let parent_node = self.ctx.arena.get(parent)?;
+            if parent_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+                let arr = self.ctx.arena.get_literal_expr(parent_node)?;
+                return arr.elements.nodes.iter().position(|&elem| elem == current);
+            }
+            if Self::is_contextual_walk_boundary(parent_node.kind) {
+                return None;
+            }
+            current = parent;
+        }
+        None
     }
 
     /// Anchor recovered from the type annotation the failing assignment was
@@ -158,8 +204,16 @@ impl<'a> CheckerState<'a> {
         // taken, so an annotation that does not declare the path declines here
         // exactly as it does at the top level.
         let path = self.contextual_property_path(anchor_idx);
+        // The failure's position inside its nearest enclosing array literal is
+        // the tuple element index tsc anchors by: two tuple elements that both
+        // declare the missing property are disambiguated by *which* element
+        // literal failed, which uniqueness alone cannot recover. `None` when the
+        // failure is not an array-literal element (a plain object member), where
+        // the tuple arm falls back to uniqueness. The index is consumed only at
+        // the member-level tuple (see `annotation_property_anchor`).
+        let element_index = self.contextual_tuple_element_index(anchor_idx);
         let anchor = if path.is_empty() {
-            self.annotation_property_anchor(annotation_idx, property, 0)
+            self.annotation_property_anchor(annotation_idx, property, element_index, 0)
         } else {
             let mut member_type_idx = annotation_idx;
             let mut walked = Some(());
@@ -172,7 +226,9 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
-            walked.and_then(|()| self.annotation_property_anchor(member_type_idx, property, 0))
+            walked.and_then(|()| {
+                self.annotation_property_anchor(member_type_idx, property, element_index, 0)
+            })
         };
         let (start, length, file) = anchor?;
         Some(Diagnostic::related_pointer(
@@ -199,6 +255,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         idx: NodeIndex,
         property: &str,
+        element_index: Option<usize>,
         depth: u32,
     ) -> Option<(u32, u32, Option<String>)> {
         use tsz_parser::parser::syntax_kind_ext;
@@ -208,8 +265,10 @@ impl<'a> CheckerState<'a> {
         }
         let node = self.ctx.arena.get(idx)?;
         if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE {
+            // A parenthesis wraps the same collection, so a tuple position
+            // written as `([T, T])` still selects by index inside — propagate it.
             let inner = self.ctx.arena.get_wrapped_type(node)?.type_node;
-            return self.annotation_property_anchor(inner, property, depth + 1);
+            return self.annotation_property_anchor(inner, property, element_index, depth + 1);
         }
         if node.kind == syntax_kind_ext::TYPE_LITERAL {
             let arena = self.ctx.arena;
@@ -233,10 +292,16 @@ impl<'a> CheckerState<'a> {
                 }
                 // An alias chain (`type Indirect = Zed`) declares no member list of
                 // its own, so the walk above finds nothing to anchor in. Continue
-                // through the alias body, which is itself annotation syntax.
+                // through the alias body, which is itself annotation syntax. A
+                // tuple aliased directly (`type T = [A, B]`) keeps the element
+                // index, so `member: T` still selects by position.
                 if let Some(body_idx) = self.local_type_alias_body(owner_symbol)
-                    && let Some(anchor) =
-                        self.annotation_property_anchor(body_idx, property, depth + 1)
+                    && let Some(anchor) = self.annotation_property_anchor(
+                        body_idx,
+                        property,
+                        element_index,
+                        depth + 1,
+                    )
                 {
                     return Some(anchor);
                 }
@@ -244,7 +309,8 @@ impl<'a> CheckerState<'a> {
             // The reference itself declares no `property`, so look in what it is
             // parameterized by: `Array<T>` and `ReadonlyArray<T>` hold the written
             // element shape in a type argument exactly as `T[]` holds it in its
-            // element type, and `tsc` anchors there identically.
+            // element type, and `tsc` anchors there identically. Type arguments
+            // are not tuple positions, so the element index does not apply here.
             //
             // This is deliberately not keyed to the global array types. The
             // question the walk answers is "where is `property` written?", and a
@@ -259,7 +325,7 @@ impl<'a> CheckerState<'a> {
             let (object_idx, index_idx) = (data.object_type, data.index_type);
             let key = self.written_index_key(index_idx)?;
             let member_type_idx = self.annotation_member_type_node(object_idx, &key, depth)?;
-            return self.annotation_property_anchor(member_type_idx, property, depth + 1);
+            return self.annotation_property_anchor(member_type_idx, property, None, depth + 1);
         }
         if node.kind == syntax_kind_ext::ARRAY_TYPE {
             // `T[]` and `T` describe the same element shape at every index, so
@@ -268,32 +334,48 @@ impl<'a> CheckerState<'a> {
             // `T`-typed member. The array itself contributes no path segment
             // (`contextual_property_path` already skips over
             // `ARRAY_LITERAL_EXPRESSION` without pushing a name), so this is a
-            // plain descent into the element type, not a new path step.
+            // plain descent into the element type, not a new path step. An
+            // element index belongs to *this* array's own literal, whose element
+            // type is index-independent; any tuple nested deeper is a different
+            // literal level and resolves by uniqueness, so drop the index.
             let element_idx = self.ctx.arena.get_array_type(node)?.element_type;
-            return self.annotation_property_anchor(element_idx, property, depth + 1);
+            return self.annotation_property_anchor(element_idx, property, None, depth + 1);
         }
         if node.kind == syntax_kind_ext::TYPE_OPERATOR {
             let data = self.ctx.arena.get_type_operator(node)?;
-            // `readonly T[]` describes the same element shape as `T[]`, so the
-            // operator contributes no path segment and the walk descends into
-            // its operand. `keyof`/`unique` are *not* transparent this way —
-            // `keyof T` denotes T's keys, not T — so they decline here.
+            // `readonly T[]` / `readonly [T, T]` describe the same element shapes
+            // as their operand, so the operator contributes no path segment and
+            // the walk descends into its operand, keeping the element index so a
+            // `readonly` tuple position still selects by index. `keyof`/`unique`
+            // are *not* transparent this way — `keyof T` denotes T's keys, not T
+            // — so they decline here.
             if data.operator != tsz_scanner::SyntaxKind::ReadonlyKeyword as u16 {
                 return None;
             }
             let operand_idx = data.type_node;
-            return self.annotation_property_anchor(operand_idx, property, depth + 1);
+            return self.annotation_property_anchor(
+                operand_idx,
+                property,
+                element_index,
+                depth + 1,
+            );
         }
         if node.kind == syntax_kind_ext::TUPLE_TYPE {
             // A tuple element type describes the shape written at that index
             // exactly as an array's element type describes the shape at every
             // index, and tsc anchors a missing-property pointer for a tuple
-            // element literal inside that element's own type. Like `ARRAY_TYPE`
-            // above, the tuple contributes no path segment —
-            // `contextual_property_path` skips `ARRAY_LITERAL_EXPRESSION`
-            // without pushing a name, so the walk arrives here carrying no
-            // element position and resolves the element by uniqueness instead.
+            // element literal inside that element's own type. When the failing
+            // array-literal element's position is known (`element_index`), select
+            // that element directly — two elements declaring the same property
+            // are disambiguated by position, matching tsc. Without a position
+            // (e.g. an indexed access reached this tuple), fall back to
+            // uniqueness: anchor when exactly one element declares the property.
             let elements = self.ctx.arena.get_tuple_type(node)?.elements.nodes.clone();
+            if let Some(index) = element_index
+                && let Some(&element_idx) = elements.get(index)
+            {
+                return self.annotation_property_anchor(element_idx, property, None, depth + 1);
+            }
             return self.unique_sibling_type_anchor(&elements, property, depth);
         }
         if node.kind == syntax_kind_ext::NAMED_TUPLE_MEMBER {
@@ -301,14 +383,14 @@ impl<'a> CheckerState<'a> {
             // position, not a property, so it matches nothing in the failing
             // literal and the walk descends straight into the member's type.
             let inner = self.ctx.arena.get_named_tuple_member(node)?.type_node;
-            return self.annotation_property_anchor(inner, property, depth + 1);
+            return self.annotation_property_anchor(inner, property, None, depth + 1);
         }
         if node.kind == syntax_kind_ext::OPTIONAL_TYPE || node.kind == syntax_kind_ext::REST_TYPE {
             // `[a?: T]` and `[...T[]]` constrain how many elements may be
             // written, not what shape each one has, so both are transparent to
             // a walk asking where `property` is declared.
             let inner = self.ctx.arena.get_wrapped_type(node)?.type_node;
-            return self.annotation_property_anchor(inner, property, depth + 1);
+            return self.annotation_property_anchor(inner, property, None, depth + 1);
         }
         None
     }
@@ -319,6 +401,8 @@ impl<'a> CheckerState<'a> {
     /// Declines when two candidates both declare `property`: the walk has no
     /// basis to pick between them, and pointing at the wrong one is worse than
     /// omitting the pointer, which is what every other declining path here does.
+    /// Used only when no element position is available; a known tuple position
+    /// is resolved directly by [`Self::annotation_property_anchor`].
     fn unique_sibling_type_anchor(
         &mut self,
         candidates: &[NodeIndex],
@@ -327,7 +411,8 @@ impl<'a> CheckerState<'a> {
     ) -> Option<(u32, u32, Option<String>)> {
         let mut found: Option<(u32, u32, Option<String>)> = None;
         for &argument_idx in candidates {
-            let Some(anchor) = self.annotation_property_anchor(argument_idx, property, depth + 1)
+            let Some(anchor) =
+                self.annotation_property_anchor(argument_idx, property, None, depth + 1)
             else {
                 continue;
             };
