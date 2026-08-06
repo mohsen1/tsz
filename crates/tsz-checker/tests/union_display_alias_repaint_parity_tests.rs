@@ -8,11 +8,13 @@
 //! member list *plus* the alias identity, so the aliased and the longhand
 //! spelling are two distinct `Type` objects and neither can repaint the other.
 //!
-//! tsz interns one `TypeId` per content and carries the alias in a global
-//! `TypeId -> alias` side table (`TypeInterner::store_display_alias` /
-//! `get_display_alias`), so an alias declared anywhere can repaint a
-//! structurally identical type written longhand somewhere else. That is the
-//! divergence the `#[ignore]`d rows below record.
+//! tsz interns one `TypeId` per content and recovered the alias from global
+//! reverse tables (`body -> alias`, `type -> def`, `store_display_alias` /
+//! `get_display_alias`), so an alias declared anywhere used to repaint a
+//! structurally identical union written longhand somewhere else. #16610 fixes
+//! that for the directly-written union family: `mark_longhand_union_annotation`
+//! records the longhand occurrence at type-node resolution, and the diagnostic
+//! display gateways refuse the repaint for a marked union.
 //!
 //! Every expectation here was verified against the pinned oracle
 //! (`typescript@7.0.2`, `--noEmit --strict --lib es2022 --target es2022`), one
@@ -20,9 +22,11 @@
 //! which matters especially here, since the defect is precisely about one
 //! declaration reaching another site.
 //!
-//! Live rows are a regression floor for the spellings that already match.
-//! `#[ignore]`d rows are tripwires: they assert `tsc`'s answer and are expected
-//! to fail until the repaint is fixed. Run them with
+//! Live rows are the regression floor: the spellings that already matched and
+//! the longhand-union family fixed by #16610. The remaining `#[ignore]`d rows
+//! are tripwires for two *separate* mechanisms — `keyof any` operator resolution
+//! and the collapsing-alias display — expected to fail until each is fixed. Run
+//! them with
 //! `cargo test -p tsz-checker --test union_display_alias_repaint_parity_tests -- --ignored`.
 
 use tsz_checker::CheckerOptions;
@@ -128,17 +132,22 @@ fn interface_declared_elsewhere_does_not_repaint_a_longhand_object() {
 }
 
 // ---------------------------------------------------------------------------
-// Tripwires: oracle-verified divergences. Expected to fail until fixed.
+// Regression floor: the longhand-union repaint family, fixed in #16610.
+//
+// A longhand-written primitive/literal union carries no `aliasSymbol` in `tsc`,
+// so a non-generic type-alias name is no longer recovered for it from the
+// interner's global reverse tables: `mark_longhand_union_annotation` records the
+// occurrence at type-node resolution, and the diagnostic display gateways refuse
+// the repaint for a marked union. A genuine alias reference reaches display as a
+// `Lazy(DefId)` and keeps its name, so referencing the alias is unaffected.
 // ---------------------------------------------------------------------------
 
-/// A longhand primitive union is repainted by a **lib** alias the source never
-/// mentions. tsz renders `PropertyKey`; tsc renders the union.
-///
-/// This is the widest-reach row: every `string | number | symbol` written by
-/// any user anywhere renders as `PropertyKey`, because `lib.es5.d.ts` declares
-/// that alias and the display-alias table is keyed on the interned `TypeId`.
+/// A longhand primitive union is not repainted by a **lib** alias the source
+/// never mentions. Widest-reach row: before the fix every
+/// `string | number | symbol` a user wrote rendered as `PropertyKey`, because
+/// `lib.es5.d.ts` declares that alias and the reverse tables are keyed on the
+/// interned `TypeId`.
 #[test]
-#[ignore = "known divergence: lib alias repaints a longhand primitive union (display-alias table is global by TypeId)"]
 fn longhand_primitive_union_is_not_repainted_by_an_unreferenced_lib_alias() {
     let source = "declare const value: string | number | symbol;\n\
                   const target: boolean = value;\n";
@@ -149,7 +158,6 @@ fn longhand_primitive_union_is_not_repainted_by_an_unreferenced_lib_alias() {
 /// referenced. No lib involvement, so this row rules out "the lib is stamped
 /// specially" as the cause.
 #[test]
-#[ignore = "known divergence: an unreferenced user alias repaints a longhand primitive union"]
 fn longhand_primitive_union_is_not_repainted_by_an_unreferenced_user_alias() {
     let source = "type Zed = string | number | symbol;\n\
                   declare const value: string | number | symbol;\n\
@@ -161,7 +169,6 @@ fn longhand_primitive_union_is_not_repainted_by_an_unreferenced_user_alias() {
 /// anything keyed on the specific alias name or on the three-member shape that
 /// `PropertyKey` happens to have.
 #[test]
-#[ignore = "known divergence: an unreferenced user alias repaints a longhand primitive union"]
 fn renamed_binders_longhand_two_member_union_is_not_repainted_by_its_alias() {
     let source = "type Pair = string | number;\n\
                   declare const other: string | number;\n\
@@ -173,7 +180,6 @@ fn renamed_binders_longhand_two_member_union_is_not_repainted_by_its_alias() {
 /// behaviour is not a declaration-order artifact that a source-order rule could
 /// explain away.
 #[test]
-#[ignore = "known divergence: an unreferenced user alias repaints a longhand primitive union"]
 fn an_alias_declared_after_the_use_site_does_not_repaint_the_longhand_union() {
     let source = "declare const value: string | number;\n\
                   const target: boolean = value;\n\
@@ -185,9 +191,9 @@ fn an_alias_declared_after_the_use_site_does_not_repaint_the_longhand_union() {
 /// `string | number | symbol` eagerly, so the operator never reaches the
 /// printer. tsz keeps the `KeyOf` node and renders it verbatim.
 ///
-/// Kept in this file because the two interact — once `keyof any` resolves to
-/// the union, it lands on exactly the `TypeId` the rows above show is
-/// repainted, so fixing this one alone would render `PropertyKey` here.
+/// Unblocked by the #16610 fix above — the resolved union now renders
+/// structurally rather than `PropertyKey` — but resolving the `keyof any`
+/// operator for display is its own change and stays a tripwire.
 #[test]
 #[ignore = "known divergence: `keyof any` is not resolved to its member union for display"]
 fn keyof_any_renders_as_its_resolved_member_union() {
