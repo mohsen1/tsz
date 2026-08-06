@@ -411,6 +411,32 @@ impl TypeInterner {
         self.literal_object_annotations.contains_key(&type_id)
     }
 
+    /// Record that `type_id` is a union the user wrote *longhand* at a
+    /// type-annotation site (a `UnionType` node that is not a type-alias body).
+    ///
+    /// See [`Self::longhand_union_annotations`]: the diagnostic printer consults
+    /// this to refuse repainting a longhand union with a non-generic alias name
+    /// recovered from the interner's global reverse tables. Callers must not mark
+    /// a union written as an alias body, so that referencing the alias still
+    /// renders its name. Display-only provenance.
+    pub fn mark_longhand_union_annotation(&self, type_id: TypeId) {
+        if type_id.is_intrinsic() {
+            return;
+        }
+        if self
+            .longhand_union_annotations
+            .insert(type_id, ())
+            .is_none()
+        {
+            self.advance_display_provenance_generation();
+        }
+    }
+
+    /// Whether `type_id` is a recorded longhand-written union annotation.
+    pub fn is_longhand_union_annotation(&self, type_id: TypeId) -> bool {
+        self.longhand_union_annotations.contains_key(&type_id)
+    }
+
     /// Record that `member_type_id` was written as an anonymous object-type
     /// literal (`{ ... }`) directly inside the union `union_type_id`, as
     /// opposed to a named alias/interface reference whose body happens to

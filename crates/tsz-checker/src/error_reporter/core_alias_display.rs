@@ -82,6 +82,17 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        // A union the user wrote longhand carries no `aliasSymbol` in `tsc`, so
+        // it renders structurally rather than picking up a non-generic alias name
+        // from the reverse registrations below (#16610). The occurrence is
+        // distinguished by `mark_longhand_union_annotation` (an alias reference
+        // such as `T1 & T2` is never marked and still recovers `T1`; a genuine
+        // `declare const v: Zed` reaches the formatter as a `Lazy(DefId)` resolved
+        // before this helper). See `TypeInterner::longhand_union_annotations`.
+        if is_union && self.ctx.types.is_longhand_union_annotation(ty) {
+            return None;
+        }
+
         if let Some(def_id) = self.ctx.definition_store.find_def_for_type(ty)
             && let Some(def) = self.ctx.definition_store.get(def_id)
             && def.kind != tsz_solver::def::DefKind::TypeAlias

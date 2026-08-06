@@ -115,6 +115,17 @@ pub trait TypeDisplayProvenance {
         false
     }
 
+    /// Mark `type_id` as a union the user wrote longhand at a type-annotation
+    /// site (not as an alias body). See
+    /// `TypeInterner::mark_longhand_union_annotation`.
+    fn mark_longhand_union_annotation(&self, _type_id: TypeId) {}
+
+    /// Return whether `type_id` was recorded as a longhand-written union
+    /// annotation.
+    fn is_longhand_union_annotation(&self, _type_id: TypeId) -> bool {
+        false
+    }
+
     /// Mark `member_type_id` as an anonymous object-type literal written
     /// directly inside the union `union_type_id`. See
     /// `TypeInterner::mark_union_literal_member`.
@@ -286,6 +297,14 @@ impl TypeDisplayProvenance for TypeInterner {
 
     fn is_literal_object_annotation(&self, type_id: TypeId) -> bool {
         Self::is_literal_object_annotation(self, type_id)
+    }
+
+    fn mark_longhand_union_annotation(&self, type_id: TypeId) {
+        Self::mark_longhand_union_annotation(self, type_id);
+    }
+
+    fn is_longhand_union_annotation(&self, type_id: TypeId) -> bool {
+        Self::is_longhand_union_annotation(self, type_id)
     }
 
     fn mark_union_literal_member(&self, union_type_id: TypeId, member_type_id: TypeId) {

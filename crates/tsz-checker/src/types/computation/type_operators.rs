@@ -5,7 +5,37 @@ use super::super::unique_symbol_construction::unique_symbol_type_for_operator;
 use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeArena;
 use tsz_solver::TypeId;
+
+/// True when the `UnionType` node `idx` is (possibly through parenthesized
+/// wrappers) the body of a type-alias declaration.
+///
+/// A union written as an alias body carries the alias's `aliasSymbol` in `tsc`,
+/// so referencing the alias (`T1 & T2`, `T1 | null`) must keep the name; only a
+/// union written longhand at another site is alias-less and renders
+/// structurally. This gates `mark_longhand_union_annotation` so the two
+/// occurrences of the same interned union `TypeId` are not conflated (#16610).
+pub(crate) fn union_type_node_is_alias_body(arena: &NodeArena, idx: NodeIndex) -> bool {
+    let mut current = idx;
+    // Bounded to guard against a malformed parent cycle; a well-formed arena
+    // terminates far sooner when `parent_of` reaches the root (`NodeIndex::NONE`,
+    // for which `get` returns `None`).
+    for _ in 0..64 {
+        let Some(parent) = arena.parent_of(current) else {
+            return false;
+        };
+        let Some(parent_node) = arena.get(parent) else {
+            return false;
+        };
+        if parent_node.kind == tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_TYPE {
+            current = parent;
+            continue;
+        }
+        return arena.get_type_alias(parent_node).is_some();
+    }
+    false
+}
 
 impl<'a> CheckerState<'a> {
     /// Get type from a union type node (A | B).
@@ -106,6 +136,13 @@ impl<'a> CheckerState<'a> {
                         .types
                         .mark_union_literal_member(result, member_type);
                 }
+            }
+            // Record that this union was written *longhand* at an annotation
+            // site (not as a type-alias body), so the diagnostic printer refuses
+            // to recover a non-generic alias name for it from the interner's
+            // global reverse tables. See `mark_longhand_union_annotation`.
+            if !union_type_node_is_alias_body(self.ctx.arena, idx) {
+                self.ctx.types.mark_longhand_union_annotation(result);
             }
             return result;
         }

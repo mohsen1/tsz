@@ -785,6 +785,14 @@ impl TypeDisplayProvenance for QueryCache<'_> {
         self.interner.is_literal_object_annotation(type_id)
     }
 
+    fn mark_longhand_union_annotation(&self, type_id: TypeId) {
+        self.interner.mark_longhand_union_annotation(type_id);
+    }
+
+    fn is_longhand_union_annotation(&self, type_id: TypeId) -> bool {
+        self.interner.is_longhand_union_annotation(type_id)
+    }
+
     fn mark_union_literal_member(&self, union_type_id: TypeId, member_type_id: TypeId) {
         self.interner
             .mark_union_literal_member(union_type_id, member_type_id);

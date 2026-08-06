@@ -318,6 +318,15 @@ impl<'a> TypeFormatter<'a> {
             && members.contains(&TypeId::SYMBOL)
     }
 
+    /// True when `key`/`type_id` is a union the user wrote longhand at an
+    /// annotation site (recorded by `mark_longhand_union_annotation`). `tsc`
+    /// carries no `aliasSymbol` on such a union, so diagnostic alias-name
+    /// recovery must be refused for it (#16610). The cheap `Union` discriminant
+    /// check short-circuits the side-table probe for non-union keys.
+    fn is_longhand_annotation_union(&self, key: &TypeData, type_id: TypeId) -> bool {
+        matches!(key, TypeData::Union(_)) && self.interner.is_longhand_union_annotation(type_id)
+    }
+
     /// True when `key` is a `Union` whose members are all unit types: literal
     /// values, enum members, or unique symbols. Such a union is exactly what a
     /// user can spell directly as an annotation (`"a" | "b"`, `0 | 1`), so it
@@ -1344,8 +1353,18 @@ impl<'a> TypeFormatter<'a> {
                             | DefKind::Variable
                     ) | (TypeData::Enum(_, _), DefKind::Enum)
                 );
-            let unproven_primitive_key_union_alias =
-                def.kind == DefKind::TypeAlias && self.is_primitive_key_union_data(&key);
+            // Refuse a non-generic type-alias name for a union in two cases:
+            //   (1) the canonical property-key union (`string | number | symbol`)
+            //       is a shared structural sentinel (`keyof any` / `PropertyKey`)
+            //       and must never be repainted by an unrelated same-body alias;
+            //   (2) any union the user wrote longhand carries no `aliasSymbol` in
+            //       `tsc` (#16610), tracked via `mark_longhand_union_annotation`.
+            // A genuine alias reference (`T1 & T2`) whose body is interned to the
+            // same shape but is neither canonical nor written longhand keeps `T1`.
+            let unproven_primitive_key_union_alias = def.kind == DefKind::TypeAlias
+                && (self.is_primitive_key_union_data(&key)
+                    || (def.type_params.is_empty()
+                        && self.is_longhand_annotation_union(&key, type_id)));
             // An inline / anonymous composite annotation shares its interned
             // `TypeId` with a coincidentally-shaped non-generic type-alias body,
             // so the reverse `find_def_for_type` lookup cannot prove the source
@@ -1672,7 +1691,8 @@ impl<'a> TypeFormatter<'a> {
             // aggregate diagnostics.
             let skip_literal_annotation_application_alias = is_literal_object_annotation
                 && self.application_alias_base_has_mapped_body(alias_origin);
-            let skip_primitive_key_union_type_alias = self.is_primitive_key_union_data(&key)
+            let skip_primitive_key_union_type_alias = (self.is_primitive_key_union_data(&key)
+                || self.is_longhand_annotation_union(&key, type_id))
                 && matches!(
                     self.interner.lookup(alias_origin),
                     Some(TypeData::Lazy(def_id))

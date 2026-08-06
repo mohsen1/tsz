@@ -541,6 +541,25 @@ pub struct TypeInterner {
     /// union-member elaboration can ask "was *this* occurrence, in *this*
     /// union, written as a literal" instead of the shape-wide question.
     pub(super) union_literal_members: DashMap<(TypeId, TypeId), (), FxBuildHasher>,
+    /// Union `TypeId`s that were written *longhand* at a type-annotation site —
+    /// a `UnionType` node that is not itself a type-alias body.
+    ///
+    /// `tsc` stamps a union's `aliasSymbol` only on the `Type` built at the
+    /// alias's own `getUnionType(members, …, aliasSymbol)` call, so a
+    /// structurally identical union written longhand elsewhere is a distinct,
+    /// alias-less `Type` that renders structurally. tsz interns one `TypeId` for
+    /// both spellings and would otherwise recover a non-generic alias name from
+    /// its global reverse tables (`body -> alias`, `type -> def`, `PropertyKey`)
+    /// for the longhand occurrence too, repainting every longhand
+    /// `string | number | symbol` as `PropertyKey` and every `A | B` as an
+    /// unrelated same-shaped alias declared elsewhere (#16610). Recording which
+    /// ids the user actually wrote longhand lets the diagnostic printer refuse
+    /// that repaint for those — while a genuine alias reference, whose body is
+    /// interned to the same id but is *not* written longhand anywhere, keeps its
+    /// name. Alias bodies are deliberately excluded from this table so that
+    /// referencing the alias (`T1 & T2`, `T1 | null`) still renders `T1`.
+    /// Display-only; first write wins; membership is monotonic.
+    pub(super) longhand_union_annotations: DashMap<TypeId, (), FxBuildHasher>,
     /// As-written origin members for a Union TypeId, used to preserve top-level
     /// alias names that would otherwise be lost during union flattening.
     ///
@@ -874,6 +893,7 @@ impl TypeInterner {
             global_this_surface_display: DashMap::with_hasher(FxBuildHasher),
             literal_object_annotations: DashMap::with_hasher(FxBuildHasher),
             union_literal_members: DashMap::with_hasher(FxBuildHasher),
+            longhand_union_annotations: DashMap::with_hasher(FxBuildHasher),
             display_union_origin: DashMap::with_hasher(FxBuildHasher),
             union_complexity_overflow_by_thread: OnceLock::new(),
             union_complexity_pending_threads: AtomicUsize::new(0),

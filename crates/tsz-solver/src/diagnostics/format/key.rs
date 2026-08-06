@@ -91,9 +91,17 @@ impl<'a> TypeFormatter<'a> {
                 self.format_object_with_index(shape.as_ref()).into()
             }
             TypeData::Union(members) => {
+                // The canonical `string | number | symbol` collapses to
+                // `PropertyKey` in diagnostics, EXCEPT when the user wrote the
+                // union longhand: `tsc` carries no `aliasSymbol` on a longhand
+                // union, so it renders structurally (#16610). A genuine
+                // `PropertyKey` reference reaches display as a `Lazy(DefId)` and
+                // never lands here; an instantiated/evaluated key union carries no
+                // longhand mark, so it still collapses.
                 if self.diagnostic_mode
                     && !self.expand_primitive_key_union
                     && self.is_primitive_key_union_data(key)
+                    && !self.interner.is_longhand_union_annotation(type_id)
                 {
                     return Cow::Borrowed("PropertyKey");
                 }

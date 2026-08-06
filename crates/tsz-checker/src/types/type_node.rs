@@ -368,6 +368,18 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         .mark_union_literal_member(result, member_type);
                 }
             }
+            // See the sibling `get_type_from_union_type`
+            // (`computation::type_operators`): a longhand union annotation is
+            // recorded so the diagnostic printer refuses to repaint it with a
+            // non-generic alias name recovered from the interner's reverse tables
+            // (#16610). Alias bodies are excluded so referencing the alias keeps
+            // its name.
+            if !super::computation::type_operators::union_type_node_is_alias_body(
+                self.ctx.arena,
+                idx,
+            ) {
+                self.ctx.types.mark_longhand_union_annotation(result);
+            }
             return result;
         }
 

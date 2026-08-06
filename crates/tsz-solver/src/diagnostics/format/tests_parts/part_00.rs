@@ -143,11 +143,29 @@ fn primitive_key_union_registered_to_type_alias_formats_structurally_without_ori
 
 #[test]
 fn primitive_key_union_formats_as_property_key_in_diagnostic_mode() {
+    // A canonical key union that was NOT written longhand (e.g. an
+    // instantiated/evaluated `PropertyKey` / `keyof any` result) collapses to
+    // `PropertyKey` in diagnostic mode, matching `tsc`'s `aliasSymbol` display.
     let db = TypeInterner::new();
     let primitive_key_union = db.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
 
     let mut fmt = TypeFormatter::new(&db).with_diagnostic_mode();
     assert_eq!(fmt.format(primitive_key_union), "PropertyKey");
+}
+
+#[test]
+fn longhand_primitive_key_union_formats_structurally_in_diagnostic_mode() {
+    // A `string | number | symbol` the user wrote longhand carries no
+    // `aliasSymbol` in `tsc`, so it renders structurally rather than as
+    // `PropertyKey` (#16610). The checker records the occurrence via
+    // `mark_longhand_union_annotation`; the formatter refuses the `PropertyKey`
+    // collapse for such a marked union.
+    let db = TypeInterner::new();
+    let primitive_key_union = db.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
+    db.mark_longhand_union_annotation(primitive_key_union);
+
+    let mut fmt = TypeFormatter::new(&db).with_diagnostic_mode();
+    assert_eq!(fmt.format(primitive_key_union), "string | number | symbol");
 }
 
 #[test]
