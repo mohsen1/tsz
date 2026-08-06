@@ -590,6 +590,23 @@ fn interface_declares_index_signature(
     })
 }
 
+/// Whether a lib interface declares any member of its own.
+///
+/// An index signature that reaches an interface through its base chain (tracked
+/// by `index_signature_affected`) constrains **every** member that interface
+/// declares — not only members whose name collides with the augmentation, and
+/// not only an index signature the derived interface writes itself. So a lib
+/// interface that inherits a user-augmented index signature must be rechecked
+/// for heritage compatibility (TS2430) whenever it declares at least one own
+/// member (e.g. `CallableFunction`/`NewableFunction` declaring `apply`/`call`/
+/// `bind` while extending an augmented `Function`). An interface that declares
+/// nothing (`interface X extends Augmented {}`) cannot conflict and stays out.
+const fn interface_declares_own_member(
+    interface: &tsz_parser::parser::node::InterfaceData,
+) -> bool {
+    !interface.members.nodes.is_empty()
+}
+
 fn collect_user_global_interfaces_with_index_signatures(
     program: &MergedProgram,
 ) -> FxHashSet<String> {
@@ -757,7 +774,8 @@ pub(super) fn affected_lib_interface_names(
             if !affected.contains(&name) {
                 continue;
             }
-            if (index_signature_affected.contains(&name) && !interface.members.nodes.is_empty())
+            if (index_signature_affected.contains(&name)
+                && interface_declares_own_member(interface))
                 || interface_declares_member_named(
                     lib.arena.as_ref(),
                     interface,
@@ -867,7 +885,7 @@ pub(super) fn affected_lib_extension_interface_names(
             };
             if affected_interfaces.contains(&name)
                 && index_signature_affected.contains(&name)
-                && !interface.members.nodes.is_empty()
+                && interface_declares_own_member(interface)
             {
                 extension_interfaces.insert(name);
             }

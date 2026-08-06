@@ -115,6 +115,11 @@ guard = isNumber;
 /// Same rule, renamed binders — the predicate subject and interface names
 /// must not leak into the structural decision.
 #[test]
+/// The trailing `'meow' is declared here.` is tsc's `TS2728` pointer, folded in
+/// by `elaboration` with every other related-information line — not an extra
+/// chain frame. tsc emits it on this nested missing-property frame; tsz dropped
+/// it at `depth > 0` until #16443's nested-elaboration fix. Oracled on
+/// `typescript@7.0.2`: `pred.ts:1:17` on `meow`.
 fn incompatible_type_guards_reports_ts1226_renamed_binders() {
     let text = elaboration(
         r#"
@@ -130,7 +135,8 @@ guard = isDog;
         text,
         "Type '(value: unknown) => value is Dog' is not assignable to type '(value: unknown) => value is Cat'.\n\
          Type predicate 'value is Dog' is not assignable to 'value is Cat'.\n\
-         Property 'meow' is missing in type 'Dog' but required in type 'Cat'.",
+         Property 'meow' is missing in type 'Dog' but required in type 'Cat'.\n\
+         'meow' is declared here.",
     );
 }
 

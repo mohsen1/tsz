@@ -169,7 +169,12 @@ impl<'a> CheckerState<'a> {
             && !self.is_inside_namespace_declaration(stmt_idx);
         let has_parse_errors = node.this_or_subtree_has_error()
             || (self.ctx.has_real_syntax_errors && !wrong_context_allows_module_semantics);
-        if in_wrong_context && self.is_inside_function_body(stmt_idx) {
+        // A position-invalid import suppresses every specifier-derived diagnostic
+        // (TS2307, TS2882, missing-member checks) unless it actually resolves its
+        // specifier — a used binding anywhere, or a bound-but-unused import in a
+        // script top-level block. Only the placement grammar diagnostic (TS1232)
+        // survives otherwise. See `position_invalid_import_resolves_specifier`.
+        if in_wrong_context && !self.position_invalid_import_resolves_specifier(stmt_idx) {
             return;
         }
 
@@ -249,6 +254,24 @@ impl<'a> CheckerState<'a> {
 
         // Skip semantic import diagnostics when the import has parse errors.
         if has_parse_errors {
+            return;
+        }
+
+        // Outside a declaration scope, `checkImportDeclaration` has already
+        // returned at the TS1232 placement diagnostic above; whatever still
+        // resolves comes from a later pass whose reach depends on the
+        // import's own shape and the file's module-ness
+        // (`position_invalid_import_declaration_resolves_specifier`, #16505).
+        // `!is_inside_namespace_declaration` excludes a block nested inside a
+        // namespace body — that shape turns on whether the binding is
+        // referenced, not on module-ness, and is deliberately left alone (see
+        // the helper's doc comment).
+        if in_wrong_context
+            && !self.is_inside_namespace_declaration(stmt_idx)
+            && !self.position_invalid_import_declaration_resolves_specifier(
+                import.import_clause.is_some(),
+            )
+        {
             return;
         }
 

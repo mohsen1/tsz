@@ -954,6 +954,17 @@ impl<'a> CheckerState<'a> {
                 };
             }
             if merged != TypeId::ERROR {
+                // `get_type_of_interface` lowers only each declaration's OWN
+                // members. An interface's type must also carry the members it
+                // inherits through `extends`, exactly as the general lowering
+                // path below does (the `merge_interface_heritage_types` call
+                // after `lower_interface_declarations_with_symbol`). Without it
+                // this fast local-declaration path returns a heritage-thin body
+                // for an interface reached through the forced-interface-decl /
+                // namespace-merge route, dropping every inherited member (e.g.
+                // `interface A2 extends A1` where `A1` is a class — the members
+                // of `A1` vanish from `A2`).
+                merged = self.merge_interface_heritage_types(&declarations, merged);
                 // Self-module augmentations before caching, so `keyof` sees them (#13509).
                 merged = self.apply_self_module_augmentations(sym_id, merged);
                 self.ctx.symbol_instance_types.insert(sym_id, merged);

@@ -12,8 +12,40 @@ use crate::query_boundaries::common::TypeInterner;
 use crate::state::CheckerState;
 use std::sync::Arc;
 use tsz_binder::BinderState;
+use tsz_binder::SymbolArena;
 use tsz_binder::lib_loader::LibFile;
 use tsz_parser::parser::ParserState;
+
+/// Stride between the per-file `SymbolId` bases handed to multi-file harness
+/// binders.
+///
+/// The production driver's bind-result reducer remaps every file's raw
+/// `SymbolId`s into one program-global id space, so no two files ever share a
+/// raw id and `global_symbol_file_index` / `cross_file_symbol_targets` can be
+/// keyed by the bare `SymbolId` unambiguously. These in-process helpers build
+/// per-file binders directly and never run that reducer, so a binder created
+/// with [`BinderState::new`] restarts `SymbolId` from 0 for every file — file
+/// B's `SymbolId(1)` then aliases file A's `SymbolId(1)` in the shared overlay,
+/// and a cross-file alias resolves through the wrong binder's identically
+/// numbered symbol (the #15983 false-positive family). Giving each file's
+/// binder a distinct base restores the driver's globally-unique-`SymbolId`
+/// invariant on the in-process path. `1 << 20` leaves room for 255 files below
+/// [`SymbolArena::CHECKER_SYMBOL_BASE`] while allowing ~1M symbols per file.
+const PER_FILE_SYMBOL_BASE_STRIDE: u32 = 1 << 20;
+
+/// Build an empty binder whose `SymbolId`s start at a file-unique base, so the
+/// production-faithful multi-file helpers never collide in the shared symbol-id
+/// space the way per-file binders built with [`BinderState::new`] do.
+fn new_binder_for_file(file_idx: usize) -> BinderState {
+    let base = u32::try_from(file_idx)
+        .ok()
+        .and_then(|idx| idx.checked_mul(PER_FILE_SYMBOL_BASE_STRIDE))
+        .filter(|base| *base < SymbolArena::CHECKER_SYMBOL_BASE)
+        .expect("multi-file test project exceeds the per-file symbol-id base range");
+    let mut binder = BinderState::new();
+    binder.symbols = SymbolArena::new_with_base(base);
+    binder
+}
 
 /// Build the test-harness `SymbolId -> file_idx` disambiguation index.
 ///
@@ -129,10 +161,10 @@ pub fn check_multi_file_with_global_index(
     let mut roots = Vec::with_capacity(files.len());
     let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
 
-    for (name, source) in files {
+    for (file_idx, (name, source)) in files.iter().enumerate() {
         let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
         let root = parser.parse_source_file();
-        let mut binder = BinderState::new();
+        let mut binder = new_binder_for_file(file_idx);
         binder.bind_source_file(parser.get_arena(), root);
         arenas.push(Arc::new(parser.get_arena().clone()));
         binders.push(Arc::new(binder));
@@ -190,10 +222,10 @@ pub fn check_all_multi_file_with_global_index(
     let mut roots = Vec::with_capacity(files.len());
     let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
 
-    for (name, source) in files {
+    for (file_idx, (name, source)) in files.iter().enumerate() {
         let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
         let root = parser.parse_source_file();
-        let mut binder = BinderState::new();
+        let mut binder = new_binder_for_file(file_idx);
         binder.bind_source_file(parser.get_arena(), root);
         arenas.push(Arc::new(parser.get_arena().clone()));
         binders.push(Arc::new(binder));
