@@ -470,6 +470,21 @@ impl<'a> CheckerState<'a> {
         pattern_idx: NodeIndex,
         source_type: TypeId,
     ) {
+        self.check_destructuring_pattern_against_source(pattern_idx, source_type, true);
+    }
+
+    /// `positional_source` records whether `source_type` still supports asking
+    /// "what is the type at element index `i`". It is true for the type a
+    /// pattern is destructured from directly and for every type reached by a
+    /// property or element lookup on it, and false once a rest element has
+    /// collapsed a positional slice into an array — see the element judgement
+    /// at the end of the array walk, which is the only reader.
+    fn check_destructuring_pattern_against_source(
+        &mut self,
+        pattern_idx: NodeIndex,
+        source_type: TypeId,
+        positional_source: bool,
+    ) {
         if source_type == TypeId::ANY || source_type == TypeId::ERROR {
             return;
         }
@@ -518,9 +533,10 @@ impl<'a> CheckerState<'a> {
                                 let prop_type = self
                                     .resolve_property_type_for_destructuring(source_type, &name);
                                 if let Some(prop_type) = prop_type {
-                                    self.check_destructuring_property_accessibility(
+                                    self.check_destructuring_pattern_against_source(
                                         prop.initializer,
                                         prop_type,
+                                        positional_source,
                                     );
                                 }
                             } else if value_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
@@ -539,8 +555,10 @@ impl<'a> CheckerState<'a> {
                                                 &name,
                                             );
                                         if let Some(prop_type) = prop_type {
-                                            self.check_destructuring_property_accessibility(
-                                                bin.left, prop_type,
+                                            self.check_destructuring_pattern_against_source(
+                                                bin.left,
+                                                prop_type,
+                                                positional_source,
                                             );
                                         }
                                     } else {
@@ -695,7 +713,15 @@ impl<'a> CheckerState<'a> {
                     if target_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                         || target_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                     {
-                        self.check_destructuring_property_accessibility(target_idx, check_type);
+                        // A rest element's own pattern is destructured from the
+                        // *slice* type, which today falls back to the whole
+                        // source when that source is not a tuple — so element
+                        // index `i` inside it no longer names a position.
+                        self.check_destructuring_pattern_against_source(
+                            target_idx,
+                            check_type,
+                            positional_source && !is_spread,
+                        );
                     } else if target_node.kind == syntax_kind_ext::BINARY_EXPRESSION
                         && let Some(bin) = self.ctx.arena.get_binary_expr(target_node)
                         && bin.operator_token == SyntaxKind::EqualsToken as u16
@@ -703,7 +729,11 @@ impl<'a> CheckerState<'a> {
                         && (lhs_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                             || lhs_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
                     {
-                        self.check_destructuring_property_accessibility(bin.left, check_type);
+                        self.check_destructuring_pattern_against_source(
+                            bin.left,
+                            check_type,
+                            positional_source && !is_spread,
+                        );
                     } else if is_spread {
                         // For spread elements targeting simple expressions (identifiers,
                         // property accesses), check that the rest type is assignable to
@@ -774,6 +804,35 @@ impl<'a> CheckerState<'a> {
                         // default-initializer rule (for `[s = 2] = [s]` the
                         // *default* is what fails against the target), and anchors
                         // TS2322 on the target rather than on the whole pattern.
+                        //
+                        // Two source shapes cannot answer "what is the type at
+                        // index `i`" today, and a judgement made against what
+                        // they *do* answer is a false positive rather than a
+                        // weaker one:
+                        //
+                        //   - a non-positional source (`positional_source`),
+                        //     which is a rest element's slice that fell back to
+                        //     the whole array — every index then reports the
+                        //     merged element type, so `[...[a, b = 0]] = ["", 1]`
+                        //     would judge both bindings against `string | number`;
+                        //   - a union source, where tsc's element type is the
+                        //     union of each constituent's element at that index
+                        //     (`[boolean] | [string, number]` has `string |
+                        //     boolean` at 0), while the array fallback here
+                        //     flattens every position of every constituent
+                        //     together.
+                        //
+                        // Both make no judgement rather than a wrong one; the
+                        // precise element types they need are follow-up work at
+                        // the rest-slice and union-constituent owners.
+                        if !positional_source
+                            || crate::query_boundaries::common::is_union_type(
+                                self.ctx.types,
+                                source_type,
+                            )
+                        {
+                            continue;
+                        }
                         let index_key = index.to_string();
                         let default_shape = self.ctx.arena.get(target_idx).and_then(|node| {
                             if node.kind != syntax_kind_ext::BINARY_EXPRESSION {

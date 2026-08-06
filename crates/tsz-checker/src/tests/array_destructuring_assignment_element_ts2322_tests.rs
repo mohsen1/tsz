@@ -349,3 +349,47 @@ fn a_nested_object_pattern_in_an_element_slot_reports_on_its_leaf() {
         )],
     );
 }
+
+// ---------------------------------------------------------------------------
+// Sources that cannot answer "what is the type at index i" make no judgement.
+// Both rows were real conformance regressions caught by a reviewer's corpus
+// run on the first revision of this change; both are `tsc`-clean.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_rest_elements_own_pattern_is_not_judged_positionally() {
+    // conformance/es6/destructuring/restElementWithAssignmentPattern1.ts.
+    // The rest slice falls back to the whole array when the source is not a
+    // tuple, so index 0 and index 1 both report the merged `string | number`.
+    // tsc types the source as `[string, number]` and is clean; judging against
+    // the merged type would report two false TS2322.
+    let source = "\ndeclare let a: string;\ndeclare let b: number;\n[...[a, b = 0]] = [\"\", 1];\n";
+    assert_eq!(ts2322(source), vec![]);
+}
+
+#[test]
+fn a_union_of_tuples_source_is_not_judged() {
+    // conformance/types/tuple/unionsOfTupleTypes1.ts. tsc's element type at
+    // index `i` is the union of each constituent's element at `i` — for
+    // `[boolean] | [string, number]` that is `string | boolean` at 0 — while
+    // the array fallback flattens every position of every constituent into
+    // `string | number | boolean`. tsc reports no TS2322 on this row.
+    let source = concat!(
+        "\ntype T2 = [boolean] | [string, number];",
+        "\ndeclare let d20: string | boolean;",
+        "\ndeclare let d21: number | undefined;",
+        "\ndeclare let d22: undefined;",
+        "\ndeclare let t2: T2;",
+        "\n[d20, d21, d22] = t2;\n"
+    );
+    assert_eq!(ts2322(source), vec![]);
+}
+
+#[test]
+fn a_rest_element_with_a_simple_target_still_reports() {
+    // The rest *target* itself is judged by the pre-existing spread branch,
+    // which this containment does not touch: only the recursion into a rest
+    // element's own nested pattern is de-positioned.
+    let source = "\ndeclare let s: string;\ndeclare let sa: string[];\n[s, ...sa] = [s, s];\n";
+    assert_eq!(ts2322(source), vec![]);
+}
