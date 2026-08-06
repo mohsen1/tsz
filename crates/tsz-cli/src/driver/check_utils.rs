@@ -597,6 +597,7 @@ const fn is_parser_grammar_code(code: u32) -> bool {
         | 8038 // Decorators may not appear after 'export' or 'export default' if they also appear before 'export'
         | 18037 // 'await' expression cannot be used inside a class static block
         | 18041 // A 'return' statement cannot be used inside a class static block
+        | 18054 // 'await using' statements cannot be used inside a class static block
     )
 }
 
@@ -1759,3 +1760,7 @@ mod using_declaration_binding_pattern_grammar_tests;
 #[cfg(test)]
 #[path = "check_utils/filter_trigger_unification_tests.rs"]
 mod filter_trigger_unification_tests;
+
+#[cfg(test)]
+#[path = "check_utils/class_static_block_grammar_tests.rs"]
+mod class_static_block_grammar_tests;
