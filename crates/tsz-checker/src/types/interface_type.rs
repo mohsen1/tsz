@@ -25,6 +25,14 @@ use tsz_solver::Visibility;
 // Interface Type Resolution
 // =============================================================================
 
+/// Maximum nesting for `merge_interface_heritage_types_inner`'s
+/// `heritage_merge_depth` counter (#16308). Mirrors `LIB_HERITAGE_MERGE_MAX_DEPTH`
+/// in `lib_resolution_heritage.rs`: real chains stay far under this; it is
+/// pure backstop against a pathologically deep distinct-name chain, since
+/// genuine cycles are already caught by `check_interface_inheritance_cycle`
+/// (TS2310) and OS-stack risk is bounded separately by `with_stack_guard`.
+const INTERFACE_HERITAGE_MERGE_MAX_DEPTH: u32 = 50;
+
 /// Debug kill-switch for #14101 part-4 (heritage base-member incorporation).
 ///
 /// When a heritage base classifies as `Other` but still has an extractable
@@ -794,10 +802,17 @@ impl<'a> CheckerState<'a> {
         // Depth guard: heritage merging can trigger get_type_of_symbol on base
         // interfaces, which in turn calls compute_type_of_symbol →
         // merge_interface_heritage_types again for cross-referencing interfaces.
-        // Use a dedicated counter with a tight limit (10) because each heritage
-        // merge cycle is expensive (it resolves full interface types).
+        //
+        // #16308: a legitimate, non-cyclic same-file six-level chain (real
+        // shape: mobx's `IObservableArray<T> extends Array<T>`, reached
+        // through several layers of the project's own interfaces) used to
+        // hit the old limit of 5 on its sixth nested call and silently drop
+        // the `Array<T>` base with no "incomplete" signal — so the truncated
+        // type then got cached as final by every caller. See
+        // `INTERFACE_HERITAGE_MERGE_MAX_DEPTH`'s doc comment for why raising
+        // this bound is safe (cycles and OS-stack risk are caught elsewhere).
         let heritage_depth = self.ctx.heritage_merge_depth.get();
-        if heritage_depth >= 5 {
+        if heritage_depth >= INTERFACE_HERITAGE_MERGE_MAX_DEPTH {
             return derived_type;
         }
         // Bail out early if type resolution fuel is exhausted.

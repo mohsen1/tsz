@@ -461,6 +461,8 @@ mod interface_extends_generic_override_variance_tests;
 mod interface_heritage_alias_arg_substitution_tests;
 #[path = "tests/interface_heritage_index_relation_routing_arch_tests.rs"]
 mod interface_heritage_index_relation_routing_arch_tests;
+#[path = "tests/interface_heritage_merge_depth_tests.rs"]
+mod interface_heritage_merge_depth_tests;
 #[path = "tests/interface_heritage_property_index_relation_routing_arch_tests.rs"]
 mod interface_heritage_property_index_relation_routing_arch_tests;
 #[path = "tests/interface_index_conflict_relation_routing_arch_tests.rs"]

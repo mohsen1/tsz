@@ -202,6 +202,29 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let union_candidate_removable =
                 matches!(direction, SubtypeDirection::SourceSubsumedByOther)
                     && Self::union_member_removable_as_subtype(&member_facts[i], has_empty_object);
+            // tsc keeps a redundant *concrete* array/tuple supertype member in
+            // an intersection: `string[] & (string | number)[]` stays a
+            // two-member `IntersectionType`, it does not collapse to `string[]`
+            // the way object members merge. Dropping the wider element-typed
+            // sibling makes `T extends (A & B)` and `T extends A` intern to one
+            // `TypeId`, defeating the higher-order `Equal<A & B, A>` identity
+            // probe (#16095).
+            //
+            // The `any`-containing case is the exception, and tsc drops it: in
+            // `[any] & [1]` / `any[] & 1[]` the `any`-typed container is the
+            // supertype, and tsc removes it so an array/tuple *literal* is
+            // contextually typed by the concrete member (`[1]` / `1[]`) rather
+            // than widening its elements through `any`
+            // (`contextualTypeBasedOnIntersectionWithAnyInTheMix3`). So the veto
+            // fires only for a container with no `any` anywhere in it.
+            //
+            // Objects still merge, and `never`/literal/duplicate reductions are
+            // unaffected. Depends only on `members[i]`, so like
+            // `union_candidate_removable` it is computed once per `i`.
+            let intersection_candidate_is_container =
+                matches!(direction, SubtypeDirection::OtherSubsumedBySource)
+                    && crate::type_queries::is_array_or_tuple_type(self.interner, members[i])
+                    && !Self::container_element_contains_any(self.interner, members[i]);
             for j in 0..len {
                 if i == j || keep & (1u32 << j) == 0 {
                     continue;
@@ -243,6 +266,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             self.compound_subtype_cached(&mut checker, members[j], members[i]);
                         related
                             && !dropped.is_opaque_under_bypass_eval
+                            && !intersection_candidate_is_container
                             && !Self::has_unique_properties_cached(
                                 &dropped.property_names,
                                 &kept.property_names,
@@ -483,6 +507,33 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             db.lookup(type_id),
             Some(TypeData::Application(_) | TypeData::Lazy(_))
         )
+    }
+
+    /// Whether an array/tuple reaches `any` through its element type(s).
+    ///
+    /// `contains_any_type` treats an array/tuple as an opaque reference and
+    /// never descends into it, so walk the element types explicitly. Used to
+    /// exempt an `any`-elemented container supertype from the redundant-member
+    /// veto: tsc drops `[any]`/`any[]` from an intersection so a literal is
+    /// contextually typed by the concrete member, whereas a concrete container
+    /// like `(string | number)[]` is kept (#16095 vs
+    /// `contextualTypeBasedOnIntersectionWithAnyInTheMix3`).
+    fn container_element_contains_any(
+        db: &dyn crate::caches::db::TypeDatabase,
+        type_id: TypeId,
+    ) -> bool {
+        let element_reaches_any = |elem: TypeId| {
+            crate::visitors::visitor_predicates::contains_any_type(db, elem)
+                || Self::container_element_contains_any(db, elem)
+        };
+        match db.lookup(type_id) {
+            Some(TypeData::Array(elem)) => element_reaches_any(elem),
+            Some(TypeData::Tuple(list_id)) => db
+                .tuple_list(list_id)
+                .iter()
+                .any(|e| element_reaches_any(e.type_id)),
+            _ => false,
+        }
     }
 
     /// Check whether a union member is a literal that's only "subsumed" by a

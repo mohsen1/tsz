@@ -174,27 +174,19 @@ fn distinct_object_intersections_are_not_identical() {
 // Array shape (#16095). Array members of an intersection are never merged at
 // intern time, so unlike the object rows above the intersection itself survives
 // interning here (pinned by `redundant_array_intersection_survives_interning`
-// in the solver's `intern/normalize_tests.rs`). What goes wrong is
-// downstream of interning: something subtype-reduces `string[] & (string |
-// number)[]` to plain `string[]` — the element relation is a simple covariant
-// check, which is exactly why the tuple witness at the top of this file is
-// unaffected — and once both sides of the `IfEquals` trick hold the same
-// TypeId, `check_subtype`'s identity fast path answers before the extends
-// clause identity guard in `relations::subtype::rules::conditionals` runs.
-// tsc does not subtype-reduce intersections at all, and compares extends
-// clauses with `isTypeIdenticalTo`, so the two stay distinct there.
-//
-// The two rows below are `#[ignore]`d rather than deleted so they go live the
-// moment the reduction is fixed. Everything else in this section passes today
-// and is a live control: the identity guard is doing its job wherever the
-// operands still reach it, which is what makes the two ignored rows a
-// statement about *where* the operands are lost rather than about the guard.
+// in the solver's `intern/normalize_tests.rs`). The remaining defect was
+// downstream: the evaluator's intersection simplifier
+// (`remove_redundant_members`) subtype-reduced `string[] & (string | number)[]`
+// to plain `string[]` — a covariant element check makes the wider member a
+// supertype, so it was dropped — after which both sides of the `IfEquals` trick
+// held the same `TypeId` and `check_subtype`'s identity fast path answered
+// before the extends-clause identity guard ever ran. tsc does not subtype-reduce
+// an array/tuple intersection at all (`A[] & B[]` stays a two-member
+// `IntersectionType`), so the simplifier now vetoes dropping an array/tuple
+// supertype member and the two extends clauses stay distinct.
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "#16095: tsz answers EQ, tsc TS2344. The extends clause is subtype-reduced \
-     to plain `string[]` before the identity guard can see it, so both sides of the \
-     IfEquals trick become the same TypeId. See the module comment above."]
 fn redundant_array_intersection_is_not_identical_to_its_subsumed_member() {
     let source = format!(
         "{IF_EQUALS_PRELUDE}\n\
@@ -209,8 +201,6 @@ fn redundant_array_intersection_is_not_identical_to_its_subsumed_member() {
 }
 
 #[test]
-#[ignore = "#16095: same defect as the row above, renamed binders. Pinned so the \
-     renamed-binder control goes live with the fix rather than after it."]
 fn redundant_array_intersection_under_alpha_renamed_type_parameters() {
     let source = r#"
 type Equal<L, R, T = "EQ", F = "DIFF"> =
