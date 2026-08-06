@@ -541,7 +541,17 @@ fn is_hard_keyword_interface_name_2427_parse_diagnostic(diagnostic: &ParseDiagno
 const fn is_parser_grammar_code(code: u32) -> bool {
     matches!(
         code,
-        1014 // A rest parameter must be last in a parameter list
+        1013 // A rest parameter or binding pattern may not have a trailing
+             // comma. tsc's checkGrammarParameterList/checkGrammarAccessor/
+             // checkGrammarMethod report this from the checker for a rest
+             // parameter or destructuring binding pattern; tsz emits it from
+             // the parser at four sites (state_expressions_literals.rs,
+             // state_types_jsx.rs, state_statements_class.rs). A distinct
+             // checker-emitted site (assignment_ops.rs) also reports this code
+             // for a destructuring-*assignment* target's trailing comma, but
+             // that is a `CheckerDiagnostic`, never a `ParseDiagnostic`, so it
+             // never reaches this filter and is unaffected by this entry.
+        | 1014 // A rest parameter must be last in a parameter list
         | 1017 // An index signature cannot have a rest parameter
         | 1018 // An index signature parameter cannot have an accessibility modifier
         | 1101 // 'with' statements are not allowed in strict mode. tsc's
