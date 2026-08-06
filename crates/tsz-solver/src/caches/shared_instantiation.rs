@@ -46,9 +46,12 @@ fn collect_def_dependencies(
     }
 
     for root in roots {
-        for def_id in crate::visitors::visitor::collect_lazy_def_ids(interner, root) {
+        // `push_def_dependency` already de-duplicates through `seen`, so feed
+        // the walk straight in rather than materializing a deduped `Vec` from
+        // `collect_lazy_def_ids` only to de-duplicate it a second time here.
+        crate::visitors::visitor::for_each_lazy_def_id(interner, root, |def_id| {
             push_def_dependency(def_id, &mut seen, &mut deps, &mut pending);
-        }
+        });
     }
 
     let Some(store) = definition_store else {
