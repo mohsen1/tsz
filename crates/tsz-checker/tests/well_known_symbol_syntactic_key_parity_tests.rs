@@ -153,14 +153,19 @@ export const t: { [k: symbol]: number } = i;
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "known failure: keyof over a well-known-symbol-keyed interface does not reduce to the well-known symbol (false TS2322)"]
 fn keyof_a_well_known_symbol_keyed_interface_reduces_to_the_well_known_symbol() {
     // tsc 7.0.2: exit 0 — `keyof I` IS `typeof Symbol.iterator`.
-    // tsz today: TS2322 "Type 'keyof I' is not assignable to type 'unique symbol'."
     //
-    // The equivalent shape keyed by a user-authored `unique symbol` binding
-    // (`declare const u: unique symbol; interface I { [u]: number }`) is
-    // already clean, so the gap is specific to the well-known leg.
+    // A well-known-symbol-keyed member is a *named* member (`is_symbol_named`
+    // is false) stored under its canonical `[Symbol.iterator]` atom, so `keyof`
+    // took the literal-key branch and produced the string literal
+    // `"[Symbol.iterator]"` instead of `typeof Symbol.iterator`. `keyof` now
+    // recovers the unique-symbol key for such a named key through the
+    // well-known-symbol registry, which is seeded from the lib `SymbolConstructor`
+    // members up front so the registry is populated before the alias is
+    // evaluated. The equivalent shape keyed by a user-authored `unique symbol`
+    // binding (`declare const u: unique symbol; interface I { [u]: number }`)
+    // was already clean; this closes the well-known leg.
     let codes = diagnostic_codes(
         r#"
 interface I { [Symbol.iterator]: number }
@@ -177,7 +182,7 @@ export const a: typeof Symbol.iterator = k;
 }
 
 #[test]
-#[ignore = "known failure: indexed access by a well-known symbol type leaks the __unique_N placeholder (TS2339/TS2538)"]
+#[ignore = "known failure: blocked by a lib cross-file SymbolId collision — the well-known-symbol reverse lookup (UniqueSymbol(ref) -> [Symbol.xxx] atom) cannot be seeded eagerly because iterator/asyncIterator/hasInstance all resolve to the same SymbolRef across lib files; needs globally-unique lib SymbolIds"]
 fn indexed_access_by_a_well_known_symbol_type_resolves_the_member() {
     // tsc 7.0.2: exit 0 — `I[typeof Symbol.iterator]` is `number`.
     // tsz today, three diagnostics, the first of which leaks an internal key
@@ -185,6 +190,15 @@ fn indexed_access_by_a_well_known_symbol_type_resolves_the_member() {
     //   TS2339 "Property '__unique_5' does not exist on type 'I'."
     //   TS2538 "Type 'unique symbol' cannot be used as an index type."
     //   TS2322 "Type 'undefined' is not assignable to type 'number'."
+    //
+    // The forward direction (this member's `keyof` key) is fixed; the reverse
+    // direction here (`typeof Symbol.iterator` = `UniqueSymbol(ref)` back to the
+    // `[Symbol.iterator]` atom to find the member) reads the lazily-populated
+    // reverse index, which is still empty when this type alias is evaluated.
+    // It cannot be seeded eagerly like the forward index without regressing the
+    // reverse lookup, because several well-known members share one `SymbolRef`
+    // (lib cross-file `SymbolId` collision), so the reverse map would become
+    // ambiguous. Closing this needs globally-unique lib `SymbolId`s.
     let codes = diagnostic_codes(
         r#"
 interface I { [Symbol.iterator]: number }

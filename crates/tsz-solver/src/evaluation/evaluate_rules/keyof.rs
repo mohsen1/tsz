@@ -257,12 +257,36 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
+    /// The unique-symbol key type for a member stored under a well-known
+    /// `[Symbol.xxx]` text key (`Symbol.iterator`, `Symbol.asyncIterator`, …).
+    ///
+    /// A well-known-symbol-keyed member is a *named* member, not a symbol index
+    /// signature, so it carries `is_symbol_named = false` and is stored under its
+    /// canonical `[Symbol.xxx]` atom rather than a synthetic `__unique_N`
+    /// placeholder. `keyof` must nonetheless contribute the unique-symbol key
+    /// `typeof Symbol.xxx` for it — `keyof { [Symbol.iterator]: T }` is
+    /// `typeof Symbol.iterator` in `tsc`, not the string literal
+    /// `"[Symbol.iterator]"`. The registered `SymbolRef` is the same canonical
+    /// `SymbolConstructor` member ref that `typeof Symbol.xxx` resolves to, so
+    /// the two `UniqueSymbol` type ids are identical.
+    fn well_known_named_key_unique_symbol(&self, name: Atom) -> Option<TypeId> {
+        let name_text = self.interner().resolve_atom_ref(name);
+        if !name_text.starts_with("[Symbol.") {
+            return None;
+        }
+        let symbol_ref = self.resolver().resolve_well_known_symbol_name(&name_text)?;
+        Some(self.interner().unique_symbol(symbol_ref))
+    }
+
     fn property_name_to_key_type(&self, prop: &PropertyInfo) -> TypeId {
         if prop.is_symbol_named {
             if let Some(symbol_ref) = self.unique_symbol_ref_from_symbol_named_atom(prop.name) {
                 return self.interner().unique_symbol(symbol_ref);
             }
             return TypeId::SYMBOL;
+        }
+        if let Some(unique) = self.well_known_named_key_unique_symbol(prop.name) {
+            return unique;
         }
         // `keyof { 1: ... }` yields the *numeric* literal `1`, not `"1"`.
         // The bare-numeric-name vs string-quoted distinction is the same
@@ -283,6 +307,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return self.interner().unique_symbol(symbol_ref);
             }
             return TypeId::SYMBOL;
+        }
+        if let Some(unique) = self.well_known_named_key_unique_symbol(key.name) {
+            return unique;
         }
         crate::utils::literal_key_for_property_name(self.interner(), key.name, key.is_string_named)
     }
