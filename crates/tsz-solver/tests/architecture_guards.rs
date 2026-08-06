@@ -297,7 +297,13 @@ fn evaluation_engine_keeps_request_stage_boundary() {
             .contains("use crate::evaluation::request::{EvaluationCacheKey, EvaluationRequest};")
             && query_cache_rs.contains("request.cache_key()")
             && query_cache_rs.contains("evaluate_request_memo_result(request)")
-            && query_cache_rs.contains("is_stable_for_depth_agnostic_cache()")
+            // #16553: the durable, cross-file `eval_cache` write needs the
+            // stricter `EvaluationMemoResult::is_stable_for_run_wide_cache`
+            // gate (refuses `UnresolvedDef`), not the looser
+            // `is_stable_for_depth_agnostic_cache` that run/query-scoped
+            // memo consumers use — but both are still typed
+            // `EvaluationMemoResult` methods, not a rebuilt ad-hoc predicate.
+            && query_cache_rs.contains("is_stable_for_run_wide_cache()")
             && !query_cache_rs
                 .contains("evaluation_result.is_complete() && !evaluator.recursion_limit_hit()"),
         "query cache evaluation entries must derive option-sensitive keys from EvaluationRequest and consume EvaluationMemoResult stability instead of rebuilding termination predicates"

@@ -1402,8 +1402,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // kill switch for entries computed after a limit event this run.
             // The last clause skips the write only when the `TS2590` flag is
             // newly set relative to the construction snapshot.
+            //
+            // `self.limit_epoch != epoch_at_entry` above only tells us whether
+            // *this node's own* window saw a NEW limit event; it says nothing
+            // about a run-scoped taint an EARLIER, unrelated node already
+            // recorded before this node's window opened. Once
+            // `mark_unresolved_def_seen` fires anywhere in this evaluator's
+            // request, every later node's own window looks "clean" by the
+            // epoch-delta test alone (the epoch simply never moves again), yet
+            // that later node may still be a sibling/dependent of the
+            // under-resolved one — nothing about node-local epoch stability
+            // proves it is not (#16553: a checker-pool partition evaluating a
+            // cross-file interface union hits this after the pool's shared,
+            // long-lived `eval_cache` mirrors this write cross-file). The
+            // explicit `is_unresolved_def_seen()` check closes that gap; it
+            // mirrors the identical guard the silent-depth-bail arm above
+            // already applies to its own `memo_insert` call for the same
+            // registration-window reason (#12101).
             if self.persistent_memo_reads
                 && !type_id.is_intrinsic()
+                && !self.is_unresolved_def_seen()
                 && (self.limit_epoch == 0 || crate::limits::limit_result_cache_enabled())
                 && !self
                     .interner
