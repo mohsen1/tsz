@@ -161,10 +161,20 @@ class Gate { static { let x = 1; while (x) { x = 0; } } }
 /// `in_static_block_context()` gate. tsc never pairs this with TS2853
 /// ("...only allowed at the top level of a file...") — the two are mutually
 /// exclusive by container (`getContainingFunctionOrClassStaticBlock`
-/// resolving to the static block short-circuits tsc's top-level-await-using
-/// eligibility check entirely) — which also exercises the
-/// `is_directly_at_source_file_top_level` fix that added
-/// `CLASS_STATIC_BLOCK_DECLARATION` to its disqualifying-container list.
+/// resolving to the static block short-circuits tsc's top-level-`await using`
+/// eligibility check entirely). The checker declines the whole
+/// TS2852/TS2853/TS2854 family via the `find_enclosing_static_block` guard in
+/// `check_variable_declaration_list_with_request` (#16598).
+///
+/// This parse-health-aware helper cannot, on its own, prove the checker
+/// declines: it sets `has_syntax_parse_errors` from *any* parser diagnostic,
+/// so the parser's TS18054 suppresses this whole checker block regardless of
+/// the guard. Production is stricter — TS18054 is `is_parser_grammar_code`
+/// (non-suppressing) since #16597, so the checker walk actually runs there.
+/// The blind-helper test
+/// `static_block_await_using_is_silent_in_the_checker_walk_without_suppression`
+/// below is the one that pins the fix; this case pins the parser+checker
+/// combined verdict a user sees.
 #[test]
 fn static_block_direct_await_using_reports_only_ts18054() {
     let codes = check_source_codes_with_parse_health(
@@ -361,5 +371,88 @@ class Harness { static { const build = function () { return await 2; }; void bui
         "the nested function expression is its own container, so its non-async \
          `await` answers TS1308 rather than deferring to the enclosing static \
          block; got {codes:?}"
+    );
+}
+
+// -----------------------------------------------------------------------------
+// #16598: the `await using` twin of the exclusivity above, isolated from
+// parse-health suppression.
+//
+// The parse-health-aware helper cannot see this bug: it sets
+// `has_syntax_parse_errors` from the parser's TS18054, which suppresses the
+// checker's whole top-level-`await using` block, so TS2853 never surfaces there
+// even without the fix. Production is stricter — TS18054 is
+// `is_parser_grammar_code` (non-suppressing) since #16597 — so the checker walk
+// actually runs and, before #16598, leaked TS2853/TS2854 (or nested TS2852).
+// `check_source_codes` is the parse-health-*blind* helper (never wires
+// `has_syntax_parse_errors`), so it shows exactly what the checker walk decides
+// on its own — the same instrument the `await`-expression twin above uses.
+// -----------------------------------------------------------------------------
+
+/// The core of #16598: a static block's own `await using` must draw none of the
+/// top-level-`await using` family from the checker walk, with nothing
+/// suppressing it. `find_enclosing_static_block` declines at the source.
+#[test]
+fn static_block_await_using_is_silent_in_the_checker_walk_without_suppression() {
+    let codes = crate::test_utils::check_source_codes(
+        r#"
+class Gate { static { await using x = 1; } }
+"#,
+    );
+    assert!(
+        !codes.contains(&2853) && !codes.contains(&2854) && !codes.contains(&2852),
+        "tsc's checkGrammarAwaitOrAwaitUsing short-circuits on the containing \
+         class static block, so the whole TS2852/2853/2854 family must decline \
+         here on its own rather than relying on the parser's TS18054 to suppress \
+         it; got {codes:?}"
+    );
+}
+
+/// Module-ness is irrelevant to the static-block short-circuit: even with
+/// `export {}` present (which would otherwise clear TS2853 for a *real*
+/// top-level `await using`), a static block's `await using` still draws nothing
+/// from the walk — and the sibling top-level `await using` in the same file
+/// *does*, proving the guard is scoped to the static block and not the file.
+#[test]
+fn static_block_await_using_is_silent_but_a_sibling_top_level_one_still_reports() {
+    let codes = crate::test_utils::check_source_codes(
+        r#"
+await using outer = 1;
+class Latch { static { await using inner = 2; } }
+"#,
+    );
+    // The file is not a module (no import/export), so the real top-level
+    // `await using outer` draws TS2853; the static block's `inner` must not add
+    // a second one.
+    assert_eq!(
+        codes.iter().filter(|&&c| c == 2853).count(),
+        1,
+        "exactly the module-scope `await using` earns TS2853; the static block's \
+         must stay silent; got {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2852),
+        "the static block's `await using` must not fall through to the nested \
+         TS2852 arm either; got {codes:?}"
+    );
+}
+
+/// Container-walk boundary twin: an `await using` inside a function *nested* in
+/// a static block answers from its own function (TS2852, non-async), not from
+/// the static block. `find_enclosing_static_block` stops at the first function
+/// boundary rather than searching upward, matching
+/// `getContainingFunctionOrClassStaticBlock`.
+#[test]
+fn await_using_in_a_non_async_function_nested_in_a_static_block_still_reports() {
+    let codes = crate::test_utils::check_source_codes(
+        r#"
+class Harness { static { function build() { await using r = 1; return r; } void build; } }
+"#,
+    );
+    assert!(
+        codes.contains(&2852),
+        "the nested non-async function is its own container, so its `await using` \
+         answers TS2852 rather than deferring to the enclosing static block; got \
+         {codes:?}"
     );
 }

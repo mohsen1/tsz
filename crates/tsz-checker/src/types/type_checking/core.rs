@@ -1623,12 +1623,12 @@ impl<'a> CheckerState<'a> {
 
         if is_await_using && !placement_error && !self.ctx.has_syntax_parse_errors {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-
-            // Same top-level-await-eligibility predicate as `check_await_expression`
-            // (#16072): a namespace body disqualifies `await using` from being
-            // top level without being function-like, so this is not
-            // `function_depth == 0`.
-            if self.is_directly_at_source_file_top_level(list_idx) {
+            // A class static block short-circuits the whole top-level-`await using`
+            // family (TS2852/2853/2854): tsc answers only the parser's TS18054
+            // there. A dedicated guard, since a static block is not the file's top
+            // level and `is_directly_…` would else fall through to TS2852 (#16598).
+            if self.find_enclosing_static_block(list_idx).is_some() {
+            } else if self.is_directly_at_source_file_top_level(list_idx) {
                 // TS2853: Top-level 'await using' is only valid in modules.
                 if self.top_level_await_requires_module_diagnostic() {
                     self.error_at_node(
