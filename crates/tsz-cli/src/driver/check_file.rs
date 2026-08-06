@@ -318,6 +318,17 @@ fn run_check_on_existing_checker<'a>(
         // file boundary so the distinct-`TypeId` high-water / over-cache
         // buckets attribute thrash per file. No-op when counters are disabled.
         tsz_common::perf_counters::record_interner_working_set_for_file();
+        // tsc reports at most one grammar diagnostic per parameter list. When
+        // the checker's `check_parameter_ordering` won that race with a
+        // TS1015/TS1016 on an earlier parameter, drop the parser-emitted
+        // rest-parameter grammar diagnostics (TS1014/TS1047/TS1048) tsc's
+        // single-early-return `checkGrammarParameterList` never reached. The
+        // spans are recomputed per file (cleared at `check_source_file` entry),
+        // so borrowing them here is safe across a reused checker.
+        suppress_parameter_grammar_losers(
+            &mut file_diagnostics,
+            &checker.ctx.parameter_grammar_suppress_spans,
+        );
         let mut checker_diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
         let effective_options = ResolvedCompilerOptions {
             check_js,
