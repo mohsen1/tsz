@@ -161,6 +161,39 @@ fn unused_named_import_in_a_function_body_suppresses() {
     );
 }
 
+// Every clause-bearing form shares the one `markAliasReferenced` axis — a used
+// default or namespace binding in a module block resolves exactly like the
+// named form, and there is no separate module-ness gate that would re-suppress
+// it (#16522). These lock the single-gate invariant across clause kinds.
+
+#[test]
+fn used_default_import_in_top_level_block_resolves_in_a_module() {
+    assert_codes(
+        &format!(r#"{MODULE}{{ import a from "nonexistent-module"; a; }}"#),
+        &[1232, 2307],
+        "a used default binding resolves in a module top-level block",
+    );
+}
+
+#[test]
+fn used_namespace_import_in_top_level_block_resolves_in_a_module() {
+    assert_codes(
+        &format!(r#"{MODULE}{{ import * as ns from "nonexistent-module"; ns; }}"#),
+        &[1232, 2307],
+        "a used namespace binding resolves in a module top-level block",
+    );
+}
+
+#[test]
+fn used_import_equals_in_a_function_body_resolves_in_a_module() {
+    assert_codes(
+        &format!(r#"{MODULE}function f() {{ import x = require("nonexistent-module"); x; }}"#),
+        &[1232, 2307],
+        "a used `import =` alias resolves inside a function body in a module — \
+         markAliasReferenced, not position or module-ness, is the discriminator",
+    );
+}
+
 // ---------------------------------------------------------------------------
 // `import x = require(...)`: same markAliasReferenced rule.
 // ---------------------------------------------------------------------------
