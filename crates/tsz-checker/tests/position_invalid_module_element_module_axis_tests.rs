@@ -226,6 +226,36 @@ fn used_import_equals_in_top_level_block_resolves_in_a_module() {
 }
 
 // ---------------------------------------------------------------------------
+// Colliding `import x = ...` aliases (#16527 item 2): a group resolves at most
+// one specifier — the first declaration by source position — and the module
+// axis still gates the first. In a module there is no top-level-block
+// auto-resolve, so an unused colliding group resolves nothing; a referenced one
+// resolves only its first. Measured against the pinned oracle.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn colliding_import_equals_unused_in_top_level_block_resolves_none_in_a_module() {
+    assert_codes(
+        &format!(
+            r#"{MODULE}{{ import x = require("nonexistent-a"); import x = require("nonexistent-b"); }}"#
+        ),
+        &[1232, 1232, 2300, 2300],
+        "a module has no top-level-block auto-resolve, so an unused colliding group is silent",
+    );
+}
+
+#[test]
+fn colliding_import_equals_used_in_top_level_block_resolves_only_first_in_a_module() {
+    assert_codes(
+        &format!(
+            r#"{MODULE}{{ import x = require("nonexistent-a"); import x = require("nonexistent-b"); x; }}"#
+        ),
+        &[1232, 1232, 2300, 2300, 2307],
+        "a referenced colliding group resolves only its first declaration in a module too",
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Side-effect `import "m"`: binds no name, so it never resolves in a wrong
 // context (script or module) — only at a valid position.
 // ---------------------------------------------------------------------------
