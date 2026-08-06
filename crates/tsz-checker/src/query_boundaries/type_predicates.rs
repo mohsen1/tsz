@@ -275,6 +275,22 @@ pub(crate) fn collapse_pure_nullish_union_nonstrict(
     tsz_solver::narrowing::collapse_pure_nullish_union_nonstrict(strict_null_checks, member_types)
 }
 
+/// Sibling of [`collapse_pure_nullish_union_nonstrict`] for a union that also
+/// has a non-nullish member: in non-strict mode, absorb any scalar
+/// `null`/`undefined` member out of a syntactic union type node's member list
+/// before ordinary construction (#16580). See
+/// `tsz_solver::narrowing::nonstrict_union_members_absorb_nullish_scalars` for
+/// the structural rule and the all-nullish exclusion.
+pub(crate) fn nonstrict_union_members_absorb_nullish_scalars(
+    strict_null_checks: bool,
+    member_types: &[TypeId],
+) -> Option<Vec<TypeId>> {
+    tsz_solver::narrowing::nonstrict_union_members_absorb_nullish_scalars(
+        strict_null_checks,
+        member_types,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

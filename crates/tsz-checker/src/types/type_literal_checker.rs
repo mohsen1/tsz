@@ -63,6 +63,20 @@ impl<'a> CheckerState<'a> {
                 {
                     return collapsed;
                 }
+                // #16580: same non-strict scalar null/undefined absorption
+                // as the top-level union-type-node resolvers, generalized to
+                // a union written inside a type literal member.
+                if let Some(reduced) =
+                    crate::query_boundaries::type_predicates::nonstrict_union_members_absorb_nullish_scalars(
+                        self.ctx.compiler_options.strict_null_checks,
+                        &members,
+                    )
+                {
+                    if reduced.len() == 1 {
+                        return reduced[0];
+                    }
+                    return construction_boundary::type_node_union(self.ctx.types, reduced);
+                }
                 return construction_boundary::type_node_union(self.ctx.types, members);
             }
             return TypeId::ERROR;
