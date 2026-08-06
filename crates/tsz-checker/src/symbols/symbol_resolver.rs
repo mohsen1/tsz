@@ -881,10 +881,7 @@ impl<'a> CheckerState<'a> {
                     .namespace_anchor_alias_partner(sym_id, &lib_binders)
                     .unwrap_or(sym_id);
                 let mut visited_aliases = AliasCycleTracker::new();
-                Some(
-                    self.resolve_alias_symbol(anchor_src, &mut visited_aliases)
-                        .unwrap_or(anchor_src),
-                )
+                Some(self.qualified_type_anchor_symbol(anchor_src, &mut visited_aliases))
             }
             TypeSymbolResolution::ValueOnly(sym_id)
                 if self.is_import_equals_type_anchor(sym_id, &lib_binders) =>

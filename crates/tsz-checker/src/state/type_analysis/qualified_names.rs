@@ -568,7 +568,8 @@ impl<'a> CheckerState<'a> {
             && left_node.kind == SyntaxKind::Identifier as u16
         {
             if let Some(sym_id) = self.resolve_identifier_symbol_as_qualified_type_anchor(qn.left) {
-                if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
+                let anchor_symbol = self.qualified_anchor_symbol(sym_id, &lib_binders);
+                if let Some(symbol) = anchor_symbol.as_deref() {
                     left_sym_for_missing = Some(sym_id);
                     left_module_specifier = symbol.import_module().map(str::to_string);
                     let mut result = self.resolve_symbol_export_for(
@@ -675,11 +676,13 @@ impl<'a> CheckerState<'a> {
             return member_type;
         }
 
+        // Read the missing-member anchor from its owning binder (owned when
+        // cross-file) so its reference survives the `&mut self` calls below —
+        // same rule as the member-lookup site above (#16465/#16503).
+        let missing_owner = left_sym_for_missing
+            .and_then(|left_sym_id| self.qualified_anchor_symbol(left_sym_id, &lib_binders));
         if let Some(left_sym_id) = left_sym_for_missing
-            && let Some(symbol) = self
-                .ctx
-                .binder
-                .get_symbol_with_libs(left_sym_id, &lib_binders)
+            && let Some(symbol) = missing_owner.as_deref()
             && (symbol.flags
                 & (symbol_flags::MODULE
                     | symbol_flags::CLASS
@@ -1012,6 +1015,39 @@ impl<'a> CheckerState<'a> {
         }
 
         self.resolve_namespace_member_from_all_binders(namespace_name, member_name)
+    }
+
+    /// Read a qualified-name anchor `Symbol`, owning it only when it lives in
+    /// another file.
+    ///
+    /// A cross-file-resolved `sym_id` (a re-anchored default-export
+    /// namespace/enum, a named import's target) read bare from the *current*
+    /// file's binder collides with an unrelated local at the same raw id —
+    /// per-file binders mint `SymbolId`s from zero (#16465/#16503) — so it must
+    /// come from its owning binder. That read borrows `self`, so it is cloned to
+    /// outlive the later `&mut self` member-resolution calls. A purely-local
+    /// anchor (the common case) takes the zero-clone `'a` borrow from the
+    /// current binder instead of paying for a `Symbol` clone.
+    fn qualified_anchor_symbol<'b>(
+        &self,
+        sym_id: SymbolId,
+        lib_binders: &'b [std::sync::Arc<tsz_binder::BinderState>],
+    ) -> Option<std::borrow::Cow<'b, tsz_binder::Symbol>>
+    where
+        'a: 'b,
+    {
+        if self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .is_some_and(|owner| owner != self.ctx.current_file_idx)
+            && let Some(symbol) = self.get_symbol_from_registered_file_target(sym_id)
+        {
+            return Some(std::borrow::Cow::Owned(symbol.clone()));
+        }
+        self.ctx
+            .binder
+            .get_symbol_with_libs(sym_id, lib_binders)
+            .map(std::borrow::Cow::Borrowed)
     }
 
     /// Resolve a member from a symbol's exports, members, or re-exports.
