@@ -358,3 +358,183 @@ fn nested_type_literal_matching_value_stays_clean() {
         "a matching nested value must not report anything"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Nested object literals: the pointer rides a *missing-property* leaf
+// ---------------------------------------------------------------------------
+//
+// When the nested literal is missing a required member rather than mismatching
+// one, the leaf tsc reports is `TS2741` / `TS2739` / `TS2740`, not `TS2322`.
+// tsc attaches the same `TS6500` pointer to it, naming the *enclosing* property
+// and the type that declares that property. Oracled on `typescript@7.0.2` with
+// `--noEmit --strict --pretty --target es2022 --lib es2022`.
+//
+// The multi-property rows are what force this to be its own attach: tsc emits
+// `TS6500` there with **no** `TS2728` at all, so the pointer cannot be folded
+// into the sibling declared-here site (#16443 item 1, Serpentine).
+
+const TS2728: u32 = diagnostic_codes::IS_DECLARED_HERE;
+const TS2739: u32 = diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE;
+const TS2740: u32 = diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE;
+const TS2741: u32 = diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE;
+
+fn has_declared_here(diagnostic: &Diagnostic) -> bool {
+    diagnostic
+        .related_information
+        .iter()
+        .any(|info| info.code == TS2728)
+}
+
+/// `nested.ts:1:16` — `The expected type comes from property 'inner' which is
+/// declared here on type 'Outer'`, alongside the `TS2728` at `1:37`.
+#[test]
+fn nested_literal_missing_property_points_at_the_enclosing_property() {
+    let source = "type Outer = { inner: { op: number; oq: number } };\nconst r: Outer = { inner: { op: 1 } };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (file, start, length, message) = expected_type_pointer(&diagnostic);
+    assert_eq!(
+        message,
+        "The expected type comes from property 'inner' which is declared here on type 'Outer'"
+    );
+    assert_eq!(span_text(source, start, length), "inner");
+    assert_eq!(file, "test.ts");
+    // tsc emits both pointers on this row; the new attach must not displace the
+    // sibling declared-here that #16521 landed.
+    assert!(
+        has_declared_here(&diagnostic),
+        "TS2728 must survive alongside TS6500: {diagnostic:?}"
+    );
+}
+
+/// The owner reached through an `interface` rather than an alias renders its
+/// written name, exactly as tsc does (`on type 'IOuter'`).
+#[test]
+fn nested_literal_under_an_interface_names_the_interface() {
+    let source = "interface IOuter { inner: { op: number; oq: number } }\nconst r: IOuter = { inner: { op: 1 } };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, message) = expected_type_pointer(&diagnostic);
+    assert_eq!(
+        message,
+        "The expected type comes from property 'inner' which is declared here on type 'IOuter'"
+    );
+    assert_eq!(span_text(source, start, length), "inner");
+}
+
+/// Twice nested. The pointer names the **immediately enclosing** property and
+/// the anonymous type that declares it — `b` on `{ b: ...; }`, never the outer
+/// alias `Deep`. Oracled: `nested.ts:5:20`.
+#[test]
+fn twice_nested_literal_names_the_immediately_enclosing_owner() {
+    let source = "type Deep = { a: { b: { p: number; q: number } } };\nconst r: Deep = { a: { b: { p: 1 } } };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, message) = expected_type_pointer(&diagnostic);
+    assert_eq!(
+        message,
+        "The expected type comes from property 'b' which is declared here on type '{ b: { p: number; q: number; }; }'"
+    );
+    assert_eq!(span_text(source, start, length), "b");
+}
+
+/// The row that makes this its own attach site: `TS2739` carries the pointer
+/// and tsc emits **no** `TS2728` for a multi-property miss.
+#[test]
+fn nested_multi_property_miss_carries_the_pointer_without_a_declared_here() {
+    let source = "type Multi = { inner: { m1: number; m2: number; m3: number } };\nconst r: Multi = { inner: { m1: 1 } };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2739);
+    let (_, start, length, message) = expected_type_pointer(&diagnostic);
+    assert_eq!(
+        message,
+        "The expected type comes from property 'inner' which is declared here on type 'Multi'"
+    );
+    assert_eq!(span_text(source, start, length), "inner");
+    assert!(
+        !has_declared_here(&diagnostic),
+        "tsc emits no TS2728 on a multi-property miss: {diagnostic:?}"
+    );
+}
+
+/// The `and N more` form is a distinct code and needs its own arm.
+#[test]
+fn nested_and_more_property_miss_carries_the_pointer() {
+    let source = "type Huge = { inner: { a: number; b: number; c: number; d: number; e: number; f: number; g: number; h: number; i: number; j: number } };\nconst r: Huge = { inner: { a: 1 } };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2740);
+    let (_, start, length, message) = expected_type_pointer(&diagnostic);
+    assert_eq!(
+        message,
+        "The expected type comes from property 'inner' which is declared here on type 'Huge'"
+    );
+    assert_eq!(span_text(source, start, length), "inner");
+}
+
+/// An **optional** enclosing member still carries the pointer — the nullish
+/// half of the member type is not what gates this, unlike the arrow-body drill
+/// gate in the sibling `TS6502` family (#16550).
+#[test]
+fn optional_enclosing_member_still_carries_the_pointer() {
+    let source =
+        "type Opt = { inner?: { p: number; q: number } };\nconst r: Opt = { inner: { p: 1 } };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, message) = expected_type_pointer(&diagnostic);
+    assert_eq!(
+        message,
+        "The expected type comes from property 'inner' which is declared here on type 'Opt'"
+    );
+    assert_eq!(span_text(source, start, length), "inner");
+}
+
+/// Binder names must not matter on the missing-property leaf either.
+#[test]
+fn renamed_binders_on_a_nested_missing_property() {
+    let source = "type Zeta = { qux: { xylo: string; yak: number } };\nconst z: Zeta = { qux: { xylo: \"s\" } };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, message) = expected_type_pointer(&diagnostic);
+    assert_eq!(
+        message,
+        "The expected type comes from property 'qux' which is declared here on type 'Zeta'"
+    );
+    assert_eq!(span_text(source, start, length), "qux");
+}
+
+/// NEGATIVE CONTROL — depth 0. The literal *is* the assignment's right-hand
+/// side, so there is no enclosing property for the pointer to name and tsc
+/// emits `TS2728` alone. This is the row that would break if the new attach
+/// were reached from the top-level missing-property report rather than from
+/// the per-property elaboration leaf.
+#[test]
+fn top_level_missing_property_takes_no_expected_type_pointer() {
+    let source = "type Top = { alpha: string; beta: string };\nconst r: Top = { alpha: \"a\" };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    assert!(
+        !has_pointer(&diagnostic),
+        "a depth-0 miss has no enclosing property: {diagnostic:?}"
+    );
+    assert!(
+        has_declared_here(&diagnostic),
+        "TS2728 still fires at depth 0: {diagnostic:?}"
+    );
+}
+
+/// NEGATIVE CONTROL — an **array element**. tsc anchors the `TS2728` inside the
+/// element type but emits no `TS6500`: the frame immediately enclosing the
+/// failing literal is an array element, which has no property name to report.
+/// Oracled: `n2.ts:5:34` for the `TS2728`, no pointer line.
+#[test]
+fn array_element_literal_takes_no_expected_type_pointer() {
+    let source = "type Arr = { list: { lp: number; lq: number }[] };\nconst r: Arr = { list: [{ lp: 1 }] };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    assert!(
+        !has_pointer(&diagnostic),
+        "an array element has no enclosing property: {diagnostic:?}"
+    );
+}
+
+/// NEGATIVE CONTROL — a nested literal that type-checks cleanly must stay
+/// clean, so none of the arms above can fire as a side effect of the walk.
+#[test]
+fn nested_missing_property_negative_control_stays_clean() {
+    let source = "type Fine = { inner: { p: number; q: number } };\nconst f: Fine = { inner: { p: 1, q: 2 } };\n";
+    assert!(
+        check_source_diagnostics(source).is_empty(),
+        "a complete nested value must not report anything"
+    );
+}
