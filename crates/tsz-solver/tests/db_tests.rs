@@ -690,6 +690,55 @@ fn type_interner_element_access_respects_no_unchecked_indexed_access() {
 }
 
 #[test]
+fn query_cache_set_strict_null_checks_propagates_to_wrapped_interner() {
+    let interner = TypeInterner::new();
+    let db: &dyn QueryDatabase = &QueryCache::new(&interner);
+
+    // `CheckerContext::from_parts` only holds `&dyn QueryDatabase` (a
+    // `QueryCache` in production) and calls `set_strict_null_checks` on it.
+    // `QueryCache` used to update only its own local `Cell`, leaving the
+    // wrapped `TypeInterner`'s `AtomicBool` at its `true` default -- and
+    // union construction (`normalize_union`) reads that field directly via
+    // `TypeInterner`'s own inherent methods, never through `QueryDatabase`.
+    assert!(
+        interner.strict_null_checks(),
+        "interner starts strict by default"
+    );
+    db.set_strict_null_checks(false);
+    assert!(
+        !interner.strict_null_checks(),
+        "QueryCache::set_strict_null_checks must propagate to the wrapped TypeInterner"
+    );
+
+    // End-to-end: the same union construction the checker's non-strict
+    // member-dropping rule (`addTypeToUnion` never adds a nullish constituent
+    // when a non-nullish sibling is present) depends on must observe the
+    // propagated flag, not just `QueryCache`'s own local copy.
+    let reduced = db.union(vec![TypeId::STRING, TypeId::NULL, TypeId::UNDEFINED]);
+    assert_eq!(
+        reduced,
+        TypeId::STRING,
+        "non-strict union construction must drop nullish members once the flag is set"
+    );
+}
+
+#[test]
+fn query_cache_set_exact_optional_property_types_propagates_to_wrapped_interner() {
+    let interner = TypeInterner::new();
+    let db: &dyn QueryDatabase = &QueryCache::new(&interner);
+
+    // Same desync family as `strict_null_checks` above: tuple-element
+    // normalization (`normalize_optional_tuple_elements`) reads
+    // `exact_optional_property_types` on `TypeInterner` directly.
+    assert!(!interner.exact_optional_property_types());
+    db.set_exact_optional_property_types(true);
+    assert!(
+        interner.exact_optional_property_types(),
+        "QueryCache::set_exact_optional_property_types must propagate to the wrapped TypeInterner"
+    );
+}
+
+#[test]
 fn query_cache_statistics_reflects_cache_population() {
     let interner = TypeInterner::new();
     let cache = QueryCache::new(&interner);
