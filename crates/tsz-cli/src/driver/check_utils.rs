@@ -314,29 +314,25 @@ pub(super) fn filtered_parse_diagnostics(
         .iter()
         .any(|diagnostic| is_real_syntax_error(diagnostic.code));
 
-    // tsc emits these codes via grammarErrorOnNode in the checker, which checks
-    // hasParseDiagnostics(sourceFile) and suppresses when any parse error exists.
-    // In tsz, these are emitted by the parser. We post-filter them here to match
-    // tsc's suppression behavior. We only suppress grammar codes when there's a
-    // non-grammar parse error present (e.g., TS1005, TS1109) to avoid suppressing
-    // grammar codes that are the file's only diagnostic.
+    // tsc emits many grammar codes via grammarErrorOnNode in the checker, which
+    // suppresses them when `hasParseDiagnostics(sourceFile)` is true. tsz emits
+    // them from the parser instead, so we post-filter here to match. A grammar
+    // code is suppressed only when the file also carries a genuinely *suppressing*
+    // parse error — one that is NOT `is_non_suppressing_parse_error`. That is the
+    // single canonical model of tsc's `hasParseDiagnostics`; the checker gate sets
+    // `ctx.has_syntax_parse_errors` from the identical call (`check.rs`,
+    // `check_file.rs`), so this trigger cannot drift from it.
     //
-    // `is_real_syntax_error` is NOT a substitute for this exemption tuple: TS1260
-    // (keyword containing an escape character, e.g. `default:`) is neither a
-    // structural failure nor a listed grammar code, yet per the pinned tsc oracle
-    // it DOES trigger file-wide suppression of sibling grammar codes
-    // (switchStatementsWithMultipleDefaults.ts reports only TS1260, dropping every
-    // TS1113 duplicate-default diagnostic) — so "not exempted" must stay the
-    // default for anything not proven to need exemption, not "not a real syntax
-    // error". 1009/1185/1214/1262/1359/18012 are themselves parser-emitted
-    // strict-mode/grammar checks (not structural failures) that must NOT count as
-    // the trigger: e.g. plainJSBinderErrors.ts reports TS1101, TS1359, and TS18012
-    // ('#constructor' is a reserved word) all together with no structural parse
-    // error at all, per the same oracle.
-    let has_non_grammar_parse_error = parse_diagnostics.iter().any(|d| {
-        !matches!(d.code, 1009 | 1185 | 1214 | 1262 | 1359 | 18012)
-            && !is_parser_grammar_code(d.code)
-    });
+    // This replaced a hand-kept complement that #16279 showed was load-bearing in
+    // both directions (an unnamed non-suppressing code silently deleted every
+    // grammar sibling in its file). The unclassified-code default stays
+    // "suppressing" on purpose: TS1260 is neither structural nor a grammar code
+    // yet tsc still suppresses siblings for it, so it must never join
+    // `is_non_suppressing_parse_error`. See `filter_trigger_unification_tests` for
+    // the oracle-pinned witnesses and the full history.
+    let has_non_grammar_parse_error = parse_diagnostics
+        .iter()
+        .any(|d| !is_non_suppressing_parse_error(d.code));
 
     // TS1359 for `await` is parser-emitted in tsz. Keep it alongside unrelated
     // parse diagnostics (tsc does this in plain JS binder errors), but suppress
@@ -1680,6 +1676,13 @@ pub(super) const fn is_non_suppressing_parse_error(code: u32) -> bool {
                    // with string-literal escapes — so it stays enumerated here.
             | 17019 // '?' at end of type is not valid TS syntax (parser recovers valid AST)
             | 17020 // '?' at start of type is not valid TS syntax (parser recovers valid AST)
+            | 18012 // '#constructor' is a reserved word. tsc raises this from the
+                    // binder/checker, so it is never in `sourceFile.parseDiagnostics`;
+                    // tsz emits it from the parser instead. Oracle-pinned against
+                    // `typescript@7.0.2`: `class D { #constructor = 1; }` reports
+                    // TS18012 *alongside* a sibling getter's TS1054 and a semantic
+                    // TS2304 in the same file (plainJSBinderErrors.ts does the same
+                    // with TS1101/TS1359), so it must not set has_syntax_parse_errors.
     )
 }
 
@@ -1732,3 +1735,7 @@ mod parser_grammar_non_suppressing_tests;
 #[cfg(test)]
 #[path = "check_utils/for_in_using_declaration_grammar_tests.rs"]
 mod for_in_using_declaration_grammar_tests;
+
+#[cfg(test)]
+#[path = "check_utils/filter_trigger_unification_tests.rs"]
+mod filter_trigger_unification_tests;
