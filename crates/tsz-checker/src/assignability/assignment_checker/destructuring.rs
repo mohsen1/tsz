@@ -731,12 +731,17 @@ impl<'a> CheckerState<'a> {
                                 target_idx,
                             );
                         }
-                    } else if self.ctx.no_unchecked_indexed_access() && !is_spread {
+                    } else if self.ctx.no_unchecked_indexed_access() {
                         // With noUncheckedIndexedAccess, the element type includes
                         // `| undefined`. Check that this augmented type is assignable
                         // to the target variable's declared type. E.g.,
                         // `[target_string] = strArray` should error when
                         // `target_string: string` but element type is `string | undefined`.
+                        //
+                        // This branch owns the flag because the augmented
+                        // `check_type` is the thing being judged; the general
+                        // branch below re-resolves the element type from
+                        // `source_type` and would drop the added `undefined`.
                         let target_type = self.get_type_of_assignment_target(target_idx);
                         if target_type != TypeId::ANY
                             && target_type != TypeId::ERROR
@@ -749,6 +754,46 @@ impl<'a> CheckerState<'a> {
                                 check_type,
                                 target_type,
                                 target_idx,
+                                target_idx,
+                            );
+                        }
+                    } else {
+                        // tsc's `checkArrayLiteralDestructuringElementAssignment`
+                        // judges every non-spread element target against the
+                        // source's element type at that index, exactly as the
+                        // object half of this walk judges each property target.
+                        // tsz ran that check only under `noUncheckedIndexedAccess`,
+                        // so an ordinary `[a, b] = [b, a]` reported nothing: the
+                        // whole-pattern relation is deliberately skipped for
+                        // destructuring assignments — tsc processes elements
+                        // individually — and no per-element judgement replaced it.
+                        //
+                        // `check_destructuring_leaf_assignability*` is the shared
+                        // leaf owner already used by the object half. It resolves
+                        // the source type by numeric index, applies tsc's
+                        // default-initializer rule (for `[s = 2] = [s]` the
+                        // *default* is what fails against the target), and anchors
+                        // TS2322 on the target rather than on the whole pattern.
+                        let index_key = index.to_string();
+                        let default_shape = self.ctx.arena.get(target_idx).and_then(|node| {
+                            if node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                                return None;
+                            }
+                            let bin = self.ctx.arena.get_binary_expr(node)?;
+                            (bin.operator_token == SyntaxKind::EqualsToken as u16)
+                                .then_some((bin.left, bin.right))
+                        });
+                        if let Some((leaf_idx, default_idx)) = default_shape {
+                            self.check_destructuring_leaf_assignability_with_default(
+                                &index_key,
+                                source_type,
+                                leaf_idx,
+                                default_idx,
+                            );
+                        } else {
+                            self.check_destructuring_leaf_assignability(
+                                &index_key,
+                                source_type,
                                 target_idx,
                             );
                         }
