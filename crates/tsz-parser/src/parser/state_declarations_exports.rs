@@ -71,7 +71,7 @@ impl ParserState {
 
         // export default ...
         if self.is_token(SyntaxKind::DefaultKeyword) {
-            return self.parse_export_default(start_pos);
+            return self.parse_export_default(start_pos, None);
         }
 
         // export import X = Y (re-export of import equals)
@@ -391,7 +391,23 @@ impl ParserState {
     }
 
     // Parse export default
-    pub(crate) fn parse_export_default(&mut self, start_pos: u32) -> NodeIndex {
+    //
+    // `modifiers` carries a stray `declare` (plus the `export` it was found
+    // before) when reached from the ambient dispatch in `state_declarations.rs`
+    // (`declare export default <expr>;`); the ordinary `export default` path
+    // passes `None`. It is needed on the wrapper `EXPORT_DECLARATION` node
+    // because `is_in_ambient_context` reads a node's own `declare` modifier or
+    // walks to its parent — and a bare-expression default export is a leaf
+    // statement here, not nested inside another ambient-flagged node — so
+    // without it the checker's TS2714 ambient-expression check
+    // (`crates/tsz-checker/src/declarations/import/core/module_exports.rs`)
+    // never sees the declare context and silently drops the diagnostic
+    // (#16403 residual: `declare export default 1;` was missing TS2714).
+    pub(crate) fn parse_export_default(
+        &mut self,
+        start_pos: u32,
+        modifiers: Option<NodeList>,
+    ) -> NodeIndex {
         let default_pos = self.token_pos();
         self.parse_expected(SyntaxKind::DefaultKeyword);
 
@@ -472,13 +488,32 @@ impl ParserState {
         };
 
         let end_pos = self.token_end();
+        // Only thread the caller's modifiers onto the wrapper when the default
+        // export is a bare expression. A class/function/interface declaration
+        // already carries `declare` on its own inner node (via the dedicated
+        // `parse_declare_class`/etc. paths), and the checker's TS2714 check
+        // already excludes those kinds by node kind — attaching modifiers there
+        // too would be inert for TS2714 but is unnecessary surface area.
+        let is_declaration_expression = matches!(
+            self.arena.get(expression).map(|n| n.kind),
+            Some(k) if k == syntax_kind_ext::CLASS_DECLARATION
+                || k == syntax_kind_ext::FUNCTION_DECLARATION
+                || k == syntax_kind_ext::INTERFACE_DECLARATION
+                || k == syntax_kind_ext::ENUM_DECLARATION
+                || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+        );
+        let wrapper_modifiers = if is_declaration_expression {
+            None
+        } else {
+            modifiers
+        };
         // Use export assignment for default exports
         self.arena.add_export_decl(
             syntax_kind_ext::EXPORT_DECLARATION,
             start_pos,
             end_pos,
             ExportDeclData {
-                modifiers: None,
+                modifiers: wrapper_modifiers,
                 is_type_only: false,
                 is_default_export: true,
                 default_keyword_pos: Some(default_pos),

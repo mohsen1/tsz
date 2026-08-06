@@ -227,6 +227,8 @@ mod cross_module_class_self_member_tests;
 mod cross_module_generic_interface_heritage_tests;
 #[path = "tests/declaration_extract_key_path_tests.rs"]
 mod declaration_extract_key_path_tests;
+#[path = "tests/declare_export_default_expression_ambient_ts2714_tests.rs"]
+mod declare_export_default_expression_ambient_ts2714_tests;
 #[path = "tests/declare_export_default_modifier_order_ts1319_dedup_tests.rs"]
 mod declare_export_default_modifier_order_ts1319_dedup_tests;
 #[path = "tests/declare_export_equals_ambient_ts2714_tests.rs"]
@@ -967,6 +969,8 @@ mod unique_symbol_assignment_ts2322_tests;
 mod unique_symbol_member_lookup_family_tests;
 #[path = "tests/unresolved_def_eval_cache_backstop_tests.rs"]
 mod unresolved_def_eval_cache_backstop_tests;
+#[path = "tests/using_declaration_implicit_any_tests.rs"]
+mod using_declaration_implicit_any_tests;
 #[path = "tests/variadic_tuple_alias_display_tests.rs"]
 mod variadic_tuple_alias_display_tests;
 #[path = "tests/variadic_tuple_constraint_literal_preservation_tests.rs"]

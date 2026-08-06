@@ -204,7 +204,6 @@ var e: string = av;
 /// for the direct-expression push site, not the hole/spread/rest ones) — a
 /// distinct owner-site fix, left for a follow-up.
 #[test]
-#[ignore = "known gap: nested fresh array literal still over-widens through array_literal.rs's BCT pre-widening, see #16384 leg B follow-up"]
 fn declared_undefined_in_nested_array_keeps_unwidened() {
     let source = "\
 declare var q: undefined;

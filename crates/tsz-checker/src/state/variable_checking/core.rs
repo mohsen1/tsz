@@ -834,10 +834,19 @@ impl<'a> CheckerState<'a> {
                     var_decl.initializer,
                 );
             }
-            let emit_declaration_site_implicit_any = (self.is_const_variable_declaration(decl_idx)
-                && !is_in_for_in_or_for_of)
-                || is_exported
-                || (is_ambient && !self.ctx.is_declaration_file());
+            // A const-*like* binding — `const`, `using`, or `await using` (tsc's
+            // `isVarConstLike`) — cannot be reassigned, so an uninitialized one
+            // never becomes an evolving/"auto" any that control flow later fixes:
+            // tsc reports its implicit-any at the declaration site (TS7005), not
+            // deferred like `let`/`var`. Gate on `is_var_const_like_declaration`
+            // rather than `is_const_variable_declaration`, which tests only the
+            // `CONST` bit — plain `using` sets only `USING` (4) and would slip
+            // through, while `await using` (6 = `CONST | USING`) already carried
+            // `CONST` and was the only one reported before.
+            let emit_declaration_site_implicit_any =
+                (self.ctx.arena.is_var_const_like_declaration(decl_idx) && !is_in_for_in_or_for_of)
+                    || is_exported
+                    || (is_ambient && !self.ctx.is_declaration_file());
             if self.ctx.no_implicit_any()
                 && !self.ctx.has_real_syntax_errors
                 && var_decl.type_annotation.is_none()

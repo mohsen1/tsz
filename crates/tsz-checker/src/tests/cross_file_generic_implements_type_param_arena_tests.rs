@@ -56,9 +56,6 @@ fn implements_member_errors(diagnostics: &[Diagnostic]) -> Vec<(u32, String)> {
 }
 
 #[test]
-#[ignore = "root cause one layer deeper than this PR's fix: get_cross_file_symbol's \
-            local_import_alias check re-reads an already-resolved cross-file SymbolId \
-            against the CURRENT file's own binder, see module docs and #16434"]
 fn cross_file_generic_interface_implements_substitutes_type_argument() {
     let types_src = r#"
 export interface Plain<T> {
@@ -117,9 +114,6 @@ export class Actor implements Plain<number> {
 }
 
 #[test]
-#[ignore = "root cause one layer deeper than this PR's fix: get_cross_file_symbol's \
-            local_import_alias check re-reads an already-resolved cross-file SymbolId \
-            against the CURRENT file's own binder, see module docs and #16434"]
 fn cross_file_generic_interface_implements_renamed_binders() {
     // Same shape, different identifiers throughout — guards against any
     // identifier-specific logic sneaking into the fix.

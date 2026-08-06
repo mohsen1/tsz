@@ -1378,6 +1378,102 @@ fn an_array_variable_assigned_to_a_tuple_member_keeps_the_arity_reason() {
 }
 
 // ---------------------------------------------------------------------------
+// A `readonly` tuple target reaches the same `TS2741` a mutable tuple does.
+//
+// Structural rule, oracled against `typescript@7.0.2`
+// (`--noEmit --strict --pretty --target es2022 --lib es2022`): tsc elaborates
+// a `readonly [T]` target's missing-property mismatch exactly like `[T]`'s —
+// the `readonly` modifier is not itself the failure. tsz's solver already
+// gets this right end-to-end (`explain_tuple_failure` returns the correct
+// `MissingProperty` reason for both), so the bug is a checker-side rendering
+// gate mis-firing, not a missing solver descent.
+//
+// Root cause: `render_missing_property`'s "target has an index signature but
+// the missing property is not one of its own named properties" bail-out
+// (`crates/tsz-checker/src/error_reporter/render_failure_missing_property.rs`)
+// decides whether the target is array/tuple-shaped with
+// `array_element_type(target).is_some() || tuple_list_id(target).is_some()`.
+// `array_element_type` (`type_queries::data::get_array_element_type`) already
+// unwraps a `ReadonlyType` wrapper, but `tuple_list_id`
+// (`visitors::visitor_extract::tuple_list_id`) does not — it matches only
+// `TypeData::Tuple` directly. For a `readonly [T]` target that asymmetry
+// makes `target_is_array_or_tuple` false, so the tuple's own implicit numeric
+// index signature is treated as a real index signature, the missing property
+// (a named property of the *element*, not the tuple) fails the "named
+// property of target" check, and the function bails to a bare `TS2322` with
+// no elaboration at all — before the tuple-element drill this file's anchor
+// walk depends on ever runs. This is exactly why `Array<T>`/`ReadonlyArray<T>`/
+// `readonly T[]` were already fixed (#16551/#16556) while the tuple spelling
+// alone stayed broken (#16552): every one of those goes through
+// `array_element_type`, which already peels `readonly`.
+//
+// The fix swaps the raw `tuple_list_id(target).is_some()` check for
+// `is_tuple_type(target)` (`visitors::visitor_predicates::is_tuple_type`),
+// which already peels `ReadonlyType`/`Substitution` — the same query this
+// file's own anchor walk and the solver's `explain.rs` already use for the
+// identical "is this shape a tuple" question. `tuple_list_id` itself is left
+// alone: it has 24 call sites across the solver's core relation dispatch, and
+// widening what it matches is a much larger blast radius than this one
+// boolean gate needs.
+// ---------------------------------------------------------------------------
+
+/// The headline row: a `readonly` tuple member's missing-property failure
+/// reaches `TS2741`, matching the mutable-tuple case
+/// (`tuple_member_missing_property_is_not_reported_as_an_arity_gap` above).
+/// Oracle: `2:23 - TS2741 Property 'rq' is missing in type '{ rp: number; }' …`
+#[test]
+fn readonly_tuple_member_missing_property_reaches_ts2741() {
+    let source = "type R1 = { tup: readonly [{ rp: number; rq: number }] };\nconst r: R1 = { tup: [{ rp: 1 }] };\n";
+    let diagnostics = check_source_diagnostics(source);
+    assert_eq!(codes(&diagnostics), vec![TS2741], "{diagnostics:?}");
+}
+
+/// The same rule for a `readonly` tuple written directly as a binding's own
+/// annotation, with no wrapping object-literal member — the bail-out this
+/// fixes runs on this shape too, and unlike the member row above needs no
+/// contextual-retype recovery at all: the literal is typed against the
+/// annotation from the start.
+/// Oracle: `2:16 - TS2741 Property 'rq' is missing in type '{ rp: number; }' …`
+#[test]
+fn readonly_tuple_direct_annotation_missing_property_reaches_ts2741() {
+    let source = "type Ro = readonly [{ rp: number; rq: number }];\nconst v: Ro = [{ rp: 1 }];\n";
+    let diagnostics = check_source_diagnostics(source);
+    assert_eq!(codes(&diagnostics), vec![TS2741], "{diagnostics:?}");
+}
+
+/// A multi-element `readonly` tuple: the fix must not just special-case a
+/// one-element tuple, and a genuinely *unrelated* missing-index-signature
+/// bail-out (a real index-signature-vs-index-signature target) must still
+/// fire for the type that is not array/tuple shaped at all.
+#[test]
+fn readonly_tuple_with_two_elements_missing_property_reaches_ts2741() {
+    let source = "type R2 = { tup: readonly [{ ra: number }, { rb: number; rc: number }] };\nconst r: R2 = { tup: [{ ra: 1 }, { rb: 2 }] };\n";
+    let diagnostics = check_source_diagnostics(source);
+    assert_eq!(codes(&diagnostics), vec![TS2741], "{diagnostics:?}");
+}
+
+/// Negative control: a genuine index-signature-to-index-signature target
+/// (not array/tuple-shaped at all) must keep the generic `TS2322` this
+/// bail-out exists for — the fix narrows `target_is_array_or_tuple`'s
+/// readonly blind spot, it does not remove the check.
+/// Oracle: a single `TS2322` — `'string' index signatures are incompatible.`
+#[test]
+fn indexed_object_target_keeps_the_generic_index_signature_mismatch() {
+    let source = "interface SrcIdx { [k: string]: boolean }\ninterface Idx { [k: string]: number }\ndeclare const s: SrcIdx;\nconst v: Idx = s;\n";
+    let diagnostics = check_source_diagnostics(source);
+    assert_eq!(codes(&diagnostics), vec![TS2322], "{diagnostics:?}");
+}
+
+/// Renamed binders and a different property name: the fix keys on the
+/// target's *shape* (readonly tuple), never on an identifier written above
+/// it.
+#[test]
+fn readonly_tuple_recovery_is_not_identifier_keyed() {
+    let source = "type Roster2 = { slots: readonly [{ alpha: string; beta: string }] };\nconst r: Roster2 = { slots: [{ alpha: \"a\" }] };\n";
+    let diagnostics = check_source_diagnostics(source);
+    assert_eq!(codes(&diagnostics), vec![TS2741], "{diagnostics:?}");
+}
+
 // A tuple element type is descended into exactly as an array element type is.
 //
 // Structural rule, oracled against `typescript@7.0.2`
@@ -1409,26 +1505,21 @@ fn a_tuple_element_literal_anchors_in_the_element_type() {
     assert_eq!(span_text(source, start, length), "tq");
 }
 
-/// Remaining gap, at a *different* owner. `readonly [T]` never reaches the
-/// anchor walk at all: the elaboration explains the failure as a whole-tuple
-/// `TS2322` (`Type '[{ rp: number; }]' is not assignable to type 'readonly
-/// [{ rp: number; rq: number; }]'`) instead of drilling element-wise to the
-/// `TS2741` that tsc reports, so there is no `TS2741` for a pointer to hang
-/// on. The `readonly` `TYPE_OPERATOR` peel in the walk is already in place and
-/// composes with the tuple descent the moment the primary is fixed — the same
-/// shape as #16552, where this whole cell was blocked until #16586 fixed the
-/// primary for the non-readonly form.
+/// A `readonly [T]` element used to stop here too — the primary was still a
+/// whole-tuple `TS2322`, so there was no `TS2741` for this file's own anchor
+/// walk to hang a pointer on. That primary is now fixed (checker-side
+/// rendering gate, not this walk — see `readonly_tuple_member_missing_property_reaches_ts2741`
+/// above), so the walk's `readonly` `TYPE_OPERATOR` peel composes for free and
+/// this row now anchors too.
 ///
 /// Oracle: `t2.ts:2:23 - TS2741 Property 'rq' is missing …` with
 /// `t2.ts:1:42 - 'rq' is declared here.`
 #[test]
-fn a_readonly_tuple_element_still_reports_the_whole_tuple_mismatch() {
+fn a_readonly_tuple_element_anchors_in_the_element_type() {
     let source = "type R1 = { tup: readonly [{ rp: number; rq: number }] };\nconst r: R1 = { tup: [{ rp: 1 }] };\n";
-    let diagnostics = check_source_diagnostics(source);
-    assert!(
-        diagnostics.iter().all(|d| d.code != TS2741),
-        "readonly tuple primary is expected to still be the whole-tuple TS2322: {diagnostics:?}"
-    );
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, _) = declared_here(&diagnostic);
+    assert_eq!(span_text(source, start, length), "rq");
 }
 
 /// A tuple written directly as the binding's annotation, with no enclosing
