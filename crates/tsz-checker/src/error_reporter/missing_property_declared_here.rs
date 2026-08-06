@@ -284,7 +284,46 @@ impl<'a> CheckerState<'a> {
             let operand_idx = data.type_node;
             return self.annotation_property_anchor(operand_idx, property, depth + 1);
         }
+        if node.kind == syntax_kind_ext::TUPLE_TYPE {
+            // Unlike `T[]`, each tuple element occupies a distinct index and
+            // this walk carries no failing-element-index context — only the
+            // property name reaches this far. Try every element and require
+            // exactly one match, the same "no basis to pick between them"
+            // policy `unique_type_argument_anchor` already applies to
+            // `Array<T>`'s type argument just above. The tuple itself
+            // contributes no path segment, for the same reason the `ARRAY_TYPE`
+            // arm does not: `contextual_property_path` skips
+            // `ARRAY_LITERAL_EXPRESSION` without pushing a name, so this arm is
+            // reached either directly (a bare tuple annotation) or after the
+            // wrapping member's own path segment already resolved to this node.
+            let elements = self.ctx.arena.get_tuple_type(node)?.elements.nodes.clone();
+            let element_type_nodes: Vec<NodeIndex> = elements
+                .iter()
+                .filter_map(|&element_idx| self.tuple_element_type_node(element_idx))
+                .collect();
+            return self.unique_type_argument_anchor(&element_type_nodes, property, depth);
+        }
         None
+    }
+
+    /// The written type node a tuple element denotes, unwrapping the syntax a
+    /// tuple element is allowed to carry: a named element (`[first: T]`)
+    /// stores its type on `NamedTupleMemberData` rather than being the type
+    /// node itself, and an optional or rest element (`T?`, `...T`) stores it
+    /// on the same `WrappedTypeData` the optional/rest *type* nodes elsewhere
+    /// in this walk already unwrap. A plain element is already its own type
+    /// node.
+    fn tuple_element_type_node(&self, element_idx: NodeIndex) -> Option<NodeIndex> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let node = self.ctx.arena.get(element_idx)?;
+        if node.kind == syntax_kind_ext::NAMED_TUPLE_MEMBER {
+            return Some(self.ctx.arena.get_named_tuple_member(node)?.type_node);
+        }
+        if node.kind == syntax_kind_ext::OPTIONAL_TYPE || node.kind == syntax_kind_ext::REST_TYPE {
+            return Some(self.ctx.arena.get_wrapped_type(node)?.type_node);
+        }
+        Some(element_idx)
     }
 
     /// The anchor for `property` in exactly one of `type_arguments`.

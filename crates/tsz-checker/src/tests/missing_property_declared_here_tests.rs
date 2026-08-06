@@ -1218,25 +1218,93 @@ fn user_defined_array_named_type_does_not_take_the_element_descent() {
     );
 }
 
-/// Known *remaining* gap, pinned so it cannot regress silently: a tuple member
-/// now reports tsc's `TS2741` code, but anchored at the member name and
-/// comparing the whole tuples, where tsc anchors the failing *element* literal
-/// and compares the element types — so the anchor walk is still never reached
-/// and no pointer is attached. tsc's row for this source is
-/// `2:26 - TS2741 Property 'tq' is missing in type '{ tp: number; }' …` with
-/// `1:36 - 'tq' is declared here.` Closing it means drilling the tuple
-/// element-wise in the failure explanation, which is a different owner from the
-/// anchor walk this file covers. Tracked in #16552.
+/// #16552's tuple row. `annotation_property_anchor` now descends `TUPLE_TYPE`:
+/// each element is tried in turn and the walk requires exactly one to declare
+/// `property`, the same "no basis to pick between them" policy
+/// `unique_type_argument_anchor` already applies to `Array<T>`'s type
+/// argument — there is no failing-index context left by the time the walk
+/// reaches here to pick a position directly.
+/// Oracle: `2:26 - TS2741 Property 'tq' is missing in type '{ tp: number; }' …`
+/// with `1:36 - 'tq' is declared here.`
 #[test]
-fn tuple_element_literal_still_carries_no_pointer() {
+fn tuple_element_literal_carries_its_pointer() {
     let source = "type Nest3 = { tup: [{ tp: number; tq: number }] };\nconst c: Nest3 = { tup: [{ tp: 1 }] };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, _) = declared_here(&diagnostic);
+    assert_eq!(span_text(source, start, length), "tq");
+}
+
+/// A bare tuple annotation (no wrapping property) reaches the `TUPLE_TYPE` arm
+/// directly, with an empty `contextual_property_path` — the same route the
+/// bare-`Array<T>`/bare-`T[]` rows already take for the non-tuple spellings.
+#[test]
+fn bare_tuple_annotation_element_carries_its_pointer() {
+    let source = "type Solo = [{ sp: number; sq: number }];\nconst v: Solo = [{ sp: 1 }];\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, _) = declared_here(&diagnostic);
+    assert_eq!(span_text(source, start, length), "sq");
+}
+
+/// Known *remaining* gap, pinned so it cannot regress silently: unlike a bare
+/// tuple, `readonly [T]` never reaches a per-element `TS2741` at all — even
+/// for a plain, non-nested variable declaration, outside any object-literal
+/// property elaboration. tsc reports the elementwise failure; tsz still
+/// compares the whole tuples. This is a distinct root cause from the one
+/// `#16552` described for the property-elaboration recovery
+/// (`contextual_tuple_recovers_elementwise_failure` already sees through the
+/// `readonly` wrapper via `is_tuple_type`'s own `ReadonlyType` case — verified
+/// empirically, not assumed) — the failure reason classification itself
+/// (`analyze_assignability_failure`) does not produce a
+/// `TupleElementTypeMismatch` for a `readonly`-wrapped tuple target. Tracked
+/// as a follow-up; the anchor walk this file owns already supports
+/// `readonly [T]` once the primary diagnostic becomes `TS2741`.
+#[test]
+fn readonly_tuple_element_still_reports_the_whole_tuple_mismatch() {
+    let source = "type Ro = readonly [{ rp: number; rq: number }];\nconst v: Ro = [{ rp: 1 }];\n";
+    let diagnostics = check_source_diagnostics(source);
+    assert_eq!(
+        codes(&diagnostics),
+        vec![TS2322],
+        "readonly tuple element-wise TS2741 is not yet produced: {diagnostics:?}"
+    );
+}
+
+/// A named tuple element (`[first: T]`) stores its type on
+/// `NamedTupleMemberData`, not directly as the element node — the element
+/// must be unwrapped before the per-element `annotation_property_anchor`
+/// descent, or every element declines and the walk falls back to no pointer.
+#[test]
+fn named_tuple_element_carries_its_pointer() {
+    let source = "type Named = { pair: [first: { np: number; nq: number }] };\nconst v: Named = { pair: [{ np: 1 }] };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, _) = declared_here(&diagnostic);
+    assert_eq!(span_text(source, start, length), "nq");
+}
+
+/// Known *conservative* gap, disclosed rather than hidden: tsc's row for this
+/// source reports *two* `TS2741`s, each correctly pointed at its own element's
+/// declaration (`1:23 - 'dq' is declared here.` for the first, `1:39` for the
+/// second) — it knows which literal element failed against which tuple
+/// position directly from the relation. This walk only carries the property
+/// *name* by the time it reaches the annotation (see the `TUPLE_TYPE` arm's
+/// own doc comment), not which element failed, so two elements sharing a
+/// property name give it no basis to pick between them and it declines both
+/// rather than risk anchoring one at the wrong element — the same policy an
+/// ambiguous `unique_type_argument_anchor` case already applies to
+/// `Array<T>`'s type argument. Closing this gap needs the failing element's
+/// own index threaded through from the `TS2741` site, which is a different,
+/// larger change than this fix; tracked as a follow-up rather than attempted
+/// here.
+#[test]
+fn tuple_with_two_elements_declaring_the_same_name_declines() {
+    let source = "type Dup = { pair: [{ dq: number }, { dq: string }] };\nconst v: Dup = { pair: [{}, {}] };\n";
     let diagnostics = check_source_diagnostics(source);
     assert!(
         !diagnostics
             .iter()
             .flat_map(|d| d.related_information.iter())
             .any(|info| info.code == TS2728),
-        "tuple element type is not descended into: {diagnostics:?}"
+        "an ambiguous property name across tuple elements must decline the pointer: {diagnostics:?}"
     );
 }
 
