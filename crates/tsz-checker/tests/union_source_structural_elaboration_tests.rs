@@ -203,6 +203,63 @@ const t: Target = s;
     );
 }
 
+/// Same-shaped, distinctly-declared enum members select by *declaration*
+/// order (tsz's canonical union-interning sort keys `Enum` members on their
+/// `DefId`, which tracks binder declaration order), not by the union's
+/// *written* member order — regression coverage for the enum row of #16513.
+/// Oracled against `typescript@7.0.2`: `tsc` reports `E1` (the first
+/// *declared* enum) for both `E1 | E2` and the reversed `E2 | E1`, since a
+/// top-level enum's type is created once, at its own declaration, regardless
+/// of where or how many times it is later referenced — the union's written
+/// order does not change which member's type was created first.
+#[test]
+fn union_member_selection_matches_tsc_declaration_order_for_same_shaped_enums() {
+    let forward = ts2322_chain(&diagnostics(
+        r#"
+enum E1 { A }
+enum E2 { A }
+declare const e: E1 | E2;
+const ee: boolean = e;
+"#,
+    ));
+    assert!(
+        chain_has_leaf(&forward, "E1", "boolean") && !chain_has_leaf(&forward, "E2", "boolean"),
+        "the first-declared member E1 should be elaborated; got {forward:?}"
+    );
+
+    // Reversing the *written* union order does not change the pick: `tsc`
+    // still names `E1`, the first-*declared* member.
+    let reversed = ts2322_chain(&diagnostics(
+        r#"
+enum E1 { A }
+enum E2 { A }
+declare const e: E2 | E1;
+const ee: boolean = e;
+"#,
+    ));
+    assert!(
+        chain_has_leaf(&reversed, "E1", "boolean") && !chain_has_leaf(&reversed, "E2", "boolean"),
+        "reversing the written order must not change the pick — still the \
+         first-declared member E1; got {reversed:?}"
+    );
+
+    // Renamed binders (anti-hardcoding): the same shape under different names
+    // must select the same way, so no fix here could be keyed to `E1`/`E2`.
+    let renamed = ts2322_chain(&diagnostics(
+        r#"
+enum Alpha { X }
+enum Beta { X }
+declare const v: Alpha | Beta;
+const w: boolean = v;
+"#,
+    ));
+    assert!(
+        chain_has_leaf(&renamed, "Alpha", "boolean")
+            && !chain_has_leaf(&renamed, "Beta", "boolean"),
+        "renamed binders must still select the first-declared member; got {renamed:?}"
+    );
+}
+
 /// Nullish member priority matches `tsc`'s relation order. `tsc`'s
 /// `eachTypeRelatedToType` walks the source union in ascending *type-id* order,
 /// where the intrinsic `undefined` and `null` types (allocated before any user
