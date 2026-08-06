@@ -15,6 +15,7 @@ fn assert_invariant_defaults(lowering: &TypeLowering<'_>) {
     assert!(lowering.preferred_self_def_id.is_none());
     assert!(lowering.host.name_def_id_resolver.is_none());
     assert!(!lowering.strict_null_checks);
+    assert!(!lowering.nonstrict_nullish_union_reduction);
     assert!(lowering.host.type_query_override.is_none());
 }
 
