@@ -58,14 +58,14 @@ pub(super) type ApplicationEvalCacheKey = (DefId, smallvec::SmallVec<[TypeId; 4]
 pub struct SharedQueryCache {
     pub(super) eval_cache: DashMap<EvaluationCacheKey, TypeId, FxBuildHasher>,
     pub(super) eval_dependency_index: DashMap<DefId, FxHashSet<EvaluationCacheKey>, FxBuildHasher>,
-    eval_key_dependency_index: DashMap<EvaluationCacheKey, FxHashSet<DefId>, FxBuildHasher>,
+    eval_key_dependency_index: DashMap<EvaluationCacheKey, Box<[DefId]>, FxBuildHasher>,
     pub(super) subtype_cache: DashMap<RelationCacheKey, RelationCacheValue, FxBuildHasher>,
     pub(super) assignability_cache: DashMap<RelationCacheKey, RelationCacheValue, FxBuildHasher>,
     pub(super) application_eval_cache: DashMap<ApplicationEvalCacheKey, TypeId, FxBuildHasher>,
     pub(super) application_eval_dependency_index:
         DashMap<DefId, FxHashSet<ApplicationEvalCacheKey>, FxBuildHasher>,
     application_eval_key_dependency_index:
-        DashMap<ApplicationEvalCacheKey, FxHashSet<DefId>, FxBuildHasher>,
+        DashMap<ApplicationEvalCacheKey, Box<[DefId]>, FxBuildHasher>,
     pub(super) instantiation_cache: DashMap<InstantiationCacheKey, TypeId, FxBuildHasher>,
     share_instantiation_family: bool,
 }
@@ -127,14 +127,14 @@ impl SharedQueryCache {
         if deps.is_empty() {
             return;
         }
-        let deps: FxHashSet<_> = deps.into_iter().collect();
         for &def_id in &deps {
             self.application_eval_dependency_index
                 .entry(def_id)
                 .or_default()
                 .insert(key.clone());
         }
-        self.application_eval_key_dependency_index.insert(key, deps);
+        self.application_eval_key_dependency_index
+            .insert(key, deps.into_boxed_slice());
     }
 
     pub(super) fn invalidate_application_eval_cache_for_def(
@@ -206,22 +206,22 @@ impl SharedQueryCache {
         if deps.is_empty() {
             return;
         }
-        let deps: FxHashSet<_> = deps.into_iter().collect();
         for &def_id in &deps {
             self.eval_dependency_index
                 .entry(def_id)
                 .or_default()
                 .insert(key);
         }
-        self.eval_key_dependency_index.insert(key, deps);
+        self.eval_key_dependency_index
+            .insert(key, deps.into_boxed_slice());
     }
 
     fn remove_eval_dependencies(&self, key: EvaluationCacheKey, _result: TypeId) {
         let Some((_, deps)) = self.eval_key_dependency_index.remove(&key) else {
             return;
         };
-        for def_id in deps {
-            let Some(mut keys) = self.eval_dependency_index.get_mut(&def_id) else {
+        for def_id in deps.iter() {
+            let Some(mut keys) = self.eval_dependency_index.get_mut(def_id) else {
                 continue;
             };
             keys.remove(&key);
@@ -229,7 +229,7 @@ impl SharedQueryCache {
             drop(keys);
             if empty {
                 self.eval_dependency_index
-                    .remove_if(&def_id, |_, keys| keys.is_empty());
+                    .remove_if(def_id, |_, keys| keys.is_empty());
             }
         }
     }
@@ -238,8 +238,8 @@ impl SharedQueryCache {
         let Some((_, deps)) = self.application_eval_key_dependency_index.remove(key) else {
             return;
         };
-        for def_id in deps {
-            let Some(mut keys) = self.application_eval_dependency_index.get_mut(&def_id) else {
+        for def_id in deps.iter() {
+            let Some(mut keys) = self.application_eval_dependency_index.get_mut(def_id) else {
                 continue;
             };
             keys.remove(key);
@@ -247,7 +247,7 @@ impl SharedQueryCache {
             drop(keys);
             if empty {
                 self.application_eval_dependency_index
-                    .remove_if(&def_id, |_, keys| keys.is_empty());
+                    .remove_if(def_id, |_, keys| keys.is_empty());
             }
         }
     }
@@ -273,14 +273,15 @@ impl SharedQueryCache {
         size += self.eval_key_dependency_index.len()
             * (DASHMAP_ENTRY_OVERHEAD
                 + std::mem::size_of::<EvaluationCacheKey>()
-                + std::mem::size_of::<FxHashSet<DefId>>());
+                + std::mem::size_of::<Box<[DefId]>>());
         for keys in &self.eval_dependency_index {
             let keys = keys.value();
             size +=
                 keys.len() * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<EvaluationCacheKey>());
         }
         for deps in &self.eval_key_dependency_index {
-            size += deps.value().len() * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<DefId>());
+            // Boxed slice: one contiguous allocation, no per-element bucket.
+            size += deps.value().len() * std::mem::size_of::<DefId>();
         }
         size += (self.subtype_cache.len() + self.assignability_cache.len())
             * (DASHMAP_ENTRY_OVERHEAD
@@ -297,14 +298,15 @@ impl SharedQueryCache {
         size += self.application_eval_key_dependency_index.len()
             * (DASHMAP_ENTRY_OVERHEAD
                 + std::mem::size_of::<ApplicationEvalCacheKey>()
-                + std::mem::size_of::<FxHashSet<DefId>>());
+                + std::mem::size_of::<Box<[DefId]>>());
         for keys in &self.application_eval_dependency_index {
             let keys = keys.value();
             size += keys.len()
                 * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<ApplicationEvalCacheKey>());
         }
         for deps in &self.application_eval_key_dependency_index {
-            size += deps.value().len() * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<DefId>());
+            // Boxed slice: one contiguous allocation, no per-element bucket.
+            size += deps.value().len() * std::mem::size_of::<DefId>();
         }
         size += self.instantiation_cache.len()
             * (DASHMAP_ENTRY_OVERHEAD
