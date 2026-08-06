@@ -1135,8 +1135,32 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        let original_target = target;
         let target = self.evaluate_type_for_assignability(target);
         if target == TypeId::UNDEFINED || target == TypeId::NULL {
+            return true;
+        }
+        // tsc's `reportErrorResults` restores an alias-named target to its whole
+        // (unreduced) form before the source-literal generalization gate runs, so
+        // a nullable-union *alias* (`type U<T> = T | undefined`) keeps the literal
+        // source that a structurally identical *inline* `T | undefined` — which the
+        // relation reduces to its non-nullish member for the report — widens.
+        //
+        // The alias surface is read from the pre-evaluation target (evaluation
+        // flattens the application to the raw union, dropping it), and the whole
+        // resolved type is judged through the solver's resolver-aware singleton
+        // predicate, which counts the `undefined`/`null` union members that the
+        // reduced-target `_inner` path below deliberately ignores (that omission is
+        // exactly the nullish-strip a non-alias union already gets).
+        if crate::query_boundaries::diagnostics::type_keeps_alias_symbol_surface(
+            self.ctx.types.as_type_database(),
+            &self.ctx.definition_store,
+            original_target,
+        ) && crate::query_boundaries::diagnostics::relation_target_could_hold_singleton(
+            self.ctx.types,
+            &self.ctx,
+            target,
+        ) {
             return true;
         }
         // A deferred generic indexed access `O[K]` (K a type parameter, e.g.
