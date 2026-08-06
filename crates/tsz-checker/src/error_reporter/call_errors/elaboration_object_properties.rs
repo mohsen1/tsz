@@ -1503,6 +1503,35 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // An array literal written for a *tuple-typed element slot* is
+            // cached as the widened array (`{ kp: number }[]`) for exactly the
+            // reason an array literal written for a tuple-typed *property* is:
+            // its own check ran before the slot's contextual type was
+            // available. Handing that widened form to the relation loses the
+            // element count, so the failure is classified as the
+            // unbounded-source arity gap (`TS2620` "Target requires N
+            // element(s) but source may have fewer") — false on its face for a
+            // literal that wrote exactly N elements — and it hides the real
+            // per-element failure underneath.
+            //
+            // `contextual_tuple_recovers_elementwise_failure` is the same
+            // predicate the object-literal property path already applies for
+            // this shape; the element slot is the other half of `tsc`'s
+            // `elaborateElementwise`, which recurses through array and object
+            // literals alike. Restricted identically: the cached form lost
+            // tuple-ness, the contextual form regained it, and the target slot
+            // is a tuple, so the swap can only turn a whole-array arity reason
+            // into the element-wise one.
+            let elem_type = if self.contextual_tuple_recovers_elementwise_failure(
+                elem_type,
+                contextual_elem_type,
+                target_element_type,
+            ) {
+                contextual_elem_type
+            } else {
+                elem_type
+            };
+
             // For object/array literal elements, use contextually-typed type
             // to decide whether to elaborate (avoids false positives from widening).
             // Pass the target element type as contextual type so literal types
@@ -1596,6 +1625,20 @@ impl<'a> CheckerState<'a> {
                         .unwrap_or(elem_type)
                 } else {
                     elem_type
+                };
+                // The recovered source tuple slot can itself be the widened
+                // array form when the *enclosing* literal was the one cached
+                // before its contextual type arrived (a tuple of tuples). Apply
+                // the same recovery to the slot so the nested case cannot
+                // reintroduce the arity reason the rebind above removed.
+                let relation_elem_type = if self.contextual_tuple_recovers_elementwise_failure(
+                    relation_elem_type,
+                    contextual_elem_type,
+                    target_element_type,
+                ) {
+                    contextual_elem_type
+                } else {
+                    relation_elem_type
                 };
                 tracing::debug!(
                     "try_elaborate_array_literal_elements: elem_type = {:?}, target_element_type = {:?}, file = {}",
