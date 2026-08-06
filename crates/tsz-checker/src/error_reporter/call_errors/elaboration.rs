@@ -1384,4 +1384,37 @@ impl<'a> CheckerState<'a> {
 
         None
     }
+
+    /// The expected return type governing the arrow-body drill for an object
+    /// literal member whose declared type is `ty`.
+    ///
+    /// [`Self::first_callable_return_type`] answers for a type whose callable
+    /// structure is already materialized. A member written through a type alias
+    /// (`cb: Fn` for `type Fn = () => string`) arrives as an unresolved
+    /// `TypeData::Lazy(DefId)` that it does not see through, so the drill read
+    /// "not callable" for a type `tsc` considers identical to the inline
+    /// signature and reported the `TS2322` at the property name instead of at
+    /// the offending body expression.
+    ///
+    /// The alias hop is spent on `ty` **as written** and only after the direct
+    /// probe declines. Both halves matter:
+    ///
+    /// - Resolving after the probe declines cannot change an answer it already
+    ///   gave, only add one where there was none.
+    /// - Hopping on `ty` itself rather than inside the probe keeps the hop away
+    ///   from the probe's nullish-stripping arm. An optional or explicitly
+    ///   nullable member (`cb?: Fn`, `cb: Fn | undefined`) is a union, not an
+    ///   alias, so it declines here — which is what `tsc` does: it reports the
+    ///   whole function type at the member for those, drilling neither the
+    ///   alias form nor the inline one.
+    fn callable_return_type_for_drill(&mut self, ty: TypeId) -> Option<TypeId> {
+        if let Some(found) = self.first_callable_return_type(ty) {
+            return Some(found);
+        }
+        let resolved = self.resolve_lazy_type(ty);
+        if resolved == ty {
+            return None;
+        }
+        self.first_callable_return_type(resolved)
+    }
 }
