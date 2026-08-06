@@ -257,23 +257,12 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Outside a declaration scope, `checkImportDeclaration` has already
-        // returned at the TS1232 placement diagnostic above; whatever still
-        // resolves comes from a later pass whose reach depends on the
-        // import's own shape and the file's module-ness
-        // (`position_invalid_import_declaration_resolves_specifier`, #16505).
-        // `!is_inside_namespace_declaration` excludes a block nested inside a
-        // namespace body — that shape turns on whether the binding is
-        // referenced, not on module-ness, and is deliberately left alone (see
-        // the helper's doc comment).
-        if in_wrong_context
-            && !self.is_inside_namespace_declaration(stmt_idx)
-            && !self.position_invalid_import_declaration_resolves_specifier(
-                import.import_clause.is_some(),
-            )
-        {
-            return;
-        }
+        // The position-invalid specifier decision is made once, above, by
+        // `position_invalid_import_resolves_specifier`. A second module-ness-only
+        // guard used to stand here (#16505/#16517); it was written before the
+        // `markAliasReferenced` disjunct (#16516) and answered the same question
+        // without it, so on a module file it re-suppressed a *used* binding the
+        // guard above had already resolved (#16522).
 
         // Extract module specifier data eagerly so direct import diagnostics like
         // TS6137 can run even when unresolved-import reporting is disabled.
