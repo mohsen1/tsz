@@ -38,6 +38,37 @@ impl<'a> CheckerState<'a> {
             .or(Some(rest.type_id))
     }
 
+    /// Whether the contextually re-typed member should replace the cached one
+    /// even though it *also* fails the target.
+    ///
+    /// An array literal written for a tuple-typed member is cached as the
+    /// widened array (`{ x: number }[]`) when its own check ran before the
+    /// member's contextual type was available. Handing that widened form to the
+    /// relation loses the element count, and the failure is explained as the
+    /// unbounded-source arity gap (`TS2620` "Target requires N element(s) but
+    /// source may have fewer") — false on its face for a literal that wrote
+    /// exactly N elements, and it also hides the real per-element failure.
+    ///
+    /// `tsc` elaborates the written literal against the target element-wise
+    /// (`elaborateElementwise`), so the contextual tuple form is the one that
+    /// carries the truth. Restricted to exactly that recovery: the cached form
+    /// lost tuple-ness, the contextual form regained it, and the target is a
+    /// tuple, so the swap can only turn a whole-array arity reason into an
+    /// element-indexed one. A cached form that is already a tuple, or a
+    /// non-tuple target, keeps the cached type and today's reason.
+    pub(in crate::error_reporter::call_errors) fn contextual_tuple_recovers_elementwise_failure(
+        &self,
+        cached: TypeId,
+        contextual: TypeId,
+        target: TypeId,
+    ) -> bool {
+        use crate::query_boundaries::common::is_tuple_type;
+
+        !is_tuple_type(self.ctx.types, cached)
+            && is_tuple_type(self.ctx.types, contextual)
+            && is_tuple_type(self.ctx.types, target)
+    }
+
     pub(in crate::error_reporter::call_errors) fn try_elaborate_array_literal_mismatch_from_failure_reason(
         &mut self,
         arg_idx: NodeIndex,

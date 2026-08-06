@@ -1218,9 +1218,15 @@ fn user_defined_array_named_type_does_not_take_the_element_descent() {
     );
 }
 
-/// Known gap, pinned so it cannot regress silently: a tuple member reports
-/// TS2322 whole-tuple assignability rather than TS2741 at the failing element,
-/// so the anchor walk is never reached. Tracked in #16552.
+/// Known *remaining* gap, pinned so it cannot regress silently: a tuple member
+/// now reports tsc's `TS2741` code, but anchored at the member name and
+/// comparing the whole tuples, where tsc anchors the failing *element* literal
+/// and compares the element types — so the anchor walk is still never reached
+/// and no pointer is attached. tsc's row for this source is
+/// `2:26 - TS2741 Property 'tq' is missing in type '{ tp: number; }' …` with
+/// `1:36 - 'tq' is declared here.` Closing it means drilling the tuple
+/// element-wise in the failure explanation, which is a different owner from the
+/// anchor walk this file covers. Tracked in #16552.
 #[test]
 fn tuple_element_literal_still_carries_no_pointer() {
     let source = "type Nest3 = { tup: [{ tp: number; tq: number }] };\nconst c: Nest3 = { tup: [{ tp: 1 }] };\n";
@@ -1231,5 +1237,159 @@ fn tuple_element_literal_still_carries_no_pointer() {
             .flat_map(|d| d.related_information.iter())
             .any(|info| info.code == TS2728),
         "tuple element type is not descended into: {diagnostics:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// An array literal written for a tuple-typed *member* keeps its tuple form.
+//
+// Structural rule, oracled against `typescript@7.0.2`
+// (`--noEmit --strict --pretty --target es2022 --lib es2022`): the type of an
+// array literal written for a tuple-typed target is the tuple it wrote, in a
+// nested object-literal member exactly as in a direct annotation. tsz reaches
+// that through the elaboration's contextual re-type
+// (`error_reporter/call_errors/elaboration_object_properties.rs`), which
+// previously kept the *widened* cached array (`{ x: number }[]`) whenever the
+// contextual form still failed. Handing the widened array to the relation
+// erases the element count, and the failure was then explained as the
+// unbounded-source arity gap — `TS2620` "Target requires N element(s) but
+// source may have fewer" on a literal that wrote exactly N elements.
+//
+// These rows pin the two things that follow: the false arity reason is gone,
+// and a *genuine* arity mismatch reports tsc's own `TS2618` counts.
+// ---------------------------------------------------------------------------
+
+const TS2322: u32 = 2322; // Type X is not assignable to type Y.
+const TS2618: u32 = 2618; // Source has N element(s) but target requires M.
+const TS2620: u32 = 2620; // Target requires N element(s) but source may have fewer.
+
+fn related_codes(diagnostics: &[Diagnostic]) -> Vec<u32> {
+    diagnostics
+        .iter()
+        .flat_map(|d| d.related_information.iter())
+        .map(|info| info.code)
+        .collect()
+}
+
+fn codes(diagnostics: &[Diagnostic]) -> Vec<u32> {
+    diagnostics.iter().map(|d| d.code).collect()
+}
+
+/// The headline row. A one-element literal for a one-slot tuple whose element
+/// misses a required property must not be explained as an arity gap: the
+/// counts agree. tsc reports `TS2741`; the false `TS2620` is what this fixes.
+#[test]
+fn tuple_member_missing_property_is_not_reported_as_an_arity_gap() {
+    let source =
+        "type Tc = { p: [{ x: number; y: number }] };\nconst vc: Tc = { p: [{ x: 1 }] };\n";
+    let diagnostics = check_source_diagnostics(source);
+    assert!(
+        !related_codes(&diagnostics).contains(&TS2620),
+        "one written element cannot be 'fewer' than one required: {diagnostics:?}"
+    );
+    assert_eq!(codes(&diagnostics), vec![TS2741], "{diagnostics:?}");
+}
+
+/// Renamed binders and a different arity: the recovery keys on the shape
+/// (cached form lost tuple-ness, contextual form regained it, target is a
+/// tuple), never on the identifiers written above it.
+#[test]
+fn tuple_member_recovery_is_not_identifier_keyed() {
+    let source = "type Roster = { slots: [{ alpha: string; beta: string }, { gamma: string; delta: string }] };\nconst r: Roster = { slots: [{ alpha: \"a\", beta: \"b\" }, { gamma: \"g\" }] };\n";
+    let diagnostics = check_source_diagnostics(source);
+    assert!(
+        !related_codes(&diagnostics).contains(&TS2620),
+        "{diagnostics:?}"
+    );
+    assert_eq!(codes(&diagnostics), vec![TS2741], "{diagnostics:?}");
+}
+
+/// A named tuple element (`[first: T]`) is the same tuple to the relation, so
+/// it takes the same recovery. Oracle reports `TS2741` here too.
+#[test]
+fn named_tuple_member_element_takes_the_same_recovery() {
+    let source = "type Tup4 = { pair: [first: { na: number; nb: number }] };\nconst v4: Tup4 = { pair: [{ na: 1 }] };\n";
+    let diagnostics = check_source_diagnostics(source);
+    assert!(
+        !related_codes(&diagnostics).contains(&TS2620),
+        "{diagnostics:?}"
+    );
+    assert_eq!(codes(&diagnostics), vec![TS2741], "{diagnostics:?}");
+}
+
+/// A rest-tailed tuple target (`[T, ...T[]]`) reached the same false reason
+/// family through `TS2623` ("Source provides no match for required element at
+/// position 0"), which is equally untrue of a literal that wrote that element.
+#[test]
+fn rest_tailed_tuple_member_keeps_its_written_leading_element() {
+    let source = "type Tup9 = { pair: [{ ca: number; cb: number }, ...{ ca: number; cb: number }[]] };\nconst v9: Tup9 = { pair: [{ ca: 1 }] };\n";
+    let diagnostics = check_source_diagnostics(source);
+    assert!(
+        related_codes(&diagnostics)
+            .iter()
+            .all(|&code| code != TS2620),
+        "{diagnostics:?}"
+    );
+    assert_eq!(codes(&diagnostics), vec![TS2741], "{diagnostics:?}");
+}
+
+/// The negative control that keeps the recovery honest: a literal that really
+/// does write too few elements still fails on arity — and now with tsc's own
+/// reason and counts. Oracle:
+/// `TS2322` … / `Source has 1 element(s) but target requires 2.`
+#[test]
+fn a_real_tuple_arity_shortfall_reports_tscs_own_counts() {
+    let source = "type Tup8 = { pair: [{ ea: number }, { eb: number }] };\nconst v8: Tup8 = { pair: [{ ea: 1 }] };\n";
+    let diagnostics = check_source_diagnostics(source);
+    assert_eq!(codes(&diagnostics), vec![TS2322], "{diagnostics:?}");
+    assert!(
+        related_codes(&diagnostics).contains(&TS2618),
+        "a genuine shortfall keeps an arity reason, with the source's own \
+         count rather than the unbounded-source form: {diagnostics:?}"
+    );
+    let arity = diagnostics[0]
+        .related_information
+        .iter()
+        .find(|info| info.code == TS2618)
+        .expect("TS2618");
+    assert_eq!(
+        arity.message_text, "Source has 1 element(s) but target requires 2.",
+        "{diagnostics:?}"
+    );
+}
+
+/// A tuple member that is fully satisfied stays clean — the recovery must not
+/// invent a failure where the contextual form relates.
+#[test]
+fn a_satisfied_tuple_member_stays_clean() {
+    let source = "type Tup1 = { pair: [{ lp: number; lq: number }] };\nconst ok1: Tup1 = { pair: [{ lp: 1, lq: 2 }] };\n";
+    assert!(
+        check_source_diagnostics(source).is_empty(),
+        "{:?}",
+        check_source_diagnostics(source)
+    );
+}
+
+/// An *array*-typed member is untouched: its cached form is already the right
+/// shape, so the recovery declines and the element-wise pointer this file
+/// covers keeps working.
+#[test]
+fn an_array_typed_member_is_untouched_by_the_tuple_recovery() {
+    let source = "type Arr7 = { list: { la: number; lb: number }[] };\nconst v7: Arr7 = { list: [{ la: 1 }] };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, _) = declared_here(&diagnostic);
+    assert_eq!(span_text(source, start, length), "lb");
+}
+
+/// A non-literal member value cannot be re-typed contextually, so an array
+/// *variable* assigned to a tuple member keeps the unbounded-source reason —
+/// which is correct there, because the array really may have fewer elements.
+#[test]
+fn an_array_variable_assigned_to_a_tuple_member_keeps_the_arity_reason() {
+    let source = "type Tz = { p: [{ x: number; y: number }] };\nconst xs: { x: number; y: number }[] = [];\nconst vz: Tz = { p: xs };\n";
+    let diagnostics = check_source_diagnostics(source);
+    assert!(
+        related_codes(&diagnostics).contains(&TS2620),
+        "an unbounded array source genuinely may have fewer: {diagnostics:?}"
     );
 }
