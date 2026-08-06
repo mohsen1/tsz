@@ -138,7 +138,6 @@ fn interface_declared_elsewhere_does_not_repaint_a_longhand_object() {
 /// any user anywhere renders as `PropertyKey`, because `lib.es5.d.ts` declares
 /// that alias and the display-alias table is keyed on the interned `TypeId`.
 #[test]
-#[ignore = "known divergence: lib alias repaints a longhand primitive union (display-alias table is global by TypeId)"]
 fn longhand_primitive_union_is_not_repainted_by_an_unreferenced_lib_alias() {
     let source = "declare const value: string | number | symbol;\n\
                   const target: boolean = value;\n";
@@ -149,7 +148,6 @@ fn longhand_primitive_union_is_not_repainted_by_an_unreferenced_lib_alias() {
 /// referenced. No lib involvement, so this row rules out "the lib is stamped
 /// specially" as the cause.
 #[test]
-#[ignore = "known divergence: an unreferenced user alias repaints a longhand primitive union"]
 fn longhand_primitive_union_is_not_repainted_by_an_unreferenced_user_alias() {
     let source = "type Zed = string | number | symbol;\n\
                   declare const value: string | number | symbol;\n\
@@ -161,7 +159,6 @@ fn longhand_primitive_union_is_not_repainted_by_an_unreferenced_user_alias() {
 /// anything keyed on the specific alias name or on the three-member shape that
 /// `PropertyKey` happens to have.
 #[test]
-#[ignore = "known divergence: an unreferenced user alias repaints a longhand primitive union"]
 fn renamed_binders_longhand_two_member_union_is_not_repainted_by_its_alias() {
     let source = "type Pair = string | number;\n\
                   declare const other: string | number;\n\
@@ -173,7 +170,6 @@ fn renamed_binders_longhand_two_member_union_is_not_repainted_by_its_alias() {
 /// behaviour is not a declaration-order artifact that a source-order rule could
 /// explain away.
 #[test]
-#[ignore = "known divergence: an unreferenced user alias repaints a longhand primitive union"]
 fn an_alias_declared_after_the_use_site_does_not_repaint_the_longhand_union() {
     let source = "declare const value: string | number;\n\
                   const target: boolean = value;\n\
