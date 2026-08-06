@@ -1262,7 +1262,7 @@ mod multi_file;
 pub use multi_file::{
     check_all_multi_file_with_global_index, check_multi_file, check_multi_file_with_global_index,
     check_multi_file_with_libs, check_multi_file_with_libs_stamped,
-    check_multi_file_with_type_params_cache,
+    check_multi_file_with_libs_unique_module_locals, check_multi_file_with_type_params_cache,
 };
 
 #[cfg(test)]

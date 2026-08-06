@@ -88,6 +88,15 @@
 # Fix-or-remove tracked in #15983 and #15396/#13979 respectively; #15999
 # closed as superseded (its other three sections were independently fixed by
 # #16002/#16003/#16006/#16007).
+# 2026-08-06 shrink (no generation bump — removals are always allowed): the two
+# kysely_callback_context_tests conditional-builder rows now pass. They were the
+# #15983 SymbolId-collision family surfacing through the lib-aware multi-file
+# harness: base-0 per-file binders aliased distinct-but-same-named module
+# exports (e.g. two files' `ResultBuilder`) on one raw SymbolId, which the
+# dynamic cross-file overlay could not disambiguate. Fixed by migrating the two
+# rows to the new production-faithful `check_multi_file_with_libs_unique_module_locals`
+# helper, which gives each file's module-local suffix a disjoint id range while
+# keeping the shared lib prefix's ids (mirroring the driver's bind-result reducer).
 # baseline-status: reconciled r10
 
 tsz-checker::commonjs_module_export_alias_tests::test_module_exports_forward_read_reports_ts2565
@@ -118,8 +127,6 @@ tsz-checker::js_export_surface_tests::part_01::test_current_file_module_exports_
 tsz-checker::js_jsdoc_diagnostics_tests::checked_js_async_jsdoc_expression_body_ts2322_anchors_on_return_expr
 tsz-checker::jsdoc_constructor_typeof_source_display_tests::ts2345_jsdoc_constructor_function_decl_displays_plain_function_source
 tsz-checker::jsdoc_constructor_typeof_source_display_tests::ts2345_jsdoc_constructor_var_displays_plain_function_source
-tsz-checker::kysely_callback_context_tests::imported_conditional_builder_alias_materializes_callback_context
-tsz-checker::kysely_callback_context_tests::imported_conditional_builder_alias_uses_declaring_file_for_duplicate_helper_names
 tsz-checker::nonnull_contextual_type_arg_inference_tests::contextual_return_can_refine_transparent_wrapper_inference
 tsz-checker::raw_builder_return_context_inference_tests::different_base_and_ambiguous_union_do_not_pin_the_tag
 tsz-checker::reexported_symbol_keyed_member_tests::direct_import_symbol_keyed_member_is_clean

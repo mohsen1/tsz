@@ -47,6 +47,39 @@ fn new_binder_for_file(file_idx: usize) -> BinderState {
     binder
 }
 
+/// Place a lib-aware file's module-local symbols in a raw-id range disjoint
+/// from every other file's, without disturbing the shared lib prefix.
+///
+/// The whole-arena per-file *base* used by [`new_binder_for_file`] cannot be
+/// reused here: `merge_lib_symbols` folds the shared lib universe into this
+/// binder's arena at ids `[0, lib_count)`, and those ids must stay identical
+/// across files (the driver merges each lib symbol to a single global id, and
+/// the in-process type caches key on the raw id — a per-file base would give
+/// the same lib type a different id per file and split its identity). So the
+/// lib prefix keeps its ids and only the module-local *suffix* is shifted:
+/// after the lib merge, reserve placeholder ids up to `next_base` (the running
+/// high-water mark of module-local ids handed out by earlier files, or the
+/// current arena length when that is higher) so the first symbol this file
+/// binds lands above every earlier file's module-local range. This gives
+/// module-scoped declarations the file-disjoint ids the dynamic cross-file
+/// overlay (`cross_file_symbol_targets`, keyed by the bare `SymbolId`) needs to
+/// tell two files' same-named module exports apart. It reproduces only the
+/// *id-disjointness* of the driver's remap, not its `decl_file_idx` stamping or
+/// `global_symbol_file_index` (use [`check_multi_file_with_libs_stamped`] for
+/// those). `reserve_symbol_ids` is a no-op when the arena already reaches
+/// `next_base`, so file 0's suffix follows its lib prefix with no gap and the
+/// reserved ranges stay tightly packed.
+///
+/// Each file keeps its own binder/arena, so the caller threads `next_base`
+/// forward as a running high-water mark. Total placeholder count therefore
+/// grows as O(files² · module-locals) — negligible for the small fixtures these
+/// helpers target, but a project of dozens of files with hundreds of symbols
+/// each would want a sparse two-region arena instead.
+fn reserve_module_local_symbol_base(binder: &mut BinderState, next_base: usize) {
+    let base = binder.symbols.len().max(next_base);
+    binder.symbols.reserve_symbol_ids(base);
+}
+
 /// Build the test-harness `SymbolId -> file_idx` disambiguation index.
 ///
 /// The driver's `build_global_symbol_file_index` maps only symbols the
@@ -283,7 +316,40 @@ pub fn check_multi_file_with_libs(
     options: CheckerOptions,
     lib_files: &[Arc<LibFile>],
 ) -> Vec<Diagnostic> {
-    check_multi_file_with_libs_impl(files, entry_file, options, lib_files, false)
+    check_multi_file_with_libs_impl(files, entry_file, options, lib_files, LibHelperMode::Plain)
+}
+
+/// Like [`check_multi_file_with_libs`] but with the driver's
+/// globally-unique-`SymbolId` invariant restored for module-scoped
+/// declarations (see [`reserve_module_local_symbol_base`]).
+///
+/// The plain helpers build every per-file binder with a base-0 arena, so file
+/// B's first module-local `SymbolId` aliases file A's — and the dynamic
+/// cross-file overlay (`cross_file_symbol_targets`), keyed by the bare
+/// `SymbolId`, then cannot tell two files' distinct-but-same-named module
+/// exports apart. In production the bind-result reducer remaps every file's
+/// module-local ids into one program-global space, so this never happens.
+///
+/// Use this for cross-file regressions where distinct module-scoped
+/// declarations share a name or shape across files and must resolve to their
+/// own declaring file — e.g. an imported conditional-builder alias whose
+/// helper (`ResultBuilder`, `SelectionCallback`, …) is also declared, with a
+/// different body, in another project file. The lib prefix keeps its shared
+/// ids, so lib-type identity is unaffected; only the module-local suffix is
+/// made file-unique.
+pub fn check_multi_file_with_libs_unique_module_locals(
+    files: &[(&str, &str)],
+    entry_file: &str,
+    options: CheckerOptions,
+    lib_files: &[Arc<LibFile>],
+) -> Vec<Diagnostic> {
+    check_multi_file_with_libs_impl(
+        files,
+        entry_file,
+        options,
+        lib_files,
+        LibHelperMode::UniqueModuleLocals,
+    )
 }
 
 /// Like [`check_multi_file_with_libs`] but production-faithful with respect to
@@ -303,40 +369,72 @@ pub fn check_multi_file_with_libs_stamped(
     options: CheckerOptions,
     lib_files: &[Arc<LibFile>],
 ) -> Vec<Diagnostic> {
-    check_multi_file_with_libs_impl(files, entry_file, options, lib_files, true)
+    check_multi_file_with_libs_impl(
+        files,
+        entry_file,
+        options,
+        lib_files,
+        LibHelperMode::Stamped,
+    )
 }
 
-/// Shared body for [`check_multi_file_with_libs`] and
-/// [`check_multi_file_with_libs_stamped`]. When `stamp` is set, each binder is
-/// given its file index before binding (so `stamp_file_idx` records
-/// `decl_file_idx`) and the `global_symbol_file_index` is wired — matching the
-/// production driver. When unset, this is the lib-aware counterpart to
-/// [`check_multi_file`] that leaves `decl_file_idx == u32::MAX`.
+/// How [`check_multi_file_with_libs_impl`] should build each file's binder.
+/// The three lib-aware entry points map one-to-one onto these variants, so the
+/// otherwise-invalid combinations (e.g. stamped *and* unique module locals) are
+/// unrepresentable.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LibHelperMode {
+    /// Base-0 arenas, `decl_file_idx == u32::MAX`, no `global_symbol_file_index`.
+    Plain,
+    /// Driver-faithful provenance: `set_file_idx` before binding (so
+    /// `stamp_file_idx` records `decl_file_idx`) and the
+    /// `global_symbol_file_index` wired.
+    Stamped,
+    /// Module-local `SymbolId`s made file-disjoint (see
+    /// [`reserve_module_local_symbol_base`]); shared lib prefix keeps its ids.
+    UniqueModuleLocals,
+}
+
+/// Shared body for [`check_multi_file_with_libs`],
+/// [`check_multi_file_with_libs_stamped`], and
+/// [`check_multi_file_with_libs_unique_module_locals`]; the [`LibHelperMode`]
+/// selects which per-file binder layout each uses.
 fn check_multi_file_with_libs_impl(
     files: &[(&str, &str)],
     entry_file: &str,
     options: CheckerOptions,
     lib_files: &[Arc<LibFile>],
-    stamp: bool,
+    mode: LibHelperMode,
 ) -> Vec<Diagnostic> {
     let mut arenas = Vec::with_capacity(files.len());
     let mut binders = Vec::with_capacity(files.len());
     let mut roots = Vec::with_capacity(files.len());
     let file_names: Vec<String> = files.iter().map(|(name, _)| (*name).to_string()).collect();
 
+    // Running high-water mark of module-local `SymbolId`s already handed out by
+    // earlier files (only consulted in `UniqueModuleLocals` mode).
+    let mut next_module_local_base = 0usize;
     for (file_idx, (name, source)) in files.iter().enumerate() {
         let mut parser = ParserState::new((*name).to_string(), (*source).to_string());
         let root = parser.parse_source_file();
         let mut binder = BinderState::new();
-        if stamp {
+        if mode == LibHelperMode::Stamped {
             // Stamp the driver-assigned file index before binding so that
             // `stamp_file_idx` runs at bind end and records `decl_file_idx`.
             binder.set_file_idx(file_idx as u32);
         }
-        if lib_files.is_empty() {
-            binder.bind_source_file(parser.get_arena(), root);
-        } else {
-            binder.bind_source_file_with_libs(parser.get_arena(), root, lib_files);
+        // `bind_source_file_with_libs` is exactly merge-libs-then-bind; the
+        // steps are spelled out here so the per-file id-gap reservation can be
+        // wedged between the lib merge and binding this file's own declarations.
+        if !lib_files.is_empty() {
+            binder.merge_lib_symbols(lib_files);
+        }
+        if mode == LibHelperMode::UniqueModuleLocals {
+            reserve_module_local_symbol_base(&mut binder, next_module_local_base);
+        }
+        binder.bind_source_file(parser.get_arena(), root);
+        if mode == LibHelperMode::UniqueModuleLocals {
+            next_module_local_base = binder.symbols.len();
         }
         arenas.push(Arc::new(parser.get_arena().clone()));
         binders.push(Arc::new(binder));
@@ -381,7 +479,7 @@ fn check_multi_file_with_libs_impl(
         .set_resolved_module_paths(Arc::new(resolved_module_paths));
     checker.ctx.set_resolved_modules(resolved_modules);
 
-    if stamp {
+    if mode == LibHelperMode::Stamped {
         let symbol_file_index = build_test_symbol_file_index(&all_binders);
         checker
             .ctx
