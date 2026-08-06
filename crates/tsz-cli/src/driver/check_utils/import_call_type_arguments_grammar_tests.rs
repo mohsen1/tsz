@@ -2,7 +2,7 @@
 //! (#16279's general shape, audit round 6).
 //!
 //! tsc's `checkGrammarImportCallExpression` reports TS1326 ("This use of
-//! 'import' is invalid. 'import()' calls can be written, but they must have
+//! 'import' is invalid. '`import()`' calls can be written, but they must have
 //! parentheses and cannot have type arguments.") from the checker for
 //! `import<T>("m")`. tsz emits it from the parser
 //! (`crates/tsz-parser/src/parser/state_expressions_literals.rs`). Before
