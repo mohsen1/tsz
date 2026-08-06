@@ -1403,6 +1403,34 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Non-strict subtype reduction of the array-literal element union
+        // (tsc `getUnionType(..., UnionReduction.Subtype)`). With
+        // `strictNullChecks` off, `null` and `undefined` are subtypes of every
+        // type, so tsc absorbs a scalar `null`/`undefined` element out of the
+        // element union whenever a non-nullish sibling is present: `["s",
+        // undefined]` is `string[]` (not `(string | undefined)[]`), and
+        // `[collect(), undefined]` with `collect(): undefined[]` is
+        // `undefined[][]` (not `(undefined[] | undefined)[]`). A pure-nullish
+        // element set (`[undefined]`, `[null, undefined]`) is left intact —
+        // there is no non-nullish supertype to absorb into — and the
+        // fresh-literal widening seam maps it to `any` on its own. Strict mode
+        // keeps every `undefined` so strict-null mismatches still surface. This
+        // runs before the preserve-literal and BCT branches below so the
+        // generic-call argument path (`id(["s", undefined])`, which routes
+        // through the literal-preserving `element_union`) reduces the same way.
+        let element_types = if self.ctx.strict_null_checks()
+            || element_types
+                .iter()
+                .all(|&t| t == TypeId::NULL || t == TypeId::UNDEFINED)
+        {
+            element_types
+        } else {
+            element_types
+                .into_iter()
+                .filter(|&t| t != TypeId::NULL && t != TypeId::UNDEFINED)
+                .collect()
+        };
+
         // Use Solver API for Best Common Type computation (Solver-First architecture)
         // When preserve_literal_types is set (e.g., inside generic call argument collection),
         // skip BCT's literal widening by computing the union directly. This preserves
@@ -1414,7 +1442,7 @@ impl<'a> CheckerState<'a> {
             || preserve_tuple_spread_literals
             || preserve_const_asserted_element_literals
         {
-            array_surfaces::element_union(self.ctx.types, element_types.clone())
+            array_surfaces::element_union(self.ctx.types, element_types)
         } else {
             // A nested array/tuple literal element (e.g. `[[null]]` inside
             // `[[[null]],[undefined]]`) resolves its own `null`/`undefined`
@@ -1447,7 +1475,7 @@ impl<'a> CheckerState<'a> {
             // leaves are genuine widening sources still collapses its siblings
             // post-widening and one whose leaves are declared values does not.
             let bct_element_types: Vec<TypeId> = if self.ctx.strict_null_checks() {
-                element_types.clone()
+                element_types
             } else {
                 let widened: Vec<TypeId> = element_types
                     .iter()
@@ -1468,7 +1496,7 @@ impl<'a> CheckerState<'a> {
                 if widened == element_types || self.initializer_nullish_leaves_are_widening(idx) {
                     widened
                 } else {
-                    element_types.clone()
+                    element_types
                 }
             };
             expr_ops::compute_best_common_type_cached(

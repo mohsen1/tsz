@@ -238,19 +238,15 @@ var e: string = v;
     );
 }
 
-/// Known gap, unchanged by this fix and recorded on #16384: a mixed
-/// non-nullish/nullish array. tsc says `string[]` — but it reaches that through
-/// non-strict **union reduction** (`undefined` is absorbed out of
-/// `string | undefined` when `strictNullChecks` is off), not through the
-/// widening flavour this change is about. tsz says `(string | undefined)[]`
-/// both before and after the candidate-seam fix, so the residual divergence
-/// belongs to the reduction mechanism, in a different owner.
-///
-/// Pinned to tsc's answer rather than to tsz's current output, so it flips
-/// green on its own when the reduction is fixed instead of freezing today's
-/// divergence into an expectation.
+/// A mixed non-nullish/nullish array through generic-call inference. tsc says
+/// `string[]`: with `strictNullChecks` off it reduces the scalar `undefined`
+/// out of the array-literal element union (`getUnionType(...,
+/// UnionReduction.Subtype)`, where `undefined` is a subtype of every type)
+/// before inferring `T`, so `T` never sees `undefined`. This is the reduction
+/// mechanism, distinct from #16384 leg A's widening flavour; the argument here
+/// routes through the literal-preserving `element_union`, which the same
+/// element-list reduction now covers.
 #[test]
-#[ignore = "known gap: non-strict union reduction does not absorb `undefined` from an element union; independent of leg A's widening seam — see #16384"]
 fn mixed_array_reduces_undefined_out_of_the_element_union() {
     assert_infers(
         "\
