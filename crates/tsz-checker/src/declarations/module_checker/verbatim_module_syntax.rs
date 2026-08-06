@@ -417,15 +417,38 @@ impl<'a> CheckerState<'a> {
             // verbatimModuleSyntax-only: TS1284/TS1285.
             if option_name == "verbatimModuleSyntax" {
                 if sym.is_type_only {
-                    let message = format_message(
-                        diagnostic_messages::AN_EXPORT_DEFAULT_MUST_REFERENCE_A_REAL_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABL,
-                        &[&name],
-                    );
-                    self.error_at_node(
-                        clause_idx,
-                        &message,
-                        diagnostic_codes::AN_EXPORT_DEFAULT_MUST_REFERENCE_A_REAL_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABL,
-                    );
+                    // tsc picks between these two on whether the symbol's
+                    // FULL merged meaning (across the alias chain, ignoring
+                    // this file's own `import type`) still carries Value:
+                    // `getSymbolFlags(sym) & Value` true -> TS1285 ("resolves
+                    // to a type-only declaration"); false -> TS1284 ("only
+                    // refers to a type"), same message the PURE_TYPE branch
+                    // below uses for a local type-only declaration. A plain
+                    // import symbol never carries VALUE flags itself (only
+                    // ALIAS), so `sym`'s own flags can't answer this — the
+                    // resolved import target's flags can, mirroring the
+                    // lookup TS1292 already does further down.
+                    let target_has_value = sym
+                        .import_module()
+                        .map(|module_spec| {
+                            let import_name = sym.import_name().unwrap_or(name.as_str());
+                            self.lookup_imported_target_flags(module_spec, import_name)
+                                .1
+                        })
+                        .unwrap_or(true);
+                    let (message_key, diag_code) = if target_has_value {
+                        (
+                            diagnostic_messages::AN_EXPORT_DEFAULT_MUST_REFERENCE_A_REAL_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABL,
+                            diagnostic_codes::AN_EXPORT_DEFAULT_MUST_REFERENCE_A_REAL_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABL,
+                        )
+                    } else {
+                        (
+                            diagnostic_messages::AN_EXPORT_DEFAULT_MUST_REFERENCE_A_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABLED_BU,
+                            diagnostic_codes::AN_EXPORT_DEFAULT_MUST_REFERENCE_A_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABLED_BU,
+                        )
+                    };
+                    let message = format_message(message_key, &[&name]);
+                    self.error_at_node(clause_idx, &message, diag_code);
                     return;
                 }
 

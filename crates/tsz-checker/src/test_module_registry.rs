@@ -979,6 +979,8 @@ mod variadic_tuple_constraint_literal_preservation_tests;
 mod variadic_tuple_spread_element_inference_tests;
 #[path = "tests/verbatim_module_syntax_export_default_alias_ts1284_tests.rs"]
 mod verbatim_module_syntax_export_default_alias_ts1284_tests;
+#[path = "tests/verbatim_module_syntax_export_default_type_only_import_ts1284_tests.rs"]
+mod verbatim_module_syntax_export_default_type_only_import_ts1284_tests;
 #[path = "tests/void_undefined_discriminant_narrowing_tests.rs"]
 mod void_undefined_discriminant_narrowing_tests;
 #[path = "tests/window_self_globalthis_resolution_tests.rs"]
