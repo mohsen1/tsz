@@ -17,6 +17,15 @@
 //!
 //! The rule is structural (independent of identifier spelling), so the cases
 //! below vary binder names where a name appears in the rendered output.
+//!
+//! `elaboration` folds in every related-information line, so the trailing
+//! `'x' is declared here.` (`TS2728`) in the expectations below is part of the
+//! rendered output tsc produces, not an extra chain frame. tsc emits that
+//! pointer on a *nested* missing-property frame exactly as it does on a
+//! top-level one; tsz dropped it at `depth > 0` until #16443's nested-
+//! elaboration fix. Oracled on `typescript@7.0.2` with `--noEmit --strict
+//! --pretty --target es2022 --lib es2022`: the parameter-chain case anchors on
+//! `bark` at `2:28`, the renamed-binder case on `howl` at `2:40`.
 
 use crate::context::CheckerOptions;
 use crate::test_utils::{check_source_codes, check_with_options, strict_checker_options};
@@ -69,7 +78,8 @@ class Derived extends Base { handler: (value: Dog) => void = () => {}; }
         "Property 'handler' in type 'Derived' is not assignable to the same property in base type 'Base'.\n\
          Type '(value: Dog) => void' is not assignable to type '(value: Animal) => void'.\n\
          Types of parameters 'value' and 'value' are incompatible.\n\
-         Property 'bark' is missing in type 'Animal' but required in type 'Dog'.",
+         Property 'bark' is missing in type 'Animal' but required in type 'Dog'.\n\
+         'bark' is declared here.",
     );
 }
 
@@ -151,7 +161,8 @@ class Refined extends Origin { onPick: (subject: HoundKind) => void = () => {}; 
         "Property 'onPick' in type 'Refined' is not assignable to the same property in base type 'Origin'.\n\
          Type '(subject: HoundKind) => void' is not assignable to type '(subject: CreatureKind) => void'.\n\
          Types of parameters 'subject' and 'subject' are incompatible.\n\
-         Property 'howl' is missing in type 'CreatureKind' but required in type 'HoundKind'.",
+         Property 'howl' is missing in type 'CreatureKind' but required in type 'HoundKind'.\n\
+         'howl' is declared here.",
     );
 }
 
