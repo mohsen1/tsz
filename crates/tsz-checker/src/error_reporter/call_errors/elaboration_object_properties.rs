@@ -639,6 +639,7 @@ impl<'a> CheckerState<'a> {
                                     &expected_type_owners,
                                     &prop_name,
                                     body_idx,
+                                    prop_name_idx,
                                 );
                                 elaborated = true;
                                 continue;
@@ -661,6 +662,7 @@ impl<'a> CheckerState<'a> {
                             &expected_type_owners,
                             &prop_name,
                             body_idx,
+                            prop_name_idx,
                         );
                     } else {
                         self.with_expected_type_from_property_pointer(

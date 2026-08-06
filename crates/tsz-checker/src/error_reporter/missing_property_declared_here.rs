@@ -303,7 +303,10 @@ impl<'a> CheckerState<'a> {
     /// out indices from `0`, so a raw index from elsewhere names an unrelated
     /// node. The cross-file case is served by the symbol route, which resolves
     /// its own arena from the location.
-    fn local_declaration_node(&self, owner_symbol: tsz_binder::SymbolId) -> Option<NodeIndex> {
+    pub(super) fn local_declaration_node(
+        &self,
+        owner_symbol: tsz_binder::SymbolId,
+    ) -> Option<NodeIndex> {
         let symbol = self.ctx.binder.get_symbol(owner_symbol)?;
         let location = std::iter::once(symbol.stable_value_declaration)
             .chain(symbol.stable_declarations.iter().copied())
@@ -314,7 +317,10 @@ impl<'a> CheckerState<'a> {
 
     /// The body type node of a type alias declared in the file being checked,
     /// used to continue the annotation walk through an alias chain.
-    fn local_type_alias_body(&self, owner_symbol: tsz_binder::SymbolId) -> Option<NodeIndex> {
+    pub(super) fn local_type_alias_body(
+        &self,
+        owner_symbol: tsz_binder::SymbolId,
+    ) -> Option<NodeIndex> {
         use tsz_parser::parser::syntax_kind_ext;
 
         let decl_idx = self.local_declaration_node(owner_symbol)?;
@@ -341,7 +347,7 @@ impl<'a> CheckerState<'a> {
 
     /// The symbol a type-position name node denotes, ignoring value-only
     /// resolutions (an `import =` alias used as a bare type, for instance).
-    fn type_position_symbol(&self, name_idx: NodeIndex) -> Option<tsz_binder::SymbolId> {
+    pub(super) fn type_position_symbol(&self, name_idx: NodeIndex) -> Option<tsz_binder::SymbolId> {
         match self.resolve_identifier_symbol_in_type_position_without_tracking(name_idx) {
             crate::symbol_resolver::TypeSymbolResolution::Type(symbol_id) => Some(symbol_id),
             _ => None,
@@ -350,7 +356,7 @@ impl<'a> CheckerState<'a> {
 
     /// Bound on the annotation walk, which follows user-written type syntax and
     /// must terminate on a pathological nesting rather than recurse forever.
-    const ANNOTATION_WALK_MAX_DEPTH: u32 = 8;
+    pub(super) const ANNOTATION_WALK_MAX_DEPTH: u32 = 8;
 
     /// Resolve `owner` to its declaring symbol, find the member declaration
     /// with this name inside that symbol's own declaration, and anchor there.
