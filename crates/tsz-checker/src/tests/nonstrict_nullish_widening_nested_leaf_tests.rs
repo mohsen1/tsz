@@ -155,16 +155,11 @@ var probe: string = deep;
 /// A genuine widening source (`undefined` keyword) beside a declared
 /// `undefined[]` leaf: the enclosing `all` means one non-widening element makes
 /// the whole literal non-widening, so the declared leaf keeps `undefined[]`
-/// rather than becoming `any[]` — which is the half this fix owns.
-///
-/// The residual `| undefined` is a *different*, separately tracked defect: with
-/// `strictNullChecks` off tsc reduces `undefined` out of an element union, so it
-/// renders `undefined[][]` where tsz renders `(undefined[] | undefined)[]`. That
-/// is the non-strict union-reduction gap recorded on #16384/#16393, not a
-/// widening-flavour question — a widening "fix" for it would produce `any[][]`,
-/// wrong in the other direction. Twins asserting tsc's full answer are the two
-/// `#[ignore]`d rows below, so they flip green on their own when that gap
-/// closes.
+/// rather than becoming `any[]` — that is the widening half this file's leaf
+/// rule owns. The `| undefined` sibling is then absorbed by non-strict union
+/// reduction (#16574), so tsc's full answer is `undefined[][]`, not
+/// `(undefined[] | undefined)[]` or `any[][]` (the widening-only answer would
+/// be wrong in the other direction).
 #[test]
 fn undefined_keyword_sibling_does_not_rescue_an_undefined_array_leaf() {
     assert_inferred(
@@ -173,14 +168,14 @@ declare function collect(): undefined[];
 var mixed = [collect(), undefined];
 var probe: string = mixed;
 ",
-        "(undefined[] | undefined)[]",
-        "one non-widening element makes the whole literal non-widening",
+        "undefined[][]",
+        "one non-widening element makes the whole literal non-widening, then non-strict reduction absorbs `undefined`",
     );
 }
 
 /// The elided-hole carve-out (#16393) is permissive on its own and decisive
 /// nowhere: a hole beside a declared `undefined[]` leaf must not widen it.
-/// Same `| undefined` residual as the row above, same separate owner.
+/// Same non-strict union-reduction absorption as the row above (#16574).
 #[test]
 fn elided_hole_sibling_does_not_rescue_an_undefined_array_leaf() {
     assert_inferred(
@@ -189,40 +184,8 @@ declare function gather(): undefined[];
 var sparse = [, gather()];
 var probe: string = sparse;
 ",
-        "(undefined[] | undefined)[]",
-        "an elided hole must not rescue a non-widening sibling leaf",
-    );
-}
-
-/// tsc's full answer for the mixed row above. Blocked only on non-strict union
-/// reduction absorbing `undefined` out of the element union (#16384/#16393);
-/// the widening half is already correct. Flips green when that gap closes.
-#[test]
-#[ignore = "blocked on non-strict union reduction absorbing `undefined` (#16384/#16393)"]
-fn undefined_keyword_sibling_mixed_literal_matches_tsc() {
-    assert_inferred(
-        "\
-declare function collect(): undefined[];
-var mixed = [collect(), undefined];
-var probe: string = mixed;
-",
         "undefined[][]",
-        "tsc reduces `undefined` out of the element union",
-    );
-}
-
-/// tsc's full answer for the elided-hole row above. Same blocker.
-#[test]
-#[ignore = "blocked on non-strict union reduction absorbing `undefined` (#16384/#16393)"]
-fn elided_hole_sibling_sparse_literal_matches_tsc() {
-    assert_inferred(
-        "\
-declare function gather(): undefined[];
-var sparse = [, gather()];
-var probe: string = sparse;
-",
-        "undefined[][]",
-        "tsc reduces `undefined` out of the element union",
+        "an elided hole must not rescue a non-widening sibling leaf, then non-strict reduction absorbs `undefined`",
     );
 }
 
