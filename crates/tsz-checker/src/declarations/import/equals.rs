@@ -842,6 +842,24 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // A bare block, an `if` body and a loop body resolve however the alias is
+        // used, but only in a *script*. The comment above predates this axis:
+        // measured against the pinned oracle (#16505), the same non-declaration-
+        // scope `import x = require(...)` stays silent past TS1232 when the file
+        // is an external module — the same rule
+        // `position_invalid_import_declaration_resolves_specifier` now gives the
+        // plain `import ... from` forms, since neither production's specifier
+        // resolution reaches a later pass once the file already has a module
+        // table. `!inside_namespace` keeps this from overriding the
+        // referenced-alias verdict just above/below, which owns that shape.
+        if in_wrong_context
+            && !self.is_inside_function_body(stmt_idx)
+            && !inside_namespace
+            && !self.position_invalid_import_declaration_resolves_specifier(true)
+        {
+            return;
+        }
+
         if force_module_not_found {
             if !should_emit_module_not_found {
                 return;
