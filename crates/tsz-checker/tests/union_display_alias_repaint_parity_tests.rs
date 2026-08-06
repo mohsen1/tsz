@@ -8,11 +8,24 @@
 //! member list *plus* the alias identity, so the aliased and the longhand
 //! spelling are two distinct `Type` objects and neither can repaint the other.
 //!
-//! tsz interns one `TypeId` per content and carries the alias in a global
-//! `TypeId -> alias` side table (`TypeInterner::store_display_alias` /
-//! `get_display_alias`), so an alias declared anywhere can repaint a
-//! structurally identical type written longhand somewhere else. That is the
-//! divergence the `#[ignore]`d rows below record.
+//! tsz interns one `TypeId` per content, so a reverse `TypeId -> alias` lookup
+//! cannot prove the source ever referenced the alias, and an alias declared
+//! anywhere could repaint a structurally identical type written longhand
+//! somewhere else.
+//!
+//! For **unions** that repaint is fixed: both reverse lookups on the path now
+//! decline a union outright — `lookup_type_alias_name_for_display`
+//! (`error_reporter/core_alias_display.rs`) on the checker side, and the
+//! `find_def_for_type` alias naming in `diagnostics/format/mod.rs` on the
+//! solver side. A referenced alias survives because the spelling written at
+//! the site arrives as its own `Lazy(DefId)` and never reaches either lookup,
+//! which is what rows 6/7 pin.
+//!
+//! The `#[ignore]`d rows that remain record two *different* mechanisms, both
+//! still open: `keyof any` not being resolved eagerly for display, and an
+//! alias whose RHS **collapses** to a pre-existing type keeping its name
+//! (opposite polarity — there the alias *is* written at the site and `tsc`
+//! drops it). See #16610.
 //!
 //! Every expectation here was verified against the pinned oracle
 //! (`typescript@7.0.2`, `--noEmit --strict --lib es2022 --target es2022`), one
@@ -128,17 +141,18 @@ fn interface_declared_elsewhere_does_not_repaint_a_longhand_object() {
 }
 
 // ---------------------------------------------------------------------------
-// Tripwires: oracle-verified divergences. Expected to fail until fixed.
+// The repaint family, fixed. These were `#[ignore]`d tripwires; they are a
+// live regression floor now that neither reverse lookup names a union.
 // ---------------------------------------------------------------------------
 
-/// A longhand primitive union is repainted by a **lib** alias the source never
-/// mentions. tsz renders `PropertyKey`; tsc renders the union.
+/// A longhand primitive union must not be repainted by a **lib** alias the
+/// source never mentions.
 ///
 /// This is the widest-reach row: every `string | number | symbol` written by
-/// any user anywhere renders as `PropertyKey`, because `lib.es5.d.ts` declares
-/// that alias and the display-alias table is keyed on the interned `TypeId`.
+/// any user anywhere used to render as `PropertyKey` — `lib.es5.d.ts` declares
+/// that alias, and the solver formatter additionally carried a hardcoded
+/// `"PropertyKey"` return for any three-member string/number/symbol union.
 #[test]
-#[ignore = "known divergence: lib alias repaints a longhand primitive union (display-alias table is global by TypeId)"]
 fn longhand_primitive_union_is_not_repainted_by_an_unreferenced_lib_alias() {
     let source = "declare const value: string | number | symbol;\n\
                   const target: boolean = value;\n";
@@ -149,7 +163,6 @@ fn longhand_primitive_union_is_not_repainted_by_an_unreferenced_lib_alias() {
 /// referenced. No lib involvement, so this row rules out "the lib is stamped
 /// specially" as the cause.
 #[test]
-#[ignore = "known divergence: an unreferenced user alias repaints a longhand primitive union"]
 fn longhand_primitive_union_is_not_repainted_by_an_unreferenced_user_alias() {
     let source = "type Zed = string | number | symbol;\n\
                   declare const value: string | number | symbol;\n\
@@ -161,7 +174,6 @@ fn longhand_primitive_union_is_not_repainted_by_an_unreferenced_user_alias() {
 /// anything keyed on the specific alias name or on the three-member shape that
 /// `PropertyKey` happens to have.
 #[test]
-#[ignore = "known divergence: an unreferenced user alias repaints a longhand primitive union"]
 fn renamed_binders_longhand_two_member_union_is_not_repainted_by_its_alias() {
     let source = "type Pair = string | number;\n\
                   declare const other: string | number;\n\
@@ -173,7 +185,6 @@ fn renamed_binders_longhand_two_member_union_is_not_repainted_by_its_alias() {
 /// behaviour is not a declaration-order artifact that a source-order rule could
 /// explain away.
 #[test]
-#[ignore = "known divergence: an unreferenced user alias repaints a longhand primitive union"]
 fn an_alias_declared_after_the_use_site_does_not_repaint_the_longhand_union() {
     let source = "declare const value: string | number;\n\
                   const target: boolean = value;\n\

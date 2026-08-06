@@ -142,26 +142,25 @@ fn primitive_key_union_registered_to_type_alias_formats_structurally_without_ori
 }
 
 #[test]
-fn primitive_key_union_formats_as_property_key_in_diagnostic_mode() {
+fn primitive_key_union_formats_structurally_in_diagnostic_mode() {
+    // `tsc` names an alias only when the source wrote it. A bare
+    // `string | number | symbol` union carries no `aliasSymbol`, so it renders
+    // structurally on every diagnostic surface -- including the TS2344
+    // constraint message, which is why the previous opt-in
+    // (`with_expanded_primitive_key_union`) existed at all.
+    //
+    // This replaces two earlier pins: one asserting a hardcoded `"PropertyKey"`
+    // return for any three-member string/number/symbol union, and one asserting
+    // that a narrow opt-in could escape it. The hardcode contradicted the
+    // oracle-verified rows in
+    // `tsz-checker/tests/union_display_alias_repaint_parity_tests.rs`, so the
+    // general rule replaced it and the opt-in became unreachable. A source that
+    // *does* write `PropertyKey` still renders `PropertyKey`: that spelling
+    // arrives as its own `Lazy(DefId)` and never reaches this structural path.
     let db = TypeInterner::new();
     let primitive_key_union = db.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
 
     let mut fmt = TypeFormatter::new(&db).with_diagnostic_mode();
-    assert_eq!(fmt.format(primitive_key_union), "PropertyKey");
-}
-
-#[test]
-fn primitive_key_union_formats_structurally_when_alias_collapse_is_opted_out() {
-    // tsc strips the `aliasSymbol` from the constraint type before formatting
-    // the TS2344 message, so opt-in callers (the constraint-not-satisfied
-    // emitter) get the structural form. The default diagnostic surface still
-    // collapses to `PropertyKey`; the opt-in is narrow and intentional.
-    let db = TypeInterner::new();
-    let primitive_key_union = db.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
-
-    let mut fmt = TypeFormatter::new(&db)
-        .with_diagnostic_mode()
-        .with_expanded_primitive_key_union();
     assert_eq!(fmt.format(primitive_key_union), "string | number | symbol");
 }
 

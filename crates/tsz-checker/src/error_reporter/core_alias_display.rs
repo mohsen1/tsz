@@ -53,6 +53,26 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        // A union is interned by content, so the reverse `TypeId -> alias body`
+        // index below cannot prove the source ever referenced the alias:
+        // `type Zed = string | number | symbol` and a longhand
+        // `string | number | symbol` annotation written elsewhere share one
+        // `TypeId`, and the index answers `Zed` for both. `tsc` names an alias
+        // only when the type node written at the site *is* the alias reference
+        // (`getUnionType` keys its cache on the member list plus the alias
+        // identity, so the two spellings are distinct `Type` objects and
+        // neither can repaint the other). tsz models the referenced spelling as
+        // `Lazy(DefId)`, which `format_type_for_assignability_message` renders
+        // from the reference before reaching here, so a union that arrives as a
+        // raw structural id was written longhand and renders structurally.
+        //
+        // This is the same policy the solver formatter already applies to
+        // anonymous composite annotations via `anonymous_composite_structural`;
+        // unions reaching this checker-side lookup had no equivalent gate.
+        if is_union {
+            return None;
+        }
+
         // If the type has a display alias (produced by evaluating a generic
         // Application like B<string>), let the formatter handle it - using the
         // raw alias name would lose the type arguments.

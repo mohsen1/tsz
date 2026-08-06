@@ -91,12 +91,6 @@ impl<'a> TypeFormatter<'a> {
                 self.format_object_with_index(shape.as_ref()).into()
             }
             TypeData::Union(members) => {
-                if self.diagnostic_mode
-                    && !self.expand_primitive_key_union
-                    && self.is_primitive_key_union_data(key)
-                {
-                    return Cow::Borrowed("PropertyKey");
-                }
                 // tsc preserves top-level alias names that would otherwise be
                 // lost during union flattening (e.g., `T | null` should not
                 // expand to T's body). The checker records the unflattened
