@@ -596,7 +596,7 @@ impl<'a> CheckerState<'a> {
                         if self.function_value_has_explicit_param_annotation(prop_value_idx) {
                             return None;
                         }
-                        let expected_ret = self.first_callable_return_type(target_prop_type)?;
+                        let expected_ret = self.callable_return_type_for_drill(target_prop_type)?;
                         if expected_ret == TypeId::VOID || expected_ret == TypeId::ANY {
                             return None;
                         }

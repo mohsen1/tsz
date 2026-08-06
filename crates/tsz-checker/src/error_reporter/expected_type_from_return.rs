@@ -275,12 +275,13 @@ impl<'a> CheckerState<'a> {
     /// `(start, length, file)` of the function or constructor type `idx`
     /// denotes, peeling parentheses.
     ///
-    /// Anything else — a union, an object type, a type reference — yields no
-    /// signature of its own for tsc to point at, so it declines. A reference is
-    /// deliberately *not* followed here: the arrow-body drill this pointer hangs
-    /// off never fires for an alias-annotated member in the first place (see the
-    /// `type_reference_annotation_*` test), so a hop at this site would be
-    /// unreachable complexity on a diagnostic path.
+    /// A union or an object type yields no signature of its own for tsc to point
+    /// at, so it declines. A reference to a *type alias* is followed into the
+    /// alias body, which is where tsc underlines: for `type Fn = () => string`
+    /// and a member `cb: Fn`, tsc points at `() => string` inside `Fn`, not at
+    /// the reference. The hop stays in the checking file's own arena, so a
+    /// reference to an alias declared elsewhere declines rather than reading a
+    /// foreign `NodeIndex` against the current arena.
     fn callable_type_node_anchor(
         &mut self,
         idx: NodeIndex,
@@ -295,6 +296,12 @@ impl<'a> CheckerState<'a> {
         if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE {
             let inner = self.ctx.arena.get_wrapped_type(node)?.type_node;
             return self.callable_type_node_anchor(inner, depth + 1);
+        }
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            let name_idx = self.ctx.arena.get_type_ref(node)?.type_name;
+            let alias_symbol = self.type_position_symbol(name_idx)?;
+            let body_idx = self.local_type_alias_body(alias_symbol)?;
+            return self.callable_type_node_anchor(body_idx, depth + 1);
         }
         if node.kind != syntax_kind_ext::FUNCTION_TYPE
             && node.kind != syntax_kind_ext::CONSTRUCTOR_TYPE

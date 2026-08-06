@@ -235,13 +235,114 @@ fn block_bodied_function_expression_keeps_the_property_pointer() {
 /// **undrilled** branch. Whatever makes that branch win for a member typed
 /// through an alias owns this row.
 #[test]
-fn type_reference_annotation_declines_because_the_arrow_body_is_never_drilled() {
+fn type_reference_annotation_anchors_inside_the_alias_body() {
     let source =
         "type Fn = () => string;\ninterface Ref { cb: Fn; }\nconst rf: Ref = { cb: () => 6 };\n";
     let diagnostic = only(&check_source_diagnostics(source), TS2322);
+    assert_eq!(
+        diagnostic.start, 78,
+        "the TS2322 is reported at the arrow body, not the member (oracle 3:29)"
+    );
+    let (start, length, _) = return_pointer(&diagnostic);
+    assert_eq!(span_text(source, start, length), "() => string");
+    assert_eq!(start, 10, "the anchor is inside Fn's body (oracle 1:11)");
+}
+
+/// The row above with every binder renamed. A name-driven fix would move the
+/// anchor; a structural one only moves the span.
+#[test]
+fn alias_annotated_members_keep_the_anchor_rule_under_renamed_binders() {
+    let source = "type Handler = () => string;\ninterface Shape { run: Handler; }\nconst inst: Shape = { run: () => 6 };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2322);
+    assert_eq!(diagnostic.start, 96, "oracle 3:34");
+    let (start, length, _) = return_pointer(&diagnostic);
+    assert_eq!(span_text(source, start, length), "() => string");
+    assert_eq!(start, 15, "oracle 1:16, inside Handler's body");
+}
+
+/// An alias chain on the member: `F2` names `F1`, and tsc underlines the
+/// signature at the *end* of the chain, not the hop that named it.
+/// Oracled: `r3.ts:1:11`.
+#[test]
+fn an_alias_chain_on_the_member_is_followed_to_the_written_signature() {
+    let source = "type F1 = () => string;\ntype F2 = F1;\ninterface R3 { cb: F2; }\nconst v3: R3 = { cb: () => 6 };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2322);
+    assert_eq!(diagnostic.start, 90, "oracle 4:28");
+    let (start, length, _) = return_pointer(&diagnostic);
+    assert_eq!(span_text(source, start, length), "() => string");
+    assert_eq!(start, 10, "F1's signature, not F2's reference to it");
+}
+
+/// A parenthesized alias body: tsc underlines *inside* the parentheses.
+/// Oracled: `r4.ts:1:11`.
+#[test]
+fn a_parenthesized_alias_body_anchors_inside_the_parentheses() {
+    let source =
+        "type P = (() => string);\ninterface R4 { cb: P; }\nconst v4: R4 = { cb: () => 6 };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2322);
+    assert_eq!(diagnostic.start, 76, "oracle 3:28");
+    let (start, length, _) = return_pointer(&diagnostic);
+    assert_eq!(span_text(source, start, length), "() => string");
+    assert_eq!(start, 10);
+}
+
+/// A *generic* alias applied at the member is still not drilled — a known
+/// divergence this row pins rather than fixes, so the next session starts from
+/// a measured statement instead of re-deriving it.
+///
+/// tsc drills to the body (`r6.ts:3:28`) and anchors the pointer in the alias's
+/// own **uninstantiated** body, `() => T` at `r6.ts:1:13`, while still reporting
+/// the *instantiated* expected type in the message (`'string'`, not `'T'`).
+/// tsz reports at the member with the sibling `TS6500` instead.
+///
+/// This is deliberately out of the alias hop's reach: `G[ string ]` arrives as a
+/// type *application*, not a `Lazy(DefId)`, and following it to the alias base
+/// would hand the drill the uninstantiated `T` as the expected return type —
+/// the right anchor with the wrong message. Closing it needs the instantiated
+/// return type and the uninstantiated anchor to be sourced separately, which is
+/// a different change from alias transparency. Tracked as its own issue.
+#[test]
+fn a_generic_alias_application_is_not_drilled_and_pins_a_known_divergence() {
+    let source =
+        "type G<T> = () => T;\ninterface R6 { cb: G<string>; }\nconst v6: R6 = { cb: () => 6 };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2322);
+    assert_eq!(
+        diagnostic.start, 70,
+        "tsz reports at the member; tsc reports at the body (oracle 3:28 => 80)"
+    );
     assert!(
         !has_return_pointer(&diagnostic),
-        "an alias-annotated member is never drilled, so no TS6502 site is reached: {diagnostic:?}"
+        "the application declines the alias hop: {diagnostic:?}"
+    );
+}
+
+/// Alias in *both* positions — the owner is a type alias to a type literal and
+/// the member is annotated with a second alias, so the walk hops twice.
+/// Oracled: `r7.ts:1:12`.
+#[test]
+fn an_alias_owner_and_an_alias_member_are_both_followed() {
+    let source =
+        "type Fn7 = () => string;\ntype Own7 = { cb: Fn7 };\nconst v7: Own7 = { cb: () => 6 };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2322);
+    assert_eq!(diagnostic.start, 79, "oracle 3:30");
+    let (start, length, _) = return_pointer(&diagnostic);
+    assert_eq!(span_text(source, start, length), "() => string");
+    assert_eq!(start, 11);
+}
+
+/// Negative control: an *optional* alias-annotated member is not drilled at all
+/// — tsc reports the whole function type at the member with the sibling
+/// `TS6500` pointer, exactly as it does for an optional inline signature.
+/// Oracled: `r5.ts:3:18`, pointer `r5.ts:2:16`. The alias hop must not make the
+/// nullish member newly drillable.
+#[test]
+fn an_optional_alias_annotated_member_is_not_drilled() {
+    let source =
+        "type Fn5 = () => string;\ninterface R5 { cb?: Fn5; }\nconst v5: R5 = { cb: () => 6 };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2322);
+    assert!(
+        !has_return_pointer(&diagnostic),
+        "an optional member keeps the member frame: {diagnostic:?}"
     );
     assert!(
         diagnostic
@@ -249,6 +350,31 @@ fn type_reference_annotation_declines_because_the_arrow_body_is_never_drilled() 
             .iter()
             .any(|info| info.code == TS6500),
         "the TS6500 pointer is the witness that the undrilled branch ran: {diagnostic:?}"
+    );
+}
+
+/// Negative control: an explicitly annotated arrow parameter bails out of the
+/// drill before the alias hop is ever consulted, so an alias-annotated member
+/// with one still reports at the member. Oracled: `r8.ts:3:18`.
+#[test]
+fn an_annotated_parameter_still_bails_out_of_the_drill_through_an_alias() {
+    let source = "type Fn8 = (a: number) => string;\ninterface R8 { cb: Fn8; }\nconst v8: R8 = { cb: (a: number) => 6 };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2322);
+    assert!(
+        !has_return_pointer(&diagnostic),
+        "the annotated-parameter gate runs before the alias hop: {diagnostic:?}"
+    );
+}
+
+/// Negative control: an alias to a non-callable type yields no signature to
+/// point at, so the hop must decline rather than anchor on the alias body.
+#[test]
+fn an_alias_to_a_non_callable_type_declines_the_return_pointer() {
+    let source = "type NotFn = { a: number };\ninterface R10 { cb: NotFn; }\nconst v10: R10 = { cb: { a: \"s\" } };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2322);
+    assert!(
+        !has_return_pointer(&diagnostic),
+        "a non-callable alias body carries no signature: {diagnostic:?}"
     );
 }
 
