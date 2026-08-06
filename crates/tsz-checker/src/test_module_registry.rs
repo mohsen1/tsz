@@ -347,6 +347,8 @@ mod generator_yield_literal_widening_tests;
 mod generator_yield_self_similar_nesting_tests;
 #[path = "tests/generator_yieldstar_symbol_iterator_contribution_tests.rs"]
 mod generator_yieldstar_symbol_iterator_contribution_tests;
+#[path = "tests/generator_yieldstar_union_delegate_contribution_tests.rs"]
+mod generator_yieldstar_union_delegate_contribution_tests;
 #[path = "tests/generic_alias_application_display_tests.rs"]
 mod generic_alias_application_display_tests;
 #[path = "tests/generic_argument_suppression_relation_routing_arch_tests.rs"]

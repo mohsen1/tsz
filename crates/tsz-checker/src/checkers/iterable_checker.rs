@@ -451,14 +451,38 @@ impl<'a> CheckerState<'a> {
             return TypeId::ANY;
         }
 
-        if let ForOfElementKind::TypeParameter { constraint } =
-            classify_for_of_element_type(self.ctx.types, iterable_type)
-        {
-            return constraint
-                .map(|constraint| {
-                    self.for_of_element_type_with_depth(constraint, is_async, depth + 1)
-                })
-                .unwrap_or(TypeId::ANY);
+        match classify_for_of_element_type(self.ctx.types, iterable_type) {
+            ForOfElementKind::TypeParameter { constraint } => {
+                return constraint
+                    .map(|constraint| {
+                        self.for_of_element_type_with_depth(constraint, is_async, depth + 1)
+                    })
+                    .unwrap_or(TypeId::ANY);
+            }
+            // Distribute async iteration over a union/intersection delegate
+            // member-by-member. The sync `for_of_element_type_classified`
+            // fallback below walks `[Symbol.iterator]`, so an async-only member
+            // (`AsyncGenerator<T>`, `AsyncIterable<T>`) inside a union would
+            // collapse to `ANY` there; resolving each constituent through this
+            // async-aware entry recovers it. tsc's iteration type over a
+            // union/intersection is the union/intersection of the members'.
+            // (The sync arm already distributes inside
+            // `for_of_element_type_classified`, so this is gated on `is_async`.)
+            ForOfElementKind::Union(members) if is_async => {
+                let element_types = members
+                    .into_iter()
+                    .map(|member| self.for_of_element_type_with_depth(member, is_async, depth + 1))
+                    .collect();
+                return union_element_type(self.ctx.types, element_types);
+            }
+            ForOfElementKind::Intersection(members) if is_async => {
+                let element_types = members
+                    .into_iter()
+                    .map(|member| self.for_of_element_type_with_depth(member, is_async, depth + 1))
+                    .collect();
+                return intersection_element_type(self.ctx.types, element_types);
+            }
+            _ => {}
         }
 
         if is_async {
