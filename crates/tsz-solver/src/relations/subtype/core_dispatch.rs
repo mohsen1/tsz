@@ -916,17 +916,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             )
             || is_function_structural;
         if is_function_target {
-            // A function's apparent type carries no numeric index, so a target
-            // that structurally matches the Function interface (apply/call/bind)
-            // but ALSO declares one — a user `interface Function { [n: number]: T }`
-            // augmentation — is not satisfied by a bare function. Defer it to the
-            // structural arms below (which reject a function and still accept a
-            // source that provides a numeric index) instead of the callable
-            // fast-path. Companion to #16473, which fixed the callable/object arms
-            // it did not reach; the intrinsic/un-augmented `Function` keeps `True`.
+            // A function's apparent type carries no numeric or string index, so
+            // a target that structurally matches the Function interface
+            // (apply/call/bind) but ALSO declares one — a user `interface
+            // Function { [n: number]: T }` or `interface Function { [x: string]:
+            // T }` augmentation — is not satisfied by a bare function. Defer it
+            // to the structural arms below (which reject a function and still
+            // accept a source that provides a matching index) instead of the
+            // callable fast-path. Companion to #16473 (number index), which
+            // fixed the callable/object arms it did not reach, and #16525
+            // (string index sibling); the intrinsic/un-augmented `Function`
+            // keeps `True`.
             let structural_number_index_target = is_function_structural
                 && self.function_structural_target_has_unwaived_number_index(target);
-            if self.is_callable_type(source) && !structural_number_index_target {
+            let structural_string_index_target = is_function_structural
+                && self.function_structural_target_has_unwaived_string_index(target);
+            let structural_index_target =
+                structural_number_index_target || structural_string_index_target;
+            if self.is_callable_type(source) && !structural_index_target {
                 return SubtypeResult::True;
             }
             // For structural Function interface targets (object types with apply/call/bind),
@@ -937,7 +944,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // assignable to the Function interface.
             let source_is_object = object_shape_id(self.interner, source).is_some()
                 || object_with_index_shape_id(self.interner, source).is_some();
-            if (is_function_structural && source_is_object) || structural_number_index_target {
+            if (is_function_structural && source_is_object) || structural_index_target {
                 // Fall through to structural object-to-object comparison below
             } else {
                 return SubtypeResult::False;

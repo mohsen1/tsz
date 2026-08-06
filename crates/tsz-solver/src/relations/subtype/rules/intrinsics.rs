@@ -414,6 +414,38 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && !self.target_dual_any_index_waives_missing_number_index(&shape)
     }
 
+    /// Whether a structural-`Function` target (apply/call/bind) additionally
+    /// declares a string index signature that a bare function cannot satisfy.
+    ///
+    /// Same rationale as [`Self::function_structural_target_has_unwaived_number_index`]
+    /// (companion to #16473), extended to the string-index sibling: a function
+    /// value's apparent type carries no string index either, so a target that
+    /// matches the `Function` surface but also declares `[x: string]: T` is not
+    /// satisfied by a function no matter which other members it requires.
+    ///
+    /// Unlike the number-index case, a lone `any`-valued string index waives the
+    /// requirement outright (`tsc`'s `indexSignaturesRelatedTo` treats a target
+    /// string index of `any` as satisfied by anything, string-indexed or not —
+    /// [`Self::target_string_index_any_waives_missing_index`]); it does not need
+    /// a paired `any`-valued number index the way the dual-any waiver does.
+    pub(crate) fn function_structural_target_has_unwaived_string_index(
+        &self,
+        target: TypeId,
+    ) -> bool {
+        let shape_id = crate::visitors::visitor_extract::object_shape_id(self.interner, target)
+            .or_else(|| {
+                crate::visitors::visitor_extract::object_with_index_shape_id(self.interner, target)
+            });
+        let Some(shape_id) = shape_id else {
+            return false;
+        };
+        let shape = self.interner.object_shape(shape_id);
+        shape
+            .string_index
+            .as_ref()
+            .is_some_and(|idx| !self.target_string_index_any_waives_missing_index(idx.value_type))
+    }
+
     /// Get the apparent primitive shape for a type.
     ///
     /// When primitives are used in object-like operations (e.g., `"hello".length`),

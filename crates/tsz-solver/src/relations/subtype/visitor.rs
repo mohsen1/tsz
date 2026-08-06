@@ -861,16 +861,21 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             && !self
                 .checker
                 .function_structural_target_has_unwaived_number_index(self.target)
+            && !self
+                .checker
+                .function_structural_target_has_unwaived_string_index(self.target)
         {
             // Function expressions are assignable to the global `Function` interface.
             // Avoid expanding and comparing every `Function` interface member.
             //
-            // Excluded: a target that also declares a numeric index signature — the
-            // shape a user `interface Function { [n: number]: T }` augmentation gives
-            // the global interface. A function value's apparent type carries no
-            // numeric index, so it cannot satisfy such a target; it falls through to
+            // Excluded: a target that also declares a numeric or string index
+            // signature — the shape a user `interface Function { [n: number]: T }`
+            // or `interface Function { [x: string]: T }` augmentation gives the
+            // global interface. A function value's apparent type carries neither
+            // index, so it cannot satisfy such a target; it falls through to
             // the structural object arm below, which rejects it via the boxed
-            // (index-free) `Function` interface. Companion to #16473.
+            // (index-free) `Function` interface. Companion to #16473 (number
+            // index) and #16525 (string index sibling).
             SubtypeResult::True
         } else if object_shape_id(self.checker.interner, self.target).is_some()
             || object_with_index_shape_id(self.checker.interner, self.target).is_some()
@@ -931,12 +936,16 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             && !self
                 .checker
                 .function_structural_target_has_unwaived_number_index(self.target)
+            && !self
+                .checker
+                .function_structural_target_has_unwaived_string_index(self.target)
         {
             // Callable object types are assignable to the global `Function` interface,
-            // except when the target also declares a numeric index signature the
-            // callable's apparent type does not provide — then defer to the
-            // index-aware object arms below (`check_object_to_indexed`), which compare
-            // the callable's own indexes against the target's. Companion to #16473.
+            // except when the target also declares a numeric or string index
+            // signature the callable's apparent type does not provide — then defer
+            // to the index-aware object arms below (`check_object_to_indexed`),
+            // which compare the callable's own indexes against the target's.
+            // Companion to #16473 (number index) and #16525 (string index sibling).
             SubtypeResult::True
         } else if let Some(t_shape_id) = object_shape_id(self.checker.interner, self.target) {
             // Callable <: Object — check callable's properties against object's required properties.

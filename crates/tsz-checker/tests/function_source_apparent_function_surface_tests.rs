@@ -317,6 +317,36 @@ target = source;
 }
 
 #[test]
+fn function_still_fails_a_string_index_target() {
+    // #16525's sibling rule: a function's apparent type carries no string
+    // index signature either, so a `Function`-surface target that also
+    // declares one must reject a bare function just like the numeric case.
+    assert!(has_error_with_code(
+        r#"
+interface Bar { b: number; }
+declare var target: { [x: string]: Bar };
+declare var source: (x: any) => void;
+target = source;
+"#,
+        2322
+    ));
+}
+
+#[test]
+fn function_satisfies_an_any_valued_string_index_target() {
+    // A lone `any`-valued string index waives the requirement outright
+    // (`tsc`'s `indexSignaturesRelatedTo` short-circuit) — unlike the
+    // numeric case, it needs no paired `any`-valued number index.
+    assert!(is_clean(
+        r#"
+declare var target: { [x: string]: any };
+declare var source: (x: any) => void;
+target = source;
+"#
+    ));
+}
+
+#[test]
 fn function_still_satisfies_a_call_only_target() {
     assert!(is_clean(
         r#"
