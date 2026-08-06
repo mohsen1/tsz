@@ -108,3 +108,72 @@ export {};
         "did not expect TS2853 for top-level await using in a module, got {codes:?}"
     );
 }
+
+// A class static block is its own container for `checkGrammarAwaitOrAwaitUsing`,
+// the same way it is for `checkAwaitExpression`: tsc reports TS18054 (parser
+// grammar check) for this shape and nothing else, so none of TS2852/2853/2854
+// may fire from the checker. Verified against `typescript@7.0.2`.
+#[test]
+fn await_using_directly_in_class_static_block_does_not_emit_ts285x() {
+    let codes = check_codes(
+        r#"
+class C {
+    static {
+        await using x = getResource();
+    }
+}
+"#,
+    );
+
+    assert!(
+        !codes.contains(&2852) && !codes.contains(&2853) && !codes.contains(&2854),
+        "did not expect TS2852/2853/2854 for await using directly inside a class static block, got {codes:?}"
+    );
+}
+
+// A function boundary between the `await using` and the static block is a
+// closer container than the static block itself — `await_container_is_class_static_block`
+// stops at the first function-like ancestor, so a plain (non-async) nested
+// function keeps answering TS2852 rather than silently swallowing it.
+#[test]
+fn await_using_in_non_async_function_nested_in_static_block_emits_ts2852() {
+    let codes = check_codes(
+        r#"
+class C {
+    static {
+        function f() {
+            await using x = getResource();
+        }
+        void f;
+    }
+}
+"#,
+    );
+
+    assert!(
+        codes.contains(&2852),
+        "expected TS2852 for await using inside a non-async function nested in a static block, got {codes:?}"
+    );
+}
+
+// Symmetric to the non-async case above: an async function nested in a
+// static block is its own container and legitimately allows `await using`.
+#[test]
+fn await_using_in_async_function_nested_in_static_block_does_not_emit_ts285x() {
+    let codes = check_codes(
+        r#"
+class C {
+    static {
+        void (async () => {
+            await using x = getResource();
+        })();
+    }
+}
+"#,
+    );
+
+    assert!(
+        !codes.contains(&2852) && !codes.contains(&2853) && !codes.contains(&2854),
+        "did not expect TS2852/2853/2854 for await using inside an async function nested in a static block, got {codes:?}"
+    );
+}

@@ -1043,6 +1043,27 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Whether the TS2852/2853/2854 top-level-`await`-`using`-eligibility
+    /// family should run at all for the `await using` declaration list at
+    /// `list_idx`. False for a placement error, a syntax-error file, or a
+    /// list sitting directly inside a class static block — tsc's
+    /// `checkGrammarAwaitOrAwaitUsing` opens with the same
+    /// containing-function-or-class-static-block check `checkAwaitExpression`
+    /// uses (`await_container_is_class_static_block`), so a static block
+    /// answers only TS18054 (from the parser) and never a second diagnostic
+    /// from this family. Without this guard `is_directly_at_source_file_top_level`
+    /// walks straight through the static block's non-function-like ancestors
+    /// up to the source file and wrongly answers "top level".
+    pub(crate) fn await_using_top_level_family_applies(
+        &self,
+        list_idx: NodeIndex,
+        placement_error: bool,
+    ) -> bool {
+        !placement_error
+            && !self.ctx.has_syntax_parse_errors
+            && !self.await_container_is_class_static_block(list_idx)
+    }
+
     pub(crate) fn is_directly_at_source_file_top_level(&self, idx: NodeIndex) -> bool {
         let mut current = idx;
         let mut iterations = 0;

@@ -162,9 +162,20 @@ class Gate { static { let x = 1; while (x) { x = 0; } } }
 /// ("...only allowed at the top level of a file...") — the two are mutually
 /// exclusive by container (`getContainingFunctionOrClassStaticBlock`
 /// resolving to the static block short-circuits tsc's top-level-await-using
-/// eligibility check entirely) — which also exercises the
-/// `is_directly_at_source_file_top_level` fix that added
-/// `CLASS_STATIC_BLOCK_DECLARATION` to its disqualifying-container list.
+/// eligibility check entirely) — matched by
+/// `await_using_top_level_family_applies` (`core_statement_checks.rs`), the
+/// checker-side guard on the TS2852/2853/2854 walk in
+/// `check_variable_declaration_list_with_request` (#16598).
+///
+/// This test's own `check_source_codes_with_parse_health` helper sets
+/// `has_syntax_parse_errors` from *any* parse diagnostic, unfiltered by
+/// `is_non_suppressing_parse_error` — so it would have passed even without
+/// the guard above, via the same whole-file suppression this file's header
+/// comment already flags as a historical bug for TS18037. The real CLI
+/// driver (`check_file.rs`) filters TS18054 out as non-suppressing (#16597),
+/// so only the container-scoped guard reflects production; confirmed against
+/// a rebuilt `.target/debug/tsz` binary with the guard reverted, which
+/// reproduces the spurious TS2853 this test would otherwise miss.
 #[test]
 fn static_block_direct_await_using_reports_only_ts18054() {
     let codes = check_source_codes_with_parse_health(
