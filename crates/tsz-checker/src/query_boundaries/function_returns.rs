@@ -17,6 +17,14 @@ pub(crate) fn function_return_union(db: &dyn TypeDatabase, members: Vec<TypeId>)
     db.union(members)
 }
 
+/// Combine the `TNext`s an unannotated generator's `yield*` delegations
+/// declared. `tsc` uses `getIntersectionType` here, not a union: a value sent
+/// into the outer generator can be forwarded to any of its delegates, so it
+/// must satisfy all of them.
+pub(crate) fn function_return_intersection(db: &dyn TypeDatabase, members: Vec<TypeId>) -> TypeId {
+    common::intersection_or_single(db, members)
+}
+
 pub(crate) fn function_return_lazy_type(db: &dyn TypeDatabase, def_id: DefId) -> TypeId {
     db.lazy(def_id)
 }

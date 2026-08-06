@@ -51,6 +51,24 @@ pub(crate) struct FunctionFinalReturnTypeCtx {
     pub(crate) final_generator_yield_type: Option<TypeId>,
     pub(crate) early_gen_return_type: Option<TypeId>,
     pub(crate) early_gen_next_type: Option<TypeId>,
+    /// Intersection of the `TNext`s the body's `yield*` delegations declared.
+    pub(crate) delegated_gen_next_type: Option<TypeId>,
+}
+
+/// What checking an unannotated generator's body inferred for its signature:
+/// the aggregated yield type, and the `TNext` its `yield*` delegations imply.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct InferredGeneratorYield {
+    pub(crate) yield_type: Option<TypeId>,
+    pub(crate) delegated_next_type: Option<TypeId>,
+}
+
+impl InferredGeneratorYield {
+    /// Nothing inferred — the function is not an unannotated generator.
+    pub(crate) const NONE: Self = Self {
+        yield_type: None,
+        delegated_next_type: None,
+    };
 }
 
 pub(crate) struct GeneratorBodyReturnCheckCtx<'b> {
@@ -295,12 +313,38 @@ impl<'a> CheckerState<'a> {
         (contributions, inferred)
     }
 
+    /// Intersect the `TNext` every `yield*` in the just-checked body
+    /// contributed. `tsc`'s `checkAndAggregateYieldOperandTypes` pushes one
+    /// `getIterationTypeOfIterable(IterationTypeKind.Next, ...)` per delegation
+    /// and combines them with `getIntersectionType`, which is what a caller
+    /// sending a value through the outer generator must satisfy: the value has
+    /// to be acceptable to *every* delegate it can reach. `None` when no
+    /// delegation declared a `TNext`, leaving the slot at its `unknown` default.
+    fn delegated_generator_next_type(
+        &self,
+        contributions: &[crate::context::GeneratorYieldContribution],
+    ) -> Option<TypeId> {
+        let next_types: Vec<TypeId> = contributions
+            .iter()
+            .filter_map(|c| c.delegated_next_type)
+            .collect();
+        if next_types.is_empty() {
+            return None;
+        }
+        Some(
+            crate::query_boundaries::function_returns::function_return_intersection(
+                self.ctx.types,
+                next_types,
+            ),
+        )
+    }
+
     pub(crate) fn check_generator_body_return(
         &mut self,
         ctx: GeneratorBodyReturnCheckCtx<'_>,
-    ) -> Option<TypeId> {
+    ) -> InferredGeneratorYield {
         if !ctx.is_generator {
-            return None;
+            return InferredGeneratorYield::NONE;
         }
 
         if ctx.has_type_annotation {
@@ -317,10 +361,11 @@ impl<'a> CheckerState<'a> {
                 declared_type,
                 error_node,
             );
-            return None;
+            return InferredGeneratorYield::NONE;
         }
 
         let (yield_contributions, inferred_yield) = self.take_generator_yield_union();
+        let delegated_next_type = self.delegated_generator_next_type(&yield_contributions);
         // tsc's `getWidenedLiteralLikeTypeForContextualIterationTypeIfNeeded` +
         // `getWidenedType(getUnionType(...))`: widen only a union collapsed to a
         // single *fresh* literal (or enum member) that the contextual yield
@@ -382,7 +427,10 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        Some(final_yield)
+        InferredGeneratorYield {
+            yield_type: Some(final_yield),
+            delegated_next_type,
+        }
     }
 
     pub(crate) fn function_body_return_type(&mut self, ctx: FunctionBodyReturnTypeCtx) -> TypeId {
@@ -1024,7 +1072,16 @@ impl<'a> CheckerState<'a> {
         let return_t = body_return_t
             .or(ctx.early_gen_return_type)
             .unwrap_or(TypeId::VOID);
-        let next_t = ctx.early_gen_next_type.unwrap_or(TypeId::UNKNOWN);
+        // A contextual `Generator<Y, R, N>` still wins: it is the declared shape
+        // the generator is being checked against, and `tsc` reads plain yields'
+        // next contributions out of exactly that contextual type. The delegated
+        // aggregate speaks only where tsz previously had nothing to say and fell
+        // through to `unknown` — an unannotated, uncontextualized generator whose
+        // body delegates.
+        let next_t = ctx
+            .early_gen_next_type
+            .or(ctx.delegated_gen_next_type)
+            .unwrap_or(TypeId::UNKNOWN);
 
         let application = return_type_construction::function_return_application(
             self.ctx.types,

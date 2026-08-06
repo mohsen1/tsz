@@ -411,6 +411,27 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     );
                 }
 
+                // The delegate's own `TNext`, contributed to an *unannotated*
+                // enclosing generator's `TNext` slot (`tsc`:
+                // `checkAndAggregateYieldOperandTypes` collects
+                // `getIterationTypeOfIterable(IterationTypeKind.Next, ...)` for
+                // every `yield*` and intersects them).
+                //
+                // Deliberately the declared-type-argument query rather than
+                // `get_iterator_info(...).next_type`: that structural query
+                // reports `undefined` for the `Array`/`Tuple` fast paths, but
+                // the lib's real `ArrayIterator<T>` declares `TNext = unknown`,
+                // so routing arrays through it would replace today's correct
+                // `unknown` with a wrong `undefined`. The declared-argument
+                // query answers `None` for a delegate that has no `TNext` of
+                // its own (arrays, tuples, `string`, `Set<T>`), which leaves
+                // the slot at the same `unknown` default `tsc` lands on for
+                // those shapes — so this only ever speaks where the delegate
+                // actually declares a `TNext`.
+                let yield_star_next_type = self
+                    .checker
+                    .get_generator_next_type_argument(expression_type);
+
                 if is_async_generator {
                     if self
                         .checker
@@ -511,9 +532,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     // generator yield type must come from actual body yields, not context
                     // (see function_type.rs comment on final_generator_yield_type).
                     if let Some(ref i) = async_info {
-                        self.checker
-                            .ctx
-                            .push_generator_yield_contribution(i.yield_type, false);
+                        self.checker.ctx.push_generator_yield_star_contribution(
+                            i.yield_type,
+                            yield_star_next_type,
+                        );
                         // When yield* delegates to an async iterable with `any` element
                         // type, suppress TS7055 at the function level (see sync path).
                         if i.yield_type == TypeId::ANY {
@@ -541,9 +563,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         // has never spoken for.
                         let resolved = self.checker.for_of_element_type(expression_type, true);
                         if resolved != TypeId::ANY {
-                            self.checker
-                                .ctx
-                                .push_generator_yield_contribution(resolved, false);
+                            self.checker.ctx.push_generator_yield_star_contribution(
+                                resolved,
+                                yield_star_next_type,
+                            );
                         }
                     }
                     element
@@ -607,7 +630,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     };
                     self.checker
                         .ctx
-                        .push_generator_yield_contribution(yield_type, false);
+                        .push_generator_yield_star_contribution(yield_type, yield_star_next_type);
                     // When yield* delegates to an iterable with `any` element type
                     // (e.g. `any[]`), suppress TS7055 at the function level.
                     // tsc considers the `any` yield type to be "explained" by

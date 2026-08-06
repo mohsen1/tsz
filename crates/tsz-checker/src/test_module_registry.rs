@@ -345,6 +345,8 @@ mod generator_yield_invalid_thenable_tests;
 mod generator_yield_literal_widening_tests;
 #[path = "tests/generator_yield_self_similar_nesting_tests.rs"]
 mod generator_yield_self_similar_nesting_tests;
+#[path = "tests/generator_yield_star_next_type_tests.rs"]
+mod generator_yield_star_next_type_tests;
 #[path = "tests/generator_yieldstar_symbol_iterator_contribution_tests.rs"]
 mod generator_yieldstar_symbol_iterator_contribution_tests;
 #[path = "tests/generic_alias_application_display_tests.rs"]
