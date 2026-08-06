@@ -827,7 +827,10 @@ impl<'a> TypePrinter<'a> {
             };
         }
 
-        if app.args.is_empty() {
+        // A base that rendered as a bare fallback keyword cannot syntactically
+        // carry type arguments, so drop them rather than emit invalid
+        // `any<...>`. See `base_text_cannot_carry_type_arguments`.
+        if app.args.is_empty() || Self::base_text_cannot_carry_type_arguments(&base_text) {
             base_text
         } else {
             let args: Vec<String> = app
@@ -843,6 +846,44 @@ impl<'a> TypePrinter<'a> {
                 format!("{base_text}<{}>", args.join(", "))
             }
         }
+    }
+
+    /// True when a type-application base rendered as a bare fallback that cannot
+    /// head a generic reference. A valid generic base is always an identifier,
+    /// qualified name, or `import("...").Name`; when the printer instead
+    /// truncates (depth cutoff → `any`), renders a bare intrinsic, or elides a
+    /// self-referential alias (`crate::ELIDED_ANY`), the result is a non-generic
+    /// keyword and appending `<...>` would emit invalid TypeScript — tsc renders
+    /// a truncated or unnameable recursive application as the bare fallback,
+    /// never as `<keyword><...>`.
+    ///
+    /// The keyword set is the *non-generic* subset of the bare renderings
+    /// `print_intrinsic_type` produces. It deliberately omits the intrinsic
+    /// renderings that are legitimate generic reference heads (`Promise`,
+    /// `Function`) and the boolean-literal renderings (`true`/`false`); keep it
+    /// in sync if a new non-generic intrinsic keyword is added there.
+    ///
+    /// (tsc additionally reports TS7056 for the *non-exported* form of this
+    /// shape — a separate alias-retention gap tracked on #15983; this guard only
+    /// keeps the emitted fallback syntactically valid.)
+    fn base_text_cannot_carry_type_arguments(base_text: &str) -> bool {
+        let trimmed = base_text.trim();
+        trimmed == crate::ELIDED_ANY
+            || matches!(
+                trimmed,
+                "any"
+                    | "unknown"
+                    | "never"
+                    | "void"
+                    | "undefined"
+                    | "null"
+                    | "object"
+                    | "string"
+                    | "number"
+                    | "boolean"
+                    | "symbol"
+                    | "bigint"
+            )
     }
 
     fn print_keyof_alias_application(
@@ -1456,6 +1497,49 @@ mod tests {
         let text = TypePrinter::new(&interner)
             .print_type(interner.intersection(vec![object_type, literal]));
         assert_eq!(text, "\"def\"");
+    }
+
+    #[test]
+    fn degraded_application_base_drops_type_arguments() {
+        // A type application whose base cannot be resolved to a nameable
+        // reference renders the base as the bare `any` fallback. Appending the
+        // type arguments would emit `any<number, string>`, which is not valid
+        // TypeScript (`any` is not generic) — the printer must drop them and
+        // keep just the fallback, matching tsc's rendering of a truncated or
+        // unnameable recursive application.
+        let interner = TypeInterner::new();
+        let base = interner.lazy(DefId(9999));
+        let app = interner.application(base, vec![TypeId::NUMBER, TypeId::STRING]);
+        let printed = TypePrinter::new(&interner).print_type(app);
+        assert!(
+            !printed.contains('<'),
+            "degraded base must not carry type arguments, got: {printed}"
+        );
+        assert_eq!(printed, "any");
+    }
+
+    #[test]
+    fn base_text_cannot_carry_type_arguments_classifies_degraded_fallbacks() {
+        assert!(TypePrinter::base_text_cannot_carry_type_arguments("any"));
+        assert!(TypePrinter::base_text_cannot_carry_type_arguments(
+            "unknown"
+        ));
+        assert!(TypePrinter::base_text_cannot_carry_type_arguments("never"));
+        assert!(TypePrinter::base_text_cannot_carry_type_arguments(
+            crate::ELIDED_ANY
+        ));
+        // Real, nameable reference heads must keep their type arguments.
+        assert!(!TypePrinter::base_text_cannot_carry_type_arguments("Foo"));
+        assert!(!TypePrinter::base_text_cannot_carry_type_arguments(
+            "Promise"
+        ));
+        assert!(!TypePrinter::base_text_cannot_carry_type_arguments(
+            "import(\"./m\").Bar"
+        ));
+        // A member named after a keyword (e.g. `ns.any`) is still a reference.
+        assert!(!TypePrinter::base_text_cannot_carry_type_arguments(
+            "ns.any"
+        ));
     }
 
     #[test]
