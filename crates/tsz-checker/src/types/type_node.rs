@@ -329,6 +329,31 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 self.ctx.types,
                 member_types.clone(),
             );
+
+            // With `strictNullChecks` off, `null`/`undefined` are subtypes of
+            // every type, so tsc's `getUnionType` (`addTypeToUnion`) drops a
+            // `null`/`undefined` constituent whenever the union has at least
+            // one non-nullish sibling — this applies to every union tsc
+            // constructs, not only the array-literal element path (see
+            // `nonstrict_array_element_union_absorbs_nullish_scalars` in
+            // `array_literal.rs`). The all-nullish union (nothing left to
+            // keep) is handled separately above by
+            // `collapse_pure_nullish_union_nonstrict` and must stay untouched
+            // here.
+            let reduced = crate::query_boundaries::type_predicates::strip_nullish_from_union_type_node_nonstrict(
+                self.ctx.types,
+                self.ctx.compiler_options.strict_null_checks,
+                result,
+            );
+            if reduced != result {
+                // The union collapsed to a single surviving member (or a
+                // smaller union) — its identity is no longer the original
+                // written union, so the anonymous-object-literal bookkeeping
+                // below (which is keyed on *this* union's `TypeId`) does not
+                // apply and must not be recorded against the reduced type.
+                return reduced;
+            }
+
             // Record, per member, whether it was written as an anonymous
             // `{ ... }` literal directly in *this* union — as opposed to a
             // named alias/interface reference whose body happens to reduce

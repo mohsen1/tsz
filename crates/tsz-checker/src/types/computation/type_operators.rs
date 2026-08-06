@@ -63,6 +63,26 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 member_types.clone(),
             );
+
+            // With `strictNullChecks` off, `null`/`undefined` are subtypes of
+            // every type, so tsc's `getUnionType` (`addTypeToUnion`) drops a
+            // `null`/`undefined` constituent whenever the union has at least
+            // one non-nullish sibling — matching the array-literal element
+            // path's identical reduction (#16578). The all-nullish case is
+            // handled separately above by `collapse_pure_nullish_union_nonstrict`.
+            let reduced = crate::query_boundaries::type_predicates::strip_nullish_from_union_type_node_nonstrict(
+                self.ctx.types,
+                self.ctx.compiler_options.strict_null_checks,
+                result,
+            );
+            if reduced != result {
+                // The union collapsed to a single surviving member (or a
+                // smaller union) — its identity is no longer *this* written
+                // union, so the anonymous-object-literal bookkeeping below
+                // (keyed on this union's `TypeId`) does not apply.
+                return reduced;
+            }
+
             // Mirror tsc's `UnionType.origin`: record the as-written input
             // member list so the diagnostic printer can preserve top-level
             // alias names that union flattening would otherwise dissolve

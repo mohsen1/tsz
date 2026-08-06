@@ -275,6 +275,37 @@ pub(crate) fn collapse_pure_nullish_union_nonstrict(
     tsz_solver::narrowing::collapse_pure_nullish_union_nonstrict(strict_null_checks, member_types)
 }
 
+/// With `strictNullChecks` off, drop `null`/`undefined` members out of an
+/// already-constructed union type whenever a non-nullish sibling is present
+/// — e.g. `declare function f(): number | null` infers `number`, not
+/// `number | null`. `tsc`'s `getUnionType` (`addTypeToUnion`) applies this to
+/// every union it constructs; this is the single choke point both of tsz's
+/// union-type-node resolvers (`TypeNodeChecker::get_type_from_union_type` and
+/// `CheckerState::get_type_from_union_type`) call into, so the answer agrees
+/// regardless of which one a given syntactic position routes through.
+///
+/// The all-nullish case (nothing left to keep once the nullish members are
+/// gone) is handled separately by `collapse_pure_nullish_union_nonstrict`,
+/// which callers must consult first — this function leaves such a union
+/// untouched precisely because it finds no non-nullish survivor.
+pub(crate) fn strip_nullish_from_union_type_node_nonstrict(
+    db: &dyn TypeDatabase,
+    strict_null_checks: bool,
+    type_id: TypeId,
+) -> TypeId {
+    if strict_null_checks {
+        return type_id;
+    }
+    let Some(members) = tsz_solver::type_queries::get_union_members(db, type_id) else {
+        return type_id;
+    };
+    let is_nullish_scalar = |m: &TypeId| *m == TypeId::NULL || *m == TypeId::UNDEFINED;
+    if !members.iter().any(is_nullish_scalar) || !members.iter().any(|m| !is_nullish_scalar(m)) {
+        return type_id;
+    }
+    tsz_solver::narrowing::remove_nullish(db, type_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
