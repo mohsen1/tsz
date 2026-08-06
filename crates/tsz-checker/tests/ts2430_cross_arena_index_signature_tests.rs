@@ -90,3 +90,85 @@ interface CompletelyDifferentName extends Array<string> {
         "renaming the derived interface must not suppress the TS2430 report"
     );
 }
+
+// =========================================================================
+// Overloaded base method coverage across arenas
+//
+// `check_interface_extension_compatibility` defers a method name to
+// `check_interface_overload_coverage` whenever either side declares more
+// than one signature for it (the N x M overload-set rule). That deferred
+// pass re-read each heritage base declaration through `self.ctx.arena`
+// directly instead of resolving the declaration's own arena first - the
+// same defect class the index-signature tests above cover for a derived
+// interface's *own* index signature. Because a lib generic's declaration
+// lives in a lib arena, `self.ctx.arena.get(..)` silently missed,
+// `base_method_groups` came back empty for every overloaded lib method
+// name, and the entire overload-set comparison for that member was
+// skipped - an incompatible override went unreported.
+// =========================================================================
+
+/// Reported repro shape (oracled `typescript@7.0.2`): a derived interface's
+/// own overloaded `concat` that does not cover `Array<T>`'s inherited
+/// `concat` overload set must report TS2430.
+#[test]
+fn extends_array_incompatible_overloaded_method_reports_ts2430() {
+    let source = r#"
+interface MyArray<T> extends Array<T> {
+    concat(x: string): T[];
+    concat(y: number): T[];
+}
+"#;
+    assert!(
+        lib_codes(source).contains(&2430),
+        "a derived interface's own overloaded method incompatible with Array's inherited overload set must report TS2430"
+    );
+}
+
+/// Negative: re-declaring the base's own overload set verbatim is a valid,
+/// trivially-assignable override and must not report TS2430.
+#[test]
+fn extends_array_identical_overloaded_method_no_ts2430() {
+    let source = r#"
+interface MyArray<T> extends Array<T> {
+    concat(...items: ConcatArray<T>[]): T[];
+    concat(...items: (T | ConcatArray<T>)[]): T[];
+}
+"#;
+    assert!(
+        !lib_codes(source).contains(&2430),
+        "re-declaring Array's own concat overload set verbatim must not report TS2430"
+    );
+}
+
+/// Adjacent: renaming the derived interface must not change the outcome —
+/// the fix must not key off any user-chosen identifier.
+#[test]
+fn extends_array_incompatible_overloaded_method_renamed_binder_reports_ts2430() {
+    let source = r#"
+interface CompletelyDifferentArrayName<T> extends Array<T> {
+    concat(x: string): T[];
+    concat(y: number): T[];
+}
+"#;
+    assert!(
+        lib_codes(source).contains(&2430),
+        "renaming the derived interface must not suppress the TS2430 report"
+    );
+}
+
+/// Adjacent: the concrete (non-generic-reparameterized) heritage form —
+/// `extends Array<string>` instead of `extends Array<T>` — must apply the
+/// same rule.
+#[test]
+fn extends_array_concrete_incompatible_overloaded_method_reports_ts2430() {
+    let source = r#"
+interface MyStringArray extends Array<string> {
+    concat(x: symbol): string[];
+    concat(y: boolean): string[];
+}
+"#;
+    assert!(
+        lib_codes(source).contains(&2430),
+        "a concrete (non-reparameterized) heritage form must still report TS2430 for an incompatible overloaded override"
+    );
+}

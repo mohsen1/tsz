@@ -1856,6 +1856,7 @@ impl<'a> CheckerState<'a> {
                         iface_name: iface_data.name,
                         derived_name: &derived_name,
                         base_name: &base_name,
+                        base_sym_id,
                         base_iface_indices: &base_iface_indices,
                         derived_member_names: &derived_member_names,
                         derived_members: &derived_members,
