@@ -250,7 +250,6 @@ var e: string = v;
 /// green on its own when the reduction is fixed instead of freezing today's
 /// divergence into an expectation.
 #[test]
-#[ignore = "known gap: non-strict union reduction does not absorb `undefined` from an element union; independent of leg A's widening seam — see #16384"]
 fn mixed_array_reduces_undefined_out_of_the_element_union() {
     assert_infers(
         "\

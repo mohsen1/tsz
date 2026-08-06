@@ -437,6 +437,39 @@ impl<'a> CheckerState<'a> {
         applicable_shape
     }
 
+    /// Non-strict Subtype union reduction for array-literal elements, mirroring
+    /// tsc's `getUnionType(elementTypes, UnionReduction.Subtype)`.
+    ///
+    /// With `strictNullChecks` off, `null` and `undefined` are subtypes of every
+    /// non-nullish type, so a scalar `null`/`undefined` element is absorbed out of
+    /// the element union whenever a non-nullish sibling is present:
+    /// `["s", undefined]` reduces to `string`, `[collect(), undefined]` (with
+    /// `collect(): undefined[]`) reduces to `undefined[]`. This is a *reduction*,
+    /// not a widening — it removes the scalar nullish member rather than rewriting
+    /// any leaf to `any`, so it composes with (and runs before) the compound
+    /// widening seam below without producing the wrong-direction `any[]`.
+    ///
+    /// A pure-nullish literal (`[undefined]`, `[null, undefined]`) is left
+    /// untouched: with no non-nullish supertype to be absorbed into there is
+    /// nothing to reduce against, and its own widening seam turns it into `any[]`.
+    /// The reduction is `strictNullChecks`-off only; under `strict`, a scalar
+    /// nullish element is retained so a genuine strict-null mismatch still
+    /// surfaces. Only the *scalar* `null`/`undefined` members are removed — a
+    /// member that merely *contains* `undefined` (e.g. `string | undefined`) is a
+    /// non-nullish sibling that stays and legitimately absorbs the scalar.
+    fn reduce_nonstrict_nullish_array_elements(&self, element_types: Vec<TypeId>) -> Vec<TypeId> {
+        let is_nullish_scalar = |&t: &TypeId| t == TypeId::NULL || t == TypeId::UNDEFINED;
+        if !element_types.iter().any(is_nullish_scalar)
+            || !element_types.iter().any(|t| !is_nullish_scalar(t))
+        {
+            return element_types;
+        }
+        element_types
+            .into_iter()
+            .filter(|t| !is_nullish_scalar(t))
+            .collect()
+    }
+
     /// Get type of array literal.
     ///
     /// Computes the type of array literals like `[1, 2, 3]` or `["a", "b"]`.
@@ -1358,6 +1391,19 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Non-strict Subtype union reduction: with `strictNullChecks` off, a
+        // scalar `null`/`undefined` element is absorbed out of the element union
+        // whenever a non-nullish sibling is present (tsc's
+        // `getUnionType(_, UnionReduction.Subtype)`). Runs before both the
+        // preserve-literals union and the BCT/pre-widen path below so neither
+        // sees a spurious `| undefined`. Strict mode and pure-nullish literals
+        // (which the widening seam turns into `any[]`) are left untouched.
+        let element_types = if self.ctx.strict_null_checks() {
+            element_types
+        } else {
+            self.reduce_nonstrict_nullish_array_elements(element_types)
+        };
+
         // Snapshot the solver's worker-local complexity epoch before computing
         // this array's element union. A recursive
         // type-alias evaluation triggered while computing the *contextual* element
@@ -1414,7 +1460,7 @@ impl<'a> CheckerState<'a> {
             || preserve_tuple_spread_literals
             || preserve_const_asserted_element_literals
         {
-            array_surfaces::element_union(self.ctx.types, element_types.clone())
+            array_surfaces::element_union(self.ctx.types, element_types)
         } else {
             // A nested array/tuple literal element (e.g. `[[null]]` inside
             // `[[[null]],[undefined]]`) resolves its own `null`/`undefined`
@@ -1447,7 +1493,7 @@ impl<'a> CheckerState<'a> {
             // leaves are genuine widening sources still collapses its siblings
             // post-widening and one whose leaves are declared values does not.
             let bct_element_types: Vec<TypeId> = if self.ctx.strict_null_checks() {
-                element_types.clone()
+                element_types
             } else {
                 let widened: Vec<TypeId> = element_types
                     .iter()
@@ -1468,7 +1514,7 @@ impl<'a> CheckerState<'a> {
                 if widened == element_types || self.initializer_nullish_leaves_are_widening(idx) {
                     widened
                 } else {
-                    element_types.clone()
+                    element_types
                 }
             };
             expr_ops::compute_best_common_type_cached(
