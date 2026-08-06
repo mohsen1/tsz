@@ -384,6 +384,36 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         crate::type_queries::matches_global_function_interface_shape(self.interner, target)
     }
 
+    /// Whether a structural-`Function` target (apply/call/bind) additionally
+    /// declares a numeric index signature that a bare function cannot satisfy.
+    ///
+    /// `tsc` models a function value's apparent type as its call signatures plus
+    /// the members of the global `Function` interface, and that apparent type
+    /// carries **no** numeric index signature. So a target that matches the
+    /// Function surface but also declares `[n: number]: T` — the shape a user
+    /// `interface Function { [n: number]: T }` augmentation produces — is not
+    /// satisfied by a function no matter which other members it requires. The
+    /// intrinsic `Function` and the un-augmented global interface carry no such
+    /// index and are unaffected. Mirrors the dual-`any`-index waiver the object
+    /// index path already honors (`indexSignaturesRelatedTo` short-circuits a
+    /// target whose numeric and string indexes are both `any`), so the two paths
+    /// agree on `{ [k: string]: any; [n: number]: any }`.
+    pub(crate) fn function_structural_target_has_unwaived_number_index(
+        &self,
+        target: TypeId,
+    ) -> bool {
+        let shape_id = crate::visitors::visitor_extract::object_shape_id(self.interner, target)
+            .or_else(|| {
+                crate::visitors::visitor_extract::object_with_index_shape_id(self.interner, target)
+            });
+        let Some(shape_id) = shape_id else {
+            return false;
+        };
+        let shape = self.interner.object_shape(shape_id);
+        shape.number_index.is_some()
+            && !self.target_dual_any_index_waives_missing_number_index(&shape)
+    }
+
     /// Get the apparent primitive shape for a type.
     ///
     /// When primitives are used in object-like operations (e.g., `"hello".length`),
