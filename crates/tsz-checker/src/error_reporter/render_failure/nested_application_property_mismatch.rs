@@ -1135,6 +1135,66 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    /// Display a single failing union constituent honoring the source
+    /// annotation's provenance: an inline `{ ... }` constituent (an anonymous
+    /// composite the user wrote directly) shows its structural shape, while a
+    /// named reference keeps its name. Falls back to the ordinary diagnostic
+    /// display when the source expression carries no anonymous-composite
+    /// annotation. See issue #16513.
+    fn union_source_member_display(
+        &mut self,
+        anchor_idx: tsz_parser::parser::NodeIndex,
+        member: TypeId,
+    ) -> String {
+        self.anonymous_composite_annotation_source_display(anchor_idx, member)
+            .unwrap_or_else(|| self.format_type_diagnostic(member))
+    }
+
+    /// Render a depth-0 plain-leaf union-source mismatch (`Type 'A | B' is not
+    /// assignable to type 'T'.` -> `Type '<failing member>' is not assignable to
+    /// type 'T'.`), displaying the failing constituent with the source
+    /// annotation's provenance so an inline `{ ... }` constituent shows its
+    /// structural shape rather than a coincidentally same-shaped alias reached
+    /// through the reverse type-to-def lookup. See issue #16513.
+    ///
+    /// Only invoked at chain depth 0 (the primary assignment diagnostic). The
+    /// `member_type` is the solver's selected failing constituent; the solver
+    /// already walks the union in source order (#16523 reorders enum slots by
+    /// declaration), so this path corrects only the member *display*, not the
+    /// selection.
+    ///
+    /// The outer-line + generalize + `push_elaboration_in_span` scaffolding
+    /// mirrors the depth-0 plain-leaf branch of
+    /// [`Self::render_parent_with_child_relation`] — the two must stay in
+    /// lockstep. The sole divergence is `union_source_member_display` (annotation
+    /// provenance) in place of that renderer's plain `format_type_diagnostic`.
+    fn render_union_source_plain_leaf_member(
+        &mut self,
+        ctx: &RenderContext,
+        target_type: TypeId,
+        member_type: TypeId,
+    ) -> Diagnostic {
+        let mut diag = self.render_type_mismatch(ctx);
+        // The leaf generalizes the same way as the outer line (tsc runs
+        // `reportRelationError` on every relation line): an all-unit member
+        // widens to its base against a non-singleton target.
+        let display_member =
+            self.generalize_nested_relation_source_for_display(member_type, target_type);
+        let member_str = self.union_source_member_display(ctx.idx, display_member);
+        let target_str = self.format_type_diagnostic(target_type);
+        diag.push_elaboration_in_span(
+            ctx.start,
+            ctx.length,
+            format_message(
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&member_str, &target_str],
+            ),
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            0,
+        );
+        diag
+    }
+
     /// Render a union-source mismatch: a union type that is not assignable to
     /// the target because one of its members fails.
     ///
@@ -1170,6 +1230,18 @@ impl<'a> CheckerState<'a> {
         member_type: TypeId,
         nested_reason: &tsz_solver::SubtypeFailureReason,
     ) -> Diagnostic {
+        // A whole-constituent (plain-leaf) rejection carries no member-specific
+        // structure — its nested reason is just `member <: target`. An inline
+        // `{ ... }` constituent has no `aliasSymbol`, but the reverse
+        // type-to-def lookup repaints it with a coincidentally same-shaped alias
+        // declared elsewhere in the file (`{ m: number }` -> `U`). Render the
+        // failing member honoring the source annotation's provenance instead.
+        // Scoped to depth-0 plain-leaf: a structural or nested member failure
+        // binds its `nested_reason` to a specific member and self-heads its own
+        // line, so it keeps the established rendering. See issue #16513.
+        if ctx.depth == 0 && Self::nested_reason_is_plain_type_mismatch(nested_reason) {
+            return self.render_union_source_plain_leaf_member(ctx, target_type, member_type);
+        }
         if !Self::union_member_nested_needs_header(nested_reason) {
             return self.render_parent_with_child_relation(
                 ctx,

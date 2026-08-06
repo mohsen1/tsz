@@ -1092,6 +1092,9 @@ path = "tests/union_source_structural_elaboration_tests.rs"
 name = "union_source_enum_elaboration_order_tests"
 path = "tests/union_source_enum_elaboration_order_tests.rs"
 [[test]]
+name = "union_source_elaboration_constituent_tests"
+path = "tests/union_source_elaboration_constituent_tests.rs"
+[[test]]
 name = "ts2353_omit_pick_excess_property_tests"
 path = "tests/ts2353_omit_pick_excess_property_tests.rs"
 [[test]]
