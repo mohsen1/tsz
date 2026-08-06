@@ -18,12 +18,19 @@
 //!   `'"two-part"' is declared here.`.
 //! * the message carries no trailing period.
 //!
-//! Three shapes deliberately produce **no** pointer rather than a guessed one,
+//! Two shapes deliberately produce **no** pointer rather than a guessed one,
 //! and are pinned negatively below so they cannot regress into a wrong anchor:
-//! an index-signature target (tsc: `TS6501`), a contextual return type inside a
-//! property initializer (tsc: `TS6502`), and an owner that is an anonymous
-//! object type — a type alias to a type literal, or a nested literal — whose
-//! declaration the binder mints no symbol for (#16443).
+//! an index-signature target (tsc: `TS6501`) and a contextual return type
+//! inside a property initializer (tsc: `TS6502`).
+//!
+//! An owner that is an anonymous object type — a type alias to a type
+//! literal, or a nested literal — has no binder symbol to resolve through
+//! (#16443: a type literal mints none at all), so the owner-candidate walk
+//! alone declines. The annotation-syntax fallback recovers it anyway, from
+//! the object-literal path at the failure site — the same per-occurrence
+//! provenance argument #16521 already established for the sibling `TS2728`
+//! pointer, since an interned anonymous shape can never carry its own source
+//! location for the direct route to find.
 
 use crate::diagnostics::Diagnostic;
 use crate::test_utils::check_source_diagnostics;
@@ -287,29 +294,67 @@ fn array_element_mismatch_gets_no_property_pointer() {
 }
 
 /// A nested literal reports at the inner property; tsc's pointer then names the
-/// *inner* anonymous type. tsz's owner walk needs a binder symbol and the
-/// binder mints none for a type literal (#16443), so it declines. Pinned so the
-/// day #16443's owner route lands, this row's regression is visible instead of
-/// silently anchoring at the outer `lvl`.
+/// *inner* anonymous type. The owner has no binder symbol at all — a type
+/// literal mints none (#16443) — so `member_declaration_anchor_for_owner`
+/// still declines, but the annotation-syntax fallback recovers the same
+/// per-occurrence path #16521 gave the sibling `TS2728` pointer: walk the
+/// object-literal ancestry from the failing value out to `Deep`, then back
+/// down through `lvl`'s own written type to `p`.
 #[test]
-fn nested_type_literal_owner_declines_rather_than_naming_the_outer_property() {
+fn nested_type_literal_owner_points_at_the_inner_anonymous_type() {
     let source = "interface Deep { lvl: { p: string }; }\nconst d: Deep = { lvl: { p: 7 } };\n";
     let diagnostic = only(&check_source_diagnostics(source), TS2322);
-    assert!(
-        !has_pointer(&diagnostic),
-        "an anonymous owner must decline, never fall back to the enclosing property: {diagnostic:?}"
+    let (_, start, length, message) = expected_type_pointer(&diagnostic);
+    assert_eq!(
+        message,
+        "The expected type comes from property 'p' which is declared here on type '{ p: string; }'"
     );
+    assert_eq!(span_text(source, start, length), "p");
 }
 
 /// Same root cause as above with the alias spelled out: `type Alias = { .. }`
-/// evaluates to an anonymous object type carrying no symbol, so the walk has no
-/// declaration to anchor in. tsc prints the pointer here.
+/// evaluates to an anonymous object type carrying no symbol, so the direct
+/// owner-candidate walk declines. Unlike the nested case, the annotation walk
+/// needs no hop at all — `path` is just `["av"]` — so it stops on the
+/// `Alias` type-reference node itself, which is also why the owner displays
+/// as the alias's own written name rather than its expanded body.
 #[test]
-fn type_alias_to_type_literal_owner_declines() {
+fn type_alias_to_type_literal_owner_points_at_its_member() {
     let source = "type Alias = { av: string; bv: number };\nconst al: Alias = { av: 5, bv: 6 };\n";
     let diagnostic = only(&check_source_diagnostics(source), TS2322);
+    let (_, start, length, message) = expected_type_pointer(&diagnostic);
+    assert_eq!(
+        message,
+        "The expected type comes from property 'av' which is declared here on type 'Alias'"
+    );
+    assert_eq!(span_text(source, start, length), "av");
+}
+
+/// Binder names must not matter here either: the annotation-syntax fallback
+/// matches members by the path recovered from the object-literal source, not
+/// by any name coincidence with the primary diagnostic's own display text.
+#[test]
+fn renamed_binders_point_at_the_inner_anonymous_type() {
+    let source = "interface Zeta { qux: { xylo: string; yak: number }; }\nconst z: Zeta = { qux: { xylo: 9 } };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2322);
+    let (_, start, length, message) = expected_type_pointer(&diagnostic);
+    assert_eq!(
+        message,
+        "The expected type comes from property 'xylo' which is declared here on type '{ xylo: string; yak: number; }'"
+    );
+    assert_eq!(span_text(source, start, length), "xylo");
+}
+
+/// Negative control for both rows above: a nested literal that type-checks
+/// cleanly must stay clean — the fallback only ever activates once a `TS2322`
+/// has already been reported for this member, never as a side effect of
+/// walking the annotation.
+#[test]
+fn nested_type_literal_matching_value_stays_clean() {
+    let source =
+        "interface Deep { lvl: { p: string }; }\nconst d: Deep = { lvl: { p: \"ok\" } };\n";
     assert!(
-        !has_pointer(&diagnostic),
-        "an alias-to-type-literal owner must decline rather than guess: {diagnostic:?}"
+        check_source_diagnostics(source).is_empty(),
+        "a matching nested value must not report anything"
     );
 }
