@@ -416,11 +416,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let has_too_few_args =
-            Self::decorator_signature_param_counts(self.ctx.types, decorator_type)
-                .is_some_and(|counts| !counts.is_empty() && counts.iter().all(|&n| n == 0));
-
-        if has_too_few_args {
+        if Self::decorator_signature_accepts_no_arguments(self.ctx.types, decorator_type) {
             let name = self.get_decorator_expression_name(decorator_expr);
             let msg = diagnostic_messages::ACCEPTS_TOO_FEW_ARGUMENTS_TO_BE_USED_AS_A_DECORATOR_HERE_DID_YOU_MEAN_TO_CALL_IT
                 .replace("{0}", &name);
@@ -433,6 +429,23 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    /// Whether every call signature of a decorator expression takes zero
+    /// parameters — the shape of a decorator factory written without its
+    /// call (`@factory` rather than `@factory()`).
+    ///
+    /// Mirrors tsc's `isPotentiallyUncalledDecorator` for the common
+    /// zero-parameter case. tsc reports only the TS1329 "did you mean to call
+    /// it first" hint for these, so every other decorator diagnostic that
+    /// would otherwise fall out of the failed call — the signature failure and
+    /// the return-type check alike — must stand down.
+    fn decorator_signature_accepts_no_arguments(
+        db: &dyn tsz_solver::construction::TypeDatabase,
+        decorator_type: TypeId,
+    ) -> bool {
+        Self::decorator_signature_param_counts(db, decorator_type)
+            .is_some_and(|counts| !counts.is_empty() && counts.iter().all(|&n| n == 0))
     }
 
     fn es_method_or_accessor_decorator_args(
@@ -843,13 +856,76 @@ impl<'a> CheckerState<'a> {
             actual_this_type,
         );
 
-        if !matches!(result, CallResult::Success(_)) {
-            self.error_at_node(
-                self.decorator_failure_anchor(decorator_node, resolved, 3),
-                diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_PARAMETER_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
-                diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_PARAMETER_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
-            );
+        let return_type = match result {
+            CallResult::Success(return_type) => Some(return_type),
+            _ => {
+                self.error_at_node(
+                    self.decorator_failure_anchor(decorator_node, resolved, 3),
+                    diagnostic_messages::UNABLE_TO_RESOLVE_SIGNATURE_OF_PARAMETER_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+                    diagnostic_codes::UNABLE_TO_RESOLVE_SIGNATURE_OF_PARAMETER_DECORATOR_WHEN_CALLED_AS_AN_EXPRESSION,
+                );
+                // tsc keeps checking the return type after a failed signature
+                // resolution — `@bad` whose call fails AND whose return type is
+                // not `void` draws TS1239 and TS1271 at the same anchor. Recover
+                // the return type the same way the property-decorator path does.
+                self.recover_decorator_return_type_with_any_args(resolved)
+                    .or_else(|| {
+                        crate::query_boundaries::checkers::call::stable_call_recovery_return_type(
+                            self.ctx.types,
+                            resolved,
+                        )
+                    })
+            }
+        };
+
+        self.check_parameter_decorator_return_type(decorator_node, resolved, return_type);
+    }
+
+    /// TS1271 for legacy parameter decorators.
+    ///
+    /// The runtime discards a parameter decorator's result, so tsc requires the
+    /// return type to be assignable to `void` (`any` short-circuits). This is
+    /// the sibling of the identical check
+    /// [`Self::check_legacy_property_decorator_call_signature`] runs for
+    /// property decorators; the parameter half was never wired, so a parameter
+    /// decorator returning a value was silently accepted.
+    fn check_parameter_decorator_return_type(
+        &mut self,
+        decorator_node: NodeIndex,
+        resolved: TypeId,
+        return_type: Option<TypeId>,
+    ) {
+        // An uncalled zero-parameter decorator factory draws only the TS1329
+        // "did you mean to call it first" hint; its (unreachable) return type is
+        // not judged.
+        if Self::decorator_signature_accepts_no_arguments(self.ctx.types, resolved) {
+            return;
         }
+
+        let Some(return_type) = return_type else {
+            return;
+        };
+        let return_type = self.evaluate_type_for_assignability(return_type);
+        if matches!(return_type, TypeId::ERROR | TypeId::ANY) {
+            return;
+        }
+        if self
+            .return_relation_outcome(return_type, TypeId::VOID)
+            .related
+        {
+            return;
+        }
+
+        let return_str = self.format_type_diagnostic(return_type);
+        let message = format_message(
+            diagnostic_messages::DECORATOR_FUNCTION_RETURN_TYPE_IS_BUT_IS_EXPECTED_TO_BE_VOID_OR_ANY,
+            &[&return_str],
+        );
+        self.error_at_node(
+            self.decorator_expression_anchor(decorator_node),
+            &message,
+            diagnostic_codes::DECORATOR_FUNCTION_RETURN_TYPE_IS_BUT_IS_EXPECTED_TO_BE_VOID_OR_ANY,
+        );
     }
 
     fn get_decorator_expression_name(&self, expr: NodeIndex) -> String {
