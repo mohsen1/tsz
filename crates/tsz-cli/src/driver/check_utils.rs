@@ -498,6 +498,21 @@ fn is_hard_keyword_interface_name_2427_parse_diagnostic(diagnostic: &ParseDiagno
 ///   keeps it alongside an unrelated syntax error in the same file, unlike
 ///   its TS2427/TS2457 siblings — so family membership must not be assumed
 ///   from a sibling's membership.
+///
+/// #16279 audit round 5: TS1492 (`'{0}' declarations may not have binding
+/// patterns.`, `state_variable_declarations.rs` — `using {a} = x` / `await
+/// using [a] = x`) is the direct-declaration sibling that round 4's
+/// `for...in`/`for...of` TS1493/TS1494 left out of the same "using
+/// declaration" grammar family. Parser-emitted and, like its siblings, was
+/// entirely absent from this list. Oracle-confirmed against
+/// `typescript@7.0.2` (Direction B): an unrelated `let x: = 1;` syntax error
+/// elsewhere in the file drops the TS1492 that would otherwise fire. End-to-
+/// end witness against the rebuilt `tsz` binary: `using {a} = null as any;`
+/// next to `export declare import x = require("y");` in the same file —
+/// tsc reports both TS1492 and TS1079 (the `declare`-on-an-import-declaration
+/// modifier error, already listed above); tsz's `main` before this entry
+/// reported only TS1492, silently dropping TS1079 because the unlisted TS1492
+/// counted as a "real" parse error.
 const fn is_parser_grammar_code(code: u32) -> bool {
     matches!(
         code,
@@ -556,6 +571,7 @@ const fn is_parser_grammar_code(code: u32) -> bool {
         | 1182 // A destructuring declaration must have an initializer
         | 1184 // Modifiers cannot appear here
         | 1188 // Only a single variable declaration is allowed in a 'for...of' statement
+        | 1492 // '{0}' declarations may not have binding patterns
         | 1493 // The left-hand side of a 'for...in' statement cannot be a 'using' declaration
         | 1494 // The left-hand side of a 'for...in' statement cannot be an 'await using' declaration
         | 1191 // An import declaration cannot have modifiers
@@ -1735,6 +1751,10 @@ mod parser_grammar_non_suppressing_tests;
 #[cfg(test)]
 #[path = "check_utils/for_in_using_declaration_grammar_tests.rs"]
 mod for_in_using_declaration_grammar_tests;
+
+#[cfg(test)]
+#[path = "check_utils/using_declaration_binding_pattern_grammar_tests.rs"]
+mod using_declaration_binding_pattern_grammar_tests;
 
 #[cfg(test)]
 #[path = "check_utils/filter_trigger_unification_tests.rs"]
