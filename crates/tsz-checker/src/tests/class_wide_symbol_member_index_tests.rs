@@ -128,6 +128,49 @@ export { read };
 }
 
 #[test]
+fn two_wide_symbol_interface_members_union_their_index_value_types() {
+    // #16307's own 2026-08-05T15:38Z comment recorded this shape as a still-open
+    // gap: `merge_index_signature`'s duplicate-key collapse (meant for genuine
+    // explicit `[k: symbol]: T` conflicts) was said to also swallow the
+    // interface leg of the implicit wide-symbol union, reporting a false
+    // TS7053 on read. Verified against pinned `typescript@7.0.2` (exit 0) and
+    // against current main: this interface leg already routes through
+    // `merge_implicit_symbol_index` (shared lowering, `signature_members.rs`)
+    // and unions cleanly, matching the class leg's own coverage above. Pinning
+    // it so the "still open" note stops drawing future sessions back to a gap
+    // that closed without a matching regression test.
+    assert_clean(
+        r#"
+declare const firstKey: symbol;
+declare const secondKey: symbol;
+interface T { [firstKey]: number; [secondKey]: string }
+declare const anyKey: symbol;
+declare const t: T;
+const read: number | string = t[anyKey];
+export { read };
+"#,
+    );
+}
+
+#[test]
+fn two_wide_symbol_interface_members_union_with_renamed_binders() {
+    // Same shape as above with different declaration order and binder names,
+    // confirming the routing is driven by the key's declared `symbol` type
+    // rather than by identifier spelling or source position.
+    assert_clean(
+        r#"
+interface Holder { [beta]: string; [alpha]: number }
+declare const alpha: symbol;
+declare const beta: symbol;
+declare const probe: symbol;
+declare const holder: Holder;
+const value: string | number = holder[probe];
+export { value };
+"#,
+    );
+}
+
+#[test]
 fn wide_symbol_class_member_leaves_ordinary_named_members_alone() {
     // The symbol index must not swallow string-named members, and `keyof`
     // must still surface them.
