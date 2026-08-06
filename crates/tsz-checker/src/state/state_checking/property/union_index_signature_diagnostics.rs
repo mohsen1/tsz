@@ -60,6 +60,30 @@ impl<'a> CheckerState<'a> {
             let mut has_deferred_index_value_type = false;
 
             for shape in union_shapes {
+                // A `symbol`-keyed property is covered only by the target's
+                // `[k: symbol]` signature (tsc `getApplicableIndexInfo`); the
+                // `[k: string]`/`[k: number]` signatures this loop otherwise
+                // selects never apply to it. Route the value check to the symbol
+                // signature so a mismatch surfaces (TS2418) and a match is
+                // accepted — and, when the target has no symbol signature, the
+                // property is left uncovered (not excess), matching `tsc`. The
+                // trailing `continue` keeps a symbol key from ever falling
+                // through to the string/number branches below.
+                if source_prop.is_symbol_named {
+                    if let Some(symbol_index) = shape.symbol_index_signature()
+                        && self.record_applicable_index_value(
+                            source_prop.type_id,
+                            symbol_index.value_type,
+                            &mut applicable_index_value_types,
+                            &mut has_deferred_index_value_type,
+                        )
+                    {
+                        accepted_by_index = true;
+                        break;
+                    }
+                    continue;
+                }
+
                 if let Some(string_index) = &shape.string_index {
                     if !self.string_index_key_accepts_property_name(
                         string_index.key_type,
@@ -68,39 +92,28 @@ impl<'a> CheckerState<'a> {
                     ) {
                         continue;
                     }
-                    if self.index_value_type_is_deferred(string_index.value_type) {
-                        has_deferred_index_value_type = true;
-                        continue;
-                    }
-                    applicable_index_value_types.push(string_index.value_type);
-                    if self
-                        .index_signature_relation_outcome(
-                            source_prop.type_id,
-                            string_index.value_type,
-                        )
-                        .related
-                    {
+                    if self.record_applicable_index_value(
+                        source_prop.type_id,
+                        string_index.value_type,
+                        &mut applicable_index_value_types,
+                        &mut has_deferred_index_value_type,
+                    ) {
                         accepted_by_index = true;
                         break;
                     }
                 }
 
-                if is_numeric_name && let Some(number_index) = &shape.number_index {
-                    if self.index_value_type_is_deferred(number_index.value_type) {
-                        has_deferred_index_value_type = true;
-                        continue;
-                    }
-                    applicable_index_value_types.push(number_index.value_type);
-                    if self
-                        .index_signature_relation_outcome(
-                            source_prop.type_id,
-                            number_index.value_type,
-                        )
-                        .related
-                    {
-                        accepted_by_index = true;
-                        break;
-                    }
+                if is_numeric_name
+                    && let Some(number_index) = &shape.number_index
+                    && self.record_applicable_index_value(
+                        source_prop.type_id,
+                        number_index.value_type,
+                        &mut applicable_index_value_types,
+                        &mut has_deferred_index_value_type,
+                    )
+                {
+                    accepted_by_index = true;
+                    break;
                 }
             }
 
@@ -264,5 +277,27 @@ impl<'a> CheckerState<'a> {
         }
 
         self.ctx.diagnostics.len() > diag_count_before
+    }
+
+    /// Record `value_type` as an applicable index-signature value for the
+    /// property under check, returning `true` when the property's type is
+    /// assignable to it — i.e. an accepting signature was found and the caller
+    /// should stop scanning. A deferred value type is noted in
+    /// `has_deferred_index_value_type` and never counts as accepting. Shared by
+    /// the symbol / string / number branches of the per-shape scan.
+    fn record_applicable_index_value(
+        &mut self,
+        source_type: TypeId,
+        value_type: TypeId,
+        applicable_index_value_types: &mut Vec<TypeId>,
+        has_deferred_index_value_type: &mut bool,
+    ) -> bool {
+        if self.index_value_type_is_deferred(value_type) {
+            *has_deferred_index_value_type = true;
+            return false;
+        }
+        applicable_index_value_types.push(value_type);
+        self.index_signature_relation_outcome(source_type, value_type)
+            .related
     }
 }

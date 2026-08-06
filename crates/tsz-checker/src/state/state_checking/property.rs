@@ -844,6 +844,15 @@ impl<'a> CheckerState<'a> {
                     );
                     let target_prop = target_props.iter().find(|p| p.name == source_prop.name);
 
+                    // A `symbol`-keyed property is covered only by a `[k: symbol]`
+                    // signature (checked in `try_union_index_signature_value_check`
+                    // above) or a declared named member. It is never excess against
+                    // a string index and is never checked against the string/number
+                    // index value, so skip it here unless it names a declared member.
+                    if source_prop.is_symbol_named && target_prop.is_none() {
+                        continue;
+                    }
+
                     if !matches_index && target_prop.is_none() {
                         let report_idx = self
                             .find_object_literal_property_element(

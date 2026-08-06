@@ -21,12 +21,17 @@ impl<'a> CheckerState<'a> {
                 || prop_name.starts_with("__@");
         }
 
-        if key_type == TypeId::STRING {
-            return true;
-        }
-
+        // A `symbol`-keyed property is covered only by a `[k: symbol]` index
+        // signature (tsc `getApplicableIndexInfo`); a `[k: string]`/`[k: number]`
+        // key — broad or template-literal — never applies to it. This guard must
+        // precede the broad `TypeId::STRING` acceptance below, which would
+        // otherwise claim every symbol-keyed property for the string signature.
         if is_symbol_named {
             return false;
+        }
+
+        if key_type == TypeId::STRING {
+            return true;
         }
 
         let prop_literal =
