@@ -235,6 +235,9 @@ mod overload_modifier_tests;
 #[path = "../tests/override_intersection_display_tests.rs"]
 mod override_intersection_display_tests;
 #[cfg(test)]
+#[path = "../tests/qualified_default_export_namespace_member_tests.rs"]
+mod qualified_default_export_namespace_member_tests;
+#[cfg(test)]
 #[path = "../tests/quick_type_nullish_callee_companion_tests.rs"]
 mod quick_type_nullish_callee_companion_tests;
 #[cfg(test)]

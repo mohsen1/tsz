@@ -95,6 +95,27 @@ impl<'a> CheckerState<'a> {
             let sym_res = if left_node.kind == syntax_kind_ext::QUALIFIED_NAME {
                 self.resolve_qualified_symbol_in_type_position(qn.left)
             } else if left_node.kind == SyntaxKind::Identifier as u16 {
+                // A default import of `export default <namespace|enum>` used as a
+                // qualifier (`import D from "./dep"; D.Member`) anchors on the
+                // synthetic `default` ALIAS, which carries none of the referenced
+                // declaration's namespace/enum meaning. Left to the resolution
+                // below it either collapses `left_type` to `ERROR` (silent missing
+                // member, the namespace case) or falls to the `ValueOnly`/
+                // `NotFound` arm and emits a spurious `TS2503` (the enum case) —
+                // never tsc's `TS2694`. Re-anchor on the referenced namespace/enum
+                // and resolve the member through its own declaring binder up front
+                // (#16503).
+                if let Some(namespace_id) =
+                    self.default_export_namespace_qualifier_anchor(&left_name)
+                {
+                    return self.resolve_default_export_namespace_member(
+                        namespace_id,
+                        &left_name,
+                        &right_name,
+                        qn.right,
+                    );
+                }
+
                 let mut initial = self
                     .resolve_identifier_symbol_as_qualified_type_anchor(qn.left)
                     .map(TypeSymbolResolution::Type)
@@ -729,11 +750,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            let export_names: Vec<String> = symbol
-                .exports
-                .as_ref()
-                .map(|e| e.iter().map(|(name, _)| name.clone()).collect())
-                .unwrap_or_default();
+            let export_names = Self::symbol_export_names(symbol);
             let req =
                 crate::query_boundaries::name_resolution::NameResolutionRequest::exported_member(
                     &right_name,
@@ -822,11 +839,7 @@ impl<'a> CheckerState<'a> {
             }
 
             // Not found - report TS2694 or TS2724 (with spelling suggestion)
-            let export_names: Vec<String> = symbol
-                .exports
-                .as_ref()
-                .map(|e| e.iter().map(|(name, _)| name.clone()).collect())
-                .unwrap_or_default();
+            let export_names = Self::symbol_export_names(symbol);
             let req =
                 crate::query_boundaries::name_resolution::NameResolutionRequest::exported_member(
                     &right_name,
@@ -857,6 +870,135 @@ impl<'a> CheckerState<'a> {
             self.error_cannot_find_namespace_with_suggestion(ident.escaped_text.as_str(), qn.left);
         }
         TypeId::ERROR
+    }
+
+    /// Re-anchor a default-imported qualifier from the synthetic `default`
+    /// ALIAS to the real namespace/enum it references.
+    ///
+    /// `export default <identifier>` mints a fresh `default` ALIAS whose own
+    /// flags are always bare `ALIAS`, carrying none of the referenced
+    /// declaration's namespace/enum meaning (`bind_export_declaration`,
+    /// `crates/tsz-binder/src/modules/import_export.rs`). Reached through a
+    /// default import (`import D from "./dep"; D.Member`), member lookup and the
+    /// `left_type` probe would otherwise operate on that meaning-less wrapper —
+    /// `type_reference_symbol_type` collapses it to `ERROR` — so a genuinely
+    /// missing member reports nothing (namespace) or a spurious `TS2503` (enum)
+    /// instead of `TS2694` (#16503).
+    ///
+    /// Resolves `left_name`'s local import alias to its (cross-file-registered)
+    /// `default` target the same way the `TS2702` gate does
+    /// (`resolve_import_alias_and_register`), then hops one step further to the
+    /// referenced declaration via `default_export_identifier_target` (which
+    /// registers it cross-file). The hop is gated on the target carrying
+    /// namespace/enum meaning WITHOUT `Class` bits, mirroring
+    /// `default_export_alias_target_has_namespace_meaning`: tsc's `default` slot
+    /// denies namespace meaning to a `class C {} namespace C {}` merge even when
+    /// the default clause is a bare reference to it, so those rows must keep
+    /// declining (`TS2702`) and must not re-anchor.
+    fn default_export_namespace_qualifier_anchor(&self, left_name: &str) -> Option<SymbolId> {
+        let local_id = self.ctx.binder.file_locals.get(left_name)?;
+        let local = self.ctx.binder.get_symbol(local_id)?;
+        if !local.has_any_flags(symbol_flags::ALIAS) || local.import_name().is_none() {
+            return None;
+        }
+        let default_target = self.ctx.resolve_import_alias_and_register(local_id)?;
+        let namespace_id = self.default_export_identifier_target(default_target)?;
+        let file_idx = self.ctx.resolve_symbol_file_index(namespace_id)?;
+        let namespace = self
+            .ctx
+            .get_binder_for_file(file_idx)?
+            .get_symbol(namespace_id)?;
+        // `SymbolFlags.Namespace` (`VALUE_MODULE | NAMESPACE_MODULE | ENUM`) plus
+        // `ENUM_MEMBER`, expanded from `symbol_flags::NAMESPACE` — the same
+        // "carries namespace/enum meaning" set the TS2702 gate uses. The `CLASS`
+        // exclusion mirrors `default_export_alias_target_has_namespace_meaning`.
+        if namespace.has_any_flags(symbol_flags::CLASS)
+            || !namespace.has_any_flags(symbol_flags::NAMESPACE | symbol_flags::ENUM_MEMBER)
+        {
+            return None;
+        }
+        Some(namespace_id)
+    }
+
+    /// Resolve `member_name` on a default-imported namespace/enum re-anchored by
+    /// [`Self::default_export_namespace_qualifier_anchor`].
+    ///
+    /// The namespace/enum lives in another file, so its member table is read
+    /// from its own declaring binder rather than the current file's — per-file
+    /// binders mint raw `SymbolId`s from zero, so a bare read of the cross-file
+    /// id against `self.ctx.binder` would collide with an unrelated local
+    /// (#16465). A present member resolves to its type (the member id is pinned
+    /// to the namespace's owning file so its own resolution reads the right
+    /// binder); a genuinely missing member reports `TS2694` against the
+    /// namespace's own export list, matching tsc.
+    ///
+    /// Deliberately out of scope for this early path (they need the narrow
+    /// combination of a default-imported namespace *and* the extra condition, so
+    /// they stay on the general path's TODO rather than being duplicated here):
+    /// module augmentation of the backing module (`apply_module_augmentations`)
+    /// and the value-only-member-in-type-position `TS2749` (`report_wrong_meaning`).
+    fn resolve_default_export_namespace_member(
+        &mut self,
+        namespace_id: SymbolId,
+        qualifier_name: &str,
+        member_name: &str,
+        right_node: NodeIndex,
+    ) -> TypeId {
+        // Clone out of the owning binder: the member-type resolution and the
+        // diagnostic below both take `&mut self`, so an immutable borrow into a
+        // cross-file binder cannot be held across them. This fires only for a
+        // default-imported namespace qualifier, so the clone is off any hot path.
+        let Some(namespace) = self
+            .get_symbol_from_registered_file_target(namespace_id)
+            .cloned()
+        else {
+            return TypeId::ERROR;
+        };
+        let member_id = namespace
+            .exports
+            .as_ref()
+            .and_then(|exports| exports.get(member_name))
+            .or_else(|| {
+                namespace
+                    .members
+                    .as_ref()
+                    .and_then(|members| members.get(member_name))
+            });
+        if let Some(member_id) = member_id {
+            // The member is declared in the namespace's own file; pin it there so
+            // `type_reference_symbol_type` reads its declaration from the right
+            // binder instead of the current file's colliding id.
+            if let Some(namespace_file) = self.ctx.resolve_symbol_file_index(namespace_id) {
+                self.ctx
+                    .register_symbol_file_target(member_id, namespace_file);
+            }
+            return self.type_reference_symbol_type(member_id);
+        }
+        if self.ctx.has_parse_errors {
+            return TypeId::ERROR;
+        }
+        // tsc names the namespace by the qualifier as written (`D`), not by the
+        // resolved declaration (`m`) — see the #16503 repro. Emit against the
+        // namespace's own export list so a near-miss still becomes the TS2724
+        // "did you mean" form rather than a bare TS2694.
+        let export_names = Self::symbol_export_names(&namespace);
+        self.error_namespace_no_export_with_exports(
+            qualifier_name,
+            member_name,
+            right_node,
+            &export_names,
+        );
+        TypeId::ERROR
+    }
+
+    /// Collect a namespace/module symbol's own exported member names, in export-
+    /// table order, for spelling suggestions on a `TS2694`/`TS2724` failure.
+    fn symbol_export_names(symbol: &tsz_binder::Symbol) -> Vec<String> {
+        symbol
+            .exports
+            .as_ref()
+            .map(|exports| exports.iter().map(|(name, _)| name.clone()).collect())
+            .unwrap_or_default()
     }
 
     /// Resolve `member_name` for a qualified-type-name anchor that is an import
