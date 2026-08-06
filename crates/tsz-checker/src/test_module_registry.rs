@@ -949,6 +949,8 @@ mod under_applied_generic_constructor_fill_tests;
 mod union_call_resolution_tests;
 #[path = "tests/union_constraint_relation_routing_arch_tests.rs"]
 mod union_constraint_relation_routing_arch_tests;
+#[path = "tests/union_display_longhand_primitive_repaint_tests.rs"]
+mod union_display_longhand_primitive_repaint_tests;
 #[path = "tests/union_excess_property_relation_routing_arch_tests.rs"]
 mod union_excess_property_relation_routing_arch_tests;
 #[path = "tests/union_index_signature_relation_routing_arch_tests.rs"]
