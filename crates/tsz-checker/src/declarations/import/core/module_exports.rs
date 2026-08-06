@@ -324,8 +324,22 @@ impl<'a> CheckerState<'a> {
                                             )
                                         },
                                     );
+                                // A default export nested in a namespace body is
+                                // itself invalid there (TS1319, emitted by
+                                // `check_export_declaration` in
+                                // `statement_callback_bridge.rs` under this exact
+                                // gate), and tsc's grammar check returns as soon
+                                // as that placement diagnostic fires — the
+                                // ambient-expression check never runs for the same
+                                // node. Mirror that early-return here so a
+                                // `declare`d bare-expression default export inside
+                                // a namespace does not additionally draw TS2714.
+                                let namespace_placement_wins = !self.ctx.has_parse_errors
+                                    && !self.is_in_non_module_element_context(stmt_idx)
+                                    && self.is_inside_namespace_declaration(stmt_idx);
                                 if is_ambient
                                     && !is_declaration
+                                    && !namespace_placement_wins
                                     && export_data.export_clause.is_some()
                                     && !self
                                         .is_identifier_or_qualified_name(export_data.export_clause)
