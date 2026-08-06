@@ -3,7 +3,9 @@ use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::def::DefId;
 use tsz_solver::relations::subtype::TypeResolver;
 
-pub(crate) use super::common::{intersection_members, is_type_parameter_like, union_members};
+pub(crate) use super::common::{
+    get_base_constraint_of_type, intersection_members, is_type_parameter_like, union_members,
+};
 
 pub(crate) fn is_object_like_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_object_like_type(db, type_id)
