@@ -87,6 +87,22 @@ fn span_text(source: &str, start: u32, length: u32) -> &str {
     &source[start as usize..(start + length) as usize]
 }
 
+/// Each `TS2741`'s declared-here `(anchor start, anchor text)`, in source order
+/// of the diagnostics themselves. Shared by the per-element tuple rows, which
+/// all assert that every failing element carries its own pointer.
+fn ts2741_anchors_in_order(source: &str) -> Vec<(u32, String)> {
+    let diagnostics = check_source_diagnostics(source);
+    let mut ts2741: Vec<_> = diagnostics.iter().filter(|d| d.code == TS2741).collect();
+    ts2741.sort_by_key(|d| d.start);
+    ts2741
+        .iter()
+        .map(|d| {
+            let (_, start, length, _) = declared_here(d);
+            (start, span_text(source, start, length).to_string())
+        })
+        .collect()
+}
+
 /// The pointer models tsc's `relatedInformation`, not a `messageText` chain
 /// link, so it must carry that tag through to the reporter. Oracled on
 /// `typescript@7.0.2`: `tsc --noEmit --strict --pretty false` on this source
@@ -1572,35 +1588,85 @@ fn a_tuple_element_type_reference_resolves_through_its_alias() {
     assert_eq!(span_text(source, start, length), "eq");
 }
 
-// The second half of the same gap — an array *of* tuples stopping at the inner
-// whole-tuple `TS2322` — is closed at the elaboration owner rather than in this
-// walk; its rows live in the block at the end of this file
-// (`an_array_of_tuples_reaches_ts2741_at_the_inner_element` and siblings).
-// Both descents this file needs (`ARRAY_TYPE` then `TUPLE_TYPE`) were already
-// in place; the primary was the blocker.
+// The array-*of*-tuples half of the gap — an array literal in a tuple-typed
+// element slot stopping at the inner whole-tuple `TS2322` — is closed at the
+// elaboration owner (#16631) rather than in this walk; its rows live in the
+// block at the end of this file (`an_array_of_tuples_reaches_ts2741_at_the_inner_element`
+// and siblings). Both descents this file needs (`ARRAY_TYPE` then `TUPLE_TYPE`)
+// were already in place; the primary was the blocker.
 
-/// Negative / declining case, and the remaining gap. Two elements declare the
-/// same property name, so the walk has no basis to pick between the two
-/// declaration sites and attaches no pointer — the same answer
-/// `unique_type_argument_anchor` gives for an ambiguous type argument.
-///
-/// tsc does better here because it carries the failing element's *position*:
-/// it reports two `TS2741`s and anchors each at its own element
-/// (`t5.ts:1:33` and `t5.ts:1:61`). Closing that needs an element index
-/// threaded from the failing array-literal element through the annotation
-/// walk, which `contextual_property_path` currently discards. Pinned so the
-/// gap is a recorded decline, not a silent wrong anchor.
+/// Two elements declare the *same* property name. Each failing element is a
+/// distinct literal, so each is reported as its own `TS2741`, and the pointer
+/// is resolved by the failing element's *position* — the first `qq` anchors in
+/// the first element's type, the second in the second's. tsc does exactly this
+/// (`t5.ts:1:33` and `t5.ts:1:61`); uniqueness alone could not choose between
+/// the two identical declarations, so the element index threaded from the
+/// failing array-literal element is what disambiguates.
 #[test]
-fn two_tuple_elements_declaring_the_same_property_decline_the_pointer() {
+fn two_tuple_elements_declaring_the_same_property_anchor_by_position() {
     let source = "type A1 = { tup: [{ xp: number; qq: number }, { yp: number; qq: number }] };\nconst a: A1 = { tup: [{ xp: 1 }, { yp: 2 }] };\n";
-    let diagnostics = check_source_diagnostics(source);
-    assert!(
-        !diagnostics
-            .iter()
-            .flat_map(|d| d.related_information.iter())
-            .any(|info| info.code == TS2728),
-        "an ambiguous element declaration must decline rather than guess: {diagnostics:?}"
+    let anchors = ts2741_anchors_in_order(source);
+    assert_eq!(
+        anchors.len(),
+        2,
+        "each failing tuple element is its own TS2741"
     );
+    // Both name `qq`, but each points at a *different* `qq` declaration — the
+    // one inside its own element's type, in source order.
+    assert_eq!(anchors[0].1, "qq");
+    assert_eq!(anchors[1].1, "qq");
+    assert_eq!(
+        anchors[0].0,
+        source.find("qq").unwrap() as u32,
+        "first element points at the first qq"
+    );
+    assert_eq!(
+        anchors[1].0,
+        source.rfind("qq").unwrap() as u32,
+        "second element points at the second qq"
+    );
+}
+
+/// The false-negative twin: two elements each miss a *different* required
+/// property. tsz used to report only the first (`ax`) and silently drop the
+/// second; tsc reports both. Each is now its own `TS2741` anchored at its own
+/// element.
+#[test]
+fn two_tuple_elements_missing_different_properties_both_report() {
+    let source = "type B1 = { tup: [{ xp: number; ax: number }, { yp: number; by: number }] };\nconst b: B1 = { tup: [{ xp: 1 }, { yp: 2 }] };\n";
+    let names: Vec<String> = ts2741_anchors_in_order(source)
+        .into_iter()
+        .map(|(_, name)| name)
+        .collect();
+    assert_eq!(
+        names,
+        vec!["ax", "by"],
+        "each element anchors its own missing prop"
+    );
+}
+
+/// Renamed binders: the per-element anchoring keys on structure and position,
+/// never on the property spelling, so renaming every binder leaves the two
+/// same-named-property pointers landing on their own elements.
+#[test]
+fn two_tuple_elements_same_property_position_is_binder_name_independent() {
+    let source = "type Payload = { slots: [{ alpha: number; shared: number }, { beta: number; shared: number }] };\nconst p: Payload = { slots: [{ alpha: 1 }, { beta: 2 }] };\n";
+    let anchors = ts2741_anchors_in_order(source);
+    assert_eq!(anchors.len(), 2);
+    assert_eq!(anchors[0].0, source.find("shared").unwrap() as u32);
+    assert_eq!(anchors[1].0, source.rfind("shared").unwrap() as u32);
+}
+
+/// A `readonly` two-element tuple: the `readonly` `TYPE_OPERATOR` peel is
+/// transparent and carries the element index through, so both same-named
+/// pointers still land by position.
+#[test]
+fn readonly_two_tuple_elements_same_property_anchor_by_position() {
+    let source = "type R2 = { tup: readonly [{ xp: number; qq: number }, { yp: number; qq: number }] };\nconst r: R2 = { tup: [{ xp: 1 }, { yp: 2 }] };\n";
+    let anchors = ts2741_anchors_in_order(source);
+    assert_eq!(anchors.len(), 2);
+    assert_eq!(anchors[0].0, source.find("qq").unwrap() as u32);
+    assert_eq!(anchors[1].0, source.rfind("qq").unwrap() as u32);
 }
 
 /// `keyof` is not transparent the way `readonly` is, and the tuple arm must
