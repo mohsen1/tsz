@@ -2697,3 +2697,6 @@ path = "tests/qualified_default_import_enum_namespace_merge_root_tests.rs"
 [[test]]
 name = "union_display_alias_repaint_parity_tests"
 path = "tests/union_display_alias_repaint_parity_tests.rs"
+[[test]]
+name = "symbol_key_index_signature_selection_tests"
+path = "tests/symbol_key_index_signature_selection_tests.rs"
