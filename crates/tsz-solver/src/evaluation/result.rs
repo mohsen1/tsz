@@ -324,6 +324,32 @@ impl EvaluationMemoResult {
         self.cache_stability.is_stable_for_depth_agnostic_cache()
     }
 
+    /// Whether this result is safe to publish into a cross-file, run-wide
+    /// durable cache whose key does not capture per-run resolver-registration
+    /// state — the checker pool's shared `eval_cache`
+    /// (`crate::caches::query_cache::QueryCache::evaluate_type_with_options`).
+    ///
+    /// Stricter than [`Self::is_stable_for_depth_agnostic_cache`]: that check
+    /// goes through [`EvaluationMemoStability`], which deliberately tolerates
+    /// `UnresolvedDef` (see
+    /// [`EvaluationRequestStability::allows_complete_memo_result`]) to
+    /// preserve legacy behavior for "ordinary eval memo consumers" — readers
+    /// scoped to one run or one query window, where a registration-window
+    /// artifact is safe to reuse because the window ends before the next
+    /// registration can occur. A run-wide cache has no such window: a result
+    /// observed while a cross-file `Lazy`/`Ref` definition had not yet
+    /// registered would otherwise be published under a `(TypeId, options)`
+    /// key with no resolver-identity component and silently shadow the real
+    /// answer for every later file that hits the same key after the
+    /// definition registers — the same registration-window hazard
+    /// `closed_eval`'s `run_state_cache_stability` gate already guards
+    /// against for its own run-wide cache, checking the raw
+    /// [`EvaluationRequestStability`] directly rather than going through
+    /// [`EvaluationMemoStability`].
+    pub(crate) const fn is_stable_for_run_wide_cache(self) -> bool {
+        self.result.is_complete() && self.request_stability.is_stable_for_depth_agnostic_cache()
+    }
+
     /// Whether this result can be stored in the thread-local per-query memo.
     ///
     /// The per-query memo is window-scoped (cleared when a fresh top-level query
@@ -459,6 +485,12 @@ mod tests {
         );
         assert!(unresolved_def_named.is_stable_for_depth_agnostic_cache());
         assert!(unresolved_def_named.is_stable_for_per_query_memo());
+        // `is_stable_for_run_wide_cache` is intentionally stricter than the
+        // loose `is_stable_for_depth_agnostic_cache` gate above: a run/query-
+        // scoped memo may reuse an `UnresolvedDef` result within its own
+        // window, but a cross-file durable cache (#16553) must refuse it —
+        // see `is_stable_for_run_wide_cache`'s doc comment.
+        assert!(!unresolved_def_named.is_stable_for_run_wide_cache());
 
         let incomplete =
             EvaluationResult::incomplete(TypeId::NUMBER, TerminationKind::DepthExceeded);
@@ -472,6 +504,45 @@ mod tests {
             EvaluationMemoStability::Unstable
         );
         assert!(!typed_tainted.is_stable_for_depth_agnostic_cache());
+    }
+
+    #[test]
+    fn run_wide_cache_stability_refuses_every_non_stable_request_verdict() {
+        // #16553 adjacent matrix: `is_stable_for_run_wide_cache` must accept
+        // only a complete result with a `Stable` request verdict — every
+        // other request-state taint, plus any incomplete termination, must be
+        // refused even though some of them are tolerated by the looser
+        // `is_stable_for_depth_agnostic_cache` gate above.
+        let complete = EvaluationResult::complete(TypeId::STRING);
+
+        let stable = EvaluationMemoResult::for_depth_agnostic_memo(
+            complete,
+            EvaluationRequestStability::Stable,
+        );
+        assert!(stable.is_stable_for_run_wide_cache());
+
+        for tainted_state in [
+            EvaluationRequestStability::UnresolvedDef,
+            EvaluationRequestStability::RecursionLimit,
+            EvaluationRequestStability::IncompleteVerdict,
+        ] {
+            let memo = EvaluationMemoResult::for_depth_agnostic_memo(complete, tainted_state);
+            assert!(
+                !memo.is_stable_for_run_wide_cache(),
+                "{tainted_state:?} must be refused by the run-wide cache gate"
+            );
+        }
+
+        // A `Stable` request verdict paired with a guard-truncated (incomplete)
+        // termination must also be refused: the collapsed `type_id` is only a
+        // partial approximation, not a converged answer.
+        let incomplete =
+            EvaluationResult::incomplete(TypeId::NUMBER, TerminationKind::DepthExceeded);
+        let incomplete_memo = EvaluationMemoResult::for_depth_agnostic_memo(
+            incomplete,
+            EvaluationRequestStability::Stable,
+        );
+        assert!(!incomplete_memo.is_stable_for_run_wide_cache());
     }
 
     #[test]
