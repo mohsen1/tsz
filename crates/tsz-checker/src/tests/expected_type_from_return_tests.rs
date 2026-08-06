@@ -286,33 +286,58 @@ fn a_parenthesized_alias_body_anchors_inside_the_parentheses() {
     assert_eq!(start, 10);
 }
 
-/// A *generic* alias applied at the member is still not drilled — a known
-/// divergence this row pins rather than fixes, so the next session starts from
-/// a measured statement instead of re-deriving it.
+/// A *generic* alias applied at the member (`cb: G<string>`) drills to the
+/// body, sourcing the relation/message's expected return type and the
+/// pointer's anchor **separately**: `G<string>` arrives as a `TypeData::
+/// Application` whose `base` is itself an unresolved `Lazy(DefId)` reference
+/// to `G`'s own uninstantiated body, so `callable_return_type_for_drill`
+/// evaluates the application (the same substitution the checker uses
+/// everywhere else a type application is read) to get the *instantiated*
+/// `string`, while the pointer anchor walk (`callable_type_node_anchor`)
+/// follows the written type-reference `G` to its **uninstantiated** body
+/// `() => T` for the span — matching tsc, which anchors in the alias's own
+/// declaration regardless of the instantiation.
 ///
-/// tsc drills to the body (`r6.ts:3:28`) and anchors the pointer in the alias's
-/// own **uninstantiated** body, `() => T` at `r6.ts:1:13`, while still reporting
-/// the *instantiated* expected type in the message (`'string'`, not `'T'`).
-/// tsz reports at the member with the sibling `TS6500` instead.
-///
-/// This is deliberately out of the alias hop's reach: `G[ string ]` arrives as a
-/// type *application*, not a `Lazy(DefId)`, and following it to the alias base
-/// would hand the drill the uninstantiated `T` as the expected return type —
-/// the right anchor with the wrong message. Closing it needs the instantiated
-/// return type and the uninstantiated anchor to be sourced separately, which is
-/// a different change from alias transparency. Tracked as its own issue.
+/// Oracle (`typescript@7.0.2`): `r6.ts:3:28` for the primary, pointer at
+/// `r6.ts:1:13` spanning `() => T`, message still naming `'string'`.
 #[test]
-fn a_generic_alias_application_is_not_drilled_and_pins_a_known_divergence() {
+fn a_generic_alias_application_is_drilled_with_the_instantiated_return_type() {
     let source =
         "type G<T> = () => T;\ninterface R6 { cb: G<string>; }\nconst v6: R6 = { cb: () => 6 };\n";
     let diagnostic = only(&check_source_diagnostics(source), TS2322);
     assert_eq!(
-        diagnostic.start, 70,
-        "tsz reports at the member; tsc reports at the body (oracle 3:28 => 80)"
+        diagnostic.start, 80,
+        "tsc drills to the body expression (oracle 3:28 => 80)"
     );
+    assert_eq!(
+        diagnostic.message_text, "Type 'number' is not assignable to type 'string'.",
+        "the message names the instantiated return type, not the alias's own type parameter"
+    );
+    let (start, length, message) = return_pointer(&diagnostic);
+    assert_eq!(
+        span_text(source, start, length),
+        "() => T",
+        "the anchor is the alias's own uninstantiated body"
+    );
+    assert_eq!(start, 12, "oracle 1:13");
+    assert_eq!(
+        message, "The expected type comes from the return type of this signature.",
+        "{diagnostic:?}"
+    );
+}
+
+/// Negative control for the fix above: a generic alias whose application
+/// declines to evaluate to anything callable (a non-function generic alias)
+/// must not be newly drilled. `judge_evaluate` on `H<number>` yields `number`,
+/// which `first_callable_return_type` correctly still declines.
+#[test]
+fn a_non_callable_generic_alias_application_still_declines_the_drill() {
+    let source =
+        "type H<T> = T;\ninterface R9 { cb: H<number>; }\nconst v9: R9 = { cb: () => 1 };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2322);
     assert!(
         !has_return_pointer(&diagnostic),
-        "the application declines the alias hop: {diagnostic:?}"
+        "an instantiation that evaluates to a non-callable type must not fabricate a signature: {diagnostic:?}"
     );
 }
 
