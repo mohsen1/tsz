@@ -186,6 +186,36 @@ const r: Bag = { [loose]: { size: 1, extra: 2 } };
 }
 
 #[test]
+fn computed_non_const_key_nested_object_literal_reports_missing_property_not_excess() {
+    // Carried over from #16571 (the parallel PR fixing the same defect), whose
+    // review measured this row on both branches. A `let`-bound key is not
+    // late-bound to a member at all, so the member never satisfies `room` and
+    // tsc's answer is the *missing-property* code — not an excess one. This
+    // pins that the descent does not over-fire into a shape that has no
+    // matching member to descend through.
+    let src = r#"
+let door = "room";
+type House = { room: { size: number } };
+const built: House = { [door]: { size: 1, extra: 2 } };
+"#;
+    assert_eq!(codes(src), vec![2741]);
+}
+
+#[test]
+fn excess_arriving_through_a_variable_is_not_fresh_under_a_computed_key() {
+    // Freshness is what licenses the excess check; a value that arrives through
+    // a variable is not fresh, and tsc reports nothing. The computed-key path
+    // must not manufacture freshness.
+    let src = r#"
+const door = "room" as const;
+type House = { room: { size: number } };
+const loose = { size: 1, extra: 2 };
+const built: House = { [door]: loose };
+"#;
+    assert_clean("non-fresh value under a computed key", src);
+}
+
+#[test]
 fn type_assertion_under_a_computed_key_stays_opaque() {
     // `as` makes the value opaque to excess-property checking; the computed-key
     // path must not make it fresh again.
