@@ -1338,25 +1338,26 @@ impl<'a> TypeLowering<'a> {
         // when a site opted in via `with_nonstrict_nullish_union_reduction` —
         // which also wires the real `strictNullChecks`, so an unwired site
         // (whose `strict_null_checks` silently defaults to `false`) can never
-        // collapse a union under `--strict`. Solver-owned and identical to the
-        // rule `tsz-checker`'s type-node resolvers apply; this is the seam for
-        // object/interface members (index signatures, and heritage-bearing or
-        // multiply-declared interfaces) that fall through to this lowering
-        // rather than the checker fast-path. See #16620.
-        let members = if self.nonstrict_nullish_union_reduction {
-            if let Some(collapsed) = tsz_solver::narrowing::collapse_pure_nullish_union_nonstrict(
+        // collapse a union under `--strict`. The `!strict_null_checks` gate
+        // makes strict builds skip both solver calls entirely. Solver-owned
+        // and identical to the rule `tsz-checker`'s type-node resolvers apply;
+        // this is the seam for object/interface members (index signatures, and
+        // heritage-bearing or multiply-declared interfaces) that fall through
+        // to this lowering rather than the checker fast-path. See #16620.
+        let members = if self.nonstrict_nullish_union_reduction && !self.strict_null_checks {
+            match tsz_solver::narrowing::collapse_pure_nullish_union_nonstrict(
                 self.strict_null_checks,
                 &members,
             ) {
                 // Pure `null | undefined` resolves to a bare nullish scalar —
                 // no `Union`, so no origin to record.
-                return collapsed;
+                Some(collapsed) => return collapsed,
+                None => tsz_solver::narrowing::nonstrict_union_members_absorb_nullish_scalars(
+                    self.strict_null_checks,
+                    &members,
+                )
+                .unwrap_or(members),
             }
-            tsz_solver::narrowing::nonstrict_union_members_absorb_nullish_scalars(
-                self.strict_null_checks,
-                &members,
-            )
-            .unwrap_or(members)
         } else {
             members
         };
