@@ -1,4 +1,4 @@
-use super::super::function_type_helpers::GeneratorBodyReturnCheckCtx;
+use super::super::function_type_helpers::{GeneratorBodyReturnCheckCtx, InferredGeneratorYield};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -28,7 +28,7 @@ impl CheckerState<'_> {
     pub(super) fn infer_generator_declaration_yield_type(
         &mut self,
         ctx: GeneratorDeclarationYieldCtx,
-    ) -> Option<TypeId> {
+    ) -> InferredGeneratorYield {
         let GeneratorDeclarationYieldCtx {
             body,
             contextual_type,
@@ -55,7 +55,7 @@ impl CheckerState<'_> {
         // gate is that shape structurally — an ordinary delegate (array,
         // annotated generator, `const` binding, type parameter) infers through.
         if self.generator_body_delegates_to_evolving_binding(body, true) {
-            return None;
+            return InferredGeneratorYield::NONE;
         }
 
         let yield_snapshot = self.ctx.snapshot_return_type();
@@ -77,13 +77,21 @@ impl CheckerState<'_> {
             name_node: None,
             name_for_error: None,
         });
-        let final_yield = self.concrete_or_empty_generator_yield(body, inferred_yield);
+        let final_yield = self.concrete_or_empty_generator_yield(body, inferred_yield.yield_type);
+        // A dropped yield type (an empty/never aggregate) means this speculative
+        // pass had nothing to say about the signature at all, so its delegated
+        // `TNext` is dropped with it rather than being applied to a `Generator`
+        // whose `TYield` came from somewhere else.
+        let delegated_next_type = final_yield.and(inferred_yield.delegated_next_type);
 
         self.ctx.generator_yield_operand_types = saved_yield_collection;
         self.ctx.generator_had_ts7057 = saved_had_ts7057;
         self.ctx.exit_function_like_control_flow(saved_cf_context);
         yield_snapshot.rollback(&mut self.ctx.speculation_state());
-        final_yield
+        InferredGeneratorYield {
+            yield_type: final_yield,
+            delegated_next_type,
+        }
     }
 
     fn concrete_or_empty_generator_yield(
