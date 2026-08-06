@@ -1153,12 +1153,12 @@ impl ParserState {
     /// turns only on token *kinds*, never on the exported name or the specific
     /// modifier text (anti-hardcoding).
     fn look_ahead_is_stacked_modifier_run_before_export_as_namespace(&mut self) -> bool {
-        if !Self::is_stacked_export_run_modifier(self.token()) {
-            return false;
-        }
         let snapshot = self.scanner.save_state();
         let current = self.current_token;
 
+        // A first token that is not a run modifier leaves `count` at 0, which
+        // the `count >= 2` guard below already rejects — no separate early
+        // return is needed.
         let mut count = 0usize;
         let mut static_count = 0usize;
         // Consume the leading run of modifier keywords, requiring same-line
