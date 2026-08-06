@@ -1,4 +1,0 @@
-error[E0432]: unresolved import `tsz_common::perf_counters::ScopedPerfCounters`
-error[E0433]: failed to resolve: could not find `ScopedPerfCounters` in `perf_counters`
-error[E0433]: failed to resolve: could not find `ProjectInstCacheDisabledGuard` in `computation`
-error[E0425]: cannot find type `ScopedPerfCounters` in module `tsz_common::perf_counters`
