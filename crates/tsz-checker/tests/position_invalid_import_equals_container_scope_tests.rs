@@ -365,6 +365,63 @@ fn static_block_two_colliding_aliases_do_not_resolve_the_specifier() {
 }
 
 // ---------------------------------------------------------------------------
+// #16527 adjacent cases: the referenced-alias short-circuit and the
+// colliding-alias binding-vs-use distinction, exercised beyond the minimal
+// pinning rows above.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nested_block_referenced_alias_inside_static_block_still_does_not_resolve_the_specifier() {
+    assert_codes(
+        r#"class E {
+  static {
+    {
+      import whiskey = require("nonexistent-module");
+      whiskey;
+    }
+  }
+}"#,
+        &[1232],
+        "#16527: a reference from a plain block nested inside the static block must not \
+         re-trigger resolution either — the static-block carve-out applies through nesting",
+    );
+}
+
+#[test]
+fn static_block_three_colliding_aliases_do_not_resolve_the_specifier() {
+    assert_codes(
+        r#"class E {
+  static {
+    import xray = require("nonexistent-a");
+    import xray = require("nonexistent-b");
+    import xray = require("nonexistent-c");
+  }
+}"#,
+        &[1232, 1232, 1232, 2300, 2300, 2300],
+        "#16527: the binding-vs-use fix generalizes past a single colliding pair — none of \
+         three colliding aliases' own names may satisfy each other's reference scan",
+    );
+}
+
+#[test]
+fn top_level_colliding_aliases_each_independently_resolve() {
+    // A legal top-level `import =` is not position-invalid, so it never
+    // reaches `position_invalid_import_resolves_specifier` at all — its
+    // specifier always resolves regardless of reference or collision. This
+    // is the control row for the two static-block collision tests above: it
+    // pins that the binding-vs-use fix is scoped to the position-invalid
+    // reference scan and does not touch the always-resolves path.
+    assert_codes(
+        r#"import yankee = require("nonexistent-a");
+import yankee = require("nonexistent-b");
+yankee;"#,
+        &[2300, 2300, 2307, 2307],
+        "#16527: outside a static block, each colliding top-level alias resolves its own \
+         specifier independently — unaffected by the binding-vs-use fix",
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Positions where the retarget must be a no-op: the container already *is* the
 // current scope, so nothing about a legal `import =` moves.
 // ---------------------------------------------------------------------------
