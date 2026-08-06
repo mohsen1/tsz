@@ -2681,3 +2681,7 @@ path = "tests/import_equals_alias_duplicate_container_tests.rs"
 [[test]]
 name = "import_equals_alias_duplicate_function_container_tests"
 path = "tests/import_equals_alias_duplicate_function_container_tests.rs"
+
+[[test]]
+name = "qualified_default_import_enum_namespace_merge_root_tests"
+path = "tests/qualified_default_import_enum_namespace_merge_root_tests.rs"
