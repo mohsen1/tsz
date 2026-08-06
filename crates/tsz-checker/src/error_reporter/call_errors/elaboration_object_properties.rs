@@ -407,9 +407,14 @@ impl<'a> CheckerState<'a> {
                         self.get_type_of_node_with_request(prop_value_idx, &contextual_request);
                     if contextual_prop_type != TypeId::ERROR
                         && contextual_prop_type != TypeId::ANY
-                        && self
+                        && (self
                             .call_arg_relation_outcome(contextual_prop_type, target_prop_type)
                             .related
+                            || self.contextual_tuple_recovers_elementwise_failure(
+                                cached_prop_type,
+                                contextual_prop_type,
+                                target_prop_type,
+                            ))
                     {
                         contextual_prop_type
                     } else {
