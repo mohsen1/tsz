@@ -19,9 +19,25 @@
 //! (`error_reporter/missing_property_declared_here.rs`), reached from the one
 //! TS2741 construction in `render_missing_property`.
 
+use crate::CheckerOptions;
 use crate::diagnostics::Diagnostic;
-use crate::test_utils::check_source_diagnostics;
+use crate::test_utils::{check_source_diagnostics, check_source_with_libs, load_default_lib_files};
+use std::sync::{Arc, OnceLock};
+use tsz_binder::lib_loader::LibFile;
 use tsz_common::diagnostics::diagnostic_codes;
+
+/// The array-like rows below name `Array` / `ReadonlyArray`, so they need the
+/// real lib on the side; `check_source_diagnostics` runs lib-free and would
+/// report TS2318 `Cannot find global type 'Array'` instead of the TS2741 under
+/// test. Loaded once for the whole suite.
+fn default_libs() -> &'static [Arc<LibFile>] {
+    static DEFAULT_LIBS: OnceLock<Vec<Arc<LibFile>>> = OnceLock::new();
+    DEFAULT_LIBS.get_or_init(load_default_lib_files)
+}
+
+fn check_source_diagnostics_with_libs(source: &str) -> Vec<Diagnostic> {
+    check_source_with_libs(source, "test.ts", CheckerOptions::default(), default_libs())
+}
 
 const TS2741: u32 = diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE;
 const TS2739: u32 = diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE;
@@ -1088,4 +1104,80 @@ fn array_element_multi_property_failure_still_carries_no_pointer() {
             .any(|info| info.code == TS2728),
         "TS2739 carries no declared-here pointer: {diagnostic:?}"
     );
+}
+
+/// `Array<T>` holds the written element shape in a type argument exactly as
+/// `T[]` holds it in its element type, and tsc anchors there identically.
+/// Oracle: `case.ts:1:41 - 'lq' is declared here.`
+#[test]
+fn generic_array_type_argument_anchors_like_an_array_element() {
+    let source = "type ArrG = { list: Array<{ lp: number; lq: number }> };\nconst ra: ArrG = { list: [{ lp: 1 }] };\n";
+    let diagnostic = only(&check_source_diagnostics_with_libs(source), TS2741);
+    let (_, start, length, _) = declared_here(&diagnostic);
+    assert_eq!(span_text(source, start, length), "lq");
+}
+
+/// `ReadonlyArray<T>` is the same shape reached through a different global
+/// name — the walk must not be keyed to either one.
+/// Oracle: `case.ts:1:47 - 'lq' is declared here.`
+#[test]
+fn readonly_array_type_argument_anchors_like_an_array_element() {
+    let source = "type ArrR = { list: ReadonlyArray<{ lp: number; lq: number }> };\nconst ra: ArrR = { list: [{ lp: 1 }] };\n";
+    let diagnostic = only(&check_source_diagnostics_with_libs(source), TS2741);
+    let (_, start, length, _) = declared_here(&diagnostic);
+    assert_eq!(span_text(source, start, length), "lq");
+}
+
+/// `readonly T[]` describes the same element shape as `T[]`, so the operator is
+/// transparent to the walk. Oracle: `case.ts:1:44 - 'lq' is declared here.`
+#[test]
+fn readonly_operator_is_transparent_to_the_element_walk() {
+    let source = "type ArrRO = { list: readonly { lp: number; lq: number }[] };\nconst ra: ArrRO = { list: [{ lp: 1 }] };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, _) = declared_here(&diagnostic);
+    assert_eq!(span_text(source, start, length), "lq");
+}
+
+/// The array-like descents must not depend on the identifiers chosen: the same
+/// shapes under renamed binders anchor at the renamed property.
+#[test]
+fn array_like_type_argument_anchor_is_not_identifier_keyed() {
+    let source = "type Roster = { members: Array<{ alpha: string; beta: string }> };\nconst r: Roster = { members: [{ alpha: \"a\" }] };\n";
+    let diagnostic = only(&check_source_diagnostics_with_libs(source), TS2741);
+    let (_, start, length, _) = declared_here(&diagnostic);
+    assert_eq!(span_text(source, start, length), "beta");
+}
+
+/// `keyof T` denotes T's *keys*, not T, so the type operator is not blanket
+/// transparent — only `readonly` is. This pins the scoping of the operator
+/// case; tsc reports a plain TS2322 here with no missing-property pointer.
+#[test]
+fn keyof_operator_is_not_transparent_to_the_element_walk() {
+    let source =
+        "type K = { obj: keyof { aa: number; ab: number } };\nconst k: K = { obj: \"zz\" };\n";
+    let diagnostics = check_source_diagnostics(source);
+    assert!(
+        diagnostics.iter().all(|d| d.code != TS2741),
+        "keyof denotes keys, not the object shape: {diagnostics:?}"
+    );
+}
+
+/// When two type arguments both declare the property the walk has no basis to
+/// choose, and pointing at the wrong occurrence is worse than omitting the
+/// pointer. Reaching tsc's answer here needs type-parameter substitution
+/// through the alias body (`p.a` -> `A` -> the first written argument), which
+/// this walk does not model; see #16552.
+#[test]
+fn ambiguous_type_arguments_decline_rather_than_guessing() {
+    let source = "type Pair<A, B> = { a: A; b: B };\ntype W = { p: Pair<{ lq: number }, { lq: string }> };\nconst w: W = { p: { a: {}, b: { lq: \"x\" } } };\n";
+    let diagnostics = check_source_diagnostics(source);
+    for diagnostic in diagnostics.iter().filter(|d| d.code == TS2741) {
+        assert!(
+            diagnostic
+                .related_information
+                .iter()
+                .all(|info| info.code != TS2728),
+            "two arguments declare 'lq'; the walk must decline: {diagnostic:?}"
+        );
+    }
 }
