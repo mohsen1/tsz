@@ -528,6 +528,19 @@ pub struct TypeInterner {
     /// different declaration's type. Display-only — it does not affect identity
     /// or semantics. First write wins; the membership is monotonic.
     pub(super) literal_object_annotations: DashMap<TypeId, (), FxBuildHasher>,
+    /// Per-occurrence record of which union members were written as an
+    /// anonymous object-type literal directly inside a *specific* union,
+    /// keyed by `(union_type_id, member_type_id)`.
+    ///
+    /// `literal_object_annotations` above is keyed on the member's bare
+    /// `TypeId` alone, so it cannot distinguish a genuinely anonymous member
+    /// from a named type alias whose body happens to reduce to the same
+    /// content-interned shape (`type A = { a: number }` marks the same id
+    /// `mark_literal_object_annotation` would for a hand-written `{ a: number
+    /// }` union member). This table adds the union as part of the key so a
+    /// union-member elaboration can ask "was *this* occurrence, in *this*
+    /// union, written as a literal" instead of the shape-wide question.
+    pub(super) union_literal_members: DashMap<(TypeId, TypeId), (), FxBuildHasher>,
     /// As-written origin members for a Union TypeId, used to preserve top-level
     /// alias names that would otherwise be lost during union flattening.
     ///
@@ -860,6 +873,7 @@ impl TypeInterner {
             conditional_alias_bases: DashMap::with_hasher(FxBuildHasher),
             global_this_surface_display: DashMap::with_hasher(FxBuildHasher),
             literal_object_annotations: DashMap::with_hasher(FxBuildHasher),
+            union_literal_members: DashMap::with_hasher(FxBuildHasher),
             display_union_origin: DashMap::with_hasher(FxBuildHasher),
             union_complexity_overflow_by_thread: OnceLock::new(),
             union_complexity_pending_threads: AtomicUsize::new(0),

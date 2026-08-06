@@ -411,6 +411,39 @@ impl TypeInterner {
         self.literal_object_annotations.contains_key(&type_id)
     }
 
+    /// Record that `member_type_id` was written as an anonymous object-type
+    /// literal (`{ ... }`) directly inside the union `union_type_id`, as
+    /// opposed to a named alias/interface reference whose body happens to
+    /// reduce to the same content-interned shape.
+    ///
+    /// `is_literal_object_annotation` is keyed on the member's bare `TypeId`
+    /// alone, so it cannot tell "this member is genuinely anonymous" apart
+    /// from "this member is a named alias reference whose body coincidentally
+    /// marked the same id" — a type alias's body also runs through
+    /// `get_type_from_type_literal`, which marks that global table too. This
+    /// per-union record lets a union-member elaboration ask the narrower,
+    /// sound question instead: was *this* occurrence, in *this* union,
+    /// syntactically anonymous. Display-only.
+    pub fn mark_union_literal_member(&self, union_type_id: TypeId, member_type_id: TypeId) {
+        if union_type_id.is_intrinsic() || member_type_id.is_intrinsic() {
+            return;
+        }
+        if self
+            .union_literal_members
+            .insert((union_type_id, member_type_id), ())
+            .is_none()
+        {
+            self.advance_display_provenance_generation();
+        }
+    }
+
+    /// Whether `member_type_id` was recorded as an anonymous literal member
+    /// of the union `union_type_id`.
+    pub fn is_union_literal_member(&self, union_type_id: TypeId, member_type_id: TypeId) -> bool {
+        self.union_literal_members
+            .contains_key(&(union_type_id, member_type_id))
+    }
+
     /// Record the as-written origin members for a flattened Union TypeId.
     ///
     /// Mirrors tsc's `UnionType.origin` mechanism: when `T | null` is built and

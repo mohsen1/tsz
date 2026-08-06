@@ -785,6 +785,16 @@ impl TypeDisplayProvenance for QueryCache<'_> {
         self.interner.is_literal_object_annotation(type_id)
     }
 
+    fn mark_union_literal_member(&self, union_type_id: TypeId, member_type_id: TypeId) {
+        self.interner
+            .mark_union_literal_member(union_type_id, member_type_id);
+    }
+
+    fn is_union_literal_member(&self, union_type_id: TypeId, member_type_id: TypeId) -> bool {
+        self.interner
+            .is_union_literal_member(union_type_id, member_type_id)
+    }
+
     fn store_union_origin(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
         self.interner
             .store_union_origin(union_type_id, origin_members);
