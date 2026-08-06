@@ -462,7 +462,6 @@ wants(d());
 }
 
 #[test]
-#[ignore = "pre-existing spurious TS1320 on a union delegate: see the doc comment above"]
 fn union_delegate_correct_instantiation_stays_clean() {
     let codes = strict_codes(
         r#"
