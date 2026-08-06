@@ -1396,3 +1396,159 @@ fn static_before_export_as_namespace_span_starts_at_modifier_renamed_binder() {
         source,
     );
 }
+
+// --------------------------------------------------------------------------
+// Stacked modifier runs before `export as namespace` (#16403).
+//
+// `modified_export_form` only looks one modifier past the current token, so a
+// run of two or more modifiers never reached the single-modifier
+// NamespaceExport path and fell into the generic `TS1128` recovery instead.
+// tsc collapses any such run into one TS1184 at the first modifier, with the
+// node span (and thus the checker's TS1314/TS1315/TS1316) anchored there too —
+// independent of the run length, the modifier kinds, their order, or the
+// container. Generalizes the single-modifier fix (#16540) to a run. Every row
+// is pinned against `typescript@7.0.2`.
+// --------------------------------------------------------------------------
+
+/// The core matrix: any run of two-or-more modifiers before `export as
+/// namespace` is one TS1184 at the first modifier (offset 0). The tail may mix
+/// any modifier kind, in any order; the answer never varies because a
+/// `NamespaceExportDeclaration` admits no modifiers at all.
+#[test]
+fn stacked_modifier_run_before_export_as_namespace_is_one_ts1184_at_run_start() {
+    for source in [
+        "static readonly export as namespace Foo;",
+        "readonly static export as namespace Foo;",
+        "public static export as namespace Foo;",
+        "static public export as namespace Foo;",
+        "private protected export as namespace Foo;",
+        "public readonly static export as namespace Foo;",
+        "static async export as namespace Foo;",
+        "static accessor export as namespace Foo;",
+        "static abstract export as namespace Foo;",
+        "static declare export as namespace Foo;",
+        "public public export as namespace Foo;",
+        "readonly readonly export as namespace Foo;",
+        "private protected public readonly export as namespace Foo;",
+        "static readonly accessor async export as namespace Foo;",
+    ] {
+        let (parser, _root) = parse_source(source);
+        let diagnostics = parser.get_diagnostics();
+        assert_eq!(
+            diagnostics.len(),
+            1,
+            "expected exactly one parser diagnostic for {source:?}, got {diagnostics:?}"
+        );
+        assert_eq!(
+            diagnostics[0].code,
+            diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+            "expected TS1184 for {source:?}, got {diagnostics:?}"
+        );
+        assert_eq!(
+            diagnostics[0].start, 0,
+            "TS1184 must anchor at the first modifier (offset 0) for {source:?}, \
+             got {diagnostics:?}"
+        );
+    }
+}
+
+/// The node span must start at the first modifier so the checker's
+/// TS1314/TS1315/TS1316 anchor there too — the whole point of threading the
+/// run start, exactly like the single-modifier case (#16540).
+#[test]
+fn stacked_modifier_run_before_export_as_namespace_node_spans_from_run_start() {
+    let source = "static readonly export as namespace Foo;";
+    assert_span(
+        source,
+        syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION,
+        source,
+    );
+}
+
+/// Anti-hardcoding: neither the exported name nor the specific modifier text
+/// steers the span or the diagnostic.
+#[test]
+fn stacked_modifier_run_before_export_as_namespace_span_renamed_binder() {
+    let source = "public static export as namespace qux$_0;";
+    assert_span(
+        source,
+        syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION,
+        source,
+    );
+}
+
+/// The rule is not container-derived — a stacked run is TS1184 in a namespace
+/// body just as at the source file's own top level.
+#[test]
+fn stacked_modifier_run_before_export_as_namespace_in_namespace_body_reports_ts1184() {
+    assert_only_diagnostic(
+        "namespace Outer {\n  static readonly export as namespace Telemetry;\n}",
+        "static",
+        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+    );
+}
+
+/// ... and inside a Block body.
+#[test]
+fn stacked_modifier_run_before_export_as_namespace_in_function_body_reports_ts1184() {
+    assert_only_diagnostic(
+        "function collect() {\n  public static export as namespace Telemetry;\n}",
+        "public",
+        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+    );
+}
+
+/// A line break inside the run is ASI: the leading modifier becomes its own
+/// expression statement, so the run must NOT collapse. Guards that the fix
+/// requires same-line adjacency.
+#[test]
+fn a_line_break_inside_the_modifier_run_is_not_a_stacked_export_as_namespace() {
+    let source = "static\nreadonly export as namespace Foo;";
+    let (parser, _root) = parse_source(source);
+    let ds = parser.get_diagnostics();
+    let collapsed = ds.len() == 1
+        && ds[0].code == diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE
+        && ds[0].start == 0;
+    assert!(
+        !collapsed,
+        "a line break must break the run (ASI); got {ds:?}"
+    );
+}
+
+/// tsc recovers a repeated `static` as TS1146 at the second `static`, not the
+/// uniform TS1184, so the fix deliberately excludes it (the lookahead caps
+/// `static` at one). Pin that it is not collapsed; the exact TS1146 recovery is
+/// a separate, pre-existing gap.
+#[test]
+fn a_repeated_static_run_is_not_collapsed_to_a_lone_ts1184() {
+    for source in [
+        "static static export as namespace Foo;",
+        "static readonly static export as namespace Foo;",
+    ] {
+        let (parser, _root) = parse_source(source);
+        let ds = parser.get_diagnostics();
+        let collapsed = ds.len() == 1
+            && ds[0].code == diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE
+            && ds[0].start == 0;
+        assert!(
+            !collapsed,
+            "a repeated `static` must not collapse for {source:?}; got {ds:?}"
+        );
+    }
+}
+
+/// `override` has its own unconditional TS1434 recovery; a run containing it
+/// must be left to that path, not absorbed into the collapsed TS1184.
+#[test]
+fn an_override_inside_the_run_is_left_to_its_own_recovery() {
+    let source = "readonly override export as namespace Foo;";
+    let (parser, _root) = parse_source(source);
+    let ds = parser.get_diagnostics();
+    let has_ts1434 = ds
+        .iter()
+        .any(|d| d.code == diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER);
+    assert!(
+        has_ts1434,
+        "an `override` in the run keeps its own TS1434 recovery; got {ds:?}"
+    );
+}
