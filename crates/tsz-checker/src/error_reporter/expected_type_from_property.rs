@@ -5,8 +5,10 @@ use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     /// Attach tsc's `The expected type comes from property '{0}' which is
-    /// declared here on type '{1}'` (TS6500) pointer to every `TS2322` pushed
-    /// since `since`.
+    /// declared here on type '{1}'` (TS6500) pointer to every leaf report
+    /// pushed since `since` — see
+    /// [`Self::takes_expected_type_from_property_pointer`] for which codes
+    /// those are.
     ///
     /// tsc's `elaborateElementwise` adds this related entry to the diagnostic it
     /// just reported for an object-literal member, pointing at the *target*
@@ -61,20 +63,41 @@ impl<'a> CheckerState<'a> {
             return;
         };
         for diagnostic in self.ctx.diagnostics.iter_mut().skip(since) {
-            if diagnostic.code != diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE {
+            if !Self::takes_expected_type_from_property_pointer(diagnostic.code) {
                 continue;
             }
             // A leaf report that already carries a location pointer got it from
             // a deeper frame; tsc keeps that one rather than stacking a second.
-            if diagnostic
-                .related_information
-                .iter()
-                .any(|entry| entry.is_location_pointer())
-            {
+            // TS2728 is the one exception: it is this frame's own sibling
+            // pointer, not a deeper frame's, and tsc emits both on the same
+            // report (see the module docs on `missing_property_declared_here`).
+            if diagnostic.related_information.iter().any(|entry| {
+                entry.is_location_pointer() && entry.code != diagnostic_codes::IS_DECLARED_HERE
+            }) {
                 continue;
             }
             diagnostic.related_information.push(related.clone());
         }
+    }
+
+    /// Whether `code` is a leaf report tsc hangs the `TS6500` pointer on.
+    ///
+    /// tsc's `elaborateElementwise` attaches the pointer to whatever diagnostic
+    /// the member's leaf produced, and a nested object literal's leaf is a
+    /// *missing-property* report rather than `TS2322`. Oracled on
+    /// `typescript@7.0.2`: `{ inner: { op: 1 } }` against
+    /// `{ inner: { op: number; oq: number } }` carries the pointer on its
+    /// `TS2741`, and the multi-property forms carry it on `TS2739` / `TS2740` —
+    /// where tsc emits *no* `TS2728` at all, so the pointer cannot be made to
+    /// ride the sibling `TS2728` attach site instead.
+    const fn takes_expected_type_from_property_pointer(code: u32) -> bool {
+        matches!(
+            code,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                | diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+                | diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
+                | diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE
+        )
     }
 
     /// Build the TS6500 related entry for `property_name` on the first of
