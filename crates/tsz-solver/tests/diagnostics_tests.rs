@@ -134,6 +134,113 @@ fn test_format_union_type() {
     assert!(formatted.contains(" | "));
 }
 
+/// Helper for the union-display identity tests: a user-origin type parameter
+/// named `name`, distinguished from its siblings only by `constraint`. Two of
+/// these are two different types that render the same text.
+fn distinct_type_param(interner: &TypeInterner, name: &str, constraint: TypeId) -> TypeId {
+    interner.type_param(TypeParamInfo {
+        name: interner.intern_string(name),
+        constraint: Some(constraint),
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    })
+}
+
+/// `tsc` never dedupes while printing a union: `typeToString` walks the
+/// `types` array verbatim, and duplicates were already removed at
+/// construction, keyed on type identity. So two *different* types that render
+/// the same text both print.
+///
+/// Verified against `typescript@7.0.2` (`--singleThreaded --stableTypeOrdering
+/// true`) with a shadowed binder — an outer `<T>` unioned with an inner `<T>`
+/// reports `Type 'T | T' is not assignable to type 'boolean'.`
+///
+/// Keying the collapse on the formatted string instead cannot tell two
+/// distinct declarations apart from two handles to one declaration.
+#[test]
+fn union_display_keeps_distinct_type_params_that_render_the_same() {
+    let interner = TypeInterner::new();
+    let mut formatter = TypeFormatter::new(&interner);
+
+    let outer = distinct_type_param(&interner, "T", TypeId::STRING);
+    let inner = distinct_type_param(&interner, "T", TypeId::NUMBER);
+    assert_ne!(
+        outer, inner,
+        "the two type parameters must be distinct types"
+    );
+
+    let union = interner.union_preserve_members(vec![outer, inner]);
+    assert_eq!(formatter.format(union), "T | T");
+}
+
+/// The binder name is not what makes the two constituents distinct — rename
+/// both and the same pair still prints twice.
+#[test]
+fn union_display_keeps_distinct_type_params_under_a_renamed_binder() {
+    let interner = TypeInterner::new();
+    let mut formatter = TypeFormatter::new(&interner);
+
+    let outer = distinct_type_param(&interner, "Elem", TypeId::STRING);
+    let inner = distinct_type_param(&interner, "Elem", TypeId::NUMBER);
+
+    let union = interner.union_preserve_members(vec![outer, inner]);
+    assert_eq!(formatter.format(union), "Elem | Elem");
+}
+
+/// Three shadowing levels of one binder name print three constituents, not one.
+#[test]
+fn union_display_keeps_three_distinct_type_params_that_render_the_same() {
+    let interner = TypeInterner::new();
+    let mut formatter = TypeFormatter::new(&interner);
+
+    let a = distinct_type_param(&interner, "T", TypeId::STRING);
+    let b = distinct_type_param(&interner, "T", TypeId::NUMBER);
+    let c = distinct_type_param(&interner, "T", TypeId::BOOLEAN);
+
+    let union = interner.union_preserve_members(vec![a, b, c]);
+    assert_eq!(formatter.format(union), "T | T | T");
+}
+
+/// Negative control: ONE type parameter listed twice is one type, so it prints
+/// once — this is the collapse the identity key must keep making. `tsc` agrees
+/// (`function r4<T>(a: T, b: T)` unions to `T`, not `T | T`).
+#[test]
+fn union_display_collapses_one_type_param_listed_twice() {
+    let interner = TypeInterner::new();
+    let mut formatter = TypeFormatter::new(&interner);
+
+    let param = distinct_type_param(&interner, "T", TypeId::STRING);
+
+    let union = interner.union_preserve_members(vec![param, param]);
+    assert_eq!(formatter.format(union), "T");
+}
+
+/// Negative control: distinct type parameters with distinct names were never
+/// affected by the collapse and must keep rendering both.
+#[test]
+fn union_display_keeps_distinct_type_params_with_distinct_names() {
+    let interner = TypeInterner::new();
+    let mut formatter = TypeFormatter::new(&interner);
+
+    let t = distinct_type_param(&interner, "T", TypeId::STRING);
+    let u = distinct_type_param(&interner, "U", TypeId::STRING);
+
+    let union = interner.union_preserve_members(vec![t, u]);
+    assert_eq!(formatter.format(union), "T | U");
+}
+
+/// Negative control: one interned intrinsic listed twice stays one member, so
+/// the identity key does not turn every repeated constituent into a duplicate.
+#[test]
+fn union_display_collapses_a_repeated_intrinsic_member() {
+    let interner = TypeInterner::new();
+    let mut formatter = TypeFormatter::new(&interner);
+
+    let union = interner.union_preserve_members(vec![TypeId::STRING, TypeId::STRING]);
+    assert_eq!(formatter.format(union), "string");
+}
+
 #[test]
 fn test_format_array_type() {
     let interner = TypeInterner::new();
