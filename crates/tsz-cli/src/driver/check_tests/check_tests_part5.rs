@@ -313,3 +313,68 @@ const elem = <div className={class1, class2}/>;
             "TS1347's pointer must survive tagged as a pointer: {ts1347:?}"
         );
     }
+
+    #[test]
+    fn lib_interface_inheriting_an_augmented_index_signature_is_scheduled_for_recheck() {
+        // #16474: when a user augments a lib interface with an index signature,
+        // every lib interface that inherits that index through its base chain
+        // must be scheduled for the post-merge TS2430 heritage recheck — even
+        // though it declares no index signature of its own (it declares only
+        // ordinary members like `apply`). Requiring the *derived* interface to
+        // declare an index signature asked the wrong question: an index
+        // signature reaching an interface through its base chain constrains
+        // every member that interface declares, so the recheck must run whenever
+        // it declares at least one own member.
+        //
+        // The binder names are deliberately non-`Function`/`CallableFunction`
+        // so the schedule is driven by the structural extends-an-index-augmented
+        // base relation, not by any built-in identifier string.
+        let checker_libs = checker_lib_set_for_test(&[(
+            "lib.test.d.ts",
+            r#"
+interface LibBase {
+    apply(this: LibBase, thisArg: any): any;
+}
+interface LibCallable extends LibBase {
+    apply<T, R>(this: (this: T) => R, thisArg: T): R;
+}
+interface LibNewable extends LibBase {
+    apply<T>(this: new () => T, thisArg: T): void;
+}
+interface LibEmpty extends LibBase {
+}
+"#,
+        )]);
+
+        let program = merged_program_from_owned_files(vec![(
+            "file.ts".to_string(),
+            r#"
+interface Bar { b: number }
+interface LibBase {
+    [n: number]: Bar;
+}
+"#
+            .to_string(),
+        )]);
+
+        let affected = affected_lib_interface_names(&program, &checker_libs);
+        assert!(
+            affected.contains("LibCallable") && affected.contains("LibNewable"),
+            "lib interfaces that declare members and inherit a user-augmented \
+             index signature must be scheduled for recheck, got: {affected:?}"
+        );
+        assert!(
+            !affected.contains("LibEmpty"),
+            "a memberless derived interface cannot conflict and must stay out, got: {affected:?}"
+        );
+
+        let extension = affected_lib_extension_interface_names(&program, &checker_libs, &affected);
+        assert!(
+            extension.contains("LibCallable") && extension.contains("LibNewable"),
+            "and must run heritage (TS2430) extension compatibility, got: {extension:?}"
+        );
+        assert!(
+            !extension.contains("LibEmpty"),
+            "a memberless derived interface must not run heritage compatibility, got: {extension:?}"
+        );
+    }
