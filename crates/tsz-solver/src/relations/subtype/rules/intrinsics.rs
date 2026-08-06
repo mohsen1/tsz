@@ -405,18 +405,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         };
         let shape = self.interner.object_shape(shape_id);
-        if let Some(string_index) = shape.string_index.as_ref()
-            && string_index.key_type != TypeId::SYMBOL
-        {
-            if self.target_string_index_any_waives_missing_index(string_index.value_type) {
-                // An `any`-valued string index waives every index obligation.
-                return false;
-            }
-            // A concrete-valued string index is unsatisfiable by a bare function.
-            return true;
+        if let Some(string_index) = shape.string_index_signature() {
+            // An `any`-valued string index waives every index obligation; any
+            // concrete-valued one is unsatisfiable by a bare function.
+            return !self.target_string_index_any_waives_missing_index(string_index.value_type);
         }
+        // No (non-symbol) string index means no `any`-string waiver is possible,
+        // so an inherited numeric index is unsatisfiable on its own.
         shape.number_index.is_some()
-            && !self.target_dual_any_index_waives_missing_number_index(&shape)
     }
 
     /// Whether the target — understood as (a reference to) the *global*

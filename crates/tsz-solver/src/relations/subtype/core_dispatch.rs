@@ -928,21 +928,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if self.is_callable_type(source) && !indexed_target {
                 return SubtypeResult::True;
             }
-            // A non-callable object source (e.g. `class Foo extends Function {}`)
-            // falls through to structural checking.
+            // Only a non-callable *object* source (e.g. `class Foo extends
+            // Function {}`, or a source declaring its own index) may still relate,
+            // via the structural object-to-object comparison below. A bare
+            // function/callable against an `indexed_target` is rejected here rather
+            // than falling through: the structural arms key off `target`'s
+            // unresolved shape and would miss an intrinsic/boxed augmentation.
             let source_is_object = object_shape_id(self.interner, source).is_some()
                 || object_with_index_shape_id(self.interner, source).is_some();
-            if indexed_target && !source_is_object {
-                // A bare function/callable cannot satisfy the index; reject
-                // directly — the structural arms below key off `target`'s
-                // unresolved shape and would miss an intrinsic/boxed augmentation.
+            if !(source_is_object && (is_function_structural || indexed_target)) {
                 return SubtypeResult::False;
             }
-            if (is_function_structural && source_is_object) || indexed_target {
-                // Fall through to structural object-to-object comparison below.
-            } else {
-                return SubtypeResult::False;
-            }
+            // else: fall through to structural object-to-object comparison below.
         }
 
         // Check if target is the global `Object` interface from lib.d.ts.
