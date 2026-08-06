@@ -5,7 +5,7 @@ use tsz_parser::parser::NodeIndex;
 
 impl<'a> CheckerState<'a> {
     // =========================================================================
-    // verbatimModuleSyntax / isolatedModules Export Checks (TS1205, TS1284, TS1285, TS1448)
+    // verbatimModuleSyntax / isolatedModules Export Checks (TS1205, TS1284, TS1285, TS1286, TS1448)
     // =========================================================================
 
     /// TS1205: Re-exporting a type when 'verbatimModuleSyntax' or 'isolatedModules' is enabled
@@ -336,7 +336,7 @@ impl<'a> CheckerState<'a> {
         !self.ctx.compiler_options.module.is_es_module()
     }
 
-    /// TS1295: ESM exports cannot be written in a CommonJS file under verbatimModuleSyntax.
+    /// TS1286/TS1295: ESM exports cannot be written in a CommonJS file under verbatimModuleSyntax.
     /// TS1287: top-level export on value declarations in CJS.
     /// Returns true if a CJS-specific diagnostic was emitted.
     pub(crate) fn check_verbatim_module_syntax_cjs_export(
@@ -363,11 +363,18 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::A_TOP_LEVEL_EXPORT_MODIFIER_CANNOT_BE_USED_ON_VALUE_DECLARATIONS_IN_A_COMMONJS_M,
             );
         } else {
-            self.error_at_node(
-                export_idx,
-                diagnostic_messages::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT_2,
-                diagnostic_codes::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT_2,
-            );
+            let (message, code) = if self.current_file_commonjs_is_extension_locked() {
+                (
+                    diagnostic_messages::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT,
+                    diagnostic_codes::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT,
+                )
+            } else {
+                (
+                    diagnostic_messages::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT_2,
+                    diagnostic_codes::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT_2,
+                )
+            };
+            self.error_at_node(export_idx, message, code);
         }
         true
     }

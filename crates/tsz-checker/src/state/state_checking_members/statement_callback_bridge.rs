@@ -689,7 +689,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             return;
         };
 
-        // TS1295: dynamic import() in CJS+VMS
+        // TS1286/TS1295: dynamic import() in CJS+VMS
         if expr_node.kind == syntax_kind_ext::CALL_EXPRESSION {
             let is_import_call = self
                 .ctx
@@ -698,11 +698,18 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 .and_then(|call| self.ctx.arena.get(call.expression))
                 .is_some_and(|callee| callee.kind == SyntaxKind::ImportKeyword as u16);
             if is_import_call && self.is_current_file_commonjs_for_vms() {
-                self.error_at_node(
-                    expr_idx,
-                    crate::diagnostics::diagnostic_messages::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT_2,
-                    crate::diagnostics::diagnostic_codes::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT_2,
-                );
+                let (message, code) = if self.current_file_commonjs_is_extension_locked() {
+                    (
+                        crate::diagnostics::diagnostic_messages::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT,
+                        crate::diagnostics::diagnostic_codes::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT,
+                    )
+                } else {
+                    (
+                        crate::diagnostics::diagnostic_messages::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT_2,
+                        crate::diagnostics::diagnostic_codes::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT_2,
+                    )
+                };
+                self.error_at_node(expr_idx, message, code);
             }
         }
 

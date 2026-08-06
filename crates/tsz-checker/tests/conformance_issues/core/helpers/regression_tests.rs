@@ -920,6 +920,169 @@ export const enum E {
     );
 }
 
+/// tsc picks between two messages for the same "ESM import/export syntax
+/// written in a CommonJS file under verbatimModuleSyntax" defect, keyed on
+/// whether the file's CommonJS-ness is locked in by a fixed extension
+/// (`.cts`/`.cjs`, where adjusting `package.json` cannot help — TS1286) or
+/// came from `module`/`moduleResolution` config or an adjustable
+/// `package.json` (TS1295, which suggests adjusting it). Oracle:
+/// `typescript@7.0.2`, `--strict --verbatimModuleSyntax --module commonjs`.
+#[test]
+fn test_verbatim_module_syntax_cjs_import_extension_locked_reports_ts1286() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "a.cts",
+                "import { y } from \"./mod.cjs\";\nexport const z = y;\n",
+            ),
+            ("mod.cts", "export const y = 1;\n"),
+        ],
+        "a.cts",
+        CheckerOptions {
+            target: ScriptTarget::ES2022,
+            module: ModuleKind::CommonJS,
+            verbatim_module_syntax: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 1286),
+        "Expected TS1286 for a `.cts` file, got: {diagnostics:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 1295),
+        "Expected no TS1295 for a `.cts` file (extension-locked, package.json can't help), got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_verbatim_module_syntax_cjs_import_adjustable_reports_ts1295() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "a.ts",
+                "import { y } from \"./mod\";\nexport const z = y;\n",
+            ),
+            ("mod.ts", "export const y = 1;\n"),
+        ],
+        "a.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2022,
+            module: ModuleKind::CommonJS,
+            verbatim_module_syntax: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_error(&diagnostics, 1295),
+        "Expected TS1295 for a `.ts` file under `module: commonjs`, got: {diagnostics:?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 1286),
+        "Expected no TS1286 for a `.ts` file (CJS-ness is config-adjustable), got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_verbatim_module_syntax_cjs_export_default_extension_locked_reports_ts1286() {
+    let diagnostics = compile_and_get_raw_diagnostics_named(
+        "a.cts",
+        r#"const x = 1;
+export default x;
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2022,
+            module: ModuleKind::CommonJS,
+            verbatim_module_syntax: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|d| d.code == 1286),
+        "Expected TS1286 for `export default` in a `.cts` file, got: {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 1295),
+        "Expected no TS1295 for `export default` in a `.cts` file, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_verbatim_module_syntax_cjs_export_default_adjustable_reports_ts1295() {
+    let diagnostics = compile_and_get_raw_diagnostics_named(
+        "a.ts",
+        r#"const x = 1;
+export default x;
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2022,
+            module: ModuleKind::CommonJS,
+            verbatim_module_syntax: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|d| d.code == 1295),
+        "Expected TS1295 for `export default` in a `.ts` file under `module: commonjs`, got: {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 1286),
+        "Expected no TS1286 for `export default` in a `.ts` file, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_verbatim_module_syntax_cjs_dynamic_import_extension_locked_reports_ts1286() {
+    let diagnostics = compile_and_get_raw_diagnostics_named(
+        "a.cts",
+        r#"import("./mod.cjs");
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2022,
+            module: ModuleKind::CommonJS,
+            verbatim_module_syntax: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|d| d.code == 1286),
+        "Expected TS1286 for dynamic `import()` in a `.cts` file, got: {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 1295),
+        "Expected no TS1295 for dynamic `import()` in a `.cts` file, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_verbatim_module_syntax_cjs_dynamic_import_adjustable_reports_ts1295() {
+    let diagnostics = compile_and_get_raw_diagnostics_named(
+        "a.ts",
+        r#"import("./mod");
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2022,
+            module: ModuleKind::CommonJS,
+            verbatim_module_syntax: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        diagnostics.iter().any(|d| d.code == 1295),
+        "Expected TS1295 for dynamic `import()` in a `.ts` file under `module: commonjs`, got: {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 1286),
+        "Expected no TS1286 for dynamic `import()` in a `.ts` file, got: {diagnostics:?}"
+    );
+}
+
 #[test]
 fn test_window_console_resolves_through_global_this_alias() {
     let diagnostics = without_missing_global_type_errors(compile_and_get_diagnostics_with_lib(
