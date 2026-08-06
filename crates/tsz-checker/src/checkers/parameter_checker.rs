@@ -1702,3 +1702,120 @@ pub(crate) fn check_this_parameter_placement_in_ctx(
         }
     }
 }
+
+/// Run the parameter-list grammar of tsc's `checkGrammarParameterList` over a
+/// signature written in *type* position — a `FunctionType` or `ConstructorType`
+/// node.
+///
+/// Every other signature form reaches this grammar through
+/// `CheckerState::check_parameter_ordering`, but a function/constructor type is
+/// parsed by `parse_type_parameter_list` and typed by
+/// `get_type_from_function_type`, neither of which routes through it. tsc draws
+/// no such distinction: `checkGrammarFunctionLikeDeclaration` runs the same
+/// `checkGrammarParameterList` for `FunctionType` and `ConstructorType` as for a
+/// function declaration, so `type F = (...a: number[], b: string) =` `> void`
+/// reports TS1014 exactly like `function f(...a: number[], b: string) {}`.
+///
+/// Three arms, in tsc's own order:
+///
+/// - a rest parameter that is not last -> `TS1014`
+/// - a parameter carrying both `?` and an initializer -> `TS1015`
+/// - a required parameter after an optional one -> `TS1016`
+///
+/// Every arm in tsc is a `return grammarErrorOnNode(...)`, so **at most one**
+/// diagnostic is reported per parameter list and the walk stops at the first
+/// failing parameter. `(a?: number, b: string, c: string)` is one TS1016, not
+/// two, and `(a?: number, b: string, ...c: any[], d: any)` is that same lone
+/// TS1016 with no TS1014 behind it.
+///
+/// A parameter with an initializer is not "required" for the TS1016 arm, and it
+/// does not make the parameters after it optional either: tsc's
+/// `isOptionalParameter` compares the parameter's index against the signature's
+/// minimum argument count, so `(a = 1, b: number)` is clean on both sides.
+///
+/// Lives at context level for the same reason as
+/// `check_this_parameter_placement_in_ctx`: the callers run inside
+/// `TypeNodeChecker`, which owns the context but not the checker state.
+pub(crate) fn check_type_position_parameter_list_grammar_in_ctx(
+    ctx: &mut crate::CheckerContext,
+    parameters: &tsz_parser::parser::NodeList,
+) {
+    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+    /// Width of the `...` token tsc anchors `TS1014` on.
+    const DOT_DOT_DOT_LEN: u32 = 3;
+
+    let report_at = |ctx: &mut crate::CheckerContext,
+                     anchor: NodeIndex,
+                     len: Option<u32>,
+                     message: &str,
+                     code: u32| {
+        let Some(node) = ctx.arena.get(anchor) else {
+            return;
+        };
+        let span = node.end.saturating_sub(node.pos);
+        let len = len.map_or(span, |requested| requested.min(span));
+        ctx.error(node.pos, len, message.to_string(), code);
+    };
+
+    let last_index = parameters.nodes.len().saturating_sub(1);
+    let mut seen_optional = false;
+
+    for (index, &param_idx) in parameters.nodes.iter().enumerate() {
+        let Some((is_rest, is_question, has_initializer, name_idx)) = ctx
+            .arena
+            .get(param_idx)
+            .and_then(|param_node| ctx.arena.get_parameter(param_node))
+            .map(|param| {
+                (
+                    param.dot_dot_dot_token,
+                    param.question_token,
+                    param.initializer.is_some(),
+                    param.name,
+                )
+            })
+        else {
+            continue;
+        };
+
+        if is_rest {
+            if index != last_index {
+                report_at(
+                    ctx,
+                    param_idx,
+                    Some(DOT_DOT_DOT_LEN),
+                    diagnostic_messages::A_REST_PARAMETER_MUST_BE_LAST_IN_A_PARAMETER_LIST,
+                    diagnostic_codes::A_REST_PARAMETER_MUST_BE_LAST_IN_A_PARAMETER_LIST,
+                );
+            }
+            // TS1047 (`A rest parameter cannot be optional.`) is already
+            // reported by `parse_type_parameter_list`, so the remaining rest
+            // arms of tsc's loop have no work here. A rest parameter is neither
+            // optional nor required for the arms below.
+            return;
+        }
+
+        if is_question {
+            seen_optional = true;
+            if has_initializer {
+                report_at(
+                    ctx,
+                    name_idx,
+                    None,
+                    diagnostic_messages::PARAMETER_CANNOT_HAVE_QUESTION_MARK_AND_INITIALIZER,
+                    diagnostic_codes::PARAMETER_CANNOT_HAVE_QUESTION_MARK_AND_INITIALIZER,
+                );
+                return;
+            }
+        } else if seen_optional && !has_initializer {
+            report_at(
+                ctx,
+                name_idx,
+                None,
+                diagnostic_messages::A_REQUIRED_PARAMETER_CANNOT_FOLLOW_AN_OPTIONAL_PARAMETER,
+                diagnostic_codes::A_REQUIRED_PARAMETER_CANNOT_FOLLOW_AN_OPTIONAL_PARAMETER,
+            );
+            return;
+        }
+    }
+}
