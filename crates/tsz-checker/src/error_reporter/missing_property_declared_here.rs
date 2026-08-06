@@ -252,7 +252,7 @@ impl<'a> CheckerState<'a> {
             // own members and alias body have declined — so any generic wrapper
             // is served by the same rule, and a user-declared `Array` needs no
             // special case. See the anti-hardcoding gate in `.claude/CLAUDE.md`.
-            return self.unique_type_argument_anchor(type_arguments?.as_slice(), property, depth);
+            return self.unique_sibling_type_anchor(type_arguments?.as_slice(), property, depth);
         }
         if node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE {
             let data = self.ctx.arena.get_indexed_access_type(node)?;
@@ -284,22 +284,49 @@ impl<'a> CheckerState<'a> {
             let operand_idx = data.type_node;
             return self.annotation_property_anchor(operand_idx, property, depth + 1);
         }
+        if node.kind == syntax_kind_ext::TUPLE_TYPE {
+            // A tuple element type describes the shape written at that index
+            // exactly as an array's element type describes the shape at every
+            // index, and tsc anchors a missing-property pointer for a tuple
+            // element literal inside that element's own type. Like `ARRAY_TYPE`
+            // above, the tuple contributes no path segment —
+            // `contextual_property_path` skips `ARRAY_LITERAL_EXPRESSION`
+            // without pushing a name, so the walk arrives here carrying no
+            // element position and resolves the element by uniqueness instead.
+            let elements = self.ctx.arena.get_tuple_type(node)?.elements.nodes.clone();
+            return self.unique_sibling_type_anchor(&elements, property, depth);
+        }
+        if node.kind == syntax_kind_ext::NAMED_TUPLE_MEMBER {
+            // `[first: T]` is `T` wearing a label. The label names a tuple
+            // position, not a property, so it matches nothing in the failing
+            // literal and the walk descends straight into the member's type.
+            let inner = self.ctx.arena.get_named_tuple_member(node)?.type_node;
+            return self.annotation_property_anchor(inner, property, depth + 1);
+        }
+        if node.kind == syntax_kind_ext::OPTIONAL_TYPE || node.kind == syntax_kind_ext::REST_TYPE {
+            // `[a?: T]` and `[...T[]]` constrain how many elements may be
+            // written, not what shape each one has, so both are transparent to
+            // a walk asking where `property` is declared.
+            let inner = self.ctx.arena.get_wrapped_type(node)?.type_node;
+            return self.annotation_property_anchor(inner, property, depth + 1);
+        }
         None
     }
 
-    /// The anchor for `property` in exactly one of `type_arguments`.
+    /// The anchor for `property` in exactly one of `candidates` — the type
+    /// arguments of a reference, or the element types of a tuple.
     ///
-    /// Declines when two arguments both declare `property`: the walk has no
+    /// Declines when two candidates both declare `property`: the walk has no
     /// basis to pick between them, and pointing at the wrong one is worse than
     /// omitting the pointer, which is what every other declining path here does.
-    fn unique_type_argument_anchor(
+    fn unique_sibling_type_anchor(
         &mut self,
-        type_arguments: &[NodeIndex],
+        candidates: &[NodeIndex],
         property: &str,
         depth: u32,
     ) -> Option<(u32, u32, Option<String>)> {
         let mut found: Option<(u32, u32, Option<String>)> = None;
-        for &argument_idx in type_arguments {
+        for &argument_idx in candidates {
             let Some(anchor) = self.annotation_property_anchor(argument_idx, property, depth + 1)
             else {
                 continue;
