@@ -56,6 +56,7 @@ impl CheckerContext<'_> {
     /// Publish `body` and its dependency set when it is canonical progress.
     /// Returns `false` when the candidate is a rejected registration-window
     /// placeholder or the store does not retain that exact body.
+    #[track_caller]
     pub(crate) fn publish_definition_body(&self, def_id: DefId, body: TypeId) -> bool {
         if self.is_non_progress_non_program_alias_body(def_id, body) {
             return false;
@@ -66,6 +67,7 @@ impl CheckerContext<'_> {
 
     /// Parameterized counterpart of [`Self::publish_definition_body`], with
     /// the same exact-publication return contract.
+    #[track_caller]
     pub(crate) fn publish_definition_body_with_params(
         &self,
         def_id: DefId,
