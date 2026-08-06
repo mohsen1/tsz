@@ -1292,14 +1292,29 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // bare function and still accepts a source that provides a numeric index.
         // The intrinsic `Function` and the un-augmented global interface carry no
         // such index and keep the fast-path. Mirror of the subtype-checker guard
-        // in `core_dispatch`/`visitor`. Companion to #16473.
+        // in `core_dispatch`/`visitor`. Companion to #16473;
+        // `function_target_has_unwaived_index` (vs the structural-only
+        // predicate) also resolves the augmentation on the intrinsic/boxed/`Lazy`
+        // `Function` reference — the receiver of `const g: Function = fn` — which
+        // is where this lawyer fast-path was still masking it (#16525).
         if self.is_function_target_member(target)
             && crate::type_queries::is_callable_type(self.interner, source)
-            && !self
-                .subtype
-                .function_structural_target_has_unwaived_number_index(target)
         {
-            return true;
+            if !self.subtype.function_target_has_unwaived_index(target) {
+                return true;
+            }
+            // The target requires a numeric index. A function value's apparent
+            // `Function` surface carries none, so a bare function/callable is
+            // *not* assignable — reject directly rather than falling through to
+            // the structural comparison, whose boxed-`Function` apparent surface
+            // (identical to the augmented target) would credit the source with
+            // the very index it lacks and wrongly accept (#16525). A hybrid
+            // callable that declares its *own* numeric index still defers to the
+            // structural comparison, which adjudicates that index against the
+            // target's.
+            if !self.subtype.callable_source_declares_index(source) {
+                return false;
+            }
         }
 
         // TS2859 complexity guard: check constituent-count cross-product before

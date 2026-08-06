@@ -1407,14 +1407,34 @@ impl<'a> CheckerState<'a> {
     ///   alias, so it declines here — which is what `tsc` does: it reports the
     ///   whole function type at the member for those, drilling neither the
     ///   alias form nor the inline one.
+    ///
+    /// A *generic* alias application (`cb: G<string>` for `type G<T> = () =>
+    /// T`) arrives as `TypeData::Application`, whose `base` is itself an
+    /// unresolved `Lazy(DefId)` reference to `G`'s own uninstantiated body —
+    /// neither the direct probe nor the lazy hop above (which only resolves
+    /// `ty` itself, and an `Application` is not a `Lazy`) sees through it. A
+    /// third, narrower hop evaluates `ty` through the same substitution the
+    /// checker uses everywhere else a type application is finally read
+    /// ([`Self::judge_evaluate`]), so the return type driving the drill's
+    /// relation and message is the *instantiated* `string`, not the alias's
+    /// own type parameter `T`. This hop is gated on `ty` actually being an
+    /// application so it cannot fire on an unrelated declined shape.
     fn callable_return_type_for_drill(&mut self, ty: TypeId) -> Option<TypeId> {
         if let Some(found) = self.first_callable_return_type(ty) {
             return Some(found);
         }
         let resolved = self.resolve_lazy_type(ty);
-        if resolved == ty {
-            return None;
+        if resolved != ty
+            && let Some(found) = self.first_callable_return_type(resolved)
+        {
+            return Some(found);
         }
-        self.first_callable_return_type(resolved)
+        if crate::query_boundaries::diagnostics::type_application(self.ctx.types, ty).is_some() {
+            let evaluated = self.judge_evaluate(ty);
+            if evaluated != ty {
+                return self.first_callable_return_type(evaluated);
+            }
+        }
+        None
     }
 }
