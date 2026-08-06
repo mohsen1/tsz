@@ -62,6 +62,70 @@ impl<'a> CheckerState<'a> {
         self.declared_here_related_from_annotation(anchor_idx, &property, property_display)
     }
 
+    /// Property names, outermost first, naming the object-literal members the
+    /// failure at `anchor_idx` sits inside — the syntactic path from the
+    /// annotated binding down to the failing literal.
+    ///
+    /// Bounded by the same ancestor walk [`Self::target_annotation_node`] uses,
+    /// and stopping at the same declaration and function boundaries, so the two
+    /// always describe one assignment. Returns empty for a failure that is not
+    /// inside an object literal at all (an array element, a call argument),
+    /// which declines the pointer rather than guessing.
+    fn contextual_property_path(&self, anchor_idx: NodeIndex) -> Vec<String> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let mut path: Vec<String> = Vec::new();
+        let mut current = anchor_idx;
+        let mut guard = 0u32;
+        while current.is_some() {
+            guard += 1;
+            if guard > 32 {
+                break;
+            }
+            let Some(node) = self.ctx.arena.get(current) else {
+                break;
+            };
+            if node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+                || node.kind == syntax_kind_ext::PARAMETER
+                || node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                || node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || node.kind == syntax_kind_ext::METHOD_DECLARATION
+                || node.kind == syntax_kind_ext::BLOCK
+                || node.kind == syntax_kind_ext::SOURCE_FILE
+            {
+                break;
+            }
+            let name_idx = if node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                self.ctx.arena.get_property_assignment(node).map(|p| p.name)
+            } else if node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
+                self.ctx.arena.get_shorthand_property(node).map(|p| p.name)
+            } else {
+                None
+            };
+            if let Some(name_idx) = name_idx {
+                match crate::types_domain::queries::core::get_literal_property_name(
+                    self.ctx.arena,
+                    name_idx,
+                ) {
+                    Some(name) => path.push(name),
+                    // A computed or otherwise non-literal member name cannot be
+                    // matched against the written annotation by name. Abandon
+                    // the whole path rather than skipping the level, which would
+                    // anchor one member too shallow.
+                    None => return Vec::new(),
+                }
+            }
+            let Some(parent) = self.ctx.arena.get_extended(current).map(|ext| ext.parent) else {
+                break;
+            };
+            current = parent;
+        }
+        path.reverse();
+        path
+    }
+
     /// Anchor recovered from the type annotation the failing assignment was
     /// declared with, for targets that resolve to no binder symbol.
     ///
@@ -83,7 +147,34 @@ impl<'a> CheckerState<'a> {
         property_display: &str,
     ) -> Option<DiagnosticRelatedInformation> {
         let annotation_idx = self.target_annotation_node(anchor_idx)?;
-        let (start, length, file) = self.annotation_property_anchor(annotation_idx, property, 0)?;
+        // A failure inside a *nested* object literal names a property of an
+        // inner member type, not of the annotation itself: `oq` is no member of
+        // `Outer` in `const r: Outer = { inner: { op: 1 } }`. Resolving the leaf
+        // name straight against the annotation therefore declines, and tsc still
+        // reports the pointer — `reportUnmatchedProperty` draws no distinction
+        // between an inner and an outer literal. The missing step is the path,
+        // which the object-literal syntax at the failure site supplies; each
+        // member is validated against the written annotation before the next is
+        // taken, so an annotation that does not declare the path declines here
+        // exactly as it does at the top level.
+        let path = self.contextual_property_path(anchor_idx);
+        let anchor = if path.is_empty() {
+            self.annotation_property_anchor(annotation_idx, property, 0)
+        } else {
+            let mut member_type_idx = annotation_idx;
+            let mut walked = Some(());
+            for key in &path {
+                match self.annotation_member_type_node(member_type_idx, key, 0) {
+                    Some(next) => member_type_idx = next,
+                    None => {
+                        walked = None;
+                        break;
+                    }
+                }
+            }
+            walked.and_then(|()| self.annotation_property_anchor(member_type_idx, property, 0))
+        };
+        let (start, length, file) = anchor?;
         Some(Diagnostic::related_pointer(
             diagnostic_codes::IS_DECLARED_HERE,
             file.unwrap_or_else(|| self.ctx.file_name.clone()),

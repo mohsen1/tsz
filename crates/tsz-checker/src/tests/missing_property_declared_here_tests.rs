@@ -916,3 +916,140 @@ fn named_target_still_anchors_through_the_symbol_route() {
         "the anchor is `Want`'s own member, not anything in `Src`"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Nested elaboration: a property missing from an *inner* object literal.
+//
+// tsc's `reportUnmatchedProperty` draws no distinction between an inner and an
+// outer literal — every row below carries the pointer in `typescript@7.0.2`.
+// The leaf property name alone cannot locate it: `oq` is no member of `Outer`
+// in `const r: Outer = { inner: { op: 1 } }`, so the annotation walk first
+// follows the path the object-literal syntax at the failure site spells out.
+// ---------------------------------------------------------------------------
+
+/// Row 1 of #16443's nested-elaboration table. Oracle (`typescript@7.0.2`,
+/// `--noEmit --strict --pretty --target es2022 --lib es2022`):
+/// `matrix.ts:1:37 - 'oq' is declared here.`
+#[test]
+fn nested_object_literal_pointer_anchors_in_the_inner_type_literal() {
+    let source = "type Outer = { inner: { op: number; oq: number } };\nconst r: Outer = { inner: { op: 1 } };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, message) = declared_here(&diagnostic);
+    assert_eq!(
+        span_text(source, start, length),
+        "oq",
+        "the anchor underlines the inner member's own name node"
+    );
+    assert!(
+        message.contains("'oq'"),
+        "pointer names the property: {message}"
+    );
+}
+
+/// Anti-hardcoding: the walk keys on the nesting structure, not on the
+/// identifiers `Outer`/`inner`/`oq`. Renamed binders anchor identically.
+#[test]
+fn nested_pointer_is_binder_name_independent() {
+    let source = "type Envelope = { payload: { alpha: number; beta: number } };\nconst env: Envelope = { payload: { alpha: 1 } };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, _) = declared_here(&diagnostic);
+    assert_eq!(span_text(source, start, length), "beta");
+}
+
+/// The same nesting written as an `interface` rather than a type alias. The
+/// annotation walk reaches an interface's member list through the same
+/// declaration route, so the interface and alias forms must not diverge.
+/// Oracle: `matrix.ts:3:41 - 'oq' is declared here.`
+#[test]
+fn nested_pointer_anchors_through_an_interface_annotation() {
+    let source = "interface OuterI { inner: { op: number; oq: number } }\nconst ri: OuterI = { inner: { op: 1 } };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, _) = declared_here(&diagnostic);
+    assert_eq!(span_text(source, start, length), "oq");
+}
+
+/// Two levels of nesting: the anchor follows the whole path, not just the
+/// first hop. Oracle: `matrix.ts:6:36 - 'q' is declared here.`
+#[test]
+fn twice_nested_object_literal_pointer_anchors_at_the_innermost_member() {
+    let source = "type Deep = { a: { b: { p: number; q: number } } };\nconst rd: Deep = { a: { b: { p: 1 } } };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, _) = declared_here(&diagnostic);
+    assert_eq!(span_text(source, start, length), "q");
+    // The outer member `b` shares no name with the leaf, but a path walk that
+    // stopped one hop early would still find *a* plausible member; pin the
+    // offset so a shallow anchor cannot pass.
+    assert_eq!(length, 1, "underlines `q` alone, not a wider member span");
+}
+
+/// A nested member written as a *named* alias resolves through the symbol
+/// route with no path walk at all — the alias declares the property itself.
+/// Oracle: `matrix.ts:3:29 - 'iq' is declared here.` (in `Inner2`'s own body).
+#[test]
+fn nested_member_named_alias_anchors_in_the_alias_body() {
+    let source = "type Inner2 = { ip: number; iq: number };\ntype Outer2 = { inner: Inner2 };\nconst r2: Outer2 = { inner: { ip: 1 } };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, _) = declared_here(&diagnostic);
+    assert_eq!(span_text(source, start, length), "iq");
+}
+
+/// Negative arm, unchanged by the path walk: more than one unmatched property
+/// is TS2739, and tsc attaches no `'x' is declared here.` pointer to it at any
+/// depth. Oracle row 5 of the matrix carries only the TS6500 entry.
+#[test]
+fn nested_multi_property_failure_still_carries_no_pointer() {
+    let source = "type Multi = { inner: { m1: number; m2: number; m3: number } };\nconst rm: Multi = { inner: { m1: 1 } };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2739);
+    assert!(
+        !diagnostic
+            .related_information
+            .iter()
+            .any(|info| info.code == TS2728),
+        "TS2739 carries no declared-here pointer: {diagnostic:?}"
+    );
+}
+
+/// A computed member name in the path is not matchable against the written
+/// annotation by name, so the walk abandons the whole path rather than
+/// skipping the level and anchoring one member too shallow.
+///
+/// tsc *does* resolve this row (`matrix.ts:9:36`) because `K` is a `const` with
+/// a literal type — declining here is a known, safe gap, not parity. What this
+/// test pins is that the decline stays a decline: no pointer is better than a
+/// pointer into the wrong member, which is the failure mode the name+kind guard
+/// exists to prevent.
+///
+/// Asserted over every diagnostic rather than a chosen one: this witness also
+/// diverges on its *primary* code (tsz reports TS2418 where tsc reports
+/// TS2741), which is a separate defect from the pointer and must not decide
+/// whether this test passes.
+#[test]
+fn computed_path_member_declines_rather_than_anchoring_shallow() {
+    let source = "const K = \"inner\";\ntype Comp = { inner: { cp: number; cq: number } };\nconst rc: Comp = { [K]: { cp: 1 } };\n";
+    let diagnostics = check_source_diagnostics(source);
+    assert!(
+        !diagnostics
+            .iter()
+            .flat_map(|d| d.related_information.iter())
+            .any(|info| info.code == TS2728),
+        "a computed path member produces no anchor at all: {diagnostics:?}"
+    );
+}
+
+/// A literal nested inside an *array* member: the path reaches the member's
+/// written type node, but that node is an array type rather than a type
+/// literal, so the leaf resolution declines. tsc anchors this row
+/// (`matrix.ts:13:34`); pinned as a decline so the remaining gap is visible and
+/// cannot silently become a wrong anchor.
+#[test]
+fn array_element_literal_declines_rather_than_anchoring_wrongly() {
+    let source = "type Arr = { list: { lp: number; lq: number }[] };\nconst ra: Arr = { list: [{ lp: 1 }] };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    assert!(
+        !diagnostic
+            .related_information
+            .iter()
+            .any(|info| info.code == TS2728),
+        "an array-typed member produces no anchor at all: {diagnostic:?}"
+    );
+}
