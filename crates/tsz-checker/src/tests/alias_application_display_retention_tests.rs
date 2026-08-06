@@ -9,6 +9,13 @@
 //! render `Name<Args>`; a nullable union target that keeps its alias is not
 //! stripped to its non-nullish member.
 //!
+//! The same alias restoration also governs the *source* side: when the target is
+//! a generic union-alias application whose whole (restored) type is singleton-
+//! capable through a `null`/`undefined` member, a fresh literal source is kept
+//! (`Type '5'`) rather than generalized to its base (`Type 'number'`), mirroring
+//! tsc's `reportErrorResults` restoring `originalTarget` before the source-literal
+//! generalization gate.
+//!
 //! Owners: `tsz_solver::diagnostics::format::application_reduction` (shared
 //! display reduction), `type_queries::application_base_reducing_alias_body_kind`,
 //! and the checker's `render_missing_property` primitive-source target display.
@@ -167,9 +174,15 @@ type OrMissing<S> = S | undefined;
 const wrong: OrMissing<{ u: string }> = 5;
 "#,
     );
+    // The alias is restored over the reduced target (tsc `reportErrorResults`),
+    // so the reported target is the whole `OrMissing<{ u: string; }>` union —
+    // singleton-capable through its `undefined` member — and the literal source
+    // `5` is preserved rather than generalized to `number`. Oracle
+    // `typescript@7.0.2`: `Type '5' is not assignable to type
+    // 'OrMissing<{ u: string; }>'.`
     assert_eq!(
         message,
-        "Type 'number' is not assignable to type 'OrMissing<{ u: string; }>'."
+        "Type '5' is not assignable to type 'OrMissing<{ u: string; }>'."
     );
 }
 
@@ -181,6 +194,15 @@ type MaybeBox = { u: string } | undefined;
 const wrong: MaybeBox = 5;
 "#,
     );
+    // Residual: the target name `MaybeBox` is kept, but the literal source is
+    // still widened. The alias-restore source-literal fix lands for *generic*
+    // alias applications (the `OrMissing<..>` case above), which reach the
+    // source-display gate as an `Application` carrying the alias surface; a
+    // *non-generic* alias reaches it already reduced, so `original_target` no
+    // longer answers `type_keeps_alias_symbol_surface`. Oracle `typescript@7.0.2`
+    // preserves the literal here too (`Type '5' is not assignable to type
+    // 'MaybeBox'.`); pinning current output so a follow-up on the non-generic
+    // path updates this deliberately rather than silently.
     assert_eq!(
         message,
         "Type 'number' is not assignable to type 'MaybeBox'."
