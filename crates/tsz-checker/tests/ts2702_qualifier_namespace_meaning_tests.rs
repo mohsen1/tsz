@@ -64,13 +64,24 @@ fn multi_file_codes(files: &[(&str, &str)], entry: &str) -> Vec<u32> {
 /// `TS2702`", not "reports `TS2694`" (see the comment on
 /// `export_default_namespace_keeps_namespace_meaning` in that suite).
 fn multi_file_codes_global_index(files: &[(&str, &str)], entry: &str) -> Vec<u32> {
+    multi_file_diags_global_index(files, entry)
+        .into_iter()
+        .map(|(code, _)| code)
+        .collect()
+}
+
+/// Like `multi_file_codes_global_index`, but keeps `(code, message)` so the
+/// namespace name in a `TS2694` can be asserted — the load-bearing detail for
+/// #16503, where the missing-member message must name the *target* namespace,
+/// not a colliding local read from the checking file's binder.
+fn multi_file_diags_global_index(files: &[(&str, &str)], entry: &str) -> Vec<(u32, String)> {
     let options = CheckerOptions {
         strict: true,
         ..CheckerOptions::default()
     };
     check_multi_file_with_global_index(files, entry, options)
         .into_iter()
-        .map(|diagnostic| diagnostic.code)
+        .map(|diagnostic| (diagnostic.code, diagnostic.message_text))
         .collect()
 }
 
@@ -338,92 +349,13 @@ fn namespace_import_qualifier_keeps_the_member_lookup_path() {
 // meaning through the default import (closes #16486, a regression from
 // #16480: that PR's alias-target check stopped at the synthesized `default`
 // wrapper symbol's own flags, which are always bare `ALIAS` regardless of
-// what the identifier denotes)
+// what the identifier denotes). #16503 completes it: the member-lookup path
+// now hops through the `default` slot too, so a present member resolves and a
+// missing one is `TS2694` — the strict assertions live in the #16503 section
+// below (`default_exported_namespace_member_resolves_and_missing_is_ts2694`
+// and its enum / renamed twins), which supersede #16486's weaker
+// "must not be TS2702" checks.
 // ---------------------------------------------------------------------------
-
-/// `export default m;` where `m` is a previously-declared namespace: `tsc`
-/// resolves `D.foo` as a member lookup, never `TS2702` — the default export is
-/// an alias to `m`'s own declaration, not a fresh symbol with its own
-/// (non-namespace) meaning. As `qualified_name_default_import_namespace_meaning_tests`'s
-/// own `export_default_namespace_keeps_namespace_meaning` control documents,
-/// the no-lib multi-file harness does not reliably surface the downstream
-/// missing-member `TS2694` for this shape; the load-bearing assertion for this
-/// regression is the absence of `TS2702` on both a present and a missing
-/// member.
-#[test]
-fn default_exported_namespace_identifier_keeps_namespace_meaning() {
-    let present = multi_file_codes_global_index(
-        &[
-            (
-                "dep.ts",
-                "namespace m { export interface foo { a: number } }\nexport default m;\n",
-            ),
-            ("main.ts", "import D from './dep';\nvar q: D.foo;\n"),
-        ],
-        "main.ts",
-    );
-    assert!(
-        !present.contains(&2702),
-        "a present member of an export-default namespace must not be TS2702, got: {present:?}"
-    );
-
-    let missing = multi_file_codes_global_index(
-        &[
-            (
-                "dep.ts",
-                "namespace m { export interface foo { a: number } }\nexport default m;\n",
-            ),
-            ("main.ts", "import D from './dep';\nvar bad: D.Missing;\n"),
-        ],
-        "main.ts",
-    );
-    assert!(
-        !missing.contains(&2702),
-        "a missing member of an export-default namespace must not become TS2702, got: {missing:?}"
-    );
-}
-
-/// `export default Color;` where `Color` is a previously-declared enum: an
-/// enum carries `SymbolFlags.Namespace` (`Enum` is in the set), so it must
-/// never report `TS2702` through a default-exported identifier alias, matching
-/// the namespace case above.
-#[test]
-fn default_exported_enum_identifier_keeps_namespace_meaning() {
-    let codes = multi_file_codes_global_index(
-        &[
-            ("e.ts", "enum Color { Red, Green }\nexport default Color;\n"),
-            ("main.ts", "import C from './e';\nvar bad: C.Nope;\n"),
-        ],
-        "main.ts",
-    );
-    assert!(
-        !codes.contains(&2702),
-        "an enum default export keeps namespace meaning (no TS2702), got: {codes:?}"
-    );
-}
-
-/// The local binding name at the import site is irrelevant — resolution goes
-/// through the `default` export slot's own target, not the local spelling.
-#[test]
-fn renamed_default_import_of_namespace_identifier_keeps_namespace_meaning() {
-    let codes = multi_file_codes_global_index(
-        &[
-            (
-                "dep2.ts",
-                "namespace m { export interface foo { a: number } }\nexport default m;\n",
-            ),
-            (
-                "main2.ts",
-                "import Renamed from './dep2';\nvar bad: Renamed.Missing;\n",
-            ),
-        ],
-        "main2.ts",
-    );
-    assert!(
-        !codes.contains(&2702),
-        "renaming the local binding must not affect the default export's namespace meaning, got: {codes:?}"
-    );
-}
 
 /// Negative control, restated from `default_imported_class_used_as_namespace_reports_type_used_as_namespace`:
 /// a default-exported class *merged* with a same-named namespace still
@@ -479,5 +411,222 @@ fn default_exported_bare_ref_class_merged_with_namespace_still_reports_ts2702() 
             "/main4.ts",
         ),
         vec![2702]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// #16503: a default-exported namespace/enum's real members are reachable
+// through the default import. #16486 only stopped the false `TS2702` at the
+// diagnostic gate; the member-lookup path still routed the synthetic `default`
+// alias, so a present member resolved only by error-masking coincidence and a
+// missing member emitted *nothing* (namespace) or `TS2503` (enum) instead of
+// tsc's `TS2694`. The anchor now hops to the real namespace/enum symbol, read
+// from its declaring binder, so both a present member and a missing one behave
+// like tsc.
+//
+// All rows oracled against the pinned `tsc` (`--noEmit --strict --pretty false
+// --target es2022 --lib es2022`). The `TS2694` names the *target* namespace
+// (`m`/`Color`), not the local import alias — tsc's `getFullyQualifiedName` of
+// the resolved namespace symbol, confirmed against the oracle:
+//   main2.ts(2,10): error TS2694: Namespace 'm2' has no exported member 'Missing'.
+//   maine.ts(2,12): error TS2694: Namespace 'Color' has no exported member 'Nope'.
+// ---------------------------------------------------------------------------
+
+/// A present member of a default-exported namespace resolves cleanly, and a
+/// missing one is `TS2694` naming the target namespace — not silence, and not
+/// `TS2702`.
+#[test]
+fn default_exported_namespace_member_resolves_and_missing_is_ts2694() {
+    const DEP: &str = "namespace m { export interface foo { a: number } }\nexport default m;\n";
+
+    let present = multi_file_diags_global_index(
+        &[
+            ("dep.ts", DEP),
+            ("main.ts", "import D from './dep';\nvar q: D.foo;\n"),
+        ],
+        "main.ts",
+    );
+    assert_eq!(
+        present,
+        Vec::<(u32, String)>::new(),
+        "a present member resolves with no diagnostic"
+    );
+
+    let missing = multi_file_diags_global_index(
+        &[
+            ("dep.ts", DEP),
+            ("main.ts", "import D from './dep';\nvar bad: D.Missing;\n"),
+        ],
+        "main.ts",
+    );
+    assert_eq!(
+        missing,
+        vec![(
+            2694,
+            "Namespace 'm' has no exported member 'Missing'.".to_string()
+        )],
+        "a missing member is TS2694 naming the target namespace"
+    );
+}
+
+/// The enum twin: `enum Color` carries `SymbolFlags.Namespace` (`Enum` is in
+/// the set), so `C.Red` resolves and `C.Nope` is `TS2694` naming `Color`.
+/// Before the fix the enum default import produced `TS2503` for both.
+#[test]
+fn default_exported_enum_member_resolves_and_missing_is_ts2694() {
+    const DEP: &str = "enum Color { Red, Green }\nexport default Color;\n";
+
+    let present = multi_file_diags_global_index(
+        &[
+            ("e.ts", DEP),
+            ("main.ts", "import C from './e';\nvar ok: C.Red;\n"),
+        ],
+        "main.ts",
+    );
+    assert_eq!(
+        present,
+        Vec::<(u32, String)>::new(),
+        "a present enum member resolves with no diagnostic"
+    );
+
+    let missing = multi_file_diags_global_index(
+        &[
+            ("e.ts", DEP),
+            ("main.ts", "import C from './e';\nvar bad: C.Nope;\n"),
+        ],
+        "main.ts",
+    );
+    assert_eq!(
+        missing,
+        vec![(
+            2694,
+            "Namespace 'Color' has no exported member 'Nope'.".to_string()
+        )],
+        "a missing enum member is TS2694 naming the enum"
+    );
+}
+
+/// Anti-hardcoding: the hop keys on the `default` slot's target flags, not on
+/// any spelling. Renaming both the namespace binder and the local import
+/// binding leaves the behaviour — and the target-relative message name —
+/// unchanged.
+#[test]
+fn default_exported_namespace_member_rule_is_binder_name_independent() {
+    let missing = multi_file_diags_global_index(
+        &[
+            (
+                "dep.ts",
+                "namespace Payload { export interface foo { a: number } }\nexport default Payload;\n",
+            ),
+            (
+                "main.ts",
+                "import Renamed from './dep';\nvar bad: Renamed.Missing;\n",
+            ),
+        ],
+        "main.ts",
+    );
+    assert_eq!(
+        missing,
+        vec![(
+            2694,
+            "Namespace 'Payload' has no exported member 'Missing'.".to_string()
+        )],
+        "the message names the renamed target namespace, not the local alias"
+    );
+}
+
+/// The same raw-`SymbolId`-collision fix restores the correct namespace name
+/// for a *named* cross-file import too: before it, the missing-member `TS2694`
+/// read the anchor from the checking file's binder and named a nearby local
+/// (`var z`). This is the pre-existing collision #16503's member-lookup read
+/// also fixed, pinned so it cannot silently regress.
+#[test]
+fn named_cross_file_namespace_missing_member_names_the_target_namespace() {
+    let missing = multi_file_diags_global_index(
+        &[
+            (
+                "n1.ts",
+                "export namespace Named { export interface I { q: number } }\n",
+            ),
+            (
+                "n2.ts",
+                "import { Named } from './n1';\nvar z: Named.Missing;\n",
+            ),
+        ],
+        "n2.ts",
+    );
+    assert_eq!(
+        missing,
+        vec![(
+            2694,
+            "Namespace 'Named' has no exported member 'Missing'.".to_string()
+        )],
+    );
+}
+
+/// Negative control for the hop's class exclusion, restated at message level:
+/// a default-exported *class* has no namespace meaning, so `D.X` stays
+/// `TS2702` and never becomes a member lookup. (Codes-level twins live in
+/// `default_imported_class_used_as_namespace_reports_type_used_as_namespace`.)
+#[test]
+fn default_exported_class_member_access_stays_ts2702_not_ts2694() {
+    let codes = multi_file_codes_global_index(
+        &[
+            ("t1.ts", "export default class D { m: number = 0 }\n"),
+            ("t2.ts", "import D from './t1';\nvar a: D.X;\n"),
+        ],
+        "t2.ts",
+    );
+    assert_eq!(
+        codes,
+        vec![2702],
+        "a default-exported class stays TS2702, never TS2694"
+    );
+}
+
+/// Uncovered-and-pinned: a member reached *through a re-export hub*
+/// (`export { default } from './dep'`) is not resolved — tsc follows the hub to
+/// the original namespace and reports `TS2694 Namespace 'm2' has no exported
+/// member 'Missing'`, tsz reports `TS2702` (the qualifier resolves to a type
+/// with no namespace meaning). This is not specific to `default` — a named
+/// re-export hub (`export { Foo } from './dep'`) behaves identically — so it is
+/// a pre-existing gap in following re-export chains for a *type-position*
+/// qualified-name anchor, outside #16503's default-import member routing (the
+/// default→namespace hop only fires when the `default` slot's declaration is a
+/// bare identifier, which a re-export specifier is not). Pinned as today's
+/// behaviour so a future re-export-chain fix is caught by the change.
+#[test]
+fn reexport_hub_member_is_currently_ts2702_not_ts2694() {
+    let default_hub = multi_file_codes_global_index(
+        &[
+            (
+                "dep.ts",
+                "namespace m { export interface foo { a: number } }\nexport default m;\n",
+            ),
+            ("hub.ts", "export { default } from './dep';\n"),
+            ("main.ts", "import D from './hub';\nvar bad: D.Missing;\n"),
+        ],
+        "main.ts",
+    );
+    assert_eq!(default_hub, vec![2702], "re-export default hub is TS2702");
+
+    let named_hub = multi_file_codes_global_index(
+        &[
+            (
+                "dep.ts",
+                "export namespace Foo { export interface bar { a: number } }\n",
+            ),
+            ("hub.ts", "export { Foo } from './dep';\n"),
+            (
+                "main.ts",
+                "import { Foo } from './hub';\nvar bad: Foo.Missing;\n",
+            ),
+        ],
+        "main.ts",
+    );
+    assert_eq!(
+        named_hub,
+        vec![2702],
+        "a named re-export hub behaves the same — the gap is not default-specific"
     );
 }

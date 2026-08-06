@@ -390,10 +390,19 @@ impl<'a> CheckerState<'a> {
             .expect("ExportedMember lookup requires parent_symbol");
 
         let lib_binders = self.get_lib_binders();
-        let parent_symbol = self
-            .ctx
-            .binder
-            .get_symbol_with_libs(parent_sym, &lib_binders);
+        // Read the parent namespace/module from its *owning* binder, not the
+        // checking file's: per-file binders mint raw `SymbolId`s from zero, so
+        // a cross-file-resolved `parent_sym` (a re-anchored default-export
+        // namespace, a named import's target) read bare from `self.ctx.binder`
+        // collides with an unrelated local at the same id — surfacing as a
+        // wrong namespace name in the `TS2694` text (a nearby `var`) and as an
+        // exports lookup against the wrong symbol (#16465/#16503). Mirrors the
+        // cross-file-first read in `classify` above.
+        let parent_symbol = self.get_cross_file_symbol(parent_sym).or_else(|| {
+            self.ctx
+                .binder
+                .get_symbol_with_libs(parent_sym, &lib_binders)
+        });
 
         let parent_name = parent_symbol
             .map(|s| {

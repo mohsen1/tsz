@@ -842,6 +842,69 @@ impl<'a> CheckerState<'a> {
         Some(target_sym_id)
     }
 
+    /// The qualified-name type anchor for `anchor_src`: its alias target,
+    /// followed by the namespace/enum a synthetic `export default` slot names.
+    ///
+    /// A default import of `export default <namespace|enum>` lands on the
+    /// `default` alias, which owns no member surface; hopping to the
+    /// namespace/enum it names (see
+    /// [`Self::default_export_namespace_qualifier_target`]) is what lets the
+    /// qualifier drive real member lookup — a present member resolves, a missing
+    /// one is `TS2694` — instead of collapsing. Never fails: falls back to the
+    /// alias-resolved id, then to `anchor_src`.
+    pub(crate) fn qualified_type_anchor_symbol(
+        &self,
+        anchor_src: SymbolId,
+        visited_aliases: &mut AliasCycleTracker,
+    ) -> SymbolId {
+        let resolved = self
+            .resolve_alias_symbol(anchor_src, visited_aliases)
+            .unwrap_or(anchor_src);
+        self.default_export_namespace_qualifier_target(resolved)
+            .unwrap_or(resolved)
+    }
+
+    /// Re-anchor a qualified-name left anchor that resolved to a synthetic
+    /// `export default <identifier>` alias onto the *namespace/enum* it names,
+    /// read from that declaration's own file.
+    ///
+    /// A `default` export alias carries no member surface of its own — its
+    /// type-reference type is `ERROR` for a namespace and the bare enum type
+    /// for an enum — so member lookup through it either silently drops the
+    /// qualified name (namespace) or misreads the anchor from the *current*
+    /// file's binder under the raw-`SymbolId`-collision hazard (enum), never
+    /// producing the `TS2694` a missing member deserves. Resolving the alias to
+    /// its target's real symbol, registered against its declaring file so every
+    /// downstream cross-file read lands in the right binder, restores the
+    /// member-lookup path for both.
+    ///
+    /// Returns `None` — leaving the caller on its existing anchor — unless the
+    /// target genuinely has namespace meaning (`SymbolFlags.Namespace`:
+    /// module/namespace/value-module/enum). A **class** target is excluded even
+    /// when merged with a namespace: `tsc` folds a namespace merge into the
+    /// *named* binding only, never the synthetic `default` slot, so
+    /// `export default Decl;` (a class merged with a same-named namespace) still
+    /// reports `TS2702` through the default import — the same rule the
+    /// `TS2702`/`TS2713` gate already encodes for this shape.
+    pub(crate) fn default_export_namespace_qualifier_target(
+        &self,
+        sym_id: SymbolId,
+    ) -> Option<SymbolId> {
+        // `sym_id` is (or resolved to) the synthetic `default` alias, whose
+        // declaration is the bare identifier naming the namespace/enum. Read
+        // that target from its own file and keep it only when it has namespace
+        // meaning — `SymbolFlags.Namespace` (module | namespace | value-module
+        // | enum), plus an enum member for a `export default Enum.Member` slot.
+        let target_id = self.default_export_identifier_target(sym_id)?;
+        let target = self.get_symbol_from_registered_file_target(target_id)?;
+        if target.has_any_flags(symbol_flags::CLASS) {
+            return None;
+        }
+        target
+            .has_any_flags(symbol_flags::NAMESPACE | symbol_flags::ENUM_MEMBER)
+            .then_some(target_id)
+    }
+
     /// Resolve a namespace value member by name.
     ///
     /// This function resolves value members of namespace/enum types.
