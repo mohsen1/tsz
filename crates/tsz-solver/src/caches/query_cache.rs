@@ -1425,9 +1425,30 @@ impl QueryDatabase for QueryCache<'_> {
         // recomputed from scratch on every later query.
         // A union-complexity overflow is not routed through the evaluator's
         // limit epoch, so it conservatively suppresses all writes, as before.
+        //
+        // #16553/#16587: the per-node `tainted` set only catches a node whose
+        // *own* evaluation window moved `limit_epoch` (a depth/recursion bail
+        // local to that node). It does NOT catch a node whose own window was
+        // clean but which was evaluated *after* an unrelated sibling already
+        // set the evaluator-wide `unresolved_def_seen` flag — the epoch simply
+        // never moves again once that fires, so every later node looks clean
+        // by the epoch-delta test alone even though the whole run is no longer
+        // a registration-window-independent function of its key. An
+        // intermediate is the sharper hazard here (sharper than the top-level
+        // entry, which stays gated by the looser `top_level_clean` below to
+        // preserve same-file circular-default recovery, #16587's reverted
+        // regression): it publishes under a key a *different*, unrelated
+        // top-level query in a *different* file can read back with no idea it
+        // was computed mid-registration-window. `is_stable_for_run_wide_cache`
+        // checks the raw `EvaluationRequestStability` directly (mirroring
+        // `closed_eval::commit_closed_eval_writes`'s own run-wide gate)
+        // instead of going through the looser `EvaluationMemoStability`, so it
+        // refuses `UnresolvedDef` here even though `top_level_clean` (below)
+        // deliberately still tolerates it.
         let union_complexity_stable =
             limit_snapshot.union_complexity_stayed_stable_after(self.interner);
         let top_level_clean = evaluation_memo_result.is_stable_for_depth_agnostic_cache();
+        let intermediates_clean = evaluation_memo_result.is_stable_for_run_wide_cache();
         if union_complexity_stable
             && (top_level_clean || crate::limits::limit_result_cache_enabled())
         {
@@ -1439,7 +1460,10 @@ impl QueryDatabase for QueryCache<'_> {
                 }
             }
             for (intermediate_id, intermediate_result) in evaluator.drain_stable_cache() {
-                if intermediate_id != intermediate_result && !intermediate_id.is_intrinsic() {
+                if intermediates_clean
+                    && intermediate_id != intermediate_result
+                    && !intermediate_id.is_intrinsic()
+                {
                     let ikey = request.with_type_id(intermediate_id).cache_key();
                     self.insert_eval_cache_entry_if_absent(ikey, intermediate_result);
                     if let Some(shared) = self.shared {
