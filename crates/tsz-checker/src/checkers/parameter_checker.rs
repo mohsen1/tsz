@@ -703,6 +703,10 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::PARAMETER_CANNOT_HAVE_QUESTION_MARK_AND_INITIALIZER,
                     diagnostic_codes::PARAMETER_CANNOT_HAVE_QUESTION_MARK_AND_INITIALIZER,
                 );
+                // tsc's `checkGrammarParameterList` returns at the first grammar
+                // error found anywhere in the list, so this parameter list draws
+                // no further TS1015/TS1016 diagnostics.
+                break;
             }
 
             // Rest parameter ends the check - rest params don't count as optional/required in this context
@@ -736,6 +740,10 @@ impl<'a> CheckerState<'a> {
                         diagnostic_messages::A_REQUIRED_PARAMETER_CANNOT_FOLLOW_AN_OPTIONAL_PARAMETER,
                         diagnostic_codes::A_REQUIRED_PARAMETER_CANNOT_FOLLOW_AN_OPTIONAL_PARAMETER,
                     );
+                    // tsc reports at most one grammar diagnostic per parameter
+                    // list and stops walking; every later required parameter in
+                    // this same list would otherwise draw its own TS1016.
+                    break;
                 }
             }
         }

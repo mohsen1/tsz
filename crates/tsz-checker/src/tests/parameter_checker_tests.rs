@@ -469,3 +469,139 @@ mod jsdoc_diagnostic_integration_tests {
         );
     }
 }
+
+/// #16644: tsc's `checkGrammarParameterList` reports at most one grammar
+/// diagnostic per parameter list and returns at the first offending
+/// parameter. `(a?: number, b: string, c: string)` has TWO required
+/// parameters following the optional `a` (`b` and `c`), and tsc reports
+/// TS1016 only for `b`. Oracle-pinned (`typescript@7.0.2`) across every
+/// signature-form owner of `check_parameter_ordering`.
+#[cfg(test)]
+mod ts1016_single_diagnostic_per_list_tests {
+    use crate::test_utils::check_source_diagnostics;
+
+    fn ts1016_positions(source: &str) -> Vec<u32> {
+        check_source_diagnostics(source)
+            .iter()
+            .filter(|d| d.code == 1016)
+            .map(|d| d.start)
+            .collect()
+    }
+
+    #[test]
+    fn function_declaration_reports_only_the_first() {
+        let positions = ts1016_positions("function d1(a?: number, b: string, c: string) {}");
+        assert_eq!(positions, vec![24], "expected exactly one TS1016 on `b`");
+    }
+
+    #[test]
+    fn function_expression_reports_only_the_first() {
+        let positions =
+            ts1016_positions("const d2 = function(a?: number, b: string, c: string) {};");
+        assert_eq!(
+            positions.len(),
+            1,
+            "expected exactly one TS1016: {positions:?}"
+        );
+    }
+
+    #[test]
+    fn arrow_function_reports_only_the_first() {
+        let positions = ts1016_positions("const d3 = (a?: number, b: string, c: string) => {};");
+        assert_eq!(
+            positions.len(),
+            1,
+            "expected exactly one TS1016: {positions:?}"
+        );
+    }
+
+    #[test]
+    fn class_method_reports_only_the_first() {
+        let positions = ts1016_positions("class C1 { m(a?: number, b: string, c: string) {} }");
+        assert_eq!(
+            positions.len(),
+            1,
+            "expected exactly one TS1016: {positions:?}"
+        );
+    }
+
+    #[test]
+    fn constructor_reports_only_the_first() {
+        let positions =
+            ts1016_positions("class C2 { constructor(a?: number, b: string, c: string) {} }");
+        assert_eq!(
+            positions.len(),
+            1,
+            "expected exactly one TS1016: {positions:?}"
+        );
+    }
+
+    #[test]
+    fn interface_method_signature_reports_only_the_first() {
+        let positions =
+            ts1016_positions("interface I1 { m(a?: number, b: string, c: string): void; }");
+        assert_eq!(
+            positions.len(),
+            1,
+            "expected exactly one TS1016: {positions:?}"
+        );
+    }
+
+    #[test]
+    fn interface_call_signature_reports_only_the_first() {
+        let positions =
+            ts1016_positions("interface I2 { (a?: number, b: string, c: string): void; }");
+        assert_eq!(
+            positions.len(),
+            1,
+            "expected exactly one TS1016: {positions:?}"
+        );
+    }
+
+    #[test]
+    fn interface_construct_signature_reports_only_the_first() {
+        let positions =
+            ts1016_positions("interface I3 { new (a?: number, b: string, c: string): I3; }");
+        assert_eq!(
+            positions.len(),
+            1,
+            "expected exactly one TS1016: {positions:?}"
+        );
+    }
+
+    #[test]
+    fn object_literal_method_reports_only_the_first() {
+        let positions = ts1016_positions("const o1 = { m(a?: number, b: string, c: string) {} };");
+        assert_eq!(
+            positions.len(),
+            1,
+            "expected exactly one TS1016: {positions:?}"
+        );
+    }
+
+    /// A TS1015 (question mark + initializer) is itself a grammar error that
+    /// ends the walk — tsc never reaches the later required parameter, so no
+    /// TS1016 rides along behind it.
+    #[test]
+    fn question_and_initializer_suppresses_a_later_ts1016() {
+        let diags = check_source_diagnostics("function d4(a?: number = 1, b: string) {}");
+        assert!(
+            diags.iter().any(|d| d.code == 1015),
+            "expected TS1015: {diags:?}"
+        );
+        assert!(
+            !diags.iter().any(|d| d.code == 1016),
+            "TS1015 should suppress the trailing TS1016: {diags:?}"
+        );
+    }
+
+    /// All-required and all-optional lists still take no diagnostic (control).
+    #[test]
+    fn no_ts1016_when_ordering_is_valid() {
+        let diags = check_source_diagnostics("function ok(a: number, b?: string) {}");
+        assert!(
+            !diags.iter().any(|d| d.code == 1016),
+            "valid ordering should not report TS1016: {diags:?}"
+        );
+    }
+}
