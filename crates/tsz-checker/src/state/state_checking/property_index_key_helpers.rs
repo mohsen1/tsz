@@ -21,12 +21,18 @@ impl<'a> CheckerState<'a> {
                 || prop_name.starts_with("__@");
         }
 
-        if key_type == TypeId::STRING {
-            return true;
-        }
-
+        // A symbol-keyed property is never covered by a string/number-index
+        // key: tsc's `getApplicableIndexInfo` only routes a symbol key through
+        // a `[k: symbol]` index (or a declared named member for that exact
+        // symbol). Must run before the `STRING` short-circuit below, which
+        // would otherwise treat every property name — symbol-keyed or not —
+        // as string-index-covered.
         if is_symbol_named {
             return false;
+        }
+
+        if key_type == TypeId::STRING {
+            return true;
         }
 
         let prop_literal =

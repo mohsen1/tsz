@@ -60,6 +60,35 @@ impl<'a> CheckerState<'a> {
             let mut has_deferred_index_value_type = false;
 
             for shape in union_shapes {
+                // A symbol-keyed source property is covered only by the
+                // target's `[k: symbol]` index — never by `[k: string]`/
+                // `[k: number]` (guarded out below via
+                // `string_index_key_accepts_property_name`'s `is_symbol_named`
+                // check). Checked first — and independently of the
+                // `string_index` block below, which `continue`s past the rest
+                // of this shape on a non-match — so a mixed-index target
+                // (`{ [k: string]: A; [k: symbol]: B }`) still validates the
+                // value against `B`.
+                if source_prop.is_symbol_named
+                    && let Some(symbol_index) = shape.symbol_index_signature()
+                {
+                    if self.index_value_type_is_deferred(symbol_index.value_type) {
+                        has_deferred_index_value_type = true;
+                    } else {
+                        applicable_index_value_types.push(symbol_index.value_type);
+                        if self
+                            .index_signature_relation_outcome(
+                                source_prop.type_id,
+                                symbol_index.value_type,
+                            )
+                            .related
+                        {
+                            accepted_by_index = true;
+                            break;
+                        }
+                    }
+                }
+
                 if let Some(string_index) = &shape.string_index {
                     if !self.string_index_key_accepts_property_name(
                         string_index.key_type,

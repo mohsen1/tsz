@@ -837,14 +837,34 @@ impl<'a> CheckerState<'a> {
                     }
 
                     let prop_name = self.ctx.types.resolve_atom(source_prop.name);
-                    let matches_index = self.string_index_key_accepts_property_name(
-                        idx_key_type,
-                        prop_name.as_ref(),
-                        source_prop.is_symbol_named,
-                    );
+                    // A symbol-keyed source property is never covered by the
+                    // `[k: string]` index handled by `idx_key_type` above —
+                    // check the target's dedicated `symbol_index` slot
+                    // instead (`try_union_index_signature_value_check` above
+                    // already reported any value mismatch against it and
+                    // returned early, so reaching here means it is either
+                    // covered-and-compatible or genuinely uncovered).
+                    let symbol_index = source_prop
+                        .is_symbol_named
+                        .then(|| target_shape.symbol_index_signature())
+                        .flatten();
+                    let matches_index = if source_prop.is_symbol_named {
+                        symbol_index.is_some()
+                    } else {
+                        self.string_index_key_accepts_property_name(
+                            idx_key_type,
+                            prop_name.as_ref(),
+                            false,
+                        )
+                    };
                     let target_prop = target_props.iter().find(|p| p.name == source_prop.name);
 
-                    if !matches_index && target_prop.is_none() {
+                    // An uncovered symbol key (no matching named member, no
+                    // `[k: symbol]` index) is not excess — tsc's
+                    // `getApplicableIndexInfo` simply has nothing to check it
+                    // against and leaves it alone (oracle-verified: no TS2353
+                    // for `{ [sym]: v }` against `{ [k: string]: T }` alone).
+                    if !matches_index && target_prop.is_none() && !source_prop.is_symbol_named {
                         let report_idx = self
                             .find_object_literal_property_element(
                                 object_literal_idx,
@@ -857,7 +877,11 @@ impl<'a> CheckerState<'a> {
 
                     let mut nested_types = Vec::new();
                     if matches_index {
-                        nested_types.push(idx_value_type);
+                        nested_types.push(
+                            symbol_index
+                                .map(|sig| sig.value_type)
+                                .unwrap_or(idx_value_type),
+                        );
                     }
                     if let Some(target_prop) = target_prop {
                         // Continue iterating after a mismatch — tsc reports all mismatching

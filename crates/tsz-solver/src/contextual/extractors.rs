@@ -651,9 +651,23 @@ impl<'a> PropertyExtractor<'a> {
         self.db.literal_string_atom(self.name_atom)
     }
 
+    /// True when `name_atom` is the internal `__unique_<symbol_id>` encoding
+    /// used for a `unique symbol`-keyed object-literal member (see
+    /// `property_key_type` above). A symbol-keyed property name must never
+    /// satisfy a `string`/`number` index signature — tsc's
+    /// `getApplicableIndexInfo` only routes it through a `[k: symbol]` index
+    /// (or a declared named member for that exact symbol, handled earlier in
+    /// `visit_object`/`visit_object_with_index`).
+    fn name_is_symbol_keyed(&self) -> bool {
+        self.db
+            .resolve_atom_ref(self.name_atom)
+            .starts_with("__unique_")
+    }
+
     fn index_signature_applies(&self, idx: &IndexSignature) -> bool {
         match idx.key_type {
-            TypeId::ANY | TypeId::STRING => true,
+            TypeId::ANY => true,
+            TypeId::STRING => !self.name_is_symbol_keyed(),
             TypeId::NUMBER => self.is_numeric_name,
             _ => query_relation(
                 self.db,
