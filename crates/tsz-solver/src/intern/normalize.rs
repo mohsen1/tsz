@@ -128,6 +128,68 @@ struct LiteralOccurrence {
 type LiteralOccurrencesByDomain = SmallVec<[(LiteralDomain, SmallVec<[LiteralOccurrence; 4]>); 4]>;
 
 impl TypeInterner {
+    /// tsc's `addTypeToUnion` drops a `null`/`undefined` constituent from every
+    /// union it constructs when `strictNullChecks` is off: the nullable is a
+    /// subtype of every non-nullish type there, so it is never added to the member
+    /// set (`checker.ts`), independent of the requested `UnionReduction` mode. The
+    /// lone survivor is an *all-nullish* union (`null | undefined`, or `null`
+    /// alone) — with no non-nullish sibling to absorb into, tsc keeps the nullish
+    /// members rather than collapsing to `never`.
+    ///
+    /// This is the general union-construction seam #16580 calls for. The checker's
+    /// array-literal element path (#16574) was one witness of a rule that has to
+    /// hold wherever a union is built — annotations, aliases, return types, flow
+    /// joins alike. The interner's union constructors all call it so a member set
+    /// keeps a single canonical identity per program: `strictNullChecks` is a
+    /// whole-program constant, so unlike a per-site reduction mode this never forks
+    /// one member set into two canonical types.
+    ///
+    /// `void` is deliberately **not** dropped: tsc's `TypeFlags.Nullable` is
+    /// `Undefined | Null` only, and `number | void` keeps its `void` in non-strict
+    /// mode exactly as in strict mode. `never` never counts as the non-nullish
+    /// sibling that keeps a nullish member alive — it is the identity of union and
+    /// is stripped anyway — so `null | never` reduces to `null`, not to `never`.
+    #[inline]
+    pub(crate) fn reduce_nonstrict_nullish_members(&self, flat: &mut TypeListBuffer) {
+        if self.strict_null_checks() {
+            return;
+        }
+        let mut has_nullish = false;
+        let mut has_non_nullish = false;
+        for &id in flat.iter() {
+            if id == TypeId::NULL || id == TypeId::UNDEFINED {
+                has_nullish = true;
+            } else if id != TypeId::NEVER {
+                has_non_nullish = true;
+            }
+        }
+        if !has_nullish || !has_non_nullish {
+            return;
+        }
+        flat.retain(|id| *id != TypeId::NULL && *id != TypeId::UNDEFINED);
+    }
+
+    /// Apply [`reduce_nonstrict_nullish_members`](Self::reduce_nonstrict_nullish_members)
+    /// then collapse the buffer to a terminal `TypeId` when it no longer needs a
+    /// `Union` node: `Some(never)`/`Some(only_member)` for the empty/singleton
+    /// cases, `None` when `>= 2` members remain and the caller should intern a
+    /// union. Shared by every buffer-level union constructor so the reduce-then-
+    /// collapse tail lives in one place. In strict mode the reduction is a no-op,
+    /// so this still folds an already-singleton buffer (e.g. after `never`
+    /// stripping) the same way.
+    #[inline]
+    pub(crate) fn reduce_and_collapse_nonstrict(
+        &self,
+        flat: &mut TypeListBuffer,
+    ) -> Option<TypeId> {
+        self.reduce_nonstrict_nullish_members(flat);
+        match flat.len() {
+            0 => Some(TypeId::NEVER),
+            1 => Some(flat[0]),
+            _ => None,
+        }
+    }
+
     pub(crate) fn intersection_has_disjoint_primitives(&self, members: &[TypeId]) -> bool {
         let mut class: Option<PrimitiveClass> = None;
         let mut has_non_primitive = false;

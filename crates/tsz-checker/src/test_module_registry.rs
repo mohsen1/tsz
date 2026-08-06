@@ -631,6 +631,8 @@ mod non_generic_spread_tuple_alias_display_tests;
 mod non_strict_non_null_check_narrows_tests;
 #[path = "tests/non_strict_nullish_return_widening_tests.rs"]
 mod non_strict_nullish_return_widening_tests;
+#[path = "tests/nonstrict_nullish_union_reduction_tests.rs"]
+mod nonstrict_nullish_union_reduction_tests;
 #[path = "tests/nonstrict_nullish_widening_generic_call_tests.rs"]
 mod nonstrict_nullish_widening_generic_call_tests;
 #[path = "tests/nonstrict_nullish_widening_mutable_binding_tests.rs"]
