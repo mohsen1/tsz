@@ -4,6 +4,7 @@ use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::error_reporter::fingerprint_policy::DiagnosticAnchorKind;
 use crate::query_boundaries::common as query_common;
 use crate::query_boundaries::common::ContextualTypeContext;
+use crate::query_boundaries::relation_types::RelationFailure;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -835,8 +836,30 @@ impl<'a> CheckerState<'a> {
                 // property in the target, tsc uses TS2322 instead.
                 let target_has_named_member_for_key = is_computed_property
                     && self.target_has_named_property_for_key(effective_param_type, &prop_name);
+                // A *missing-property* failure keeps its own code even when the
+                // member was written with a computed key. `tsc` runs
+                // `reportUnmatchedProperty` on the property relation itself and
+                // only a failure that is not missing-property falls back to the
+                // computed-property message, so the discriminator is the shape
+                // of the relation failure — never the kind of the key. Measured
+                // against `typescript@7.0.2` across every key kind that reaches
+                // here (late-bound `const` string, numeric `const`, enum member,
+                // `unique symbol`, well-known symbol): all report TS2741/TS2739.
+                // The negative control is a union-typed target member, whose
+                // failure is not missing-property and which keeps TS2418.
+                let computed_failure_is_missing_property = is_computed_property
+                    && target_has_named_member_for_key
+                    && matches!(
+                        self.call_arg_relation_outcome(source_prop_type, target_prop_type)
+                            .failure,
+                        Some(
+                            RelationFailure::MissingProperty { .. }
+                                | RelationFailure::MissingProperties { .. }
+                        )
+                    );
                 if is_computed_property
                     && !(is_computed_literal_key && target_has_named_member_for_key)
+                    && !computed_failure_is_missing_property
                 {
                     // `tsc` widens a computed-property value in `TS2418` only when
                     // the key resolves through an index signature (the contextual
@@ -844,17 +867,30 @@ impl<'a> CheckerState<'a> {
                     // the key matches a declared named member — e.g. a
                     // `unique symbol` property whose declared type is a literal —
                     // the fresh literal type is preserved instead.
-                    let computed_source = if target_has_named_member_for_key {
-                        self.expression_display_type_preferring_literal(
-                            prop_value_idx,
-                            source_prop_type,
-                        )
-                    } else {
-                        let widened = self
-                            .literal_type_from_initializer(prop_value_idx)
-                            .unwrap_or(source_prop_type);
-                        self.widen_literal_type(widened)
-                    };
+                    //
+                    // "Declared type is a literal" is the operative half, and it
+                    // is a property of the *target member type*, not of the key:
+                    // this is ordinary object-literal freshness, where a fresh
+                    // literal widens unless the contextual type is literal-
+                    // bearing. Oracled on `typescript@7.0.2`: a `unique symbol`
+                    // key against `{ [S]: 1 }` keeps `'2'`, and the same key
+                    // against `{ [S]: number }` widens to `'string'` — as does a
+                    // late-bound `const` string key against `{ inner: number }`.
+                    // Keyed on the target so both key kinds get one rule.
+                    let target_member_is_literal_bearing = self
+                        .computed_member_target_is_literal_bearing(target_prop_type_for_diagnostic);
+                    let computed_source =
+                        if target_has_named_member_for_key && target_member_is_literal_bearing {
+                            self.expression_display_type_preferring_literal(
+                                prop_value_idx,
+                                source_prop_type,
+                            )
+                        } else {
+                            let widened = self
+                                .literal_type_from_initializer(prop_value_idx)
+                                .unwrap_or(source_prop_type);
+                            self.widen_literal_type(widened)
+                        };
                     let src_str = self.format_type_for_assignability_message(computed_source);
                     let tgt_str =
                         self.format_type_for_assignability_message(target_prop_type_for_diagnostic);
@@ -1160,6 +1196,23 @@ impl<'a> CheckerState<'a> {
                         |ms| ms.iter().copied().any(has_named),
                     )
             })
+    }
+
+    /// `true` when `target_type` is a literal type, or a union any member of
+    /// which is, so a fresh literal written under it keeps its literal type
+    /// instead of widening. This is the contextual half of ordinary
+    /// object-literal freshness, asked of the computed member's *target* type.
+    fn computed_member_target_is_literal_bearing(&mut self, target_type: TypeId) -> bool {
+        let evaluated = self.evaluate_type_with_env(target_type);
+        let is_literal = |type_id: TypeId| {
+            crate::query_boundaries::common::is_literal_type(self.ctx.types, type_id)
+        };
+        [target_type, evaluated].into_iter().any(|candidate| {
+            crate::query_boundaries::common::union_members(self.ctx.types, candidate).map_or_else(
+                || is_literal(candidate),
+                |ms| ms.iter().copied().any(is_literal),
+            )
+        })
     }
 
     fn type_has_indexed_access_surface(&self, target_type: TypeId, depth: usize) -> bool {
