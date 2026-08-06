@@ -858,9 +858,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                 .check_function_to_callable_subtype(FunctionShapeId(shape_id), t_callable_id)
         } else if (self.target == TypeId::FUNCTION
             || self.checker.is_function_interface_structural(self.target))
-            && !self
-                .checker
-                .function_structural_target_has_unwaived_number_index(self.target)
+            && !self.checker.function_target_has_unwaived_index(self.target)
         {
             // Function expressions are assignable to the global `Function` interface.
             // Avoid expanding and comparing every `Function` interface member.
@@ -870,7 +868,10 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             // the global interface. A function value's apparent type carries no
             // numeric index, so it cannot satisfy such a target; it falls through to
             // the structural object arm below, which rejects it via the boxed
-            // (index-free) `Function` interface. Companion to #16473.
+            // (index-free) `Function` interface. Companion to #16473;
+            // `function_target_has_unwaived_index` (vs the structural-only
+            // predicate) also catches the augmentation on the intrinsic/boxed/`Lazy`
+            // `Function` reference (#16525).
             SubtypeResult::True
         } else if object_shape_id(self.checker.interner, self.target).is_some()
             || object_with_index_shape_id(self.checker.interner, self.target).is_some()
@@ -893,18 +894,28 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             // *direct* assignment to a weak type still triggers TS2559 because the
             // boxed `Function` interface has properties yet none in common with the
             // weak target.
-            let boxed_function = self
-                .checker
-                .resolver
-                .get_boxed_type(IntrinsicKind::Function)
-                .or_else(|| {
-                    self.checker
-                        .interner
-                        .get_boxed_type(IntrinsicKind::Function)
-                });
-            match boxed_function {
-                Some(boxed) => self.checker.check_subtype(boxed, self.target),
-                None => SubtypeResult::False,
+            //
+            // But the boxed `Function` substitution must not satisfy an unwaived
+            // numeric index the target requires: a concrete function value's
+            // apparent type carries none. When the target *is* the (augmented)
+            // global `Function`, `check_subtype(boxed_function, target)` would be
+            // identity-true and mask the deficit, so reject up front (#16525).
+            if self.checker.function_target_has_unwaived_index(self.target) {
+                SubtypeResult::False
+            } else {
+                let boxed_function = self
+                    .checker
+                    .resolver
+                    .get_boxed_type(IntrinsicKind::Function)
+                    .or_else(|| {
+                        self.checker
+                            .interner
+                            .get_boxed_type(IntrinsicKind::Function)
+                    });
+                match boxed_function {
+                    Some(boxed) => self.checker.check_subtype(boxed, self.target),
+                    None => SubtypeResult::False,
+                }
             }
         } else {
             SubtypeResult::False
@@ -928,15 +939,15 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                 .check_callable_to_function_subtype(CallableShapeId(shape_id), t_fn_id)
         } else if (self.target == TypeId::FUNCTION
             || self.checker.is_function_interface_structural(self.target))
-            && !self
-                .checker
-                .function_structural_target_has_unwaived_number_index(self.target)
+            && !self.checker.function_target_has_unwaived_index(self.target)
         {
             // Callable object types are assignable to the global `Function` interface,
             // except when the target also declares a numeric index signature the
             // callable's apparent type does not provide — then defer to the
             // index-aware object arms below (`check_object_to_indexed`), which compare
-            // the callable's own indexes against the target's. Companion to #16473.
+            // the callable's own indexes against the target's. Companion to #16473;
+            // `function_target_has_unwaived_index` also catches the
+            // augmentation on the intrinsic/boxed/`Lazy` `Function` reference (#16525).
             SubtypeResult::True
         } else if let Some(t_shape_id) = object_shape_id(self.checker.interner, self.target) {
             // Callable <: Object — check callable's properties against object's required properties.

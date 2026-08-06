@@ -891,6 +891,9 @@ path = "tests/ts2430_cross_file_generic_heritage_tests.rs"
 name = "ts2430_cross_arena_index_signature_tests"
 path = "tests/ts2430_cross_arena_index_signature_tests.rs"
 [[test]]
+name = "ts2430_global_function_numeric_index_tests"
+path = "tests/ts2430_global_function_numeric_index_tests.rs"
+[[test]]
 name = "readonly_apparent_type_generic_constraint_tests"
 path = "tests/readonly_apparent_type_generic_constraint_tests.rs"
 [[test]]
