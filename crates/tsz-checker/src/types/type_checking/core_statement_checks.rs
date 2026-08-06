@@ -1015,7 +1015,15 @@ impl<'a> CheckerState<'a> {
     /// block anywhere above, so an `await` inside a function nested in a static
     /// block (`class C { static { void (async () => await 1); } }`) keeps
     /// answering from its own function.
-    fn await_container_is_class_static_block(&self, idx: NodeIndex) -> bool {
+    ///
+    /// `pub(crate)` (not private) because `check_variable_declaration_list_with_request`
+    /// in the sibling `core` module shares this exclusivity rule for `await using`
+    /// (see #16598: `is_directly_at_source_file_top_level` treats a class static
+    /// block as an ordinary non-disqualifying container, so an `await using`
+    /// directly inside one walks all the way up to `SOURCE_FILE` and reads as
+    /// top level — the same bug the `AWAIT_EXPRESSION` walk below already closes
+    /// with this exact predicate).
+    pub(crate) fn await_container_is_class_static_block(&self, idx: NodeIndex) -> bool {
         let mut current = idx;
         let mut iterations = 0;
         loop {

@@ -363,3 +363,93 @@ class Harness { static { const build = function () { return await 2; }; void bui
          block; got {codes:?}"
     );
 }
+
+/// `await using`'s TS2853 twin of the TS1375/TS1378 exclusivity above (#16598).
+///
+/// `static_block_direct_await_using_reports_only_ts18054` (above) uses the
+/// parse-health-*aware* helper, which sets `has_syntax_parse_errors` from the
+/// coarse `!parse_diagnostics.is_empty()` signal — true here because TS18054
+/// is itself a parser diagnostic — so that test's passing tells us nothing
+/// about `check_variable_declaration_list_with_request`'s own logic: the
+/// blanket `!self.ctx.has_syntax_parse_errors` guard already skips the whole
+/// TS2852/2853/2854 family before the static-block question is ever asked.
+/// `check_source_codes` never wires that flag at all (see its doc comment's
+/// warning about `is_non_suppressing_parse_error`/`is_parser_grammar_code`),
+/// so it is the one instrument that exercises `is_directly_at_source_file_top_level`
+/// on its own — and before this fix, that predicate did not stop at
+/// `CLASS_STATIC_BLOCK_DECLARATION`, so it walked all the way up to
+/// `SOURCE_FILE` and misread the static block's `await using` as top level,
+/// firing TS2853 (non-module file) alongside TS18054. Confirmed against
+/// `typescript@7.0.2`: only TS18054.
+#[test]
+fn static_block_direct_await_using_reports_no_top_level_diagnostics_in_the_checker_walk_without_suppression()
+ {
+    let codes = crate::test_utils::check_source_codes(
+        r#"
+class Gate { static { await using x = 1; } }
+"#,
+    );
+    assert!(
+        !codes.contains(&2852) && !codes.contains(&2853) && !codes.contains(&2854),
+        "tsc's checkGrammarAwaitOrAwaitUsing puts the whole TS2852/TS2853/TS2854 \
+         family behind the same class-static-block exclusivity as the bare-`await` \
+         family; the checker walk must decline here on its own; got {codes:?}"
+    );
+}
+
+/// Same exclusivity, exercised through a `for`-head `await using` rather than
+/// a plain statement — a different declaration-list constructor
+/// (`parse_for_variable_declaration`), same `check_variable_declaration_list_with_request`
+/// call site once bound.
+#[test]
+fn static_block_for_of_await_using_reports_no_top_level_diagnostics_in_the_checker_walk_without_suppression()
+ {
+    let codes = crate::test_utils::check_source_codes(
+        r#"
+class Gate { static { for (await using x of []) { } } }
+"#,
+    );
+    assert!(
+        !codes.contains(&2852) && !codes.contains(&2853) && !codes.contains(&2854),
+        "got {codes:?}"
+    );
+}
+
+/// The same walk must still speak for an `await using` that is *not* in a
+/// static block, in a file that also has one — the sibling case for TS2853's
+/// family, same shape as `sibling_await_outside_a_static_block_still_reports_in_the_checker_walk`.
+#[test]
+fn sibling_await_using_outside_a_static_block_still_reports_in_the_checker_walk() {
+    let codes = crate::test_utils::check_source_codes(
+        r#"
+class Latch { static { await using seeded = 1; } }
+await using top = 2;
+"#,
+    );
+    assert!(
+        codes.contains(&2853),
+        "the true top-level `await using` outside the static block is unaffected \
+         by the sibling static block, and this file has no imports/exports, so \
+         tsc reports TS2853 for it; got {codes:?}"
+    );
+}
+
+/// Container-walk boundary for `await using`: nested inside a *non-async*
+/// function inside a static block, it is that function's own top-level-eligibility
+/// question, not the static block's — mirroring
+/// `await_in_a_non_async_function_nested_in_a_static_block_still_reports`.
+/// A non-async function body is never top level, so this answers TS2852
+/// (nested `await using` requires an async function), not TS2853/TS2854.
+#[test]
+fn await_using_in_a_non_async_function_nested_in_a_static_block_reports_ts2852() {
+    let codes = crate::test_utils::check_source_codes(
+        r#"
+class Harness { static { const build = function () { await using x = 1; }; void build; } }
+"#,
+    );
+    assert!(
+        codes.contains(&2852),
+        "the nested function expression is its own container, so its `await using` \
+         answers TS2852 rather than deferring to the enclosing static block; got {codes:?}"
+    );
+}

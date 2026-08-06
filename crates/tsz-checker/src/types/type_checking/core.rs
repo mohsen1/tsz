@@ -1604,24 +1604,24 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        // Check if this is a using/await using declaration list.
         // Only check the USING bit (bit 2) — AWAIT_USING (6) = CONST (2) | USING (4),
-        // so checking just the USING bit correctly matches both using and await using
-        // but not const.
+        // so this matches both `using` and `await using` but not plain `const`.
         use tsz_parser::parser::flags::node_flags;
         let flags_u32 = node.flags as u32;
         let is_using = (flags_u32 & node_flags::USING) != 0;
         let is_await_using = node_flags::is_await_using(flags_u32);
 
-        // TS1545/TS1546/TS1547/TS1548: where a `using` / `await using` list is
-        // allowed to stand at all. tsc checks this in `checkGrammarVariableDeclarationList`,
-        // ahead of the `await using` placement family below, and returns at the first
-        // failure — so a placement error replaces those diagnostics rather than
-        // accompanying them.
+        // TS1545-TS1548: where a `using`/`await using` list may stand at all;
+        // a placement error replaces the family below (`checkGrammarVariableDeclarationList`).
         let placement_error =
             is_using && self.check_grammar_using_declaration_placement(list_idx, is_await_using);
 
-        if is_await_using && !placement_error && !self.ctx.has_syntax_parse_errors {
+        // A static block answers only TS18054, never TS2852/2853/2854 (#16598).
+        if is_await_using
+            && !placement_error
+            && !self.ctx.has_syntax_parse_errors
+            && !self.await_container_is_class_static_block(list_idx)
+        {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
             // Same top-level-await-eligibility predicate as `check_await_expression`
