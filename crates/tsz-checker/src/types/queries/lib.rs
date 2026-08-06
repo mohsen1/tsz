@@ -860,8 +860,71 @@ impl<'a> CheckerState<'a> {
         let resolved = self
             .resolve_alias_symbol(anchor_src, visited_aliases)
             .unwrap_or(anchor_src);
+        // `resolve_alias_symbol` stops at the first *re-export hub* alias it
+        // reaches: `resolve_cross_file_export_from_file` returns the hub's own
+        // `export { X } from "./m"` / `export { default } from "./m"` specifier
+        // (registered to the hub's file) and the alias resolver returns it
+        // without recursing, because that specifier carries no member surface of
+        // its own. `tsc` resolves the qualified-name LHS with *namespace*
+        // meaning through the entire chain, so keep following the re-export
+        // edges to the terminal declaration before the `default`-slot hop — a
+        // present member then resolves and a missing one is `TS2694`, matching a
+        // direct import, instead of collapsing to the `TS2702` "used as a
+        // namespace" gate. A non-hub anchor (already terminal, or a namespace
+        // import) is left untouched.
+        let resolved = self
+            .follow_reexport_hub_for_type_anchor(resolved)
+            .unwrap_or(resolved);
         self.default_export_namespace_qualifier_target(resolved)
             .unwrap_or(resolved)
+    }
+
+    /// Follow a re-export **hub** alias to the terminal declaration it names.
+    ///
+    /// When the qualified-name anchor resolves to an intermediate
+    /// `export { X } from "./m"` (or `export { default } from "./m"`) specifier
+    /// — an `ALIAS` that still carries an `import_module` because it re-exports
+    /// across a further module boundary — this walks the re-export chain (via
+    /// [`Self::resolve_reexport_chain_to_declaration`], reading each hop from the
+    /// file that owns it so per-file raw `SymbolId`s never collide, #16465) to
+    /// the original namespace/enum/class/type declaration and registers it
+    /// against its declaring file for the caller's owner-relative reads.
+    ///
+    /// Returns `None` — leaving the caller on its existing anchor — when the
+    /// symbol is not a named/default re-export alias (a concrete declaration, a
+    /// `default`-slot alias with no `import_module`, or a `*` namespace import),
+    /// or when the chain does not advance. The terminal's namespace meaning is
+    /// judged by the same gate the direct-import path uses, so a re-exported
+    /// class still declines to `TS2702`.
+    fn follow_reexport_hub_for_type_anchor(&self, sym_id: SymbolId) -> Option<SymbolId> {
+        // Read the alias from its owning binder: a cross-file-registered raw id
+        // read against the current file's binder can hit an unrelated local at
+        // the same numeric id (#16465).
+        let owner_file = self.ctx.resolve_symbol_file_index(sym_id)?;
+        let owner_binder = self.ctx.get_binder_for_file(owner_file)?;
+        let symbol = owner_binder.get_symbol(sym_id)?;
+        if !symbol.has_any_flags(symbol_flags::ALIAS) {
+            return None;
+        }
+        let module_specifier = symbol.import_module()?;
+        // Only a concretely-named re-export (`export { X } from` /
+        // `export { default } from`) is a hub to follow. A `*` namespace import
+        // is its own anchor, and a `default`-slot alias with no `import_module`
+        // is handled by the `default`→namespace hop, not here.
+        let export_name = symbol.import_name()?;
+        if export_name == "*" {
+            return None;
+        }
+        let target_file = self
+            .ctx
+            .resolve_import_target_from_file(owner_file, module_specifier)?;
+        // The chain starts one module past the hub and is cycle-guarded, so it
+        // can never resolve back to this hub alias itself.
+        let (terminal, terminal_file) =
+            self.resolve_reexport_chain_to_declaration(target_file, export_name)?;
+        self.ctx
+            .register_symbol_file_target(terminal, terminal_file);
+        Some(terminal)
     }
 
     /// Re-anchor a qualified-name left anchor that resolved to a synthetic

@@ -584,39 +584,94 @@ fn default_exported_class_member_access_stays_ts2702_not_ts2694() {
     );
 }
 
-/// Uncovered-and-pinned: a member reached *through a re-export hub*
-/// (`export { default } from './dep'`) is not resolved — tsc follows the hub to
-/// the original namespace and reports `TS2694 Namespace 'm2' has no exported
-/// member 'Missing'`, tsz reports `TS2702` (the qualifier resolves to a type
-/// with no namespace meaning). This is not specific to `default` — a named
-/// re-export hub (`export { Foo } from './dep'`) behaves identically — so it is
-/// a pre-existing gap in following re-export chains for a *type-position*
-/// qualified-name anchor, outside #16503's default-import member routing (the
-/// default→namespace hop only fires when the `default` slot's declaration is a
-/// bare identifier, which a re-export specifier is not). Pinned as today's
-/// behaviour so a future re-export-chain fix is caught by the change.
+// ---------------------------------------------------------------------------
+// #16503 (re-export-hub residual): a namespace/enum member reached *through a
+// re-export hub* (`export { default } from './dep'` or `export { Foo } from
+// './dep'`, chained) now resolves like `tsc`. The qualified-name type anchor
+// follows the re-export chain to the terminal declaration — a hub specifier is
+// itself an `ALIAS` with an `import_module`, so alias resolution used to stop
+// on it (it owns no member surface) and the qualifier fell to the `TS2702`
+// "used as a namespace" gate. Following the chain restores the member-lookup
+// path: a present member resolves and a missing one is `TS2694`.
+//
+// Oracled against `tsc` 6.0.2 (`--noEmit --strict --pretty false --target
+// es2022 --lib es2022`); `tsc` follows both the default and the named hub:
+//   main.ts(2,12): error TS2694: Namespace 'm' has no exported member 'Missing'.
+//   emain.ts(2,12): error TS2694: Namespace 'Color' has no exported member 'Nope'.
+// The message names the *target* namespace (bare, as everywhere else in this
+// suite — tsz does not reproduce `tsc`'s `getFullyQualifiedName` module prefix,
+// a separately-tracked display divergence, not this fix's concern).
+// ---------------------------------------------------------------------------
+
+/// A `export { default } from './dep'` hub over `export default <namespace>`:
+/// the present member resolves and the missing one is `TS2694` naming the
+/// target namespace — no longer the `TS2702` qualifier error.
 #[test]
-fn reexport_hub_member_is_currently_ts2702_not_ts2694() {
-    let default_hub = multi_file_codes_global_index(
+fn reexport_default_hub_namespace_member_resolves_and_missing_is_ts2694() {
+    const DEP: &str = "namespace m { export interface foo { a: number } }\nexport default m;\n";
+    const HUB: &str = "export { default } from './dep';\n";
+
+    let present = multi_file_diags_global_index(
         &[
-            (
-                "dep.ts",
-                "namespace m { export interface foo { a: number } }\nexport default m;\n",
-            ),
-            ("hub.ts", "export { default } from './dep';\n"),
+            ("dep.ts", DEP),
+            ("hub.ts", HUB),
+            ("main.ts", "import D from './hub';\nvar ok: D.foo;\n"),
+        ],
+        "main.ts",
+    );
+    assert_eq!(
+        present,
+        Vec::<(u32, String)>::new(),
+        "a present member resolves through the default hub"
+    );
+
+    let missing = multi_file_diags_global_index(
+        &[
+            ("dep.ts", DEP),
+            ("hub.ts", HUB),
             ("main.ts", "import D from './hub';\nvar bad: D.Missing;\n"),
         ],
         "main.ts",
     );
-    assert_eq!(default_hub, vec![2702], "re-export default hub is TS2702");
+    assert_eq!(
+        missing,
+        vec![(
+            2694,
+            "Namespace 'm' has no exported member 'Missing'.".to_string()
+        )],
+        "a missing member through the default hub is TS2694 naming the target namespace"
+    );
+}
 
-    let named_hub = multi_file_codes_global_index(
+/// The named-hub twin (`export { Foo } from './dep'`): `tsc` follows it the same
+/// way, proving the fix is a general re-export-chain resolution, not a
+/// default-export special case.
+#[test]
+fn reexport_named_hub_namespace_member_resolves_and_missing_is_ts2694() {
+    const DEP: &str = "export namespace Foo { export interface bar { a: number } }\n";
+    const HUB: &str = "export { Foo } from './dep';\n";
+
+    let present = multi_file_diags_global_index(
         &[
+            ("dep.ts", DEP),
+            ("hub.ts", HUB),
             (
-                "dep.ts",
-                "export namespace Foo { export interface bar { a: number } }\n",
+                "main.ts",
+                "import { Foo } from './hub';\nvar ok: Foo.bar;\n",
             ),
-            ("hub.ts", "export { Foo } from './dep';\n"),
+        ],
+        "main.ts",
+    );
+    assert_eq!(
+        present,
+        Vec::<(u32, String)>::new(),
+        "a present member resolves through the named hub"
+    );
+
+    let missing = multi_file_diags_global_index(
+        &[
+            ("dep.ts", DEP),
+            ("hub.ts", HUB),
             (
                 "main.ts",
                 "import { Foo } from './hub';\nvar bad: Foo.Missing;\n",
@@ -625,8 +680,127 @@ fn reexport_hub_member_is_currently_ts2702_not_ts2694() {
         "main.ts",
     );
     assert_eq!(
-        named_hub,
+        missing,
+        vec![(
+            2694,
+            "Namespace 'Foo' has no exported member 'Missing'.".to_string()
+        )],
+        "a missing member through the named hub is TS2694"
+    );
+}
+
+/// The enum twin of the default hub: `enum` carries `SymbolFlags.Namespace`, so
+/// `C.Red` resolves and `C.Nope` is `TS2694` naming the enum.
+#[test]
+fn reexport_default_hub_enum_member_resolves_and_missing_is_ts2694() {
+    const DEP: &str = "enum Color { Red, Green }\nexport default Color;\n";
+    const HUB: &str = "export { default } from './edep';\n";
+
+    let present = multi_file_diags_global_index(
+        &[
+            ("edep.ts", DEP),
+            ("ehub.ts", HUB),
+            ("main.ts", "import C from './ehub';\nvar ok: C.Red;\n"),
+        ],
+        "main.ts",
+    );
+    assert_eq!(
+        present,
+        Vec::<(u32, String)>::new(),
+        "a present enum member resolves through the default hub"
+    );
+
+    let missing = multi_file_diags_global_index(
+        &[
+            ("edep.ts", DEP),
+            ("ehub.ts", HUB),
+            ("main.ts", "import C from './ehub';\nvar bad: C.Nope;\n"),
+        ],
+        "main.ts",
+    );
+    assert_eq!(
+        missing,
+        vec![(
+            2694,
+            "Namespace 'Color' has no exported member 'Nope'.".to_string()
+        )],
+        "a missing enum member through the default hub is TS2694 naming the enum"
+    );
+}
+
+/// A *chained* hub (`hub2` re-exports the `default` of `hub`, which re-exports
+/// the `default` of `dep`): each hop is an `import_module` re-export alias, so
+/// the walk must compose across all of them to the terminal namespace.
+#[test]
+fn reexport_chained_default_hub_missing_member_is_ts2694() {
+    let missing = multi_file_diags_global_index(
+        &[
+            (
+                "dep.ts",
+                "namespace m { export interface foo { a: number } }\nexport default m;\n",
+            ),
+            ("hub.ts", "export { default } from './dep';\n"),
+            ("hub2.ts", "export { default } from './hub';\n"),
+            ("main.ts", "import D from './hub2';\nvar bad: D.Missing;\n"),
+        ],
+        "main.ts",
+    );
+    assert_eq!(
+        missing,
+        vec![(
+            2694,
+            "Namespace 'm' has no exported member 'Missing'.".to_string()
+        )],
+        "a chained default hub composes to the terminal namespace"
+    );
+}
+
+/// Anti-hardcoding: the chain-follow keys on the re-export edge's flags, not on
+/// any spelling. Renaming the namespace binder, the hub's export, and the local
+/// import leaves the behaviour and the target-relative message unchanged.
+#[test]
+fn reexport_hub_rule_is_binder_name_independent() {
+    let missing = multi_file_diags_global_index(
+        &[
+            (
+                "dep.ts",
+                "export namespace Payload { export interface bar { a: number } }\n",
+            ),
+            ("hub.ts", "export { Payload } from './dep';\n"),
+            (
+                "main.ts",
+                "import { Payload as Renamed } from './hub';\nvar bad: Renamed.Missing;\n",
+            ),
+        ],
+        "main.ts",
+    );
+    assert_eq!(
+        missing,
+        vec![(
+            2694,
+            "Namespace 'Payload' has no exported member 'Missing'.".to_string()
+        )],
+        "the message names the renamed target namespace, not the local alias"
+    );
+}
+
+/// Negative control: a default-exported **class** reached through a hub has no
+/// namespace meaning, so `D.X` stays `TS2702` and never becomes a member
+/// lookup — the terminal is judged by the same namespace-meaning gate the
+/// direct default-import path uses. Oracle-verified: `tsc` reports `TS2702`.
+#[test]
+fn reexport_default_hub_class_stays_ts2702_not_ts2694() {
+    let codes = multi_file_codes_global_index(
+        &[
+            ("dep.ts", "export default class D { m: number = 0 }\n"),
+            ("hub.ts", "export { default } from './dep';\n"),
+            ("main.ts", "import D from './hub';\nvar a: D.X;\n"),
+        ],
+        "main.ts",
+    );
+    assert_eq!(
+        codes,
         vec![2702],
-        "a named re-export hub behaves the same — the gap is not default-specific"
+        "a class reached through a default hub stays TS2702, never TS2694"
     );
 }
