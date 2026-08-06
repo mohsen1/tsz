@@ -43,6 +43,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if result.is_true() || Self::is_weak_type_shape(target_shape) {
             return result;
         }
+        // The boxed `Function` surface must not satisfy an unwaived numeric index
+        // the target requires — a concrete function value's apparent type carries
+        // none. When the target *is* the (augmented) global `Function`,
+        // `check_subtype(boxed_function, target)` would be identity-true and mask
+        // that deficit, so keep the existing rejection (#16525).
+        if self.function_target_has_unwaived_index(target) {
+            return result;
+        }
         let Some(boxed_function) = self
             .resolver
             .get_boxed_type(IntrinsicKind::Function)

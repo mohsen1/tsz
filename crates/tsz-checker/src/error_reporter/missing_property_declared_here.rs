@@ -219,18 +219,40 @@ impl<'a> CheckerState<'a> {
             return Some((start, length, Self::arena_file_name(arena, anchor_idx)));
         }
         if node.kind == syntax_kind_ext::TYPE_REFERENCE {
-            let name_idx = self.ctx.arena.get_type_ref(node)?.type_name;
-            let owner_symbol = self.type_position_symbol(name_idx)?;
-            if let Some(anchor) =
-                self.member_declaration_anchor_following_aliases(owner_symbol, property)
-            {
-                return Some(anchor);
+            let type_ref = self.ctx.arena.get_type_ref(node)?;
+            let name_idx = type_ref.type_name;
+            let type_arguments = type_ref
+                .type_arguments
+                .as_ref()
+                .map(|list| list.nodes.clone());
+            if let Some(owner_symbol) = self.type_position_symbol(name_idx) {
+                if let Some(anchor) =
+                    self.member_declaration_anchor_following_aliases(owner_symbol, property)
+                {
+                    return Some(anchor);
+                }
+                // An alias chain (`type Indirect = Zed`) declares no member list of
+                // its own, so the walk above finds nothing to anchor in. Continue
+                // through the alias body, which is itself annotation syntax.
+                if let Some(body_idx) = self.local_type_alias_body(owner_symbol)
+                    && let Some(anchor) =
+                        self.annotation_property_anchor(body_idx, property, depth + 1)
+                {
+                    return Some(anchor);
+                }
             }
-            // An alias chain (`type Indirect = Zed`) declares no member list of
-            // its own, so the walk above finds nothing to anchor in. Continue
-            // through the alias body, which is itself annotation syntax.
-            let body_idx = self.local_type_alias_body(owner_symbol)?;
-            return self.annotation_property_anchor(body_idx, property, depth + 1);
+            // The reference itself declares no `property`, so look in what it is
+            // parameterized by: `Array<T>` and `ReadonlyArray<T>` hold the written
+            // element shape in a type argument exactly as `T[]` holds it in its
+            // element type, and `tsc` anchors there identically.
+            //
+            // This is deliberately not keyed to the global array types. The
+            // question the walk answers is "where is `property` written?", and a
+            // type argument is the only place left to look once the reference's
+            // own members and alias body have declined — so any generic wrapper
+            // is served by the same rule, and a user-declared `Array` needs no
+            // special case. See the anti-hardcoding gate in `.claude/CLAUDE.md`.
+            return self.unique_type_argument_anchor(type_arguments?.as_slice(), property, depth);
         }
         if node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE {
             let data = self.ctx.arena.get_indexed_access_type(node)?;
@@ -250,7 +272,44 @@ impl<'a> CheckerState<'a> {
             let element_idx = self.ctx.arena.get_array_type(node)?.element_type;
             return self.annotation_property_anchor(element_idx, property, depth + 1);
         }
+        if node.kind == syntax_kind_ext::TYPE_OPERATOR {
+            let data = self.ctx.arena.get_type_operator(node)?;
+            // `readonly T[]` describes the same element shape as `T[]`, so the
+            // operator contributes no path segment and the walk descends into
+            // its operand. `keyof`/`unique` are *not* transparent this way —
+            // `keyof T` denotes T's keys, not T — so they decline here.
+            if data.operator != tsz_scanner::SyntaxKind::ReadonlyKeyword as u16 {
+                return None;
+            }
+            let operand_idx = data.type_node;
+            return self.annotation_property_anchor(operand_idx, property, depth + 1);
+        }
         None
+    }
+
+    /// The anchor for `property` in exactly one of `type_arguments`.
+    ///
+    /// Declines when two arguments both declare `property`: the walk has no
+    /// basis to pick between them, and pointing at the wrong one is worse than
+    /// omitting the pointer, which is what every other declining path here does.
+    fn unique_type_argument_anchor(
+        &mut self,
+        type_arguments: &[NodeIndex],
+        property: &str,
+        depth: u32,
+    ) -> Option<(u32, u32, Option<String>)> {
+        let mut found: Option<(u32, u32, Option<String>)> = None;
+        for &argument_idx in type_arguments {
+            let Some(anchor) = self.annotation_property_anchor(argument_idx, property, depth + 1)
+            else {
+                continue;
+            };
+            if found.is_some() {
+                return None;
+            }
+            found = Some(anchor);
+        }
+        found
     }
 
     /// The written type node of the member named `key` on the type annotation
