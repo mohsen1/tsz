@@ -1251,7 +1251,12 @@ impl<'a> CheckerState<'a> {
             // Method shorthand: { foo() {} }
             else if let Some(method) = self.ctx.arena.get_method_decl(elem_node) {
                 // TS1015/TS1016: parameter grammar runs for object-literal
-                // methods like any other function-like signature.
+                // methods like any other function-like signature. TS2300 for
+                // duplicate parameter names runs here too: an object-literal
+                // method is a `METHOD_DECLARATION`, so `get_type_of_function`'s
+                // shared signature-grammar block skips it (that block is gated
+                // to the non-method function-expression forms).
+                self.check_duplicate_parameters(&method.parameters, method.body.is_some());
                 self.check_parameter_ordering(&method.parameters, Some(elem_idx));
                 // Always type-check computed property name expressions for methods,
                 // even when the identifier can be resolved as a literal name.
