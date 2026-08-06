@@ -227,6 +227,8 @@ mod cross_module_class_self_member_tests;
 mod cross_module_generic_interface_heritage_tests;
 #[path = "tests/declaration_extract_key_path_tests.rs"]
 mod declaration_extract_key_path_tests;
+#[path = "tests/declare_export_default_expression_ambient_ts2714_tests.rs"]
+mod declare_export_default_expression_ambient_ts2714_tests;
 #[path = "tests/declare_export_default_modifier_order_ts1319_dedup_tests.rs"]
 mod declare_export_default_modifier_order_ts1319_dedup_tests;
 #[path = "tests/declare_export_equals_ambient_ts2714_tests.rs"]
@@ -345,6 +347,8 @@ mod generator_yield_invalid_thenable_tests;
 mod generator_yield_literal_widening_tests;
 #[path = "tests/generator_yield_self_similar_nesting_tests.rs"]
 mod generator_yield_self_similar_nesting_tests;
+#[path = "tests/generator_yield_star_next_type_tests.rs"]
+mod generator_yield_star_next_type_tests;
 #[path = "tests/generator_yieldstar_symbol_iterator_contribution_tests.rs"]
 mod generator_yieldstar_symbol_iterator_contribution_tests;
 #[path = "tests/generator_yieldstar_union_delegate_contribution_tests.rs"]
@@ -463,6 +467,8 @@ mod interface_extends_generic_override_variance_tests;
 mod interface_heritage_alias_arg_substitution_tests;
 #[path = "tests/interface_heritage_index_relation_routing_arch_tests.rs"]
 mod interface_heritage_index_relation_routing_arch_tests;
+#[path = "tests/interface_heritage_merge_depth_tests.rs"]
+mod interface_heritage_merge_depth_tests;
 #[path = "tests/interface_heritage_property_index_relation_routing_arch_tests.rs"]
 mod interface_heritage_property_index_relation_routing_arch_tests;
 #[path = "tests/interface_index_conflict_relation_routing_arch_tests.rs"]
@@ -631,12 +637,16 @@ mod non_generic_spread_tuple_alias_display_tests;
 mod non_strict_non_null_check_narrows_tests;
 #[path = "tests/non_strict_nullish_return_widening_tests.rs"]
 mod non_strict_nullish_return_widening_tests;
+#[path = "tests/nonstrict_nullish_union_reduction_tests.rs"]
+mod nonstrict_nullish_union_reduction_tests;
 #[path = "tests/nonstrict_nullish_widening_generic_call_tests.rs"]
 mod nonstrict_nullish_widening_generic_call_tests;
 #[path = "tests/nonstrict_nullish_widening_mutable_binding_tests.rs"]
 mod nonstrict_nullish_widening_mutable_binding_tests;
 #[path = "tests/nonstrict_nullish_widening_nested_leaf_tests.rs"]
 mod nonstrict_nullish_widening_nested_leaf_tests;
+#[path = "tests/nonstrict_union_nullish_scalar_reduction_tests.rs"]
+mod nonstrict_union_nullish_scalar_reduction_tests;
 #[path = "tests/nonunique_symbol_property_access_tests.rs"]
 mod nonunique_symbol_property_access_tests;
 #[path = "tests/noUIA_any_index_emits_ts2322_tests.rs"]
@@ -959,6 +969,8 @@ mod unique_symbol_assignment_ts2322_tests;
 mod unique_symbol_member_lookup_family_tests;
 #[path = "tests/unresolved_def_eval_cache_backstop_tests.rs"]
 mod unresolved_def_eval_cache_backstop_tests;
+#[path = "tests/using_declaration_implicit_any_tests.rs"]
+mod using_declaration_implicit_any_tests;
 #[path = "tests/variadic_tuple_alias_display_tests.rs"]
 mod variadic_tuple_alias_display_tests;
 #[path = "tests/variadic_tuple_constraint_literal_preservation_tests.rs"]

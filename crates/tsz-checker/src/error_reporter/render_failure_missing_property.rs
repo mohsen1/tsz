@@ -116,8 +116,7 @@ impl<'a> CheckerState<'a> {
             let target_is_array_or_tuple =
                 crate::query_boundaries::common::array_element_type(self.ctx.types, target)
                     .is_some()
-                    || crate::query_boundaries::common::tuple_list_id(self.ctx.types, target)
-                        .is_some();
+                    || crate::query_boundaries::common::is_tuple_type(self.ctx.types, target);
             let target_has_index = !target_is_array_or_tuple
                 && crate::query_boundaries::index_signature::has_string_or_number_index_signature(
                     self.ctx.types,
@@ -173,7 +172,7 @@ impl<'a> CheckerState<'a> {
         let target_evaluated = self.evaluate_type_with_env(target);
         let target_is_array_or_tuple_for_idx =
             crate::query_boundaries::common::array_element_type(self.ctx.types, target).is_some()
-                || crate::query_boundaries::common::tuple_list_id(self.ctx.types, target).is_some();
+                || crate::query_boundaries::common::is_tuple_type(self.ctx.types, target);
         let source_has_index = [source, source_evaluated].iter().any(|t| {
             crate::query_boundaries::index_signature::has_string_or_number_index_signature(
                 self.ctx.types,

@@ -122,7 +122,12 @@ function* f(): Generator<"outer", number, unknown> {
 }
 
 #[test]
-fn yield_star_allows_unknown_containing_next_type() {
+fn yield_star_unknown_containing_next_type_reports_ts2766() {
+    // A container whose declared `TNext` is `unknown` forwards `unknown` into
+    // the delegate's `next()`. `unknown` is assignable only to `unknown`/`any`,
+    // so delegating to a `Generator<..., string>` — whose `next()` expects
+    // `string` — is unsound, and `tsc` reports TS2766. (This previously asserted
+    // the inverse, encoding the #16591 false-negative.)
     let source = r#"
 declare const gen: Generator<string, void, string>;
 function* f(): Generator<string, void, unknown> {
@@ -131,8 +136,8 @@ function* f(): Generator<string, void, unknown> {
 "#;
     let diags = codes_with_strict(source);
     assert!(
-        !diags.contains(&2766),
-        "yield* should not emit TS2766 when the containing generator TNext is unknown, got: {diags:?}"
+        diags.contains(&2766),
+        "yield* must emit TS2766 when the container always sends `unknown` into a `string` next(), got: {diags:?}"
     );
 }
 

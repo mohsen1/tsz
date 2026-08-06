@@ -399,10 +399,17 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 // iterator whose next() expects type X, the containing generator
                 // must send a compatible type.
                 if let Some(expected_generator) = self.get_expected_generator_type(idx) {
+                    // When the container's declared return type carries no
+                    // resolvable `TNext` (e.g. an `Iterable<T>` annotation, which
+                    // has no next type at all), `tsc` treats the send type as
+                    // `any` (`signatureNextType = iterationTypes?.nextType ?? anyType`)
+                    // and reports nothing. Defaulting to `undefined` instead would
+                    // manufacture a false-positive TS2766 against any concrete
+                    // delegate `next()` parameter.
                     let containing_next = self
                         .checker
                         .get_generator_next_type_argument(expected_generator)
-                        .unwrap_or(TypeId::UNDEFINED);
+                        .unwrap_or(TypeId::ANY);
                     self.checker.check_iterator_next_type_assignability(
                         expression_type,
                         containing_next,
@@ -410,6 +417,27 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         crate::iterable_checker::IterationUseKind::YieldStar,
                     );
                 }
+
+                // The delegate's own `TNext`, contributed to an *unannotated*
+                // enclosing generator's `TNext` slot (`tsc`:
+                // `checkAndAggregateYieldOperandTypes` collects
+                // `getIterationTypeOfIterable(IterationTypeKind.Next, ...)` for
+                // every `yield*` and intersects them).
+                //
+                // Deliberately the declared-type-argument query rather than
+                // `get_iterator_info(...).next_type`: that structural query
+                // reports `undefined` for the `Array`/`Tuple` fast paths, but
+                // the lib's real `ArrayIterator<T>` declares `TNext = unknown`,
+                // so routing arrays through it would replace today's correct
+                // `unknown` with a wrong `undefined`. The declared-argument
+                // query answers `None` for a delegate that has no `TNext` of
+                // its own (arrays, tuples, `string`, `Set<T>`), which leaves
+                // the slot at the same `unknown` default `tsc` lands on for
+                // those shapes — so this only ever speaks where the delegate
+                // actually declares a `TNext`.
+                let yield_star_next_type = self
+                    .checker
+                    .get_generator_next_type_argument(expression_type);
 
                 if is_async_generator {
                     if self
@@ -523,16 +551,18 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     // query rather than defaulting the aggregate to `any`.
                     match async_info {
                         Some(ref i) if i.yield_type != TypeId::ANY => {
-                            self.checker
-                                .ctx
-                                .push_generator_yield_contribution(i.yield_type, false);
+                            self.checker.ctx.push_generator_yield_star_contribution(
+                                i.yield_type,
+                                yield_star_next_type,
+                            );
                         }
                         resolved_via_solver => {
                             let resolved = self.checker.for_of_element_type(expression_type, true);
                             if resolved != TypeId::ANY {
-                                self.checker
-                                    .ctx
-                                    .push_generator_yield_contribution(resolved, false);
+                                self.checker.ctx.push_generator_yield_star_contribution(
+                                    resolved,
+                                    yield_star_next_type,
+                                );
                             } else if resolved_via_solver.is_some() {
                                 // The solver resolved the delegate but only to `ANY`, and
                                 // the env-aware chain could not refine it (e.g. `yield*` of
@@ -540,9 +570,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 // behaviour of contributing `ANY` and suppressing the
                                 // function-level TS7055. The bare-`None` case still
                                 // contributes nothing and sets no flag, as before.
-                                self.checker
-                                    .ctx
-                                    .push_generator_yield_contribution(TypeId::ANY, false);
+                                self.checker.ctx.push_generator_yield_star_contribution(
+                                    TypeId::ANY,
+                                    yield_star_next_type,
+                                );
                                 self.checker.ctx.generator_had_ts7057 = true;
                             }
                         }
@@ -607,7 +638,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     };
                     self.checker
                         .ctx
-                        .push_generator_yield_contribution(yield_type, false);
+                        .push_generator_yield_star_contribution(yield_type, yield_star_next_type);
                     // When yield* delegates to an iterable with `any` element type
                     // (e.g. `any[]`), suppress TS7055 at the function level.
                     // tsc considers the `any` yield type to be "explained" by

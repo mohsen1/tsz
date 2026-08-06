@@ -164,6 +164,59 @@ fn property_cache_keeps_resolved_object_property_result() {
     );
 }
 
+/// #16553: a clean-looking sibling `IndexAccess` node evaluated within the
+/// same top-level walk as an unrelated `IndexAccess` into an unresolved
+/// `Lazy` must not publish into the cross-file `eval_cache` either.
+///
+/// Two independent write paths had to agree for this to hold, and fixing
+/// only one is silently insufficient (confirmed the hard way — an earlier
+/// version of this fix passed every existing test while still leaking this
+/// exact entry):
+///  - `memo_insert`'s per-node epoch check only proves *this node's own*
+///    evaluation window saw no new limit event, not that the evaluator-wide
+///    `unresolved_def_seen` flag stayed clear (an unrelated sibling visited
+///    earlier in the same walk can have already set it), so its persistent
+///    write-through needs its own `!self.is_unresolved_def_seen()` guard.
+///  - `evaluate_type_with_options`'s end-of-walk intermediate drain
+///    unconditionally re-publishes *everything* `memo_insert` ever put in
+///    the per-evaluator local cache (filtered only by the per-node `tainted`
+///    set, which the first guard does not populate for a clean-window node)
+///    — so even with the first guard in place, this drain alone republishes
+///    the same entry a second, ungated way. It needs the stricter
+///    `is_stable_for_run_wide_cache` check too.
+///
+/// Uses `union_from_sorted_vec` (which trusts caller-provided order) rather
+/// than `union`, which canonically re-sorts members by `TypeId` — a `Lazy`
+/// member's `TypeId` sorted after a plain `Object` member's in practice,
+/// which made an earlier `union`-based version of this test visit the clean
+/// sibling *first* and never exercise the intended contamination order.
+/// `Intersection`'s concrete-index path was also tried and rejected: it
+/// returns as soon as it hits the first unresolved member, so the sibling is
+/// never reached at all regardless of this fix.
+#[test]
+fn eval_cache_skips_sibling_of_unresolved_lazy_index_access_in_same_union() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let tag_atom = interner.intern_string("tag");
+    let tag_type = interner.literal_string("tag");
+    let unresolved = interner.lazy(crate::def::DefId(9003));
+    let resolved_obj = interner.object(vec![PropertyInfo::new(tag_atom, TypeId::NUMBER)]);
+    let union = interner.union_from_sorted_vec(vec![unresolved, resolved_obj]);
+    let union_index_access = interner.index_access(union, tag_type);
+    let sibling_index_access = interner.index_access(resolved_obj, tag_type);
+
+    db.evaluate_type(union_index_access);
+
+    let sibling_key =
+        crate::evaluation::request::EvaluationCacheKey::new(sibling_index_access, false, false);
+    assert!(
+        db.eval_cache.borrow().get(&sibling_key).is_none(),
+        "a clean sibling IndexAccess evaluated after an unrelated union \
+         member tainted this evaluator's unresolved_def_seen flag must not \
+         publish into the cross-file eval_cache"
+    );
+}
+
 /// Test cache poisoning prevention.
 ///
 /// CRITICAL: This test ensures that separate caches don't interfere.

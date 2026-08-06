@@ -9,7 +9,7 @@ mod literal_context;
 use self::generator_declaration_yield::GeneratorDeclarationYieldCtx;
 use super::function_type_helpers::{
     ExpressionBodyReturnCheckCtx, FunctionBodyReturnTypeCtx, FunctionFinalReturnTypeCtx,
-    GeneratorBodyReturnCheckCtx,
+    GeneratorBodyReturnCheckCtx, InferredGeneratorYield,
 };
 use crate::context::TypingRequest;
 use crate::context::speculation::DiagnosticSpeculationSnapshot;
@@ -1329,7 +1329,7 @@ impl<'a> CheckerState<'a> {
         let mut has_contextual_return = false;
         let mut return_context_for_circularity = None;
         let mut early_yield_type: Option<TypeId> = None;
-        let mut final_generator_yield_type: Option<TypeId> = None;
+        let mut inferred_gen_yield = InferredGeneratorYield::NONE;
         let mut early_gen_return_type: Option<TypeId> = None;
         let mut early_gen_next_type: Option<TypeId> = None;
 
@@ -1883,7 +1883,7 @@ impl<'a> CheckerState<'a> {
                     snap.rollback(&mut self.ctx.diagnostic_state());
                 }
 
-                final_generator_yield_type =
+                inferred_gen_yield =
                     self.check_generator_body_return(GeneratorBodyReturnCheckCtx {
                         is_generator,
                         has_type_annotation,
@@ -1906,9 +1906,9 @@ impl<'a> CheckerState<'a> {
             if is_function_declaration
                 && is_generator
                 && !has_type_annotation
-                && final_generator_yield_type.is_none()
+                && inferred_gen_yield.yield_type.is_none()
             {
-                final_generator_yield_type =
+                inferred_gen_yield =
                     self.infer_generator_declaration_yield_type(GeneratorDeclarationYieldCtx {
                         body,
                         contextual_type,
@@ -1946,9 +1946,10 @@ impl<'a> CheckerState<'a> {
             function_is_generator,
             annotated_return_type,
             return_type,
-            final_generator_yield_type,
+            final_generator_yield_type: inferred_gen_yield.yield_type,
             early_gen_return_type,
             early_gen_next_type,
+            delegated_gen_next_type: inferred_gen_yield.delegated_next_type,
         });
 
         let params = if inherited_contextual_generics {

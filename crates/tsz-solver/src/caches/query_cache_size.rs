@@ -43,9 +43,10 @@ impl QueryCache<'_> {
             size += index.key_dependencies.capacity()
                 * (BUCKET_OVERHEAD
                     + std::mem::size_of::<EvaluationCacheKey>()
-                    + std::mem::size_of::<FxHashSet<DefId>>());
+                    + std::mem::size_of::<Box<[DefId]>>());
             for deps in index.key_dependencies.values() {
-                size += deps.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<DefId>());
+                // Boxed slice: one contiguous allocation, no per-element bucket.
+                size += deps.len() * std::mem::size_of::<DefId>();
             }
         }
 
@@ -70,9 +71,10 @@ impl QueryCache<'_> {
             size += index.key_dependencies.capacity()
                 * (BUCKET_OVERHEAD
                     + std::mem::size_of::<EvaluationCacheKey>()
-                    + std::mem::size_of::<FxHashSet<DefId>>());
+                    + std::mem::size_of::<Box<[DefId]>>());
             for deps in index.key_dependencies.values() {
-                size += deps.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<DefId>());
+                // Boxed slice: one contiguous allocation, no per-element bucket.
+                size += deps.len() * std::mem::size_of::<DefId>();
             }
         }
 
@@ -126,9 +128,10 @@ impl QueryCache<'_> {
             size += index.key_dependencies.capacity()
                 * (BUCKET_OVERHEAD
                     + std::mem::size_of::<ApplicationEvalCacheKey>()
-                    + std::mem::size_of::<FxHashSet<DefId>>());
+                    + std::mem::size_of::<Box<[DefId]>>());
             for (key, deps) in &index.key_dependencies {
-                size += deps.capacity() * (BUCKET_OVERHEAD + std::mem::size_of::<DefId>());
+                // Boxed slice: one contiguous allocation, no per-element bucket.
+                size += deps.len() * std::mem::size_of::<DefId>();
                 if key.1.spilled() {
                     size += key.1.capacity() * std::mem::size_of::<TypeId>();
                 }

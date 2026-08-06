@@ -324,6 +324,35 @@ impl EvaluationMemoResult {
         self.cache_stability.is_stable_for_depth_agnostic_cache()
     }
 
+    /// Whether this result is safe to publish into a cross-file, run-wide
+    /// durable cache whose key does not capture per-run resolver-registration
+    /// state — the checker pool's shared `eval_cache`
+    /// (`crate::caches::query_cache::QueryCache::evaluate_type_with_options`'s
+    /// *intermediate* drain, specifically: unlike the top-level entry, whose
+    /// key is the exact `TypeId` a caller explicitly requested and can accept
+    /// re-deriving, an intermediate publishes under a key the caller never
+    /// asked about — a later, unrelated top-level query in a different file
+    /// can read it back with no idea it was computed mid-registration-window).
+    ///
+    /// Stricter than [`Self::is_stable_for_depth_agnostic_cache`]: that check
+    /// goes through [`EvaluationMemoStability`], which deliberately tolerates
+    /// `UnresolvedDef` (see
+    /// [`EvaluationRequestStability::allows_complete_memo_result`]) to
+    /// preserve legacy behavior for the top-level entry and other "ordinary
+    /// eval memo consumers" — readers scoped to one run or one query window,
+    /// where a registration-window artifact is safe to reuse because the
+    /// window ends before the next registration can occur (a same-file
+    /// circular type-parameter default's recovery-to-`any` is exactly this
+    /// case — see #16587's reverted blanket top-level refusal). An
+    /// *intermediate* has no such window: it is read by queries that never
+    /// asked for the tainted key at all. Checks the raw
+    /// [`EvaluationRequestStability`] directly rather than going through
+    /// [`EvaluationMemoStability`], mirroring `closed_eval`'s
+    /// `run_state_cache_stability` gate for its own run-wide cache.
+    pub(crate) const fn is_stable_for_run_wide_cache(self) -> bool {
+        self.result.is_complete() && self.request_stability.is_stable_for_depth_agnostic_cache()
+    }
+
     /// Whether this result can be stored in the thread-local per-query memo.
     ///
     /// The per-query memo is window-scoped (cleared when a fresh top-level query
@@ -472,6 +501,48 @@ mod tests {
             EvaluationMemoStability::Unstable
         );
         assert!(!typed_tainted.is_stable_for_depth_agnostic_cache());
+    }
+
+    #[test]
+    fn run_wide_cache_stability_refuses_every_non_stable_request_verdict() {
+        // #16553/#16587 adjacent matrix: `is_stable_for_run_wide_cache` must
+        // accept only a complete result with a `Stable` request verdict —
+        // every other request-state taint, plus any incomplete termination,
+        // must be refused even though some of them are tolerated by the
+        // looser `is_stable_for_depth_agnostic_cache` gate above (that gate
+        // stays loose deliberately, for the top-level entry write; see
+        // `is_stable_for_run_wide_cache`'s doc comment for why the
+        // *intermediate* drain needs the stricter gate instead).
+        let complete = EvaluationResult::complete(TypeId::STRING);
+
+        let stable = EvaluationMemoResult::for_depth_agnostic_memo(
+            complete,
+            EvaluationRequestStability::Stable,
+        );
+        assert!(stable.is_stable_for_run_wide_cache());
+
+        for tainted_state in [
+            EvaluationRequestStability::UnresolvedDef,
+            EvaluationRequestStability::RecursionLimit,
+            EvaluationRequestStability::IncompleteVerdict,
+        ] {
+            let memo = EvaluationMemoResult::for_depth_agnostic_memo(complete, tainted_state);
+            assert!(
+                !memo.is_stable_for_run_wide_cache(),
+                "{tainted_state:?} must be refused by the run-wide cache gate"
+            );
+        }
+
+        // A `Stable` request verdict paired with a guard-truncated (incomplete)
+        // termination must also be refused: the collapsed `type_id` is only a
+        // partial approximation, not a converged answer.
+        let incomplete =
+            EvaluationResult::incomplete(TypeId::NUMBER, TerminationKind::DepthExceeded);
+        let incomplete_memo = EvaluationMemoResult::for_depth_agnostic_memo(
+            incomplete,
+            EvaluationRequestStability::Stable,
+        );
+        assert!(!incomplete_memo.is_stable_for_run_wide_cache());
     }
 
     #[test]

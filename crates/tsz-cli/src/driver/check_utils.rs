@@ -314,29 +314,25 @@ pub(super) fn filtered_parse_diagnostics(
         .iter()
         .any(|diagnostic| is_real_syntax_error(diagnostic.code));
 
-    // tsc emits these codes via grammarErrorOnNode in the checker, which checks
-    // hasParseDiagnostics(sourceFile) and suppresses when any parse error exists.
-    // In tsz, these are emitted by the parser. We post-filter them here to match
-    // tsc's suppression behavior. We only suppress grammar codes when there's a
-    // non-grammar parse error present (e.g., TS1005, TS1109) to avoid suppressing
-    // grammar codes that are the file's only diagnostic.
+    // tsc emits many grammar codes via grammarErrorOnNode in the checker, which
+    // suppresses them when `hasParseDiagnostics(sourceFile)` is true. tsz emits
+    // them from the parser instead, so we post-filter here to match. A grammar
+    // code is suppressed only when the file also carries a genuinely *suppressing*
+    // parse error — one that is NOT `is_non_suppressing_parse_error`. That is the
+    // single canonical model of tsc's `hasParseDiagnostics`; the checker gate sets
+    // `ctx.has_syntax_parse_errors` from the identical call (`check.rs`,
+    // `check_file.rs`), so this trigger cannot drift from it.
     //
-    // `is_real_syntax_error` is NOT a substitute for this exemption tuple: TS1260
-    // (keyword containing an escape character, e.g. `default:`) is neither a
-    // structural failure nor a listed grammar code, yet per the pinned tsc oracle
-    // it DOES trigger file-wide suppression of sibling grammar codes
-    // (switchStatementsWithMultipleDefaults.ts reports only TS1260, dropping every
-    // TS1113 duplicate-default diagnostic) — so "not exempted" must stay the
-    // default for anything not proven to need exemption, not "not a real syntax
-    // error". 1009/1185/1214/1262/1359/18012 are themselves parser-emitted
-    // strict-mode/grammar checks (not structural failures) that must NOT count as
-    // the trigger: e.g. plainJSBinderErrors.ts reports TS1101, TS1359, and TS18012
-    // ('#constructor' is a reserved word) all together with no structural parse
-    // error at all, per the same oracle.
-    let has_non_grammar_parse_error = parse_diagnostics.iter().any(|d| {
-        !matches!(d.code, 1009 | 1185 | 1214 | 1262 | 1359 | 18012)
-            && !is_parser_grammar_code(d.code)
-    });
+    // This replaced a hand-kept complement that #16279 showed was load-bearing in
+    // both directions (an unnamed non-suppressing code silently deleted every
+    // grammar sibling in its file). The unclassified-code default stays
+    // "suppressing" on purpose: TS1260 is neither structural nor a grammar code
+    // yet tsc still suppresses siblings for it, so it must never join
+    // `is_non_suppressing_parse_error`. See `filter_trigger_unification_tests` for
+    // the oracle-pinned witnesses and the full history.
+    let has_non_grammar_parse_error = parse_diagnostics
+        .iter()
+        .any(|d| !is_non_suppressing_parse_error(d.code));
 
     // TS1359 for `await` is parser-emitted in tsz. Keep it alongside unrelated
     // parse diagnostics (tsc does this in plain JS binder errors), but suppress
@@ -502,6 +498,46 @@ fn is_hard_keyword_interface_name_2427_parse_diagnostic(diagnostic: &ParseDiagno
 ///   keeps it alongside an unrelated syntax error in the same file, unlike
 ///   its TS2427/TS2457 siblings — so family membership must not be assumed
 ///   from a sibling's membership.
+///
+/// #16279 audit round 5: TS1492 (`'{0}' declarations may not have binding
+/// patterns.`, `state_variable_declarations.rs` — `using {a} = x` / `await
+/// using [a] = x`) is the direct-declaration sibling that round 4's
+/// `for...in`/`for...of` TS1493/TS1494 left out of the same "using
+/// declaration" grammar family. Parser-emitted and, like its siblings, was
+/// entirely absent from this list. Oracle-confirmed against
+/// `typescript@7.0.2` (Direction B): an unrelated `let x: = 1;` syntax error
+/// elsewhere in the file drops the TS1492 that would otherwise fire. End-to-
+/// end witness against the rebuilt `tsz` binary: `using {a} = null as any;`
+/// next to `export declare import x = require("y");` in the same file —
+/// tsc reports both TS1492 and TS1079 (the `declare`-on-an-import-declaration
+/// modifier error, already listed above); tsz's `main` before this entry
+/// reported only TS1492, silently dropping TS1079 because the unlisted TS1492
+/// counted as a "real" parse error.
+///
+/// #16279 audit round 6: full re-derivation of the grep-and-diff recipe (every
+/// `diagnostic_codes::*` name emitted from `crates/tsz-parser/src`, resolved
+/// to codes, diffed against this list) surfaced 132 unlisted candidates.
+/// Batch Direction-A/B oracle testing against `typescript@7.0.2` found one
+/// genuine addition: TS1326 (see its own comment below) — and several
+/// look-alikes that were tested and correctly rejected because they survive
+/// Direction B (tsc does **not** suppress them alongside an unrelated real
+/// syntax error, so they must stay unlisted): TS1034 (`'super' must be
+/// followed by an argument list or member access`), TS1477 (`an
+/// instantiation expression cannot be followed by a property access`),
+/// TS2754 (`'super' may not use type arguments`), TS18009 (`private
+/// identifiers cannot be used as parameters`), TS18029 (`private identifiers
+/// are not allowed in variable declarations`), and TS18030 (`an optional
+/// chain cannot contain private identifiers` — already handled by a
+/// different mechanism, see `is_real_syntax_error` below).
+///
+/// **Not pursued, flagged for a future slice**: TS18016 (`private
+/// identifiers are not allowed outside class bodies`) is also Direction-B
+/// suppressible, but unlike TS1326 it has four checker-side emission sites
+/// (`types/type_checking/core.rs`, `assignability/assignment_checker/
+/// assignment_ops.rs`, `state/type_analysis/computed_helpers_private.rs`)
+/// alongside its five parser sites — the same double-emission shape that
+/// blocked TS2499 in round 3. Adding it here only patches the parser-emitted
+/// occurrences and needs the checker-side sites audited first, same caveat.
 const fn is_parser_grammar_code(code: u32) -> bool {
     matches!(
         code,
@@ -560,6 +596,7 @@ const fn is_parser_grammar_code(code: u32) -> bool {
         | 1182 // A destructuring declaration must have an initializer
         | 1184 // Modifiers cannot appear here
         | 1188 // Only a single variable declaration is allowed in a 'for...of' statement
+        | 1492 // '{0}' declarations may not have binding patterns
         | 1493 // The left-hand side of a 'for...in' statement cannot be a 'using' declaration
         | 1494 // The left-hand side of a 'for...in' statement cannot be an 'await using' declaration
         | 1191 // An import declaration cannot have modifiers
@@ -585,6 +622,19 @@ const fn is_parser_grammar_code(code: u32) -> bool {
         | 8038 // Decorators may not appear after 'export' or 'export default' if they also appear before 'export'
         | 18037 // 'await' expression cannot be used inside a class static block
         | 18041 // A 'return' statement cannot be used inside a class static block
+        | 18054 // 'await using' statements cannot be used inside a class static block
+        | 1326 // This use of 'import' is invalid. 'import()' calls can be written,
+               // but they must have parentheses and cannot have type arguments.
+               // tsc's checkGrammarImportCallExpression reports this from the
+               // checker (`import<T>("m")`); tsz emits it from the parser
+               // (`state_expressions_literals.rs`). #16279 audit round 6:
+               // oracle-confirmed against `typescript@7.0.2` — Direction A,
+               // `import<number>("mod")` alone reports TS1326 (plus the
+               // unrelated TS2307 for the unresolved module specifier);
+               // Direction B, the same line plus an unrelated real syntax
+               // error (`let x: = 1;`) elsewhere in the file drops TS1326
+               // entirely on the real compiler. Sole emission site, no
+               // checker-side counterpart, so no double-emission risk.
     )
 }
 
@@ -1680,6 +1730,13 @@ pub(super) const fn is_non_suppressing_parse_error(code: u32) -> bool {
                    // with string-literal escapes — so it stays enumerated here.
             | 17019 // '?' at end of type is not valid TS syntax (parser recovers valid AST)
             | 17020 // '?' at start of type is not valid TS syntax (parser recovers valid AST)
+            | 18012 // '#constructor' is a reserved word. tsc raises this from the
+                    // binder/checker, so it is never in `sourceFile.parseDiagnostics`;
+                    // tsz emits it from the parser instead. Oracle-pinned against
+                    // `typescript@7.0.2`: `class D { #constructor = 1; }` reports
+                    // TS18012 *alongside* a sibling getter's TS1054 and a semantic
+                    // TS2304 in the same file (plainJSBinderErrors.ts does the same
+                    // with TS1101/TS1359), so it must not set has_syntax_parse_errors.
     )
 }
 
@@ -1732,3 +1789,19 @@ mod parser_grammar_non_suppressing_tests;
 #[cfg(test)]
 #[path = "check_utils/for_in_using_declaration_grammar_tests.rs"]
 mod for_in_using_declaration_grammar_tests;
+
+#[cfg(test)]
+#[path = "check_utils/using_declaration_binding_pattern_grammar_tests.rs"]
+mod using_declaration_binding_pattern_grammar_tests;
+
+#[cfg(test)]
+#[path = "check_utils/filter_trigger_unification_tests.rs"]
+mod filter_trigger_unification_tests;
+
+#[cfg(test)]
+#[path = "check_utils/class_static_block_grammar_tests.rs"]
+mod class_static_block_grammar_tests;
+
+#[cfg(test)]
+#[path = "check_utils/import_call_type_arguments_grammar_tests.rs"]
+mod import_call_type_arguments_grammar_tests;

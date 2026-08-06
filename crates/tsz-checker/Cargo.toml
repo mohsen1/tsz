@@ -1113,6 +1113,9 @@ path = "tests/ts2353_generic_constraint_excess_property_tests.rs"
 name = "ts2353_cross_module_symbol_computed_key_tests"
 path = "tests/ts2353_cross_module_symbol_computed_key_tests.rs"
 [[test]]
+name = "well_known_symbol_syntactic_key_parity_tests"
+path = "tests/well_known_symbol_syntactic_key_parity_tests.rs"
+[[test]]
 name = "wide_symbol_computed_member_index_signature_tests"
 path = "tests/wide_symbol_computed_member_index_signature_tests.rs"
 [[test]]
@@ -2691,3 +2694,6 @@ path = "tests/import_equals_alias_duplicate_function_container_tests.rs"
 [[test]]
 name = "qualified_default_import_enum_namespace_merge_root_tests"
 path = "tests/qualified_default_import_enum_namespace_merge_root_tests.rs"
+[[test]]
+name = "union_display_alias_repaint_parity_tests"
+path = "tests/union_display_alias_repaint_parity_tests.rs"

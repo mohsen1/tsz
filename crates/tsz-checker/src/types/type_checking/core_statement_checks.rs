@@ -1015,7 +1015,7 @@ impl<'a> CheckerState<'a> {
     /// block anywhere above, so an `await` inside a function nested in a static
     /// block (`class C { static { void (async () => await 1); } }`) keeps
     /// answering from its own function.
-    fn await_container_is_class_static_block(&self, idx: NodeIndex) -> bool {
+    pub(crate) fn await_container_is_class_static_block(&self, idx: NodeIndex) -> bool {
         let mut current = idx;
         let mut iterations = 0;
         loop {

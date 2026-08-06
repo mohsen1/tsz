@@ -325,9 +325,28 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 return collapsed;
             }
 
+            // #16580: in non-strict mode, a scalar `null`/`undefined` member
+            // sitting alongside a non-nullish sibling is absorbed out of the
+            // union before construction — same reduction #16578 already
+            // applies to array-literal elements, generalized to every
+            // syntactic union type node. `literal_member_nodes` stays keyed
+            // to the original (unreduced) `member_types` below: a dropped
+            // `null`/`undefined` member was never `TYPE_LITERAL`, so it never
+            // contributed a `mark_union_literal_member` entry either way.
+            let construction_members = crate::query_boundaries::type_predicates::nonstrict_union_members_absorb_nullish_scalars(
+                self.ctx.compiler_options.strict_null_checks,
+                &member_types,
+            );
+            if let Some(reduced) = &construction_members
+                && reduced.len() == 1
+            {
+                return reduced[0];
+            }
+            let construction_members = construction_members.unwrap_or_else(|| member_types.clone());
+
             let result = type_construction::type_node_annotation_union_with_origin(
                 self.ctx.types,
-                member_types.clone(),
+                construction_members,
             );
             // Record, per member, whether it was written as an anonymous
             // `{ ... }` literal directly in *this* union — as opposed to a

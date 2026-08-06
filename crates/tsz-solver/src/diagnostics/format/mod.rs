@@ -378,6 +378,119 @@ impl<'a> TypeFormatter<'a> {
         resolved
     }
 
+    /// A concrete (type-parameter-free) mapped type whose key constraint is a
+    /// finite set of literal keys — `{ [K in Color]: number }`,
+    /// `{ [K in "a" | "b"]: number }` — is resolved by `tsc` to its member
+    /// object (`{ green: number; red: number; }`) for display, exactly as if
+    /// the members had been written out. tsz keeps the `Mapped` node live for
+    /// semantic identity (#15392), so the printer resolves it here instead.
+    ///
+    /// Returns the resolved object only when evaluation produces a plain
+    /// named-property object carrying no free type parameters and no index
+    /// signature. A generic mapped (`{ [K in keyof T]: T[K] }`) stays deferred
+    /// and a `string`/`number`/`symbol`-constrained mapped is an index
+    /// signature (`{ [x: string]: T }`, owned by `format_mapped`); both keep
+    /// their `{ [K in ...]: ... }` source form by returning `type_id`.
+    fn resolve_concrete_mapped_for_display(&self, type_id: TypeId) -> TypeId {
+        let Some(TypeData::Mapped(mapped_id)) = self.interner.lookup(type_id) else {
+            return type_id;
+        };
+        let mapped = self.interner.mapped_type(mapped_id);
+        // A generic key constraint (`keyof T`, `AB[S]`) can never reduce to a
+        // concrete member object, so it prints as written.
+        if crate::type_queries::contains_type_parameters_db(self.interner, mapped.constraint) {
+            return type_id;
+        }
+        // An enum / aliased-union constraint hides its keys behind a
+        // `Lazy(DefId)`; resolve one hop through the store — a direct body
+        // lookup, NOT an `evaluate`, so it registers no `store_display_alias`
+        // side effect the way a whole-mapped evaluation would.
+        let mut eff_constraint = mapped.constraint;
+        if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(mapped.constraint)
+            && let Some(def_store) = self.def_store
+        {
+            use crate::def::resolver::TypeResolver;
+            let resolver = crate::caches::query_cache_evaluation::StoreOnlyResolver::new(def_store);
+            if let Some(body) = resolver.resolve_lazy(def_id, self.interner) {
+                eff_constraint = body;
+            }
+        }
+        // Only a finite literal-key constraint (a literal/enum/unique-symbol
+        // union, or a single such key) both reduces to a member object AND is
+        // safe to hand to the key collector. A `string`/`number`/`symbol`
+        // constraint is an index signature owned by `format_mapped`; an
+        // index-access / application / conditional constraint would trigger a
+        // side-effectful `evaluate` inside the collector. Either keeps the
+        // source / index-signature form via the fall-through below.
+        if !self.is_finite_literal_key_constraint(eff_constraint) {
+            return type_id;
+        }
+        // Build the member object from the finite key set, mirroring
+        // `DiagnosticBuilder::materialize_finite_mapped_type_for_display` — a
+        // key query plus per-property template resolution, over a mapped
+        // carrying the resolved constraint.
+        let eff_mapped_id = if eff_constraint == mapped.constraint {
+            mapped_id
+        } else {
+            let rebuilt = self.interner.mapped(crate::types::MappedType {
+                constraint: eff_constraint,
+                ..*mapped
+            });
+            match self.interner.lookup(rebuilt) {
+                Some(TypeData::Mapped(id)) => id,
+                _ => return type_id,
+            }
+        };
+        let Some(names) =
+            crate::type_queries::collect_finite_mapped_property_names(self.interner, eff_mapped_id)
+        else {
+            return type_id;
+        };
+        if names.is_empty() {
+            return type_id;
+        }
+        let mut names: Vec<_> = names.into_iter().collect();
+        names.sort_by(|a, b| {
+            self.interner
+                .resolve_atom_ref(*a)
+                .cmp(&self.interner.resolve_atom_ref(*b))
+        });
+        let mut properties = Vec::with_capacity(names.len());
+        for name in names {
+            let property_name = self.interner.resolve_atom_ref(name).to_string();
+            let Some(value_type) = crate::type_queries::get_finite_mapped_property_type(
+                self.interner,
+                eff_mapped_id,
+                &property_name,
+            ) else {
+                return type_id;
+            };
+            // A free type parameter in the template (`{ [K in "a"]: T }`) keeps
+            // the mapped generic; print it as written.
+            if crate::type_queries::contains_type_parameters_db(self.interner, value_type) {
+                return type_id;
+            }
+            let mut property = crate::PropertyInfo::new(name, value_type);
+            property.optional = mapped.optional_modifier == Some(MappedModifier::Add);
+            property.readonly = mapped.readonly_modifier == Some(MappedModifier::Add);
+            properties.push(property);
+        }
+        self.interner.object(properties)
+    }
+
+    /// True when `constraint` is a finite set of literal keys — a single
+    /// literal / enum member / unique symbol, or a union of them. Such a
+    /// constraint is exactly what `resolve_concrete_mapped_for_display` can
+    /// expand to a member object, and it is safe to hand to the finite-key
+    /// collector without triggering a side-effectful `evaluate`.
+    fn is_finite_literal_key_constraint(&self, constraint: TypeId) -> bool {
+        match self.interner.lookup(constraint) {
+            Some(TypeData::Literal(_) | TypeData::Enum(_, _) | TypeData::UniqueSymbol(_)) => true,
+            Some(key @ TypeData::Union(_)) => self.union_is_all_unit_literals(&key),
+            _ => false,
+        }
+    }
+
     /// A semantic reference (`Lazy(DefId)`, or an `Application` over one)
     /// carries no members of its own, so `evaluate_index_access` cannot reduce
     /// `Iface["m"]` while the object operand is still that reference. Swap in
