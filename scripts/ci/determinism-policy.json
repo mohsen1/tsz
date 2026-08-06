@@ -1,0 +1,22 @@
+{
+  "$comment": [
+    "Determinism policy for scripts/ci/determinism-check.mjs (issue #16309).",
+    "Standing Rule 5 (cache/order honesty): same binary + same fixture + same",
+    "tsconfig, no flags changed between runs => byte-identical diagnostics.",
+    "",
+    "'known_flaky' lists rows whose non-determinism is a KNOWN, tracked defect.",
+    "The harness reports divergence on these rows but does NOT block (advisory),",
+    "mirroring project-compat-ratchet's advisory-on-inconclusive design so a",
+    "tracked-and-open bug never wedges the lane. Every entry MUST name its",
+    "tracking issue so promotion is auditable: when the underlying race is fixed,",
+    "delete the row here and the harness begins blocking on any future regression.",
+    "",
+    "Any row NOT listed here is held to strict reproducibility: divergence blocks."
+  ],
+  "known_flaky": {
+    "mobx-project": {
+      "issue": 16309,
+      "reason": "Multi-threaded shared-DefinitionStore materialization race + partition-dependent eval_cache attribution (barrel-cycle / DecoratorContext path). Tracked by the mutation-isolation campaign; advisory until the race is closed."
+    }
+  }
+}
