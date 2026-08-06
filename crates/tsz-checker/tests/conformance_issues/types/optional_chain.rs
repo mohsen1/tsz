@@ -983,11 +983,27 @@ c2 = c;
         has_error(&relevant_diagnostics, 2720),
         "Expected TS2720 for implementing class A, got: {relevant_diagnostics:#?}"
     );
-    // tsc expects TS2741: "Property 'x' is missing in type 'C' but required in type 'A'."
-    // for the `c2 = c` assignment (C -> C2 where C2 requires private x from A).
+    // The `c2 = c` assignment (C -> C2, where C2 inherits A's private `x`) reports
+    // TS2322, not a standalone TS2741. Verified against the pinned typescript@7.0.2:
+    //
+    //   t.ts(5,7):  error TS2720: Class 'C' incorrectly implements class 'A'. ...
+    //     Property 'x' is missing in type 'C' but required in type 'A'.
+    //   t.ts(16,1): error TS2322: Type 'C' is not assignable to type 'C2'.
+    //     Property 'x' is missing in type 'C' but required in type 'A'.
+    //
+    // "Property 'x' is missing ..." is *nested related information* under each
+    // anchor, never its own top-level TS2741. The previous TS2741 assertion was an
+    // unverified expectation; it passed only while tsz emitted a spurious TS2741
+    // instead of TS2322 (the same divergence conformance recorded on
+    // classImplementsClass4.ts as `actual:[TS2720,TS2741]`, now passing).
     assert!(
-        has_error(&relevant_diagnostics, 2741),
-        "Expected TS2741 for missing private property 'x', got: {relevant_diagnostics:#?}"
+        has_error(&relevant_diagnostics, 2322),
+        "Expected TS2322 for the C -> C2 assignment, got: {relevant_diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&relevant_diagnostics, 2741),
+        "TS2741 is not a top-level diagnostic here; tsc nests the missing-property \
+         line under TS2720/TS2322. Got: {relevant_diagnostics:#?}"
     );
 }
 

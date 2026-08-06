@@ -99,6 +99,14 @@
 # keeping the shared lib prefix's ids (mirroring the driver's bind-result reducer).
 # baseline-status: reconciled r10
 
+# 2026-08-06 shrink (no generation bump — removals are always allowed): six
+# rows now pass on main @ 0001e7a725, verified with per-target runs
+# (`cargo nextest run -p <pkg> --test <target>`), not a scoped filter. Three
+# alias-intersection rows and the reexported-symbol row are #15983 entries that
+# the cross-file identity landings have since fixed; the ts2303 self-import row
+# and the tsz-emitter overloaded-initializer row likewise pass. Full per-target
+# sweep of every target holding a gate entry: 30 failing, all remaining entries
+# still reproduce.
 tsz-checker::commonjs_module_export_alias_tests::test_module_exports_forward_read_reports_ts2565
 tsz-checker::conditional_application_display_tests::deferred_generic_conditional_keeps_branch_union
 tsz-checker::conformance_issues_features::features::namespace_construct_signature::part_00::test_js_void_zero_expando_reports_named_receiver_type
@@ -107,9 +115,6 @@ tsz-checker::conformance_issues_types::types::fp_repro_audit_2026::issue_14944_g
 tsz-checker::conformance_issues_types::types::r#enum::test_jsdoc_object_literal_property_types_do_not_trigger_self_tdz
 tsz-checker::conformance_issues_types::types::r#enum::test_jsdoc_object_literal_shorthand_and_default_param_preserve_source_types
 tsz-checker::contravariant_app_constrained_type_param_target_tests::same_base_mapped_record_alias_keeps_tsc_variance_quirk
-tsz-checker::cross_file_recursive_alias_intersection_tests::const_assignment_to_imported_alias_intersection_is_clean
-tsz-checker::cross_file_recursive_alias_intersection_tests::member_read_through_imported_alias_intersection_is_clean
-tsz-checker::cross_file_recursive_alias_intersection_tests::renamed_binders_member_read_is_clean
 tsz-checker::cross_module_nested_interface_tests::test_cross_module_nested_interface_method_arg_check
 tsz-checker::cross_module_nested_interface_tests::test_three_file_namespace_import_property_type
 tsz-checker::cross_module_nested_interface_tests::test_workspace_method_type_resolution
@@ -129,11 +134,8 @@ tsz-checker::jsdoc_constructor_typeof_source_display_tests::ts2345_jsdoc_constru
 tsz-checker::jsdoc_constructor_typeof_source_display_tests::ts2345_jsdoc_constructor_var_displays_plain_function_source
 tsz-checker::nonnull_contextual_type_arg_inference_tests::contextual_return_can_refine_transparent_wrapper_inference
 tsz-checker::raw_builder_return_context_inference_tests::different_base_and_ambiguous_union_do_not_pin_the_tag
-tsz-checker::reexported_symbol_keyed_member_tests::direct_import_symbol_keyed_member_is_clean
 tsz-checker::simple_local_interface_fastpath_tests::missing_interface_lib_rows_keep_lib_shapes
-tsz-checker::ts2303_tests::recursive_export_assignment_self_import_reports_ts2303
 tsz-cli::driver::core::check::check_tests::cross_file_class_namespace_merge_value_keeps_call_signature_in_import_cycle
 tsz-cli::driver::core::check::check_tests::default_lib_validation_normalizes_cross_arena_method_members_after_global_merge
 tsz-cli::driver_tests::cross_file_dependent_operand_aliases_accept_scalars_and_literal_arrays
 tsz-cli::driver_tests::declaration_emit_reports_ts7056_for_private_import_type_alias
-tsz-emitter::declaration_emitter::tests::simple_declarations::test_overloaded_call_initializer_does_not_use_first_signature_return_type
