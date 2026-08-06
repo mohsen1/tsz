@@ -1621,7 +1621,27 @@ impl<'a> CheckerState<'a> {
         let placement_error =
             is_using && self.check_grammar_using_declaration_placement(list_idx, is_await_using);
 
-        if is_await_using && !placement_error && !self.ctx.has_syntax_parse_errors {
+        // tsc's `checkGrammarAwaitOrAwaitUsing` opens with the same
+        // containing-function-or-class-static-block test that
+        // `checkAwaitExpression` does, and the entire TS2852/TS2853/TS2854/TS1309
+        // family lives in its `else` — so a class static block short-circuits the
+        // top-level-eligibility question outright, answering only TS18054
+        // ('await using' cannot be used inside a class static block, emitted by
+        // the parser grammar). Without this gate the top-level walk below
+        // (`is_directly_at_source_file_top_level`) climbs past the static block to
+        // the source file and spuriously fires TS2853; adding the block to that
+        // walk's disqualifying list instead would only swap TS2853 for the nested
+        // TS2852 arm, so the container short-circuit is the tsc-faithful fix. This
+        // mirrors `check_await_expression`'s `await_container_is_class_static_block`
+        // gate for the bare-`await` family. Before #16597 the guard below was
+        // reached only when TS18054 still set `has_syntax_parse_errors`, which
+        // masked this; TS18054 is now non-suppressing, so the decline has to be
+        // made here on its own.
+        if is_await_using
+            && !placement_error
+            && !self.ctx.has_syntax_parse_errors
+            && !self.await_container_is_class_static_block(list_idx)
+        {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
             // Same top-level-await-eligibility predicate as `check_await_expression`
