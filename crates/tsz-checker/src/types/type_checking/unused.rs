@@ -1295,7 +1295,11 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|sym_id| sym_id != target_sym_id)
     }
 
-    fn is_declaration_name_position(&self, idx: NodeIndex) -> bool {
+    /// Whether `idx` is the *binding name* of its parent declaration — a name in
+    /// a declaration position rather than a reference. Covers every declaration
+    /// [`Self::get_declaration_name_node`] names, plus type parameters and
+    /// property/method signatures whose name field it does not.
+    pub(crate) fn is_declaration_name_position(&self, idx: NodeIndex) -> bool {
         let Some(ext) = self.ctx.arena.get_extended(idx) else {
             return false;
         };

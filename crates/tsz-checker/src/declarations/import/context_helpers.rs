@@ -376,7 +376,108 @@ impl<'a> CheckerState<'a> {
         }
         let top_level_block = self.position_invalid_module_element_resolves_specifier(node_idx);
         let is_module = self.ctx.is_external_module_file();
+
+        // A colliding `import x = ...` group (same name, same container — the
+        // TS2300 duplicate set) resolves at most one specifier. Each alias binds
+        // its own distinct `SymbolId` (aliases never merge, so the duplicate
+        // diagnostics survive), and `tsc` reaches `resolveExternalModuleName`
+        // only for the group's *first* declaration by source position; every
+        // later duplicate is silent. Both the script top-level-block auto-resolve
+        // and the reference test therefore apply to the first declaration alone,
+        // and the reference test spans the whole group's symbols (measured
+        // against the pinned `typescript@7.0.2` oracle; #16527 item 2).
+        //
+        // A namespace body reaches TS2307 through a *separate* module-not-found
+        // gate (`should_emit_module_not_found` via
+        // `namespace_import_alias_is_referenced`, interleaved with the TS1147
+        // rule), not this one, so the group gate stays out of that subsystem
+        // rather than double-gating it.
+        if !self.is_inside_namespace_declaration(node_idx)
+            && let Some(group) = self.import_equals_colliding_group(node_idx)
+        {
+            if group.first() != Some(&node_idx) {
+                return false;
+            }
+            return (top_level_block && !is_module)
+                || self.import_equals_group_is_referenced(&group);
+        }
+
         (top_level_block && !is_module) || self.import_element_alias_is_referenced(node_idx)
+    }
+
+    /// Whether any member of a colliding `import x = ...` group is *referenced* —
+    /// a genuine value/type use of any of the group's alias symbols, anywhere in
+    /// the source file. The scan skips binding names (`markAliasReferenced` never
+    /// fires on the name that declares a symbol), which is essential here: every
+    /// member's own binding name resolves to a group symbol, so without that
+    /// guard a group would always count itself referenced.
+    fn import_equals_group_is_referenced(&self, group: &[NodeIndex]) -> bool {
+        let symbols: Vec<tsz_binder::SymbolId> = group
+            .iter()
+            .flat_map(|&member| self.import_binding_symbols(member))
+            .collect();
+        if symbols.is_empty() {
+            return false;
+        }
+        let Some(scan_root) = self.enclosing_source_file(group[0]) else {
+            return false;
+        };
+        self.subtree_has_reference(scan_root, &symbols, true, None)
+    }
+
+    /// Whether any identifier under `scan_root` is a genuine *reference* to one
+    /// of `symbols` — the shared `markAliasReferenced` scan.
+    ///
+    /// `skip_binding_names` rejects declaration-name positions; the colliding
+    /// group needs it because every member's own binding name resolves to a
+    /// group symbol, so a group would otherwise count itself referenced. The
+    /// single-alias caller instead prunes its own declaration subtree via
+    /// `skip_node` (only the alias's own binding name lives there, and the
+    /// module reference is not an alias symbol), so it leaves the flag off.
+    fn subtree_has_reference(
+        &self,
+        scan_root: NodeIndex,
+        symbols: &[tsz_binder::SymbolId],
+        skip_binding_names: bool,
+        skip_node: Option<NodeIndex>,
+    ) -> bool {
+        let mut stack: Vec<NodeIndex> = self.ctx.arena.get_children(scan_root);
+        while let Some(current) = stack.pop() {
+            if Some(current) == skip_node {
+                continue;
+            }
+            if let Some(node) = self.ctx.arena.get(current)
+                && node.kind == SyntaxKind::Identifier as u16
+                && !(skip_binding_names && self.is_declaration_name_position(current))
+                && self
+                    .resolve_identifier_symbol(current)
+                    .is_some_and(|sym| symbols.contains(&sym))
+            {
+                return true;
+            }
+            stack.extend(self.ctx.arena.get_children(current));
+        }
+        false
+    }
+
+    /// The `SourceFile` node enclosing `node_idx`, walking the parent chain.
+    fn enclosing_source_file(&self, node_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut cursor = node_idx;
+        loop {
+            if self
+                .ctx
+                .arena
+                .get(cursor)
+                .is_some_and(|node| node.kind == syntax_kind_ext::SOURCE_FILE)
+            {
+                return Some(cursor);
+            }
+            let ext = self.ctx.arena.get_extended(cursor)?;
+            if ext.parent.is_none() {
+                return None;
+            }
+            cursor = ext.parent;
+        }
     }
 
     /// Whether an import statement introduces a local binding: an `import =`
@@ -450,45 +551,11 @@ impl<'a> CheckerState<'a> {
         if symbols.is_empty() {
             return false;
         }
-
-        let mut scan_root = node_idx;
-        loop {
-            if self
-                .ctx
-                .arena
-                .get(scan_root)
-                .is_some_and(|node| node.kind == syntax_kind_ext::SOURCE_FILE)
-            {
-                break;
-            }
-            let Some(ext) = self.ctx.arena.get_extended(scan_root) else {
-                return false;
-            };
-            if ext.parent.is_none() {
-                return false;
-            }
-            scan_root = ext.parent;
-        }
-
-        let mut stack: Vec<NodeIndex> = self.ctx.arena.get_children(scan_root);
-        while let Some(current) = stack.pop() {
-            // The declaration's own subtree is the binding site, not a use.
-            if current == node_idx {
-                continue;
-            }
-            let Some(node) = self.ctx.arena.get(current) else {
-                continue;
-            };
-            if node.kind == SyntaxKind::Identifier as u16
-                && self
-                    .resolve_identifier_symbol(current)
-                    .is_some_and(|sym| symbols.contains(&sym))
-            {
-                return true;
-            }
-            stack.extend(self.ctx.arena.get_children(current));
-        }
-        false
+        let Some(scan_root) = self.enclosing_source_file(node_idx) else {
+            return false;
+        };
+        // The declaration's own subtree is the binding site, not a use.
+        self.subtree_has_reference(scan_root, &symbols, false, Some(node_idx))
     }
 
     /// Whether a position-invalid `export ... from "m"` still resolves its module
