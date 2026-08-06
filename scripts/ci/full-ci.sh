@@ -387,6 +387,7 @@ run_lint() {
   node scripts/ci/test-wip-state-comments.mjs || return $?
   node scripts/ci/test-project-compatibility.mjs || return $?
   node scripts/ci/test-type-challenges-solutions-manifest.mjs || return $?
+  node scripts/ci/test-determinism-check.mjs || return $?
   scripts/test/safe-run-test.sh || return $?
   for test_file in scripts/agents/test_*.py scripts/setup/test_*.py; do
     [[ -f "$test_file" ]] || continue

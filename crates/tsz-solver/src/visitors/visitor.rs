@@ -485,18 +485,33 @@ pub(crate) fn walk_referenced_types_with_policy<F>(
     });
 }
 
+/// Invoke `f` for every lazy `DefId` reachable from `root`, in walk order and
+/// **without** de-duplication — a `DefId` reachable by more than one path is
+/// reported once per occurrence.
+///
+/// This is the allocation-free core of [`collect_lazy_def_ids`]. A caller that
+/// already maintains its own visited set (the eval-cache dependency collector
+/// does) feeds this directly instead of materializing an intermediate deduped
+/// `Vec` only to re-deduplicate it, which is redundant work on a hot memoization
+/// path.
+pub fn for_each_lazy_def_id(types: &dyn TypeDatabase, root: TypeId, mut f: impl FnMut(DefId)) {
+    walk_referenced_types(types, root, |type_id| {
+        if type_id.is_intrinsic() {
+            return;
+        }
+        if let Some(TypeData::Lazy(def_id)) = types.lookup(type_id) {
+            f(def_id);
+        }
+    });
+}
+
 /// Collect all unique lazy `DefIds` reachable from `root`.
 pub fn collect_lazy_def_ids(types: &dyn TypeDatabase, root: TypeId) -> Vec<DefId> {
     let mut out = Vec::new();
     let mut seen = FxHashSet::default();
 
-    walk_referenced_types(types, root, |type_id| {
-        if type_id.is_intrinsic() {
-            return;
-        }
-        if let Some(TypeData::Lazy(def_id)) = types.lookup(type_id)
-            && seen.insert(def_id)
-        {
+    for_each_lazy_def_id(types, root, |def_id| {
+        if seen.insert(def_id) {
             out.push(def_id);
         }
     });
