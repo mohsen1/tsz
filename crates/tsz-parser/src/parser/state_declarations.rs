@@ -1963,7 +1963,7 @@ impl ParserState {
                                 diagnostic_codes::AN_EXPORT_ASSIGNMENT_CANNOT_HAVE_MODIFIERS,
                             );
                         }
-                        self.parse_export_default(start_pos)
+                        self.parse_export_default(start_pos, Some(modifiers))
                     }
                     _ => {
                         self.error_declaration_expected();

@@ -227,6 +227,8 @@ mod cross_module_class_self_member_tests;
 mod cross_module_generic_interface_heritage_tests;
 #[path = "tests/declaration_extract_key_path_tests.rs"]
 mod declaration_extract_key_path_tests;
+#[path = "tests/declare_export_default_expression_ambient_ts2714_tests.rs"]
+mod declare_export_default_expression_ambient_ts2714_tests;
 #[path = "tests/declare_export_default_modifier_order_ts1319_dedup_tests.rs"]
 mod declare_export_default_modifier_order_ts1319_dedup_tests;
 #[path = "tests/declare_export_equals_ambient_ts2714_tests.rs"]
