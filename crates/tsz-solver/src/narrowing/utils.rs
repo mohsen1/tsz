@@ -406,6 +406,48 @@ pub fn collapse_pure_nullish_union_nonstrict(
     }
 }
 
+/// Non-strict scalar `null`/`undefined` absorption for a syntactic union that
+/// also has a non-nullish member — the mixed-member sibling of
+/// [`collapse_pure_nullish_union_nonstrict`] above, which only handles the
+/// all-nullish case.
+///
+/// Without `strictNullChecks`, `null`/`undefined` are subtypes of every type,
+/// so tsc's `getUnionType(members, UnionReduction.Subtype)` absorbs a scalar
+/// `null`/`undefined` member out of a union whenever a non-nullish sibling is
+/// present (`number | null` resolves to plain `number`). #16578 already
+/// applies this rule to the array-literal element union as a post-pass; this
+/// is the general syntactic-union-type-node seam (type annotations, type
+/// aliases, return types) that #16578 explicitly left for a follow-up
+/// (#16580). Every member here is already a fully resolved type rather than
+/// an expression to widen/infer, so — unlike the array-literal case — it is
+/// sound to pre-filter the candidate list handed to ordinary union
+/// construction instead of post-passing the constructed result.
+///
+/// Returns `None` (caller keeps its ordinary construction) when strict, when
+/// no member is a nullish scalar, or when every member is nullish scalar —
+/// that all-nullish case belongs to `collapse_pure_nullish_union_nonstrict`
+/// and must not be touched here (a bare `null | undefined` annotation stays
+/// nullable, it does not disappear).
+pub fn nonstrict_union_members_absorb_nullish_scalars(
+    strict_null_checks: bool,
+    member_types: &[TypeId],
+) -> Option<Vec<TypeId>> {
+    if strict_null_checks {
+        return None;
+    }
+    let is_nullish_scalar = |m: &TypeId| *m == TypeId::NULL || *m == TypeId::UNDEFINED;
+    if !member_types.iter().any(is_nullish_scalar) || member_types.iter().all(is_nullish_scalar) {
+        return None;
+    }
+    Some(
+        member_types
+            .iter()
+            .copied()
+            .filter(|m| !is_nullish_scalar(m))
+            .collect(),
+    )
+}
+
 /// Check if a type is definitely nullish (only null/undefined/void).
 pub fn is_definitely_nullish(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id.is_nullable() {
