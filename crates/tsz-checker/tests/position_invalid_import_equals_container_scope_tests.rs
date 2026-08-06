@@ -378,36 +378,22 @@ fn nested_block_referenced_alias_inside_static_block_resolves_the_specifier() {
     );
 }
 
-// #16527 item 2 (colliding aliases inside a static block) is a real, still
-// open, oracle-confirmed defect — the row below stays red. It is deeper than
-// "skip a sibling declaration's own subtree": each `import x = ...` alias
-// binds its own distinct `SymbolId` (aliases deliberately do not merge,
-// `crates/tsz-binder/src/nodes/binding.rs` around the `ALIAS && ALIAS` branch
-// of `declare_symbol`), and only the *first* declaration for a colliding name
-// ever reaches `resolveExternalModuleName` in `tsc` — verified with the
-// pinned oracle:
-//
-// - 2/3 colliding aliases, no reference: no specifier ever resolves.
-// - 2/3 colliding aliases, one explicit reference: only the *first*
-//   declaration's specifier resolves (`TS2307` lands on its position, not the
-//   later duplicates' — confirmed by column offset).
-// - Even the "unused resolves in a script's top-level block" row (#16505) is
-//   suppressed once a name collides — a bare top-level block with two
-//   colliding aliases and no reference at all resolves neither, where a
-//   single non-colliding alias in the same position would resolve.
-//
-// A correct fix needs a first-declaration-in-group gate plus a group-wide
-// (not single-symbol) reference scan, and the full unused/script/module axis
-// re-measured under collision — scoped as its own session rather than
-// folded into this one.
+// #16527 item 2 (colliding `import x = ...` aliases) — now fixed. Each alias
+// binds its own distinct `SymbolId` (aliases deliberately do not merge, so the
+// duplicate diagnostics survive — `ALIAS && ALIAS` branch of `declare_symbol`
+// in `crates/tsz-binder/src/nodes/binding.rs`), and `tsc` reaches
+// `resolveExternalModuleName` for at most the group's *first* declaration by
+// source position. `position_invalid_import_resolves_specifier` gates on
+// `import_equals_colliding_group`: a non-first member never resolves, and the
+// first resolves under the ordinary rule with a *group-wide* reference scan.
+// The whole matrix below is measured against the pinned `typescript@7.0.2`
+// oracle (`--singleThreaded --stableTypeOrdering`, `--module commonjs`); this
+// `check` runs a script (no top-level `import`/`export`).
+
 #[test]
-#[ignore = "#16527 item 2: still open. Each colliding `import x = ...` alias binds its own \
-     distinct SymbolId (aliases deliberately do not merge), so a naive own-subtree skip \
-     cannot see a sibling duplicate as a binding site — the sibling's own name resolves \
-     through scope shadowing to whichever declaration is currently live, not to its \
-     originally-bound symbol. A real fix needs a first-declaration-in-group gate plus a \
-     group-wide reference scan; see the module comment above this test."]
 fn static_block_two_colliding_aliases_do_not_resolve_the_specifier() {
+    // Static block is not a top-level block, and neither alias is used, so the
+    // first declaration resolves nothing either — the group is silent.
     assert_codes(
         r#"class E {
   static {
@@ -416,7 +402,78 @@ fn static_block_two_colliding_aliases_do_not_resolve_the_specifier() {
   }
 }"#,
         &[1232, 1232, 2300, 2300],
-        "#16450: the duplicate-alias TS2300 pair (#16437) rides along, but neither specifier resolves",
+        "#16527: an unused colliding group in a static block resolves no specifier",
+    );
+}
+
+#[test]
+fn static_block_colliding_aliases_used_resolves_only_the_first() {
+    // A genuine reference marks the group referenced, so its *first* declaration
+    // resolves — exactly one TS2307, on `nonexistent-a`, never the duplicate.
+    assert_codes(
+        r#"class E {
+  static {
+    import victor = require("nonexistent-a");
+    import victor = require("nonexistent-b");
+    victor;
+  }
+}"#,
+        &[1232, 1232, 2300, 2300, 2307],
+        "#16527: a referenced colliding group resolves only its first declaration",
+    );
+}
+
+#[test]
+fn top_level_block_colliding_aliases_unused_resolves_only_the_first_in_a_script() {
+    // A script's top-level bare block resolves a bound-but-unused alias (#16505),
+    // but under a collision only the *first* declaration rides that rule.
+    assert_codes(
+        r#"{
+  import xray = require("nonexistent-a");
+  import xray = require("nonexistent-b");
+}"#,
+        &[1232, 1232, 2300, 2300, 2307],
+        "#16527: only the first of a colliding group takes the script top-level-block auto-resolve",
+    );
+}
+
+#[test]
+fn top_level_block_three_colliding_aliases_unused_resolves_only_the_first_in_a_script() {
+    assert_codes(
+        r#"{
+  import yankee = require("nonexistent-a");
+  import yankee = require("nonexistent-b");
+  import yankee = require("nonexistent-c");
+}"#,
+        &[1232, 1232, 1232, 2300, 2300, 2300, 2307],
+        "#16527: a three-way collision still resolves exactly one specifier — the first",
+    );
+}
+
+#[test]
+fn function_body_colliding_aliases_unused_resolves_none() {
+    // A function body is neither a top-level block nor referenced here, so the
+    // group is silent — the collision does not change that.
+    assert_codes(
+        r#"function f() {
+  import zulu = require("nonexistent-a");
+  import zulu = require("nonexistent-b");
+}"#,
+        &[1232, 1232, 2300, 2300],
+        "#16527: an unused colliding group in a function body resolves nothing",
+    );
+}
+
+#[test]
+fn function_body_colliding_aliases_used_resolves_only_the_first() {
+    assert_codes(
+        r#"function f() {
+  import alfa = require("nonexistent-a");
+  import alfa = require("nonexistent-b");
+  alfa;
+}"#,
+        &[1232, 1232, 2300, 2300, 2307],
+        "#16527: a referenced colliding group in a function body resolves only its first",
     );
 }
 

@@ -162,25 +162,11 @@ impl<'a> CheckerState<'a> {
         }
 
         for stmt_idx in collected {
-            let Some(node) = self.ctx.arena.get(stmt_idx) else {
+            // `collect_import_equals_transparently` yields only `import =` nodes.
+            let Some(alias_name) = self.import_equals_alias_name(stmt_idx) else {
                 continue;
             };
-
-            let Some(import_decl) = self.ctx.arena.get_import_decl(node) else {
-                continue;
-            };
-
-            let Some(alias_node) = self.ctx.arena.get(import_decl.import_clause) else {
-                continue;
-            };
-            let Some(alias_id) = self.ctx.arena.get_identifier(alias_node) else {
-                continue;
-            };
-
-            alias_map
-                .entry(alias_id.escaped_text.to_string())
-                .or_default()
-                .push(stmt_idx);
+            alias_map.entry(alias_name).or_default().push(stmt_idx);
         }
 
         for (alias_name, indices) in alias_map {
@@ -243,6 +229,59 @@ impl<'a> CheckerState<'a> {
             cursor = self.ctx.arena.parent_of(cursor)?;
         }
         None
+    }
+
+    /// The alias name an `import X = ...` declaration binds, or `None` for a
+    /// non-alias node.
+    fn import_equals_alias_name(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+            return None;
+        }
+        let import_decl = self.ctx.arena.get_import_decl(node)?;
+        let alias_node = self.ctx.arena.get(import_decl.import_clause)?;
+        let alias_id = self.ctx.arena.get_identifier(alias_node)?;
+        Some(alias_id.escaped_text.to_string())
+    }
+
+    /// Every `import X = ...` declaration that collides with the one at
+    /// `node_idx` — same alias name, same nearest declaration container — as a
+    /// group of two or more, or `None` when `node_idx` is not a colliding alias.
+    ///
+    /// This is the grouping [`Self::check_import_alias_duplicates`] and
+    /// [`Self::check_import_alias_duplicates_in_nested_containers`] key TS2300
+    /// on, reused from the specifier-resolution side: `tsc` resolves at most one
+    /// specifier per colliding group (the first declaration by source position),
+    /// because each alias binds its own distinct `SymbolId` and only the group's
+    /// first reaches `resolveExternalModuleName`. Returned in source-position
+    /// order so the caller can identify that first declaration.
+    pub(crate) fn import_equals_colliding_group(
+        &self,
+        node_idx: NodeIndex,
+    ) -> Option<Vec<NodeIndex>> {
+        // Name first: it short-circuits (and skips the container parent-walk) for
+        // a non-`import =` node, the common caller.
+        let name = self.import_equals_alias_name(node_idx)?;
+        let container = self.nearest_alias_container(node_idx)?;
+
+        let mut group: Vec<NodeIndex> = self
+            .ctx
+            .arena
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION)
+            .map(|(raw, _)| NodeIndex(raw as u32))
+            // Name match (a few arena reads) before the container parent-walk.
+            .filter(|&idx| self.import_equals_alias_name(idx).as_deref() == Some(name.as_str()))
+            .filter(|&idx| self.nearest_alias_container(idx) == Some(container))
+            .collect();
+
+        if group.len() <= 1 {
+            return None;
+        }
+        group.sort_by_key(|&idx| self.ctx.arena.get(idx).map(|n| n.pos).unwrap_or(u32::MAX));
+        Some(group)
     }
 
     /// TS2300 for duplicate `import X = ...` aliases inside a function-like
