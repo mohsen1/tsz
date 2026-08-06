@@ -19,7 +19,8 @@
 //! oracle run as
 //! `tsc --noEmit --strict --target es2022 --module esnext --lib esnext`.
 
-use tsz_checker::test_utils::check_source_codes_named;
+use tsz_checker::CheckerOptions;
+use tsz_checker::test_utils::{check_source, check_source_codes_named};
 
 /// Only this family's codes. The surrounding fixtures deliberately carry
 /// unrelated diagnostics in a few rows (an unresolved import specifier, for
@@ -271,5 +272,59 @@ fn a_namespace_export_inside_a_namespace_is_not_confused_with_a_global_module_ex
             "a.ts"
         ),
         Vec::<u32>::new(),
+    );
+}
+
+// ---------------------------------------------------------------------------
+// #16403 residual: TS1314's own COLUMN when a stray modifier precedes
+// `export as namespace`. This is a checker diagnostic, so it reads whatever
+// span the parser gave the `NamespaceExportDeclaration` node — tsc anchors it
+// at the modifier (column 1), not at `export`, matching TS1184 alongside it.
+// A code-set comparison cannot see this: TS1314 fires either way, only the
+// column differs. Oracle-pinned (`typescript@7.0.2`) for every modifier in
+// this family; `accessor`/`async` already anchored correctly before this fix.
+// ---------------------------------------------------------------------------
+
+fn ts1314_start(source: &str, file_name: &str) -> u32 {
+    let diags = check_source(source, file_name, CheckerOptions::default());
+    diags
+        .iter()
+        .find(|d| d.code == 1314)
+        .unwrap_or_else(|| panic!("expected TS1314 for {source:?}, got {diags:?}"))
+        .start
+}
+
+#[test]
+fn modifier_before_global_module_export_anchors_ts1314_at_the_modifier() {
+    for modifier in ["static", "public", "protected", "private", "readonly"] {
+        let source = format!("{modifier} export as namespace Foo;\n");
+        assert_eq!(
+            ts1314_start(&source, "a.ts"),
+            0,
+            "tsc anchors TS1314 at the modifier (column 1), not at `export`, for {source:?}"
+        );
+    }
+}
+
+#[test]
+fn modifier_before_global_module_export_ts1314_column_is_unaffected_by_leading_content() {
+    // Same rule, with the declaration not at the very start of the file, so a
+    // fix that merely special-cased offset 0 would not be caught by the test
+    // above.
+    let source = "export {};\nprivate export as namespace Foo;\n";
+    let diags = check_source(source, "a.ts", CheckerOptions::default());
+    // `export {};\n` makes the file an external module, so TS1314 (step 2:
+    // "not an external module") no longer applies — this reaches TS1315
+    // instead (step 3: module file, not a declaration file). Confirms the
+    // node span fix generalizes to a differently-positioned declaration by
+    // checking the sibling code in the same family anchors correctly too.
+    let ts1315 = diags
+        .iter()
+        .find(|d| d.code == 1315)
+        .unwrap_or_else(|| panic!("expected TS1315 for {source:?}, got {diags:?}"));
+    assert_eq!(
+        ts1315.start,
+        "export {};\n".len() as u32,
+        "TS1315 must anchor at `private`, not `export`, for {source:?}"
     );
 }

@@ -26,7 +26,8 @@
 //! code. Verified locally: with #16367's containment applied, these sources
 //! report the full tsc pair.
 
-use crate::parser::test_fixture::parse_source;
+use crate::parser::syntax_kind_ext;
+use crate::parser::test_fixture::{assert_span, parse_source};
 use tsz_common::diagnostics::diagnostic_codes;
 
 fn diagnostic_codes_at(source: &str, needle: &str) -> Vec<u32> {
@@ -1330,5 +1331,68 @@ fn accessor_before_type_only_export_splits_by_container() {
     );
     assert_no_parser_diagnostics(
         "function collect() {\n  accessor export type * from \"./source\";\n}",
+    );
+}
+
+// --------------------------------------------------------------------------
+// #16403 residual: the `NamespaceExportDeclaration` node built after a stray
+// `static`/`public`/`protected`/`private`/`readonly` modifier must span from
+// the MODIFIER, not from `export`. TS1184 (above) is unaffected — it anchors
+// on the modifier token directly, before this node is even built — but the
+// checker's own TS1314/TS1316 read this node's own `pos`/`end`
+// (`crates/tsz-checker/src/state/state_checking/source_file.rs`), so a node
+// that starts at `export` misreports their column even though the CODE is
+// already right (a code-set comparison cannot see this). The accessor/async
+// dispatch already threads the modifier's start position through
+// `parse_export_declaration_from`; this dispatch (`static`/`public`/
+// `protected`/`private`/`readonly`, `parse_statement_top_level_modifier`) used
+// to drop straight to a fresh `parse_statement()` after reporting TS1184,
+// which re-anchored the node at `export`. Oracle-pinned: tsc anchors both
+// TS1184 and TS1314 at column 1 (the modifier) for every row below.
+// --------------------------------------------------------------------------
+
+fn assert_namespace_export_span_starts_at_modifier(modifier: &str) {
+    let source = format!("{modifier} export as namespace Foo;");
+    assert_span(
+        &source,
+        syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION,
+        &source,
+    );
+}
+
+#[test]
+fn static_before_export_as_namespace_span_starts_at_modifier() {
+    assert_namespace_export_span_starts_at_modifier("static");
+}
+
+#[test]
+fn public_before_export_as_namespace_span_starts_at_modifier() {
+    assert_namespace_export_span_starts_at_modifier("public");
+}
+
+#[test]
+fn protected_before_export_as_namespace_span_starts_at_modifier() {
+    assert_namespace_export_span_starts_at_modifier("protected");
+}
+
+#[test]
+fn private_before_export_as_namespace_span_starts_at_modifier() {
+    assert_namespace_export_span_starts_at_modifier("private");
+}
+
+#[test]
+fn readonly_before_export_as_namespace_span_starts_at_modifier() {
+    assert_namespace_export_span_starts_at_modifier("readonly");
+}
+
+/// Renamed-binder control: the exported name is arbitrary and must not affect
+/// where the node's span starts.
+#[test]
+fn static_before_export_as_namespace_span_starts_at_modifier_renamed_binder() {
+    let source = "static export as namespace qux$_0;";
+    assert_span(
+        source,
+        syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION,
+        source,
     );
 }

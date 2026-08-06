@@ -633,12 +633,26 @@ impl ParserState {
                     // TS1184 in a Block, in a namespace body, and at the
                     // source file's own top level alike — where a modified
                     // *declaration* would keep TS1044 in the latter two.
+                    //
+                    // The checker's own TS1314 (global-module-exports
+                    // placement) reads the `NamespaceExportDeclaration` node's
+                    // span, and tsc anchors that span at the first modifier,
+                    // not at `export` (#16403 residual, oracle-confirmed for
+                    // `static`/`public`/`protected`/`private`/`readonly`
+                    // — the sibling `accessor`/`async` dispatch already
+                    // threads `start_pos` through `parse_export_declaration_from`
+                    // for this same reason). Capture the modifier's position
+                    // before consuming it and hand the node construction to
+                    // that shared helper instead of dropping straight to a
+                    // fresh `parse_statement()`, which would re-anchor the
+                    // node at `export`.
+                    let start_pos = self.token_pos();
                     self.parse_error_at_current_token(
                         "Modifiers cannot appear here.",
                         diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
                     );
                     self.next_token();
-                    self.parse_statement()
+                    self.parse_export_declaration_from(start_pos)
                 }
                 _ => {
                     // Every other shape reaching this branch — a plain
