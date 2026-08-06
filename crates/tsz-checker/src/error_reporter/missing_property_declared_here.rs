@@ -202,6 +202,7 @@ impl<'a> CheckerState<'a> {
         depth: u32,
     ) -> Option<(u32, u32, Option<String>)> {
         use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
 
         if depth > Self::ANNOTATION_WALK_MAX_DEPTH {
             return None;
@@ -219,12 +220,20 @@ impl<'a> CheckerState<'a> {
             return Some((start, length, Self::arena_file_name(arena, anchor_idx)));
         }
         if node.kind == syntax_kind_ext::TYPE_REFERENCE {
-            let name_idx = self.ctx.arena.get_type_ref(node)?.type_name;
+            let type_ref = self.ctx.arena.get_type_ref(node)?;
+            let name_idx = type_ref.type_name;
             let owner_symbol = self.type_position_symbol(name_idx)?;
             if let Some(anchor) =
                 self.member_declaration_anchor_following_aliases(owner_symbol, property)
             {
                 return Some(anchor);
+            }
+            // `Array<T>`/`ReadonlyArray<T>` is the type-reference spelling of
+            // the same element shape `ARRAY_TYPE` (`T[]`) descends into below —
+            // tsc's checker lowers both to one internal array type, so the
+            // pointer must reach the same element node either way.
+            if let Some(element_idx) = self.lib_array_type_argument(owner_symbol, node) {
+                return self.annotation_property_anchor(element_idx, property, depth + 1);
             }
             // An alias chain (`type Indirect = Zed`) declares no member list of
             // its own, so the walk above finds nothing to anchor in. Continue
@@ -250,7 +259,50 @@ impl<'a> CheckerState<'a> {
             let element_idx = self.ctx.arena.get_array_type(node)?.element_type;
             return self.annotation_property_anchor(element_idx, property, depth + 1);
         }
+        if node.kind == syntax_kind_ext::TYPE_OPERATOR {
+            let data = self.ctx.arena.get_type_operator(node)?;
+            if data.operator == SyntaxKind::ReadonlyKeyword as u16 {
+                // `readonly T[]` and `readonly Array<T>` carry no shape of
+                // their own beyond the operand they modify.
+                return self.annotation_property_anchor(data.type_node, property, depth + 1);
+            }
+            return None;
+        }
         None
+    }
+
+    /// The sole type argument of `idx` when `owner_symbol` is the actual
+    /// global `Array` or `ReadonlyArray` lib interface, so an `Array<T>`
+    /// member type-reference can be descended into exactly like `T[]`.
+    ///
+    /// Gated on lib provenance, not name text alone: a user-defined `Array<T>`
+    /// shadowing the global must not take this path (it has its own member
+    /// list, handled by the ordinary declaration walk above). Mirrors the same
+    /// name-plus-lib-provenance check `class_implements_checker` already uses
+    /// to recognize the global `Array` for its own display/member fast path.
+    fn lib_array_type_argument(
+        &self,
+        owner_symbol: tsz_binder::SymbolId,
+        type_ref_node: &tsz_parser::parser::node::Node,
+    ) -> Option<NodeIndex> {
+        let symbol = self
+            .get_cross_file_symbol(owner_symbol)
+            .or_else(|| self.ctx.binder.get_symbol(owner_symbol))?;
+        let is_lib = self.ctx.symbol_is_from_actual_or_cloned_lib(owner_symbol)
+            || self.ctx.binder.lib_symbol_ids.contains(&owner_symbol);
+        if !is_lib || (symbol.escaped_name != "Array" && symbol.escaped_name != "ReadonlyArray") {
+            return None;
+        }
+        let args = self
+            .ctx
+            .arena
+            .get_type_ref(type_ref_node)?
+            .type_arguments
+            .as_ref()?;
+        if args.nodes.len() != 1 {
+            return None;
+        }
+        args.nodes.first().copied()
     }
 
     /// The written type node of the member named `key` on the type annotation

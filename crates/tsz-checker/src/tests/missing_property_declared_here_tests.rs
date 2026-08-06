@@ -19,8 +19,9 @@
 //! (`error_reporter/missing_property_declared_here.rs`), reached from the one
 //! TS2741 construction in `render_missing_property`.
 
+use crate::context::CheckerOptions;
 use crate::diagnostics::Diagnostic;
-use crate::test_utils::check_source_diagnostics;
+use crate::test_utils::{check_source_diagnostics, check_source_with_libs, load_default_lib_files};
 use tsz_common::diagnostics::diagnostic_codes;
 
 const TS2741: u32 = diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE;
@@ -1036,6 +1037,25 @@ fn computed_path_member_declines_rather_than_anchoring_shallow() {
     );
 }
 
+/// Checks `source` against the real lib `Array`/`ReadonlyArray` globals, for
+/// the shapes below that name them by their type-reference spelling
+/// (`Array<T>`, `ReadonlyArray<T>`) rather than `T[]` — the no-lib
+/// [`check_source_diagnostics`] harness above resolves no lib symbols at all,
+/// so a bare `Array` identifier would be an unresolved reference rather than
+/// the actual global interface.
+fn check_source_with_default_libs(source: &str) -> Vec<Diagnostic> {
+    let libs = load_default_lib_files();
+    check_source_with_libs(
+        source,
+        "case.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    )
+}
+
 /// A literal nested inside an *array* member: the path reaches the member's
 /// written type node, and `annotation_property_anchor` descends through the
 /// array type's own element type to anchor at the missing property inside it.
@@ -1087,5 +1107,102 @@ fn array_element_multi_property_failure_still_carries_no_pointer() {
             .iter()
             .any(|info| info.code == TS2728),
         "TS2739 carries no declared-here pointer: {diagnostic:?}"
+    );
+}
+
+/// `Array<T>` is the type-reference spelling of the same element shape
+/// `T[]`'s `ARRAY_TYPE` node descends into: tsc's checker lowers both to one
+/// internal array type, so `annotation_property_anchor`'s `TYPE_REFERENCE` arm
+/// must reach the same element node when the referenced symbol is the actual
+/// lib `Array` interface. Oracle: `case.ts:1:50 - 'delta' is declared here.`
+#[test]
+fn array_type_reference_argument_anchors_through_the_element_type() {
+    let source = "type Roster2 = { members: Array<{ gamma: string; delta: string }> };\nconst r2: Roster2 = { members: [{ gamma: \"g\" }] };\n";
+    let diagnostic = only(&check_source_with_default_libs(source), TS2741);
+    let (_, start, length, _) = declared_here(&diagnostic);
+    assert_eq!(span_text(source, start, length), "delta");
+}
+
+/// `ReadonlyArray<T>` is the other lib generic naming the same element shape.
+/// Oracle: `case.ts:1:53 - 'zq' is declared here.`
+#[test]
+fn readonly_array_type_reference_argument_anchors_through_the_element_type() {
+    let source = "type Nest5 = { list: ReadonlyArray<{ zp: number; zq: number }> };\nconst e: Nest5 = { list: [{ zp: 1 }] };\n";
+    let diagnostic = only(&check_source_with_default_libs(source), TS2741);
+    let (_, start, length, _) = declared_here(&diagnostic);
+    assert_eq!(span_text(source, start, length), "zq");
+}
+
+/// `readonly T[]` wraps the array type in a `TYPE_OPERATOR` node; the operator
+/// itself carries no shape and `annotation_property_anchor` must peel it
+/// exactly like `PARENTHESIZED_TYPE` before reaching the existing `ARRAY_TYPE`
+/// descent. Oracle: `case.ts:1:49 - 'rq' is declared here.`
+#[test]
+fn readonly_array_type_literal_anchors_through_the_element_type() {
+    let source = "type Nest2 = { list: readonly ({ rp: number; rq: number })[] };\nconst b: Nest2 = { list: [{ rp: 1 }] };\n";
+    let diagnostic = only(&check_source_with_default_libs(source), TS2741);
+    let (_, start, length, _) = declared_here(&diagnostic);
+    assert_eq!(span_text(source, start, length), "rq");
+}
+
+/// `readonly Array<T>` composes both the `TYPE_OPERATOR` peel and the lib
+/// `Array` type-reference descent in one annotation. tsc's own grammar check
+/// flags this spelling as `TS1354` ("'readonly' type modifier is only
+/// permitted on array and tuple literal types") but keeps checking the
+/// assignment through the error, and still attaches the pointer — asserted
+/// with `only(..., TS2741)` so the unrelated grammar diagnostic cannot affect
+/// this test. Oracle: `case.ts:1:52 - 'cq' is declared here.`
+#[test]
+fn readonly_array_type_reference_composes_with_the_type_operator_peel() {
+    let source = "type Combo = { items: readonly Array<{ cp: number; cq: number }> };\nconst c2: Combo = { items: [{ cp: 1 }] };\n";
+    let diagnostic = only(&check_source_with_default_libs(source), TS2741);
+    let (_, start, length, _) = declared_here(&diagnostic);
+    assert_eq!(span_text(source, start, length), "cq");
+}
+
+/// Negative control: a user-defined generic interface merely *named* `Array`
+/// (shadowing the lib global in its own module scope) must not take the lib
+/// fast path — it has its own member list `{ held: T }`, which owns no
+/// property matching the failing literal's shape, so this declines exactly as
+/// any other unrelated generic member type does. Proves the gate is
+/// lib-provenance, not name text alone.
+#[test]
+fn user_defined_array_named_type_does_not_take_the_lib_fast_path() {
+    let source = "interface Array<T> { held: T }\ntype Boxed = { list: Array<{ up: number; uq: number }> };\nconst u: Boxed = { list: { up: 1 } };\n";
+    let diagnostics = check_source_with_default_libs(source);
+    assert!(
+        !diagnostics
+            .iter()
+            .flat_map(|d| d.related_information.iter())
+            .any(|info| info.code == TS2728),
+        "a shadowed `Array` must not anchor through the lib element-type descent: {diagnostics:?}"
+    );
+}
+
+/// Negative control, current known gap: a tuple member type (`[T]`) is not
+/// descended into, because the failing array-literal element's *index* is not
+/// tracked anywhere on the path to the annotation walk (`ARRAY_TYPE`/`Array<T>`
+/// share one element type at every index; a tuple does not). Anchoring at a
+/// fixed slot would be wrong whenever the failure is not at that slot, so this
+/// declines rather than guessing.
+///
+/// Asserted over every diagnostic rather than a chosen one, same reasoning as
+/// [`computed_path_member_declines_rather_than_anchoring_shallow`]: tsz's
+/// *primary* diagnostic also diverges here (`TS2322` "not assignable to type
+/// '[...]'" where tsc reports `TS2741`), a distinct pre-existing defect this
+/// test must not depend on. Oracle: tsc reports `TS2741` and anchors
+/// `case.ts:1:39 - 'tq' is declared here.`; pinned here as today's behavior so
+/// a future index-aware fix flips this assertion rather than silently landing
+/// a wrong anchor.
+#[test]
+fn tuple_element_literal_still_carries_no_pointer() {
+    let source = "type Nest3 = { tup: [{ tp: number; tq: number }] };\nconst c: Nest3 = { tup: [{ tp: 1 }] };\n";
+    let diagnostics = check_source_diagnostics(source);
+    assert!(
+        !diagnostics
+            .iter()
+            .flat_map(|d| d.related_information.iter())
+            .any(|info| info.code == TS2728),
+        "tuple element type is not yet descended into: {diagnostics:?}"
     );
 }
