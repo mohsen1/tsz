@@ -399,10 +399,17 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 // iterator whose next() expects type X, the containing generator
                 // must send a compatible type.
                 if let Some(expected_generator) = self.get_expected_generator_type(idx) {
+                    // When the container's declared return type carries no
+                    // resolvable `TNext` (e.g. an `Iterable<T>` annotation, which
+                    // has no next type at all), `tsc` treats the send type as
+                    // `any` (`signatureNextType = iterationTypes?.nextType ?? anyType`)
+                    // and reports nothing. Defaulting to `undefined` instead would
+                    // manufacture a false-positive TS2766 against any concrete
+                    // delegate `next()` parameter.
                     let containing_next = self
                         .checker
                         .get_generator_next_type_argument(expected_generator)
-                        .unwrap_or(TypeId::UNDEFINED);
+                        .unwrap_or(TypeId::ANY);
                     self.checker.check_iterator_next_type_assignability(
                         expression_type,
                         containing_next,

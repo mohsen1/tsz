@@ -166,6 +166,9 @@ mod fresh_literal_boundary_tests;
 #[path = "../tests/generator_union_return_type_tests.rs"]
 mod generator_union_return_type_tests;
 #[cfg(test)]
+#[path = "../tests/generator_yield_star_next_type_tests.rs"]
+mod generator_yield_star_next_type_tests;
+#[cfg(test)]
 #[path = "../tests/heritage_type_only_tests.rs"]
 mod heritage_type_only_tests;
 #[cfg(test)]
