@@ -643,6 +643,8 @@ mod nonstrict_nullish_widening_generic_call_tests;
 mod nonstrict_nullish_widening_mutable_binding_tests;
 #[path = "tests/nonstrict_nullish_widening_nested_leaf_tests.rs"]
 mod nonstrict_nullish_widening_nested_leaf_tests;
+#[path = "tests/nonstrict_return_union_nullish_reduction_tests.rs"]
+mod nonstrict_return_union_nullish_reduction_tests;
 #[path = "tests/nonstrict_union_nullish_scalar_reduction_tests.rs"]
 mod nonstrict_union_nullish_scalar_reduction_tests;
 #[path = "tests/nonunique_symbol_property_access_tests.rs"]
