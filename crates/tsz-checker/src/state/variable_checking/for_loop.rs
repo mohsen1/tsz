@@ -756,23 +756,26 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // TS2780/TS2781: The left-hand side of a 'for...in'/'for...of' statement
-        // may not be an optional property access.
-        if self.is_optional_chain_access(initializer) {
+        // TS2781: The left-hand side of a 'for...of' statement may not be an
+        // optional property access. tsc's checkForOfStatement runs this check
+        // unconditionally (typescript-go checker.go's checkReferenceExpression
+        // call in checkForOfStatement is not gated on the element-type check).
+        //
+        // For 'for...in', the analogous optional-chain check is NOT unconditional:
+        // tsc's checkForInStatement only calls checkReferenceExpression (which is
+        // what reports TS2780) in the `else` branch of an `if
+        // !isTypeAssignableTo(indexType, leftType) { TS2405 } else {
+        // checkReferenceExpression(...) }` — so TS2405 (the LHS type must be
+        // string/any) wins whenever it fires, and TS2780 only fires when the LHS
+        // type check already passed. See the TS2405 block below, which now owns
+        // the for-in optional-chain emission.
+        if is_for_of && self.is_optional_chain_access(initializer) {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-            if is_for_of {
-                self.error_at_node(
-                    initializer,
-                    diagnostic_messages::THE_LEFT_HAND_SIDE_OF_A_FOR_OF_STATEMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
-                    diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_OF_STATEMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
-                );
-            } else {
-                self.error_at_node(
-                    initializer,
-                    diagnostic_messages::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
-                    diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
-                );
-            }
+            self.error_at_node(
+                initializer,
+                diagnostic_messages::THE_LEFT_HAND_SIDE_OF_A_FOR_OF_STATEMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
+                diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_OF_STATEMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
+            );
         }
 
         // TS2487: For-of LHS must be a variable or a property access.
@@ -862,9 +865,9 @@ impl<'a> CheckerState<'a> {
         // TS2405: For for-in, also check that the LHS type is string or any.
         // This applies only to valid LHS forms (identifiers and property/element access).
         // Skip if we already emitted TS2491 (destructuring) or TS2406 (invalid form).
-        // Also skip for optional chain accesses — TS2777 already covers those.
+        // Only once this check passes does an optional-chain LHS get its own TS2780
+        // (see the structural-rule note above the `is_for_of` TS2781 emission).
         if !is_for_of
-            && !self.is_optional_chain_access(initializer)
             && let Some(_init_node) = self.ctx.arena.get(initializer)
             && {
                 let unwrapped = self
@@ -898,6 +901,12 @@ impl<'a> CheckerState<'a> {
                     initializer,
                     diagnostic_messages::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_MUST_BE_OF_TYPE_STRING_OR_ANY,
                     diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_MUST_BE_OF_TYPE_STRING_OR_ANY,
+                );
+            } else if self.is_optional_chain_access(initializer) {
+                self.error_at_node(
+                    initializer,
+                    diagnostic_messages::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
+                    diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
                 );
             }
         }
