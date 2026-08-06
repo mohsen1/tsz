@@ -1446,6 +1446,19 @@ impl<'a> CheckerState<'a> {
             source_str = display;
             source_from_annotation = true;
         }
+        // A longhand primitive-keyword union source annotation
+        // (`string | number | symbol`, `string | number`) carries no
+        // `aliasSymbol`, so tsc renders it by its members rather than repainting
+        // the whole union with a coincidentally-shaped non-generic alias
+        // (`PropertyKey`, a user `type`) reached through the reverse type-to-def
+        // lookup. A written-through reference (`: Zed`) is a `TYPE_REFERENCE`,
+        // not a longhand union, so it keeps its name.
+        if !source_from_annotation
+            && let Some(display) = self.longhand_primitive_union_source_display(anchor_idx, source)
+        {
+            source_str = display;
+            source_from_annotation = true;
+        }
         if !source_from_annotation
             && let Some(expr_idx) = expr_idx
             && !self.declared_identifier_has_literal_only_alias_source(expr_idx)

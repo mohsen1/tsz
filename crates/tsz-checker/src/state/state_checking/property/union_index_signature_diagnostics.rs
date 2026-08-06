@@ -60,6 +60,33 @@ impl<'a> CheckerState<'a> {
             let mut has_deferred_index_value_type = false;
 
             for shape in union_shapes {
+                // A symbol-keyed property is covered only by a `[k: symbol]`
+                // index signature — never by the `[k: string]`/`[k: number]`
+                // branches below. Mirrors tsc `getApplicableIndexInfo`. When the
+                // shape has no symbol signature the property is uncovered and no
+                // value check applies (`applicable_index_value_types` stays empty
+                // for this shape, so the outer guard skips it).
+                if source_prop.is_symbol_named {
+                    if let Some(symbol_index) = shape.symbol_index_signature() {
+                        if self.index_value_type_is_deferred(symbol_index.value_type) {
+                            has_deferred_index_value_type = true;
+                            continue;
+                        }
+                        applicable_index_value_types.push(symbol_index.value_type);
+                        if self
+                            .index_signature_relation_outcome(
+                                source_prop.type_id,
+                                symbol_index.value_type,
+                            )
+                            .related
+                        {
+                            accepted_by_index = true;
+                            break;
+                        }
+                    }
+                    continue;
+                }
+
                 if let Some(string_index) = &shape.string_index {
                     if !self.string_index_key_accepts_property_name(
                         string_index.key_type,
