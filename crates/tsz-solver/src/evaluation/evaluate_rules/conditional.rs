@@ -135,7 +135,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             index.value_type = v;
         }
 
-        if with_index {
+        let result = if with_index {
             self.interner().object_with_index(ObjectShape {
                 flags,
                 properties,
@@ -147,6 +147,56 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         } else {
             self.interner()
                 .object_with_flags_and_symbol(properties, flags, symbol)
+        };
+
+        // Re-interning the object under evaluated property types produces a
+        // fresh `TypeId` that has no provenance of its own. Carry the source's
+        // merged-intersection origin (and its display alias) across so an
+        // eagerly merged object intersection stays recoverable as an
+        // intersection after its members reduce.
+        //
+        // Without this, `{ a: 1 } & { a: 1 | number }` — merged at intern time
+        // into `{ a: 1 & (1 | number) }` with a recorded origin — loses that
+        // origin here once the property intersection evaluates to `1`, leaving
+        // a bare object that the conditional extends-clause identity guard
+        // (`intersection_member_set`) can no longer distinguish from a plain
+        // `{ a: 1 }`. tsc keeps the written `IntersectionType` distinct from
+        // the flattened object under `isTypeIdenticalTo`, so the higher-order
+        // `Equal<A & M, A>` probe must answer `false` (#16095).
+        self.propagate_merged_object_operand_provenance(type_id, result);
+
+        result
+    }
+
+    /// Carry merged-intersection provenance from a conditional object operand to
+    /// the re-interned, property-evaluated `result`. First-write-wins on the
+    /// interner side, so this is a no-op when `result` already carries its own
+    /// origin (or when `result` is unchanged from `source`).
+    fn propagate_merged_object_operand_provenance(&mut self, source: TypeId, result: TypeId) {
+        if source == result {
+            return;
+        }
+        let Some(origin) = self.interner().get_merged_intersection_origin(source) else {
+            return;
+        };
+        // Never stamp an intersection origin onto a `result` that is itself one
+        // of the origin's own members. Once a property intersection reduces, the
+        // re-interned object can hash-cons to a plain member (`{ a: 1 } & { a: 1
+        // | number }` → `{ a: 1 }`), and that member `TypeId` is shared with
+        // every unrelated `{ a: 1 }` in the program. Giving it a phantom
+        // intersection provenance would mis-elaborate diagnostics on code that
+        // never wrote an intersection. This mirrors the guard in
+        // `normalize_intersection` that records an origin only for a genuinely
+        // distinct merged object.
+        if let Some(TypeData::Intersection(list)) = self.interner().lookup(origin)
+            && self.interner().type_list(list).contains(&result)
+        {
+            return;
+        }
+        self.interner()
+            .store_merged_intersection_origin(result, origin);
+        if let Some(alias) = self.interner().get_display_alias(source) {
+            self.interner().store_display_alias(result, alias);
         }
     }
 

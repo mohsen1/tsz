@@ -121,12 +121,57 @@ fn intersection_member_order_does_not_affect_identity() {
 // intersections over the same members stay identical.
 // ---------------------------------------------------------------------------
 
-// NOT covered here, and deliberately: `{ a: 1 } & { a: 1 | number }` vs
-// `{ a: 1 }`. When the merge result is structurally equal to one of the
-// members it *is* that member's interned type, so no distinguishing origin can
-// be recorded without making every plain `{ a: 1 }` claim an intersection
-// provenance it does not have. tsc reports TS2344 there; tsz still answers EQ.
-// Tracked as the remaining half of #16095.
+// The subsumed-member object row (#16095). `{ a: 1 } & { a: 1 | number }` vs
+// `{ a: 1 }`: the two objects merge into one synthesized shape whose sole
+// property `a` is the *unreduced* intersection `1 & (1 | number)`, and the
+// interner records the pre-merge members as the merge origin. tsc keeps the
+// written `IntersectionType` distinct from the plain `{ a: 1 }`, so the higher-
+// order probe must answer DIFF; tsz used to answer EQ because evaluation
+// reduced the property `1 & (1 | number)` to `1`, collapsing the merged object
+// to the plain `{ a: 1 }` before the extends-clause identity guard ever ran.
+#[test]
+fn redundant_object_intersection_is_not_identical_to_its_subsumed_member() {
+    let source = format!(
+        "{IF_EQUALS_PRELUDE}\n\
+        type R = IfEquals<{{ a: 1 }} & {{ a: 1 | number }}, {{ a: 1 }}, \"EQ\", \"DIFF\">;\n\
+        const r: R = \"DIFF\";\n"
+    );
+    let diags = check(&source);
+    assert!(
+        error_codes(&diags).is_empty(),
+        "A redundant object intersection and its subsumed member are different types to tsc's isTypeIdenticalTo; got: {diags:#?}"
+    );
+}
+
+#[test]
+fn redundant_object_intersection_under_alpha_renamed_type_parameters() {
+    let source = r#"
+type Equal<L, R, T = "EQ", F = "DIFF"> =
+  (<U>() => U extends L ? 1 : 2) extends
+  (<U>() => U extends R ? 1 : 2) ? T : F;
+type R = Equal<{ p: 2 } & { p: 2 | string }, { p: 2 }>;
+const r: R = "DIFF";
+"#;
+    let diags = check(source);
+    assert!(
+        error_codes(&diags).is_empty(),
+        "Renamed binders must not change the object-intersection identity answer; got: {diags:#?}"
+    );
+}
+
+#[test]
+fn redundant_object_intersection_is_not_identical_to_the_wider_member_either() {
+    let source = format!(
+        "{IF_EQUALS_PRELUDE}\n\
+        type R = IfEquals<{{ a: 1 }} & {{ a: 1 | number }}, {{ a: 1 | number }}, \"EQ\", \"DIFF\">;\n\
+        const r: R = \"DIFF\";\n"
+    );
+    let diags = check(&source);
+    assert!(
+        error_codes(&diags).is_empty(),
+        "The merge kept the narrower property, so pin the wider-member side too; got: {diags:#?}"
+    );
+}
 
 #[test]
 fn merged_object_intersection_is_not_identical_to_the_flattened_object() {
