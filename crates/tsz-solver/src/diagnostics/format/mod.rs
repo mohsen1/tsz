@@ -378,6 +378,66 @@ impl<'a> TypeFormatter<'a> {
         resolved
     }
 
+    /// A concrete (type-parameter-free) mapped type whose key constraint is a
+    /// finite set of literal keys — `{ [K in Color]: number }`,
+    /// `{ [K in "a" | "b"]: number }` — is resolved by `tsc` to its member
+    /// object (`{ green: number; red: number; }`) for display, exactly as if
+    /// the members had been written out. tsz keeps the `Mapped` node live for
+    /// semantic identity (#15392), so the printer resolves it here instead.
+    ///
+    /// Returns the resolved object only when evaluation produces a plain
+    /// named-property object carrying no free type parameters and no index
+    /// signature. A generic mapped (`{ [K in keyof T]: T[K] }`) stays deferred
+    /// and a `string`/`number`/`symbol`-constrained mapped is an index
+    /// signature (`{ [x: string]: T }`, owned by `format_mapped`); both keep
+    /// their `{ [K in ...]: ... }` source form by returning `type_id`.
+    fn resolve_concrete_mapped_for_display(&self, type_id: TypeId) -> TypeId {
+        let Some(TypeData::Mapped(mapped_id)) = self.interner.lookup(type_id) else {
+            return type_id;
+        };
+        let mapped = self.interner.mapped_type(mapped_id);
+        // Gate cheaply before evaluating, mirroring
+        // `resolve_concrete_index_access_for_display`: a generic key constraint
+        // (`keyof T`) can never reduce to a concrete member object, and a
+        // `string`/`number`/`symbol` constraint is an index signature owned by
+        // `format_mapped` — neither should pay a full mapped evaluation here.
+        if crate::type_queries::contains_type_parameters_db(self.interner, mapped.constraint) {
+            return type_id;
+        }
+        // Evaluate the mapped type. A `keyof`/enum/aliased-union constraint is a
+        // `Lazy(DefId)` reference whose keys only materialize with a resolver, so
+        // back the evaluation with the formatter's `DefinitionStore` when present;
+        // an inline literal-union constraint resolves without one.
+        let resolved = match self.def_store {
+            Some(def_store) => {
+                let resolver =
+                    crate::caches::query_cache_evaluation::StoreOnlyResolver::new(def_store);
+                crate::evaluation::evaluate::evaluate_type_with_resolver(
+                    self.interner,
+                    &resolver,
+                    type_id,
+                )
+            }
+            None => crate::evaluation::evaluate::evaluate_mapped(self.interner, mapped.as_ref()),
+        };
+        // A free type parameter in the *template* (`{ [K in "a"]: T }`) keeps the
+        // mapped generic; such a result must print as written, not expanded.
+        if crate::type_queries::contains_type_parameters_db(self.interner, resolved) {
+            return type_id;
+        }
+        // Only a resolved *member* object matches tsc's expansion. A deferred
+        // result (still a `Mapped`/error) or an index-signature object
+        // (`ObjectWithIndex`) is not a plain `Object`, so it keeps its source or
+        // index-signature form via the fall-through below.
+        let Some(TypeData::Object(shape_id)) = self.interner.lookup(resolved) else {
+            return type_id;
+        };
+        if self.interner.object_shape(shape_id).properties.is_empty() {
+            return type_id;
+        }
+        resolved
+    }
+
     /// A semantic reference (`Lazy(DefId)`, or an `Application` over one)
     /// carries no members of its own, so `evaluate_index_access` cannot reduce
     /// `Iface["m"]` while the object operand is still that reference. Swap in

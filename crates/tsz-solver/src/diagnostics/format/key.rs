@@ -598,6 +598,14 @@ impl<'a> TypeFormatter<'a> {
                 self.format_conditional(cond.as_ref()).into()
             }
             TypeData::Mapped(mapped_id) => {
+                // A concrete finite-key mapped type displays as its resolved
+                // member object in tsc (`{ green: number; red: number; }`),
+                // not its `{ [K in E]: V }` source form. Generic and
+                // index-signature mapped types return unchanged.
+                let resolved = self.resolve_concrete_mapped_for_display(type_id);
+                if resolved != type_id {
+                    return self.format(resolved);
+                }
                 let mapped = self.interner.mapped_type(*mapped_id);
                 self.format_mapped(mapped.as_ref()).into()
             }
