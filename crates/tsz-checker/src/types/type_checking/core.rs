@@ -5,7 +5,6 @@
 //! Type alias declaration checking and type node validation are in
 //! `type_alias_checking.rs`.
 
-use super::core_statement_checks::TopLevelAwaitVerdict;
 use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
@@ -1621,54 +1620,12 @@ impl<'a> CheckerState<'a> {
         let placement_error =
             is_using && self.check_grammar_using_declaration_placement(list_idx, is_await_using);
 
-        if is_await_using && !placement_error && !self.ctx.has_syntax_parse_errors {
-            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-
-            // Same top-level-await-eligibility predicate as `check_await_expression`
-            // (#16072): a namespace body disqualifies `await using` from being
-            // top level without being function-like, so this is not
-            // `function_depth == 0`.
-            if self.is_directly_at_source_file_top_level(list_idx) {
-                // TS2853: Top-level 'await using' is only valid in modules.
-                if self.top_level_await_requires_module_diagnostic() {
-                    self.error_at_node(
-                        list_idx,
-                        diagnostic_messages::AWAIT_USING_STATEMENTS_ARE_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_FILE_WHEN_THAT_FIL,
-                        diagnostic_codes::AWAIT_USING_STATEMENTS_ARE_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_FILE_WHEN_THAT_FIL,
-                    );
-                }
-
-                // TS1309 when a Node module kind pairs with a CommonJS-format
-                // file; otherwise TS2854, which requires specific module +
-                // target options. Both answers come from the shared
-                // `checkGrammarAwaitOrAwaitUsing` switch, which routes the
-                // module/target half through the environment capability
-                // boundary.
-                match self.top_level_await_verdict() {
-                    TopLevelAwaitVerdict::Allowed => {}
-                    TopLevelAwaitVerdict::CommonJsFile => {
-                        self.error_at_node(
-                            list_idx,
-                            diagnostic_messages::THE_CURRENT_FILE_IS_A_COMMONJS_MODULE_AND_CANNOT_USE_AWAIT_AT_THE_TOP_LEVEL,
-                            diagnostic_codes::THE_CURRENT_FILE_IS_A_COMMONJS_MODULE_AND_CANNOT_USE_AWAIT_AT_THE_TOP_LEVEL,
-                        );
-                    }
-                    TopLevelAwaitVerdict::UnsupportedModuleOrTarget => {
-                        self.error_at_node(
-                            list_idx,
-                            diagnostic_messages::TOP_LEVEL_AWAIT_USING_STATEMENTS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET,
-                            diagnostic_codes::TOP_LEVEL_AWAIT_USING_STATEMENTS_ARE_ONLY_ALLOWED_WHEN_THE_MODULE_OPTION_IS_SET,
-                        );
-                    }
-                }
-            } else if !self.enclosing_function_allows_await_using(list_idx) {
-                // TS2852: Nested 'await using' is only valid inside async functions.
-                self.error_at_node(
-                    list_idx,
-                    diagnostic_messages::AWAIT_USING_STATEMENTS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LE,
-                    diagnostic_codes::AWAIT_USING_STATEMENTS_ARE_ONLY_ALLOWED_WITHIN_ASYNC_FUNCTIONS_AND_AT_THE_TOP_LE,
-                );
-            }
+        // TS2852/TS2853/TS2854/TS1309: the module/target/async-context grammar
+        // for an `await using` list, once its TS1545-family placement is cleared.
+        // A class static block short-circuits the whole family (answering only
+        // the parser's TS18054) — see `check_await_using_context`.
+        if is_await_using {
+            self.check_await_using_context(list_idx, placement_error);
         }
 
         // VariableDeclarationList uses the same VariableData structure
@@ -1694,30 +1651,6 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
-    }
-
-    fn enclosing_function_allows_await_using(&self, idx: NodeIndex) -> bool {
-        let Some(function_idx) = self.find_enclosing_function(idx) else {
-            return false;
-        };
-        let Some(node) = self.ctx.arena.get(function_idx) else {
-            return false;
-        };
-
-        self.ctx
-            .arena
-            .get_function(node)
-            .is_some_and(|function| function.is_async)
-            || self
-                .ctx
-                .arena
-                .get_method_decl(node)
-                .is_some_and(|method| self.has_async_modifier(&method.modifiers))
-            || self
-                .ctx
-                .arena
-                .get_accessor(node)
-                .is_some_and(|accessor| self.has_async_modifier(&accessor.modifiers))
     }
 
     /// TS2492: Check if any `let`/`const` declaration in a catch block shadows
