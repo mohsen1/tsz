@@ -821,24 +821,14 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        // A position-invalid `import =` inside a declaration scope resolves its
-        // specifier only when the alias is referenced. What reaches
-        // `resolveExternalModuleName` in tsc is `markAliasReferenced`, so the
-        // discriminator is the use, not the position — the same rule the namespace
-        // arm above already applies via `namespace_import_alias_is_referenced`.
-        //
-        // The scope test is what keeps this narrow. A bare block, an `if` body and a
-        // loop body are not declaration scopes, and tsc resolves in all three however
-        // the alias is used; only a function body, a method body, a static block and a
-        // namespace body suppress. #16489 draws the same line for `export ... from`.
-        //
-        // This condition used to be unqualified, under the comment "tsc doesn't
-        // resolve require() inside functions". It does — when the alias is
-        // referenced — so the unqualified form swallowed a TS2307 that tsc reports.
-        if in_wrong_context
-            && self.is_inside_function_body(stmt_idx)
-            && !self.import_alias_is_referenced(stmt_idx)
-        {
+        // A position-invalid `import =` resolves its specifier under the same
+        // `markAliasReferenced` rule every import production obeys: a used alias
+        // resolves wherever it sits, and a bound-but-unused `import =` resolves
+        // additionally in a script top-level block. Everything else — a module
+        // top-level block, a function/method/static body, a namespace body —
+        // suppresses, leaving only the TS1232 placement diagnostic. See
+        // `position_invalid_element_resolves_specifier`.
+        if in_wrong_context && !self.position_invalid_element_resolves_specifier(stmt_idx) {
             return;
         }
 
@@ -1888,44 +1878,6 @@ impl<'a> CheckerState<'a> {
         }
 
         self.alias_is_referenced_under(module_decl.body, import_decl_node, import_alias_sym_id)
-    }
-
-    /// Is the alias declared by a position-invalid `import =` at `import_decl_node`
-    /// referenced anywhere in its source file?
-    ///
-    /// The declaration-scope counterpart of `namespace_import_alias_is_referenced`.
-    /// It scans from the `SourceFile` rather than from the enclosing function body
-    /// because the test is symbol identity, not position: only an identifier that
-    /// resolves to *this* alias counts, so widening the walk cannot produce a false
-    /// positive, and it does catch a use from a nested closure.
-    ///
-    /// Defaults to `true` (resolve the specifier) whenever the alias has no symbol
-    /// or no enclosing file, matching the pre-existing behaviour of both callers.
-    fn import_alias_is_referenced(&self, import_decl_node: NodeIndex) -> bool {
-        let Some(import_alias_sym_id) = self.ctx.binder.get_node_symbol(import_decl_node) else {
-            return true;
-        };
-
-        let mut scan_root = import_decl_node;
-        loop {
-            if self
-                .ctx
-                .arena
-                .get(scan_root)
-                .is_some_and(|node| node.kind == syntax_kind_ext::SOURCE_FILE)
-            {
-                break;
-            }
-            let Some(ext) = self.ctx.arena.get_extended(scan_root) else {
-                return true;
-            };
-            if ext.parent.is_none() {
-                return true;
-            }
-            scan_root = ext.parent;
-        }
-
-        self.alias_is_referenced_under(scan_root, import_decl_node, import_alias_sym_id)
     }
 
     /// Does any identifier under `scan_root`, other than the declaration itself,
