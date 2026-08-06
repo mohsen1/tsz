@@ -93,6 +93,7 @@ impl<'a> TypeFormatter<'a> {
             TypeData::Union(members) => {
                 if self.diagnostic_mode
                     && !self.expand_primitive_key_union
+                    && !self.anonymous_composite_structural
                     && self.is_primitive_key_union_data(key)
                 {
                     return Cow::Borrowed("PropertyKey");
