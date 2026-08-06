@@ -458,8 +458,33 @@ fn checked_js_cross_file_typedef_and_script_globals_duplicate() {
     );
 }
 
+/// A default-imported, type-only `namespace` used as a value reports `TS2708`
+/// at each value position — and reports **nothing** on the declaration file.
+///
+/// This test previously also asserted `TS2300 "Duplicate identifier"` on the
+/// `.d.ts`. That expectation was an artifact of how it was oracled, not a rule.
+/// Reproducing the fixture under `/tmp` on macOS makes tsc load the declaration
+/// file **twice** — once as an explicit root spelled `/tmp/...` and once through
+/// module resolution spelled `/private/tmp/...`, because `/tmp` is a symlink —
+/// so the `declare module` block is declared twice and *that* is what collides.
+/// Measured against the pinned `typescript@7.0.2`:
+///
+/// ```text
+/// # fixture under /tmp (symlinked): the same file, reported under two paths
+/// ../../private/tmp/.../index.d.ts(8,20): error TS2300: Duplicate identifier 'TruffleContract'.
+/// node_modules/@truffle/contract/index.d.ts(8,20): error TS2300: Duplicate identifier 'TruffleContract'.
+///
+/// # same fixture under a real (non-symlinked) directory: no TS2300 at all
+/// caller.ts(2,20): error TS2708: Cannot use namespace 'TruffleContract' as a value.
+/// caller.ts(2,37): error TS2708: Cannot use namespace 'TruffleContract' as a value.
+/// ```
+///
+/// Same family as the `typingsLookup3` case-insensitive-filesystem trap: an
+/// environment artifact that reads as a language rule. The declaration file is
+/// now asserted clean of `TS2300` so the corrected expectation is pinned in
+/// both directions rather than merely dropped.
 #[test]
-fn checked_js_elided_default_namespace_import_reports_duplicate_and_value_errors() {
+fn checked_js_elided_default_namespace_import_reports_value_errors() {
     let files = [
         (
             "node_modules/@truffle/contract/index.d.ts",
@@ -500,8 +525,9 @@ console.log(typeof TruffleContract, TruffleContract);
         .map(|(code, _)| *code)
         .collect();
     assert!(
-        declaration_codes.contains(&2300),
-        "Expected TS2300 for default export colliding with namespace. Actual diagnostics: {declaration_diagnostics:#?}"
+        !declaration_codes.contains(&2300),
+        "A namespace and an `export default` naming it do not collide; the pinned \
+         tsc reports no TS2300 here. Actual diagnostics: {declaration_diagnostics:#?}"
     );
 
     let caller_diagnostics = compile_named_files(
