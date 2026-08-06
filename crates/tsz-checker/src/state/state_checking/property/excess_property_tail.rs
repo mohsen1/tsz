@@ -1148,6 +1148,30 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Resolve an object-literal member's written name to the atom that the
+    /// member's own *type* carries, so the nested excess-property walk can match
+    /// an element by the same name its caller was handed.
+    ///
+    /// The syntactic resolver declines for a late-bound computed key (`[K]`
+    /// where `const K = "door"`, `[E.A]`, `[S]`) — by design, since the written
+    /// text names a variable, not a property. But the source type's member list
+    /// carries the *resolved* name, and that list is where the caller's
+    /// `prop_name` comes from, so matching on syntax alone silently skips every
+    /// computed member and the walk never descends into its value.
+    fn object_literal_member_name_atom(&mut self, name_idx: NodeIndex) -> Option<Atom> {
+        if let Some(name) = self.get_property_name(name_idx) {
+            return Some(self.ctx.types.intern_string(&name));
+        }
+        // Only a computed key can be late-bound; anything else that the
+        // syntactic resolver declined has no name to recover.
+        let name_node = self.ctx.arena.get(name_idx)?;
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return None;
+        }
+        let resolved = self.get_property_name_resolved(name_idx)?;
+        Some(self.ctx.types.intern_string(&resolved))
+    }
+
     /// Check nested object literal properties for excess properties.
     ///
     /// This implements recursive excess property checking for nested object literals.
@@ -1187,8 +1211,8 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .arena
                     .get_property_assignment(elem_node)
-                    .and_then(|prop| self.get_property_name(prop.name))
-                    .map(|name| self.ctx.types.intern_string(&name)),
+                    .map(|prop| prop.name)
+                    .and_then(|name_idx| self.object_literal_member_name_atom(name_idx)),
                 syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => self
                     .ctx
                     .arena

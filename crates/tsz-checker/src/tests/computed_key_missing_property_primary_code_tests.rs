@@ -219,20 +219,20 @@ const worn: Badged = { [badge]: "text" };
 }
 
 // ---------------------------------------------------------------------------
-// Documented remaining gap, pinned so it cannot regress silently either way.
+// Formerly a documented gap, now closed — flipped deliberately, as intended.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn excess_property_inside_a_computed_members_value_is_a_known_gap() {
-    // tsc reports TS2353 for `extra` here. tsz reports nothing — the excess
-    // check does not descend into a computed member's object-literal value.
-    // Pre-existing and untouched by this fix (it is an excess-property gap,
-    // not a missing-property one); pinned as today's behaviour so whoever
-    // closes it has to flip this row deliberately.
+fn excess_property_inside_a_computed_members_value_is_reported() {
+    // This row was pinned as `codes(source) == []` when the missing-property
+    // fix landed, with the note that whoever closed the excess-property half
+    // had to flip it deliberately rather than discover it. Flipped here: the
+    // excess check now descends into a computed member's object-literal value,
+    // so tsz reports the TS2353 that tsc has always reported for `extra`.
     let source = r#"
 const door = "room";
 type House = { room: { size: number } };
 const built: House = { [door]: { size: 1, extra: 2 } };
 "#;
-    assert_eq!(codes(source), Vec::<u32>::new());
+    assert_eq!(codes(source), vec![2353]);
 }
