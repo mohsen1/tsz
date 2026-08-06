@@ -9,6 +9,7 @@ pub(crate) struct InterfaceOverloadCoverageCtx<'a> {
     pub(crate) iface_name: NodeIndex,
     pub(crate) derived_name: &'a str,
     pub(crate) base_name: &'a str,
+    pub(crate) base_sym_id: tsz_binder::SymbolId,
     pub(crate) base_iface_indices: &'a [NodeIndex],
     pub(crate) derived_member_names: &'a rustc_hash::FxHashSet<String>,
     pub(crate) derived_members: &'a [(String, TypeId, NodeIndex, u16, bool, bool)],
@@ -25,6 +26,7 @@ impl<'a> CheckerState<'a> {
             iface_name,
             derived_name,
             base_name,
+            base_sym_id,
             base_iface_indices,
             derived_member_names,
             derived_members,
@@ -36,36 +38,90 @@ impl<'a> CheckerState<'a> {
             let mut by_name: rustc_hash::FxHashMap<String, Vec<TypeId>> =
                 rustc_hash::FxHashMap::default();
             for &base_iface_idx in base_iface_indices {
-                if let Some(base_node) = self.ctx.arena.get(base_iface_idx)
-                    && let Some(base_iface) = self.ctx.arena.get_interface(base_node)
-                {
-                    for &base_member_idx in &base_iface.members.nodes {
-                        let Some(base_member_node) = self.ctx.arena.get(base_member_idx) else {
-                            continue;
-                        };
-                        if base_member_node.kind != METHOD_SIGNATURE {
-                            continue;
-                        }
-                        let Some(sig) = self.ctx.arena.get_signature(base_member_node) else {
-                            continue;
-                        };
-                        let Some(name) = self.get_property_name(sig.name) else {
-                            continue;
-                        };
-                        if !derived_member_names.contains(&name) {
-                            continue;
-                        }
-                        let base_type = crate::query_boundaries::class::maybe_substitute_this_type(
-                            self.ctx.types,
-                            instantiate_type(
-                                self.ctx.types,
-                                self.get_type_of_interface_member(base_member_idx),
-                                substitution,
-                            ),
-                            interface_self_type,
-                        );
-                        by_name.entry(name).or_default().push(base_type);
+                // `base_iface_idx` is only guaranteed valid against the arena
+                // that owns `base_sym_id`'s declaration — which is a foreign
+                // (e.g. lib) arena whenever this coverage check runs against
+                // an interface being rechecked from a different file's
+                // context (the `CallableFunction`/`NewableFunction` vs.
+                // user-augmented `Function` family). Reading it through
+                // `self.ctx.arena` used to silently miss (`NodeArena::get`
+                // returns `None` for a foreign index), dropping the base's
+                // whole overloaded-method set and producing a false-negative
+                // TS2430.
+                let decl_arena = self.ctx.binder.arena_for_declaration_or(
+                    base_sym_id,
+                    base_iface_idx,
+                    self.ctx.arena,
+                );
+                let Some(base_node) = decl_arena.get(base_iface_idx) else {
+                    continue;
+                };
+                let Some(base_iface) = decl_arena.get_interface(base_node) else {
+                    continue;
+                };
+
+                let method_member_indices: Vec<NodeIndex> = base_iface
+                    .members
+                    .nodes
+                    .iter()
+                    .copied()
+                    .filter(|&member_idx| {
+                        decl_arena
+                            .get(member_idx)
+                            .is_some_and(|node| node.kind == METHOD_SIGNATURE)
+                    })
+                    .collect();
+                if method_member_indices.is_empty() {
+                    continue;
+                }
+
+                let cross_arena = !std::ptr::eq(decl_arena, self.ctx.arena);
+                let delegated_types = if cross_arena {
+                    self.delegate_cross_arena_interface_member_simple_types(
+                        base_iface_idx,
+                        &method_member_indices,
+                        decl_arena,
+                        None,
+                        false,
+                    )
+                } else {
+                    None
+                };
+
+                for &base_member_idx in &method_member_indices {
+                    let Some(base_member_node) = decl_arena.get(base_member_idx) else {
+                        continue;
+                    };
+                    let Some(sig) = decl_arena.get_signature(base_member_node) else {
+                        continue;
+                    };
+                    let Some(name) =
+                        crate::types_domain::queries::core::get_literal_or_well_known_property_name(
+                            decl_arena, sig.name,
+                        )
+                    else {
+                        continue;
+                    };
+                    if !derived_member_names.contains(&name) {
+                        continue;
                     }
+                    let raw_type = if cross_arena {
+                        let Some(t) = delegated_types
+                            .as_ref()
+                            .and_then(|types| types.get(&base_member_idx).copied())
+                        else {
+                            continue;
+                        };
+                        t
+                    } else {
+                        self.get_type_of_interface_member(base_member_idx)
+                    };
+                    let base_type = crate::query_boundaries::class::maybe_substitute_this_type(
+                        self.ctx.types,
+                        instantiate_type(self.ctx.types, raw_type, substitution),
+                        interface_self_type,
+                    );
+                    by_name.entry(name).or_default().push(base_type);
                 }
             }
             base_method_groups = by_name.into_iter().collect();
