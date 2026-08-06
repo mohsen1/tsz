@@ -298,6 +298,15 @@ impl<'a> CheckerState<'a> {
         &self,
         node_idx: NodeIndex,
     ) -> bool {
+        self.nearest_declaration_scope_ancestor(node_idx).is_none()
+    }
+
+    /// Walks from `node_idx` to the nearest declaration-scope-opening
+    /// ancestor and returns it: a function-like node (the same set
+    /// `is_inside_function_body` walks, including a class `static { }` block,
+    /// #16450) or a `ModuleBlock`. Returns `None` when the walk reaches the
+    /// `SourceFile` first, meaning no declaration scope encloses `node_idx`.
+    fn nearest_declaration_scope_ancestor(&self, node_idx: NodeIndex) -> Option<NodeIndex> {
         let mut current = node_idx;
         while current.is_some() {
             let Some(ext) = self.ctx.arena.get_extended(current) else {
@@ -311,8 +320,6 @@ impl<'a> CheckerState<'a> {
                 break;
             };
             match node.kind {
-                // Function-like ancestors are the same set `is_inside_function_body`
-                // walks, including a class `static { }` block (#16450).
                 k if k == syntax_kind_ext::FUNCTION_DECLARATION
                     || k == syntax_kind_ext::FUNCTION_EXPRESSION
                     || k == syntax_kind_ext::ARROW_FUNCTION
@@ -322,17 +329,34 @@ impl<'a> CheckerState<'a> {
                     || k == syntax_kind_ext::SET_ACCESSOR
                     || k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION =>
                 {
-                    return false;
+                    return Some(current);
                 }
                 // Reaching a `ModuleBlock` from a position-invalid node means the
                 // node is nested *inside* a namespace/module body rather than being
                 // one of its own elements, so the body is a scope it sits within.
-                k if k == syntax_kind_ext::MODULE_BLOCK => return false,
-                k if k == syntax_kind_ext::SOURCE_FILE => return true,
+                k if k == syntax_kind_ext::MODULE_BLOCK => return Some(current),
+                k if k == syntax_kind_ext::SOURCE_FILE => return None,
                 _ => continue,
             }
         }
-        true
+        None
+    }
+
+    /// Whether the nearest declaration scope enclosing `node_idx` is a class
+    /// `static { }` block. #16450/#16527: a static block's own body never
+    /// resolves an enclosed `import =`'s specifier, referenced or not — the
+    /// one exception to "a used binding resolves wherever it sits" in
+    /// [`Self::position_invalid_import_resolves_specifier`]'s table. Every
+    /// other function-like container (and `ModuleBlock`) resolves normally on
+    /// a reference, so only this one ancestor kind short-circuits.
+    fn nearest_declaration_scope_is_class_static_block(&self, node_idx: NodeIndex) -> bool {
+        self.nearest_declaration_scope_ancestor(node_idx)
+            .is_some_and(|ancestor| {
+                self.ctx
+                    .arena
+                    .kind_at(ancestor)
+                    .is_some_and(|k| k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION)
+            })
     }
 
     /// Whether a position-invalid `import`/`import =` still resolves its module
@@ -366,12 +390,23 @@ impl<'a> CheckerState<'a> {
     /// [`Self::position_invalid_export_declaration_resolves_specifier`]; the two
     /// rules cannot be shared.
     ///
+    /// The table's "bound & used" row has one exception the oracle does not
+    /// share with any other function-like container: a class `static { }`
+    /// block never resolves, referenced or not (#16450/#16527), so it is
+    /// checked and short-circuited before the table's rules apply.
+    ///
     /// Only meaningful for a node in a non-module-element context; callers guard
     /// with [`Self::is_in_non_module_element_context`].
     pub(crate) fn position_invalid_import_resolves_specifier(&self, node_idx: NodeIndex) -> bool {
         // A side-effect import binds no name, so nothing triggers its specifier
         // resolution here.
         if !self.import_element_binds_a_name(node_idx) {
+            return false;
+        }
+        // #16450/#16527: a class static block never resolves, referenced or
+        // not — checked before the reference scan so a use inside the block
+        // cannot re-trigger resolution the way every other container allows.
+        if self.nearest_declaration_scope_is_class_static_block(node_idx) {
             return false;
         }
         let top_level_block = self.position_invalid_module_element_resolves_specifier(node_idx);
@@ -451,6 +486,21 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // Every declaration contributing to one of these symbols is a binding
+        // site, not a use — including a colliding duplicate alias declared
+        // elsewhere in the file (#16527 item 2), whose own binding identifier
+        // would otherwise resolve to the same merged symbol and read back as
+        // a "use" of itself.
+        let mut own_declarations: Vec<NodeIndex> = Vec::new();
+        for &sym in &symbols {
+            if let Some(symbol) = self.ctx.binder.get_symbol(sym) {
+                own_declarations.extend(symbol.all_declarations());
+            }
+        }
+        if !own_declarations.contains(&node_idx) {
+            own_declarations.push(node_idx);
+        }
+
         let mut scan_root = node_idx;
         loop {
             if self
@@ -472,8 +522,8 @@ impl<'a> CheckerState<'a> {
 
         let mut stack: Vec<NodeIndex> = self.ctx.arena.get_children(scan_root);
         while let Some(current) = stack.pop() {
-            // The declaration's own subtree is the binding site, not a use.
-            if current == node_idx {
+            // Every binding declaration's own subtree is a binding site, not a use.
+            if own_declarations.contains(&current) {
                 continue;
             }
             let Some(node) = self.ctx.arena.get(current) else {
