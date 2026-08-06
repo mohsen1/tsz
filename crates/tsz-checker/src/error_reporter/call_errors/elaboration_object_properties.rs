@@ -474,6 +474,7 @@ impl<'a> CheckerState<'a> {
                     self.with_expected_type_from_property_pointer(
                         &expected_type_owners,
                         &prop_name,
+                        prop_value_idx,
                         |this| {
                             this.error_type_not_assignable_at_with_display_types(
                                 source_prop_type_for_diagnostic,
@@ -531,6 +532,7 @@ impl<'a> CheckerState<'a> {
                     self.with_expected_type_from_property_pointer(
                         &expected_type_owners,
                         &prop_name,
+                        prop_value_idx,
                         |this| {
                             this.error_type_not_assignable_at_with_display_types(
                                 source_prop_type_for_diagnostic,
@@ -563,6 +565,7 @@ impl<'a> CheckerState<'a> {
                     self.with_expected_type_from_property_pointer(
                         &expected_type_owners,
                         &prop_name,
+                        prop_value_idx,
                         |this| {
                             this.error_type_not_assignable_at_with_anchor(
                                 source_prop_type_for_diagnostic,
@@ -663,6 +666,7 @@ impl<'a> CheckerState<'a> {
                         self.with_expected_type_from_property_pointer(
                             &expected_type_owners,
                             &prop_name,
+                            prop_value_idx,
                             |this| {
                                 this.error_type_not_assignable_at_with_anchor(
                                     source_prop_type_for_diagnostic,
@@ -924,6 +928,7 @@ impl<'a> CheckerState<'a> {
                         self.with_expected_type_from_property_pointer(
                             &expected_type_owners,
                             &prop_name,
+                            prop_value_idx,
                             |this| {
                                 this.error_type_not_assignable_at_with_display_types(
                                     source_prop_type_for_diagnostic,
@@ -936,6 +941,7 @@ impl<'a> CheckerState<'a> {
                         self.with_expected_type_from_property_pointer(
                             &expected_type_owners,
                             &prop_name,
+                            prop_value_idx,
                             |this| {
                                 this.error_type_not_assignable_at_with_anchor_elaboration_inner_with_value_anchor(
                                     source_prop_type_for_diagnostic,

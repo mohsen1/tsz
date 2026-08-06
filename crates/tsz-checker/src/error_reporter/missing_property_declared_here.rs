@@ -71,7 +71,7 @@ impl<'a> CheckerState<'a> {
     /// always describe one assignment. Returns empty for a failure that is not
     /// inside an object literal at all (an array element, a call argument),
     /// which declines the pointer rather than guessing.
-    fn contextual_property_path(&self, anchor_idx: NodeIndex) -> Vec<String> {
+    pub(super) fn contextual_property_path(&self, anchor_idx: NodeIndex) -> Vec<String> {
         use tsz_parser::parser::syntax_kind_ext;
 
         let mut path: Vec<String> = Vec::new();
@@ -195,7 +195,7 @@ impl<'a> CheckerState<'a> {
     /// as a resolved target does. An indexed access resolves its written key
     /// against the object type's members and continues into that member's type
     /// node.
-    fn annotation_property_anchor(
+    pub(super) fn annotation_property_anchor(
         &mut self,
         idx: NodeIndex,
         property: &str,
@@ -249,7 +249,7 @@ impl<'a> CheckerState<'a> {
     /// here rather than reading a foreign arena's `NodeIndex` against the
     /// current one — per-file arenas make a raw index from another file name an
     /// unrelated node.
-    fn annotation_member_type_node(
+    pub(super) fn annotation_member_type_node(
         &mut self,
         idx: NodeIndex,
         key: &str,
