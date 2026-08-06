@@ -513,6 +513,31 @@ fn is_hard_keyword_interface_name_2427_parse_diagnostic(diagnostic: &ParseDiagno
 /// modifier error, already listed above); tsz's `main` before this entry
 /// reported only TS1492, silently dropping TS1079 because the unlisted TS1492
 /// counted as a "real" parse error.
+///
+/// #16279 audit round 6: full re-derivation of the grep-and-diff recipe (every
+/// `diagnostic_codes::*` name emitted from `crates/tsz-parser/src`, resolved
+/// to codes, diffed against this list) surfaced 132 unlisted candidates.
+/// Batch Direction-A/B oracle testing against `typescript@7.0.2` found one
+/// genuine addition: TS1326 (see its own comment below) — and several
+/// look-alikes that were tested and correctly rejected because they survive
+/// Direction B (tsc does **not** suppress them alongside an unrelated real
+/// syntax error, so they must stay unlisted): TS1034 (`'super' must be
+/// followed by an argument list or member access`), TS1477 (`an
+/// instantiation expression cannot be followed by a property access`),
+/// TS2754 (`'super' may not use type arguments`), TS18009 (`private
+/// identifiers cannot be used as parameters`), TS18029 (`private identifiers
+/// are not allowed in variable declarations`), and TS18030 (`an optional
+/// chain cannot contain private identifiers` — already handled by a
+/// different mechanism, see `is_real_syntax_error` below).
+///
+/// **Not pursued, flagged for a future slice**: TS18016 (`private
+/// identifiers are not allowed outside class bodies`) is also Direction-B
+/// suppressible, but unlike TS1326 it has four checker-side emission sites
+/// (`types/type_checking/core.rs`, `assignability/assignment_checker/
+/// assignment_ops.rs`, `state/type_analysis/computed_helpers_private.rs`)
+/// alongside its five parser sites — the same double-emission shape that
+/// blocked TS2499 in round 3. Adding it here only patches the parser-emitted
+/// occurrences and needs the checker-side sites audited first, same caveat.
 const fn is_parser_grammar_code(code: u32) -> bool {
     matches!(
         code,
@@ -598,6 +623,18 @@ const fn is_parser_grammar_code(code: u32) -> bool {
         | 18037 // 'await' expression cannot be used inside a class static block
         | 18041 // A 'return' statement cannot be used inside a class static block
         | 18054 // 'await using' statements cannot be used inside a class static block
+        | 1326 // This use of 'import' is invalid. 'import()' calls can be written,
+               // but they must have parentheses and cannot have type arguments.
+               // tsc's checkGrammarImportCallExpression reports this from the
+               // checker (`import<T>("m")`); tsz emits it from the parser
+               // (`state_expressions_literals.rs`). #16279 audit round 6:
+               // oracle-confirmed against `typescript@7.0.2` — Direction A,
+               // `import<number>("mod")` alone reports TS1326 (plus the
+               // unrelated TS2307 for the unresolved module specifier);
+               // Direction B, the same line plus an unrelated real syntax
+               // error (`let x: = 1;`) elsewhere in the file drops TS1326
+               // entirely on the real compiler. Sole emission site, no
+               // checker-side counterpart, so no double-emission risk.
     )
 }
 
@@ -1764,3 +1801,7 @@ mod filter_trigger_unification_tests;
 #[cfg(test)]
 #[path = "check_utils/class_static_block_grammar_tests.rs"]
 mod class_static_block_grammar_tests;
+
+#[cfg(test)]
+#[path = "check_utils/import_call_type_arguments_grammar_tests.rs"]
+mod import_call_type_arguments_grammar_tests;
