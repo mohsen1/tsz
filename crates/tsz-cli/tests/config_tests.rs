@@ -117,16 +117,61 @@ fn load_tsconfig_merges_extends() {
     assert_eq!(config.files, Some(vec!["main.ts".to_string()]));
 }
 
+/// An `extends` cycle is **recoverable**, not fatal: `load_tsconfig` is the
+/// diagnostic-free loader, so the cyclic base contributes nothing and the load
+/// still succeeds. `tsc` behaves the same way — it reports `TS18000` and keeps
+/// compiling rather than aborting:
+///
+/// ```text
+/// a.json extends ./b.json ;  b.json extends ./a.json
+/// tsc: error TS18000: Circularity detected while resolving configuration: {0}
+/// tsz: error TS18000: Circularity detected while resolving configuration: {0}
+/// ```
+///
+/// This test previously asserted `expect_err("cycle should error")`, which was
+/// the contract before the loader was split. `load_tsconfig_inner` now returns
+/// `Ok(TsConfig::default())` for the cyclic base by design, and the `TS18000`
+/// half lives on `load_tsconfig_with_diagnostics` — pinned in `tsz-core` by
+/// `config::tests::extends_cycle_and_jsx_factory_values`
+/// (`self_extends_cycle_reports_ts18000_and_recovers`,
+/// `two_config_extends_cycle_reports_ts18000_once`). The CLI's own output was
+/// never wrong; only this assertion lagged the split.
 #[test]
-fn load_tsconfig_detects_extends_cycle() {
+fn load_tsconfig_recovers_from_an_extends_cycle() {
     let temp = TempDir::new().expect("temp dir");
 
     write_file(&temp.path, "a.json", r#"{"extends":"./b.json"}"#);
     write_file(&temp.path, "b.json", r#"{"extends":"./a.json"}"#);
 
-    let err = load_tsconfig(&temp.path.join("a.json")).expect_err("cycle should error");
-    let message = err.to_string();
-    assert!(message.contains("extends cycle"), "{message}");
+    let config = load_tsconfig(&temp.path.join("a.json"))
+        .expect("an extends cycle is recoverable and must not abort the load");
+    assert!(
+        config.extends.is_none(),
+        "the cyclic base must contribute nothing, got: {config:?}"
+    );
+}
+
+/// Recovery must not swallow the entry config's *own* settings — only the
+/// cyclic base is dropped. Guards against "fixing" the row above by returning
+/// an empty config unconditionally.
+#[test]
+fn extends_cycle_recovery_keeps_the_entry_config_s_own_options() {
+    let temp = TempDir::new().expect("temp dir");
+
+    write_file(
+        &temp.path,
+        "a.json",
+        r#"{"extends":"./b.json","files":["a.ts"]}"#,
+    );
+    write_file(&temp.path, "b.json", r#"{"extends":"./a.json"}"#);
+
+    let config = load_tsconfig(&temp.path.join("a.json"))
+        .expect("an extends cycle is recoverable and must not abort the load");
+    assert_eq!(
+        config.files.as_deref(),
+        Some(&["a.ts".to_string()][..]),
+        "the entry config's own `files` must survive the cycle, got: {config:?}"
+    );
 }
 
 #[test]
