@@ -374,19 +374,25 @@ impl<'a> CheckerState<'a> {
         // below folds the whole operand to `never` and hides the object-like members.
         let raw_intersection_is_valid = self.for_in_expr_type_is_valid_intersection(expr_type);
 
-        // Resolve lazy/application types before checking (e.g. Record<string, any>)
-        let expr_type = self.resolve_type_for_property_access(expr_type);
+        // Resolve lazy/application types before checking (e.g. Record<string, any>).
+        // This resolved form is for the validity checks below ONLY: tsc's
+        // `checkForInStatement` reports the RHS's `checkExpression` result verbatim
+        // (`typeToString(rightType)`), so a fresh literal (`for (var i in 1)`) must
+        // keep displaying `'1'`, not the widened `'number'` this resolution step
+        // produces for property-access purposes. `expr_type` (the un-resolved
+        // parameter) stays the one used in the message below.
+        let resolved_expr_type = self.resolve_type_for_property_access(expr_type);
 
         // Valid types: any, unknown, object (non-primitive), object types, type parameters
         // Invalid types: primitive types (void, null, undefined, number, string, boolean,
         // bigint, symbol) and `never` (tsc reports TS2407 for `never` as well)
         let is_valid = raw_intersection_is_valid
-            || self.for_in_leaf_type_is_valid(expr_type)
+            || self.for_in_leaf_type_is_valid(resolved_expr_type)
             // Also allow union types that contain valid types
-            || self.for_in_expr_type_is_valid_union(expr_type)
+            || self.for_in_expr_type_is_valid_union(resolved_expr_type)
             // A deferred alias that resolves to an object intersection is valid if ANY
             // member is object-like (the raw operand above was not itself an intersection).
-            || self.for_in_expr_type_is_valid_intersection(expr_type);
+            || self.for_in_expr_type_is_valid_intersection(resolved_expr_type);
 
         // Checked only on the error path, so an accepted operand never pays for
         // the walk: tsc derives a for-in loop variable's type from the loop's
@@ -399,7 +405,26 @@ impl<'a> CheckerState<'a> {
         // which is a primitive and tripped a false TS2407 on `for (var of in of)`
         // and on `recursiveLetConst.ts`'s `for (let v in v)`.
         if !is_valid && !self.for_in_operand_resolution_is_circular(expression) {
-            let type_str = self.format_type(expr_type);
+            // tsc's `checkForInStatement` reports
+            // `typeToString(getNonNullableTypeIfNeeded(checkExpression(node.expression)))`
+            // — the RHS's own checked type, not the widened form the validity
+            // checks above use. Two corrections on top of `expr_type` (which is
+            // already widened by the time it reaches this function, e.g. a
+            // fresh numeric literal `1` arrives as `number`):
+            // - `getNonNullableTypeIfNeeded` collapses a bare `null`/`undefined`
+            //   RHS to `never` before display, in both strict and non-strict
+            //   mode (verified against `tsc` 7.0.2 both ways).
+            // - Any other fresh literal keeps its literal spelling
+            //   (`for (var i in 1)` → `'1'`, not `'number'`); recovered from the
+            //   operand node the same way `emit_ts2488_not_iterable` does for
+            //   for-of's analogous message.
+            let display_type = if expr_type == TypeId::NULL || expr_type == TypeId::UNDEFINED {
+                TypeId::NEVER
+            } else {
+                self.literal_type_from_initializer(expression)
+                    .unwrap_or(expr_type)
+            };
+            let type_str = self.format_type(display_type);
             let message = format_message(
                 diagnostic_messages::THE_RIGHT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_MUST_BE_OF_TYPE_ANY_AN_OBJECT_TYPE_OR,
                 &[&type_str],

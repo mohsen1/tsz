@@ -832,9 +832,13 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // The alias gate above is the whole rule for `import x = require(...)`
-        // too — no separate module-ness gate follows it, for the same reason
-        // the plain `import ... from` path documents (#16522).
+        // The position-invalid specifier decision is made once, above, by
+        // `position_invalid_import_resolves_specifier`. A second module-ness-only
+        // guard used to stand here (#16505/#16517), mirroring the one on the
+        // plain-`import` side; it predates the `markAliasReferenced` disjunct
+        // (#16516) and answered the same question without it, so on a module file
+        // it re-suppressed a *used* alias the guard above had already resolved
+        // (#16522).
 
         if force_module_not_found {
             if !should_emit_module_not_found {

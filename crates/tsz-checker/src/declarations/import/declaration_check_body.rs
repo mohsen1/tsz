@@ -257,14 +257,12 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // The position-invalid gate above (`position_invalid_import_resolves_specifier`)
-        // is the whole rule: a used binding resolves wherever it sits, and a
-        // bound-but-unused import resolves additionally in a script top-level
-        // block, while every other position-invalid shape (a module top-level
-        // block, a function/method/static body, a namespace body, a
-        // side-effect `import "m"`) already returned at TS1232. There is no
-        // separate module-ness gate here — folding one in re-suppresses the
-        // used-in-a-module case the alias gate deliberately resolves (#16522).
+        // The position-invalid specifier decision is made once, above, by
+        // `position_invalid_import_resolves_specifier`. A second module-ness-only
+        // guard used to stand here (#16505/#16517); it was written before the
+        // `markAliasReferenced` disjunct (#16516) and answered the same question
+        // without it, so on a module file it re-suppressed a *used* binding the
+        // guard above had already resolved (#16522).
 
         // Extract module specifier data eagerly so direct import diagnostics like
         // TS6137 can run even when unresolved-import reporting is disabled.
