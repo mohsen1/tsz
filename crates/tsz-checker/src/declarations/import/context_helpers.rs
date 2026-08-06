@@ -335,82 +335,47 @@ impl<'a> CheckerState<'a> {
         true
     }
 
-    /// Whether a position-invalid import/export element still resolves its
-    /// module specifier — the full answer [`Self::position_invalid_module_element_resolves_specifier`]
-    /// cannot give from the container shape alone.
+    /// Whether a position-invalid `import`/`import =` still resolves its module
+    /// specifier — the import-side companion to
+    /// [`Self::position_invalid_export_declaration_resolves_specifier`], refining
+    /// [`Self::position_invalid_module_element_resolves_specifier`] with the
+    /// import side's own demand model.
     ///
     /// Once the scope walk establishes that no declaration scope encloses the
-    /// element (so tsc's `checkImportDeclaration`/`checkExportDeclaration` does
-    /// not `return` at the placement diagnostic), two further structural axes
-    /// decide whether `resolveExternalModuleName` runs. Both were measured with
-    /// `scripts/conformance/oracle.sh` (typescript@7.0.2, the shape the
-    /// conformance cache scores) across every import/export production in a
-    /// top-level bare block / `if` body / loop body (#16495, #16505):
+    /// element (so tsc's `checkImportDeclaration` does not `return` at the
+    /// placement diagnostic), tsc reaches `resolveExternalModuleName` under
+    /// `markAliasReferenced`: an import binding's specifier is resolved when the
+    /// binding is **used**, wherever it sits (#16411 established this for
+    /// `import =`; it holds for every import binding, so a used binding in a
+    /// function body resolves too). The one fact a use cannot express is that a
+    /// **script** additionally resolves its bound-but-unused top-level-block
+    /// imports, because a script has no module import table gating that pass. A
+    /// side-effect `import "m"` binds nothing, so nothing ever marks it
+    /// referenced; it resolves only at a valid position, never here.
+    ///
+    /// Measured against the pinned oracle across every import production in a
+    /// top-level bare block / `if` body / loop body (#16505):
     ///
     /// | production                          | script   | module   |
     /// | ----------------------------------- | -------- | -------- |
     /// | `import`/`import =` (bound & used)   | resolve  | resolve  |
     /// | `import`/`import =` (bound, unused)  | resolve  | suppress |
     /// | `import "m"` (side-effect, no bind)  | suppress | suppress |
-    /// | `export { a } from "m"`              | resolve  | suppress |
-    /// | `export * from "m"`                  | suppress | resolve  |
-    /// | `export * as ns from "m"`            | suppress | suppress |
     ///
-    /// The unifying rule is tsc's `markAliasReferenced`: an import binding's
-    /// specifier is resolved once the binding is **used**, wherever the binding
-    /// sits (#16411 established this for `import =`; it holds for every import
-    /// binding, so a used binding in a function body resolves too). The facts a
-    /// use cannot express are that a **script** additionally resolves its
-    /// bound-but-unused top-level-block imports and its `export { } from`, while
-    /// a **module** resolves its top-level-block `export *` because only a
-    /// module's export set is ever computed — the inversion two earlier PRs
-    /// generalised the wrong way (#16409, #16411). A side-effect `import "m"`
-    /// binds nothing, so nothing ever marks it referenced; it resolves only at a
-    /// valid position, never at a position-invalid one.
+    /// The export side inverts on the `export *` row and is handled separately by
+    /// [`Self::position_invalid_export_declaration_resolves_specifier`]; the two
+    /// rules cannot be shared.
     ///
     /// Only meaningful for a node in a non-module-element context; callers guard
     /// with [`Self::is_in_non_module_element_context`].
-    pub(crate) fn position_invalid_element_resolves_specifier(&self, node_idx: NodeIndex) -> bool {
-        let top_level_block = self.position_invalid_module_element_resolves_specifier(node_idx);
-        let is_module = self.ctx.is_external_module_file();
-
-        if self
-            .ctx
-            .arena
-            .kind_at(node_idx)
-            .is_some_and(|k| k == syntax_kind_ext::EXPORT_DECLARATION)
-        {
-            let Some(export_decl) = self
-                .ctx
-                .arena
-                .get(node_idx)
-                .and_then(|node| self.ctx.arena.get_export_decl(node))
-            else {
-                return false;
-            };
-            if export_decl.export_clause.is_none() {
-                // `export * from "m"` — resolved only when the file is a module.
-                return top_level_block && is_module;
-            }
-            if self
-                .ctx
-                .arena
-                .kind_at(export_decl.export_clause)
-                .is_some_and(|k| k == syntax_kind_ext::NAMED_EXPORTS)
-            {
-                // `export { a } from "m"` — resolved only for a script.
-                return top_level_block && !is_module;
-            }
-            // `export * as ns from "m"` (a NAMESPACE_EXPORT clause) never resolves
-            // at a position-invalid site.
-            return false;
-        }
-
-        // Import productions (`import ...`, `import =`). A side-effect import
-        // binds no name, so nothing triggers its specifier resolution here.
+    pub(crate) fn position_invalid_import_resolves_specifier(&self, node_idx: NodeIndex) -> bool {
+        // A side-effect import binds no name, so nothing triggers its specifier
+        // resolution here.
         if !self.import_element_binds_a_name(node_idx) {
             return false;
         }
+        let top_level_block = self.position_invalid_module_element_resolves_specifier(node_idx);
+        let is_module = self.ctx.is_external_module_file();
         (top_level_block && !is_module) || self.import_element_alias_is_referenced(node_idx)
     }
 
@@ -524,6 +489,66 @@ impl<'a> CheckerState<'a> {
             stack.extend(self.ctx.arena.get_children(current));
         }
         false
+    }
+
+    /// Whether a position-invalid `export ... from "m"` still resolves its module
+    /// specifier, refining [`Self::position_invalid_module_element_resolves_specifier`]
+    /// with the export side's own demand model.
+    ///
+    /// [`Self::position_invalid_module_element_resolves_specifier`] answers whether a
+    /// *declaration scope* encloses the declaration. When one does, nothing resolves
+    /// and that answer is final. When one does not — a top-level bare block, an
+    /// `if`/loop/`try` body, a labeled statement, a `switch` clause — the declaration
+    /// is left in the source file's own scope, and the export side then diverges from
+    /// the import side: `checkExportDeclaration` has already returned at the placement
+    /// diagnostic, so whatever resolution still happens comes from a *later* pass over
+    /// whichever symbol table the binder put the declaration in, and which table that
+    /// is depends on the file.
+    ///
+    /// In an external module the file symbol carries an export table, so `export *`
+    /// binds as an export-star entry that computing that table resolves eagerly, while
+    /// a named or namespace export clause binds an alias resolved only on reference —
+    /// and a position-invalid one is never referenced. In a file that is *not* a
+    /// module there is no export table to compute, so the export-star is never
+    /// resolved at all, and only the individual specifiers of a named clause bind as
+    /// ordinary aliases that a later pass reaches.
+    ///
+    /// The two forms therefore swap roles across that one axis, measured against the
+    /// pinned oracle (#16495):
+    ///
+    /// | clause | external module | not a module |
+    /// | --- | --- | --- |
+    /// | `export * from "m"` | resolves | silent |
+    /// | `export * as ns from "m"` | silent | silent |
+    /// | `export { a } from "m"` | silent | resolves |
+    ///
+    /// Only the export side consults this. `import`/`import =` keep resolving in every
+    /// one of these containers, which is why the rule cannot be shared with them.
+    pub(crate) fn position_invalid_export_declaration_resolves_specifier(
+        &self,
+        export_idx: NodeIndex,
+        export_clause: NodeIndex,
+    ) -> bool {
+        if !self.position_invalid_module_element_resolves_specifier(export_idx) {
+            return false;
+        }
+
+        if export_clause.is_none() {
+            // Bare `export * from "m"`: an export-star entry, resolved only when the
+            // file actually has a module export table to compute.
+            return self.ctx.is_external_module_file();
+        }
+
+        let is_named_exports = self
+            .ctx
+            .arena
+            .get(export_clause)
+            .is_some_and(|n| n.kind == syntax_kind_ext::NAMED_EXPORTS);
+
+        // A named clause's specifiers bind as plain aliases outside a module; inside
+        // one they land in the export table and stay lazy. `export * as ns` is an
+        // alias either way, so it never resolves here.
+        is_named_exports && !self.ctx.is_external_module_file()
     }
 
     /// Check if a node is inside a module augmentation

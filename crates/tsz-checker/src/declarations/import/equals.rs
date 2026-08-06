@@ -827,8 +827,8 @@ impl<'a> CheckerState<'a> {
         // additionally in a script top-level block. Everything else — a module
         // top-level block, a function/method/static body, a namespace body —
         // suppresses, leaving only the TS1232 placement diagnostic. See
-        // `position_invalid_element_resolves_specifier`.
-        if in_wrong_context && !self.position_invalid_element_resolves_specifier(stmt_idx) {
+        // `position_invalid_import_resolves_specifier`.
+        if in_wrong_context && !self.position_invalid_import_resolves_specifier(stmt_idx) {
             return;
         }
 

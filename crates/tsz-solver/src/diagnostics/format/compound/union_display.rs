@@ -394,13 +394,14 @@ impl<'a> TypeFormatter<'a> {
         // tsc shows `Foo.Yep | Bar.Yep` instead of `Yep | Yep` when two different
         // types share the same name in different namespaces.
         let disambiguated = self.disambiguate_union_member_names(&ordered, formatted);
-        // If qualification couldn't break a tie (or slots were already
-        // identical), tsc collapses the duplicates to a single member.
-        // Mirror that — `Symbol | Symbol` should display as just `Symbol`.
+        // Collapse constituents that are the SAME TYPE, keyed on identity —
+        // never on the rendered string. See
+        // [`Self::union_member_display_identity`].
         let mut deduped: Vec<String> = Vec::with_capacity(disambiguated.len());
-        let mut seen: rustc_hash::FxHashSet<String> = rustc_hash::FxHashSet::default();
-        for name in disambiguated {
-            if seen.insert(name.clone()) {
+        let mut seen: rustc_hash::FxHashSet<UnionMemberDisplayIdentity> =
+            rustc_hash::FxHashSet::default();
+        for (&member, name) in ordered.iter().zip(disambiguated) {
+            if seen.insert(self.union_member_display_identity(member)) {
                 deduped.push(name);
             }
         }
@@ -1207,4 +1208,55 @@ impl<'a> TypeFormatter<'a> {
         let qualified = self.namespace_qualify_symbol_name(sym_id, base);
         Some(format!("import(\"{specifier}\").{qualified}"))
     }
+
+    /// The identity `tsc` collapses union constituents on.
+    ///
+    /// `tsc` never dedupes while printing: `typeToString` walks the union's
+    /// `types` array verbatim. Duplicates are removed once, at *construction*,
+    /// keyed on type identity. So by the time a union is printed, two handles
+    /// to one declaration (`Symbol | Symbol`) are already a single
+    /// constituent, while two separate type-literal declarations
+    /// (`{ m: number } | { m: number }`) are two distinct types and both
+    /// print. Keying the collapse on the formatted string cannot tell those
+    /// apart — and a printer-output predicate must not drive a display
+    /// decision in the first place.
+    ///
+    /// A constituent that names a declaration keys on that declaration's
+    /// `SymbolId`, which every handle to it shares regardless of whether this
+    /// slot is still a `Lazy(DefId)` or an already-resolved shape. Everything
+    /// else — anonymous object types, literals, intrinsics — keys on its own
+    /// `TypeId`, which is what interning already made canonical for it.
+    fn union_member_display_identity(&self, type_id: TypeId) -> UnionMemberDisplayIdentity {
+        match self.union_member_declaration_symbol(type_id) {
+            Some(sym_id) => UnionMemberDisplayIdentity::Declaration(sym_id.0),
+            None => UnionMemberDisplayIdentity::Anonymous(type_id.0),
+        }
+    }
+
+    /// The declaring symbol a union constituent names, when it names one.
+    ///
+    /// Deliberately narrower than [`Self::primary_symbol_for_type`], which
+    /// also falls back to `find_def_by_shape` — a *content* lookup that maps
+    /// two structurally identical anonymous type literals onto one def, which
+    /// is exactly the collapse this identity must not make.
+    fn union_member_declaration_symbol(&self, type_id: TypeId) -> Option<SymbolId> {
+        if let Some(shape) = crate::type_queries::get_object_shape(self.interner, type_id)
+            && let Some(sym_id) = shape.symbol
+        {
+            return Some(sym_id);
+        }
+        let def_store = self.def_store?;
+        let def_id = crate::type_queries::get_lazy_def_id(self.interner, type_id)
+            .or_else(|| crate::type_queries::get_enum_def_id(self.interner, type_id))?;
+        def_store.get(def_id)?.symbol_id.map(SymbolId)
+    }
+}
+
+/// Identity key produced by [`TypeFormatter::union_member_display_identity`].
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum UnionMemberDisplayIdentity {
+    /// A constituent that names a declaration, keyed on its `SymbolId`.
+    Declaration(u32),
+    /// Anything else, keyed on the constituent's own `TypeId`.
+    Anonymous(u32),
 }

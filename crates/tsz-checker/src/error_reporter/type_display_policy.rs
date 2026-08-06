@@ -214,8 +214,17 @@ impl<'a> CheckerState<'a> {
             // A bare, concrete (type-parameter-free) indexed access is reduced
             // to its member type, matching tsc's eager `getIndexedAccessType`.
             // Generic/deferred accesses stay opaque (see the helper's docs).
+            // `FlattenedDiagnostic` is the TS2741 single-missing-property
+            // target: it is a distinct role from `AssignmentTarget`, but tsc
+            // draws no such distinction — the target it quotes in "but
+            // required in type '_'" is the same annotated type either
+            // message reaches, so it needs the identical pre-resolution or a
+            // concrete `keyof` access reaches this role's message still
+            // unreduced (the shared formatter's own gate excludes `keyof`
+            // unconditionally; see `is_display_reducible_index_key`).
             DiagnosticTypeDisplayRole::AssignmentSource { .. }
-            | DiagnosticTypeDisplayRole::AssignmentTarget { .. } => {
+            | DiagnosticTypeDisplayRole::AssignmentTarget { .. }
+            | DiagnosticTypeDisplayRole::FlattenedDiagnostic => {
                 self.resolve_concrete_indexed_access_for_display(ty)
             }
             _ => ty,

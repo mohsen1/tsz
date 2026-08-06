@@ -271,15 +271,25 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             // Check module specifier for unresolved modules (TS2792)
             //
             // A declaration whose placement is already invalid resolves its
-            // specifier only under `position_invalid_element_resolves_specifier`:
-            // tsc's `checkExportDeclaration` returns at the placement diagnostic
-            // in a declaration scope, and everything downstream — TS2307, the
-            // re-exported-member validation (TS2305) and TS2498 — goes with it.
-            // In a top-level block the answer additionally splits on module-ness
-            // and production: `export * from` resolves only for a module,
-            // `export { } from` only for a script, `export * as ns from` never.
+            // specifier only when no declaration scope encloses it: tsc's
+            // `checkExportDeclaration` returns at the placement diagnostic, and
+            // everything downstream — TS2307, the re-exported-member validation
+            // (TS2305) and TS2498 — goes with it. See
+            // `position_invalid_module_element_resolves_specifier` for which
+            // containers open a scope and which do not.
+            //
+            // Outside a declaration scope the declaration is left in the source
+            // file's own scope, where the export side resolves through a later
+            // pass rather than through the check that just returned — so which
+            // export clause it carries, and whether the file is an external
+            // module, decide whether anything reaches the specifier at all
+            // (#16495). `position_invalid_export_declaration_resolves_specifier`
+            // owns that refinement; the import side does not share it.
             let resolves_specifier = !in_non_module_context
-                || self.position_invalid_element_resolves_specifier(export_idx);
+                || self.position_invalid_export_declaration_resolves_specifier(
+                    export_idx,
+                    export_decl.export_clause,
+                );
             if export_decl.module_specifier.is_some() && resolves_specifier {
                 self.check_export_module_specifier(export_idx);
                 // TS2498: export * from a module that uses export =

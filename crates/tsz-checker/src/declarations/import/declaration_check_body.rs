@@ -173,8 +173,8 @@ impl<'a> CheckerState<'a> {
         // (TS2307, TS2882, missing-member checks) unless it actually resolves its
         // specifier — a used binding anywhere, or a bound-but-unused import in a
         // script top-level block. Only the placement grammar diagnostic (TS1232)
-        // survives otherwise. See `position_invalid_element_resolves_specifier`.
-        if in_wrong_context && !self.position_invalid_element_resolves_specifier(stmt_idx) {
+        // survives otherwise. See `position_invalid_import_resolves_specifier`.
+        if in_wrong_context && !self.position_invalid_import_resolves_specifier(stmt_idx) {
             return;
         }
 

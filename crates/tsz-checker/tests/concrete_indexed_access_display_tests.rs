@@ -351,28 +351,56 @@ const m1: M["outer"]["mid"] = { z: 1 };
 }
 
 /// `keyof`-keyed access in the **missing-property (TS2741) target** message.
-/// The assignment display gate now admits a concrete `keyof` key, but a
-/// TS2741 target renders through a *different* path than the reduced type it
-/// receives, so this row still prints the access as written. The source-role
-/// and TS2322-whole-type keyof rows below *are* reduced; this is the residual
-/// TS2741-target cell (tsc reduces it — tracked with the wider #16443 family).
+/// The TS2741 single-missing-property target renders through the
+/// `FlattenedDiagnostic` role, a distinct path from `AssignmentTarget` that
+/// used to skip the keyof-aware pre-resolution entirely and fall through to
+/// the shared formatter's `keyof`-excluding gate. Routing `FlattenedDiagnostic`
+/// through the same `resolve_concrete_indexed_access_for_display` step as
+/// `AssignmentTarget` closes this row — matching tsc, which draws no such
+/// distinction for the type it quotes in "but required in type '_'".
 #[test]
-fn keyof_rooted_indexed_access_target_prints_as_written() {
-    let messages = strict_messages(
+fn keyof_rooted_indexed_access_target_renders_reduced_member() {
+    let messages = ts2741_messages(
         r#"
 interface Q { only: { c: number; d: string } }
 const q1: Q[keyof Q] = { c: 1 };
 "#,
     );
-    assert_eq!(
-        messages.len(),
-        1,
-        "exactly one assignability error: {messages:?}"
+    assert_eq!(messages.len(), 1, "exactly one TS2741: {messages:?}");
+    assert_reduced_member(&messages[0], "{ c: number; d: string; }");
+}
+
+/// Anti-hardcoding: the TS2741-target `keyof` reduction keys on the concrete
+/// `keyof`-access structure, not on the identifiers `Q`/`only`/`c`/`d`.
+#[test]
+fn keyof_rooted_indexed_access_target_reduction_is_binder_name_independent() {
+    let messages = ts2741_messages(
+        r#"
+interface Registry { entry: { alpha: number; beta: string } }
+const reg1: Registry[keyof Registry] = { alpha: 1 };
+"#,
+    );
+    assert_eq!(messages.len(), 1, "exactly one TS2741: {messages:?}");
+    assert_reduced_member(&messages[0], "{ alpha: number; beta: string; }");
+}
+
+/// Negative control mirroring the source-role guard: when the reduced `keyof`
+/// access carries an ambiguous `display_alias` (a sibling generic alias
+/// instantiates to the same `TypeId`), the TS2741 target must stay as
+/// written rather than repaint with the unrelated alias name.
+#[test]
+fn keyof_rooted_indexed_access_target_with_sibling_alias_prints_as_written() {
+    let messages = strict_messages(
+        r#"
+type Boxes<T> = { [K in keyof T]: { tag: K; val: T[K] } };
+type Boxed<T> = Boxes<T>[keyof T];
+type FB = { a: string; b: number };
+const boxed: Boxes<FB>[keyof FB] = {};
+"#,
     );
     assert!(
-        messages[0].contains("Q[keyof Q]"),
-        "an unreduced access must print as written: {}",
-        messages[0]
+        messages.iter().any(|m| m.contains("Boxes<FB>[keyof FB]")),
+        "an alias-ambiguous keyof access must print as written, not repaint with the sibling alias: {messages:?}"
     );
 }
 

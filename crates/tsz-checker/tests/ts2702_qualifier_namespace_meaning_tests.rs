@@ -452,3 +452,32 @@ fn default_exported_class_merged_with_namespace_still_reports_ts2702() {
         vec![2702]
     );
 }
+
+/// The bare-identifier-reference twin of the control above (#16501): a class
+/// merged with a same-named namespace, default-exported by referencing the
+/// already-declared, already-merged name rather than declaring the class
+/// inline. The identifier-hop above *does* fire here (`export default Decl2;`
+/// makes `default`'s `value_declaration` a bare `Identifier`), so without the
+/// `Class`-bit override it would wrongly resolve `Entity3.I` as a member
+/// lookup — oracle-verified (`typescript@7.0.2`, three ways: `oracle.sh`, a
+/// bare `tsc` invocation, and with `export` dropped from the namespace) that
+/// `tsc` reports `TS2702` here exactly as it does for the inline form.
+#[test]
+fn default_exported_bare_ref_class_merged_with_namespace_still_reports_ts2702() {
+    assert_eq!(
+        multi_file_codes(
+            &[
+                (
+                    "/dep4.ts",
+                    "class Decl2 {}\nexport namespace Decl2 { export interface I { q: number } }\nexport default Decl2;\n",
+                ),
+                (
+                    "/main4.ts",
+                    "import Entity3 from \"./dep4\";\nvar y: Entity3.I;\n"
+                ),
+            ],
+            "/main4.ts",
+        ),
+        vec![2702]
+    );
+}
