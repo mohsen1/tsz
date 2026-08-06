@@ -131,10 +131,26 @@ impl TypeInterner {
     /// tsc's `addTypeToUnion` drops a `null`/`undefined` constituent from every
     /// union it constructs when `strictNullChecks` is off: the nullable is a
     /// subtype of every non-nullish type there, so it is never added to the member
-    /// set (`checker.ts`), independent of the requested `UnionReduction` mode. The
-    /// lone survivor is an *all-nullish* union (`null | undefined`, or `null`
-    /// alone) — with no non-nullish sibling to absorb into, tsc keeps the nullish
-    /// members rather than collapsing to `never`.
+    /// set (`checker.ts`), independent of the requested `UnionReduction` mode.
+    ///
+    /// The exclusion is **unconditional**, so an *all-nullish* union leaves
+    /// `typeSet` empty and `getUnionType` falls through to its empty-set branch:
+    ///
+    /// ```text
+    /// includes & TypeFlags.Null      ? nullType :
+    /// includes & TypeFlags.Undefined ? undefinedType :
+    ///                                  neverType
+    /// ```
+    ///
+    /// So `null | undefined` is the **scalar** `null` — `null` preferred over
+    /// `undefined` — not a surviving two-member union, and not `never`. The
+    /// distinction is invisible to assignability (both answers are assignable
+    /// everywhere with the flag off) and shows up only where a check keys on
+    /// `type.flags & Nullable`: a `Union`'s flags are `Union`, so the non-strict
+    /// non-null arm stays silent on a union and fires on the scalar. That is what
+    /// makes `interface I { [k: string]: null | undefined }` report tsc's
+    /// `TS18047` — see `non_strict_non_null_check_narrows_tests`, whose header
+    /// documents the rule ("a union never triggers the non-strict arm").
     ///
     /// This is the general union-construction seam #16580 calls for. The checker's
     /// array-literal element path (#16574) was one witness of a rule that has to
@@ -154,16 +170,33 @@ impl TypeInterner {
         if self.strict_null_checks() {
             return;
         }
-        let mut has_nullish = false;
+        let mut has_null = false;
+        let mut has_undefined = false;
         let mut has_non_nullish = false;
         for &id in flat.iter() {
-            if id == TypeId::NULL || id == TypeId::UNDEFINED {
-                has_nullish = true;
+            if id == TypeId::NULL {
+                has_null = true;
+            } else if id == TypeId::UNDEFINED {
+                has_undefined = true;
             } else if id != TypeId::NEVER {
                 has_non_nullish = true;
             }
         }
-        if !has_nullish || !has_non_nullish {
+        if !has_null && !has_undefined {
+            return;
+        }
+        if !has_non_nullish {
+            // Every member was nullish (`never` aside), so tsc's `typeSet` is
+            // empty and the empty-set branch picks a single scalar. Collapsing to
+            // that scalar rather than leaving the union intact is what lets a
+            // `type.flags & Nullable` check see it.
+            let survivor = if has_null {
+                TypeId::NULL
+            } else {
+                TypeId::UNDEFINED
+            };
+            flat.clear();
+            flat.push(survivor);
             return;
         }
         flat.retain(|id| *id != TypeId::NULL && *id != TypeId::UNDEFINED);

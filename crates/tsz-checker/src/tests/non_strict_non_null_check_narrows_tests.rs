@@ -502,30 +502,41 @@ fn strict_mode_keeps_the_two_cause_answer_for_an_interface_member() {
 }
 
 #[test]
-fn interface_index_signature_value_is_a_known_unfixed_residual() {
-    // NOT fixed here — documented so a future fix has a red test to turn
-    // green, and so this stays visibly a residual rather than silently
-    // regressing further. An index-signature member never reaches the
-    // interface fast path at all (`try_lower_simple_local_interface_object`
-    // rejects any non-`PROPERTY_SIGNATURE` member outright), so it always
-    // falls through to `tsz-lowering`'s `TypeLowering`, whose
-    // `strict_null_checks` field is not reliably wired to the real compiler
-    // option — see the strict-mode control above and this PR's review
-    // discussion. Fixing this either needs fast-path support for index
-    // signatures (mirroring the property-signature handling) or properly
-    // plumbing the option through `tsz-lowering`; both are out of scope for
-    // this fix. Behavior is unchanged from before this PR in both modes.
+fn interface_index_signature_value_reports_the_reduced_single_cause() {
+    // Was pinned here as a known-unfixed residual: the index-signature value
+    // `null | undefined` stayed a *union* in non-strict mode, and a union never
+    // triggers the non-strict arm (see this file's header), so the row reported
+    // nothing while tsc reported TS18047.
+    //
+    // #16580 fixed it at the real owner. With `strictNullChecks` off, tsc's
+    // `addTypeToUnion` drops every nullish constituent and `getUnionType` falls
+    // back to `null` (preferred over `undefined`) when nothing else remains, so
+    // this value's type is the *scalar* `null` — whose own `type.flags` are
+    // `TypeFlags.Nullable`, which is exactly what the non-strict arm keys on.
+    // The single-cause TS18047 is therefore the correct answer, not a
+    // regression, and this row doubles as the most direct observable witness of
+    // the `null`-preferred all-nullish fallback.
+    //
+    // Oracle, `typescript@7.0.2`:
+    //   --strict false --strictNullChecks false -> TS18047 'i.m' is possibly 'null'.
+    //   --strict                                -> TS18049 'i.m' is possibly 'null' or 'undefined'.
     let source = "interface I { [k: string]: null | undefined }\ndeclare const i: I;\ni.m.foo;";
     let lax = nullish_codes(&non_strict(source));
-    assert!(
-        lax.is_empty(),
-        "index-signature value nullish collapse remains unfixed (non-strict), got: {lax:?}"
+    assert_eq!(
+        lax,
+        vec![TS18047],
+        "non-strict reduces the index-signature value to `null` and reports the single-cause TS18047, got: {lax:?}"
     );
     let strict = check_source_strict_codes(source);
     assert_eq!(
         count(&strict, 18049),
         1,
-        "strict mode already reports the two-cause TS18049 for an interface index signature, got: {strict:?}"
+        "strict mode keeps the two-cause TS18049 for an interface index signature, got: {strict:?}"
+    );
+    assert_eq!(
+        count(&strict, TS18047),
+        0,
+        "strict mode must not collapse to the single-cause TS18047, got: {strict:?}"
     );
 }
 

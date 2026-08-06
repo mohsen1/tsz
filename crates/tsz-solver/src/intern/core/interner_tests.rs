@@ -835,20 +835,54 @@ mod nonstrict_nullish_union_tests {
     }
 
     #[test]
-    fn nonstrict_keeps_all_nullish_union() {
+    fn nonstrict_all_nullish_union_collapses_to_the_scalar_null() {
         let interner = nonstrict();
-        // No non-nullish sibling to absorb into: the union must stay as-is, never
-        // collapse to `never` (#16580 row a6).
-        let all_nullish = interner.union(vec![TypeId::NULL, TypeId::UNDEFINED]);
-        assert_ne!(
-            all_nullish,
-            TypeId::NEVER,
-            "null | undefined must not become never"
+        // tsc's `addTypeToUnion` exclusion is unconditional, so an all-nullish
+        // union leaves `typeSet` empty and `getUnionType`'s empty-set branch
+        // returns a *scalar*: `null` if seen, else `undefined`, else `never`.
+        // It must not become `never` (#16580 row a6), and it must not stay a
+        // two-member union either — a `Union`'s flags are `Union`, not
+        // `Nullable`, so a surviving union is invisible to the non-strict
+        // non-null arm.
+        //
+        // Oracle, `typescript@7.0.2`, `--strict false --strictNullChecks false`:
+        //   declare var a: null | undefined; a.foo;  -> TS18047 possibly 'null'
+        //   declare var b: undefined | null; b.foo;  -> TS18047 possibly 'null'
+        //   declare var d: undefined;        d.foo;  -> TS18048 possibly 'undefined'
+        assert_eq!(
+            interner.union(vec![TypeId::NULL, TypeId::UNDEFINED]),
+            TypeId::NULL,
+            "null | undefined -> null"
         );
-        let members = union_members(&interner, all_nullish).expect("all-nullish stays a union");
+        // `null` wins regardless of the order the members arrive in: tsc keys on
+        // `includes & TypeFlags.Null` having been *seen*, not on position.
+        assert_eq!(
+            interner.union(vec![TypeId::UNDEFINED, TypeId::NULL]),
+            TypeId::NULL,
+            "undefined | null -> null, order-independent"
+        );
+        // With no `null` seen, `undefined` is the survivor rather than `never`.
+        assert_eq!(
+            interner.union(vec![TypeId::UNDEFINED, TypeId::NEVER]),
+            TypeId::UNDEFINED,
+            "undefined | never -> undefined"
+        );
+        // A lone nullish scalar is untouched in both flavours.
+        assert_eq!(interner.union(vec![TypeId::NULL]), TypeId::NULL);
+        assert_eq!(interner.union(vec![TypeId::UNDEFINED]), TypeId::UNDEFINED);
+    }
+
+    #[test]
+    fn strict_keeps_the_all_nullish_union_intact() {
+        // The negative control for the collapse above: with `strictNullChecks`
+        // on, `null | undefined` is a real two-member union and must stay one.
+        let interner = TypeInterner::new();
+        interner.set_strict_null_checks(true);
+        let all_nullish = interner.union(vec![TypeId::NULL, TypeId::UNDEFINED]);
+        let members = union_members(&interner, all_nullish).expect("strict keeps a union");
         assert!(
             members.contains(&TypeId::NULL) && members.contains(&TypeId::UNDEFINED),
-            "all-nullish union must keep both members: {members:?}"
+            "strict mode must keep both members: {members:?}"
         );
     }
 
