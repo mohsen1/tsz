@@ -926,39 +926,51 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
                     if let Some(idx_sig) = iface_arena.get_index_signature(member_node) {
-                        // `member_idx` and every annotation index below belong to
-                        // `iface_arena`. Resolving them through
-                        // `self.get_type_from_type_node` reads `self.ctx.arena`
-                        // instead, so for a cross-arena base (a lib interface such
-                        // as `Array` reached through `extends Array<any>`) the raw
-                        // index lands on an arbitrary same-numbered node of the
-                        // *user* file — which node depends on the file's exact
-                        // layout, producing knife-edge phantom diagnostics
-                        // (underscoreTest1's TS2304 at whatever node collided).
-                        // Cross-arena levels skip the value-conflict comparison
-                        // instead of fabricating types from misread nodes.
-                        let cross_arena = !std::ptr::eq(iface_arena, self.ctx.arena);
-                        if cross_arena {
-                            continue;
-                        }
+                        // `member_idx`'s annotations belong to `iface_arena`; reading
+                        // them via `self.get_type_from_type_node` (which reads
+                        // `self.ctx.arena`) misreads a cross-arena base (knife-edge
+                        // phantom diagnostics — underscoreTest1's TS2304). Route
+                        // through a delegate checker scoped to `iface_arena` (as
+                        // `delegate_cross_arena_interface_member_simple_types` does),
+                        // so an index signature on a *different* merged declaration
+                        // of the same base symbol (e.g. a `declare global`
+                        // augmentation) is read instead of skipped outright.
                         let param_idx = idx_sig
                             .parameters
                             .nodes
                             .first()
                             .copied()
                             .unwrap_or(NodeIndex::NONE);
-                        let key_type = if let Some(param_node) = iface_arena.get(param_idx)
-                            && let Some(param) = iface_arena.get_parameter(param_node)
-                            && param.type_annotation.is_some()
-                        {
-                            self.get_type_from_type_node(param.type_annotation)
-                        } else {
-                            TypeId::ANY
-                        };
-                        let value_type = if idx_sig.type_annotation.is_some() {
-                            self.get_type_from_type_node(idx_sig.type_annotation)
-                        } else {
-                            TypeId::ANY
+                        let key_annotation = iface_arena.get(param_idx).and_then(|param_node| {
+                            iface_arena
+                                .get_parameter(param_node)
+                                .filter(|param| param.type_annotation.is_some())
+                                .map(|param| param.type_annotation)
+                        });
+                        let value_annotation = idx_sig
+                            .type_annotation
+                            .is_some()
+                            .then_some(idx_sig.type_annotation);
+
+                        let Some((key_type, value_type)) =
+                            (if std::ptr::eq(iface_arena, self.ctx.arena) {
+                                Some((
+                                    key_annotation.map_or(TypeId::ANY, |idx| {
+                                        self.get_type_from_type_node(idx)
+                                    }),
+                                    value_annotation.map_or(TypeId::ANY, |idx| {
+                                        self.get_type_from_type_node(idx)
+                                    }),
+                                ))
+                            } else {
+                                self.resolve_cross_arena_index_signature_types(
+                                    iface_arena,
+                                    key_annotation,
+                                    value_annotation,
+                                )
+                            })
+                        else {
+                            continue;
                         };
                         let value_type =
                             instantiate_type(self.ctx.types, value_type, &substitution);
@@ -1549,11 +1561,23 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            let Some(base_root_node) = self.ctx.arena.get(base_root_idx) else {
+            // `base_root_idx` may belong to a different arena than the
+            // interface being checked (e.g. `interface X extends Array<T>`
+            // from a user file — `Array`'s declarations live in a lib
+            // arena). Reading it via `self.ctx.arena` silently misses and
+            // `continue`s past the entire type-level member/index-signature/
+            // overload comparison below — not a degraded check, a skipped one.
+            let base_root_arena = self.ctx.binder.arena_for_declaration_or(
+                base_sym_id,
+                base_root_idx,
+                self.ctx.arena,
+            );
+
+            let Some(base_root_node) = base_root_arena.get(base_root_idx) else {
                 continue;
             };
 
-            let Some(base_root_iface) = self.ctx.arena.get_interface(base_root_node) else {
+            let Some(base_root_iface) = base_root_arena.get_interface(base_root_node) else {
                 continue;
             };
 
