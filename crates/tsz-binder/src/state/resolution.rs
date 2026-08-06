@@ -825,7 +825,16 @@ impl BinderState {
 
         // Check for wildcard re-exports: `export * from 'bar'`
         // A module can have multiple wildcard re-exports, check all of them.
-        if let Some(entries) = self.wildcard_reexports.get(module_specifier) {
+        //
+        // `export *` never forwards `default` (ECMAScript's
+        // `ExportStarAsNamedExports` drops the local name `default` from what a
+        // wildcard export re-exports; `tsc`'s `visitExportedUnnamedExportBindings`
+        // is only called when `specifier.name.escapedText !== InternalSymbolName.Default`).
+        // Only a *named* re-export (`export { default } from 'bar'`, handled by
+        // the `reexports` branch above) forwards a default across a barrel.
+        if export_name != "default"
+            && let Some(entries) = self.wildcard_reexports.get(module_specifier)
+        {
             // When the caller is in value context (`is_type_only = false`), a
             // type-only path found in one wildcard source must not shadow a
             // VALUE export of the same name from a later wildcard source.

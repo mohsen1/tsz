@@ -1784,7 +1784,16 @@ impl<'a> CheckerState<'a> {
         // TSC behavior: If two `export *` declarations export the same name,
         // that name is considered AMBIGUOUS and is NOT exported
         // (unless explicitly re-exported by name, which is checked above).
-        if let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_specifier) {
+        //
+        // `export *` never forwards `default` (ECMAScript's
+        // `ExportStarAsNamedExports` drops the local name `default` from what a
+        // wildcard export re-exports; `tsc`'s `visitExportedUnnamedExportBindings`
+        // is only called when `specifier.name.escapedText !== InternalSymbolName.Default`).
+        // Only a *named* re-export (`export { default } from 'bar'`, the branch
+        // above) forwards a default across a barrel.
+        if member_name != "default"
+            && let Some(source_modules) = self.ctx.binder.wildcard_reexports.get(module_specifier)
+        {
             let mut found_result: Option<SymbolId> = None;
             let mut found_count = 0;
 
