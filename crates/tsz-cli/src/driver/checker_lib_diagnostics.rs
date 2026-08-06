@@ -757,8 +757,7 @@ pub(super) fn affected_lib_interface_names(
             if !affected.contains(&name) {
                 continue;
             }
-            if (index_signature_affected.contains(&name)
-                && interface_declares_index_signature(lib.arena.as_ref(), interface))
+            if (index_signature_affected.contains(&name) && !interface.members.nodes.is_empty())
                 || interface_declares_member_named(
                     lib.arena.as_ref(),
                     interface,
@@ -868,7 +867,7 @@ pub(super) fn affected_lib_extension_interface_names(
             };
             if affected_interfaces.contains(&name)
                 && index_signature_affected.contains(&name)
-                && interface_declares_index_signature(lib.arena.as_ref(), interface)
+                && !interface.members.nodes.is_empty()
             {
                 extension_interfaces.insert(name);
             }

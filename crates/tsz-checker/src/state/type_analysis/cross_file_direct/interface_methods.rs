@@ -308,4 +308,55 @@ impl<'a> CheckerState<'a> {
 
         (!results.is_empty()).then_some(results)
     }
+
+    /// Resolve a heritage-base index signature's key/value type annotations
+    /// against their own arena when that base's declaration lives in a
+    /// different arena than the interface being checked for TS2430
+    /// (`class_checker_compat::check_interface_extension_compatibility`) —
+    /// e.g. a lib interface whose index signature exists only on a
+    /// `declare global` augmentation declaration merged elsewhere. The
+    /// annotation node indices are only valid against `interface_arena`, so
+    /// reading them through `self.get_type_from_type_node` (which reads
+    /// `self.ctx.arena`) would land on an arbitrary, unrelated node of the
+    /// checked interface's own file. Delegate through a checker scoped to
+    /// `interface_arena`, mirroring
+    /// `delegate_cross_arena_interface_member_simple_types`. Returns `None`
+    /// when no binder is registered for that arena, so the caller can skip
+    /// the comparison instead of guessing.
+    pub(crate) fn resolve_cross_arena_index_signature_types(
+        &mut self,
+        interface_arena: &NodeArena,
+        key_annotation: Option<NodeIndex>,
+        value_annotation: Option<NodeIndex>,
+    ) -> Option<(TypeId, TypeId)> {
+        let file_idx = self.ctx.get_file_idx_for_arena(interface_arena)?;
+        let delegate_binder_arc = self
+            .ctx
+            .all_binders
+            .as_ref()
+            .and_then(|binders| binders.get(file_idx).cloned())?;
+        let file_name = interface_arena
+            .source_files
+            .first()
+            .map(|sf| sf.file_name.clone())
+            .unwrap_or_else(|| self.ctx.file_name.clone());
+
+        tsz_common::perf_counters::record_delegate_cross_arena_miss();
+        let _delegate_depth_guard = tsz_common::perf_counters::enter_delegate();
+
+        let mut checker = CheckerState::delegate_for_arena(
+            interface_arena,
+            delegate_binder_arc.as_ref(),
+            file_name,
+            self,
+            tsz_common::perf_counters::CheckerCreationReason::DelegateCrossArenaOther,
+        );
+        checker.ctx.current_file_idx = file_idx;
+
+        let key_type =
+            key_annotation.map_or(TypeId::ANY, |idx| checker.get_type_from_type_node(idx));
+        let value_type =
+            value_annotation.map_or(TypeId::ANY, |idx| checker.get_type_from_type_node(idx));
+        Some((key_type, value_type))
+    }
 }
