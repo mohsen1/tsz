@@ -14,15 +14,21 @@
 //! so an object-literal getter suppresses exactly like a class method does
 //! while the object-literal method one line away does not.
 //!
-//! Harness note: the default unit harness does not report an unresolved name in
-//! an *expression* position at all — a plain `const zz = undefinedName;` comes
-//! back clean under it, while the same name in a heritage clause does report.
-//! The suppressing rows below therefore assert the placement diagnostic, which
-//! the harness does see, and the deferred-container rows are pinned but
-//! `#[ignore]`d; both halves are verified end to end through the CLI in the PR
-//! body. `default_exported_class_declaration_in_a_block_still_resolves_its_heritage`
-//! is the live over-reach control: it goes through a path the harness *can*
-//! observe and would fail if the suppression reached the declaration forms.
+//! Harness note: `crate::test_utils::check_source_diagnostics` never sets
+//! `CheckerContext::report_unresolved_imports`, so it stays at its
+//! `CheckerState::new` default of `false` — unlike every production entry
+//! point (`tsz-cli`'s `check_file.rs`/`check.rs`, `tsz_server`'s `check.rs`),
+//! which sets it `true` before checking. `resolve_truly_unknown_identifier`
+//! (`types/computation/identifier/resolution.rs`) gates plain "cannot find
+//! name" reporting for a value-position identifier on that flag and silently
+//! returns `any` when it is `false` — so a plain `const zz = undefinedName;`
+//! comes back clean under the shared default helper even though the CLI
+//! reports `TS2552` for the identical source. A heritage-clause identifier
+//! does not route through that gate, which is why it reports either way.
+//! `codes` below builds its own checker with the flag set, mirroring the
+//! established idiom in `tests/name_resolution_boundary_tests.rs` and
+//! `src/tests/suggestion_scan_discarded_tests.rs`, rather than changing the
+//! shared helper's default and risking every one of its other callers.
 //!
 //! Verified against the pinned tsc 7.0.2 through
 //! `scripts/conformance/oracle.sh` (which carries the
@@ -30,18 +36,48 @@
 //! generator uses), cross-checked against the default scheduler. All rows here
 //! are flag-insensitive.
 
-use crate::test_utils::check_source_diagnostics;
+use crate::context::CheckerOptions;
+use crate::diagnostics::Diagnostic;
+use crate::query_boundaries::common::TypeInterner;
+use crate::state::CheckerState;
+use tsz_binder::BinderState;
+use tsz_parser::parser::ParserState;
 
 const DEFAULT_EXPORT_TOP_LEVEL: u32 = 1258;
 const EXPORT_ASSIGNMENT_TOP_LEVEL: u32 = 1231;
 const MODIFIERS_CANNOT_APPEAR_HERE: u32 = 1184;
 const DEFAULT_EXPORT_IN_NAMESPACE: u32 = 1319;
 
-/// `Cannot find name 'x'.` and its did-you-mean variant. The default unit
-/// harness loads no lib, so which of the two fires depends on whether a
-/// suggestion candidate exists; the rule under test is about whether the name
-/// is resolved at all, so both codes count as "the expression was typed".
+/// `Cannot find name 'x'.` and its did-you-mean variant. This harness loads no
+/// lib, so which of the two fires depends on whether a suggestion candidate
+/// exists; the rule under test is about whether the name is resolved at all,
+/// so both codes count as "the expression was typed".
 const CANNOT_FIND_NAME: [u32; 2] = [2304, 2552];
+
+/// Parse, bind, and type-check with `report_unresolved_imports` set, so a
+/// value-position "cannot find name" reports the same way it does through the
+/// CLI (see the module doc comment).
+fn check_source_diagnostics(source: &str) -> Vec<Diagnostic> {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let source_file = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), source_file);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    checker.enable_source_file_test_pragmas();
+    checker.ctx.set_lib_contexts(Vec::new());
+    checker.ctx.report_unresolved_imports = true;
+    checker.check_source_file(source_file);
+    checker.ctx.diagnostics.clone()
+}
 
 fn codes(source: &str) -> Vec<u32> {
     check_source_diagnostics(source)
@@ -152,11 +188,6 @@ fn object_literal_getter_reports_placement_only() {
 // --- Deferred containers: tsc types the expression, and so must tsz. ---
 
 #[test]
-#[ignore = "the default unit harness does not report an unresolved name in an \
-           expression position at all — a plain `const zz = undefinedName;` is \
-           clean under it — so the deferred-container half of this rule is pinned \
-           here but verified through the CLI against `scripts/conformance/oracle.sh`; \
-           see the matrix in the PR body"]
 fn arrow_function_body_still_resolves_the_expression() {
     let source = "const g = () => { export default undefinedName; };\n";
     let found = codes(source);
@@ -165,11 +196,6 @@ fn arrow_function_body_still_resolves_the_expression() {
 }
 
 #[test]
-#[ignore = "the default unit harness does not report an unresolved name in an \
-           expression position at all — a plain `const zz = undefinedName;` is \
-           clean under it — so the deferred-container half of this rule is pinned \
-           here but verified through the CLI against `scripts/conformance/oracle.sh`; \
-           see the matrix in the PR body"]
 fn function_expression_body_still_resolves_the_expression() {
     let source = "const g = function () { export default undefinedName; };\n";
     let found = codes(source);
@@ -178,11 +204,6 @@ fn function_expression_body_still_resolves_the_expression() {
 }
 
 #[test]
-#[ignore = "the default unit harness does not report an unresolved name in an \
-           expression position at all — a plain `const zz = undefinedName;` is \
-           clean under it — so the deferred-container half of this rule is pinned \
-           here but verified through the CLI against `scripts/conformance/oracle.sh`; \
-           see the matrix in the PR body"]
 fn named_function_expression_body_still_resolves_the_expression() {
     let source = "const g = function fn() { export default undefinedName; };\n";
     let found = codes(source);
@@ -191,11 +212,6 @@ fn named_function_expression_body_still_resolves_the_expression() {
 }
 
 #[test]
-#[ignore = "the default unit harness does not report an unresolved name in an \
-           expression position at all — a plain `const zz = undefinedName;` is \
-           clean under it — so the deferred-container half of this rule is pinned \
-           here but verified through the CLI against `scripts/conformance/oracle.sh`; \
-           see the matrix in the PR body"]
 fn object_literal_method_body_still_resolves_the_expression() {
     let source = "const o = { m() { export default undefinedName; } };\n";
     let found = codes(source);
@@ -204,11 +220,6 @@ fn object_literal_method_body_still_resolves_the_expression() {
 }
 
 #[test]
-#[ignore = "the default unit harness does not report an unresolved name in an \
-           expression position at all — a plain `const zz = undefinedName;` is \
-           clean under it — so the deferred-container half of this rule is pinned \
-           here but verified through the CLI against `scripts/conformance/oracle.sh`; \
-           see the matrix in the PR body"]
 fn immediately_invoked_arrow_still_resolves_the_expression() {
     let source = "(() => { export default undefinedName; })();\n";
     let found = codes(source);
@@ -217,11 +228,6 @@ fn immediately_invoked_arrow_still_resolves_the_expression() {
 }
 
 #[test]
-#[ignore = "the default unit harness does not report an unresolved name in an \
-           expression position at all — a plain `const zz = undefinedName;` is \
-           clean under it — so the deferred-container half of this rule is pinned \
-           here but verified through the CLI against `scripts/conformance/oracle.sh`; \
-           see the matrix in the PR body"]
 fn nested_block_inside_an_arrow_still_resolves_the_expression() {
     let source = "const g = () => { { export default undefinedName; } };\n";
     let found = codes(source);
@@ -230,11 +236,6 @@ fn nested_block_inside_an_arrow_still_resolves_the_expression() {
 }
 
 #[test]
-#[ignore = "the default unit harness does not report an unresolved name in an \
-           expression position at all — a plain `const zz = undefinedName;` is \
-           clean under it — so the deferred-container half of this rule is pinned \
-           here but verified through the CLI against `scripts/conformance/oracle.sh`; \
-           see the matrix in the PR body"]
 fn arrow_nested_inside_a_class_method_still_resolves_the_expression() {
     let source = "class C { m() { const q = () => { export default undefinedName; }; } }\n";
     let found = codes(source);
@@ -243,11 +244,6 @@ fn arrow_nested_inside_a_class_method_still_resolves_the_expression() {
 }
 
 #[test]
-#[ignore = "the default unit harness does not report an unresolved name in an \
-           expression position at all — a plain `const zz = undefinedName;` is \
-           clean under it — so the deferred-container half of this rule is pinned \
-           here but verified through the CLI against `scripts/conformance/oracle.sh`; \
-           see the matrix in the PR body"]
 fn class_property_initializer_arrow_still_resolves_the_expression() {
     let source = "class C { p = () => { export default undefinedName; }; }\n";
     let found = codes(source);
@@ -256,11 +252,6 @@ fn class_property_initializer_arrow_still_resolves_the_expression() {
 }
 
 #[test]
-#[ignore = "the default unit harness does not report an unresolved name in an \
-           expression position at all — a plain `const zz = undefinedName;` is \
-           clean under it — so the deferred-container half of this rule is pinned \
-           here but verified through the CLI against `scripts/conformance/oracle.sh`; \
-           see the matrix in the PR body"]
 fn generator_function_expression_still_resolves_the_expression() {
     let source = "const g = function* () { export default undefinedName; };\n";
     let found = codes(source);
@@ -295,11 +286,6 @@ fn default_exported_class_declaration_in_a_block_still_resolves_its_heritage() {
 }
 
 #[test]
-#[ignore = "the default unit harness does not report an unresolved name in an \
-           expression position at all — a plain `const zz = undefinedName;` is \
-           clean under it — so the deferred-container half of this rule is pinned \
-           here but verified through the CLI against `scripts/conformance/oracle.sh`; \
-           see the matrix in the PR body"]
 fn default_exported_function_declaration_in_a_block_still_resolves_its_body() {
     let source = "{ export default function h() { return undefinedName; } }\n";
     let found = codes(source);
@@ -365,11 +351,6 @@ fn renamed_binder_in_a_block_reports_placement_only() {
 }
 
 #[test]
-#[ignore = "the default unit harness does not report an unresolved name in an \
-           expression position at all — a plain `const zz = undefinedName;` is \
-           clean under it — so the deferred-container half of this rule is pinned \
-           here but verified through the CLI against `scripts/conformance/oracle.sh`; \
-           see the matrix in the PR body"]
 fn renamed_binder_in_an_arrow_still_resolves_the_expression() {
     let source = "const g = () => { const zzz = 1; export default zzZ; };\n";
     let found = codes(source);
@@ -398,11 +379,6 @@ fn module_file_bare_block_reports_placement_only() {
 }
 
 #[test]
-#[ignore = "the default unit harness does not report an unresolved name in an \
-           expression position at all — a plain `const zz = undefinedName;` is \
-           clean under it — so the deferred-container half of this rule is pinned \
-           here but verified through the CLI against `scripts/conformance/oracle.sh`; \
-           see the matrix in the PR body"]
 fn module_file_arrow_body_still_resolves_the_expression() {
     let source = "const g = () => { export default undefinedName; };\nexport {};\n";
     let found = codes(source);
