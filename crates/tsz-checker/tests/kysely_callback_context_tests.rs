@@ -1,7 +1,8 @@
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::diagnostics::Diagnostic;
 use tsz_checker::test_utils::{
-    check_multi_file_with_libs, check_multi_file_with_libs_stamped, check_source_with_libs,
+    check_multi_file_with_libs, check_multi_file_with_libs_stamped,
+    check_multi_file_with_libs_unique_module_locals, check_source_with_libs,
     diagnostic_line_column, load_default_lib_files,
 };
 
@@ -370,10 +371,11 @@ query.select((reader) => [
         ),
     ];
 
-    let diagnostics = check_multi_file_with_libs(&files, "main.ts", options, &lib_files)
-        .into_iter()
-        .filter(|diagnostic| diagnostic.code != 2318)
-        .collect::<Vec<_>>();
+    let diagnostics =
+        check_multi_file_with_libs_unique_module_locals(&files, "main.ts", options, &lib_files)
+            .into_iter()
+            .filter(|diagnostic| diagnostic.code != 2318)
+            .collect::<Vec<_>>();
 
     assert!(
         lacks_any_diagnostic_code(&diagnostics, &[2339, 2347, 7006]),
@@ -471,10 +473,11 @@ query.select((reader) => [
         ),
     ];
 
-    let diagnostics = check_multi_file_with_libs(&files, "main.ts", options, &lib_files)
-        .into_iter()
-        .filter(|diagnostic| diagnostic.code != 2318)
-        .collect::<Vec<_>>();
+    let diagnostics =
+        check_multi_file_with_libs_unique_module_locals(&files, "main.ts", options, &lib_files)
+            .into_iter()
+            .filter(|diagnostic| diagnostic.code != 2318)
+            .collect::<Vec<_>>();
 
     assert!(
         lacks_any_diagnostic_code(&diagnostics, &[2339, 2347, 7006]),
