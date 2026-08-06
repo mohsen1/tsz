@@ -166,6 +166,7 @@ impl CheckerState<'_> {
             &cross_def_id_resolver,
             &cross_value_resolver,
         )
+        .with_nonstrict_nullish_union_reduction(self.ctx.compiler_options.strict_null_checks)
         .with_type_param_bindings(type_param_bindings);
 
         lowering.lower_interface_declarations_with_symbol(&[decl_idx], sym_id)

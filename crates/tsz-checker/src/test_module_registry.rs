@@ -951,6 +951,8 @@ mod under_applied_generic_constructor_fill_tests;
 mod union_call_resolution_tests;
 #[path = "tests/union_constraint_relation_routing_arch_tests.rs"]
 mod union_constraint_relation_routing_arch_tests;
+#[path = "tests/union_display_longhand_primitive_repaint_tests.rs"]
+mod union_display_longhand_primitive_repaint_tests;
 #[path = "tests/union_excess_property_relation_routing_arch_tests.rs"]
 mod union_excess_property_relation_routing_arch_tests;
 #[path = "tests/union_index_signature_relation_routing_arch_tests.rs"]
@@ -975,6 +977,8 @@ mod variadic_tuple_alias_display_tests;
 mod variadic_tuple_constraint_literal_preservation_tests;
 #[path = "tests/variadic_tuple_spread_element_inference_tests.rs"]
 mod variadic_tuple_spread_element_inference_tests;
+#[path = "tests/verbatim_module_syntax_export_default_alias_ts1284_tests.rs"]
+mod verbatim_module_syntax_export_default_alias_ts1284_tests;
 #[path = "tests/verbatim_module_syntax_export_default_type_only_import_ts1284_tests.rs"]
 mod verbatim_module_syntax_export_default_type_only_import_ts1284_tests;
 #[path = "tests/void_undefined_discriminant_narrowing_tests.rs"]
