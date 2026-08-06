@@ -32,9 +32,15 @@ impl<'a> CheckerState<'a> {
         // UnionType uses CompositeTypeData which has a types list
         if let Some(composite) = self.ctx.arena.get_composite_type(node) {
             let mut member_types = Vec::new();
+            let mut literal_member_nodes = Vec::new();
             for &type_idx in &composite.types.nodes {
                 // Use get_type_from_type_node to properly resolve typeof expressions via binder
                 member_types.push(self.get_type_from_type_node(type_idx));
+                literal_member_nodes.push(self.ctx.arena.get(type_idx).is_some_and(
+                    |member_node| {
+                        member_node.kind == tsz_parser::parser::syntax_kind_ext::TYPE_LITERAL
+                    },
+                ));
             }
 
             if member_types.is_empty() {
@@ -63,7 +69,25 @@ impl<'a> CheckerState<'a> {
             // (e.g., `T | null` should display as `T | null`, not as T's
             // expanded body). The interner stores at most one origin per
             // flattened TypeId; first writer wins.
-            self.ctx.types.store_union_origin(result, member_types);
+            self.ctx
+                .types
+                .store_union_origin(result, member_types.clone());
+            // Record, per member, whether it was written as an anonymous
+            // `{ ... }` literal directly in *this* union — as opposed to a
+            // named alias/interface reference whose body happens to reduce
+            // to the same content-interned shape. See
+            // `TypeInterner::mark_union_literal_member` for why the global
+            // `is_literal_object_annotation` table alone cannot make this
+            // distinction: a type alias's body also marks it whenever the
+            // alias's shape coincides with an anonymous member's shape.
+            for (&member_type, &is_literal) in member_types.iter().zip(literal_member_nodes.iter())
+            {
+                if is_literal {
+                    self.ctx
+                        .types
+                        .mark_union_literal_member(result, member_type);
+                }
+            }
             return result;
         }
 

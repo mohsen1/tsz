@@ -301,9 +301,15 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         // UnionType uses CompositeTypeData which has a types list
         if let Some(composite) = self.ctx.arena.get_composite_type(node) {
             let mut member_types = Vec::new();
+            let mut literal_member_nodes = Vec::new();
             for &type_idx in &composite.types.nodes {
                 // Recursively resolve each member type
                 member_types.push(self.check(type_idx));
+                literal_member_nodes.push(
+                    self.ctx.arena.get(type_idx).is_some_and(|member_node| {
+                        member_node.kind == syntax_kind_ext::TYPE_LITERAL
+                    }),
+                );
             }
 
             if member_types.is_empty() {
@@ -319,10 +325,31 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 return collapsed;
             }
 
-            return type_construction::type_node_annotation_union_with_origin(
+            let result = type_construction::type_node_annotation_union_with_origin(
                 self.ctx.types,
-                member_types,
+                member_types.clone(),
             );
+            // Record, per member, whether it was written as an anonymous
+            // `{ ... }` literal directly in *this* union — as opposed to a
+            // named alias/interface reference whose body happens to reduce
+            // to the same content-interned shape. `mark_literal_object_annotation`
+            // (called from `get_type_from_type_literal` for every member
+            // above) cannot make that distinction on its own: a type alias's
+            // body runs through the same literal-checking path and marks the
+            // identical global table entry whenever its shape coincides.
+            // `render_union_source_mismatch`/`render_parent_with_child_relation`
+            // consult this narrower, per-union record to decide whether
+            // repainting a failing member with an unrelated same-shaped
+            // alias's name is sound for this occurrence.
+            for (&member_type, &is_literal) in member_types.iter().zip(literal_member_nodes.iter())
+            {
+                if is_literal {
+                    self.ctx
+                        .types
+                        .mark_union_literal_member(result, member_type);
+                }
+            }
+            return result;
         }
 
         TypeId::ERROR

@@ -139,6 +139,42 @@ impl<'a> CheckerState<'a> {
         .expect("DefaultDiagnostic is a basic diagnostic display role")
     }
 
+    /// Format a union member's type for a failing-elaboration message
+    /// (`Type '<member>' is not assignable to type '<target>'.` beneath a
+    /// union source mismatch), rendering it structurally when it was written
+    /// as an anonymous literal directly in `union_type`.
+    ///
+    /// The member's bare `TypeId` alone cannot make that call: a named type
+    /// alias whose body happens to reduce to the same content-interned shape
+    /// also marks the global `is_literal_object_annotation` table, so
+    /// `resolve_object_shape_name`'s structural reverse lookup would repaint
+    /// a genuinely anonymous member with that unrelated alias's name (or vice
+    /// versa, structurally expand a real alias reference). The per-union
+    /// `mark_union_literal_member` record answers the narrower, sound
+    /// question — was *this* occurrence, in *this* union, syntactically
+    /// anonymous — so aliased members (`A | B`) keep their names while
+    /// anonymous members (`{ m: number } | { m: string }`) render structurally
+    /// even when an unrelated same-shaped alias exists elsewhere in the file.
+    pub fn format_type_diagnostic_for_union_member(
+        &self,
+        union_type: TypeId,
+        member_type: TypeId,
+    ) -> String {
+        if self
+            .ctx
+            .types
+            .is_union_literal_member(union_type, member_type)
+        {
+            let mut formatter = self
+                .ctx
+                .create_diagnostic_type_formatter()
+                .with_display_properties()
+                .with_anonymous_composite_structural();
+            return formatter.format(member_type).into_owned();
+        }
+        self.format_type_diagnostic(member_type)
+    }
+
     fn format_type_diagnostic_impl(&self, type_id: TypeId) -> String {
         if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)

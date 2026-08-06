@@ -115,6 +115,17 @@ pub trait TypeDisplayProvenance {
         false
     }
 
+    /// Mark `member_type_id` as an anonymous object-type literal written
+    /// directly inside the union `union_type_id`. See
+    /// `TypeInterner::mark_union_literal_member`.
+    fn mark_union_literal_member(&self, _union_type_id: TypeId, _member_type_id: TypeId) {}
+
+    /// Return whether `member_type_id` was recorded as an anonymous literal
+    /// member of the union `union_type_id`.
+    fn is_union_literal_member(&self, _union_type_id: TypeId, _member_type_id: TypeId) -> bool {
+        false
+    }
+
     /// Record the as-written origin members for a flattened `Union` `TypeId`.
     ///
     /// The checker calls this from `get_type_from_union_type` so that the
@@ -275,6 +286,14 @@ impl TypeDisplayProvenance for TypeInterner {
 
     fn is_literal_object_annotation(&self, type_id: TypeId) -> bool {
         Self::is_literal_object_annotation(self, type_id)
+    }
+
+    fn mark_union_literal_member(&self, union_type_id: TypeId, member_type_id: TypeId) {
+        Self::mark_union_literal_member(self, union_type_id, member_type_id);
+    }
+
+    fn is_union_literal_member(&self, union_type_id: TypeId, member_type_id: TypeId) -> bool {
+        Self::is_union_literal_member(self, union_type_id, member_type_id)
     }
 
     fn store_union_origin(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {

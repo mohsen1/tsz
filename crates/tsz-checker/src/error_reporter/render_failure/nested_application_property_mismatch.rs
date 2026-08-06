@@ -1300,7 +1300,7 @@ impl<'a> CheckerState<'a> {
 
         let display_member =
             self.generalize_nested_relation_source_for_display(member_type, target_type);
-        let member_str = self.format_type_diagnostic(display_member);
+        let member_str = self.format_type_diagnostic_for_union_member(source_type, display_member);
         diag.push_elaboration_in_span(
             ctx.start,
             ctx.length,
@@ -1435,7 +1435,13 @@ impl<'a> CheckerState<'a> {
                 // every relation line).
                 let display_source = self
                     .generalize_nested_relation_source_for_display(nested_source, nested_target);
-                let source_str = self.format_type_diagnostic(display_source);
+                // `source_type` is the union whenever this leaf elaborates a
+                // `UnionSourceMismatch` member (see `render_union_source_mismatch`
+                // below); for every other caller of this shared renderer the
+                // per-union provenance lookup simply misses and falls back to
+                // the ordinary diagnostic formatting.
+                let source_str =
+                    self.format_type_diagnostic_for_union_member(source_type, display_source);
                 let target_str = self.format_type_diagnostic(nested_target);
                 diag.push_elaboration_in_span(
                     start,
