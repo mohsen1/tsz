@@ -380,7 +380,9 @@ impl<'a> CheckerState<'a> {
     }
 
     /// TS1284/TS1285: export default checks under verbatimModuleSyntax.
-    /// TS1292: export default of a type-only alias under isolatedModules.
+    /// TS1292: export default of a type-only alias under isolatedModules (and,
+    /// alongside TS1284, under verbatimModuleSyntax — tsc double-reports when
+    /// the exported name is an import alias resolving to a pure type).
     pub(crate) fn check_verbatim_module_syntax_export_default(&mut self, clause_idx: NodeIndex) {
         use tsz_binder::symbol_flags;
         use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
@@ -462,7 +464,8 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
-            let alias_sym_id = if sym.has_any_flags(symbol_flags::ALIAS) {
+            let sym_is_direct_alias = sym.has_any_flags(symbol_flags::ALIAS);
+            let alias_sym_id = if sym_is_direct_alias {
                 Some(sym_id)
             } else {
                 self.ctx.alias_partner_for(self.ctx.binder, sym_id)
@@ -493,6 +496,32 @@ impl<'a> CheckerState<'a> {
             let (target_has_type, target_has_value) =
                 self.lookup_imported_target_flags(module_spec, &import_name);
             if target_has_type && !target_has_value {
+                // tsc double-reports here for verbatimModuleSyntax: TS1284 is
+                // evaluated directly against `export default <name>` (the
+                // local binding "only refers to a type", same shape as the
+                // PURE_TYPE branch above) *in addition to* TS1292's deeper
+                // resolve-through-the-import check. The PURE_TYPE branch
+                // above cannot see this because a plain import alias symbol
+                // never carries INTERFACE/TYPE_ALIAS flags itself — only its
+                // resolved target does, which is exactly what
+                // `lookup_imported_target_flags` just computed. Oracle-
+                // verified against typescript@7.0.2: both codes fire at the
+                // same position for `import { Foo } from "./m"; export
+                // default Foo;` under verbatimModuleSyntax. isolatedModules
+                // alone does not get TS1284 (verbatimModuleSyntax-only, same
+                // gate as the PURE_TYPE branch).
+                if option_name == "verbatimModuleSyntax" && sym_is_direct_alias {
+                    let message = format_message(
+                        diagnostic_messages::AN_EXPORT_DEFAULT_MUST_REFERENCE_A_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABLED_BU,
+                        &[&name],
+                    );
+                    self.error_at_node(
+                        clause_idx,
+                        &message,
+                        diagnostic_codes::AN_EXPORT_DEFAULT_MUST_REFERENCE_A_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABLED_BU,
+                    );
+                }
+
                 let message = format_message(
                     diagnostic_messages::RESOLVES_TO_A_TYPE_AND_MUST_BE_MARKED_TYPE_ONLY_IN_THIS_FILE_BEFORE_RE_EXPORTING_2,
                     &[&name, option_name],
