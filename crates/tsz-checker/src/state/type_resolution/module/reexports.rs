@@ -140,12 +140,23 @@ impl<'a> CheckerState<'a> {
         // Check wildcard re-exports before file_locals so that
         // `export * from './other'` is followed to the actual declaring file.
         // file_locals may contain merged globals that shadow re-exported symbols.
-        if let Some(source_modules) = self
-            .ctx
-            .wildcard_reexports_for_file(target_binder, &target_file_name)
-            .or_else(|| {
-                module_key.and_then(|key| self.ctx.wildcard_reexports_for_file(target_binder, key))
-            })
+        //
+        // `export *` never forwards `default`: ECMAScript's `ExportStarAsNamedExports`
+        // resolution explicitly drops the local name `default` from the list a
+        // wildcard export re-exports, so a source module's own default is never
+        // visible through a re-exporting barrel unless the barrel exports it by
+        // name (`export { default } from './m'`, tracked separately in
+        // `reexports_for_file` above). `export_name == "default"` skips this whole
+        // branch rather than filtering per-source, matching tsc's `visitExportedUnnamedExportBindings`
+        // (called only when `specifier.name.escapedText !== InternalSymbolName.Default`).
+        if export_name != "default"
+            && let Some(source_modules) = self
+                .ctx
+                .wildcard_reexports_for_file(target_binder, &target_file_name)
+                .or_else(|| {
+                    module_key
+                        .and_then(|key| self.ctx.wildcard_reexports_for_file(target_binder, key))
+                })
         {
             let source_modules = source_modules.clone();
 
@@ -338,8 +349,14 @@ impl<'a> CheckerState<'a> {
                                 .module_exports_for_module(source_binder, source_module)
                         })
                     {
+                        // `export *` never forwards `default` — see the matching
+                        // exclusion and citation in `resolve_export_in_file_uncached`
+                        // above. Without this, a wildcard-reexporting barrel's
+                        // namespace object (`import * as ns from './barrel'`) would
+                        // expose `ns.default` whenever the wildcard source has one,
+                        // even though tsc's `checker` reports TS2339 for it.
                         for (name, sym_id) in exports.iter() {
-                            if !result.has(name) {
+                            if name != "default" && !result.has(name) {
                                 result.set(name.to_string(), *sym_id);
                             }
                         }
