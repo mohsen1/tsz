@@ -646,14 +646,26 @@ impl<'a> CheckerState<'a> {
         // with a TS2728 pointer at that property's own declaration. The
         // multi-property forms (TS2739/TS2740) above return before this point
         // and carry no pointer, matching tsc.
-        if depth == 0
-            && let Some(related) = self.missing_property_declared_here_related(
-                &[target, target_type],
-                idx,
-                property_name,
-                &prop_name_display,
-            )
-        {
+        // A nested frame reaches the same pointer through the path-aware route:
+        // tsc draws no depth distinction here, but the leaf property name alone
+        // does not locate a member of the *outer* annotation, so the object
+        // literal's own syntax supplies the path first.
+        // Only the leaf target is offered to the symbol route on a nested frame:
+        // the *outer* target is a different type that legitimately does not
+        // declare this property, and asking it would either decline anyway or,
+        // for a same-named member, anchor in the wrong declaration.
+        let owner_candidates: &[TypeId] = if depth == 0 {
+            &[target, target_type]
+        } else {
+            &[target_type]
+        };
+        let declared_here = self.missing_property_declared_here_related(
+            owner_candidates,
+            idx,
+            property_name,
+            &prop_name_display,
+        );
+        if let Some(related) = declared_here {
             diagnostic.related_information.push(related);
         }
         diagnostic
