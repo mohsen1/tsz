@@ -830,7 +830,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             )
         {
             let source_eval = self.evaluate_type(source);
-            if self.is_callable_type(source_eval) {
+            // A callable value satisfies the `Function` surface — EXCEPT when a
+            // user `interface Function { [n: number]: T }` augmentation gave the
+            // global interface an unwaived numeric index. A function value's
+            // apparent type carries no numeric index, so a bare callable no longer
+            // satisfies it; only a source that declares its own compatible numeric
+            // index does. Withhold this identity fast-path in that case and let the
+            // structural dispatch below reject it, matching `tsc`. This is the
+            // earliest of the function→`Function` acceptance sites and the one the
+            // `CallableFunction`/`NewableFunction extends Function` `this`-parameter
+            // comparison reaches (#16525); without this guard every downstream
+            // guard is dead code for that path.
+            if self.is_callable_type(source_eval)
+                && (!self.function_target_has_unwaived_index(target)
+                    || self.callable_source_declares_index(source_eval))
+            {
                 // North Star Fix: is_callable_type now respects allow_any correctly.
                 // If it returned true, it means either we're in permissive mode OR
                 // the source is genuinely a callable type.

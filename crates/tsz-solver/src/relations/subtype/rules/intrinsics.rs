@@ -384,24 +384,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         crate::type_queries::matches_global_function_interface_shape(self.interner, target)
     }
 
-    /// Whether a structural-`Function` target (apply/call/bind) additionally
-    /// declares a numeric index signature that a bare function cannot satisfy.
+    /// Whether `target`'s own object shape declares an index signature — of
+    /// *either* kind — that a bare function/callable value cannot satisfy.
     ///
-    /// `tsc` models a function value's apparent type as its call signatures plus
-    /// the members of the global `Function` interface, and that apparent type
-    /// carries **no** numeric index signature. So a target that matches the
-    /// Function surface but also declares `[n: number]: T` — the shape a user
-    /// `interface Function { [n: number]: T }` augmentation produces — is not
-    /// satisfied by a function no matter which other members it requires. The
-    /// intrinsic `Function` and the un-augmented global interface carry no such
-    /// index and are unaffected. Mirrors the dual-`any`-index waiver the object
-    /// index path already honors (`indexSignaturesRelatedTo` short-circuits a
-    /// target whose numeric and string indexes are both `any`), so the two paths
-    /// agree on `{ [k: string]: any; [n: number]: any }`.
-    pub(crate) fn function_structural_target_has_unwaived_number_index(
-        &self,
-        target: TypeId,
-    ) -> bool {
+    /// A function value's apparent type carries no index signature of its own, so
+    /// any index obligation the target declares is unsatisfiable — except the
+    /// waivers `tsc`'s `indexSignaturesRelatedTo` encodes: a `string` index whose
+    /// value type is `any` waives every index obligation for a non-primitive
+    /// source (`{ [k: string]: any }` / `Record<string, any>`), which subsumes
+    /// the numeric-only dual-`any` case. A non-`any` string index (e.g.
+    /// `[x: string]: Object`, the shape `objectTypeWith*HidingMembersOfExtended-
+    /// Function.ts` augment `Function` with) or a numeric index with no waiving
+    /// `any` string index is unsatisfiable.
+    fn function_structural_target_has_unwaived_index(&self, target: TypeId) -> bool {
         let shape_id = crate::visitors::visitor_extract::object_shape_id(self.interner, target)
             .or_else(|| {
                 crate::visitors::visitor_extract::object_with_index_shape_id(self.interner, target)
@@ -410,8 +405,96 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         };
         let shape = self.interner.object_shape(shape_id);
+        if let Some(string_index) = shape.string_index.as_ref()
+            && string_index.key_type != TypeId::SYMBOL
+        {
+            if self.target_string_index_any_waives_missing_index(string_index.value_type) {
+                // An `any`-valued string index waives every index obligation.
+                return false;
+            }
+            // A concrete-valued string index is unsatisfiable by a bare function.
+            return true;
+        }
         shape.number_index.is_some()
             && !self.target_dual_any_index_waives_missing_number_index(&shape)
+    }
+
+    /// Whether the target — understood as (a reference to) the *global*
+    /// `Function` interface — carries an unwaived index signature (numeric or a
+    /// concrete-valued string index) that a bare function value cannot satisfy.
+    ///
+    /// [`Self::function_structural_target_has_unwaived_index`] answers this from
+    /// the target's *own* object shape, which suffices when the target has
+    /// already been expanded to that shape (the user-space
+    /// `interface MyFunction { …; [n: number]: T }` heritage form the
+    /// `function_source_numeric_index_target` tests pin). But when the target is
+    /// the intrinsic / boxed / still-`Lazy` reference to the global `Function`
+    /// interface — the type `Function.apply`'s `this: Function` parameter
+    /// carries, and the receiver of `const g: Function = fn` — its augmentation
+    /// is not visible on that bare reference. Resolve the reference (and, as a
+    /// fallback, the registered boxed `Function`) to its object shape and
+    /// re-check, so a user `interface Function { [n: number]: T }` (or
+    /// `{ [x: string]: Object }`) augmentation of the *global* interface is
+    /// honored no matter which spelling of it the relation is handed. This is
+    /// what closes #16525's `CallableFunction`/`NewableFunction extends Function`
+    /// residual: those overrides' `this`-parameter comparison resolves the base
+    /// `this` type to the global `Function`, which the augmentation makes
+    /// index-signed.
+    ///
+    /// Deliberately scoped to the global `Function` identity: a plain object
+    /// target without its own index is never made index-signed by an
+    /// augmentation living on `Function`.
+    pub(crate) fn function_target_has_unwaived_index(&mut self, target: TypeId) -> bool {
+        if self.function_structural_target_has_unwaived_index(target) {
+            return true;
+        }
+        // A global-`Function` reference the augmentation gave an index can reach
+        // here as a `Lazy(DefId)`/boxed/intrinsic handle rather than a raw shape
+        // (e.g. the `this: Function` parameter inside `lib.es5.d.ts`). Resolve it
+        // and re-check.
+        let resolved = self.evaluate_type(target);
+        if resolved != target && self.function_structural_target_has_unwaived_index(resolved) {
+            return true;
+        }
+        let is_global_function = intrinsic_kind(self.interner, target)
+            == Some(IntrinsicKind::Function)
+            || crate::type_queries::is_global_interface_by_identity_with_resolver(
+                self.interner,
+                self.resolver,
+                target,
+                IntrinsicKind::Function,
+            );
+        if !is_global_function {
+            return false;
+        }
+        // The intrinsic `Function` keyword evaluates to itself, not the interface
+        // shape; the augmentation lives on the boxed global `Function`. Resolve it.
+        let boxed = self
+            .resolver
+            .get_boxed_type(IntrinsicKind::Function)
+            .or_else(|| self.interner.get_boxed_type(IntrinsicKind::Function));
+        if let Some(boxed) = boxed {
+            let boxed_resolved = self.evaluate_type(boxed);
+            if self.function_structural_target_has_unwaived_index(boxed_resolved) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Whether a function-like `source` declares its *own* index signature
+    /// (numeric or string). A bare function type never does; a hybrid callable
+    /// object may (`{ (): void; [n: number]: T }`). Used to decide whether a
+    /// callable source can satisfy a target that requires an index — its apparent
+    /// `Function` surface cannot, but its own declared index can (adjudicated by
+    /// the structural comparison).
+    pub(crate) fn callable_source_declares_index(&self, source: TypeId) -> bool {
+        crate::visitors::visitor_extract::callable_shape_id(self.interner, source).is_some_and(
+            |id| {
+                let shape = self.interner.callable_shape(id);
+                shape.number_index.is_some() || shape.string_index.is_some()
+            },
+        )
     }
 
     /// Get the apparent primitive shape for a type.
