@@ -241,9 +241,10 @@ var e: string = v;
 /// A mixed non-nullish/nullish array. tsc says `string[]` — it reaches that
 /// through non-strict **union reduction** (`undefined` is absorbed out of
 /// `string | undefined` when `strictNullChecks` is off), not through the
-/// widening flavour this file otherwise covers. Fixed by #16574: see
-/// `nonstrict_array_element_union_absorbs_nullish_scalars` in
-/// `types/computation/array_literal.rs`.
+/// widening flavour this file otherwise covers. First fixed by #16574 on the
+/// array-literal path; the reduction now lives at the solver union-construction
+/// seam (`TypeInterner::reduce_nonstrict_nullish_members`, #16580), which this
+/// row continues to witness.
 #[test]
 fn mixed_array_reduces_undefined_out_of_the_element_union() {
     assert_infers(

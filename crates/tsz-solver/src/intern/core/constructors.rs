@@ -176,6 +176,20 @@ impl TypeInterner {
             return flat[0];
         }
 
+        // Non-strict absorption applies at every union seam, not just the
+        // normalizing ones, so a sorted-and-deduped list built by narrowing or
+        // object-literal construction reaches the same canonical identity as the
+        // `normalize_union` path. `retain` preserves the sort order. Gated on the
+        // mode so a strict run keeps its byte-identical fast path.
+        if !self.strict_null_checks() {
+            let mut reduced: TypeListBuffer = flat.iter().copied().collect();
+            if let Some(collapsed) = self.reduce_and_collapse_nonstrict(&mut reduced) {
+                return collapsed;
+            }
+            let list_id = self.intern_type_list_from_slice(&reduced);
+            return self.intern(TypeData::Union(list_id));
+        }
+
         let list_id = self.intern_type_list(flat);
         self.intern(TypeData::Union(list_id))
     }
@@ -236,11 +250,14 @@ impl TypeInterner {
         flat.dedup();
         flat.retain(|id| *id != TypeId::NEVER);
 
-        if flat.is_empty() {
-            return TypeId::NEVER;
-        }
-        if flat.len() == 1 {
-            return flat[0];
+        // The structure this path preserves is *subtype* structure
+        // (`Derived1 | Derived2` stays split for narrowing); non-strict nullish
+        // absorption is orthogonal and still applies (tsc's narrowing unions run
+        // the same `addTypeToUnion` exclusion), holding one-universe identity
+        // against `normalize_union`. The shared helper also folds the post-`never`
+        // length collapse this path already needed.
+        if let Some(collapsed) = self.reduce_and_collapse_nonstrict(&mut flat) {
+            return collapsed;
         }
 
         let list_id = self.intern_type_list_from_slice(&flat);
@@ -258,6 +275,14 @@ impl TypeInterner {
         }
         if right == TypeId::NEVER {
             return left;
+        }
+        // With `strictNullChecks` off, union construction drops `null`/`undefined`,
+        // so the identity fast paths below — which assume both operands survive —
+        // do not hold; route the pair through the normalizing constructor, which
+        // applies the drop (`reduce_nonstrict_nullish_members`). Strict is
+        // unchanged.
+        if !self.strict_null_checks() {
+            return self.union_from_iter([left, right]);
         }
         // Fast path: `T | undefined`, `T | null`, `T | void` where T is a union
         // already containing the nullable member.  This avoids the full
@@ -833,7 +858,13 @@ impl TypeInterner {
     /// constantly (the interner sees ~97% repeat hits on type-level-heavy
     /// projects). Key is the exact pre-normalization member list, so repeats
     /// skip straight to the previously interned result.
-    pub(super) fn normalize_union(&self, flat: TypeListBuffer) -> TypeId {
+    pub(super) fn normalize_union(&self, mut flat: TypeListBuffer) -> TypeId {
+        // Non-strict nullish absorption runs before the length gate and the result
+        // memo, so the cache key is the *reduced* member set: a `strictNullChecks`-off
+        // run keys `[number]` where a strict run keys `[number, null]`, never colliding.
+        if let Some(collapsed) = self.reduce_and_collapse_nonstrict(&mut flat) {
+            return collapsed;
+        }
         if flat.len() > Self::UNION_NORMALIZE_CACHE_MAX_LEN {
             return self.normalize_union_uncached(flat);
         }
@@ -1069,6 +1100,11 @@ impl TypeInterner {
     /// `TSZ_UNION_LITERAL_DEFAULT` flag so this path (reached from the >1000-member
     /// object-union guard in `normalize_union`) stays byte-identical when OFF.
     fn normalize_union_literal_only(&self, mut flat: TypeListBuffer) -> TypeId {
+        // The `.Literal`-equivalent path drops non-strict nullish too: tsc's
+        // `addTypeToUnion` exclusion is independent of the reduction mode.
+        if let Some(collapsed) = self.reduce_and_collapse_nonstrict(&mut flat) {
+            return collapsed;
+        }
         self.sort_union_members(&mut flat);
         flat.dedup();
 

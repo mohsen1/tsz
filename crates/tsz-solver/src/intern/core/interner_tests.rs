@@ -767,3 +767,149 @@ mod string_cache {
         assert_eq!(&*interner.resolve_atom_ref(a0), long);
     }
 }
+
+/// Non-strict (`strictNullChecks` off) `null`/`undefined` absorption at the
+/// union-construction seam (#16580). tsc's `addTypeToUnion` never adds a nullable
+/// constituent to a union in non-strict mode; it survives only when the set would
+/// otherwise be empty (an all-nullish union). The interner must apply this
+/// uniformly across every union constructor so a member set keeps one canonical
+/// identity per program.
+mod nonstrict_nullish_union_tests {
+    use super::*;
+
+    fn nonstrict() -> TypeInterner {
+        let interner = TypeInterner::new();
+        interner.set_strict_null_checks(false);
+        interner
+    }
+
+    fn union_members(interner: &TypeInterner, id: TypeId) -> Option<Vec<TypeId>> {
+        match interner.lookup(id)? {
+            TypeData::Union(list_id) => Some(interner.type_list(list_id).to_vec()),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn nonstrict_drops_nullish_when_a_non_nullish_sibling_is_present() {
+        let interner = nonstrict();
+        assert_eq!(
+            interner.union(vec![TypeId::NUMBER, TypeId::NULL]),
+            TypeId::NUMBER,
+            "number | null -> number"
+        );
+        assert_eq!(
+            interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]),
+            TypeId::NUMBER,
+            "number | undefined -> number"
+        );
+        assert_eq!(
+            interner.union(vec![TypeId::STRING, TypeId::NULL, TypeId::UNDEFINED]),
+            TypeId::STRING,
+            "string | null | undefined -> string"
+        );
+    }
+
+    #[test]
+    fn nonstrict_keeps_void_and_never_semantics() {
+        let interner = nonstrict();
+        // `void` is not `TypeFlags.Nullable`: it stays in the union.
+        let with_void = interner.union(vec![TypeId::NUMBER, TypeId::VOID]);
+        let members = union_members(&interner, with_void).expect("number | void stays a union");
+        assert!(
+            members.contains(&TypeId::VOID) && members.contains(&TypeId::NUMBER),
+            "void must survive non-strict union construction: {members:?}"
+        );
+        // `never` is stripped and never counts as the non-nullish sibling, so a
+        // nullish + never set is all-nullish and keeps its nullish member.
+        assert_eq!(
+            interner.union(vec![TypeId::NULL, TypeId::NEVER]),
+            TypeId::NULL,
+            "null | never -> null (never stripped, null kept)"
+        );
+        assert_eq!(
+            interner.union(vec![TypeId::NUMBER, TypeId::NULL, TypeId::NEVER]),
+            TypeId::NUMBER,
+            "number | null | never -> number"
+        );
+    }
+
+    #[test]
+    fn nonstrict_keeps_all_nullish_union() {
+        let interner = nonstrict();
+        // No non-nullish sibling to absorb into: the union must stay as-is, never
+        // collapse to `never` (#16580 row a6).
+        let all_nullish = interner.union(vec![TypeId::NULL, TypeId::UNDEFINED]);
+        assert_ne!(
+            all_nullish,
+            TypeId::NEVER,
+            "null | undefined must not become never"
+        );
+        let members = union_members(&interner, all_nullish).expect("all-nullish stays a union");
+        assert!(
+            members.contains(&TypeId::NULL) && members.contains(&TypeId::UNDEFINED),
+            "all-nullish union must keep both members: {members:?}"
+        );
+    }
+
+    #[test]
+    fn nonstrict_reduction_is_uniform_across_every_seam() {
+        let interner = nonstrict();
+        // Every union constructor must reach the same canonical identity for the
+        // same member set (one-universe invariant).
+        assert_eq!(
+            interner.union(vec![TypeId::NUMBER, TypeId::NULL]),
+            TypeId::NUMBER
+        );
+        assert_eq!(
+            interner.union_from_slice(&[TypeId::NUMBER, TypeId::NULL]),
+            TypeId::NUMBER
+        );
+        assert_eq!(
+            interner.union2(TypeId::NUMBER, TypeId::NULL),
+            TypeId::NUMBER
+        );
+        assert_eq!(
+            interner.union2(TypeId::NULL, TypeId::NUMBER),
+            TypeId::NUMBER
+        );
+        assert_eq!(
+            interner.union3(TypeId::NUMBER, TypeId::NULL, TypeId::UNDEFINED),
+            TypeId::NUMBER
+        );
+        // `union_from_sorted_vec` requires a pre-sorted list: NUMBER(9) < NULL(15).
+        assert_eq!(
+            interner.union_from_sorted_vec(vec![TypeId::NUMBER, TypeId::NULL]),
+            TypeId::NUMBER
+        );
+        assert_eq!(
+            interner.union_preserve_members(vec![TypeId::NUMBER, TypeId::NULL]),
+            TypeId::NUMBER
+        );
+        assert_eq!(
+            interner.union_literal_reduce(vec![TypeId::NUMBER, TypeId::NULL]),
+            TypeId::NUMBER
+        );
+    }
+
+    #[test]
+    fn strict_mode_keeps_every_nullish_member() {
+        // The default interner is strict: the reduction is a no-op, so all the
+        // seams retain `null`/`undefined` exactly as before.
+        let interner = TypeInterner::new();
+        for id in [
+            interner.union(vec![TypeId::NUMBER, TypeId::NULL]),
+            interner.union2(TypeId::NUMBER, TypeId::NULL),
+            interner.union_preserve_members(vec![TypeId::NUMBER, TypeId::NULL]),
+            interner.union_from_sorted_vec(vec![TypeId::NUMBER, TypeId::NULL]),
+            interner.union_literal_reduce(vec![TypeId::NUMBER, TypeId::NULL]),
+        ] {
+            let members = union_members(&interner, id)
+                .unwrap_or_else(|| panic!("strict number | null must stay a union: {id:?}"));
+            assert!(
+                members.contains(&TypeId::NULL) && members.contains(&TypeId::NUMBER),
+                "strict mode must keep null: {members:?}"
+            );
+        }
+    }
+}

@@ -1478,7 +1478,9 @@ impl<'a> CheckerState<'a> {
                 Some(&self.ctx), // Pass TypeResolver for class hierarchy BCT
             )
         };
-        let element_type = self.nonstrict_array_element_union_absorbs_nullish_scalars(element_type);
+        // Non-strict `null`/`undefined` element absorption (#16574) is now owned by
+        // the solver union-construction seam (`reduce_nonstrict_nullish_members`,
+        // #16580), applied when the BCT union above is interned.
 
         // TS2590: Also check the solver's flag in case the union was constructed
         // through a different path (e.g., preserve_literal_types or internal union ops).
@@ -1500,41 +1502,6 @@ impl<'a> CheckerState<'a> {
         }
 
         array_surfaces::array_type(self.ctx.types, element_type)
-    }
-
-    /// With `strictNullChecks` off, `null`/`undefined` are subtypes of every
-    /// type, so tsc's array-literal element type
-    /// (`getUnionType(elementTypes, UnionReduction.Subtype)`) absorbs a scalar
-    /// `null`/`undefined` element out of the union whenever a non-nullish
-    /// sibling is present — e.g. `["s", undefined]` infers `string[]`, not
-    /// `(string | undefined)[]`.
-    ///
-    /// Applied as a post-pass over the already-built element union/BCT result,
-    /// not by pre-filtering the candidate list handed to
-    /// `compute_best_common_type_cached`: BCT's literal-widening and subtype
-    /// tournament must still see the full candidate set, or a literal that
-    /// happens to be the lone non-nullish survivor would skip widening (e.g.
-    /// `["s", undefined]` must still widen `"s"` to `string`, not stay `"s"`).
-    /// The solver's `element_union`/BCT primitives are unchanged; this is a
-    /// checker-owned reduction over their result.
-    fn nonstrict_array_element_union_absorbs_nullish_scalars(
-        &self,
-        element_type: TypeId,
-    ) -> TypeId {
-        if self.ctx.strict_null_checks() {
-            return element_type;
-        }
-        let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, element_type)
-        else {
-            return element_type;
-        };
-        let is_nullish_scalar = |m: &TypeId| *m == TypeId::NULL || *m == TypeId::UNDEFINED;
-        if !members.iter().any(is_nullish_scalar) || !members.iter().any(|m| !is_nullish_scalar(m))
-        {
-            return element_type;
-        }
-        crate::query_boundaries::common::remove_nullish(self.ctx.types, element_type)
     }
 
     /// When the contextual type is a generic application like `Definition<Schema>`, the

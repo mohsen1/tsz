@@ -469,3 +469,160 @@ const bad: { [K in E]: number } = { a: 1 };
         "inline anonymous enum mapped type renders the bare literal key (tsc 7.0.2), got: {diag:?}"
     );
 }
+
+/// Fetch the single TS2741 message for a fixture, panicking with context when
+/// absent. Shared by the anonymous-concrete-mapped display matrix below.
+fn ts2741_message(source: &str) -> String {
+    super::diagnostics_for(source)
+        .iter()
+        .find(|diag| diag.code == 2741)
+        .unwrap_or_else(|| panic!("expected TS2741 for:\n{source}"))
+        .message_text
+        .clone()
+}
+
+// A concrete (type-parameter-free) mapped type with a finite key set is
+// resolved by `tsc` to its member object for display — `{ [K in Color]: number }`
+// prints as `{ green: number; red: number; }`, never as its `{ [K in E]: V }`
+// source form. tsz keeps the `Mapped` node live for semantic identity (#15392),
+// so the printer resolves it. An *aliased* mapped keeps its alias name and a
+// *generic* / index-signature mapped keeps its source form; both are pinned as
+// negative controls. Expectations verified against `tsc` 7.0.2
+// (`--strict --target es2022 --lib es2022`).
+
+#[test]
+fn anon_concrete_enum_mapped_target_displays_resolved_member_object() {
+    let msg = ts2741_message(
+        r#"
+enum Color { Red = "red", Green = "green" }
+const bad: { [K in Color]: number } = { red: 1 };
+"#,
+    );
+    assert!(
+        msg.contains("required in type '{ green: number; red: number; }'"),
+        "anonymous concrete enum mapped must display its resolved member object, got: {msg}"
+    );
+    assert!(
+        !msg.contains("[K in"),
+        "must not leak the mapped source form, got: {msg}"
+    );
+}
+
+#[test]
+fn anon_inline_string_union_mapped_target_displays_resolved_members() {
+    let msg = ts2741_message(
+        r#"
+const bad: { [K in "a" | "b"]: number } = { a: 1 };
+"#,
+    );
+    assert!(
+        msg.contains("required in type '{ a: number; b: number; }'"),
+        "inline string-literal-union mapped must display its resolved members, got: {msg}"
+    );
+}
+
+#[test]
+fn anon_aliased_union_constraint_mapped_target_displays_resolved_members() {
+    // The key constraint is an alias reference (`Keys`), a `Lazy(DefId)` whose
+    // members only materialize with a resolver — the display path must resolve
+    // it, not fall back to the source form.
+    let msg = ts2741_message(
+        r#"
+type Keys = "a" | "b";
+const bad: { [K in Keys]: number } = { a: 1 };
+"#,
+    );
+    assert!(
+        msg.contains("required in type '{ a: number; b: number; }'"),
+        "aliased-union mapped must display its resolved members, got: {msg}"
+    );
+}
+
+#[test]
+fn nested_anon_concrete_mapped_target_displays_resolved_members() {
+    let msg = ts2741_message(
+        r#"
+enum Color { Red = "red", Green = "green" }
+const bad: { inner: { [K in Color]: number } } = { inner: { red: 1 } };
+"#,
+    );
+    assert!(
+        msg.contains("required in type '{ green: number; red: number; }'"),
+        "a nested anonymous concrete mapped must resolve for display, got: {msg}"
+    );
+}
+
+#[test]
+fn anon_concrete_mapped_display_is_not_name_specific() {
+    // Renaming the enum, its members, and the iteration variable must not change
+    // the rule — proves the resolution is structural, not keyed on a spelling.
+    let msg = ts2741_message(
+        r#"
+enum Palette { First = "one", Second = "two" }
+const bad: { [Prop in Palette]: number } = { one: 1 };
+"#,
+    );
+    assert!(
+        msg.contains("required in type '{ one: number; two: number; }'"),
+        "renamed binders must still resolve the concrete mapped for display, got: {msg}"
+    );
+}
+
+#[test]
+fn anon_concrete_mapped_display_carries_optional_and_readonly_modifiers() {
+    // The resolved member object must keep the mapped's optional modifier
+    // (`?`), matching tsc's `{ a?: number | undefined; b?: number | undefined; }`.
+    let msg = ts2741_message(
+        r#"
+declare const src: { a: number };
+const bad: { readonly [K in "a" | "b"]-?: number } = src;
+"#,
+    );
+    assert!(
+        msg.contains("required in type '{ readonly a: number; readonly b: number; }'"),
+        "modifiers must survive the resolved-member display, got: {msg}"
+    );
+}
+
+#[test]
+fn aliased_concrete_mapped_target_keeps_alias_name() {
+    // Negative control: an aliased mapped keeps its alias surface (#15392),
+    // never the expanded members — the resolution only fires for anonymous ones.
+    let msg = ts2741_message(
+        r#"
+enum Color { Red = "red", Green = "green" }
+type Palette = { [K in Color]: number };
+const bad: Palette = { red: 1 };
+"#,
+    );
+    assert!(
+        msg.contains("required in type 'Palette'"),
+        "an aliased mapped must keep its alias name, got: {msg}"
+    );
+    assert!(
+        !msg.contains("green: number"),
+        "an aliased mapped must not expand to members, got: {msg}"
+    );
+}
+
+#[test]
+fn anon_string_constraint_mapped_target_keeps_index_signature_form() {
+    // Negative control: a `string`-constrained mapped is an index signature in
+    // both printers (`{ [x: string]: string; }`), never a member object. It has
+    // no required member, so the mismatch surfaces as TS2322 rather than TS2741.
+    let msg = super::diagnostics_for(
+        r#"
+declare const src: { a: number };
+const bad: { [K in string]: string } = src;
+"#,
+    )
+    .iter()
+    .find(|diag| diag.code == 2322)
+    .expect("expected TS2322")
+    .message_text
+    .clone();
+    assert!(
+        msg.contains("{ [x: string]: string; }"),
+        "a string-constrained mapped must keep its index-signature form, got: {msg}"
+    );
+}
