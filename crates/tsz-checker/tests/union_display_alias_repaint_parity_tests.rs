@@ -195,3 +195,79 @@ fn keyof_any_renders_as_its_resolved_member_union() {
                   const target: boolean = value;\n";
     assert_eq!(rendered_source_type(source), "string | number | symbol");
 }
+
+// ---------------------------------------------------------------------------
+// Second mechanism: an alias whose RHS COLLAPSES to a pre-existing type.
+//
+// Opposite polarity to the rows above, and a different owner. There, the alias
+// is *not* written at the site and tsz adds it. Here, the alias *is* written at
+// the site and tsc drops it: when an alias's RHS reduces to a type that already
+// exists, `getIntersectionType`/`getTypeAliasInstantiation` return that existing
+// type object, which never carried the alias, so `typeToString` has no alias to
+// print. tsz keeps the written spelling.
+//
+// The distinction matters because the obvious unifying rule — "an alias whose
+// RHS interns to the same `TypeId` as the value being rendered" — is refuted by
+// `longhand_collapsing_intersection_renders_structurally` below: there the RHS
+// does intern to the rendered value's `TypeId` and tsz is already correct.
+// ---------------------------------------------------------------------------
+
+/// The control that separates the two mechanisms, and the reason the rules
+/// cannot be merged: with the *same* alias in scope, the longhand spelling of a
+/// collapsing intersection already renders structurally. So the global
+/// display-alias table is not what drives the failing row below — the alias
+/// being written at the site is.
+#[test]
+fn longhand_collapsing_intersection_renders_structurally() {
+    let source = "type Coll = string[] & Array<string>;\n\
+                  declare const value: string[] & Array<string>;\n\
+                  const target: boolean = value;\n";
+    assert_eq!(rendered_source_type(source), "string[]");
+}
+
+/// A non-collapsing intersection keeps its alias on both sides. Bounds the
+/// mechanism to the collapse, rather than to intersections generally.
+#[test]
+fn non_collapsing_intersection_alias_renders_the_alias() {
+    let source = "type Both = { p: number } & { q: string };\n\
+                  declare const value: Both;\n\
+                  const target: boolean = value;\n";
+    assert_eq!(rendered_source_type(source), "Both");
+}
+
+/// `string[] & Array<string>` are the same type, so the intersection collapses
+/// to the pre-existing `string[]` and tsc loses the alias. tsz renders `Coll`.
+#[test]
+#[ignore = "known divergence: an alias whose RHS collapses to a pre-existing type keeps its name"]
+fn collapsing_intersection_alias_renders_the_collapsed_type() {
+    let source = "type Coll = string[] & Array<string>;\n\
+                  declare const value: Coll;\n\
+                  const target: boolean = value;\n";
+    assert_eq!(rendered_source_type(source), "string[]");
+}
+
+/// Same mechanism reached through a homomorphic mapped type over an array: the
+/// mapped type reduces to the array itself, so the alias is dropped by tsc.
+/// Renamed binders relative to the row above, and no intersection involved.
+#[test]
+#[ignore = "known divergence: an alias whose RHS collapses to a pre-existing type keeps its name"]
+fn mapped_over_array_alias_renders_the_collapsed_array() {
+    let source = "type Copy<T> = { [K in keyof T]: T[K] };\n\
+                  type Mapped = Copy<1[]>;\n\
+                  declare const value: Mapped;\n\
+                  const target: number = value;\n";
+    assert_eq!(rendered_source_type(source), "1[]");
+}
+
+/// And through a conditional with a variadic `infer` tail, whose result is an
+/// ordinary tuple that already exists. Three different evaluation routes to one
+/// collapse, so a fix cannot be keyed on any single type constructor.
+#[test]
+#[ignore = "known divergence: an alias whose RHS collapses to a pre-existing type keeps its name"]
+fn variadic_infer_tail_alias_renders_the_collapsed_tuple() {
+    let source = "type Tail<T> = T extends [infer _H, ...infer R] ? R : never;\n\
+                  type Rest = Tail<[1, 2, 3]>;\n\
+                  declare const value: Rest;\n\
+                  const target: boolean = value;\n";
+    assert_eq!(rendered_source_type(source), "[2, 3]");
+}
