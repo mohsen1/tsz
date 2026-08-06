@@ -239,6 +239,17 @@ impl<'a> CheckerState<'a> {
             let member_type_idx = self.annotation_member_type_node(object_idx, &key, depth)?;
             return self.annotation_property_anchor(member_type_idx, property, depth + 1);
         }
+        if node.kind == syntax_kind_ext::ARRAY_TYPE {
+            // `T[]` and `T` describe the same element shape at every index, so
+            // tsc anchors a missing-property pointer for an array-element
+            // literal inside the element type exactly as it would for a bare
+            // `T`-typed member. The array itself contributes no path segment
+            // (`contextual_property_path` already skips over
+            // `ARRAY_LITERAL_EXPRESSION` without pushing a name), so this is a
+            // plain descent into the element type, not a new path step.
+            let element_idx = self.ctx.arena.get_array_type(node)?.element_type;
+            return self.annotation_property_anchor(element_idx, property, depth + 1);
+        }
         None
     }
 

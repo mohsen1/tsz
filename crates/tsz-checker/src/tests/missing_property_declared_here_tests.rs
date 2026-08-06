@@ -1037,19 +1037,55 @@ fn computed_path_member_declines_rather_than_anchoring_shallow() {
 }
 
 /// A literal nested inside an *array* member: the path reaches the member's
-/// written type node, but that node is an array type rather than a type
-/// literal, so the leaf resolution declines. tsc anchors this row
-/// (`matrix.ts:13:34`); pinned as a decline so the remaining gap is visible and
-/// cannot silently become a wrong anchor.
+/// written type node, and `annotation_property_anchor` descends through the
+/// array type's own element type to anchor at the missing property inside it.
+/// `T[]` and `T` describe the same shape at every index, so no path segment is
+/// consumed by the array itself. Oracle: `case.ts:1:34 - 'lq' is declared
+/// here.`
 #[test]
-fn array_element_literal_declines_rather_than_anchoring_wrongly() {
+fn array_element_literal_anchors_through_the_element_type() {
     let source = "type Arr = { list: { lp: number; lq: number }[] };\nconst ra: Arr = { list: [{ lp: 1 }] };\n";
     let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, _) = declared_here(&diagnostic);
+    assert_eq!(span_text(source, start, length), "lq");
+}
+
+/// Renamed binders: the array-element anchor must not depend on the
+/// particular identifiers chosen above, only on the structural shape.
+/// Oracle: `case.ts:2:43 - 'beta' is declared here.`
+#[test]
+fn array_element_literal_anchor_is_not_identifier_keyed() {
+    let source = "type Roster = { members: { alpha: string; beta: string }[] };\nconst r: Roster = { members: [{ alpha: \"a\" }] };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, _) = declared_here(&diagnostic);
+    assert_eq!(span_text(source, start, length), "beta");
+}
+
+/// The array's element type can itself be a named alias rather than an inline
+/// type literal; the existing alias-chain fallback in
+/// `annotation_property_anchor` composes with the new array-type descent with
+/// no further change. Oracle: `case.ts:1:27 - 'lq' is declared here.` (inside
+/// `Item`'s own body, not the array member's).
+#[test]
+fn array_element_named_alias_anchors_in_the_alias_body() {
+    let source = "type Item = { lp: number; lq: number };\ntype ArrOfAlias = { list: Item[] };\nconst ra: ArrOfAlias = { list: [{ lp: 1 }] };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, _) = declared_here(&diagnostic);
+    assert_eq!(span_text(source, start, length), "lq");
+}
+
+/// Negative control: more than one unmatched property inside an array element
+/// is `TS2739`, which — same as the non-array nested case — carries no
+/// `'x' is declared here.` pointer at all.
+#[test]
+fn array_element_multi_property_failure_still_carries_no_pointer() {
+    let source = "type Multi = { list: { m1: number; m2: number; m3: number }[] };\nconst rm: Multi = { list: [{ m1: 1 }] };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2739);
     assert!(
         !diagnostic
             .related_information
             .iter()
             .any(|info| info.code == TS2728),
-        "an array-typed member produces no anchor at all: {diagnostic:?}"
+        "TS2739 carries no declared-here pointer: {diagnostic:?}"
     );
 }
