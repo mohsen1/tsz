@@ -2727,3 +2727,6 @@ path = "tests/optional_chain_any_receiver_no_expando_read_tests.rs"
 [[test]]
 name = "ts2433_cross_file_ambient_class_merge_tests"
 path = "tests/ts2433_cross_file_ambient_class_merge_tests.rs"
+[[test]]
+name = "ts2345_primitive_key_union_constraint_display_tests"
+path = "tests/ts2345_primitive_key_union_constraint_display_tests.rs"
