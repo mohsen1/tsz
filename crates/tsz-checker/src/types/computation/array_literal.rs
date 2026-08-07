@@ -445,7 +445,7 @@ impl<'a> CheckerState<'a> {
     /// - Tuple contexts (e.g., `[string, number]`)
     /// - Spread elements (`[...arr]`)
     /// - Common type inference for mixed elements
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub(crate) fn get_type_of_array_literal(&mut self, idx: NodeIndex) -> TypeId {
         self.get_type_of_array_literal_with_request(idx, &crate::context::TypingRequest::NONE)
     }

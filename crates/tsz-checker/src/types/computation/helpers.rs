@@ -134,7 +134,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Uses `solver::compute_conditional_expression_type` for type computation
     /// as part of the Solver-First architecture migration.
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub(crate) fn get_type_of_conditional_expression(&mut self, idx: NodeIndex) -> TypeId {
         self.get_type_of_conditional_expression_with_request(idx, &TypingRequest::NONE)
     }
@@ -297,7 +297,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Computes the type of unary expressions like `!x`, `+x`, `-x`, `~x`, `++x`, `--x`, `typeof x`.
     /// Returns boolean for `!`, number for arithmetic operators, string for `typeof`.
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub(crate) fn get_type_of_prefix_unary(&mut self, idx: NodeIndex) -> TypeId {
         self.get_type_of_prefix_unary_with_request(idx, &TypingRequest::NONE)
     }
@@ -803,7 +803,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Uses `solver::compute_template_expression_type` for type computation
     /// as part of the Solver-First architecture migration.
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub(crate) fn get_type_of_template_expression(&mut self, idx: NodeIndex) -> TypeId {
         self.get_type_of_template_expression_with_request(idx, &TypingRequest::NONE)
     }

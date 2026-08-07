@@ -1007,7 +1007,7 @@ impl MergedAugmentations {
     }
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // Dead in the lib build; exercised only by tests.
 pub(super) fn create_binder_from_bound_file(
     file: &BoundFile,
     program: &MergedProgram,

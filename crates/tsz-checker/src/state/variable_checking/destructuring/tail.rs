@@ -174,7 +174,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub(super) fn get_binding_element_computed_key_type(
         &mut self,
         pattern_idx: NodeIndex,
@@ -335,7 +335,7 @@ impl<'a> CheckerState<'a> {
         self.resolve_identifier_symbol(target_idx) == Some(sym_id)
     }
 
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub(super) fn get_binding_identifier_initializer_key_type(
         &mut self,
         sym_id: SymbolId,
@@ -469,7 +469,7 @@ impl<'a> CheckerState<'a> {
     /// Array patterns → tuple with `any`; object patterns → typed properties.
     /// Default initializers (e.g., `{ f = (x: string) => x.length }`) seed
     /// property types instead of `any` to enable contextual typing.
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub(crate) fn build_contextual_type_from_pattern(
         &mut self,
         pattern_idx: NodeIndex,

@@ -200,13 +200,11 @@ impl InstantiationCache {
     }
 
     /// Look up an entry by key. Returns `None` if no entry exists.
-    #[allow(dead_code)]
     pub fn lookup(&self, key: &InstantiationCacheKey) -> Option<TypeId> {
         self.inner.borrow().get(key).copied()
     }
 
     /// Insert (or overwrite) an entry.
-    #[allow(dead_code)]
     pub fn insert(&self, key: InstantiationCacheKey, result: TypeId) {
         self.inner.borrow_mut().insert(key, result);
     }
@@ -224,7 +222,7 @@ impl InstantiationCache {
 
     /// Returns `true` if the cache is empty.
     #[must_use]
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Dead in the lib build; exercised only by tests.
     pub fn is_empty(&self) -> bool {
         self.inner.borrow().is_empty()
     }

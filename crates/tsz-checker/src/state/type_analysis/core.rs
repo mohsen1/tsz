@@ -270,7 +270,6 @@ impl CheckerState<'_> {
     /// type Nested = (string | number) | boolean;
     /// // Normalized to Union(STRING, NUMBER, BOOLEAN)
     /// ```
-    #[allow(dead_code)]
     /// Decide whether a `typeof <name>` query is positioned in the signature
     /// (type-annotation) region of a function and the name resolves only
     /// because of body-local hoisting. tsc treats such references as
@@ -387,7 +386,6 @@ impl CheckerState<'_> {
     /// Resolve a qualified name chain as a value property access chain
     /// for `typeof` context. Recurses through nested `QualifiedName` nodes
     /// so that `typeof a.b.c` resolves `a` as a value, then `.b`, then `.c`.
-    #[allow(dead_code)]
     pub(crate) fn resolve_typeof_qualified_value_chain(
         &mut self,
         idx: NodeIndex,
@@ -528,7 +526,6 @@ impl CheckerState<'_> {
         Some(self.resolve_type_query_type(property_type))
     }
 
-    #[allow(dead_code)]
     pub(super) fn resolve_type_query_import_type_symbol(&self, idx: NodeIndex) -> Option<u32> {
         let node = self.ctx.arena.get(idx)?;
         if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {

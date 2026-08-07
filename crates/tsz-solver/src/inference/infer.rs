@@ -149,7 +149,7 @@ impl UnifyValue for InferenceInfo {
 // Constructed throughout inference as a control-flow signal; the variant
 // payload is retained for `Debug`/future error reporting, and only the variant
 // kind and `BoundsViolation.lower` are read today.
-#[allow(dead_code)]
+#[expect(dead_code)]
 pub(crate) enum InferenceError {
     /// Two incompatible types were unified
     Conflict(TypeId, TypeId),
@@ -225,7 +225,6 @@ pub(crate) const MAX_TYPE_RECURSION_DEPTH: usize = 100;
 /// Owner: one inference request. The subtype memo is scoped to that request
 /// and is dropped with the context.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[allow(dead_code)] // Inference cache accounting; consumed by inference unit tests
 pub(crate) struct InferenceContextCacheStatistics {
     /// Entries in the inference subtype memo keyed by source and target `TypeId`.
     pub(crate) subtype_entries: usize,
@@ -688,7 +687,6 @@ impl<'a> InferenceContext<'a> {
     }
 
     /// Get the declared `extends` constraint for an inference variable.
-    #[allow(dead_code)] // Reserved for full constraint-based inference
     pub fn get_declared_constraint(&mut self, var: InferenceVar) -> Option<TypeId> {
         let root = self.table.find(var);
         self.declared_constraints.get(&root).copied()
@@ -1258,7 +1256,7 @@ impl<'a> InferenceContext<'a> {
     }
 
     /// Resolve all type parameters to concrete types
-    #[allow(dead_code)] // Reserved for full constraint-based inference
+    #[expect(dead_code)] // Reserved for full constraint-based inference
     pub fn resolve_all(&mut self) -> Result<Vec<(Atom, TypeId)>, InferenceError> {
         // Clone type_params to avoid borrow conflict
         let type_params: Vec<_> = self.type_params.clone();
@@ -1273,7 +1271,7 @@ impl<'a> InferenceContext<'a> {
     }
 
     /// Get the interner reference
-    #[allow(dead_code)] // Reserved for full constraint-based inference
+    #[expect(dead_code)] // Reserved for full constraint-based inference
     pub fn interner(&self) -> &dyn TypeDatabase {
         self.interner
     }
@@ -1644,7 +1642,7 @@ impl<'a> InferenceContext<'a> {
     /// concrete (non-TypeParameter) type. `TypeParameter` types in `contra_candidates`
     /// are typically unresolved source inference placeholders from generic function
     /// arguments and should not drive the resolution gate.
-    #[allow(dead_code)] // Reserved contra-candidate resolution-gate query
+    #[expect(dead_code)] // Reserved contra-candidate resolution-gate query
     pub fn has_concrete_contra_candidates(
         &mut self,
         var: InferenceVar,

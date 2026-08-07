@@ -58,7 +58,7 @@ pub(crate) enum IntrinsicObjectKind {
     /// This variant is provided for completeness so `intrinsic_vs_object_super`
     /// encodes the full three-column matrix. The structural path in `core.rs`
     /// handles `{}` targets without calling this helper at runtime.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Dead in the lib build; exercised only by tests.
     EmptyObject,
     /// The global `Object` interface from `lib.d.ts` — all non-null/undefined.
     GlobalObject,

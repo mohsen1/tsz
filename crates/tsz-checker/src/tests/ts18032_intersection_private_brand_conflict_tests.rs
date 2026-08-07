@@ -30,12 +30,24 @@
 //! Deliberately narrow scope, matching TS18031's own precedent: only a
 //! directly-written intersection annotation (no alias/generic-application/
 //! heritage indirection). Cases that don't reduce to `never` at all
-//! (protected-only conflicts report `TS2445` instead; ES `#`-private
-//! members don't merge into a brand conflict at all; the same class
+//! (protected-only conflicts report `TS2445` instead; the same class
 //! intersected with itself is not a conflict) are documented as negative
 //! controls below — they never reach this helper's `type_id == NEVER` gate,
 //! so they're regression coverage for the surrounding machinery, not for the
 //! new query itself.
+//!
+//! ES `#`-private members are a separate case: `#x` on two different classes
+//! is never the same name to `tsc` (each is lexically scoped to its own
+//! class body), so real `tsc` neither reduces the intersection to `never`
+//! nor elaborates. `find_private_brand_conflict_property` is scoped to never
+//! attach the TS18032 line to an ES-private occurrence; three independent
+//! never-reduction gates (`intersection_has_conflicting_private_brands` in
+//! `crates/tsz-solver/src/intern/normalize.rs`,
+//! `intersection_has_private_property_conflict` in
+//! `crates/tsz-checker/src/state/state_checking_members/mixin_member_access.rs`,
+//! and this file's own elaboration query) all now share the same
+//! ES-private exclusion, so `A & B` with same-spelled `#x` members no
+//! longer reduces to `never` at all.
 
 use crate::diagnostics::Diagnostic;
 use crate::test_utils::check_source_strict;
@@ -176,6 +188,29 @@ c.x;
         diags.iter().all(|d| d.code != TS2339),
         "protected-only conflicts must not reduce to never, got {diags:?}"
     );
+}
+
+#[test]
+fn es_private_same_spelled_fields_do_not_carry_ts18032() {
+    // ES `#`-private fields are lexically scoped to their declaring class —
+    // `#x` on `A` and `#x` on `B` are never the same name to tsc even though
+    // they share identical source text, so this is not a naming collision
+    // tsc elaborates (tsc: `Property 'foo' does not exist on type 'A & B'.`,
+    // no relatedInformation, no `never` reduction at all). This test pins
+    // only the elaboration's own scope: no TS2339 here may carry the
+    // TS18032 related-info line. `es_private_same_name_does_not_reduce_to_never`
+    // below covers the reduction itself no longer firing for this shape.
+    let diags = check_source_strict(
+        r#"
+class A { #x = 1; }
+class B { #x = 1; }
+declare const v: A & B;
+v.foo;
+"#,
+    );
+    for diag in diags.iter().filter(|d| d.code == TS2339) {
+        assert!(related(diag, TS18032).is_none(), "got {diags:?}");
+    }
 }
 
 #[test]

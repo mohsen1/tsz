@@ -9,7 +9,6 @@ use crate::inference::infer::InferenceContext;
 use crate::types::{TypeData, TypeId};
 use tsz_common::interner::Atom;
 
-#[allow(dead_code)] // Reserved for variance analysis in inference resolution
 struct VarianceState<'a> {
     target_param: Atom,
     covariant: &'a mut u32,
@@ -19,7 +18,6 @@ struct VarianceState<'a> {
 impl InferenceContext<'_> {
     /// Compute the variance of a type parameter within a type.
     /// Returns (`covariant_count`, `contravariant_count`, `invariant_count`, `bivariant_count`)
-    #[allow(dead_code)] // Reserved for variance analysis in inference
     pub fn compute_variance(&self, ty: TypeId, target_param: Atom) -> (u32, u32, u32, u32) {
         let mut covariant = 0u32;
         let mut contravariant = 0u32;

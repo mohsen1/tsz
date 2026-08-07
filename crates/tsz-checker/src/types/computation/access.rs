@@ -27,7 +27,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Handles element access with optional chaining, index signatures,
     /// and nullish coalescing.
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub(crate) fn get_type_of_element_access(&mut self, idx: NodeIndex) -> TypeId {
         self.get_type_of_element_access_with_request(idx, &TypingRequest::NONE)
     }

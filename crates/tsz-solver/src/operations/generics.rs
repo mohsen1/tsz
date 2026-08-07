@@ -12,7 +12,6 @@ use tsz_common::interner::Atom;
 
 /// Result of validating type arguments against their type parameter constraints.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[allow(dead_code)] // Used in operations_tests.rs
 pub(crate) enum GenericInstantiationResult {
     /// All type arguments satisfy their constraints
     Success,

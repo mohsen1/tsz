@@ -1093,20 +1093,25 @@ impl<'a> CheckerState<'a> {
             })
     }
 
-    /// Find the first parameter property modifier in a modifier list.
-    /// Returns the `NodeIndex` of the first public/private/protected/readonly/override keyword.
+    /// First public/private/protected/readonly/override modifier **in source
+    /// order** (tsc's `checkGrammarModifiers` walks left to right and anchors
+    /// TS2369 there, not at a fixed kind priority).
     pub(crate) fn find_first_parameter_property_modifier(
         &self,
         modifiers: &Option<tsz_parser::parser::NodeList>,
     ) -> Option<NodeIndex> {
         use tsz_scanner::SyntaxKind;
         let arena = self.ctx.arena;
-        arena
-            .find_modifier(modifiers, SyntaxKind::PublicKeyword)
-            .or_else(|| arena.find_modifier(modifiers, SyntaxKind::PrivateKeyword))
-            .or_else(|| arena.find_modifier(modifiers, SyntaxKind::ProtectedKeyword))
-            .or_else(|| arena.find_modifier(modifiers, SyntaxKind::ReadonlyKeyword))
-            .or_else(|| arena.find_modifier(modifiers, SyntaxKind::OverrideKeyword))
+        let mods = modifiers.as_ref()?;
+        mods.nodes.iter().copied().find(|&mod_idx| {
+            arena.get(mod_idx).is_some_and(|node| {
+                node.kind == SyntaxKind::PublicKeyword as u16
+                    || node.kind == SyntaxKind::PrivateKeyword as u16
+                    || node.kind == SyntaxKind::ProtectedKeyword as u16
+                    || node.kind == SyntaxKind::ReadonlyKeyword as u16
+                    || node.kind == SyntaxKind::OverrideKeyword as u16
+            })
+        })
     }
 
     // =========================================================================

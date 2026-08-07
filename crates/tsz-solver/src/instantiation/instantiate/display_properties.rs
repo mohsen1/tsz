@@ -4,7 +4,6 @@ use rustc_hash::FxHashMap;
 
 impl<'a> TypeInstantiator<'a> {
     /// Propagate display properties from intersection members to the result.
-    #[allow(dead_code)]
     pub(super) fn propagate_display_properties_for_intersection(
         &self,
         original_members: &[TypeId],

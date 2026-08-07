@@ -1394,7 +1394,7 @@ impl<'a> CheckerState<'a> {
     /// - Overload resolution
     /// - Argument type checking
     /// - Type argument validation (TS2344)
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub(crate) fn get_type_of_call_expression(&mut self, idx: NodeIndex) -> TypeId {
         self.get_type_of_call_expression_with_request(idx, &TypingRequest::NONE)
     }

@@ -39,6 +39,8 @@ pub struct PreparedTest {
 ///
 /// `original_extension` is the file extension of the original test file (e.g. "tsx"),
 /// used when there are no `@Filename` directives so the single-file test preserves its extension.
+// Dead in the lib/bin build; the thin wrapper over `prepare_test_dir_with_lib_dir`
+// is exercised only by `tests/tsz_wrapper.rs`, so `allow` (not `expect`) is correct.
 #[allow(dead_code)]
 pub fn prepare_test_dir(
     content: &str,

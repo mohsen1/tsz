@@ -1909,7 +1909,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Compute the type of a node (internal, not cached).
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     fn compute_type_of_node_complex(&mut self, idx: NodeIndex) -> TypeId {
         self.compute_type_of_node_complex_with_request(idx, &crate::context::TypingRequest::NONE)
     }

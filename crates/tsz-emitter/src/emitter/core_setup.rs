@@ -827,7 +827,7 @@ impl<'a> Printer<'a> {
         self.emit_node(node, idx);
     }
 
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub(crate) fn emit_expression_with_scoped_static_initializer(
         &mut self,
         idx: NodeIndex,
