@@ -230,12 +230,22 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+            // A computed name spelled with a literal (`["p"]`, `[0]`,
+            // `` [`p`] ``) is not a late-bound name: tsc's
+            // `isComputedNonLiteralName` is false for it, so it never reaches
+            // the computed-property message and is judged as the ordinary
+            // property it is. Only a late-bound spelling (`[label]` for a
+            // `const`, `[E.A]`, `[sym]`, `[Symbol.iterator]`) takes TS2418
+            // when it matches the target through an index signature. Falling
+            // through hands a literal-spelled name to the elaboration below,
+            // which anchors at the value and reports TS2322/TS2353.
             if let Some((prop_name_idx, prop_value_idx)) = computed_property
                 && self
                     .ctx
                     .arena
                     .get(prop_name_idx)
                     .is_some_and(|node| node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+                && !self.computed_member_name_is_literal_spelled(prop_name_idx)
             {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
