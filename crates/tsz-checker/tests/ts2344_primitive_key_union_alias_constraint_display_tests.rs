@@ -115,18 +115,54 @@ fn renamed_binders_user_key_union_alias_constraint_renders_the_alias() {
 /// ```
 ///
 /// `type B = A` is a pure alias-to-alias indirection, so `B` never gets its own
-/// `aliasSymbol`; the constraint type carries `A`'s. tsz renders `B` today, so
-/// this row is pinned as the remaining gap rather than asserted as correct —
-/// the single-hop rows above are what this PR actually fixes.
+/// `aliasSymbol`; the constraint type carries `A`'s. The fix walks the chain and
+/// renders the alias whose body is *directly* the key union.
 #[test]
-#[ignore = "known divergence: an alias-to-alias chain renders the written alias \
-            (`B`) where tsc renders the underlying one (`A`)"]
 fn alias_chain_to_key_union_constraint_renders_the_underlying_alias() {
     let source = "type A = string | number | symbol;\n\
                   type B = A;\n\
                   type G<K extends B> = K;\n\
                   type Bad = G<boolean>;\n";
     assert_eq!(rendered_constraint(source), "A");
+}
+
+/// A three-hop chain resolves to the same underlying alias `A`: every pure
+/// indirection defers to the type object `A` created, so `C` and `B` never
+/// carry their own `aliasSymbol`. Verified against pinned `typescript@7.0.2`
+/// (`… does not satisfy the constraint 'A'.`).
+#[test]
+fn multi_hop_alias_chain_to_key_union_constraint_renders_the_root_alias() {
+    let source = "type A = string | number | symbol;\n\
+                  type B = A;\n\
+                  type C = B;\n\
+                  type G<K extends C> = K;\n\
+                  type Bad = G<boolean>;\n";
+    assert_eq!(rendered_constraint(source), "A");
+}
+
+/// Renamed binders and a reordered key union across the chain, so the row
+/// cannot be satisfied by anything keyed on the specific `A`/`B` spelling or on
+/// the canonical `string | number | symbol` member order. Renders the
+/// underlying `Base`.
+#[test]
+fn renamed_binders_alias_chain_to_key_union_constraint_renders_the_root_alias() {
+    let source = "type Base = symbol | string | number;\n\
+                  type Ref = Base;\n\
+                  type H<Q extends Ref> = Q;\n\
+                  type Bad = H<boolean>;\n";
+    assert_eq!(rendered_constraint(source), "Base");
+}
+
+/// A user alias that is a pure indirection to the *lib* `PropertyKey` resolves
+/// to `PropertyKey`, the underlying alias whose body is the key union — not the
+/// head `MyKey` written at the site. Verified against pinned `typescript@7.0.2`
+/// (`… does not satisfy the constraint 'PropertyKey'.`).
+#[test]
+fn user_alias_indirection_to_lib_property_key_renders_the_lib_alias() {
+    let source = "type MyKey = PropertyKey;\n\
+                  type G<K extends MyKey> = K;\n\
+                  type Bad = G<boolean>;\n";
+    assert_eq!(rendered_constraint(source), "PropertyKey");
 }
 
 // ---------------------------------------------------------------------------
