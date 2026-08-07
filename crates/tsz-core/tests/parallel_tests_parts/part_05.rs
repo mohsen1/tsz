@@ -1074,3 +1074,235 @@ fn test_parse_and_bind_single_json_reports_property_value_violation() {
         .collect();
     assert_eq!(codes, vec![1328], "got: {:?}", result.parse_diagnostics);
 }
+
+/// tsc's JSON scanner treats `//` line comments as trivia. A commented line
+/// inside an object — the shape of a `tsconfig.json` with an explanatory
+/// comment — must stay clean, not report TS1327 by mis-reading `//` as an
+/// unquoted property name.
+#[test]
+fn test_parse_file_single_json_line_comment_is_trivia() {
+    let result = parse_file_single(
+        "settings.json".to_string(),
+        "{\n  // comment\n  \"a\": 1\n}".to_string(),
+    );
+
+    assert!(
+        result.parse_diagnostics.is_empty(),
+        "expected no diagnostics, got: {:?}",
+        result.parse_diagnostics
+    );
+}
+
+/// A `/* */` block comment in property-name position is also trivia.
+#[test]
+fn test_parse_file_single_json_leading_block_comment_is_trivia() {
+    let result = parse_file_single(
+        "settings.json".to_string(),
+        r#"{ /* leading */ "a": 1 }"#.to_string(),
+    );
+
+    assert!(
+        result.parse_diagnostics.is_empty(),
+        "expected no diagnostics, got: {:?}",
+        result.parse_diagnostics
+    );
+}
+
+/// A trailing line comment after the closing `}` is trivia at object depth 0.
+#[test]
+fn test_parse_file_single_json_trailing_line_comment_is_trivia() {
+    let result = parse_file_single(
+        "settings.json".to_string(),
+        "{ \"a\": 1 } // trailing line comment".to_string(),
+    );
+
+    assert!(
+        result.parse_diagnostics.is_empty(),
+        "expected no diagnostics, got: {:?}",
+        result.parse_diagnostics
+    );
+}
+
+/// A comment between a property's `:` and its value must be skipped *before*
+/// value classification — otherwise the `/` starts the value and draws TS1328
+/// (a different wrong answer), which is exactly the #16819 interaction the
+/// issue calls out.
+#[test]
+fn test_parse_file_single_json_comment_between_key_and_value_is_trivia() {
+    let result = parse_file_single(
+        "settings.json".to_string(),
+        r#"{ "a": /* between key and value */ 1 }"#.to_string(),
+    );
+
+    assert!(
+        result.parse_diagnostics.is_empty(),
+        "expected no diagnostics, got: {:?}",
+        result.parse_diagnostics
+    );
+}
+
+/// The constraining controls: a `//` or `/* */` sequence *inside* a string
+/// value is ordinary content, not a comment. The string must stay clean and
+/// must not be eaten — proven by a following invalid value that still draws
+/// its own TS1328 (if the `//` had started a line comment, the rest of the
+/// object, `undefined` included, would have been swallowed and gone silent).
+#[test]
+fn test_parse_file_single_json_slashes_inside_string_are_not_a_comment() {
+    let line = parse_file_single(
+        "settings.json".to_string(),
+        r#"{ "a": "// x", "b": undefined }"#.to_string(),
+    );
+    let line_got: Vec<(u32, u32)> = line
+        .parse_diagnostics
+        .iter()
+        .map(|d| (d.code, d.start))
+        .collect();
+    assert_eq!(
+        line_got,
+        vec![(1328, 20)],
+        "`//` inside a string must stay content; the trailing invalid value must still report, got: {:?}",
+        line.parse_diagnostics
+    );
+
+    let block = parse_file_single(
+        "settings.json".to_string(),
+        r#"{ "a": "/* x */", "b": undefined }"#.to_string(),
+    );
+    let block_got: Vec<(u32, u32)> = block
+        .parse_diagnostics
+        .iter()
+        .map(|d| (d.code, d.start))
+        .collect();
+    assert_eq!(
+        block_got,
+        vec![(1328, 23)],
+        "`/* */` inside a string must stay content; the trailing invalid value must still report, got: {:?}",
+        block.parse_diagnostics
+    );
+}
+
+/// A commented-out property line — the practical case in a hand-maintained
+/// `tsconfig.json` — is trivia and leaves the real properties untouched.
+#[test]
+fn test_parse_file_single_json_commented_out_property_line_is_trivia() {
+    let result = parse_file_single(
+        "settings.json".to_string(),
+        "{\n  // \"old\": 1,\n  \"new\": 2\n}".to_string(),
+    );
+
+    assert!(
+        result.parse_diagnostics.is_empty(),
+        "expected no diagnostics, got: {:?}",
+        result.parse_diagnostics
+    );
+}
+
+/// Mixed and adjacent line and block comments all resolve as a single run of
+/// trivia — the trivia skip loops until no comment or whitespace remains.
+#[test]
+fn test_parse_file_single_json_mixed_comments_are_trivia() {
+    let result = parse_file_single(
+        "settings.json".to_string(),
+        "{ /* a */ // b\n \"x\": 1 }".to_string(),
+    );
+
+    assert!(
+        result.parse_diagnostics.is_empty(),
+        "expected no diagnostics, got: {:?}",
+        result.parse_diagnostics
+    );
+}
+
+/// A block comment whose body contains structural bytes (`}`, `]`, `"`, `:`)
+/// must be consumed whole, so those bytes never desync the object/array state
+/// machine.
+#[test]
+fn test_parse_file_single_json_block_comment_body_is_not_structural() {
+    let result = parse_file_single(
+        "settings.json".to_string(),
+        r#"{ /* } ] " : */ "a": 1 }"#.to_string(),
+    );
+
+    assert!(
+        result.parse_diagnostics.is_empty(),
+        "expected no diagnostics, got: {:?}",
+        result.parse_diagnostics
+    );
+}
+
+/// Comment skipping is trivia, not suppression: a genuinely unquoted property
+/// name that merely happens to be preceded by a comment must still report
+/// TS1327, anchored at the name.
+#[test]
+fn test_parse_file_single_json_comment_does_not_suppress_real_ts1327() {
+    let result = parse_file_single(
+        "settings.json".to_string(),
+        r#"{ /* c */ bad: 1 }"#.to_string(),
+    );
+
+    let got: Vec<(u32, u32)> = result
+        .parse_diagnostics
+        .iter()
+        .map(|d| (d.code, d.start))
+        .collect();
+    assert_eq!(
+        got,
+        vec![(1327, 10)],
+        "a comment must not swallow a real unquoted-name error, got: {:?}",
+        result.parse_diagnostics
+    );
+}
+
+/// Leading trivia includes comments in the bare-identifier-root recovery
+/// pre-scan too: a `// header` before a bare identifier run must not mask the
+/// recovery. The reported diagnostics match the un-commented form exactly in
+/// code sequence, only shifted past the comment.
+#[test]
+fn test_parse_file_single_json_leading_comment_before_bare_identifier_root_still_recovers() {
+    let with_comment =
+        parse_file_single("settings.json".to_string(), "// header\nfoo bar".to_string());
+    let without = parse_file_single("settings.json".to_string(), "foo bar".to_string());
+
+    let codes_with: Vec<u32> = with_comment.parse_diagnostics.iter().map(|d| d.code).collect();
+    let codes_without: Vec<u32> = without.parse_diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        !codes_with.is_empty(),
+        "bare identifier root must still recover after a leading comment, got: {:?}",
+        with_comment.parse_diagnostics
+    );
+    assert_eq!(
+        codes_with, codes_without,
+        "a leading comment is trivia; recovery codes must match the un-commented form"
+    );
+    // `// header\n` is 10 bytes, so the first recovery anchor sits at `foo`.
+    assert_eq!(
+        with_comment.parse_diagnostics[0].start, 10,
+        "recovery must anchor past the skipped comment, got: {:?}",
+        with_comment.parse_diagnostics
+    );
+}
+
+/// A comment *between* two bare identifiers in the recovery run is trivia too:
+/// tsc tokenizes `foo /*c*/ bar` and `foo bar` identically, so both must emit
+/// the same TS1005/TS1136 recovery sequence rather than the commented form
+/// falling silent.
+#[test]
+fn test_parse_file_single_json_comment_between_bare_identifiers_still_recovers() {
+    let with_comment =
+        parse_file_single("settings.json".to_string(), "foo /* c */ bar".to_string());
+    let without = parse_file_single("settings.json".to_string(), "foo bar".to_string());
+
+    let codes_with: Vec<u32> = with_comment.parse_diagnostics.iter().map(|d| d.code).collect();
+    let codes_without: Vec<u32> = without.parse_diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        !codes_with.is_empty(),
+        "a comment between bare identifiers must not mask the recovery, got: {:?}",
+        with_comment.parse_diagnostics
+    );
+    assert_eq!(
+        codes_with, codes_without,
+        "an inter-identifier comment is trivia; recovery codes must match the un-commented form"
+    );
+}
