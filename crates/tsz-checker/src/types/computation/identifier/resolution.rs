@@ -371,9 +371,16 @@ impl<'a> CheckerState<'a> {
         // Note: TS1212/1213/1214 strict-mode reserved word check is now handled
         // centrally in error_cannot_find_name_at to cover both value and type contexts.
 
-        // Check static member suggestion (error 2662)
+        // Check static member suggestion (error 2662). Beyond the class's own
+        // declared statics, tsc's suggestion is an ordinary property lookup on
+        // the constructor type (`typeof C`), which also reaches statics
+        // inherited from an `extends` base and built-in `Function` members
+        // (`arguments`, `caller`, `length`, `name`, ...) that every class
+        // constructor structurally carries — so fall back to the type-based
+        // check when the class's own member list doesn't have `name`.
         if let Some(ref class_info) = self.ctx.enclosing_class.clone()
-            && self.is_static_member(&class_info.member_nodes, name)
+            && (self.is_static_member(&class_info.member_nodes, name)
+                || self.is_static_member_of_constructor_type(class_info.class_idx, name))
         {
             self.error_cannot_find_name_static_member_at(name, &class_info.name, idx);
             return TypeId::ERROR;
@@ -384,9 +391,12 @@ impl<'a> CheckerState<'a> {
         // suggest 'this.X'. Don't suggest when:
         // - We're in a static method (this refers to constructor)
         // - We're inside a regular function expression (this is rebound)
+        // As with the static case, also reaches instance members inherited
+        // from an `extends` base via a type-based fallback.
         if let Some(ref class_info) = self.ctx.enclosing_class.clone()
             && !class_info.in_static_member
-            && self.is_instance_member(&class_info.member_nodes, name)
+            && (self.is_instance_member(&class_info.member_nodes, name)
+                || self.is_instance_member_of_instance_type(class_info.class_idx, name))
             && !self.has_regular_function_boundary_to_class(idx)
         {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
@@ -479,6 +489,51 @@ impl<'a> CheckerState<'a> {
                 TypeId::ERROR
             }
         }
+    }
+
+    /// Whether `name` is reachable as a property of the enclosing class's
+    /// constructor type (`typeof C`), beyond its own declared static members.
+    /// Reuses the same property-access resolution ordinary member access
+    /// uses, so it reaches statics inherited from an `extends` base and
+    /// built-in `Function` members every class constructor structurally
+    /// carries. Excludes index-signature matches — an index signature isn't a
+    /// named member tsc would suggest.
+    fn is_static_member_of_constructor_type(&mut self, class_idx: NodeIndex, name: &str) -> bool {
+        let Some(node) = self.ctx.arena.get(class_idx) else {
+            return false;
+        };
+        let Some(class_data) = self.ctx.arena.get_class(node) else {
+            return false;
+        };
+        let ctor_type = self.get_class_constructor_type(class_idx, class_data);
+        matches!(
+            self.resolve_property_access_with_env(ctor_type, name),
+            tsz_solver::operations::property::PropertyAccessResult::Success {
+                from_index_signature: false,
+                ..
+            }
+        )
+    }
+
+    /// Instance-side analog of [`Self::is_static_member_of_constructor_type`]:
+    /// whether `name` is reachable on the enclosing class's instance type
+    /// beyond its own declared instance members — reaches members inherited
+    /// from an `extends` base.
+    fn is_instance_member_of_instance_type(&mut self, class_idx: NodeIndex, name: &str) -> bool {
+        let Some(node) = self.ctx.arena.get(class_idx) else {
+            return false;
+        };
+        let Some(class_data) = self.ctx.arena.get_class(node) else {
+            return false;
+        };
+        let instance_type = self.get_class_instance_type(class_idx, class_data);
+        matches!(
+            self.resolve_property_access_with_env(instance_type, name),
+            tsz_solver::operations::property::PropertyAccessResult::Success {
+                from_index_signature: false,
+                ..
+            }
+        )
     }
 
     /// Check if there's a regular function expression (non-arrow) between `idx`

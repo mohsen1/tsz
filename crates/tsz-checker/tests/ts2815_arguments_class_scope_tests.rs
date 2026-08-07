@@ -191,3 +191,83 @@ fn function_scope_static_block_reports_ts2815_lib_backed() {
         "expected TS2815 inside an enclosing function (lib-backed): {codes:?}"
     );
 }
+
+// ===========================================================================
+// Tier 3 — TS2662/TS2663 reach inherited members, not just own declared ones
+// (#16815). `arguments`/`caller` are not declared on the class at all; they
+// are inherited from `lib.es5.d.ts`'s `Function` interface, which every
+// class constructor type structurally carries.
+// ===========================================================================
+
+#[test]
+fn instance_field_initializer_arguments_suggests_inherited_static_member() {
+    let codes = lib_codes("class Widget { p = arguments; }");
+    assert!(
+        !codes.contains(&TS2815),
+        "TS2815 must not fire at module scope: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&TS2304),
+        "expected the inherited-member suggestion (TS2662), not bare TS2304: {codes:?}"
+    );
+    assert!(
+        codes.contains(&TS2662),
+        "expected TS2662 suggesting the inherited `Function.arguments` static member: {codes:?}"
+    );
+}
+
+#[test]
+fn static_block_arguments_suggests_inherited_static_member() {
+    let codes = lib_codes("class C { static { arguments; } }");
+    assert!(
+        codes.contains(&TS2662) && !codes.contains(&TS2304) && !codes.contains(&TS2815),
+        "expected TS2662 suggesting the inherited `Function.arguments` static member: {codes:?}"
+    );
+}
+
+#[test]
+fn instance_field_initializer_caller_suggests_inherited_static_member() {
+    // `caller` is a different `Function`-interface member than `arguments`,
+    // confirming the fix is a general property lookup, not special-cased.
+    let codes = lib_codes("class Widget { p = caller; }");
+    assert!(
+        codes.contains(&TS2662) && !codes.contains(&TS2304),
+        "expected TS2662 suggesting the inherited `Function.caller` static member: {codes:?}"
+    );
+}
+
+#[test]
+fn instance_field_initializer_inherited_base_static_suggests_ts2662() {
+    // Not a `Function` member at all — an ordinary static inherited from a
+    // real `extends` base, exercising the same property-lookup fallback.
+    let codes = lib_codes("class Base { static s = 1; } class D extends Base { p = s; }");
+    assert!(
+        codes.contains(&TS2662) && !codes.contains(&TS2304),
+        "expected TS2662 suggesting the inherited static member 'D.s': {codes:?}"
+    );
+}
+
+#[test]
+fn instance_field_initializer_inherited_base_instance_member_suggests_ts2663() {
+    let codes = lib_codes("class Base { m() {} } class E extends Base { p = m; }");
+    let ts2663 = 2663;
+    assert!(
+        codes.contains(&ts2663) && !codes.contains(&TS2304),
+        "expected TS2663 suggesting the inherited instance member 'this.m': {codes:?}"
+    );
+}
+
+#[test]
+fn instance_field_initializer_unreachable_name_does_not_get_a_spurious_suggestion() {
+    // The fallback row: a name that resolves to nothing anywhere must not
+    // trigger a false TS2662/TS2663 suggestion. Per the Tier 2 note above,
+    // this harness (only `es5.d.ts` wired in) emits no cannot-find-name
+    // diagnostic at all for an unresolved module-scope name — the real
+    // TS2304 fallback is pinned at the CLI/oracle level in the PR (see
+    // `class G { p = nonexistent; }` in the issue's adjacent-case matrix).
+    let codes = lib_codes("class Widget { p = totallyUnreachableName; }");
+    assert!(
+        !codes.contains(&TS2662),
+        "must not spuriously suggest a static member for an unreachable name: {codes:?}"
+    );
+}
