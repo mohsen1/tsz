@@ -140,7 +140,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         if strict {
-            let related = self.checker.is_assignable_to_strict(actual, expected);
+            // A function-valued argument follows the compiler's
+            // `strictFunctionTypes` option for parameter variance (see
+            // `AssignabilityChecker::strict_function_types`): when it is off the
+            // closest-miss check must compare bivariantly, or it manufactures a
+            // `TS2345` the plain assignability path never reports (#16632). The
+            // `strict` flag still governs rest-binder raw-surface exactness in the
+            // `raw_sensitive` branch above; it must not force function
+            // contravariance the user opted out of. Non-callable arguments keep
+            // the existing strict relation.
+            let honor_bivariant_callback = !self.checker.strict_function_types()
+                && crate::type_queries::is_callable_type(self.interner, actual);
+            let related = if honor_bivariant_callback {
+                self.checker.is_assignable_to(actual, expected)
+            } else {
+                self.checker.is_assignable_to_strict(actual, expected)
+            };
             related
                 || (allow_contextual_retry
                     && self.is_assignable_via_contextual_signatures_strict(actual, expected))

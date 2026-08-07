@@ -1565,26 +1565,34 @@ impl<'a> CheckerState<'a> {
                 _ => false,
             };
 
-            // Also need to check constructor parameter decorators
-            let has_param_decorator = match node.kind {
-                k if k == syntax_kind_ext::METHOD_DECLARATION => self
-                    .ctx
-                    .arena
-                    .get_method_decl(node)
-                    .is_some_and(|d| self.any_parameter_has_decorator(&d.parameters.nodes)),
-                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
-                    self.ctx
+            // Parameter decorators only have semantic work here under
+            // `experimentalDecorators` (the valid-position path); without it,
+            // the parameter loop bails immediately and TS1206 is owned by
+            // `check_parameter_properties`. So a member whose *only* decorators
+            // are on its parameters need not enter this function at all in the
+            // standard-decorator mode.
+            let has_param_decorator = self.ctx.compiler_options.experimental_decorators
+                && match node.kind {
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                        .ctx
                         .arena
-                        .get_accessor(node)
-                        .is_some_and(|d| self.any_parameter_has_decorator(&d.parameters.nodes))
-                }
-                k if k == syntax_kind_ext::CONSTRUCTOR => self
-                    .ctx
-                    .arena
-                    .get_constructor(node)
-                    .is_some_and(|d| self.any_parameter_has_decorator(&d.parameters.nodes)),
-                _ => false,
-            };
+                        .get_method_decl(node)
+                        .is_some_and(|d| self.any_parameter_has_decorator(&d.parameters.nodes)),
+                    k if k == syntax_kind_ext::GET_ACCESSOR
+                        || k == syntax_kind_ext::SET_ACCESSOR =>
+                    {
+                        self.ctx
+                            .arena
+                            .get_accessor(node)
+                            .is_some_and(|d| self.any_parameter_has_decorator(&d.parameters.nodes))
+                    }
+                    k if k == syntax_kind_ext::CONSTRUCTOR => self
+                        .ctx
+                        .arena
+                        .get_constructor(node)
+                        .is_some_and(|d| self.any_parameter_has_decorator(&d.parameters.nodes)),
+                    _ => false,
+                };
 
             if !has_any_decorator && !has_param_decorator {
                 return;
@@ -1810,13 +1818,16 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
 
+                        // Without `experimentalDecorators` a class-member
+                        // parameter decorator is an invalid position. TS1206 is
+                        // owned by `check_parameter_properties` (the single,
+                        // universal parameter-decorator grammar gate), which
+                        // reports it once per parameter. tsc emits nothing else
+                        // for an invalidly-placed decorator — in particular it
+                        // does not resolve the decorator expression — so skip
+                        // the semantic checks below to avoid a spurious TS2304.
                         if !self.ctx.compiler_options.experimental_decorators {
-                            use crate::diagnostics::diagnostic_codes;
-                            self.error_at_node(
-                                modifier_idx,
-                                "Decorators are not valid here.",
-                                diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
-                            );
+                            continue;
                         }
 
                         if let Some(decorator) = self.ctx.arena.get_decorator(modifier_node) {
@@ -1838,22 +1849,20 @@ impl<'a> CheckerState<'a> {
                             // `key`; for method/accessor parameters tsc passes a
                             // string (the method name). Decorators whose `key`
                             // parameter type disagrees with the position are
-                            // rejected with TS1239. Only check under
-                            // `experimentalDecorators` since stage-3 decorators
-                            // (which use a different runtime ABI) are not yet a
-                            // supported configuration.
-                            if self.ctx.compiler_options.experimental_decorators {
-                                let is_constructor_parameter =
-                                    node.kind == syntax_kind_ext::CONSTRUCTOR;
-                                let actual_this_type = self
-                                    .call_site_receiver_type(decorator_type, decorator.expression);
-                                self.check_parameter_decorator_call_signature(
-                                    modifier_idx,
-                                    decorator_type,
-                                    is_constructor_parameter,
-                                    actual_this_type,
-                                );
-                            }
+                            // rejected with TS1239. Reached only under
+                            // `experimentalDecorators` (the early `continue`
+                            // above), the sole configuration where a parameter
+                            // decorator is a valid, semantically-checked target.
+                            let is_constructor_parameter =
+                                node.kind == syntax_kind_ext::CONSTRUCTOR;
+                            let actual_this_type =
+                                self.call_site_receiver_type(decorator_type, decorator.expression);
+                            self.check_parameter_decorator_call_signature(
+                                modifier_idx,
+                                decorator_type,
+                                is_constructor_parameter,
+                                actual_this_type,
+                            );
                         }
                     }
                 }
@@ -1863,26 +1872,12 @@ impl<'a> CheckerState<'a> {
 
     /// Quick scan to check if any parameter in a parameter list has a decorator modifier.
     fn any_parameter_has_decorator(&self, params: &[NodeIndex]) -> bool {
-        for &param_idx in params {
-            let Some(param_node) = self.ctx.arena.get(param_idx) else {
-                continue;
-            };
-            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
-                continue;
-            };
-            if let Some(ref mods) = param.modifiers {
-                for &mod_idx in &mods.nodes {
-                    if self
-                        .ctx
-                        .arena
-                        .get(mod_idx)
-                        .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
-                    {
-                        return true;
-                    }
-                }
-            }
-        }
-        false
+        params.iter().any(|&param_idx| {
+            self.ctx
+                .arena
+                .get(param_idx)
+                .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
+                .is_some_and(|param| self.first_parameter_decorator(&param.modifiers).is_some())
+        })
     }
 }

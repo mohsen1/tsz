@@ -29,6 +29,8 @@ mod application_target_any_arg_assignability_tests;
 mod application_unknown_args_assignability_tests;
 #[path = "tests/architecture_contract_tests.rs"]
 mod architecture_contract_tests_src;
+#[path = "tests/array_destructuring_assignment_element_ts2322_tests.rs"]
+mod array_destructuring_assignment_element_ts2322_tests;
 #[path = "tests/array_elaboration_relation_routing_arch_tests.rs"]
 mod array_elaboration_relation_routing_arch_tests;
 #[path = "tests/array_like_constraint_relation_routing_arch_tests.rs"]
@@ -359,6 +361,8 @@ mod generator_yieldstar_union_delegate_contribution_tests;
 mod generic_alias_application_display_tests;
 #[path = "tests/generic_argument_suppression_relation_routing_arch_tests.rs"]
 mod generic_argument_suppression_relation_routing_arch_tests;
+#[path = "tests/generic_call_bivariant_callback_nonstrict_tests.rs"]
+mod generic_call_bivariant_callback_nonstrict_tests;
 #[path = "tests/generic_call_enclosing_type_param_return_tests.rs"]
 mod generic_call_enclosing_type_param_return_tests;
 #[path = "tests/generic_call_non_fresh_object_widening_tests.rs"]
@@ -983,6 +987,8 @@ mod unique_symbol_assignment_ts2322_tests;
 mod unique_symbol_member_lookup_family_tests;
 #[path = "tests/unresolved_def_eval_cache_backstop_tests.rs"]
 mod unresolved_def_eval_cache_backstop_tests;
+#[path = "tests/unused_typeof_type_query_reference_tests.rs"]
+mod unused_typeof_type_query_reference_tests;
 #[path = "tests/using_declaration_implicit_any_tests.rs"]
 mod using_declaration_implicit_any_tests;
 #[path = "tests/variadic_tuple_alias_display_tests.rs"]

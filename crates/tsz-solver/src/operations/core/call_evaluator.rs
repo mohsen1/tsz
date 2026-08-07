@@ -74,6 +74,19 @@ pub trait AssignabilityChecker {
         self.is_assignable_to(source, target)
     }
 
+    /// Whether the compiler's `strictFunctionTypes` option is enabled.
+    ///
+    /// `tsc` decides function/method parameter variance from this global option
+    /// in every relation (its `strictVariance` in `compareSignaturesRelated`
+    /// reads the option, not which relation is running). The generic-call final
+    /// argument check consults it to pick a bivariant callback comparison when
+    /// the user has disabled `strictFunctionTypes`, matching the non-generic
+    /// assignability path. Defaults to `true` (sound) for checkers that do not
+    /// track the option.
+    fn strict_function_types(&self) -> bool {
+        true
+    }
+
     /// Evaluate/expand a type using the checker's resolver context.
     /// This is needed during inference constraint collection, where Application types
     /// like `Func<T>` must be expanded to their structural form (e.g., a Callable).

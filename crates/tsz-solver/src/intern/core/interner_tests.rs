@@ -835,20 +835,87 @@ mod nonstrict_nullish_union_tests {
     }
 
     #[test]
-    fn nonstrict_keeps_all_nullish_union() {
+    fn nonstrict_all_nullish_collapses_to_scalar_null() {
         let interner = nonstrict();
-        // No non-nullish sibling to absorb into: the union must stay as-is, never
-        // collapse to `never` (#16580 row a6).
-        let all_nullish = interner.union(vec![TypeId::NULL, TypeId::UNDEFINED]);
+        // tsc's `addTypeToUnion` exclusion is unconditional, so an all-nullish set
+        // leaves `typeSet` empty and `getUnionType` yields the scalar survivor —
+        // `null` preferred over `undefined` on presence, not written position, and
+        // never a surviving `Union` node or `never` (#16657).
+        assert_eq!(
+            interner.union(vec![TypeId::NULL, TypeId::UNDEFINED]),
+            TypeId::NULL,
+            "null | undefined -> scalar null"
+        );
+        // Order must not matter: `null` wins on presence, not position.
+        assert_eq!(
+            interner.union(vec![TypeId::UNDEFINED, TypeId::NULL]),
+            TypeId::NULL,
+            "undefined | null -> scalar null"
+        );
+        // Discriminating negative: with no `null` in the set, `undefined` is the
+        // survivor — this is not "rewrite every nullish to null". `never` is the
+        // union identity and must not keep the set from collapsing to the scalar.
+        assert_eq!(
+            interner.union(vec![TypeId::UNDEFINED, TypeId::NEVER]),
+            TypeId::UNDEFINED,
+            "undefined | never -> scalar undefined (never stripped, no null present)"
+        );
+        // `void` is not `TypeFlags.Nullable`, so it is a genuine non-nullish sibling
+        // that absorbs the dropped `undefined`: `undefined | void` reduces to the
+        // scalar `void`, matching tsc's unconditional nullish exclusion — this path
+        // is the sibling-present drop, not the all-nullish collapse.
+        assert_eq!(
+            interner.union(vec![TypeId::UNDEFINED, TypeId::VOID]),
+            TypeId::VOID,
+            "undefined | void -> void (undefined dropped, void survives)"
+        );
+        // An all-nullish set must never collapse to `never` (#16580 row a6).
         assert_ne!(
-            all_nullish,
+            interner.union(vec![TypeId::NULL, TypeId::UNDEFINED]),
             TypeId::NEVER,
             "null | undefined must not become never"
         );
-        let members = union_members(&interner, all_nullish).expect("all-nullish stays a union");
-        assert!(
-            members.contains(&TypeId::NULL) && members.contains(&TypeId::UNDEFINED),
-            "all-nullish union must keep both members: {members:?}"
+    }
+
+    #[test]
+    fn nonstrict_all_nullish_collapse_is_uniform_across_every_seam() {
+        let interner = nonstrict();
+        // The collapse lives in the shared construction primitive, so every union
+        // constructor reaches the same scalar `null` for an all-nullish set
+        // (one-universe invariant), just as the sibling-present drop does.
+        assert_eq!(
+            interner.union(vec![TypeId::NULL, TypeId::UNDEFINED]),
+            TypeId::NULL
+        );
+        assert_eq!(
+            interner.union_from_slice(&[TypeId::NULL, TypeId::UNDEFINED]),
+            TypeId::NULL
+        );
+        assert_eq!(
+            interner.union2(TypeId::NULL, TypeId::UNDEFINED),
+            TypeId::NULL
+        );
+        assert_eq!(
+            interner.union2(TypeId::UNDEFINED, TypeId::NULL),
+            TypeId::NULL
+        );
+        assert_eq!(
+            interner.union3(TypeId::NULL, TypeId::UNDEFINED, TypeId::NEVER),
+            TypeId::NULL
+        );
+        // The all-nullish collapse replaces the buffer with the lone survivor, so
+        // it holds on `union_from_sorted_vec` regardless of the input member order.
+        assert_eq!(
+            interner.union_from_sorted_vec(vec![TypeId::NULL, TypeId::UNDEFINED]),
+            TypeId::NULL
+        );
+        assert_eq!(
+            interner.union_preserve_members(vec![TypeId::NULL, TypeId::UNDEFINED]),
+            TypeId::NULL
+        );
+        assert_eq!(
+            interner.union_literal_reduce(vec![TypeId::NULL, TypeId::UNDEFINED]),
+            TypeId::NULL
         );
     }
 

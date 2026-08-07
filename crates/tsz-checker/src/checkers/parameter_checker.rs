@@ -967,16 +967,130 @@ impl<'a> CheckerState<'a> {
             // it's a parameter property which is only allowed in constructors.
             // Decorators on parameters are NOT parameter properties.
             // tsc reports the error at the modifier keyword, not the parameter name.
-            if let Some(modifier_idx) =
-                self.find_first_parameter_property_modifier(&param.modifiers)
-            {
+            let property_modifier = self.find_first_parameter_property_modifier(&param.modifiers);
+            let first_decorator = self.first_parameter_decorator(&param.modifiers);
+            // `param`'s borrow of the arena ends here; the reporting below
+            // needs `&mut self`.
+            if let Some(modifier_idx) = property_modifier {
                 self.error_at_node(
                     modifier_idx,
                     "A parameter property is only allowed in a constructor implementation.",
                     diagnostic_codes::A_PARAMETER_PROPERTY_IS_ONLY_ALLOWED_IN_A_CONSTRUCTOR_IMPLEMENTATION,
                 );
             }
+            self.report_invalid_parameter_decorator(param_idx, first_decorator);
         }
+    }
+
+    /// TS1206 for parameter decorators, for callers that do not already iterate
+    /// the parameter list. `check_parameter_properties` inlines the same check
+    /// (reusing its parameter walk); a constructor *implementation* skips that
+    /// call — parameter properties are legal there — so it calls this directly.
+    pub(crate) fn check_parameter_decorator_grammar(&mut self, parameters: &[NodeIndex]) {
+        for &param_idx in parameters {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+            let first_decorator = self.first_parameter_decorator(&param.modifiers);
+            self.report_invalid_parameter_decorator(param_idx, first_decorator);
+        }
+    }
+
+    /// Emit TS1206 when a parameter's (first) decorator sits in a position
+    /// TypeScript never accepts. A parameter decorator is legal only on a class
+    /// constructor/method/set-accessor parameter under `experimentalDecorators`;
+    /// every other function-like parameter — plain functions, function/arrow
+    /// expressions, object-literal methods, interface/type-literal method and
+    /// call/construct signatures — rejects it in both decorator modes. tsc
+    /// reports once per parameter (at its first decorator) and leaves valid
+    /// positions to the class-member decorator path, which owns the decorator's
+    /// semantic checks (TS1239 and friends).
+    ///
+    /// A decorator on a `this` parameter is the exception: tsc reports the
+    /// dedicated TS1433 ("Neither decorators nor modifiers may be applied to
+    /// 'this' parameters.") and suppresses the generic TS1206, so this leaves
+    /// `this` parameters to that check.
+    fn report_invalid_parameter_decorator(
+        &mut self,
+        param_idx: NodeIndex,
+        first_decorator: Option<NodeIndex>,
+    ) {
+        let Some(decorator_idx) = first_decorator else {
+            return;
+        };
+        let is_this_parameter = self
+            .ctx
+            .arena
+            .get(param_idx)
+            .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
+            .is_some_and(|param| self.is_this_parameter_name(param.name));
+        if is_this_parameter {
+            return;
+        }
+        if !self.is_valid_parameter_decorator_position(param_idx) {
+            self.error_at_node(
+                decorator_idx,
+                "Decorators are not valid here.",
+                crate::diagnostics::diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
+            );
+        }
+    }
+
+    /// The `NodeIndex` of the first decorator modifier on a parameter, if any.
+    pub(crate) fn first_parameter_decorator(
+        &self,
+        modifiers: &Option<tsz_parser::parser::NodeList>,
+    ) -> Option<NodeIndex> {
+        use tsz_parser::parser::syntax_kind_ext;
+        let modifiers = modifiers.as_ref()?;
+        modifiers.nodes.iter().copied().find(|&idx| {
+            self.ctx
+                .arena
+                .get(idx)
+                .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+        })
+    }
+
+    /// Whether a decorator on `param_idx` sits in a position TypeScript accepts:
+    /// under `experimentalDecorators`, and belonging to a class constructor,
+    /// method, or set accessor. The immediate-parent-is-a-class test is what
+    /// separates a real class member from an object-literal method, which shares
+    /// the `MethodDeclaration` node kind but never accepts a parameter decorator.
+    /// Get accessors are excluded — they take no parameters, and tsc rejects a
+    /// decorator on their (already illegal) parameter.
+    fn is_valid_parameter_decorator_position(&self, param_idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        if !self.ctx.compiler_options.experimental_decorators {
+            return false;
+        }
+
+        let Some(container_idx) = self.enclosing_function_like_for_parameter(param_idx) else {
+            return false;
+        };
+        let Some(container) = self.ctx.arena.get(container_idx) else {
+            return false;
+        };
+        if !matches!(
+            container.kind,
+            syntax_kind_ext::METHOD_DECLARATION
+                | syntax_kind_ext::CONSTRUCTOR
+                | syntax_kind_ext::SET_ACCESSOR
+        ) {
+            return false;
+        }
+
+        self.ctx
+            .arena
+            .get_extended(container_idx)
+            .and_then(|ext| self.ctx.arena.get(ext.parent))
+            .is_some_and(|parent| {
+                parent.kind == syntax_kind_ext::CLASS_DECLARATION
+                    || parent.kind == syntax_kind_ext::CLASS_EXPRESSION
+            })
     }
 
     /// Find the first parameter property modifier in a modifier list.

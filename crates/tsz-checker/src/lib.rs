@@ -348,6 +348,9 @@ mod ts2411_tests;
 #[path = "../tests/ts2418_computed_property_value_widening_tests.rs"]
 mod ts2418_computed_property_value_widening_tests;
 #[cfg(test)]
+#[path = "../tests/ts2418_wellknown_symbol_declared_member_tests.rs"]
+mod ts2418_wellknown_symbol_declared_member_tests;
+#[cfg(test)]
 #[path = "../tests/ts2428_tests.rs"]
 mod ts2428_tests;
 #[cfg(test)]
