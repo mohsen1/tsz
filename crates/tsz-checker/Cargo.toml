@@ -2700,3 +2700,6 @@ path = "tests/union_display_alias_repaint_parity_tests.rs"
 [[test]]
 name = "symbol_key_index_signature_selection_tests"
 path = "tests/symbol_key_index_signature_selection_tests.rs"
+[[test]]
+name = "symbol_key_nested_literal_excess_property_tests"
+path = "tests/symbol_key_nested_literal_excess_property_tests.rs"
