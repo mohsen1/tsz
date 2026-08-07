@@ -289,7 +289,6 @@ _CRATE_SRC_LINE_LIMIT_ALLOWLISTS = [
     ("tsz-parser", "Parser", {
         "crates/tsz-parser/src/parser/state_expressions_literals_regex.rs",
         "crates/tsz-parser/src/parser/state_statements_class_members.rs",
-        "crates/tsz-parser/src/parser/state_declarations.rs",
     }),
     ("tsz-scanner", "Scanner", set()),
     ("tsz-solver", "Solver", {
