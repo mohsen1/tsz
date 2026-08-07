@@ -846,6 +846,153 @@ class ArchGuardLineLimitCoverageTests(unittest.TestCase):
             self.assertTrue(missing[0].endswith("crates/tsz-demo/src"))
 
 
+class ArchGuardTestsLineLimitTests(unittest.TestCase):
+    """Cover `TESTS_LINE_LIMIT_CHECKS` + its coverage invariant (#16745).
+
+    Mirrors `ArchGuardLineLimitCoverageTests` for the src-root cap (#16733):
+    the 2000-LOC cap is documented over "source, test, script" without
+    qualification, so a `crates/*/tests` root that is never scanned should
+    fail the same way an unregistered `crates/*/src` root would.
+    """
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def test_every_crate_tests_root_is_registered(self):
+        """No `crates/*/tests` root may be missing from TESTS_LINE_LIMIT_CHECKS."""
+        missing = self.arch_guard.scan_tests_line_limit_coverage()
+        self.assertEqual(
+            missing,
+            [],
+            "Unguarded crate tests roots (documented 2000-LOC cap not enforced): "
+            + ", ".join(missing),
+        )
+
+    def test_registered_bases_are_real_crate_tests_roots(self):
+        """Every TESTS_LINE_LIMIT_CHECKS base must be an existing crates/*/tests dir."""
+        roots = {p.resolve() for p in self.arch_guard.crate_tests_roots()}
+        for name, base, _limit, *_rest in self.arch_guard.TESTS_LINE_LIMIT_CHECKS:
+            self.assertIn(
+                base.resolve(),
+                roots,
+                f"TESTS_LINE_LIMIT_CHECKS base for {name!r} is not a "
+                f"crates/*/tests root: {base}",
+            )
+
+    def test_coverage_flags_a_missing_tests_root(self):
+        """A crate whose tests root is unregistered is reported as missing."""
+        with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
+            crates_dir = pathlib.Path(temp_dir) / "crates"
+            (crates_dir / "tsz-registered" / "tests").mkdir(parents=True)
+            (crates_dir / "tsz-unguarded" / "tests").mkdir(parents=True)
+            checks = [
+                (
+                    "registered",
+                    crates_dir / "tsz-registered" / "tests",
+                    self.arch_guard.TESTS_LINE_LIMIT,
+                    set(),
+                ),
+            ]
+            missing = self.arch_guard.scan_tests_line_limit_coverage(
+                checks, crates_dir=crates_dir
+            )
+            self.assertIn("tsz-unguarded", "/".join(missing))
+            self.assertNotIn("tsz-registered", "/".join(missing))
+
+    def test_excluded_tests_files_actually_exist(self):
+        """Every file in a TESTS_LINE_LIMIT_CHECKS exclusion list must exist on disk."""
+        for entry in self.arch_guard.TESTS_LINE_LIMIT_CHECKS:
+            excludes = entry[3] if len(entry) > 3 else set()
+            for rel_path in excludes:
+                full_path = ROOT / rel_path
+                self.assertTrue(
+                    full_path.exists(),
+                    f"Excluded file {rel_path} does not exist. Remove it from the exclusion list.",
+                )
+
+    def test_excluded_tests_files_actually_exceed_limit(self):
+        """Every excluded tests file must actually be over the limit."""
+        for entry in self.arch_guard.TESTS_LINE_LIMIT_CHECKS:
+            limit = entry[2]
+            excludes = entry[3] if len(entry) > 3 else set()
+            for rel_path in excludes:
+                full_path = ROOT / rel_path
+                if not full_path.exists():
+                    continue  # caught by test_excluded_tests_files_actually_exist
+                with full_path.open("r", encoding="utf-8", errors="ignore") as fh:
+                    line_count = sum(1 for _ in fh)
+                self.assertGreater(
+                    line_count,
+                    limit,
+                    f"Excluded file {rel_path} has {line_count} lines "
+                    f"(limit {limit}). Remove it from the exclusion list.",
+                )
+
+    def test_tests_line_limit_exclusion_count_cannot_grow(self):
+        """No single crate's TESTS_LINE_LIMIT_CHECKS allowlist may exceed the ceiling."""
+        # Largest allowlist at landing time (tsz-checker/tsz-cli/tsz-solver) is 2.
+        MAX_EXCLUDED = 2
+        for entry in self.arch_guard.TESTS_LINE_LIMIT_CHECKS:
+            excludes = entry[3] if len(entry) > 3 else set()
+            self.assertLessEqual(
+                len(excludes),
+                MAX_EXCLUDED,
+                f"TESTS_LINE_LIMIT_CHECKS exclusion list for {entry[0]!r} has "
+                f"{len(excludes)} entries, max allowed is {MAX_EXCLUDED}. "
+                f"Split a file or remove ones that dropped below the limit.",
+            )
+
+
+class ArchGuardScriptsLineLimitTests(unittest.TestCase):
+    """Cover `SCRIPTS_LINE_LIMIT_CHECKS` + `scan_script_line_limits` (#16745)."""
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def test_scripts_root_is_registered(self):
+        bases = {entry[1] for entry in self.arch_guard.SCRIPTS_LINE_LIMIT_CHECKS}
+        self.assertIn(ROOT / "scripts", bases)
+
+    def test_scripts_allowlist_is_currently_empty(self):
+        """Splitting arch_guard_shared.py (#16745) leaves no grandfathered debt."""
+        for _name, _base, _limit, allowlist in self.arch_guard.SCRIPTS_LINE_LIMIT_CHECKS:
+            self.assertEqual(allowlist, set())
+
+    def test_scan_script_line_limits_flags_file_above_limit(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
+            base = pathlib.Path(temp_dir)
+            big = base / "big.py"
+            big.write_text("\n".join(f"x = {i}" for i in range(5)) + "\n")
+            hits = self.arch_guard.scan_script_line_limits(base, 3)
+            self.assertEqual(len(hits), 1)
+            self.assertIn("big.py", hits[0])
+
+    def test_scan_script_line_limits_allows_file_at_limit(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
+            base = pathlib.Path(temp_dir)
+            ok = base / "ok.sh"
+            ok.write_text("\n".join(f"echo {i}" for i in range(3)) + "\n")
+            hits = self.arch_guard.scan_script_line_limits(base, 3)
+            self.assertEqual(hits, [])
+
+    def test_scan_script_line_limits_ignores_non_script_extensions(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
+            base = pathlib.Path(temp_dir)
+            data = base / "data.json"
+            data.write_text("\n".join(f'"{i}"' for i in range(5)) + "\n")
+            hits = self.arch_guard.scan_script_line_limits(base, 3)
+            self.assertEqual(hits, [])
+
+    def test_scan_script_line_limits_honors_exclude_files(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
+            base = pathlib.Path(temp_dir)
+            big = base / "big.mjs"
+            big.write_text("\n".join(f"x = {i}" for i in range(5)) + "\n")
+            rel = big.relative_to(ROOT).as_posix()
+            hits = self.arch_guard.scan_script_line_limits(base, 3, exclude_files={rel})
+            self.assertEqual(hits, [])
+
+
 class ArchGuardStructFieldCountTests(unittest.TestCase):
     """Cover `STRUCT_FIELD_COUNT_CHECKS` + `scan_struct_field_count`.
 

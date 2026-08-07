@@ -12,6 +12,7 @@ if str(ARCH_DIR) not in sys.path:
 
 import arch_guard_project as _arch_guard_project
 from arch_guard_counts import *  # noqa: F401,F403
+from arch_guard_file_limits import *  # noqa: F401,F403
 from arch_guard_project import *  # noqa: F401,F403
 from arch_guard_rust import *  # noqa: F401,F403
 from arch_guard_shared import *  # noqa: F401,F403
@@ -162,6 +163,26 @@ def main() -> int:
         size_total += len(coverage_missing)
         if coverage_missing:
             size_failures.append((LINE_LIMIT_COVERAGE_NAME, coverage_missing))
+        for name, base, limit, *rest in TESTS_LINE_LIMIT_CHECKS:
+            if not base.exists():
+                continue
+            exclude_files = rest[0] if rest else None
+            hits = scan_line_limits(base, limit, exclude_files)
+            size_total += len(hits)
+            if hits:
+                size_failures.append((name, hits))
+        tests_coverage_missing = scan_tests_line_limit_coverage()
+        size_total += len(tests_coverage_missing)
+        if tests_coverage_missing:
+            size_failures.append((TESTS_LINE_LIMIT_COVERAGE_NAME, tests_coverage_missing))
+        for name, base, limit, *rest in SCRIPTS_LINE_LIMIT_CHECKS:
+            if not base.exists():
+                continue
+            exclude_files = rest[0] if rest else None
+            hits = scan_script_line_limits(base, limit, exclude_files)
+            size_total += len(hits)
+            if hits:
+                size_failures.append((name, hits))
         for name, path, limit in FILE_LINE_LIMIT_CHECKS:
             # The #8225 common-quarantine ratchets carry their own arch-owner
             # green-campaign headroom policy and are tracked as debt separately;
@@ -229,6 +250,29 @@ def main() -> int:
     total_hits += len(coverage_missing)
     if coverage_missing:
         failures.append((LINE_LIMIT_COVERAGE_NAME, coverage_missing))
+
+    for name, base, limit, *rest in TESTS_LINE_LIMIT_CHECKS:
+        if not base.exists():
+            continue
+        exclude_files = rest[0] if rest else None
+        hits = scan_line_limits(base, limit, exclude_files)
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    tests_coverage_missing = scan_tests_line_limit_coverage()
+    total_hits += len(tests_coverage_missing)
+    if tests_coverage_missing:
+        failures.append((TESTS_LINE_LIMIT_COVERAGE_NAME, tests_coverage_missing))
+
+    for name, base, limit, *rest in SCRIPTS_LINE_LIMIT_CHECKS:
+        if not base.exists():
+            continue
+        exclude_files = rest[0] if rest else None
+        hits = scan_script_line_limits(base, limit, exclude_files)
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
 
     for name, path, limit in FILE_LINE_LIMIT_CHECKS:
         hits = scan_file_line_limit(path, limit)
