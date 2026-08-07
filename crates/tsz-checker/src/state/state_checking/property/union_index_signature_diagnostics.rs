@@ -160,7 +160,44 @@ impl<'a> CheckerState<'a> {
             let report_idx = self
                 .find_object_literal_property_element(obj_literal_idx, source_prop.name)
                 .unwrap_or(obj_literal_idx);
-            if let Some(nested_idx) = self.object_literal_property_initializer(report_idx) {
+
+            // `find_object_literal_property_element` only matches property names
+            // readable straight off the syntax (literals, well-known `Symbol.xxx`
+            // members). A computed name that needs type evaluation to resolve —
+            // `[sym]` for `declare const sym: unique symbol` — falls through to
+            // `obj_literal_idx` above, which is not a property node, so the
+            // initializer lookup below would find nothing and this property's
+            // nested object-literal value would never get its own excess-property
+            // drill-in. Resolve through the same three-tier lookup the
+            // computed-property diagnostic further down already uses (property
+            // node at `report_idx`, then syntax-name match, then
+            // `get_property_name_resolved`'s type-evaluated match) before
+            // deciding there is nothing to drill into.
+            let computed_property = self
+                .ctx
+                .arena
+                .get(report_idx)
+                .and_then(|node| self.ctx.arena.get_property_assignment(node))
+                .map(|prop| (prop.name, prop.initializer))
+                .or_else(|| {
+                    self.object_literal_property_name_and_value(obj_literal_idx, source_prop.name)
+                })
+                .or_else(|| {
+                    let obj_node = self.ctx.arena.get(obj_literal_idx)?;
+                    let obj_lit = self.ctx.arena.get_literal_expr(obj_node)?;
+                    obj_lit.elements.nodes.iter().rev().find_map(|&elem_idx| {
+                        let elem_node = self.ctx.arena.get(elem_idx)?;
+                        let prop = self.ctx.arena.get_property_assignment(elem_node)?;
+                        let resolved = self.get_property_name_resolved(prop.name)?;
+                        (self.ctx.types.intern_string(&resolved) == source_prop.name)
+                            .then_some((prop.name, prop.initializer))
+                    })
+                });
+
+            let nested_value_idx = computed_property
+                .map(|(_, value_idx)| value_idx)
+                .or_else(|| self.object_literal_property_initializer(report_idx));
+            if let Some(nested_idx) = nested_value_idx {
                 let nested_idx = self.ctx.arena.skip_parenthesized(nested_idx);
                 if self
                     .ctx
@@ -183,26 +220,6 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
-            let computed_property = self
-                .ctx
-                .arena
-                .get(report_idx)
-                .and_then(|node| self.ctx.arena.get_property_assignment(node))
-                .map(|prop| (prop.name, prop.initializer))
-                .or_else(|| {
-                    self.object_literal_property_name_and_value(obj_literal_idx, source_prop.name)
-                })
-                .or_else(|| {
-                    let obj_node = self.ctx.arena.get(obj_literal_idx)?;
-                    let obj_lit = self.ctx.arena.get_literal_expr(obj_node)?;
-                    obj_lit.elements.nodes.iter().rev().find_map(|&elem_idx| {
-                        let elem_node = self.ctx.arena.get(elem_idx)?;
-                        let prop = self.ctx.arena.get_property_assignment(elem_node)?;
-                        let resolved = self.get_property_name_resolved(prop.name)?;
-                        (self.ctx.types.intern_string(&resolved) == source_prop.name)
-                            .then_some((prop.name, prop.initializer))
-                    })
-                });
             // A computed name spelled with a literal (`["p"]`, `[0]`,
             // `` [`p`] ``) is not a late-bound name: tsc's
             // `isComputedNonLiteralName` is false for it, so it never reaches

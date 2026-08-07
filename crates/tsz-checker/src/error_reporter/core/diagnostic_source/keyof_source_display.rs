@@ -90,7 +90,7 @@ impl<'a> CheckerState<'a> {
     /// operator shape (e.g. `keyof …`) behind a `Lazy(DefId)` or body-registered
     /// alias becomes visible. Returns `ty` unchanged when it is not such an
     /// alias.
-    fn resolve_non_generic_alias_body_for_display(&self, ty: TypeId) -> TypeId {
+    pub(crate) fn resolve_non_generic_alias_body_for_display(&self, ty: TypeId) -> TypeId {
         if diagnostic_query::keyof_inner_type(self.ctx.types, ty).is_some() {
             return ty;
         }

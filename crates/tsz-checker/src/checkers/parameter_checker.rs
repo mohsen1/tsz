@@ -678,11 +678,24 @@ impl<'a> CheckerState<'a> {
             None
         };
 
-        let mut seen_optional = false;
-
         self.check_this_parameter_placement(parameters, func_idx);
 
-        for &param_idx in &parameters.nodes {
+        // Mirror tsc's `checkGrammarParameterList`: it walks the parameter list
+        // once and every arm is `return grammarErrorOnNode(...)`, so it reports
+        // **at most one** ordering-grammar diagnostic per list — the first
+        // offending parameter wins and the walk stops. tsz splits this across
+        // layers: TS1015/TS1016 are checker-owned (here), while the rest-param
+        // grammar (TS1014 rest-not-last, TS1047 rest-optional, TS1048
+        // rest-initializer) is parser-emitted. A rest parameter is therefore a
+        // hard stop: reaching one means no checker-owned error fired earlier
+        // (otherwise we would already have returned), so the parser's own
+        // diagnostic for it is the list's single winner and the walk ends.
+        // When a checker-owned error *does* win, any parser rest-grammar
+        // diagnostic on a *later* parameter is a loser tsc never reached, so we
+        // record its span for the driver to drop.
+        let mut seen_optional = false;
+
+        for (index, &param_idx) in parameters.nodes.iter().enumerate() {
             let Some(param_node) = self.ctx.arena.get(param_idx) else {
                 continue;
             };
@@ -690,24 +703,10 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // TS1015: Parameter cannot have question mark and initializer.
-            // This is a grammar check (in tsc it lives in the checker, not the parser).
-            // Suppress when the file has syntax parse errors — tsc skips grammar checks
-            // on subtrees from parser-recovery artifacts (e.g. broken arrow functions).
-            if param.question_token
-                && param.initializer.is_some()
-                && !self.has_syntax_parse_errors()
-            {
-                self.error_at_node(
-                    param.name,
-                    diagnostic_messages::PARAMETER_CANNOT_HAVE_QUESTION_MARK_AND_INITIALIZER,
-                    diagnostic_codes::PARAMETER_CANNOT_HAVE_QUESTION_MARK_AND_INITIALIZER,
-                );
-            }
-
-            // Rest parameter ends the check - rest params don't count as optional/required in this context
+            // A rest parameter is tsc's return point (its rest-grammar codes are
+            // parser-emitted in tsz). Stop the checker-side walk here.
             if param.dot_dot_dot_token {
-                break;
+                return;
             }
 
             // Check if this parameter is optional via `?` token or JSDoc annotations
@@ -725,19 +724,76 @@ impl<'a> CheckerState<'a> {
 
             if is_optional {
                 seen_optional = true;
+                // TS1015: Parameter cannot have question mark and initializer.
+                // A grammar check that lives in the checker in tsc. Suppress when
+                // the file has syntax parse errors — tsc skips grammar checks on
+                // subtrees from parser-recovery artifacts (e.g. broken arrows).
+                if param.question_token
+                    && param.initializer.is_some()
+                    && !self.has_syntax_parse_errors()
+                {
+                    self.error_at_node(
+                        param.name,
+                        diagnostic_messages::PARAMETER_CANNOT_HAVE_QUESTION_MARK_AND_INITIALIZER,
+                        diagnostic_codes::PARAMETER_CANNOT_HAVE_QUESTION_MARK_AND_INITIALIZER,
+                    );
+                    self.record_rest_grammar_suppression_after(parameters, index);
+                    return;
+                }
             } else if seen_optional {
-                // A parameter is "required" only if it has neither `?` nor an initializer.
-                // Parameters with initializers (e.g., `options = {}`) are effectively optional
-                // and don't trigger TS1016 even after `?` parameters.
-                let has_initializer = param.initializer.is_some();
-                if !has_initializer {
+                // A parameter is "required" only if it has neither `?` nor an
+                // initializer. Parameters with initializers (e.g. `options = {}`)
+                // are effectively optional and don't trigger TS1016.
+                if param.initializer.is_none() {
                     self.error_at_node(
                         param.name,
                         diagnostic_messages::A_REQUIRED_PARAMETER_CANNOT_FOLLOW_AN_OPTIONAL_PARAMETER,
                         diagnostic_codes::A_REQUIRED_PARAMETER_CANNOT_FOLLOW_AN_OPTIONAL_PARAMETER,
                     );
+                    self.record_rest_grammar_suppression_after(parameters, index);
+                    return;
                 }
             }
+        }
+    }
+
+    /// Record the half-open `[pos, boundary)` span of every rest parameter that
+    /// appears *after* `winner_index` in `parameters`, so the driver drops the
+    /// parser-emitted rest-grammar diagnostics (TS1014/TS1047/TS1048) anchored
+    /// there. tsc's `checkGrammarParameterList` returned at `winner_index` and
+    /// never reached those parameters, so their diagnostics are losers of the
+    /// single-diagnostic-per-list rule.
+    ///
+    /// The three anchors all sit in the parameter's *head* — TS1014 at the
+    /// `...` token (`pos`), TS1048 on the name, TS1047 on the `?` token — which
+    /// always precedes any type annotation or default value. `boundary` is
+    /// therefore the start of the first of those subtrees, or the parameter's
+    /// end when it has neither: a nested function's own parameter-list grammar
+    /// inside a type annotation or default value starts at/after `boundary` and
+    /// is never caught.
+    fn record_rest_grammar_suppression_after(
+        &mut self,
+        parameters: &tsz_parser::parser::NodeList,
+        winner_index: usize,
+    ) {
+        for &param_idx in parameters.nodes.iter().skip(winner_index + 1) {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+            if !param.dot_dot_dot_token {
+                continue;
+            }
+            let boundary = [param.type_annotation, param.initializer]
+                .into_iter()
+                .filter_map(|child| self.ctx.arena.pos_at(child))
+                .min()
+                .unwrap_or(param_node.end);
+            self.ctx
+                .parameter_grammar_suppress_spans
+                .push((param_node.pos, boundary));
         }
     }
 
@@ -1699,6 +1755,123 @@ pub(crate) fn check_this_parameter_placement_in_ctx(
                 param_idx,
                 diagnostic_codes::AN_ARROW_FUNCTION_CANNOT_HAVE_A_THIS_PARAMETER,
             );
+        }
+    }
+}
+
+/// Run the parameter-list grammar of tsc's `checkGrammarParameterList` over a
+/// signature written in *type* position — a `FunctionType` or `ConstructorType`
+/// node.
+///
+/// Every other signature form reaches this grammar through
+/// `CheckerState::check_parameter_ordering`, but a function/constructor type is
+/// parsed by `parse_type_parameter_list` and typed by
+/// `get_type_from_function_type`, neither of which routes through it. tsc draws
+/// no such distinction: `checkGrammarFunctionLikeDeclaration` runs the same
+/// `checkGrammarParameterList` for `FunctionType` and `ConstructorType` as for a
+/// function declaration, so `type F = (...a: number[], b: string) =` `> void`
+/// reports TS1014 exactly like `function f(...a: number[], b: string) {}`.
+///
+/// Three arms, in tsc's own order:
+///
+/// - a rest parameter that is not last -> `TS1014`
+/// - a parameter carrying both `?` and an initializer -> `TS1015`
+/// - a required parameter after an optional one -> `TS1016`
+///
+/// Every arm in tsc is a `return grammarErrorOnNode(...)`, so **at most one**
+/// diagnostic is reported per parameter list and the walk stops at the first
+/// failing parameter. `(a?: number, b: string, c: string)` is one TS1016, not
+/// two, and `(a?: number, b: string, ...c: any[], d: any)` is that same lone
+/// TS1016 with no TS1014 behind it.
+///
+/// A parameter with an initializer is not "required" for the TS1016 arm, and it
+/// does not make the parameters after it optional either: tsc's
+/// `isOptionalParameter` compares the parameter's index against the signature's
+/// minimum argument count, so `(a = 1, b: number)` is clean on both sides.
+///
+/// Lives at context level for the same reason as
+/// `check_this_parameter_placement_in_ctx`: the callers run inside
+/// `TypeNodeChecker`, which owns the context but not the checker state.
+pub(crate) fn check_type_position_parameter_list_grammar_in_ctx(
+    ctx: &mut crate::CheckerContext,
+    parameters: &tsz_parser::parser::NodeList,
+) {
+    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+    /// Width of the `...` token tsc anchors `TS1014` on.
+    const DOT_DOT_DOT_LEN: u32 = 3;
+
+    let report_at = |ctx: &mut crate::CheckerContext,
+                     anchor: NodeIndex,
+                     len: Option<u32>,
+                     message: &str,
+                     code: u32| {
+        let Some(node) = ctx.arena.get(anchor) else {
+            return;
+        };
+        let span = node.end.saturating_sub(node.pos);
+        let len = len.map_or(span, |requested| requested.min(span));
+        ctx.error(node.pos, len, message.to_string(), code);
+    };
+
+    let last_index = parameters.nodes.len().saturating_sub(1);
+    let mut seen_optional = false;
+
+    for (index, &param_idx) in parameters.nodes.iter().enumerate() {
+        let Some((is_rest, is_question, has_initializer, name_idx)) = ctx
+            .arena
+            .get(param_idx)
+            .and_then(|param_node| ctx.arena.get_parameter(param_node))
+            .map(|param| {
+                (
+                    param.dot_dot_dot_token,
+                    param.question_token,
+                    param.initializer.is_some(),
+                    param.name,
+                )
+            })
+        else {
+            continue;
+        };
+
+        if is_rest {
+            if index != last_index {
+                report_at(
+                    ctx,
+                    param_idx,
+                    Some(DOT_DOT_DOT_LEN),
+                    diagnostic_messages::A_REST_PARAMETER_MUST_BE_LAST_IN_A_PARAMETER_LIST,
+                    diagnostic_codes::A_REST_PARAMETER_MUST_BE_LAST_IN_A_PARAMETER_LIST,
+                );
+            }
+            // TS1047 (`A rest parameter cannot be optional.`) is already
+            // reported by `parse_type_parameter_list`, so the remaining rest
+            // arms of tsc's loop have no work here. A rest parameter is neither
+            // optional nor required for the arms below.
+            return;
+        }
+
+        if is_question {
+            seen_optional = true;
+            if has_initializer {
+                report_at(
+                    ctx,
+                    name_idx,
+                    None,
+                    diagnostic_messages::PARAMETER_CANNOT_HAVE_QUESTION_MARK_AND_INITIALIZER,
+                    diagnostic_codes::PARAMETER_CANNOT_HAVE_QUESTION_MARK_AND_INITIALIZER,
+                );
+                return;
+            }
+        } else if seen_optional && !has_initializer {
+            report_at(
+                ctx,
+                name_idx,
+                None,
+                diagnostic_messages::A_REQUIRED_PARAMETER_CANNOT_FOLLOW_AN_OPTIONAL_PARAMETER,
+                diagnostic_codes::A_REQUIRED_PARAMETER_CANNOT_FOLLOW_AN_OPTIONAL_PARAMETER,
+            );
+            return;
         }
     }
 }

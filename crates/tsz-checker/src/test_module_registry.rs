@@ -329,6 +329,8 @@ mod fresh_object_literal_union_literal_kind_display_tests;
 mod function_callee_spread_ts2556_tests;
 #[path = "tests/function_parameter_mismatch_elaboration_tests.rs"]
 mod function_parameter_mismatch_elaboration_tests;
+#[path = "tests/function_type_parameter_grammar_tests.rs"]
+mod function_type_parameter_grammar_tests;
 #[path = "tests/function_type_relation_routing_arch_tests.rs"]
 mod function_type_relation_routing_arch_tests;
 #[path = "tests/function_type_return_node_tests.rs"]
@@ -351,6 +353,8 @@ mod generator_yield_self_similar_nesting_tests;
 mod generator_yield_star_next_type_tests;
 #[path = "tests/generator_yieldstar_symbol_iterator_contribution_tests.rs"]
 mod generator_yieldstar_symbol_iterator_contribution_tests;
+#[path = "tests/generator_yieldstar_union_delegate_contribution_tests.rs"]
+mod generator_yieldstar_union_delegate_contribution_tests;
 #[path = "tests/generic_alias_application_display_tests.rs"]
 mod generic_alias_application_display_tests;
 #[path = "tests/generic_argument_suppression_relation_routing_arch_tests.rs"]

@@ -64,6 +64,61 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Display form for a constraint written as a non-generic alias whose body
+    /// is the canonical primitive key union (`string | number | symbol`) — e.g.
+    /// the lib `PropertyKey`, or a user `type Zed = string | number | symbol`.
+    ///
+    /// `tsc` renders such a constraint as the alias name written at the site
+    /// (`PropertyKey`, `Zed`), like every other constraint surface: the spelling
+    /// written at the site decides. tsz's generic-constraint validator resolves
+    /// the constraint's `Lazy` wrapper to the shared canonical key union before
+    /// the diagnostic is built (the assignability check needs the concrete
+    /// union), and the key-union display path then force-expands that union
+    /// structurally — dropping the alias name. Recover the written name from the
+    /// *unresolved* constraint here, before that resolution happens.
+    ///
+    /// A constraint written longhand (`K extends string | number | symbol`)
+    /// arrives without a `Lazy` wrapper, so this returns `None` and the
+    /// structural rendering is preserved, matching `tsc`. The body is required
+    /// to be the key union so that non-key-union aliases (which already keep
+    /// their name through the ordinary display path) and primitive aliases like
+    /// `type S = string` (which `tsc` renders as `string`, not `S`) are left
+    /// untouched.
+    pub(super) fn written_primitive_key_union_alias_display(
+        &self,
+        constraint: TypeId,
+    ) -> Option<String> {
+        use tsz_solver::def::DefKind;
+        let db = self.ctx.types.as_type_database();
+        let def_id = query_common::lazy_def_id(db, constraint)?;
+        let def = self.ctx.definition_store.get(def_id)?;
+        if def.kind != DefKind::TypeAlias || !def.type_params.is_empty() {
+            return None;
+        }
+        // The written spelling at the site is this head alias; its name is what
+        // renders, regardless of any intermediate aliases the body chains
+        // through (`type B = A; type A = string | number | symbol` still renders
+        // `B`).
+        let name = db.resolve_atom_ref(def.name).to_string();
+        // Follow the non-generic alias chain to its underlying body, one hop at
+        // a time via the shared single-hop resolver, and accept only the
+        // canonical key-union shape. The bound is a cycle guard against a
+        // mutually-recursive alias (`type A = B; type B = A`); a genuine chain
+        // terminates earlier when a hop stops making progress.
+        let mut body = def.body?;
+        for _ in 0..8 {
+            if self.is_primitive_key_union_type(body) {
+                return Some(name);
+            }
+            let next = self.resolve_non_generic_alias_body_for_display(body);
+            if next == body {
+                break;
+            }
+            body = next;
+        }
+        None
+    }
+
     pub(super) fn written_keyof_constraint_display(
         &self,
         constraint: TypeId,
