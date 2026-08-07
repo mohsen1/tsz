@@ -385,7 +385,6 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    #[allow(dead_code)]
     pub(in crate::declaration_emitter) fn declaration_name_idx_from_source_arena(
         &self,
         source_arena: &NodeArena,
@@ -418,7 +417,7 @@ impl<'a> DeclarationEmitter<'a> {
             .filter(|name_idx| name_idx.is_some())
     }
 
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub(in crate::declaration_emitter) fn declaration_is_publicly_emittable(
         &self,
         decl_node: &tsz_parser::parser::node::Node,
@@ -1457,7 +1456,7 @@ impl<'a> DeclarationEmitter<'a> {
     /// When the printed type text has NO such non-portable import references,
     /// the type is already nameable from the consumer's perspective and the
     /// deeper type-graph portability walk can be skipped.
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub(in crate::declaration_emitter) fn printed_type_contains_non_portable_import(
         &self,
         printed: &str,

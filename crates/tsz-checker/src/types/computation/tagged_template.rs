@@ -42,7 +42,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// This computes the return type of the tag function and ensures
     /// the template substitution expressions are type-checked.
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub(crate) fn get_type_of_tagged_template_expression(&mut self, idx: NodeIndex) -> TypeId {
         self.get_type_of_tagged_template_expression_with_request(idx, &TypingRequest::NONE)
     }

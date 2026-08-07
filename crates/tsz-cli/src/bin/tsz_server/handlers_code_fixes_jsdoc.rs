@@ -1331,7 +1331,6 @@ impl Server {
     }
 
     /// Find class names defined in the content.
-    #[allow(dead_code)]
     pub(super) fn collect_class_names(content: &str) -> Vec<String> {
         let mut names = Vec::new();
         let bytes = content.as_bytes();

@@ -687,7 +687,7 @@ impl<'a> NarrowingContext<'a> {
 
     /// O(1) discriminant narrowing for the false/excluding branch.
     /// Builds the index if needed, then returns all members NOT matching the literal.
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     fn fast_narrow_excluding_via_discriminant_index(
         &self,
         original_union_type: TypeId,

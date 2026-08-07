@@ -153,7 +153,6 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Collect base member names for override suggestions.
-    #[allow(dead_code)]
     fn collect_base_member_names_for_override(
         &mut self,
         class_idx: NodeIndex,

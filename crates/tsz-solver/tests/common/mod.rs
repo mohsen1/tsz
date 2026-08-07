@@ -2,13 +2,15 @@
 //
 // This module is loaded into multiple test binaries, so consumers vary in which
 // items they actually use. All items carry `#[allow(dead_code)]` to keep
-// cross-binary unused-warning noise quiet.
+// cross-binary unused-warning noise quiet -- `expect` cannot be used here because
+// it would fire `unfulfilled_lint_expectations` in whichever binary does use the
+// item.
 
 use crate::construction::TypeInterner;
 use crate::relations::judge::{DefaultJudge, JudgeConfig};
 use crate::relations::subtype::TypeEnvironment;
 
-#[allow(dead_code)]
+#[allow(dead_code)] // Dead in the lib build; exercised only by tests.
 pub fn create_test_interner() -> TypeInterner {
     TypeInterner::new()
 }
@@ -20,13 +22,13 @@ pub fn create_test_interner() -> TypeInterner {
 /// must be built per-call site. This fixture exposes a `judge()` accessor for
 /// the default config and a `judge_with_config()` accessor for the rare
 /// non-default `JudgeConfig` cases.
-#[allow(dead_code)]
+#[allow(dead_code)] // Dead in the lib build; exercised only by tests.
 pub struct JudgeSetup {
     pub interner: TypeInterner,
     pub env: TypeEnvironment,
 }
 
-#[allow(dead_code)]
+#[allow(dead_code)] // Dead in the lib build; exercised only by tests.
 impl JudgeSetup {
     /// Create a fresh `JudgeSetup` with an empty interner and environment.
     pub fn new() -> Self {

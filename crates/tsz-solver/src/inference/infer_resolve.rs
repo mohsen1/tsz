@@ -1266,7 +1266,10 @@ impl<'a> InferenceContext<'a> {
     /// Infer type parameters from a conditional type.
     /// When a type parameter appears in a conditional type, we can sometimes
     /// infer its value from the check and extends clauses.
-    #[allow(dead_code)] // Reserved for conditional type inference
+    // Dead in the lib build; entered only from `tests/infer_tests/context_overloads_solv16.rs`.
+    // `allow` (not `expect`) is correct: the test build makes it live, which would leave an
+    // `expect` unfulfilled.
+    #[allow(dead_code)]
     pub fn infer_from_conditional(
         &mut self,
         var: InferenceVar,
@@ -1291,7 +1294,9 @@ impl<'a> InferenceContext<'a> {
     }
 
     /// Infer type parameters from a type by traversing its structure.
-    #[allow(dead_code)] // Reserved for conditional type inference (paired with `infer_from_conditional`)
+    // Reachable only through `infer_from_conditional`, which is itself test-only; dead in the
+    // lib build, so it carries its own `allow`.
+    #[allow(dead_code)]
     fn infer_from_type(&mut self, var: InferenceVar, ty: TypeId) {
         let root = self.table.find(var);
 

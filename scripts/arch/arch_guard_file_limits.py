@@ -1020,9 +1020,7 @@ FILE_LINE_LIMIT_CHECKS = [
         ROOT / "crates" / "tsz-solver" / "src" / "contextual" / "extractors.rs",
         2004,
     ),
-    (
-        "Parser boundary: parser/state_declarations.rs size ratchet",
-        ROOT / "crates" / "tsz-parser" / "src" / "parser" / "state_declarations.rs",
-        2001,
-    ),
+    # parser/state_declarations.rs dropped below the 2000-line cap once enum
+    # declaration parsing moved to state_declarations_enums.rs; its ratchet
+    # entry was removed (the allowlist only shrinks).
 ]

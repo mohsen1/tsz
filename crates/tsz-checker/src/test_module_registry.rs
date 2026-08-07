@@ -607,6 +607,8 @@ mod mapped_optional_target_excess_property_tests;
 mod mapped_true_base_constraint_relation_routing_arch_tests;
 #[path = "tests/member_assignment_narrowing_join_tests.rs"]
 mod member_assignment_narrowing_join_tests;
+#[path = "tests/member_modifier_placement_grammar_tests.rs"]
+mod member_modifier_placement_grammar_tests;
 #[path = "tests/member_name_source_quote_fidelity_tests.rs"]
 mod member_name_source_quote_fidelity_tests;
 #[path = "tests/merged_interface_constraint_relation_routing_arch_tests.rs"]
@@ -899,6 +901,8 @@ mod ts18010_jsdoc_tag_anchor_tests;
 mod ts18017_ts18018_private_identifier_shadow_related_info_tests;
 #[path = "tests/ts18031_intersection_conflicting_property_tests.rs"]
 mod ts18031_intersection_conflicting_property_tests;
+#[path = "tests/ts18032_intersection_private_brand_conflict_tests.rs"]
+mod ts18032_intersection_private_brand_conflict_tests;
 #[path = "tests/ts18050_nullish_keyword_without_strict_null_checks_tests.rs"]
 mod ts18050_nullish_keyword_without_strict_null_checks_tests;
 #[path = "tests/ts2322_private_field_narrowing_write_tests.rs"]

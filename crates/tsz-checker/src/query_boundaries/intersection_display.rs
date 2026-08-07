@@ -20,6 +20,17 @@ pub(crate) fn find_disjoint_literal_property_across_intersection(
     tsz_solver::type_queries::find_disjoint_literal_property_across_intersection(db, members)
 }
 
+/// The property name whose declarations across a *written* intersection's
+/// members force a private-brand conflict (`tsc`'s TS18032), forwarding to
+/// [`tsz_solver::type_queries::find_private_brand_conflict_property`]. See
+/// that function for the exact condition and `members`' provenance.
+pub(crate) fn find_private_brand_conflict_property(
+    db: &dyn TypeDatabase,
+    members: &[TypeId],
+) -> Option<tsz_common::interner::Atom> {
+    tsz_solver::type_queries::find_private_brand_conflict_property(db, members)
+}
+
 pub(crate) fn collect_properties<R: TypeResolver>(
     type_id: TypeId,
     db: &dyn TypeDatabase,

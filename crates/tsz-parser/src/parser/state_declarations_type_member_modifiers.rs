@@ -28,6 +28,8 @@ impl ParserState {
                 | SyntaxKind::AbstractKeyword
                 | SyntaxKind::DeclareKeyword
                 | SyntaxKind::ExportKeyword
+                | SyntaxKind::InKeyword
+                | SyntaxKind::OutKeyword
         )
     }
 

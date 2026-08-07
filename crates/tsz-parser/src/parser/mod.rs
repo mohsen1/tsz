@@ -34,6 +34,7 @@ mod speculation;
 pub mod spelling;
 pub mod state;
 mod state_declarations;
+mod state_declarations_enums;
 mod state_declarations_exports;
 mod state_declarations_modules;
 mod state_declarations_type_member_modifiers;
@@ -193,9 +194,6 @@ mod parser_speculative_context_restore_tests;
 #[cfg(test)]
 #[path = "../../tests/parser_top_level_modifier_ts1044_ts1184_tests.rs"]
 mod parser_top_level_modifier_ts1044_ts1184_tests;
-#[cfg(test)]
-#[path = "../../tests/parser_type_member_modifier_grammar_tests.rs"]
-mod parser_type_member_modifier_grammar_tests;
 #[cfg(test)]
 #[path = "../../tests/tests.rs"]
 mod tests;
@@ -367,6 +365,10 @@ mod reserved_parameter_recovery_tests;
 #[cfg(test)]
 #[path = "../../tests/ts1180_property_destructuring_pattern_expected_tests.rs"]
 mod ts1180_property_destructuring_pattern_expected_tests;
+
+#[cfg(test)]
+#[path = "../../tests/type_member_modifier_grammar_tests.rs"]
+mod type_member_modifier_grammar_tests;
 
 // Re-export flags
 pub use flags::{modifier_flags, node_flags, transform_flags};

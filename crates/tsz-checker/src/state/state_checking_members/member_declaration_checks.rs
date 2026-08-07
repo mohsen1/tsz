@@ -1147,6 +1147,23 @@ impl<'a> CheckerState<'a> {
                         );
                     }
                 }
+                // TS1042: 'async' modifier cannot be used on a property
+                // declaration either — `checkGrammarAsyncModifier` allows it
+                // only on method/function-like nodes. `readonly` on a property
+                // is legal, so `readonly async p` is a lone TS1042 with no
+                // ordering collision; anchored at the `async` keyword to match
+                // tsc's column even when the property carries a decorator.
+                syntax_kind_ext::PROPERTY_DECLARATION => {
+                    if let Some(prop) = self.ctx.arena.get_property_decl(node)
+                        && let Some(async_mod_idx) = self.find_async_modifier(&prop.modifiers)
+                    {
+                        self.error_at_node(
+                            async_mod_idx,
+                            "'async' modifier cannot be used here.",
+                            diagnostic_codes::MODIFIER_CANNOT_BE_USED_HERE,
+                        );
+                    }
+                }
                 syntax_kind_ext::CONSTRUCTOR => {
                     // Skip constructor overload checks when the file has parse errors.
                     // Malformed constructors (e.g., `constructor` without parentheses)

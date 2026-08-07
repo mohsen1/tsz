@@ -23,7 +23,6 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Internal implementation of `find_member_in_class_chain` with recursion guard.
-    #[allow(dead_code)]
     fn find_member_in_class_chain_impl(
         &mut self,
         class_idx: NodeIndex,

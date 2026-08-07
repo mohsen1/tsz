@@ -1793,7 +1793,7 @@ enum SameAliasExpansion {
     /// would otherwise terminate silently — report the depth verdict now.
     // Designed verdict not yet wired: `classify_same_alias_expansion` does not
     // return this yet; the `resolve_application` match already handles the arm.
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     DivergentConditional,
     /// Convergent or still-generic: keep the meta-rereduce identity wrapper.
     None,

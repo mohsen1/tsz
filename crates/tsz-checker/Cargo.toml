@@ -1089,6 +1089,9 @@ path = "tests/intersection_target_missing_property_elaboration_tests.rs"
 name = "union_source_missing_property_elaboration_tests"
 path = "tests/union_source_missing_property_elaboration_tests.rs"
 [[test]]
+name = "union_duplicate_literal_member_display_tests"
+path = "tests/union_duplicate_literal_member_display_tests.rs"
+[[test]]
 name = "union_source_member_provenance_display_tests"
 path = "tests/union_source_member_provenance_display_tests.rs"
 [[test]]
@@ -2733,3 +2736,6 @@ path = "tests/ts2433_cross_file_ambient_class_merge_tests.rs"
 [[test]]
 name = "ts2345_primitive_key_union_constraint_display_tests"
 path = "tests/ts2345_primitive_key_union_constraint_display_tests.rs"
+[[test]]
+name = "ts2369_source_order_anchor_tests"
+path = "tests/ts2369_source_order_anchor_tests.rs"
