@@ -602,6 +602,52 @@ impl<'a> CheckerState<'a> {
                     kind: RelatedInformationKind::ChainLink,
                 }]
             }
+            SubtypeFailureReason::PropertyNominalMismatch { property_name } => {
+                // Two unrelated classes each declare a same-spelled modifier
+                // `private`/`protected` member. tsc elaborates the argument
+                // mismatch (TS2345) with the same `Types have separate
+                // declarations of a … property 'x'.` line it attaches to the
+                // assignment (TS2322) surface; route it through the shared
+                // `nominal_mismatch_detail` builder so both surfaces agree.
+                // `nominal_mismatch_detail` evaluates through instantiated forms
+                // itself, so pass the raw types (matching the sibling arm below).
+                let detail = self.nominal_mismatch_detail(source, target, *property_name)?;
+                vec![DiagnosticRelatedInformation {
+                    category: DiagnosticCategory::Error,
+                    code: reason.diagnostic_code(),
+                    file: self.ctx.file_name.clone(),
+                    start,
+                    length,
+                    message_text: detail,
+                    depth: 0,
+                    kind: RelatedInformationKind::ChainLink,
+                }]
+            }
+            SubtypeFailureReason::PrivateIdentifierMemberMismatch { property_name } => {
+                // ES private identifier (`#name`) counterpart of the arm above:
+                // tsc's TS18015 `Property '#x' in type 'A' refers to a different
+                // member …` line, naming each side's declaring class. Shared with
+                // the assignment renderer (`render_private_identifier_member_mismatch`).
+                let (source_str, target_str) = self
+                    .format_top_level_assignability_message_types_at(source, target, anchor_idx);
+                let detail = self.private_identifier_mismatch_detail(
+                    source,
+                    target,
+                    *property_name,
+                    &source_str,
+                    &target_str,
+                );
+                vec![DiagnosticRelatedInformation {
+                    category: DiagnosticCategory::Error,
+                    code: reason.diagnostic_code(),
+                    file: self.ctx.file_name.clone(),
+                    start,
+                    length,
+                    message_text: detail,
+                    depth: 0,
+                    kind: RelatedInformationKind::ChainLink,
+                }]
+            }
             SubtypeFailureReason::ReturnTypeMismatch {
                 source_return,
                 target_return,

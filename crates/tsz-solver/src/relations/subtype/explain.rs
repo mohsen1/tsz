@@ -1565,6 +1565,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             rustc_hash::FxHashSet::default();
         for t_prop in target_props {
             if !t_prop.optional {
+                // Skip the synthetic `__private_brand_*` marker (`tsc` never reports it
+                // missing) so a distinct-brand pair reaches the nominal second pass.
+                if crate::utils::is_synthetic_private_brand_name(
+                    self.interner.resolve_atom_ref(t_prop.name).as_ref(),
+                ) {
+                    continue;
+                }
                 let s_prop = self.lookup_property(source_props, source_shape_id, t_prop.name);
                 if s_prop.is_none() && seen_names.insert(t_prop.name) {
                     missing_with_order.push((
