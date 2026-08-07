@@ -208,6 +208,107 @@ const read: "a" = value.kind;
     );
 }
 
+// ---------------------------------------------------------------------------
+// Multi-conflict ordering: when more than one property name conflicts, tsc
+// always names the first one by a combined declaration order (walk members
+// left to right, and within each member walk its own properties in
+// declaration order — a name is positioned at its *first* occurrence).
+// Oracle-verified against `typescript@7.0.2` for every case below.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn multi_conflict_names_first_declared_property_in_first_member() {
+    // `x` is declared before `y` in the first member, so `x` wins even
+    // though the access is on `x` itself and both `x` and `y` conflict.
+    let diags = check_source_strict(
+        r#"
+interface A { x: 1; y: "a" }
+interface B { x: 2; y: "b" }
+declare const c: A & B;
+c.x;
+"#,
+    );
+    let diag = only(&diags, TS2339);
+    assert_eq!(
+        related(&diag, TS18031).as_deref(),
+        Some(
+            "The intersection 'A & B' was reduced to 'never' because property 'x' has conflicting types in some constituents."
+        ),
+        "got {diags:?}"
+    );
+}
+
+#[test]
+fn multi_conflict_order_follows_first_members_declaration_order_not_alphabetical() {
+    // Source order is `zz` then `aa` (reverse of alphabetical); the winner
+    // is `zz`, proving the pick is declaration order, not name order.
+    let diags = check_source_strict(
+        r#"
+interface P { zz: 1; aa: "a" }
+interface Q { zz: 2; aa: "b" }
+declare const r: P & Q;
+r.zz;
+"#,
+    );
+    let diag = only(&diags, TS2339);
+    assert_eq!(
+        related(&diag, TS18031).as_deref(),
+        Some(
+            "The intersection 'P & Q' was reduced to 'never' because property 'zz' has conflicting types in some constituents."
+        ),
+        "got {diags:?}"
+    );
+}
+
+#[test]
+fn multi_conflict_order_ignores_second_members_declaration_order() {
+    // `A` declares `y` before `x`; `B` declares `x` before `y`. tsc uses the
+    // FIRST member's order, so `y` wins even though `B` (and the access
+    // itself) would suggest `x`.
+    let diags = check_source_strict(
+        r#"
+interface A { y: "a"; x: 1 }
+interface B { x: 2; y: "b" }
+declare const c: A & B;
+c.x;
+"#,
+    );
+    let diag = only(&diags, TS2339);
+    assert_eq!(
+        related(&diag, TS18031).as_deref(),
+        Some(
+            "The intersection 'A & B' was reduced to 'never' because property 'y' has conflicting types in some constituents."
+        ),
+        "got {diags:?}"
+    );
+}
+
+#[test]
+fn multi_conflict_order_appends_property_absent_from_first_member() {
+    // `A` declares only `p` (no conflict on its own). `B` declares `r` then
+    // `q`; `C` declares `q` then `r`. Since `p` never conflicts, the winner
+    // is the first NEW name introduced by a later member: `B`'s own order
+    // puts `r` before `q`, so `r` wins over `q` even though `C` declares
+    // `q` first.
+    let diags = check_source_strict(
+        r#"
+interface A { p: 1 }
+interface B { r: "b"; q: "x" }
+interface C { q: "y"; r: "c" }
+declare const c: A & B & C;
+c.p;
+"#,
+    );
+    let diag = only(&diags, TS2339);
+    assert_eq!(
+        related(&diag, TS18031).as_deref(),
+        Some(
+            "The intersection 'A & B & C' was reduced to 'never' because property 'r' has conflicting types in some constituents."
+        ),
+        "got {diags:?}"
+    );
+}
+
 #[test]
 fn indirect_alias_intersection_has_no_ts18031() {
     // The conflict is real (tsc still reports the elaboration here through
