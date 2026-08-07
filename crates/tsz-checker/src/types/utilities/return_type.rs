@@ -984,6 +984,38 @@ impl<'a> CheckerState<'a> {
         hasher.finish()
     }
 
+    /// Whether an empty (or `return;`-only) function body contextually typed by
+    /// `ctx` should infer `undefined` rather than its natural `void`.
+    ///
+    /// An empty body returns `void`. `tsc` lets it be treated as `undefined` only
+    /// when the contextual return type needs `undefined` specifically — e.g.
+    /// `const f: () => undefined = () => {}`. When the context also accepts `void`
+    /// (a bare `void`, a `void | T` union, or a still-unresolved generic return
+    /// position a `void` lower bound satisfies), `void` is correct. Preferring
+    /// `undefined` there is unsound for generic-call inference: a naked type
+    /// parameter in a callback-return union (`(v) => U | X`) would infer
+    /// `U = undefined` instead of `void`, and the inferred body type would
+    /// oscillate between `void` and `undefined` across inference rounds as `U` is
+    /// fixed and re-substituted — corrupting the call and producing spurious
+    /// `TS2345`s (#16632).
+    fn empty_body_prefers_undefined(&mut self, ctx: TypeId) -> bool {
+        // Keep the natural `void` whenever the context accepts it — the top types
+        // (`any`/`unknown`), `void` itself, or a still-unresolved inference target
+        // (a type parameter or, since that predicate also matches them, an `infer`
+        // placeholder).
+        if ctx == TypeId::VOID
+            || ctx == TypeId::ANY
+            || ctx == TypeId::UNKNOWN
+            || self.contains_type_parameters_cached(ctx)
+        {
+            return false;
+        }
+        // Otherwise narrow to `undefined` only when the context needs it
+        // specifically: it accepts `undefined` but not `void` (`() => undefined`).
+        self.return_relation_outcome(TypeId::UNDEFINED, ctx).related
+            && !self.return_relation_outcome(TypeId::VOID, ctx).related
+    }
+
     /// Inner implementation of return type inference (no diagnostic/cache cleanup).
     fn infer_return_type_from_body_inner(
         &mut self,
@@ -1071,14 +1103,13 @@ impl<'a> CheckerState<'a> {
             // (e.g., `number`), fall through to the void/contextual check below.
             if saw_empty {
                 if let Some(ctx) = return_context {
-                    // Only narrow to `undefined` when the contextual return type is a
-                    // specific undefined-compatible type (not `any`/`unknown`/`void`).
-                    // `any`/`unknown` accept everything — don't change inference for them.
-                    if ctx != TypeId::VOID
-                        && ctx != TypeId::ANY
-                        && ctx != TypeId::UNKNOWN
-                        && self.return_relation_outcome(TypeId::UNDEFINED, ctx).related
-                    {
+                    // Only narrow to `undefined` when the context needs it
+                    // specifically. Keep the natural `void` whenever the context
+                    // also accepts `void` (`void`, `void | T`, or a not-yet-fixed
+                    // inference target): coercing those to `undefined` makes an
+                    // empty callback body's inferred return type oscillate as a
+                    // contextual union's type parameters get fixed (see below).
+                    if self.empty_body_prefers_undefined(ctx) {
                         return TypeId::UNDEFINED;
                     }
                 } else {
@@ -1094,13 +1125,8 @@ impl<'a> CheckerState<'a> {
                 // When contextual return type expects `undefined` (not void/any/unknown),
                 // use `undefined` so `const f: () => undefined = () => {}` doesn't produce TS2322.
                 // tsc applies contextual typing to infer the return type of such lambdas.
-                // Exclude `any`/`unknown` — they accept everything and shouldn't change inference.
-                if let Some(ctx) = return_context
-                    && ctx != TypeId::VOID
-                    && ctx != TypeId::ANY
-                    && ctx != TypeId::UNKNOWN
-                    && self.return_relation_outcome(TypeId::UNDEFINED, ctx).related
-                {
+                // Keep `void` whenever the context also accepts it (see the helper).
+                if return_context.is_some_and(|ctx| self.empty_body_prefers_undefined(ctx)) {
                     TypeId::UNDEFINED
                 } else {
                     TypeId::VOID

@@ -375,6 +375,8 @@ mod generic_callback_outer_context_tests;
 mod generic_callback_return_outer_annotation_leak_tests;
 #[path = "tests/generic_callback_sibling_arg_inference_tests.rs"]
 mod generic_callback_sibling_arg_inference_tests;
+#[path = "tests/generic_callback_union_return_void_body_tests.rs"]
+mod generic_callback_union_return_void_body_tests;
 #[path = "tests/generic_checker_mod_relation_routing_arch_tests.rs"]
 mod generic_checker_mod_relation_routing_arch_tests;
 #[path = "tests/generic_class_constructor_literal_preservation_tests.rs"]

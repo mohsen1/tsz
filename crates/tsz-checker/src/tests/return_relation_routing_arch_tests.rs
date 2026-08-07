@@ -79,12 +79,31 @@ fn return_statement_diagnostics_use_return_relation_outcome_boundary() {
             .contains("diagnostic_relation_boolean_guard(when_false,expected_return_type)"),
         "expression-bodied conditional false returns should not pre-gate with a raw boolean relation"
     );
+    // The `return;`/fall-through empty-body coercion decision is centralized in
+    // `empty_body_prefers_undefined`, which both inference sites call. That helper
+    // must reach its answer through the return-shaped relation outcome — for
+    // `undefined` (the coerced type) and for `void` (whose acceptance keeps the
+    // natural `void` return) — never a raw boolean assignability probe.
     assert_eq!(
         compact_return_type_source
             .matches("return_relation_outcome(TypeId::UNDEFINED,ctx).related")
             .count(),
+        1,
+        "empty/fallthrough return inference should use a single return-shaped `undefined` relation outcome"
+    );
+    assert_eq!(
+        compact_return_type_source
+            .matches("return_relation_outcome(TypeId::VOID,ctx).related")
+            .count(),
+        1,
+        "empty/fallthrough return inference should gate `undefined` on a return-shaped `void` relation outcome"
+    );
+    assert_eq!(
+        compact_return_type_source
+            .matches("empty_body_prefers_undefined(ctx)")
+            .count(),
         2,
-        "contextual empty/fallthrough return inference should use return-shaped relation outcomes"
+        "both the `return;` and fall-through inference sites should route through the shared helper"
     );
     assert!(
         !compact_return_type_source.contains("is_assignable_to(TypeId::UNDEFINED,ctx)"),
