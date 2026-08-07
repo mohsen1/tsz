@@ -2709,3 +2709,6 @@ path = "tests/symbol_key_index_signature_selection_tests.rs"
 [[test]]
 name = "symbol_key_nested_literal_excess_property_tests"
 path = "tests/symbol_key_nested_literal_excess_property_tests.rs"
+[[test]]
+name = "symbol_index_nested_literal_drill_in_ts2353_tests"
+path = "tests/symbol_index_nested_literal_drill_in_ts2353_tests.rs"
