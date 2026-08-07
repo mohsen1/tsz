@@ -162,16 +162,18 @@ impl ParserState {
                         diagnostic_codes::MODIFIER_ALREADY_SEEN,
                     );
                 }
-                if seen_readonly || seen_override || seen_accessor || seen_async {
+                // `readonly` and `async` are excluded from this ordering
+                // check: `abstract` and `readonly` legally coexist in either
+                // order (a `readonly abstract` property is clean in tsc), and
+                // `abstract`/`async` never coexist at all (tsc rejects the
+                // combination outright with TS1243 regardless of order, not
+                // this ordering diagnostic).
+                if seen_override || seen_accessor {
                     use tsz_common::diagnostics::diagnostic_codes;
                     let other = if seen_override {
                         "override"
-                    } else if seen_readonly {
-                        "readonly"
-                    } else if seen_accessor {
-                        "accessor"
                     } else {
-                        "async"
+                        "accessor"
                     };
                     self.parse_error_at_current_token(
                         &format!("'abstract' modifier must precede '{other}' modifier."),
@@ -198,13 +200,11 @@ impl ParserState {
                         "'readonly' modifier cannot be used with 'accessor' modifier.",
                         diagnostic_codes::MODIFIER_CANNOT_BE_USED_WITH_MODIFIER,
                     );
-                } else if seen_async {
-                    use tsz_common::diagnostics::diagnostic_codes;
-                    self.parse_error_at_current_token(
-                        "'readonly' modifier must precede 'async' modifier.",
-                        diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
-                    );
                 }
+                // No `seen_async` ordering check here: `readonly` (data-member
+                // only) and `async` (method-only) never share a legal member
+                // kind, so tsc never reaches this ordering diagnostic for the
+                // pair — the member's own TS1024/TS1042 already covers it.
                 seen_readonly = true;
             } else if current_kind == SyntaxKind::OverrideKeyword {
                 // Check for duplicate override modifier
@@ -271,13 +271,10 @@ impl ParserState {
                         diagnostic_codes::MODIFIER_CANNOT_BE_USED_WITH_MODIFIER,
                     );
                 }
-                if seen_async {
-                    use tsz_common::diagnostics::diagnostic_codes;
-                    self.parse_error_at_current_token(
-                        "'accessor' modifier must precede 'async' modifier.",
-                        diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
-                    );
-                }
+                // No `seen_async` ordering check here: `accessor` (data-member
+                // only) and `async` (method-only) never share a legal member
+                // kind, so tsc never reaches this ordering diagnostic for the
+                // pair — the member's own TS1042 already covers it.
                 seen_accessor = true;
             } else if current_kind == SyntaxKind::AsyncKeyword {
                 // Check for duplicate async modifier

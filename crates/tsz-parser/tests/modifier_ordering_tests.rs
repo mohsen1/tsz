@@ -147,6 +147,147 @@ fn accessor_readonly_emits_ts1243_without_ts1029() {
 }
 
 // =========================================================================
+// TS1029: `async` never legally coexists with `readonly`/`accessor`
+// (function-only vs data-member-only modifiers), and `readonly` legally
+// coexists with `abstract` in EITHER order — tsc never reaches the ordering
+// diagnostic in any of these shapes, matching only the member's own
+// TS1024/TS1042/TS1243. Oracle-verified against typescript@7.0.2 (#16553
+// coordination-board thread).
+// =========================================================================
+
+#[test]
+fn readonly_async_property_no_ts1029() {
+    // `readonly` before `async` on a property: tsc reports only TS1042
+    // ('async' cannot be used here); it never reaches the ordering check
+    // because `async` is illegal on a property regardless of order.
+    let source = "class C { readonly async p: number = 1; }";
+    let diagnostics = parse_diagnostics(source);
+    assert!(
+        !has_error(source, 1029),
+        "`readonly async` on a property should not produce TS1029: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn async_readonly_method_no_ts1029() {
+    // `async` before `readonly` on a method: tsc reports only TS1024
+    // ('readonly' cannot appear on a method); still no ordering diagnostic.
+    let source = "class C { async readonly m(): Promise<number> { return 1; } }";
+    let diagnostics = parse_diagnostics(source);
+    assert!(
+        !has_error(source, 1029),
+        "`async readonly` on a method should not produce TS1029: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn async_accessor_property_no_ts1029() {
+    // `async` before `accessor`: tsc reports only TS1042; `async` never
+    // legally applies to an auto-accessor property.
+    let source = "class C { async accessor p: number = 1; }";
+    let diagnostics = parse_diagnostics(source);
+    assert!(
+        !has_error(source, 1029),
+        "`async accessor` should not produce TS1029: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn readonly_abstract_property_no_ts1029() {
+    // `readonly` before `abstract`: legal in tsc in EITHER order on an
+    // abstract property (unlike `override`/`accessor`, which are genuinely
+    // order-constrained relative to `abstract`), so no TS1029 either way.
+    let source = "abstract class C { readonly abstract p: number; }";
+    let diagnostics = parse_diagnostics(source);
+    assert!(
+        !has_error(source, 1029),
+        "`readonly abstract` should not produce TS1029 — both orders are legal: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn abstract_readonly_property_no_ts1029() {
+    let source = "abstract class C { abstract readonly p: number; }";
+    let diagnostics = parse_diagnostics(source);
+    assert!(
+        !has_error(source, 1029),
+        "`abstract readonly` should not produce TS1029: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn abstract_async_method_no_ts1029() {
+    // `async` before `abstract`: tsc reports only TS1243 ('async' cannot be
+    // used with 'abstract') — never the ordering diagnostic, since an
+    // abstract member can never have a body an `async` modifier would apply
+    // to. TS1243 itself is a checker-level (not parser-level) diagnostic, so
+    // it is not asserted here — see `crates/tsz-checker`'s modifier-grammar
+    // suite for that half.
+    let source = "abstract class C { async abstract m(): Promise<number>; }";
+    let diagnostics = parse_diagnostics(source);
+    assert!(
+        !has_error(source, 1029),
+        "`async abstract` should not produce TS1029: {diagnostics:?}"
+    );
+}
+
+// Regression guard: unlike `abstract`/`readonly` above, `abstract`/`override`
+// and `abstract`/`accessor` ARE genuinely order-constrained (`abstract` must
+// come first) and must keep reporting TS1029 in the wrong order — only the
+// `readonly`/`async` triggers were removed from the `abstract` branch's
+// ordering check, not `override`/`accessor`.
+
+#[test]
+fn abstract_override_correct_order_no_ts1029() {
+    let source = r"
+class B { m(): void {} }
+abstract class D extends B {
+    abstract override m(): void;
+}
+";
+    assert!(
+        !has_error(source, 1029),
+        "`abstract override` is the correct order and must not produce TS1029: {:?}",
+        parse_diagnostics(source)
+    );
+}
+
+#[test]
+fn override_abstract_wrong_order_still_ts1029() {
+    let source = r"
+class B { m(): void {} }
+abstract class D extends B {
+    override abstract m(): void;
+}
+";
+    assert!(
+        has_error(source, 1029),
+        "`override abstract` (wrong order) must still produce TS1029: {:?}",
+        parse_diagnostics(source)
+    );
+}
+
+#[test]
+fn abstract_accessor_correct_order_no_ts1029() {
+    let source = "abstract class C { abstract accessor p: number; }\n";
+    assert!(
+        !has_error(source, 1029),
+        "`abstract accessor` is the correct order and must not produce TS1029: {:?}",
+        parse_diagnostics(source)
+    );
+}
+
+#[test]
+fn accessor_abstract_wrong_order_still_ts1029() {
+    let source = "abstract class C { accessor abstract p: number; }\n";
+    assert!(
+        has_error(source, 1029),
+        "`accessor abstract` (wrong order) must still produce TS1029: {:?}",
+        parse_diagnostics(source)
+    );
+}
+
+// =========================================================================
 // TS1040: override in ambient context (declare)
 // =========================================================================
 
