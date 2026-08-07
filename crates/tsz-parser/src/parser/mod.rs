@@ -374,6 +374,10 @@ mod type_member_modifier_grammar_tests;
 #[path = "../../tests/for_header_private_identifier_binding_tests.rs"]
 mod for_header_private_identifier_binding_tests;
 
+#[cfg(test)]
+#[path = "../../tests/keyword_identifier_missing_semicolon_cascade_tests.rs"]
+mod keyword_identifier_missing_semicolon_cascade_tests;
+
 // Re-export flags
 pub use flags::{modifier_flags, node_flags, transform_flags};
 
