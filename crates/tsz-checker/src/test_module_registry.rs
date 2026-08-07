@@ -983,6 +983,8 @@ mod unique_symbol_assignment_ts2322_tests;
 mod unique_symbol_member_lookup_family_tests;
 #[path = "tests/unresolved_def_eval_cache_backstop_tests.rs"]
 mod unresolved_def_eval_cache_backstop_tests;
+#[path = "tests/unused_typeof_type_query_reference_tests.rs"]
+mod unused_typeof_type_query_reference_tests;
 #[path = "tests/using_declaration_implicit_any_tests.rs"]
 mod using_declaration_implicit_any_tests;
 #[path = "tests/variadic_tuple_alias_display_tests.rs"]

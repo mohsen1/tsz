@@ -1177,6 +1177,14 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Whether `idx` sits in a position that resolves in the **type** namespace.
+    ///
+    /// The entity name of a `typeof` type query is deliberately excluded: a
+    /// `TYPE_QUERY` is syntactically a type node, but its operand is resolved in
+    /// the value namespace and is a genuine read of the value it names, exactly
+    /// as `tsc` treats it (`checkTypeQuery` routes the entity name through
+    /// `checkExpressionOrQualifiedName`). Classifying it as a type context makes
+    /// `typeof x` invisible to the unused-identifier reference scan.
     fn node_is_in_type_context(&self, idx: NodeIndex) -> bool {
         let mut current = idx;
         for _ in 0..20 {
@@ -1190,6 +1198,14 @@ impl<'a> CheckerState<'a> {
             let Some(parent_node) = self.ctx.arena.get(parent) else {
                 return false;
             };
+            // Checked before the generic type-node test: `TYPE_QUERY` answers
+            // `is_type_node()`, so the operand of `typeof` would otherwise be
+            // classified as a type reference. A type argument written on the
+            // query (`typeof f<string>`) still reaches its own type node first
+            // and keeps the type-context answer.
+            if parent_node.kind == syntax_kind_ext::TYPE_QUERY {
+                return false;
+            }
             if parent_node.is_type_node()
                 || parent_node.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS
             {
