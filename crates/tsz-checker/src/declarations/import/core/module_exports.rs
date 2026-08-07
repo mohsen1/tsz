@@ -734,6 +734,20 @@ impl<'a> CheckerState<'a> {
                             diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
                         );
                     }
+                } else if has_interface && !has_function && !has_class && value_count == 0 {
+                    // Every conflicting default export is an interface
+                    // declaration. tsc merges them into the one `default`
+                    // type symbol — the same as any ordinary interface merge,
+                    // keyed on the export name `default` rather than each
+                    // interface's own local spelling — so the
+                    // multiple-default complaint never fires and no other
+                    // diagnostic is produced either. `value_count == 0` is
+                    // exact here: every non-interface default-export shape
+                    // (an identifier, a class, a function without a merge
+                    // partner) increments it in the classification loop
+                    // above, so this arm is reached only when every entry in
+                    // `effective_default_indices` is itself an interface
+                    // declaration.
                 } else if has_named_default_export
                     && effective_default_indices.iter().any(|&idx| {
                         let Some(clause_idx) = self
@@ -816,8 +830,15 @@ impl<'a> CheckerState<'a> {
                 } else {
                     // Fallback: TS2528 "A module cannot have multiple default exports"
                     // Skip interface declarations when a function or class exists
-                    // (interface can merge with those). When no function/class is
-                    // present, the interface is truly conflicting and must get TS2528.
+                    // (interface can merge with those). An interface-only run
+                    // never reaches this arm at all — the `has_interface &&
+                    // !has_function && !has_class && value_count == 0` arm
+                    // above owns that merge and produces no diagnostic. What
+                    // remains here is an interface alongside some OTHER
+                    // non-function/class value (e.g. an identifier referring
+                    // to a type alias), which is a genuine conflict and does
+                    // get TS2528 on every default export, interfaces
+                    // included.
                     for &export_idx in &effective_default_indices {
                         let is_interface = self
                             .ctx
