@@ -6,6 +6,8 @@
 //! - Overload signature consistency (TS2383, TS2385, TS2386)
 //! - Built-in global identifier conflicts (TS2397)
 
+#[path = "duplicate_identifiers_flag_agreement.rs"]
+mod duplicate_identifiers_flag_agreement;
 #[path = "duplicate_identifiers_followup.rs"]
 mod duplicate_identifiers_followup;
 #[path = "duplicate_identifiers_merge.rs"]
@@ -254,118 +256,10 @@ impl<'a> CheckerState<'a> {
             if declarations.len() <= 1 {
                 continue;
             }
-            let mut func_decls_for_2384 = Vec::new();
-            // The implementation is excluded from the overload list but is still
-            // needed: tsc's `getCanonicalOverload` may take the canonical flags
-            // from it. See the TS2384 report below.
-            let mut implementation_for_2384: Option<NodeIndex> = None;
-            let mut has_ambient_func = false;
-            let mut has_non_ambient_func = false;
-            for &(decl_idx, flags, is_local, _, _) in &declarations {
-                if is_local && (flags & (symbol_flags::FUNCTION | symbol_flags::METHOD)) != 0 {
-                    // TS2384 only applies to overload signatures (bodyless declarations).
-                    // Skip implementations (declarations with bodies) — a non-ambient
-                    // implementation following ambient overloads is valid.
-                    if self.function_has_body(decl_idx) {
-                        if implementation_for_2384.is_none() {
-                            implementation_for_2384 = Some(decl_idx);
-                        }
-                        continue;
-                    }
-                    func_decls_for_2384.push(decl_idx);
-                    if self.is_ambient_declaration(decl_idx) {
-                        has_ambient_func = true;
-                    } else {
-                        has_non_ambient_func = true;
-                    }
-                }
-            }
-            if !func_decls_for_2384.is_empty() {
-                // tsc's `getCanonicalOverload` (checker.ts:43088) takes the
-                // canonical set of flags from the *implementation* when it
-                // shares a container with the first overload, and only
-                // otherwise from the first overload. The container check is
-                // what keeps lib.d.ts overloads from being blamed for a local
-                // implementation. Reading the flags off the first overload
-                // unconditionally blames the wrong declaration whenever the
-                // implementation is the one the majority agrees with.
-                let first_overload = func_decls_for_2384[0];
-                let first_parent = self
-                    .ctx
-                    .arena
-                    .get_extended(first_overload)
-                    .map(|ext| ext.parent);
-                let canonical = implementation_for_2384
-                    .filter(|&impl_idx| {
-                        first_parent.is_some()
-                            && self.ctx.arena.get_extended(impl_idx).map(|ext| ext.parent)
-                                == first_parent
-                    })
-                    .unwrap_or(first_overload);
-
-                if has_ambient_func && has_non_ambient_func {
-                    let ref_is_ambient = self.is_ambient_declaration(canonical);
-                    for &decl_idx in &func_decls_for_2384 {
-                        if self.is_ambient_declaration(decl_idx) != ref_is_ambient {
-                            let error_node =
-                                self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
-                            self.error_at_node(
-                                error_node,
-                                diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_AMBIENT_OR_NON_AMBIENT,
-                                diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_AMBIENT_OR_NON_AMBIENT,
-                            );
-                        }
-                    }
-                }
-
-                // TS2383: every bodyless overload signature must agree on export
-                // status with the canonical declaration (implementation, or first
-                // overload if none shares its container). tsc's
-                // `checkFlagAgreementBetweenOverloads` runs this even for a single
-                // bodyless signature against the implementation, unlike the TS2384
-                // ambient check's 2+-signature grouping above.
-                //
-                // Uses `effective_declaration_container`, not raw `.parent`: the
-                // parser wraps an exported statement in an `EXPORT_DECLARATION`
-                // node, so an exported/non-exported pair in the same block would
-                // otherwise look like different containers, defeating this check.
-                //
-                // Exempt inside an ambient module/namespace body (`export` there
-                // doesn't carry module-export meaning); `declare global { ... }`
-                // and a bare top-level `declare function` stay subject to it.
-                if !self.is_within_ambient_module_container(first_overload) {
-                    let first_overload_container =
-                        self.effective_declaration_container(first_overload);
-                    let export_canonical = implementation_for_2384
-                        .filter(|&impl_idx| {
-                            first_overload_container.is_some()
-                                && self.effective_declaration_container(impl_idx)
-                                    == first_overload_container
-                        })
-                        .unwrap_or(first_overload);
-                    let ref_exported = declarations
-                        .iter()
-                        .find(|&&(di, _, _, _, _)| di == export_canonical)
-                        .map(|&(_, _, _, is_exported, _)| is_exported)
-                        .unwrap_or(false);
-                    for &decl_idx in &func_decls_for_2384 {
-                        let is_exported = declarations
-                            .iter()
-                            .find(|&&(di, _, _, _, _)| di == decl_idx)
-                            .map(|&(_, _, _, is_exported, _)| is_exported)
-                            .unwrap_or(false);
-                        if is_exported != ref_exported {
-                            let error_node =
-                                self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
-                            self.error_at_node(
-                                error_node,
-                                diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_EXPORTED_OR_NON_EXPORTED,
-                                diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_EXPORTED_OR_NON_EXPORTED,
-                            );
-                        }
-                    }
-                }
-            }
+            // TS2383 / TS2384: overload-group export/ambient flag agreement,
+            // extracted to `duplicate_identifiers_flag_agreement.rs`. Returns the
+            // bodyless overload signatures the TS2385/TS2386 arms below consume.
+            let func_decls_for_2384 = self.check_overload_flag_agreement(&declarations);
 
             // TS2385: Overload signatures must all be public, private or protected
             // Applies to class method overloads with mixed access modifiers
@@ -634,7 +528,18 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                     let non_default_spaces = exported_spaces | non_exported_spaces;
-                    let default_conflict_spaces = default_exported_spaces & non_default_spaces;
+                    // A group made entirely of function declarations is one
+                    // overload group, not a merged declaration: visibility
+                    // disagreements there are overload flag-agreement errors
+                    // (TS2383, via the pass above) or duplicate-implementation
+                    // errors (TS2393), never TS2652/TS2395. A single non-function
+                    // member (namespace, class, variable) restores both checks
+                    // for the whole group.
+                    let default_conflict_spaces = if all_functions {
+                        0
+                    } else {
+                        default_exported_spaces & non_default_spaces
+                    };
                     let export_local_conflict_spaces =
                         if all_functions || suppress_ts2395_for_ambient {
                             0

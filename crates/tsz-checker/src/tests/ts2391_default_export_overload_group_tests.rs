@@ -20,10 +20,9 @@
 //! (`state_checking_members/default_export_overload_group.rs`).
 //!
 //! Binder names vary across rows; no row depends on identifier spelling.
-//! Known residuals deliberately not asserted here: mixed default/non-default
-//! same-name runs (tsc: `TS2383`; tsz currently reports `TS2652`) and
-//! export/non-export flag agreement (`TS2383`), which belong to a different
-//! diagnostic family.
+//! Mixed default/non-default and export/non-export flag agreement
+//! (`TS2383`/`TS2384`) is a different diagnostic family, covered by
+//! `ts2383_overload_flag_agreement_tests`.
 
 use crate::context::ScriptTarget;
 use crate::test_utils::{DiagnosticShape, assert_diagnostic_shapes_exactly, check_source};
