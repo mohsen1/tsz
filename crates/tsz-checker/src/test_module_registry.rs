@@ -573,6 +573,8 @@ mod lazy_lib_member_access_tests;
 mod lib_abstract_member_ts2515_tests;
 #[path = "tests/libtype_structural_name_lookup_arch_tests.rs"]
 mod libtype_structural_name_lookup_arch_tests;
+#[path = "tests/literal_spelled_computed_key_index_signature_code_tests.rs"]
+mod literal_spelled_computed_key_index_signature_code_tests;
 #[path = "tests/local_type_alias_shadowing_tests.rs"]
 mod local_type_alias_shadowing_tests;
 #[path = "tests/logical_assignment_member_narrowing_tests.rs"]

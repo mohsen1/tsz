@@ -833,12 +833,18 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // TS2418 applies when:
-                //   (a) the key is computed, AND
-                //   (b) either the key is a symbol (unique/well-known, never TS2322)
-                //       or the key is a numeric/string literal but the target has
-                //       no named property for it (matches only via index signature).
-                // When a literal key like `[0]` or `["x"]` resolves to a named
-                // property in the target, tsc uses TS2322 instead.
+                //   (a) the key is computed AND late-bound — an identifier over
+                //       a `const`, an enum member, or a symbol reference — since
+                //       tsc's `isComputedNonLiteralName` is false for a
+                //       literal-spelled computed name (`["x"]`, `[0]`,
+                //       `` [`x`] ``), which is an ordinary property name and
+                //       takes TS2322/TS2353 no matter how the target matches it,
+                //       AND
+                //   (b) the late-bound key has no named property in the target
+                //       (it matches only via an index signature), since a
+                //       late-bound key resolving to a named member takes TS2322.
+                let key_is_late_bound = is_computed_property
+                    && !self.computed_member_name_is_literal_spelled(prop_name_idx);
                 let target_has_named_member_for_key = is_computed_property
                     && self.target_has_named_property_for_key(effective_param_type, &prop_name);
                 // A *missing-property* failure keeps its own code even when the
@@ -862,7 +868,7 @@ impl<'a> CheckerState<'a> {
                                 | RelationFailure::MissingProperties { .. }
                         )
                     );
-                if is_computed_property
+                if key_is_late_bound
                     && !(is_computed_literal_key && target_has_named_member_for_key)
                     && !computed_failure_is_missing_property
                 {
