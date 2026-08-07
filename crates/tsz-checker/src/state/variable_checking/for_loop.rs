@@ -725,6 +725,39 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Whether an optional-chain access is rooted on an `any`/error receiver.
+    ///
+    /// tsc propagates `any` through an optional chain, so `any?.b.c` (or a chain
+    /// whose root identifier is `any`) is itself `any`. Walking to the root and
+    /// testing its type is more reliable than the chain's evaluated type for the
+    /// for-in TS2405/TS2780 decision: a preceding invalid `root?.b = <literal>`
+    /// can leave a stale assigned-value type on the chain result even though the
+    /// root — and therefore the whole chain per tsc — is `any`.
+    fn optional_chain_root_receiver_is_any_like(&mut self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        let mut current = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        loop {
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+            let next = match node.kind {
+                k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+                {
+                    self.ctx.arena.get_access_expr(node).map(|a| a.expression)
+                }
+                k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                    self.ctx.arena.get_call_expr(node).map(|c| c.expression)
+                }
+                _ => break,
+            };
+            let Some(expr) = next else { return false };
+            current = self.ctx.arena.skip_parenthesized_and_assertions(expr);
+        }
+        let root_type = self.get_type_of_node(current);
+        root_type == TypeId::ANY || root_type == TypeId::ERROR
+    }
+
     /// Check assignability for for-in/of expression initializer (non-declaration case).
     ///
     /// For `for (v of expr)` where `v` is a pre-declared variable (not `var v`/`let v`/`const v`),
@@ -756,23 +789,26 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // TS2780/TS2781: The left-hand side of a 'for...in'/'for...of' statement
-        // may not be an optional property access.
-        if self.is_optional_chain_access(initializer) {
+        // TS2781: The left-hand side of a 'for...of' statement may not be an
+        // optional property access. tsc's `checkForOfStatement` calls
+        // `checkReferenceExpression` unconditionally, so this fires regardless
+        // of the chain's element type.
+        //
+        // The analogous TS2780 for `for...in` is NOT unconditional. tsc's
+        // `checkForInStatement` computes the head's real type first and only
+        // reaches `checkReferenceExpression` (the TS2780 source) in the `else`
+        // branch of `if !isTypeAssignableTo(indexType, leftType) { TS2405 }
+        // else { checkReferenceExpression(...) }` — so TS2405 wins whenever the
+        // LHS type is not string/any, and TS2780 only fires once that type check
+        // passes. The for-in TS2405/TS2780 selection is owned by the optional-
+        // chain block below, which computes the head's read type to decide.
+        if is_for_of && self.is_optional_chain_access(initializer) {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-            if is_for_of {
-                self.error_at_node(
-                    initializer,
-                    diagnostic_messages::THE_LEFT_HAND_SIDE_OF_A_FOR_OF_STATEMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
-                    diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_OF_STATEMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
-                );
-            } else {
-                self.error_at_node(
-                    initializer,
-                    diagnostic_messages::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
-                    diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
-                );
-            }
+            self.error_at_node(
+                initializer,
+                diagnostic_messages::THE_LEFT_HAND_SIDE_OF_A_FOR_OF_STATEMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
+                diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_OF_STATEMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
+            );
         }
 
         // TS2487: For-of LHS must be a variable or a property access.
@@ -894,6 +930,57 @@ impl<'a> CheckerState<'a> {
                     .for_in_lhs_relation_outcome(element_type, var_type)
                     .related
             {
+                self.error_at_node(
+                    initializer,
+                    diagnostic_messages::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_MUST_BE_OF_TYPE_STRING_OR_ANY,
+                    diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_MUST_BE_OF_TYPE_STRING_OR_ANY,
+                );
+            }
+        }
+
+        // TS2405 vs TS2780 for an optional-chain for-in head. tsc gates these
+        // mutually exclusively: `checkForInStatement` computes the head
+        // expression's real type (`checkExpression`, a READ) and reports TS2405
+        // when that type is not assignable from the index type (i.e. not
+        // string/any), otherwise reaches `checkReferenceExpression`, which
+        // reports TS2780 for the optional chain itself.
+        //
+        // The head's type is read through the value path (`get_type_of_node`),
+        // NOT the write-target path (`get_type_of_assignment_target`): a for-in
+        // optional-chain head is a write-target context, so that path
+        // short-circuits to `any` (erasing the type this decision needs) and,
+        // when forced to resolve the chain, runs write-flow probes that leak the
+        // spurious TS2339/TS7053 that got #16660 reverted. The read path returns
+        // the chain's genuine `T | undefined` type and emits only the
+        // diagnostics tsc's `checkExpression` itself would.
+        if !is_for_of && self.is_optional_chain_access(initializer) {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            let head_type = self.get_type_of_node(initializer);
+            // `isTypeAssignableTo(indexType, leftType)` — TS2405 fires only when
+            // the LHS type rejects the for-in key type. `unknown` and the error
+            // type are permissive on both sides, matching tsc's assignability.
+            //
+            // `any` propagates through an optional chain: when the chain's root
+            // receiver is `any`/error, the whole head is `any` (tsc), so the type
+            // check passes and TS2780 owns the head. This is checked directly on
+            // the root because an invalid prior `a?.b = <literal>` (itself TS2779)
+            // can leave a stale assigned-value type on the chain result even on a
+            // bare `any` receiver — the root's own type is the reliable witness of
+            // the any-propagation `tsc` performs through the chain.
+            let lhs_type_accepts_index = head_type == TypeId::STRING
+                || head_type == TypeId::ANY
+                || head_type == TypeId::UNKNOWN
+                || self.optional_chain_root_receiver_is_any_like(initializer)
+                || self
+                    .for_in_lhs_relation_outcome(element_type, head_type)
+                    .related;
+            if lhs_type_accepts_index {
+                self.error_at_node(
+                    initializer,
+                    diagnostic_messages::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
+                    diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
+                );
+            } else {
                 self.error_at_node(
                     initializer,
                     diagnostic_messages::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_MUST_BE_OF_TYPE_STRING_OR_ANY,
