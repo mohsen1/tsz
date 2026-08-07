@@ -355,6 +355,8 @@ mod generator_yieldstar_symbol_iterator_contribution_tests;
 mod generic_alias_application_display_tests;
 #[path = "tests/generic_argument_suppression_relation_routing_arch_tests.rs"]
 mod generic_argument_suppression_relation_routing_arch_tests;
+#[path = "tests/generic_call_bivariant_callback_nonstrict_tests.rs"]
+mod generic_call_bivariant_callback_nonstrict_tests;
 #[path = "tests/generic_call_enclosing_type_param_return_tests.rs"]
 mod generic_call_enclosing_type_param_return_tests;
 #[path = "tests/generic_call_non_fresh_object_widening_tests.rs"]
