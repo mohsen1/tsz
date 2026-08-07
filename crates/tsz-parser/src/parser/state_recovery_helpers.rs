@@ -46,7 +46,21 @@ impl ParserState {
                 );
                 true
             }
-            "declare" => true,
+            // "declare": if a declared node failed to parse, it would have
+            // emitted a diagnostic already.
+            //
+            // "yield": `parse_yield_expression`'s outside-generator fallback
+            // (`yield(x)`, `yield * x`, ...) intentionally returns a bare
+            // `yield` identifier node without continuing into postfix/call
+            // parsing, as a disambiguation strategy against a genuine
+            // `YieldExpression` — a known, separate gap from `tsc`'s own
+            // parser, which continues normally and never reaches this
+            // fallback for `yield`. Until that gap is closed, suppressing
+            // the cascade here keeps the observable diagnostics matching
+            // `tsc` (the checker's own reserved-word check on the `yield`
+            // identifier, TS1212/TS2304, already fires independently of
+            // what the parser did with the rest of the line).
+            "declare" | "yield" => true,
             "interface" => {
                 if self.is_token(SyntaxKind::OpenBraceToken) {
                     self.parse_error_at_current_token(
