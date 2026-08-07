@@ -161,12 +161,16 @@ fn a_module_local_read_by_an_exported_type_alias_query_is_used() {
 /// nothing for any of them.
 ///
 /// The `--noUnusedLocals` half of the same spelling is already correct
-/// (`const w = 1; export const y: Wrap<typeof w> = { v: 1 };` is clean), which
-/// places the remaining defect on the parameter re-scan rather than on reference
-/// tracking. Left as a failing assertion under `#[ignore]` so it flips loudly
-/// when the type-argument cell is closed rather than sitting as a silent absence.
+/// (`const w = 1; export const y: Wrap<typeof w> = { v: 1 };` is clean). The
+/// defect was in reference tracking after all: `check_type_for_missing_names`
+/// routes a top-level `typeof a` through `get_type_from_type_query` (which
+/// resolves the operand via the *tracking* value resolver and marks it read),
+/// but its `TYPE_REFERENCE` arm delegated the whole reference — type arguments
+/// included — to `get_type_from_type_reference`, whose lowering never resolves a
+/// nested `typeof` operand through the tracking path. Recursing the walk into a
+/// reference's type arguments (as tsc's `checkSourceElement` does) reaches the
+/// nested query and closes every row below.
 #[test]
-#[ignore = "type-argument-nested typeof is a separate open cell; see the module docs"]
 fn a_parameter_read_by_a_type_argument_type_query_is_used() {
     let codes = unused_codes(
         "type Wrap<T> = { v: T };\nexport function m2(a: number, b: Wrap<typeof a>) { return b; }\n",
@@ -175,6 +179,76 @@ fn a_parameter_read_by_a_type_argument_type_query_is_used() {
     assert!(
         !codes.contains(&6133),
         "a `typeof` in type-argument position reads its operand. Got: {codes:?}"
+    );
+}
+
+/// The same rule through a lib generic (`Array<typeof a>`) rather than a
+/// user-declared alias, so the fix cannot key on the `Wrap` declaration.
+#[test]
+fn a_parameter_read_by_a_type_query_in_a_lib_generic_argument_is_used() {
+    let codes = unused_codes(
+        "export function ar(alpha: number, beta: Array<typeof alpha>) { return beta; }\n",
+    );
+
+    assert!(
+        !codes.contains(&6133),
+        "a `typeof` inside `Array<...>` reads its operand. Got: {codes:?}"
+    );
+}
+
+/// A `typeof` in the *second* type argument (`Map<string, typeof a>`): the walk
+/// must visit every argument node, not just the first.
+#[test]
+fn a_parameter_read_by_a_type_query_in_a_later_type_argument_is_used() {
+    let codes = unused_codes(
+        "export function mp(gamma: number, delta: Map<string, typeof gamma>) { return delta; }\n",
+    );
+
+    assert!(
+        !codes.contains(&6133),
+        "a `typeof` in a non-first type argument reads its operand. Got: {codes:?}"
+    );
+}
+
+/// A parenthesized query inside a type argument (`Wrap<(typeof a)>`): the walk
+/// reaches the `TYPE_QUERY` through the intervening `PARENTHESIZED_TYPE`.
+#[test]
+fn a_parameter_read_by_a_parenthesized_type_argument_query_is_used() {
+    let codes = unused_codes(
+        "type Box<T> = { v: T };\nexport function pz(epsilon: number, zeta: Box<(typeof epsilon)>) { return zeta; }\n",
+    );
+
+    assert!(
+        !codes.contains(&6133),
+        "a parenthesized `typeof` in a type argument reads its operand. Got: {codes:?}"
+    );
+}
+
+/// A query nested two type-argument levels deep (`Outer<Inner<typeof a>>`): the
+/// recursion must descend through the inner reference's own type arguments.
+#[test]
+fn a_parameter_read_by_a_doubly_nested_type_argument_query_is_used() {
+    let codes = unused_codes(
+        "type Outer<T> = { o: T };\ntype Inner<T> = { i: T };\nexport function nn(eta: number, theta: Outer<Inner<typeof eta>>) { return theta; }\n",
+    );
+
+    assert!(
+        !codes.contains(&6133),
+        "a `typeof` nested inside two type-argument levels reads its operand. Got: {codes:?}"
+    );
+}
+
+/// A `typeof` in a type argument of a *return* type reference, rather than a
+/// parameter's annotation.
+#[test]
+fn a_parameter_read_by_a_type_argument_query_in_a_return_type_is_used() {
+    let codes = unused_codes(
+        "type Wrap<T> = { v: T };\nexport function rt(iota: number): Wrap<typeof iota> { return { v: iota }; }\n",
+    );
+
+    assert!(
+        !codes.contains(&6133),
+        "a `typeof` in a return-type's type argument reads its operand. Got: {codes:?}"
     );
 }
 

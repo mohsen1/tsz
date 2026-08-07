@@ -478,33 +478,37 @@ impl<'a> CheckerState<'a> {
                 if self.missing_name_type_ref_is_bare_scoped_type_parameter(type_idx) {
                     return;
                 }
-                if !self.ctx.symbol_resolution_set.is_empty()
-                    && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
-                    && let Some(sym_id) = self
-                        .resolve_type_symbol_for_lowering(type_ref.type_name)
-                        .map(tsz_binder::SymbolId)
-                    // Only check direct self-references. Transitive walks through
-                    // type_alias_reaches_resolving_alias are too aggressive: cycles
-                    // through object/interface members are productive recursion that
-                    // tsc allows without emitting TS2577.
-                    && self.ctx.symbol_resolution_set.contains(&sym_id)
-                {
-                    // For circular references, still check type arguments for missing
-                    // names. The main resolution is skipped to avoid infinite recursion,
-                    // but type arguments may contain unresolvable names that need TS2304.
-                    let arg_indices: Vec<NodeIndex> = self
-                        .ctx
-                        .arena
-                        .get_type_ref(node)
-                        .and_then(|tr| tr.type_arguments.as_ref())
-                        .map(|args| args.nodes.clone())
-                        .unwrap_or_default();
-                    for arg_idx in arg_indices {
+                // The arena is `&'a NodeArena`, so this borrow outlives the
+                // `&mut self` calls below and can be reused for both the self-
+                // reference check and the type-argument walk.
+                let type_ref = self.ctx.arena.get_type_ref(node);
+                // Only skip the main resolution for a *direct* self-reference —
+                // resolving it would recurse forever. Transitive walks through
+                // `type_alias_reaches_resolving_alias` are too aggressive: cycles
+                // through object/interface members are productive recursion that
+                // tsc allows without emitting TS2577.
+                let is_direct_self_reference = !self.ctx.symbol_resolution_set.is_empty()
+                    && type_ref
+                        .and_then(|type_ref| {
+                            self.resolve_type_symbol_for_lowering(type_ref.type_name)
+                                .map(tsz_binder::SymbolId)
+                        })
+                        .is_some_and(|sym_id| self.ctx.symbol_resolution_set.contains(&sym_id));
+                if !is_direct_self_reference {
+                    let _ = self.get_type_from_type_reference(type_idx);
+                }
+                // Walk the type arguments either way. tsc's `checkTypeReferenceNode`
+                // runs `checkSourceElement` over each argument, so an unresolvable
+                // name (TS2304) or a nested `typeof` operand — which resolves in the
+                // value namespace and reads the value it names — is checked here even
+                // when the reference itself is circular or already resolved. Without
+                // this, a `typeof x` written inside a reference's type arguments never
+                // reaches `get_type_from_type_query`, and `x` is missed as a read.
+                if let Some(args) = type_ref.and_then(|tr| tr.type_arguments.as_ref()) {
+                    for &arg_idx in &args.nodes {
                         self.check_type_for_missing_names(arg_idx);
                     }
-                    return;
                 }
-                let _ = self.get_type_from_type_reference(type_idx);
             }
             k if k == syntax_kind_ext::TYPE_QUERY => {
                 let _ = self.get_type_from_type_query(type_idx);
