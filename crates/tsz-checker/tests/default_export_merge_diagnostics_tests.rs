@@ -171,15 +171,23 @@ function overload(value: string | number): void {}
 }
 
 #[test]
-fn all_function_group_still_reports_default_non_default_overlap() {
-    // The all-function exception suppresses ordinary TS2395 overload noise,
-    // not the default/non-default declaration-space invariant.
+fn all_function_group_never_reports_ts2652_for_default_non_default_overlap() {
+    // #16742: pinned oracle `typescript@7.0.2` reports only `TS2383`
+    // ("Overload signatures must all be exported or non-exported.") plus
+    // `TS2391` (missing implementation, outside this file's filtered code
+    // set) for this shape — never `TS2652`. A same-named run of function
+    // declarations is one overload group, not a merged declaration; tsc's
+    // flag-agreement check owns the default-vs-non-default mismatch here,
+    // the same way it already owns the plain exported-vs-local mismatch
+    // (`ordinary_function_overloads_keep_existing_ts2395_suppression` above).
+    // This test previously pinned tsz's own bug (spurious double `TS2652`)
+    // rather than oracle-verified behavior.
     let source = r#"
 export default function Execute(): void;
 function Execute(): void;
 "#;
 
-    assert_merge_diagnostics(source, "Execute", &[(TS2652, 0), (TS2652, 1)]);
+    assert_merge_diagnostics(source, "Execute", &[]);
 }
 
 #[test]

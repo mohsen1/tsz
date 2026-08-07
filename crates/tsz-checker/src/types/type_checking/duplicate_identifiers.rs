@@ -515,9 +515,8 @@ impl<'a> CheckerState<'a> {
             // Default exports are a third visibility class, distinct from ordinary
             // exported declarations. A merged declaration whose default-exported
             // type/value/namespace space intersects any non-default declaration
-            // reports TS2652. Only ordinary exported-vs-local intersections report
-            // TS2395, and a declaration claimed by TS2652 must not also report
-            // TS2395.
+            // reports TS2652; only ordinary exported-vs-local intersections report
+            // TS2395, and a TS2652-claimed declaration never also reports TS2395.
             let mut ts2652_error_nodes: Vec<NodeIndex> = Vec::new();
             let mut ts2395_error_nodes: Vec<NodeIndex> = Vec::new();
             // A symbol whose local declarations are all plain variables is
@@ -634,7 +633,12 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                     let non_default_spaces = exported_spaces | non_exported_spaces;
-                    let default_conflict_spaces = default_exported_spaces & non_default_spaces;
+                    // An all-function run is one overload group, not a merged declaration; TS2383 above owns default-vs-non-default mismatches too (#16742).
+                    let default_conflict_spaces = if all_functions {
+                        0
+                    } else {
+                        default_exported_spaces & non_default_spaces
+                    };
                     let export_local_conflict_spaces =
                         if all_functions || suppress_ts2395_for_ambient {
                             0

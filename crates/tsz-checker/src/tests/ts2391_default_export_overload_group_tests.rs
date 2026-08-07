@@ -20,10 +20,9 @@
 //! (`state_checking_members/default_export_overload_group.rs`).
 //!
 //! Binder names vary across rows; no row depends on identifier spelling.
-//! Known residuals deliberately not asserted here: mixed default/non-default
-//! same-name runs (tsc: `TS2383`; tsz currently reports `TS2652`) and
-//! export/non-export flag agreement (`TS2383`), which belong to a different
-//! diagnostic family.
+//! Mixed default/non-default same-name runs and plain export/non-export flag
+//! agreement (`TS2383`) belong to a different diagnostic family and are
+//! covered by the `mixed_export_visibility` tests below.
 
 use crate::context::ScriptTarget;
 use crate::test_utils::{DiagnosticShape, assert_diagnostic_shapes_exactly, check_source};
@@ -347,4 +346,101 @@ fn ambient_signatures_stay_clean() {
 fn single_default_implementation_is_clean() {
     let source = "export default function only(a: string) { return a; }\n";
     assert_family_exactly(source, &[]);
+}
+
+/// #16742: a same-named function overload run mixing `export default` and
+/// plain (non-exported) declarations is a flag-agreement mismatch (`TS2383`),
+/// not a merged-declaration/default-export conflict. tsc reports exactly one
+/// `TS2383` here; tsz previously reported two spurious `TS2652`s instead
+/// (`MERGED_DECLARATION_CANNOT_INCLUDE_A_DEFAULT_EXPORT_DECLARATION...`)
+/// because the merged-declaration scan's `all_functions` exemption only
+/// covered `TS2395`, not the analogous `TS2652` default-export branch.
+mod mixed_export_visibility {
+    use crate::context::ScriptTarget;
+    use crate::test_utils::{DiagnosticShape, assert_diagnostic_shapes_exactly, check_source};
+    use crate::{CheckerOptions, diagnostics::Diagnostic};
+
+    fn check_module(source: &str) -> Vec<Diagnostic> {
+        check_source(
+            source,
+            "test.ts",
+            CheckerOptions {
+                target: ScriptTarget::ES2015,
+                ..CheckerOptions::default()
+            },
+        )
+    }
+
+    /// Diagnostics restricted to the export/default-export flag-agreement
+    /// family (`TS2383`, `TS2395`, `TS2652`).
+    fn family(source: &str) -> Vec<Diagnostic> {
+        check_module(source)
+            .into_iter()
+            .filter(|d| matches!(d.code, 2383 | 2395 | 2652))
+            .collect()
+    }
+
+    fn assert_family_exactly(source: &str, shapes: &[DiagnosticShape]) {
+        assert_diagnostic_shapes_exactly(source, &family(source), shapes);
+    }
+
+    /// Default-exported signature, plain (non-exported) implementation: only
+    /// `TS2383` at the deviating signature, never `TS2652`.
+    #[test]
+    fn default_exported_signature_then_plain_implementation_reports_only_ts2383() {
+        let source = "export default function fn(a: string): string;\n\
+                      function fn(a: string): string { return a; }\n\
+                      export {};\n";
+        assert_family_exactly(source, &[DiagnosticShape::code(2383).at(1, 25)]);
+    }
+
+    /// Order flipped: plain signature first, default-exported implementation
+    /// second — same single `TS2383`, anchored at the signature.
+    #[test]
+    fn plain_signature_then_default_exported_implementation_reports_only_ts2383() {
+        let source = "function fn(a: string): string;\n\
+                      export default function fn(a: string): string { return a; }\n\
+                      export {};\n";
+        assert_family_exactly(source, &[DiagnosticShape::code(2383).at(1, 10)]);
+    }
+
+    /// Renamed binder: the same shape under a different local name stays
+    /// clean of `TS2652`. The name's own length doesn't shift the anchor —
+    /// `export default function ` is a fixed-width prefix, so the signature's
+    /// name always starts at column 25 regardless of spelling.
+    #[test]
+    fn default_exported_signature_then_plain_implementation_renamed_binder() {
+        let source = "export default function widget(a: number): number;\n\
+                      function widget(a: number): number { return a; }\n\
+                      export {};\n";
+        assert_family_exactly(source, &[DiagnosticShape::code(2383).at(1, 25)]);
+    }
+
+    /// Plain `export` (non-default) signature mixed with a non-exported
+    /// implementation: still `TS2383`, not `TS2395`/`TS2652` — `all_functions`
+    /// groups never hit the merged-declaration branches.
+    #[test]
+    fn exported_signature_then_plain_implementation_reports_only_ts2383() {
+        let source = "export function c(x: string): string;\n\
+                      function c(x: string): string { return x; }\n";
+        assert_family_exactly(source, &[DiagnosticShape::code(2383).at(1, 17)]);
+    }
+
+    /// Positive control: a default-exported class colliding with a local
+    /// interface in TYPE space is a genuine merged-declaration conflict
+    /// (`defaultExportsCannotMerge03`-shaped, pinned separately in
+    /// `tests/default_export_merge_diagnostics_tests.rs`) — not an
+    /// `all_functions` group, so the `TS2652` exemption must not apply here.
+    #[test]
+    fn default_exported_class_and_local_interface_still_reports_ts2652() {
+        let source = "export default class Model {}\n\
+                      interface Model {}\n";
+        assert_family_exactly(
+            source,
+            &[
+                DiagnosticShape::code(2652).at(1, 22),
+                DiagnosticShape::code(2652).at(2, 11),
+            ],
+        );
+    }
 }
