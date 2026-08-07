@@ -393,3 +393,89 @@ fn a_rest_element_with_a_simple_target_still_reports() {
     let source = "\ndeclare let s: string;\ndeclare let sa: string[];\n[s, ...sa] = [s, s];\n";
     assert_eq!(ts2322(source), vec![]);
 }
+
+// ---------------------------------------------------------------------------
+// Rest elements in the SOURCE tuple. A rest element holds the array type it was
+// written as, so every position it covers has that array's element type — not
+// the array itself. Reduced from conformance/types/tuple/unionsOfTupleTypes1.ts,
+// which regressed on the second revision of this change.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_trailing_rest_element_supplies_its_element_type_not_the_array() {
+    // `T3 = [string, ...number[]]` — index 1 and index 2 are both `number`.
+    // Handing back the rest element's `number[]` reported a false TS2322 on
+    // `d31` reading `Type 'number[]' is not assignable to type 'number'.`
+    let source = concat!(
+        "\ntype T3 = [string, ...number[]];",
+        "\ndeclare let d30: string;",
+        "\ndeclare let d31: number;",
+        "\ndeclare let d32: number;",
+        "\ndeclare let t3: T3;",
+        "\n[d30, d31, d32] = t3;\n"
+    );
+    assert_eq!(ts2322(source), vec![]);
+}
+
+#[test]
+fn a_trailing_rest_element_still_reports_a_real_mismatch() {
+    // The same source, but the target at the rest position is a `string`:
+    // tsc reports `Type 'number' is not assignable to type 'string'.` — so the
+    // fix above is "use the element type", not "stop judging rest positions".
+    let source = concat!(
+        "\ntype C = [string, ...number[]];",
+        "\ndeclare let c0: string;",
+        "\ndeclare let c1: string;",
+        "\ndeclare let tc: C;",
+        "\n[c0, c1] = tc;\n"
+    );
+    assert_eq!(
+        ts2322(source),
+        vec![(
+            2322,
+            offset_of(source, "[c0, c1] =", 0) + 5,
+            "c1".to_string(),
+            "Type 'number' is not assignable to type 'string'.".to_string(),
+        )],
+    );
+}
+
+#[test]
+fn a_rest_position_target_typed_as_the_array_is_the_inverse_mismatch() {
+    // The exact inverse of the regression: a target declared `number[]` at a
+    // rest position must now FAIL, where handing back the rest array made it
+    // silently pass. tsc: `Type 'number' is not assignable to type 'number[]'.`
+    let source = concat!(
+        "\ndeclare let d0: number[];",
+        "\ndeclare let td: [string, ...number[]];",
+        "\n[, d0] = td;\n"
+    );
+    assert_eq!(
+        ts2322(source),
+        vec![(
+            2322,
+            offset_of(source, "[, d0] =", 0) + 3,
+            "d0".to_string(),
+            "Type 'number' is not assignable to type 'number[]'.".to_string(),
+        )],
+    );
+}
+
+#[test]
+fn a_rest_element_that_is_not_last_makes_no_positional_judgement() {
+    // `[string, ...number[], boolean]` — tsc gives position 1 and 2 the union
+    // `number | boolean` and reports two TS2322 here. Positions after a
+    // non-trailing rest have no fixed index, so this makes no judgement rather
+    // than judging against whichever element sits at that declaration offset;
+    // the two diagnostics tsc reports are a known missing-diagnostic residual,
+    // not a false positive.
+    let source = concat!(
+        "\ntype B = [string, ...number[], boolean];",
+        "\ndeclare let b0: string;",
+        "\ndeclare let b1: number;",
+        "\ndeclare let b2: boolean;",
+        "\ndeclare let tb: B;",
+        "\n[b0, b1, b2] = tb;\n"
+    );
+    assert_eq!(ts2322(source), vec![]);
+}

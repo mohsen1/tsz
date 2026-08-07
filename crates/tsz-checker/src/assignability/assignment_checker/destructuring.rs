@@ -876,6 +876,13 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Resolve the element type at a given index from an array/tuple type.
+    ///
+    /// A rest element (`[string, ...number[]]`) holds the *array* type it was
+    /// written as, so every position it covers has that array's element type,
+    /// not the array itself. Positions after a rest element that is not last
+    /// (`[string, ...number[], boolean]`) have no fixed index at all, and get
+    /// `None` rather than the element that happens to sit at that offset in the
+    /// declaration.
     fn resolve_element_type_for_destructuring(
         &mut self,
         source_type: TypeId,
@@ -885,6 +892,19 @@ impl<'a> CheckerState<'a> {
         if let Some(elems) =
             crate::query_boundaries::common::tuple_elements(self.ctx.types, source_type)
         {
+            let first_rest = elems.iter().position(|elem| elem.rest);
+            if let Some(first_rest) = first_rest
+                && index >= first_rest
+            {
+                // Only a trailing rest keeps later positions determinate.
+                if first_rest + 1 != elems.len() {
+                    return None;
+                }
+                return crate::query_boundaries::common::array_element_type(
+                    self.ctx.types,
+                    elems[first_rest].type_id,
+                );
+            }
             if index < elems.len() {
                 return Some(elems[index].type_id);
             }
