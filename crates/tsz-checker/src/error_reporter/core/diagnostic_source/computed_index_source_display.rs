@@ -6,6 +6,22 @@ use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// Merge every wide (non-entity-name) `string`/`number` computed key in
+    /// an object literal into ONE synthesized `[x: kind]: V` index-signature
+    /// clause, matching `tsc`'s `checkObjectLiteral` display for a fresh
+    /// literal type it cannot re-spell member-by-member.
+    ///
+    /// Requires every element to be a computed key of the SAME kind — a
+    /// literal-spelled name, a different kind, or a non-computed member all
+    /// bail to the natural per-member display in the caller. Bails too when
+    /// EVERY key in the group is an entity-name reference (a plain
+    /// identifier or dotted `a.b.c` chain): `tsc` can re-spell those from
+    /// their own syntax and shows each individually instead, unmerged and
+    /// with no value-type union (see
+    /// `object_literal_source_display.rs`'s per-member loop). Only ONE
+    /// non-entity-name member in the group is enough to fold every sibling —
+    /// entity-named or not — into the single merged clause (oracle-verified
+    /// against `typescript@7.0.2`, #16721).
     pub(in crate::error_reporter) fn computed_index_signature_object_literal_source_display(
         &mut self,
         expr_idx: NodeIndex,
@@ -20,6 +36,7 @@ impl<'a> CheckerState<'a> {
         let literal = self.ctx.arena.get_literal_expr(node)?;
         let mut computed_key_kind = None;
         let mut computed_value_types = Vec::new();
+        let mut any_non_entity_name = false;
 
         for child_idx in literal.elements.nodes.iter().copied() {
             let child = self.ctx.arena.get(child_idx)?;
@@ -42,6 +59,9 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
             computed_key_kind = Some(key_kind);
+            if !self.computed_key_is_entity_name_reference(prop.name) {
+                any_non_entity_name = true;
+            }
 
             let value_type = self.get_type_of_node(prop.initializer);
             if value_type == TypeId::ERROR {
@@ -50,6 +70,9 @@ impl<'a> CheckerState<'a> {
             computed_value_types.push(self.widen_type_for_display(value_type));
         }
 
+        if !any_non_entity_name {
+            return None;
+        }
         let key_kind = computed_key_kind?;
         if computed_value_types.is_empty()
             || !((key_kind == "string" && shape.string_index.is_some())

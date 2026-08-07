@@ -6,7 +6,6 @@ use super::{DuplicateDeclList, DuplicateDeclarationOrigin};
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::syntax_kind_ext;
 
 impl<'a> CheckerState<'a> {
     /// Report export/ambient flag disagreements across one symbol's overload
@@ -76,24 +75,16 @@ impl<'a> CheckerState<'a> {
             // *implementation* when it shares a container with the first
             // overload, and only otherwise from the first overload. The
             // container check is what keeps lib.d.ts overloads from being
-            // blamed for a local implementation. An `EXPORT_DECLARATION`
-            // wrapper is not a container: hoist through it so
-            // `export function` declarations compare equal to bare siblings
-            // in the same statement list.
-            let statement_container = |decl_idx: NodeIndex| -> Option<NodeIndex> {
-                let parent = self.ctx.arena.get_extended(decl_idx)?.parent;
-                let parent_node = self.ctx.arena.get(parent)?;
-                if parent_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
-                    Some(self.ctx.arena.get_extended(parent)?.parent)
-                } else {
-                    Some(parent)
-                }
-            };
+            // blamed for a local implementation.
+            // `effective_declaration_container` hoists through an
+            // `EXPORT_DECLARATION` wrapper so `export function` declarations
+            // compare equal to bare siblings in the same statement list.
             let first_overload = overload_signatures[0];
-            let first_container = statement_container(first_overload);
+            let first_container = self.effective_declaration_container(first_overload);
             let canonical = implementation
                 .filter(|&impl_idx| {
-                    first_container.is_some() && statement_container(impl_idx) == first_container
+                    first_container.is_some()
+                        && self.effective_declaration_container(impl_idx) == first_container
                 })
                 .unwrap_or(first_overload);
             let canonical_exported = declarations

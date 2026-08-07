@@ -4,6 +4,7 @@
 //! Node and `NodeArena`, avoiding the old Node enum pattern matching.
 
 mod core;
+mod core_incremental;
 mod core_jsdoc;
 pub mod declaration_summary;
 pub mod export_surface;

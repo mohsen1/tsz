@@ -134,6 +134,13 @@ impl<'a> CheckerState<'a> {
         if let Some(display) = self.longhand_primitive_union_source_display(anchor_idx, source) {
             return display;
         }
+        // A `keyof any` / `keyof unknown` / `keyof never` source annotation
+        // resolves to its fixed key-space result at type-construction time in
+        // tsc (`getIndexType`), so it likewise carries no `aliasSymbol` — same
+        // family as the longhand-union case above, different written spelling.
+        if let Some(display) = self.keyof_degenerate_operand_source_display(anchor_idx, source) {
+            return display;
+        }
         // A deferred meta-type source — a bare conditional (`T extends U ? X : Y`)
         // or indexed-access (`T["x"]`), or an `Application` of a conditional/
         // indexed-bodied alias (`T95<U>`) — that still carries free type
@@ -930,7 +937,7 @@ impl<'a> CheckerState<'a> {
     /// a coincidentally-shaped alias reached through the reverse type-to-def
     /// lookup. Shared by the anonymous-composite and longhand-primitive-union
     /// source paths, which differ only in that annotation predicate.
-    fn annotation_gated_structural_source_display(
+    pub(super) fn annotation_gated_structural_source_display(
         &mut self,
         anchor_idx: NodeIndex,
         source: TypeId,

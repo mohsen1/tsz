@@ -692,27 +692,24 @@ class ArchGuardRatchetDirectionTests(unittest.TestCase):
         self.arch_guard = load_arch_guard_module()
 
     def test_line_limit_exclusion_count_cannot_grow(self):
-        """The number of excluded files in LINE_LIMIT_CHECKS must not increase."""
-        # Current ceiling: 11 excluded files.
-        # When a file drops below 2000 lines, remove it and lower this ceiling.
-        # 2026-05-01: ratcheted from 17 → 35 after the inherited list went
-        # to 66 entries (mostly stale). The 35 set now matches the actual
-        # at-or-above-2000-LOC files on disk; new entries should be rare,
-        # and removals (file splits) should ratchet this number down.
-        # 2026-05-05: 35 → 36 after `crates/tsz-checker/src/checkers/jsx/props/
-        # resolution.rs` crossed the 2000-LOC threshold (2001 lines after #2717).
-        # 2026-05-12: pruned stale under-limit files and re-pinned the live
-        # audited over-limit set at 38.
-        # 2026-05-31: pruned seven stale under-limit files and re-pinned the
-        # live checker src over-limit set at 11.
+        """No single crate's LINE_LIMIT_CHECKS allowlist may exceed the ceiling."""
+        # Per-entry ceiling: a single crate root may grandfather at most this
+        # many already-over-2000 files. When a file drops below 2000 lines,
+        # remove it from the allowlist in the same diff; the list only shrinks.
+        # 2026-05-31: pruned to the live checker src over-limit set at 11.
+        # 2026-08-07: repo-wide coverage landed (#16733) — one entry per
+        # crates/*/src root, each carrying its own audited allowlist. The
+        # largest at coverage time is tsz-emitter/tsz-solver with 10, so the
+        # per-entry ceiling of 11 leaves each crate a shrink-only ratchet.
         MAX_EXCLUDED = 11
         for entry in self.arch_guard.LINE_LIMIT_CHECKS:
             excludes = entry[3] if len(entry) > 3 else set()
             self.assertLessEqual(
                 len(excludes),
                 MAX_EXCLUDED,
-                f"LINE_LIMIT_CHECKS exclusion list has {len(excludes)} entries, "
-                f"max allowed is {MAX_EXCLUDED}. Remove files that dropped below the limit.",
+                f"LINE_LIMIT_CHECKS exclusion list for {entry[0]!r} has "
+                f"{len(excludes)} entries, max allowed is {MAX_EXCLUDED}. "
+                f"Split a file or remove ones that dropped below the limit.",
             )
 
     def test_excluded_files_actually_exist(self):
@@ -756,6 +753,97 @@ class ArchGuardRatchetDirectionTests(unittest.TestCase):
                     f"Excluded file {rel_path} in check '{name}' does not exist. "
                     f"Remove it from the exclusion list.",
                 )
+
+    def test_line_limit_checks_cover_at_least_these_crates(self):
+        """#16733: CLAUDE.md states the 2000-LOC cap repo-wide, but only
+
+        `tsz-checker` was ever wired into `LINE_LIMIT_CHECKS`, leaving every
+        other crate's drift invisible to `arch-size`. This does not (yet)
+        require full repo coverage — that is a crate-by-crate campaign this
+        pins as it lands — but it locks in the crates already brought into
+        compliance so a future edit cannot silently drop one back out.
+        """
+        covered_bases = {entry[1] for entry in self.arch_guard.LINE_LIMIT_CHECKS}
+        for crate in ("tsz-checker", "tsz-binder", "tsz-cli"):
+            expected = ROOT / "crates" / crate / "src"
+            self.assertIn(
+                expected,
+                covered_bases,
+                f"crates/{crate}/src dropped out of LINE_LIMIT_CHECKS coverage.",
+            )
+
+
+class ArchGuardLineLimitCoverageTests(unittest.TestCase):
+    """Cover the repo-wide 2000-LOC coverage invariant (#16733).
+
+    The historical gap was that only `tsz-checker/src` was registered in
+    `LINE_LIMIT_CHECKS`, so a new file over 2000 lines in any other crate
+    passed `arch-size` silently. `scan_line_limit_coverage` makes coverage
+    itself a checked invariant: every `crates/*/src` root must be registered.
+    """
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def test_every_crate_src_root_is_registered(self):
+        """No `crates/*/src` root may be missing from LINE_LIMIT_CHECKS."""
+        missing = self.arch_guard.scan_line_limit_coverage()
+        self.assertEqual(
+            missing,
+            [],
+            "Unguarded crate src roots (documented 2000-LOC cap not enforced): "
+            + ", ".join(missing),
+        )
+
+    def test_registered_bases_are_real_crate_src_roots(self):
+        """Every 2000-LOC base must be an existing `crates/*/src` directory."""
+        roots = {p.resolve() for p in self.arch_guard.crate_src_roots()}
+        for name, base, limit, *_rest in self.arch_guard.LINE_LIMIT_CHECKS:
+            if limit != self.arch_guard.SRC_LINE_LIMIT:
+                continue
+            self.assertIn(
+                base.resolve(),
+                roots,
+                f"LINE_LIMIT_CHECKS base for {name!r} is not a crates/*/src root: {base}",
+            )
+
+    def test_coverage_flags_a_missing_root(self):
+        """A crate whose src root is unregistered is reported as missing."""
+        with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
+            crates_dir = pathlib.Path(temp_dir) / "crates"
+            (crates_dir / "tsz-registered" / "src").mkdir(parents=True)
+            (crates_dir / "tsz-unguarded" / "src").mkdir(parents=True)
+            checks = [
+                (
+                    "registered",
+                    crates_dir / "tsz-registered" / "src",
+                    self.arch_guard.SRC_LINE_LIMIT,
+                    set(),
+                ),
+            ]
+            missing = self.arch_guard.scan_line_limit_coverage(
+                checks, crates_dir=crates_dir
+            )
+            self.assertIn("tsz-unguarded", "/".join(missing))
+            self.assertNotIn("tsz-registered", "/".join(missing))
+
+    def test_coverage_ignores_non_default_limit_entries(self):
+        """A sub-directory entry at a different limit does not register a root."""
+        with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
+            crates_dir = pathlib.Path(temp_dir) / "crates"
+            (crates_dir / "tsz-demo" / "src").mkdir(parents=True)
+            checks = [
+                (
+                    "computation-style sub-limit",
+                    crates_dir / "tsz-demo" / "src" / "computation",
+                    3100,
+                ),
+            ]
+            missing = self.arch_guard.scan_line_limit_coverage(
+                checks, crates_dir=crates_dir
+            )
+            self.assertEqual(len(missing), 1)
+            self.assertTrue(missing[0].endswith("crates/tsz-demo/src"))
 
 
 class ArchGuardStructFieldCountTests(unittest.TestCase):

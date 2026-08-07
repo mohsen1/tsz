@@ -2,6 +2,7 @@
 
 use crate::query_boundaries::diagnostics as diagnostic_query;
 use crate::state::CheckerState;
+use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -107,5 +108,30 @@ impl<'a> CheckerState<'a> {
             })
             .and_then(|def| def.body)
             .unwrap_or(ty)
+    }
+
+    /// Structural display for an assignment **source** whose declared type was
+    /// written as `keyof any` / `keyof unknown` / `keyof never`. `tsc`'s
+    /// `getIndexType` resolves such an operand to its fixed key-space result
+    /// immediately at type-construction time, so the resulting type carries no
+    /// `aliasSymbol` — the operator never reaches `typeToString`, and the
+    /// result is not distinguished from any other occurrence of the same
+    /// structural union. Without this, the reverse type-to-def lookup can
+    /// repaint the freshly-evaluated union with a coincidentally-shaped
+    /// non-generic alias (`PropertyKey`) that happens to be genuinely
+    /// referenced elsewhere (e.g. inside the loaded lib), even though this
+    /// particular occurrence was never written through it. Same family as
+    /// `longhand_primitive_union_source_display` (#16610), different written
+    /// spelling.
+    pub(in crate::error_reporter) fn keyof_degenerate_operand_source_display(
+        &mut self,
+        anchor_idx: NodeIndex,
+        source: TypeId,
+    ) -> Option<String> {
+        self.annotation_gated_structural_source_display(
+            anchor_idx,
+            source,
+            Self::annotation_is_keyof_over_degenerate_operand,
+        )
     }
 }
