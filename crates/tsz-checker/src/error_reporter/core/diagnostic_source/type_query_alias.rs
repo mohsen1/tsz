@@ -151,6 +151,63 @@ impl<'a> CheckerState<'a> {
             })
     }
 
+    /// Whether `annotation_idx` is a bare `keyof any` / `keyof unknown` /
+    /// `keyof never` type operator.
+    ///
+    /// `tsc`'s `getIndexType` resolves such an operand to its fixed key-space
+    /// result (`string | number | symbol` / `never`) at type-construction time,
+    /// so the resulting type carries no `aliasSymbol` and no memory of having
+    /// been written as `keyof <operand>` — the operator never reaches
+    /// `typeToString`. tsz's declared-annotation source text fallback
+    /// (`declared_type_annotation_text_for_symbol_type` /
+    /// `declared_type_annotation_text_for_expression_with_options`) would
+    /// otherwise reproduce the written `keyof any` text verbatim for a
+    /// `value: keyof any` declaration, repainting the already-correctly-
+    /// evaluated structural union with syntax tsc never preserves. Scoped to a
+    /// literal `any`/`unknown`/`never` keyword operand — a named/aliased
+    /// operand keeps the existing `keyof Name` display path.
+    pub(in crate::error_reporter) fn annotation_is_keyof_over_degenerate_operand(
+        arena: &tsz_parser::NodeArena,
+        annotation_idx: NodeIndex,
+    ) -> bool {
+        use crate::types_domain::queries::lib_resolution::{
+            keyword_name_to_type_id, keyword_syntax_to_type_id,
+        };
+        let Some(node) = arena.get(annotation_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::TYPE_OPERATOR {
+            return false;
+        }
+        let Some(type_op) = arena.get_type_operator(node) else {
+            return false;
+        };
+        if type_op.operator != tsz_scanner::SyntaxKind::KeyOfKeyword as u16 {
+            return false;
+        }
+        let Some(operand_node) = arena.get(type_op.type_node) else {
+            return false;
+        };
+        // A primitive keyword operand (`any`, `unknown`, `never`) is parsed as
+        // a `TYPE_REFERENCE` naming the keyword, not a bare keyword token node
+        // (mirrors `type_node_is_primitive_keyword`'s two-shape check above);
+        // fall back to the raw keyword-token kind for the rarer shape where the
+        // parser does emit one directly.
+        let operand_type_id = if operand_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            arena
+                .get_type_ref(operand_node)
+                .and_then(|type_ref| arena.get(type_ref.type_name))
+                .and_then(|name_node| arena.get_identifier(name_node))
+                .and_then(|ident| keyword_name_to_type_id(&ident.escaped_text))
+        } else {
+            keyword_syntax_to_type_id(operand_node.kind)
+        };
+        matches!(
+            operand_type_id,
+            Some(TypeId::ANY | TypeId::UNKNOWN | TypeId::NEVER)
+        )
+    }
+
     pub(in crate::error_reporter) fn annotation_names_type_query_alias(
         &self,
         arena: &tsz_parser::NodeArena,

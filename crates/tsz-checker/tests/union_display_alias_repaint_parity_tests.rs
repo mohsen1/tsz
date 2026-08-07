@@ -11,8 +11,9 @@
 //! tsz interns one `TypeId` per content and carries the alias in a global
 //! `TypeId -> alias` side table (`TypeInterner::store_display_alias` /
 //! `get_display_alias`), so an alias declared anywhere can repaint a
-//! structurally identical type written longhand somewhere else. That is the
-//! divergence the `#[ignore]`d rows below record.
+//! structurally identical type written longhand somewhere else — that was
+//! `store_display_alias`'s repaint divergence, fixed by #16645 (originally
+//! filed as #16610).
 //!
 //! Every expectation here was verified against the pinned oracle
 //! (`typescript@7.0.2`, `--noEmit --strict --lib es2022 --target es2022`), one
@@ -20,10 +21,10 @@
 //! which matters especially here, since the defect is precisely about one
 //! declaration reaching another site.
 //!
-//! Live rows are a regression floor for the spellings that already match.
-//! `#[ignore]`d rows are tripwires: they assert `tsc`'s answer and are expected
-//! to fail until the repaint is fixed. Run them with
-//! `cargo test -p tsz-checker --test union_display_alias_repaint_parity_tests -- --ignored`.
+//! All rows above the "second mechanism" section are a regression floor for
+//! the repaint fix. `#[ignore]`d rows below record a separate, still-open
+//! divergence (an alias whose RHS collapses to a pre-existing type). Run them
+//! with `cargo test -p tsz-checker --test union_display_alias_repaint_parity_tests -- --ignored`.
 
 use tsz_checker::CheckerOptions;
 use tsz_checker::test_utils::{check_source_with_libs_code_messages, load_default_lib_files};
@@ -128,7 +129,7 @@ fn interface_declared_elsewhere_does_not_repaint_a_longhand_object() {
 }
 
 // ---------------------------------------------------------------------------
-// Tripwires: oracle-verified divergences. Expected to fail until fixed.
+// Regression floor for the repaint fix (#16610, #16645).
 // ---------------------------------------------------------------------------
 
 /// A longhand primitive union is repainted by a **lib** alias the source never
@@ -179,17 +180,74 @@ fn an_alias_declared_after_the_use_site_does_not_repaint_the_longhand_union() {
 
 /// A separate mechanism in the same display family: tsc resolves `keyof any` to
 /// `string | number | symbol` eagerly, so the operator never reaches the
-/// printer. tsz keeps the `KeyOf` node and renders it verbatim.
+/// printer. `get_type_from_type_operator` now does the same for a bare
+/// `any`/`unknown`/`never` operand.
 ///
 /// Kept in this file because the two interact — once `keyof any` resolves to
-/// the union, it lands on exactly the `TypeId` the rows above show is
-/// repainted, so fixing this one alone would render `PropertyKey` here.
+/// the union, it lands on exactly the `TypeId` the rows above show is (no
+/// longer) repainted, so this row only stays green once the repaint rows above
+/// are also fixed.
 #[test]
-#[ignore = "known divergence: `keyof any` is not resolved to its member union for display"]
 fn keyof_any_renders_as_its_resolved_member_union() {
     let source = "declare const value: keyof any;\n\
                   const target: boolean = value;\n";
     assert_eq!(rendered_source_type(source), "string | number | symbol");
+}
+
+/// Sibling degenerate operand: `keyof never` resolves the same way as
+/// `keyof any` (`tsc`'s `getIndexType` treats both eagerly), with an
+/// unreferenced primitive-union alias in scope so the row also exercises the
+/// repaint guard above.
+#[test]
+fn keyof_never_renders_as_its_resolved_member_union() {
+    let source = "type Zed = string | number | symbol;\n\
+                  declare const value: keyof never;\n\
+                  const target: boolean = value;\n";
+    assert_eq!(rendered_source_type(source), "string | number | symbol");
+}
+
+/// Renamed binder: a differently-named unused alias in scope must not change
+/// the outcome — rules out anything keyed on the specific `Zed`/`PropertyKey`
+/// spelling.
+#[test]
+fn keyof_any_renders_as_its_resolved_member_union_with_renamed_alias_in_scope() {
+    let source = "type Zorb = string | number | symbol;\n\
+                  declare const value: keyof any;\n\
+                  const target: boolean = value;\n";
+    assert_eq!(rendered_source_type(source), "string | number | symbol");
+}
+
+/// A non-generic type alias whose body IS `keyof any`, referenced by name at
+/// the use site (`Foo`), should still render structurally — `tsc`'s
+/// `getIndexType` resolves the operand before the alias machinery can attach
+/// an `aliasSymbol` to the result, so even a genuinely-written-through alias
+/// carries none. tsz's separate "written through the alias" display path
+/// (for `declare const value: Foo`, `value`'s annotation is the `TYPE_REFERENCE`
+/// `Foo`, not `keyof any` itself, so the degenerate-operand guard above does
+/// not see it) still prints `Foo`. A real, adjacent divergence surfaced while
+/// building the guard above, but a distinct mechanism and out of this fix's
+/// scope: fixing it needs the alias-body check to propagate through the
+/// written-through-alias display path, not the annotation-node guard.
+#[test]
+#[ignore = "known divergence: a named alias whose body is `keyof any` keeps the alias name instead of resolving structurally"]
+fn keyof_any_type_alias_body_renders_structurally_even_written_through() {
+    let source = "type Foo = keyof any;\n\
+                  declare const value: Foo;\n\
+                  const target: boolean = value;\n";
+    assert_eq!(rendered_source_type(source), "string | number | symbol");
+}
+
+/// Negative control: `keyof <named interface>` is not a degenerate operand —
+/// it keeps its own `keyof Name` display (existing, unrelated mechanism),
+/// which the new guard must not disturb. Needs a literal-sensitive target
+/// (`tsc` widens a `keyof` source to `string` against any other target,
+/// independent of this fix).
+#[test]
+fn keyof_named_interface_still_renders_keyof_name() {
+    let source = "interface Widget { a: number; b: string }\n\
+                  declare const value: keyof Widget;\n\
+                  const target: \"z\" = value;\n";
+    assert_eq!(rendered_source_type(source), "keyof Widget");
 }
 
 // ---------------------------------------------------------------------------
