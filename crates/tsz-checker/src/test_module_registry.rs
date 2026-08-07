@@ -691,6 +691,8 @@ mod object_spread_optional_merge_tests;
 mod operator_chain_overload_resolution_tests;
 #[path = "tests/optional_chain_inherent_nullish_tests.rs"]
 mod optional_chain_inherent_nullish_tests;
+#[path = "tests/optional_chain_parenthesized_target_tests.rs"]
+mod optional_chain_parenthesized_target_tests;
 #[path = "tests/optional_chain_read_before_write_tests.rs"]
 mod optional_chain_read_before_write_tests;
 #[path = "tests/optional_chain_root_nullish_strict_only_tests.rs"]

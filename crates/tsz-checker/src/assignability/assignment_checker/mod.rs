@@ -7,6 +7,7 @@ mod commonjs_assignment;
 mod destructuring;
 mod js_constructor_provisional;
 mod js_global_fallback;
+mod optional_chain_target;
 mod polymorphic_this_display;
 mod rhs_literal_walker;
 
