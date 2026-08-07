@@ -100,15 +100,33 @@ fn renamed_binders_user_key_union_alias_constraint_renders_the_alias() {
     assert_eq!(rendered_constraint(source), "Whatever");
 }
 
-/// An alias chain to the key union (`type A = …; type B = A`) still resolves to
-/// the *written* alias `B`, since `B` is the spelling at the constraint site.
+/// An alias chain to the key union (`type A = …; type B = A`) resolves to the
+/// *underlying* alias `A`, not the spelling at the constraint site.
+///
+/// Verified against pinned `typescript@7.0.2`:
+///
+/// ```text
+/// type A = string | number | symbol;
+/// type B = A;
+/// type G<K extends B> = K;
+/// type Bad = G<boolean>;
+///
+/// error TS2344: Type 'boolean' does not satisfy the constraint 'A'.
+/// ```
+///
+/// `type B = A` is a pure alias-to-alias indirection, so `B` never gets its own
+/// `aliasSymbol`; the constraint type carries `A`'s. tsz renders `B` today, so
+/// this row is pinned as the remaining gap rather than asserted as correct —
+/// the single-hop rows above are what this PR actually fixes.
 #[test]
-fn alias_chain_to_key_union_constraint_renders_the_written_alias() {
+#[ignore = "known divergence: an alias-to-alias chain renders the written alias \
+            (`B`) where tsc renders the underlying one (`A`)"]
+fn alias_chain_to_key_union_constraint_renders_the_underlying_alias() {
     let source = "type A = string | number | symbol;\n\
                   type B = A;\n\
                   type G<K extends B> = K;\n\
                   type Bad = G<boolean>;\n";
-    assert_eq!(rendered_constraint(source), "B");
+    assert_eq!(rendered_constraint(source), "A");
 }
 
 // ---------------------------------------------------------------------------
