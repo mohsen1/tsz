@@ -111,9 +111,6 @@ const i2: I = { x: { a: 1, b: 2 } };
 // ---- Residual: the mismatch half of the same drill-in is still outer-only ---
 
 #[test]
-#[ignore = "known divergence (#16649 residual): a member *mismatch* inside a \
-            symbol-keyed nested literal still reports the outer TS2418 instead \
-            of drilling in to TS2322"]
 fn symbol_keyed_nested_literal_member_mismatch_reports_ts2322() {
     // Same drill-in, other polarity: `a` is present but wrongly typed, so this
     // is a mismatch rather than an excess property. tsc drills into the nested
