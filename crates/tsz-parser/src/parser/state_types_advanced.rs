@@ -1353,9 +1353,22 @@ impl ParserState {
         // type is not mis-reserved for a tuple-level optional when the literal is nested
         // in a tuple element. Matches tsc, where members are parsed by a fresh `parseType`
         // so the one-level `noConditionalTypes` block does not leak past the brace.
+        //
+        // Also clear the generator context so a `yield` in a member's computed name
+        // (`{ [yield x]: number }`) is parsed outside a generator body, matching tsc:
+        // `parseType` runs under `doOutsideOfContext(TypeExcludesFlags)`, and
+        // `TypeExcludesFlags` includes `YieldContext`, so the enclosing `function*`
+        // never reaches a type literal's member name — it reports TS1163 even inside a
+        // generator. This is the `yield` mirror of the `await`/type-literal asymmetry
+        // (#16103): an `interface` body is reached through `parse_type_members` rather
+        // than this function, so it keeps the enclosing context and stays TS1163-free,
+        // exactly as tsc's `parseObjectTypeMembers` does. The `await` half of
+        // `TypeExcludesFlags` is owned by the checker's `OutsideAwaitContext` walk, so
+        // only the generator flag needs clearing here.
         let saved_flags = self.context_flags;
         self.context_flags &= !(crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES
-            | crate::parser::state::CONTEXT_FLAG_IN_TUPLE_ELEMENT);
+            | crate::parser::state::CONTEXT_FLAG_IN_TUPLE_ELEMENT
+            | crate::parser::state::CONTEXT_FLAG_GENERATOR);
 
         let mut members = Vec::new();
 

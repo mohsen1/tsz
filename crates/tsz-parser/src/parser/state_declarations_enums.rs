@@ -184,7 +184,18 @@ impl ParserState {
             }
 
             let initializer = if self.parse_optional(SyntaxKind::EqualsToken) {
-                self.parse_assignment_expression()
+                // An enum member initializer is its own container for the yield-grammar
+                // check: tsc reports TS1163 for `enum E { A = yield x }` even inside a
+                // `function*`, because the enclosing generator's yield context does not
+                // reach it (the mirror of the `await`/enum-member own-container rule the
+                // checker already owns via `check_await_expression_in_own_container`).
+                // Clear the generator flag so a `yield` operand here parses outside a
+                // generator body; restore it immediately after.
+                let saved_flags = self.context_flags;
+                self.context_flags &= !crate::parser::state::CONTEXT_FLAG_GENERATOR;
+                let init = self.parse_assignment_expression();
+                self.context_flags = saved_flags;
+                init
             } else {
                 NodeIndex::NONE
             };
