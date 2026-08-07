@@ -310,27 +310,32 @@ impl ParserState {
                 continue;
             }
 
-            // `readonly` directly followed by a `get`/`set` accessor is grammar-invalid
-            // in tsc: no modifier may precede an accessor signature in an interface or
-            // type literal (unlike a plain property/method, which accepts `readonly` and
-            // is validated semantically as TS1024). tsc's parser cannot build any member
-            // starting at `readonly` here, reports TS1131 anchored at the modifier, and
-            // retries from the accessor keyword — which then parses as a bare
-            // (modifier-less) accessor. Handled before the normal property/method path so
-            // `get`/`set` is never mistaken for the property name and `readonly` is never
-            // silently dropped (which previously produced a misleading TS1005).
-            if self.is_token(SyntaxKind::ReadonlyKeyword)
-                && self.look_ahead_is_accessor_after_readonly()
-            {
-                let ro_start = self.token_pos();
-                let ro_end = self.token_end();
-                self.next_token(); // consume `readonly`
-                self.parse_error_at(
-                    ro_start,
-                    ro_end.saturating_sub(ro_start),
-                    tsz_common::diagnostics::diagnostic_messages::PROPERTY_OR_SIGNATURE_EXPECTED,
-                    tsz_common::diagnostics::diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED,
-                );
+            // A run of one or more type-member modifiers directly followed by a
+            // `get`/`set` accessor is grammar-invalid in tsc: no modifier may precede
+            // an accessor signature in an interface or type literal (unlike a plain
+            // property/method, which accepts these modifiers and is validated
+            // semantically as TS1024/TS1070/TS1071). tsc's parser cannot build any
+            // member starting at the first modifier, reports one TS1131 per modifier
+            // in the run (each anchored at its own token), and recovers by retrying
+            // at the accessor keyword — which then parses as a bare (modifier-less)
+            // accessor. See `look_ahead_modifier_run_before_accessor` for the exact
+            // qualifying modifier set. Handled before the normal property/method path
+            // so `get`/`set` is never mistaken for the property name and the
+            // modifiers are never silently dropped (which previously produced a
+            // misleading TS1005 or TS1070).
+            let modifier_run_len = self.look_ahead_modifier_run_before_accessor();
+            if modifier_run_len > 0 {
+                for _ in 0..modifier_run_len {
+                    let mod_start = self.token_pos();
+                    let mod_end = self.token_end();
+                    self.next_token();
+                    self.parse_error_at(
+                        mod_start,
+                        mod_end.saturating_sub(mod_start),
+                        tsz_common::diagnostics::diagnostic_messages::PROPERTY_OR_SIGNATURE_EXPECTED,
+                        tsz_common::diagnostics::diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED,
+                    );
+                }
                 continue;
             }
 
