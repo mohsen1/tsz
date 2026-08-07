@@ -10,6 +10,7 @@ mod computed_index_source_display;
 mod contextual_index_display;
 mod direct_source_expression;
 mod generic_source_display;
+mod keyof_constraint_target_display;
 mod keyof_source_display;
 mod literal_surface;
 mod literal_widening_helpers;

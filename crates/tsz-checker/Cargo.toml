@@ -1539,6 +1539,9 @@ path = "tests/ts2344_keyof_constraint_display_tests.rs"
 name = "ts2344_primitive_key_union_alias_constraint_display_tests"
 path = "tests/ts2344_primitive_key_union_alias_constraint_display_tests.rs"
 [[test]]
+name = "ts2345_key_union_constraint_target_display_tests"
+path = "tests/ts2345_key_union_constraint_target_display_tests.rs"
+[[test]]
 name = "ts2344_conditional_constraint_display_tests"
 path = "tests/ts2344_conditional_constraint_display_tests.rs"
 [[test]]
