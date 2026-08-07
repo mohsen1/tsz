@@ -805,6 +805,14 @@ impl<'a> CheckerState<'a> {
                             diagnostic_codes::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
                         );
                     }
+                } else if has_function && !has_interface && value_count == function_value_count {
+                    // Every conflicting default export is a function declaration.
+                    // tsc binds each of them to the single `default` export
+                    // symbol regardless of the local name, so the
+                    // multiple-default complaint (TS2528) never fires for this
+                    // shape: duplicate bodies surface as TS2323 + TS2393 (the
+                    // shared block below), and a run of signature-only groups
+                    // is left to overload validation.
                 } else {
                     // Fallback: TS2528 "A module cannot have multiple default exports"
                     // Skip interface declarations when a function or class exists
@@ -829,11 +837,18 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                // TS2393: Duplicate function implementation.
-                // When multiple `export default function` declarations have bodies,
-                // tsc emits TS2393 on each, regardless of whether they are named or anonymous.
+                // TS2393 + TS2323: duplicate default function implementations.
+                // When two or more `export default function` declarations carry
+                // bodies, tsc treats them as duplicate implementations of the one
+                // merged `default` symbol: TS2393 goes on *every* function
+                // declaration in the set (overload signatures included), and
+                // TS2323 on each declaration that carries a body — never on a
+                // signature. Both anchor at the function name (or the statement
+                // when anonymous). TS2323 is owned by the class/interface/named
+                // arms above when those shapes are present, so it is only added
+                // here for the function-only and function+value-expression arms.
                 if has_function {
-                    let func_impls: Vec<NodeIndex> = effective_default_indices
+                    let func_decls: Vec<(NodeIndex, bool)> = effective_default_indices
                         .iter()
                         .filter_map(|&idx| {
                             let ed = self.ctx.arena.get_export_decl_at(idx)?;
@@ -842,14 +857,24 @@ impl<'a> CheckerState<'a> {
                                 return None;
                             }
                             let func = self.ctx.arena.get_function(clause_node)?;
-                            if func.body.is_some() { Some(idx) } else { None }
+                            Some((idx, func.body.is_some()))
                         })
                         .collect();
+                    let impl_count = func_decls.iter().filter(|(_, has_body)| *has_body).count();
 
-                    if func_impls.len() > 1 {
-                        for &impl_idx in &func_impls {
-                            self.error_at_node(
-                                impl_idx,
+                    if impl_count > 1 {
+                        let emit_redeclare =
+                            !has_class && !has_interface && !has_named_default_export;
+                        for &(decl_idx, has_body) in &func_decls {
+                            if emit_redeclare && has_body {
+                                self.error_at_default_export_anchor(
+                                    decl_idx,
+                                    "Cannot redeclare exported variable 'default'.",
+                                    diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
+                                );
+                            }
+                            self.error_at_default_export_anchor(
+                                decl_idx,
                                 diagnostic_messages::DUPLICATE_FUNCTION_IMPLEMENTATION,
                                 diagnostic_codes::DUPLICATE_FUNCTION_IMPLEMENTATION,
                             );
@@ -1079,16 +1104,42 @@ impl<'a> CheckerState<'a> {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
         // TS2323: "Cannot redeclare exported variable 'default'." on every declaration
-        for &export_idx in export_default_indices {
-            let message = format_message(
-                diagnostic_messages::CANNOT_REDECLARE_EXPORTED_VARIABLE,
-                &["default"],
-            );
-            self.error_at_default_export_anchor(
-                export_idx,
-                &message,
-                diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
-            );
+        // that contributes a value: a class, or a function declaration carrying a
+        // body. Overload signatures never redeclare anything, so a signature-only
+        // function set beside a class reports the merge family alone.
+        let value_sites: Vec<NodeIndex> = export_default_indices
+            .iter()
+            .copied()
+            .filter(|&export_idx| {
+                let Some(clause_node) = self
+                    .ctx
+                    .arena
+                    .get_export_decl_at(export_idx)
+                    .and_then(|ed| self.ctx.arena.get(ed.export_clause))
+                else {
+                    return true;
+                };
+                if clause_node.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+                    return true;
+                }
+                self.ctx
+                    .arena
+                    .get_function(clause_node)
+                    .is_some_and(|func| func.body.is_some())
+            })
+            .collect();
+        if value_sites.len() > 1 {
+            for &export_idx in &value_sites {
+                let message = format_message(
+                    diagnostic_messages::CANNOT_REDECLARE_EXPORTED_VARIABLE,
+                    &["default"],
+                );
+                self.error_at_default_export_anchor(
+                    export_idx,
+                    &message,
+                    diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
+                );
+            }
         }
 
         // TS2813: "Class declaration cannot implement overload list for 'default'." on class
