@@ -92,6 +92,21 @@ impl<'a> CheckerState<'a> {
         // a getter"). Evaluate in read context first.
         let left_read_raw = self.get_type_of_node(left_idx);
         let left_read_type = self.resolve_type_query_type(left_read_raw);
+        // An optional chain's own `undefined` marker is added unconditionally by
+        // type construction, independent of `strictNullChecks` — unlike a
+        // *declared* nullable type, which is already stripped of `undefined`
+        // by the time it reaches here when `strictNullChecks` is off. Strip it
+        // the same way here so a marker-only chain target (`a.b?.c.d += 1`)
+        // doesn't spuriously fail the arithmetic-operand checks below under
+        // non-strict null checks, matching a plain `x: number | undefined`
+        // target, which already doesn't.
+        let left_read_type = if self.ctx.strict_null_checks() {
+            left_read_type
+        } else {
+            self.split_nullish_type(left_read_type)
+                .0
+                .unwrap_or(left_read_type)
+        };
 
         let left_target = self.get_type_of_assignment_target(left_idx);
         let left_type = self.resolve_type_query_type(left_target);

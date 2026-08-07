@@ -288,6 +288,23 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
 
                     let operand_raw = self.checker.get_type_of_node(unary.operand);
                     let operand_type = self.checker.resolve_type_query_type(operand_raw);
+                    // An optional chain's own `undefined` marker is added
+                    // unconditionally, independent of `strictNullChecks` —
+                    // unlike a *declared* nullable type, already stripped of
+                    // `undefined` by the time it reaches here when
+                    // `strictNullChecks` is off. Strip it the same way so a
+                    // marker-only chain operand (`a.b?.c.d++`) doesn't
+                    // spuriously fail the arithmetic-operand check below under
+                    // non-strict null checks, matching a plain
+                    // `x: number | undefined` operand, which already doesn't.
+                    let operand_type = if self.checker.ctx.strict_null_checks() {
+                        operand_type
+                    } else {
+                        self.checker
+                            .split_nullish_type(operand_type)
+                            .0
+                            .unwrap_or(operand_type)
+                    };
                     // TS18046: postfix ++/-- on unknown is not allowed (strictNullChecks only).
                     // tsc emits TS18046 instead of TS2356 for unknown operands.
                     if operand_type == TypeId::UNKNOWN
