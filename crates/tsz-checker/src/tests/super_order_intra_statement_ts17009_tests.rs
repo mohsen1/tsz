@@ -181,7 +181,7 @@ class D extends Base {
     );
 }
 
-/// Negative: a super() call behind `&&` is conditional and does not count
+/// Negative: a `super()` call behind `&&` is conditional and does not count
 /// for a later statement.
 #[test]
 fn conditional_super_behind_logical_and_still_errors() {
@@ -219,7 +219,7 @@ class D extends Base {
     assert_eq!(count, 1, "super(this) must keep its TS17009");
 }
 
-/// A prior completed super() call legitimizes `this` even inside a second
+/// A prior completed `super()` call legitimizes `this` even inside a second
 /// super call's arguments.
 #[test]
 fn this_in_second_super_call_arguments_after_first_super_is_clean() {
@@ -271,8 +271,8 @@ class D extends Base {
 
 // ── Conditional expression branches ────────────────────────────────────────
 
-/// Each branch runs after the condition; a branch-local super() precedes a
-/// branch-local this in comma sequence.
+/// Each branch runs after the condition; a branch-local `super()` precedes a
+/// branch-local `this` in comma sequence.
 #[test]
 fn super_then_this_within_each_conditional_branch_is_clean() {
     assert_clean(
@@ -321,8 +321,8 @@ class D extends Base {
     );
 }
 
-/// First-iteration flow: a super() statement earlier in the loop body
-/// precedes a later this in the same body.
+/// First-iteration flow: a `super()` statement earlier in the loop body
+/// precedes a later `this` in the same body.
 #[test]
 fn super_statement_before_this_in_while_body_is_clean() {
     assert_clean(
@@ -342,7 +342,7 @@ class D extends Base {
     );
 }
 
-/// A do-while body executes at least once, so a super() inside it counts
+/// A do-while body executes at least once, so a `super()` inside it counts
 /// for statements after the loop.
 #[test]
 fn super_in_do_while_body_precedes_this_after_loop() {
@@ -377,7 +377,7 @@ class D extends Base {
     );
 }
 
-/// Negative: a while body may never run; super() inside it does not count
+/// Negative: a while body may never run; `super()` inside it does not count
 /// for statements after the loop.
 #[test]
 fn super_only_in_while_body_does_not_reach_after_loop() {
@@ -397,7 +397,7 @@ class D extends Base {
     assert_eq!(count, 1, "while-body super must not count after the loop");
 }
 
-/// Nested containers: super() deep in one subtree precedes this in a later
+/// Nested containers: `super()` deep in one subtree precedes `this` in a later
 /// sibling subtree.
 #[test]
 fn super_in_nested_earlier_subtree_precedes_this_in_later_subtree() {
