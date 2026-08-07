@@ -1,9 +1,7 @@
 //! Helper methods for assignability error reporting.
 //! Extracted from `assignability.rs` for maintainability.
 
-use crate::diagnostics::{
-    diagnostic_codes, diagnostic_messages, format_message, internal_elaboration_messages,
-};
+use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::error_reporter::assignability::is_object_prototype_method;
 use crate::error_reporter::fingerprint_policy::{
     DiagnosticAnchorKind, DiagnosticRenderRequest, RelatedInformationPolicy,
@@ -1077,10 +1075,13 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::TYPES_HAVE_SEPARATE_DECLARATIONS_OF_A_PRIVATE_PROPERTY,
                 &[&prop_name],
             )),
-            tsz_solver::Visibility::Protected => Some(format_message(
-                internal_elaboration_messages::TYPES_HAVE_SEPARATE_DECLARATIONS_OF_A_PROTECTED_PROPERTY,
-                &[&prop_name],
-            )),
+            tsz_solver::Visibility::Protected => self.protected_brand_mismatch_error(
+                &prop_name,
+                source_type,
+                target_type,
+                source_prop.parent_id,
+                target_prop.parent_id,
+            ),
             tsz_solver::Visibility::Public => None,
         }
     }

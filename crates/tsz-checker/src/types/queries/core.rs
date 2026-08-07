@@ -1765,7 +1765,7 @@ impl<'a> CheckerState<'a> {
     /// name, else the enclosing `VariableDeclaration` binding name (tsc
     /// names `const C = class {…}` as 'C' via the class symbol), else the
     /// exact tsc placeholder `"(Anonymous class)"`.
-    fn get_syntactic_class_name_or_anonymous(&self, class_idx: NodeIndex) -> String {
+    pub(crate) fn get_syntactic_class_name_or_anonymous(&self, class_idx: NodeIndex) -> String {
         let syntactic = self
             .ctx
             .arena
