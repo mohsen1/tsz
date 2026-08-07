@@ -1213,7 +1213,11 @@ STRUCT_FIELD_COUNT_CHECKS = [
         "Checker boundary: CheckerContext field count (architecture health metric 1)",
         ROOT / "crates" / "tsz-checker" / "src" / "context" / "mod.rs",
         "CheckerContext",
-        255,
+        # 255 -> 256: `parameter_grammar_suppress_spans` records the rest
+        # parameters whose parser-emitted grammar diagnostics tsc's single
+        # early-return `checkGrammarParameterList` never reached, so the driver
+        # can drop them (#16644).
+        256,
     ),
 ]
 

@@ -432,17 +432,15 @@ wants(d());
     );
 }
 
-/// Both union rows are red on `main` and stay red with this fix, for a reason
-/// that has nothing to do with the contribution: tsz reports a spurious
-/// **TS1320** on a union of `AsyncGenerator`s. That diagnostic is raised by
-/// `async_iterator_has_invalid_thenable_next_result`, *upstream* of the
-/// contribution in the same arm, and it fires on both the mismatched and the
-/// matching instantiation — including the row that `tsc` reports nothing on at
-/// all. Kept as documented `#[ignore]`s rather than deleted: they are the two
-/// rows that pin the union axis of this family, and they become live the
-/// moment that separate defect is fixed.
+/// The union axis of this family. Both rows were previously blocked on two
+/// independent defects on the union arm: a spurious **TS1320** raised by
+/// `async_iterator_has_invalid_thenable_next_result` (fixed by #16116, which
+/// distributes that predicate over union members), and the contribution itself
+/// collapsing to `any` because `get_iterator_info` never distributes over a
+/// union delegate. Both are now fixed — the `yield*` element resolution routes
+/// through the checker's env-aware, union-distributing chain — so these rows
+/// are live regression guards.
 #[test]
-#[ignore = "pre-existing spurious TS1320 on a union delegate: see the doc comment"]
 fn union_delegate_contributes_the_union_of_element_types() {
     let codes = strict_codes(
         r#"

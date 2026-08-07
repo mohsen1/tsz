@@ -145,6 +145,9 @@ mod control_flow_type_guard_tests;
 #[path = "../tests/definite_assignment_tests.rs"]
 mod definite_assignment_tests;
 #[cfg(test)]
+#[path = "../tests/duplicate_parameter_names_function_expression_forms_tests.rs"]
+mod duplicate_parameter_names_function_expression_forms_tests;
+#[cfg(test)]
 #[path = "../tests/dynamic_import_defer_tests.rs"]
 mod dynamic_import_defer_tests;
 #[cfg(test)]

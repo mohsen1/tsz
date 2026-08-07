@@ -60,6 +60,33 @@ impl<'a> CheckerState<'a> {
             let mut has_deferred_index_value_type = false;
 
             for shape in union_shapes {
+                // A symbol-keyed property is covered only by a `[k: symbol]`
+                // index signature — never by the `[k: string]`/`[k: number]`
+                // branches below. Mirrors tsc `getApplicableIndexInfo`. When the
+                // shape has no symbol signature the property is uncovered and no
+                // value check applies (`applicable_index_value_types` stays empty
+                // for this shape, so the outer guard skips it).
+                if source_prop.is_symbol_named {
+                    if let Some(symbol_index) = shape.symbol_index_signature() {
+                        if self.index_value_type_is_deferred(symbol_index.value_type) {
+                            has_deferred_index_value_type = true;
+                            continue;
+                        }
+                        applicable_index_value_types.push(symbol_index.value_type);
+                        if self
+                            .index_signature_relation_outcome(
+                                source_prop.type_id,
+                                symbol_index.value_type,
+                            )
+                            .related
+                        {
+                            accepted_by_index = true;
+                            break;
+                        }
+                    }
+                    continue;
+                }
+
                 if let Some(string_index) = &shape.string_index {
                     if !self.string_index_key_accepts_property_name(
                         string_index.key_type,
@@ -133,29 +160,19 @@ impl<'a> CheckerState<'a> {
             let report_idx = self
                 .find_object_literal_property_element(obj_literal_idx, source_prop.name)
                 .unwrap_or(obj_literal_idx);
-            if let Some(nested_idx) = self.object_literal_property_initializer(report_idx) {
-                let nested_idx = self.ctx.arena.skip_parenthesized(nested_idx);
-                if self
-                    .ctx
-                    .arena
-                    .get(nested_idx)
-                    .is_some_and(|node| node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
-                {
-                    let nested_request =
-                        crate::context::TypingRequest::with_contextual_type(target_value_type);
-                    let nested_source =
-                        self.get_type_of_node_with_request(nested_idx, &nested_request);
-                    let before_nested = self.ctx.diagnostics.len();
-                    self.check_object_literal_excess_properties(
-                        nested_source,
-                        target_value_type,
-                        nested_idx,
-                    );
-                    if self.ctx.diagnostics.len() > before_nested {
-                        continue;
-                    }
-                }
-            }
+
+            // `find_object_literal_property_element` only matches property names
+            // readable straight off the syntax (literals, well-known `Symbol.xxx`
+            // members). A computed name that needs type evaluation to resolve —
+            // `[sym]` for `declare const sym: unique symbol` — falls through to
+            // `obj_literal_idx` above, which is not a property node, so the
+            // initializer lookup below would find nothing and this property's
+            // nested object-literal value would never get its own excess-property
+            // drill-in. Resolve through the same three-tier lookup the
+            // computed-property diagnostic further down already uses (property
+            // node at `report_idx`, then syntax-name match, then
+            // `get_property_name_resolved`'s type-evaluated match) before
+            // deciding there is nothing to drill into.
             let computed_property = self
                 .ctx
                 .arena
@@ -176,12 +193,59 @@ impl<'a> CheckerState<'a> {
                             .then_some((prop.name, prop.initializer))
                     })
                 });
+
+            let nested_value_idx = computed_property
+                .map(|(_, value_idx)| value_idx)
+                .or_else(|| self.object_literal_property_initializer(report_idx));
+            if let Some(nested_idx) = nested_value_idx {
+                let nested_idx = self.ctx.arena.skip_parenthesized(nested_idx);
+                if self
+                    .ctx
+                    .arena
+                    .get(nested_idx)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+                {
+                    let nested_request =
+                        crate::context::TypingRequest::with_contextual_type(target_value_type);
+                    let nested_source =
+                        self.get_type_of_node_with_request(nested_idx, &nested_request);
+                    let before_nested = self.ctx.diagnostics.len();
+                    self.check_object_literal_excess_properties(
+                        nested_source,
+                        target_value_type,
+                        nested_idx,
+                    );
+                    if self.ctx.diagnostics.len() > before_nested {
+                        continue;
+                    }
+                    // Other polarity of the same drill-in: a member that is
+                    // *present* but wrongly typed. tsc's `elaborateElementwise`
+                    // descends into the nested literal and anchors TS2322 at the
+                    // member either way, regardless of whether the outer key is
+                    // late-bound via a string or a symbol. Without this, a
+                    // late-bound key with a mismatched (not excess) nested member
+                    // falls through to the flat TS2418 below instead.
+                    if self.try_elaborate_assignment_source_error(nested_idx, target_value_type) {
+                        continue;
+                    }
+                }
+            }
+            // A computed name spelled with a literal (`["p"]`, `[0]`,
+            // `` [`p`] ``) is not a late-bound name: tsc's
+            // `isComputedNonLiteralName` is false for it, so it never reaches
+            // the computed-property message and is judged as the ordinary
+            // property it is. Only a late-bound spelling (`[label]` for a
+            // `const`, `[E.A]`, `[sym]`, `[Symbol.iterator]`) takes TS2418
+            // when it matches the target through an index signature. Falling
+            // through hands a literal-spelled name to the elaboration below,
+            // which anchors at the value and reports TS2322/TS2353.
             if let Some((prop_name_idx, prop_value_idx)) = computed_property
                 && self
                     .ctx
                     .arena
                     .get(prop_name_idx)
                     .is_some_and(|node| node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+                && !self.computed_member_name_is_literal_spelled(prop_name_idx)
             {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 

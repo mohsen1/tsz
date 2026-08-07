@@ -615,6 +615,9 @@ path = "tests/ts1240_accessor_decorator_tests.rs"
 name = "ts1241_method_decorator_tests"
 path = "tests/ts1241_method_decorator_tests.rs"
 [[test]]
+name = "ts1271_parameter_decorator_return_type_tests"
+path = "tests/ts1271_parameter_decorator_return_type_tests.rs"
+[[test]]
 name = "ts1249_method_overload_decorator_tests"
 path = "tests/ts1249_method_overload_decorator_tests.rs"
 [[test]]
@@ -1526,6 +1529,9 @@ path = "tests/ts2344_keyof_bare_tparam_defer_tests.rs"
 [[test]]
 name = "ts2344_keyof_constraint_display_tests"
 path = "tests/ts2344_keyof_constraint_display_tests.rs"
+[[test]]
+name = "ts2344_primitive_key_union_alias_constraint_display_tests"
+path = "tests/ts2344_primitive_key_union_alias_constraint_display_tests.rs"
 [[test]]
 name = "ts2344_conditional_constraint_display_tests"
 path = "tests/ts2344_conditional_constraint_display_tests.rs"
@@ -2697,3 +2703,12 @@ path = "tests/qualified_default_import_enum_namespace_merge_root_tests.rs"
 [[test]]
 name = "union_display_alias_repaint_parity_tests"
 path = "tests/union_display_alias_repaint_parity_tests.rs"
+[[test]]
+name = "symbol_key_index_signature_selection_tests"
+path = "tests/symbol_key_index_signature_selection_tests.rs"
+[[test]]
+name = "symbol_key_nested_literal_excess_property_tests"
+path = "tests/symbol_key_nested_literal_excess_property_tests.rs"
+[[test]]
+name = "symbol_index_nested_literal_drill_in_ts2353_tests"
+path = "tests/symbol_index_nested_literal_drill_in_ts2353_tests.rs"

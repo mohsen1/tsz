@@ -1864,14 +1864,17 @@ impl QueryDatabase for QueryCache<'_> {
 
     fn set_no_unchecked_indexed_access(&self, enabled: bool) {
         self.no_unchecked_indexed_access.set(enabled);
+        self.interner.set_no_unchecked_indexed_access(enabled);
     }
 
     fn set_exact_optional_property_types(&self, enabled: bool) {
         self.exact_optional_property_types.set(enabled);
+        self.interner.set_exact_optional_property_types(enabled);
     }
 
     fn set_strict_null_checks(&self, enabled: bool) {
         self.strict_null_checks.set(enabled);
+        self.interner.set_strict_null_checks(enabled);
     }
 
     fn get_type_param_variance(&self, def_id: DefId) -> Option<Arc<[Variance]>> {

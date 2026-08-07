@@ -1,4 +1,4 @@
-//! verbatimModuleSyntax import/export checks (TS1282, TS1283, TS1295, TS1484, TS1485, TS2748).
+//! verbatimModuleSyntax import/export checks (TS1282, TS1283, TS1286, TS1295, TS1484, TS1485, TS2748).
 
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -132,9 +132,9 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // TS1295: In CJS+VMS mode, ESM import syntax is forbidden entirely.
-        // Emit TS1295 on the import clause and skip ESM-specific checks.
-        // TSC skips this check for .d.ts files.
+        // TS1286/TS1295: In CJS+VMS mode, ESM import syntax is forbidden entirely.
+        // Emit TS1286 (extension-locked) or TS1295 (adjustable) on the import
+        // clause and skip ESM-specific checks. TSC skips this check for .d.ts files.
         if self.is_current_file_commonjs_for_vms() && !self.ctx.is_declaration_file() {
             // TSC positions the error at the binding NAME:
             // - Default import `import X from ...` → at X
@@ -173,11 +173,18 @@ impl<'a> CheckerState<'a> {
             } else {
                 import.import_clause
             };
-            self.error_at_node(
-                error_node,
-                diagnostic_messages::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT_2,
-                diagnostic_codes::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT_2,
-            );
+            let (message, code) = if self.current_file_commonjs_is_extension_locked() {
+                (
+                    diagnostic_messages::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT,
+                    diagnostic_codes::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT,
+                )
+            } else {
+                (
+                    diagnostic_messages::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT_2,
+                    diagnostic_codes::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT_2,
+                )
+            };
+            self.error_at_node(error_node, message, code);
             return;
         }
 
@@ -628,5 +635,17 @@ impl<'a> CheckerState<'a> {
             return !is_esm;
         }
         !self.ctx.compiler_options.module.is_es_module()
+    }
+
+    /// Whether the current file's CommonJS-ness is locked in by a fixed file
+    /// extension (`.cts`/`.cjs`), as opposed to `module`/`moduleResolution`
+    /// config or a `package.json` `"type"` field. tsc picks between two
+    /// messages for the same "ESM import/export syntax in a CJS file" defect
+    /// on exactly this distinction: TS1286 when the extension already fixes
+    /// the file's module kind (adjusting `package.json` cannot help), TS1295
+    /// when the CJS classification came from config and could be adjusted.
+    pub(crate) fn current_file_commonjs_is_extension_locked(&self) -> bool {
+        let current_file = &self.ctx.file_name;
+        current_file.ends_with(".cts") || current_file.ends_with(".cjs")
     }
 }

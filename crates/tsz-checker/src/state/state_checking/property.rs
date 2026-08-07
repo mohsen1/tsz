@@ -1256,6 +1256,133 @@ const c: TaggedCategory = { name: "root", tag: "top", parent: { name: "child", t
         );
     }
 
+    // -----------------------------------------------------------------------
+    // Symbol-index nested-literal excess-property drill-in (issue #16649)
+    //
+    // Structural rule: when a `[k: symbol]` index signature's value type is
+    // itself an object shape, a nested object-literal value assigned through
+    // a symbol-keyed computed property is drilled into for its own
+    // TS2353 excess-property check, the same way a `[k: string]` index
+    // signature's nested-literal values already are.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn ts2353_symbol_index_nested_object_literal_excess_property() {
+        let diags = check_source_diagnostics(
+            r#"
+declare const sym: unique symbol;
+interface Val { a: number; }
+interface I { [k: string]: number; [k: symbol]: Val; }
+const i2: I = { [sym]: { a: 1, b: 2 } };
+"#,
+        );
+        let ts2353: Vec<_> = diags.iter().filter(|d| d.code == 2353).collect();
+        assert_eq!(
+            ts2353.len(),
+            1,
+            "expected one TS2353 on the nested excess property 'b', got: {diags:?}"
+        );
+        assert!(
+            ts2353[0].message_text.contains("'b'"),
+            "TS2353 should mention 'b', got: {}",
+            ts2353[0].message_text
+        );
+        let ts2418: Vec<_> = diags.iter().filter(|d| d.code == 2418).collect();
+        assert!(
+            ts2418.is_empty(),
+            "expected no outer TS2418 once the nested excess property is reported, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn ts2353_symbol_index_nested_object_literal_no_excess_property_is_clean() {
+        let diags = check_source_diagnostics(
+            r#"
+declare const sym: unique symbol;
+interface Val { a: number; }
+interface I { [k: string]: number; [k: symbol]: Val; }
+const i: I = { [sym]: { a: 1 } };
+"#,
+        );
+        assert!(
+            diags.is_empty(),
+            "expected no diagnostics for a matching symbol-indexed nested literal, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn ts2322_symbol_index_nested_object_literal_type_mismatch_drills_in() {
+        // This row previously pinned the *wrong* behavior on purpose — the flat
+        // TS2418 computed-property message won over
+        // `try_elaborate_assignment_source_error` unconditionally, rather than
+        // only when there was nothing to elaborate — with a note that a future
+        // fix should update it deliberately. This is that update: the
+        // elaboration now drills into the nested literal for a member
+        // *mismatch* the same way #16649/#16651 made it drill in for an excess
+        // property.
+        //
+        // Oracle (`typescript@7.0.2`, `--strict --lib es2024 --target es2022`):
+        //
+        //   error TS2322: Type 'string' is not assignable to type 'number'.
+        let diags = check_source_diagnostics(
+            r#"
+declare const sym: unique symbol;
+interface Val { a: number; }
+interface I { [k: string]: number; [k: symbol]: Val; }
+const i3: I = { [sym]: { a: "wrong" } };
+"#,
+        );
+        let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&2322),
+            "a nested member mismatch drills in to TS2322, got: {diags:?}"
+        );
+        assert!(
+            !codes.contains(&2418),
+            "the flat TS2418 computed-property message must not also fire once \
+             the mismatch elaborates, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn ts2353_string_index_nested_object_literal_excess_property_regression() {
+        // Regression guard: the `[k: string]` case already drilled in
+        // correctly before this fix and must keep doing so.
+        let diags = check_source_diagnostics(
+            r#"
+interface Val { a: number; }
+interface I { [k: string]: Val; }
+const i4: I = { foo: { a: 1, b: 2 } };
+"#,
+        );
+        let ts2353: Vec<_> = diags.iter().filter(|d| d.code == 2353).collect();
+        assert_eq!(
+            ts2353.len(),
+            1,
+            "expected one TS2353 on the nested excess property 'b', got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn ts2418_symbol_index_primitive_value_still_reports_flat_mismatch() {
+        // This issue is object-valued-index only: a `[k: symbol]` index whose
+        // value type is a primitive keeps the flat TS2418 (nothing to drill
+        // into).
+        let diags = check_source_diagnostics(
+            r#"
+declare const sym: unique symbol;
+interface I { [k: string]: number; [k: symbol]: number; }
+const i5: I = { [sym]: { a: 1, b: 2 } };
+"#,
+        );
+        let ts2418: Vec<_> = diags.iter().filter(|d| d.code == 2418).collect();
+        assert_eq!(
+            ts2418.len(),
+            1,
+            "expected the flat TS2418 for a primitive-valued symbol index, got: {diags:?}"
+        );
+    }
+
     #[test]
     fn ts2353_debug_structural_type_alias_recursive_intersection() {
         let diags = check_source_diagnostics(

@@ -1853,6 +1853,9 @@ impl<'a> CheckerState<'a> {
                     &def_id_resolver,
                     &value_resolver,
                 )
+                .with_nonstrict_nullish_union_reduction(
+                    self.ctx.compiler_options.strict_null_checks,
+                )
                 .with_type_param_bindings(type_param_bindings)
                 .with_computed_name_resolver(&computed_name_resolver)
                 .with_computed_symbol_name_resolver(&computed_symbol_name_resolver)

@@ -1184,6 +1184,15 @@ pub struct CheckerContext<'a> {
     /// Used by TS2677 to widen predicate types to `T | null | undefined`.
     /// Excludes `!T` / `T!` errors which should not trigger widening.
     pub nullable_type_parse_error_positions: Vec<u32>,
+    /// Half-open `[start, end)` spans of rest parameters whose parser-emitted
+    /// grammar diagnostics (TS1014/TS1047/TS1048) must be suppressed because tsc's
+    /// single-early-return `checkGrammarParameterList` already reported an
+    /// earlier-positioned grammar error on the same parameter list
+    /// (TS1015/TS1016) and never reached the rest parameter. Populated by
+    /// `check_parameter_ordering`; consumed by the driver's per-file merge
+    /// (`run_check_on_existing_checker`) which drops the losing parse
+    /// diagnostics before combining them with checker diagnostics.
+    pub parameter_grammar_suppress_spans: Vec<(u32, u32)>,
     pub diagnostics: Vec<Diagnostic>,
     /// Whether this context's `diagnostics` are never surfaced to the user.
     ///

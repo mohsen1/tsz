@@ -122,6 +122,8 @@ pub struct TypeLowering<'a> {
     /// Whether strictNullChecks is enabled. When true, optional parameters
     /// in function types include `| undefined` in their type.
     pub(super) strict_null_checks: bool,
+    /// Opt-in gate for the non-strict nullish union reduction (`nonstrict_nullish`).
+    pub(super) nonstrict_nullish_union_reduction: bool,
     /// Operation counter to prevent infinite loops
     pub(super) operations: Rc<RefCell<u32>>,
     /// Whether the operation limit has been exceeded
@@ -477,6 +479,7 @@ impl<'a> TypeLowering<'a> {
             preferred_self_name: None,
             preferred_self_def_id: None,
             strict_null_checks: false,
+            nonstrict_nullish_union_reduction: false,
             type_param_scopes: Rc::new(RefCell::new(Vec::new())),
             typeof_param_scopes: Rc::new(RefCell::new(Vec::new())),
             operations: Rc::new(RefCell::new(0)),
@@ -584,6 +587,7 @@ impl<'a> TypeLowering<'a> {
             preferred_self_name: self.preferred_self_name.clone(),
             preferred_self_def_id: self.preferred_self_def_id,
             strict_null_checks: self.strict_null_checks,
+            nonstrict_nullish_union_reduction: self.nonstrict_nullish_union_reduction,
             // Rc::clone() shares the underlying Rc instead of copying data
             type_param_scopes: Rc::clone(&self.type_param_scopes),
             typeof_param_scopes: Rc::clone(&self.typeof_param_scopes),
@@ -836,6 +840,18 @@ impl<'a> TypeLowering<'a> {
     /// function types include `| undefined` in their type.
     pub const fn with_strict_null_checks(mut self, enabled: bool) -> Self {
         self.strict_null_checks = enabled;
+        self
+    }
+
+    /// Opt this lowering into tsc's non-strict-mode `null`/`undefined` union
+    /// reduction, wiring the real `strictNullChecks` in the same call so it
+    /// can never fire under `--strict`. See `lower_union_type`.
+    pub const fn with_nonstrict_nullish_union_reduction(
+        mut self,
+        strict_null_checks: bool,
+    ) -> Self {
+        self.strict_null_checks = strict_null_checks;
+        self.nonstrict_nullish_union_reduction = true;
         self
     }
 
@@ -1318,17 +1334,33 @@ impl<'a> TypeLowering<'a> {
             .iter()
             .map(|&idx| self.lower_type(idx))
             .collect();
-        // NOTE: the non-strict pure-nullish-union collapse
-        // (`collapse_pure_nullish_union_nonstrict`) deliberately does NOT
-        // live here. `self.strict_null_checks` is not reliably the real
-        // compiler option on this path — the 37 `TypeLowering` construction
-        // sites across `tsz-checker` mostly never call
-        // `with_strict_null_checks`, so it silently defaults to `false` and
-        // would collapse the union even under `--strict`. The interface
-        // fast-path caller in `simple_local_interface.rs` routes a pure
-        // `null | undefined` member through `tsz-checker`'s own
-        // `get_type_from_type_node_in_type_literal`, which reads the real
-        // `compiler_options.strict_null_checks` — see #16180's review.
+        // Non-strict-mode `null`/`undefined` union reduction, applied only
+        // when a site opted in via `with_nonstrict_nullish_union_reduction` —
+        // which also wires the real `strictNullChecks`, so an unwired site
+        // (whose `strict_null_checks` silently defaults to `false`) can never
+        // collapse a union under `--strict`. The `!strict_null_checks` gate
+        // makes strict builds skip both solver calls entirely. Solver-owned
+        // and identical to the rule `tsz-checker`'s type-node resolvers apply;
+        // this is the seam for object/interface members (index signatures, and
+        // heritage-bearing or multiply-declared interfaces) that fall through
+        // to this lowering rather than the checker fast-path. See #16620.
+        let members = if self.nonstrict_nullish_union_reduction && !self.strict_null_checks {
+            match tsz_solver::narrowing::collapse_pure_nullish_union_nonstrict(
+                self.strict_null_checks,
+                &members,
+            ) {
+                // Pure `null | undefined` resolves to a bare nullish scalar —
+                // no `Union`, so no origin to record.
+                Some(collapsed) => return collapsed,
+                None => tsz_solver::narrowing::nonstrict_union_members_absorb_nullish_scalars(
+                    self.strict_null_checks,
+                    &members,
+                )
+                .unwrap_or(members),
+            }
+        } else {
+            members
+        };
         // Mirror tsc's `UnionType.origin`: record the as-written input
         // member list so the printer can render `0 | 1 | 2` in source
         // order even when the canonical sort uses non-deterministic

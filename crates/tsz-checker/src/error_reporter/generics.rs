@@ -496,7 +496,7 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    fn is_primitive_key_union_type(&self, type_id: TypeId) -> bool {
+    pub(crate) fn is_primitive_key_union_type(&self, type_id: TypeId) -> bool {
         let Some(list_id) = common::union_list_id(self.ctx.types, type_id) else {
             return false;
         };

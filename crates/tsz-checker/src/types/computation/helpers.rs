@@ -568,6 +568,21 @@ impl<'a> CheckerState<'a> {
 
                 // Get operand type for validation.
                 let operand_type = self.get_type_of_node(unary.operand);
+                // An optional chain's own `undefined` marker is added
+                // unconditionally, independent of `strictNullChecks` — unlike a
+                // *declared* nullable type, already stripped of `undefined` by
+                // the time it reaches here when `strictNullChecks` is off.
+                // Strip it the same way so a marker-only chain operand
+                // (`a.b?.c.d++`) doesn't spuriously fail the arithmetic-operand
+                // check below under non-strict null checks, matching a plain
+                // `x: number | undefined` operand, which already doesn't.
+                let operand_type = if self.ctx.strict_null_checks() {
+                    operand_type
+                } else {
+                    self.split_nullish_type(operand_type)
+                        .0
+                        .unwrap_or(operand_type)
+                };
 
                 // TS18046: ++/-- on unknown is not allowed (strictNullChecks only).
                 // tsc emits TS18046 instead of TS2356 for unknown operands.

@@ -331,6 +331,8 @@ mod fresh_object_literal_union_literal_kind_display_tests;
 mod function_callee_spread_ts2556_tests;
 #[path = "tests/function_parameter_mismatch_elaboration_tests.rs"]
 mod function_parameter_mismatch_elaboration_tests;
+#[path = "tests/function_type_parameter_grammar_tests.rs"]
+mod function_type_parameter_grammar_tests;
 #[path = "tests/function_type_relation_routing_arch_tests.rs"]
 mod function_type_relation_routing_arch_tests;
 #[path = "tests/function_type_return_node_tests.rs"]
@@ -353,6 +355,8 @@ mod generator_yield_self_similar_nesting_tests;
 mod generator_yield_star_next_type_tests;
 #[path = "tests/generator_yieldstar_symbol_iterator_contribution_tests.rs"]
 mod generator_yieldstar_symbol_iterator_contribution_tests;
+#[path = "tests/generator_yieldstar_union_delegate_contribution_tests.rs"]
+mod generator_yieldstar_union_delegate_contribution_tests;
 #[path = "tests/generic_alias_application_display_tests.rs"]
 mod generic_alias_application_display_tests;
 #[path = "tests/generic_argument_suppression_relation_routing_arch_tests.rs"]
@@ -575,6 +579,8 @@ mod lazy_lib_member_access_tests;
 mod lib_abstract_member_ts2515_tests;
 #[path = "tests/libtype_structural_name_lookup_arch_tests.rs"]
 mod libtype_structural_name_lookup_arch_tests;
+#[path = "tests/literal_spelled_computed_key_index_signature_code_tests.rs"]
+mod literal_spelled_computed_key_index_signature_code_tests;
 #[path = "tests/local_type_alias_shadowing_tests.rs"]
 mod local_type_alias_shadowing_tests;
 #[path = "tests/logical_assignment_member_narrowing_tests.rs"]
@@ -645,6 +651,8 @@ mod nonstrict_nullish_widening_generic_call_tests;
 mod nonstrict_nullish_widening_mutable_binding_tests;
 #[path = "tests/nonstrict_nullish_widening_nested_leaf_tests.rs"]
 mod nonstrict_nullish_widening_nested_leaf_tests;
+#[path = "tests/nonstrict_return_union_nullish_reduction_tests.rs"]
+mod nonstrict_return_union_nullish_reduction_tests;
 #[path = "tests/nonstrict_union_nullish_scalar_reduction_tests.rs"]
 mod nonstrict_union_nullish_scalar_reduction_tests;
 #[path = "tests/nonunique_symbol_property_access_tests.rs"]
@@ -685,6 +693,8 @@ mod object_spread_optional_merge_tests;
 mod operator_chain_overload_resolution_tests;
 #[path = "tests/optional_chain_inherent_nullish_tests.rs"]
 mod optional_chain_inherent_nullish_tests;
+#[path = "tests/optional_chain_read_before_write_tests.rs"]
+mod optional_chain_read_before_write_tests;
 #[path = "tests/optional_chain_root_nullish_strict_only_tests.rs"]
 mod optional_chain_root_nullish_strict_only_tests;
 #[path = "tests/optional_key_extraction_tests.rs"]
@@ -953,6 +963,8 @@ mod under_applied_generic_constructor_fill_tests;
 mod union_call_resolution_tests;
 #[path = "tests/union_constraint_relation_routing_arch_tests.rs"]
 mod union_constraint_relation_routing_arch_tests;
+#[path = "tests/union_display_longhand_primitive_repaint_tests.rs"]
+mod union_display_longhand_primitive_repaint_tests;
 #[path = "tests/union_excess_property_relation_routing_arch_tests.rs"]
 mod union_excess_property_relation_routing_arch_tests;
 #[path = "tests/union_index_signature_relation_routing_arch_tests.rs"]
@@ -977,6 +989,10 @@ mod variadic_tuple_alias_display_tests;
 mod variadic_tuple_constraint_literal_preservation_tests;
 #[path = "tests/variadic_tuple_spread_element_inference_tests.rs"]
 mod variadic_tuple_spread_element_inference_tests;
+#[path = "tests/verbatim_module_syntax_export_default_alias_ts1284_tests.rs"]
+mod verbatim_module_syntax_export_default_alias_ts1284_tests;
+#[path = "tests/verbatim_module_syntax_export_default_type_only_import_ts1284_tests.rs"]
+mod verbatim_module_syntax_export_default_type_only_import_ts1284_tests;
 #[path = "tests/void_undefined_discriminant_narrowing_tests.rs"]
 mod void_undefined_discriminant_narrowing_tests;
 #[path = "tests/window_self_globalthis_resolution_tests.rs"]

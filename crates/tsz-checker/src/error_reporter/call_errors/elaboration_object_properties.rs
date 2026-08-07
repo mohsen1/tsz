@@ -833,12 +833,18 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // TS2418 applies when:
-                //   (a) the key is computed, AND
-                //   (b) either the key is a symbol (unique/well-known, never TS2322)
-                //       or the key is a numeric/string literal but the target has
-                //       no named property for it (matches only via index signature).
-                // When a literal key like `[0]` or `["x"]` resolves to a named
-                // property in the target, tsc uses TS2322 instead.
+                //   (a) the key is computed AND late-bound — an identifier over
+                //       a `const`, an enum member, or a symbol reference — since
+                //       tsc's `isComputedNonLiteralName` is false for a
+                //       literal-spelled computed name (`["x"]`, `[0]`,
+                //       `` [`x`] ``), which is an ordinary property name and
+                //       takes TS2322/TS2353 no matter how the target matches it,
+                //       AND
+                //   (b) the late-bound key has no named property in the target
+                //       (it matches only via an index signature), since a
+                //       late-bound key resolving to a named member takes TS2322.
+                let key_is_late_bound = is_computed_property
+                    && !self.computed_member_name_is_literal_spelled(prop_name_idx);
                 let target_has_named_member_for_key = is_computed_property
                     && self.target_has_named_property_for_key(effective_param_type, &prop_name);
                 // A *missing-property* failure keeps its own code even when the
@@ -862,7 +868,7 @@ impl<'a> CheckerState<'a> {
                                 | RelationFailure::MissingProperties { .. }
                         )
                     );
-                if is_computed_property
+                if key_is_late_bound
                     && !(is_computed_literal_key && target_has_named_member_for_key)
                     && !computed_failure_is_missing_property
                 {
@@ -1596,6 +1602,7 @@ impl<'a> CheckerState<'a> {
                 if elem_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                     && self.all_object_literal_properties_assignable_with_literals(
                         elem_idx,
+                        elem_type,
                         target_element_type,
                     )
                 {
@@ -1766,91 +1773,6 @@ impl<'a> CheckerState<'a> {
             &message,
             diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
         );
-        true
-    }
-
-    /// Check if all properties of an object literal are assignable to the
-    /// target type when using literal types from the initializers. This catches
-    /// cases where the widened object type (e.g., `{ kind: string }`) fails
-    /// assignability against a discriminated union, but the literal property
-    /// values (e.g., `"bluray"`) actually match a union member.
-    fn all_object_literal_properties_assignable_with_literals(
-        &mut self,
-        obj_idx: NodeIndex,
-        target_type: TypeId,
-    ) -> bool {
-        use tsz_parser::parser::syntax_kind_ext;
-
-        let obj_node = match self.ctx.arena.get(obj_idx) {
-            Some(node) if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => node,
-            _ => return false,
-        };
-
-        let obj = match self.ctx.arena.get_literal_expr(obj_node) {
-            Some(obj) => obj.clone(),
-            None => return false,
-        };
-
-        if obj.elements.nodes.is_empty() {
-            return false;
-        }
-
-        for &elem_idx in &obj.elements.nodes {
-            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
-                continue;
-            };
-
-            let (prop_name_idx, prop_value_idx) = match elem_node.kind {
-                k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
-                    match self.ctx.arena.get_property_assignment(elem_node) {
-                        Some(prop) => (prop.name, prop.initializer),
-                        None => continue,
-                    }
-                }
-                k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
-                    match self.ctx.arena.get_shorthand_property(elem_node) {
-                        Some(prop) => (prop.name, prop.name),
-                        None => continue,
-                    }
-                }
-                _ => continue,
-            };
-
-            let Some(prop_name) = self.object_literal_property_name_text(prop_name_idx) else {
-                continue;
-            };
-
-            let Some((target_prop_type, _)) =
-                self.object_literal_target_property_type(target_type, prop_name_idx, &prop_name)
-            else {
-                // Target doesn't have this property — can't confirm assignability
-                return false;
-            };
-
-            if target_prop_type == TypeId::ERROR || target_prop_type == TypeId::ANY {
-                continue;
-            }
-
-            // Try literal type first, then cached type
-            let source_prop_type =
-                if let Some(literal_type) = self.literal_type_from_initializer(prop_value_idx) {
-                    literal_type
-                } else {
-                    self.get_type_of_node(prop_value_idx)
-                };
-
-            if source_prop_type == TypeId::ERROR || source_prop_type == TypeId::ANY {
-                continue;
-            }
-
-            if !self
-                .call_arg_relation_outcome(source_prop_type, target_prop_type)
-                .related
-            {
-                return false;
-            }
-        }
-
         true
     }
 
