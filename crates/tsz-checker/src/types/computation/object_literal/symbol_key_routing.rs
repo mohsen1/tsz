@@ -174,6 +174,40 @@ impl<'a> CheckerState<'a> {
         self.get_type_of_node(computed.expression) == TypeId::SYMBOL
     }
 
+    /// True when a computed-property name is written as the syntactic
+    /// `Symbol.<member>` (or `Symbol["<member>"]`) well-known-symbol access,
+    /// judged from the syntax alone — the base identifier is literally
+    /// `Symbol` — regardless of whether that `Symbol` resolves to the global
+    /// lib value.
+    ///
+    /// `tsc`'s `isWellKnownSymbolSyntactically` late-binds such a key to the
+    /// well-known member itself, so a value mismatch is the per-property
+    /// TS2418, not the whole-object TS2322 that a genuine wide/plain `symbol`
+    /// key (an index-signature contributor) takes. This holds even when the
+    /// `Symbol` base is locally shadowed — the case where
+    /// `computed_member_key_is_wide_symbol` returns `true` and the key would
+    /// otherwise fold into the symbol index signature. Oracled against `tsc`
+    /// 6.0.2 (`--strict`, `--checkJs`) on a JSDoc-shadowed `Symbol`. #16662.
+    pub(crate) fn computed_member_key_is_well_known_symbol_syntax(
+        &self,
+        name_idx: NodeIndex,
+    ) -> bool {
+        let Some(name_node) = self.ctx.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+        let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
+            return false;
+        };
+        crate::types_domain::computed_names::well_known_symbol_access_shape(
+            self.ctx.arena,
+            computed.expression,
+        )
+        .is_some()
+    }
+
     pub(super) fn report_contextual_symbol_index_value_mismatch(
         &mut self,
         name_idx: NodeIndex,
@@ -181,6 +215,15 @@ impl<'a> CheckerState<'a> {
         source_value_type: TypeId,
         contextual_type: Option<TypeId>,
     ) -> bool {
+        // Only a syntactic `Symbol.<member>` key (well-known even when the
+        // `Symbol` base is locally shadowed) is late-bound and takes this
+        // per-property TS2418. A genuine wide/plain `symbol` key is an
+        // index-signature contributor whose value mismatch is owned by the
+        // whole-object relation (TS2322), like a wide `string`/`number` key,
+        // so it must not be reported here. #16662.
+        if !self.computed_member_key_is_well_known_symbol_syntax(name_idx) {
+            return false;
+        }
         let Some(target_value_type) = self.contextual_symbol_index_value_type(contextual_type)
         else {
             return false;
