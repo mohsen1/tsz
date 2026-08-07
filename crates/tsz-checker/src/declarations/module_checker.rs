@@ -1335,6 +1335,101 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Walk up from `node_idx` to the enclosing `declare module "<specifier>"`
+    /// declaration and return both its specifier text and its body node.
+    ///
+    /// `enclosing_ambient_module_specifier` answers "which module am I in?";
+    /// this answers "which statement list declares me?", which is what the
+    /// TS2303 companion-`export =` scan needs in order to look inside an
+    /// ambient module body instead of only at file top level.
+    fn enclosing_ambient_module_block(&self, node_idx: NodeIndex) -> Option<(String, NodeIndex)> {
+        use tsz_parser::parser::syntax_kind_ext;
+        let mut current = node_idx;
+        for _ in 0..64 {
+            let ext = self.ctx.arena.get_extended(current)?;
+            let parent = ext.parent;
+            if parent == NodeIndex::NONE || parent == current {
+                return None;
+            }
+            let parent_node = self.ctx.arena.get(parent)?;
+            if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                && let Some(module) = self.ctx.arena.get_module(parent_node)
+                && let Some(name_node) = self.ctx.arena.get(module.name)
+                && let Some(lit) = self.ctx.arena.get_literal(name_node)
+            {
+                return Some((lit.text.to_string(), module.body));
+            }
+            current = parent;
+        }
+        None
+    }
+
+    /// The statements of the container that declares `decl_idx`, paired with a
+    /// check of whether that container's `export =` names `sym_id`.
+    ///
+    /// An `export = X` never becomes a declaration of `X`'s symbol (see the
+    /// call site), so the export side has to be found syntactically, within
+    /// whichever statement list actually declares the alias: an ambient
+    /// module's body when the alias sits in one, the source file otherwise.
+    fn export_equals_sites_for_cyclic_alias(
+        &self,
+        decl_idx: NodeIndex,
+        sym_id: tsz_binder::SymbolId,
+    ) -> Vec<NodeIndex> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let (owns_export_equals, statements) = match self.enclosing_ambient_module_block(decl_idx) {
+            Some((specifier, body)) => {
+                let owns = self
+                    .ctx
+                    .binder
+                    .module_exports
+                    .get(&specifier)
+                    .and_then(|exports| exports.get("export="))
+                    == Some(sym_id);
+                let statements = self
+                    .ctx
+                    .arena
+                    .get(body)
+                    .filter(|body_node| body_node.kind == syntax_kind_ext::MODULE_BLOCK)
+                    .and_then(|body_node| self.ctx.arena.get_module_block(body_node))
+                    .and_then(|block| block.statements.as_ref())
+                    .map(|statements| statements.nodes.clone())
+                    .unwrap_or_default();
+                (owns, statements)
+            }
+            None => {
+                let owns = self.ctx.binder.file_locals.get("export=") == Some(sym_id);
+                let statements = self
+                    .ctx
+                    .arena
+                    .source_files
+                    .first()
+                    .map(|source_file| source_file.statements.nodes.clone())
+                    .unwrap_or_default();
+                (owns, statements)
+            }
+        };
+
+        if !owns_export_equals {
+            return Vec::new();
+        }
+
+        statements
+            .into_iter()
+            .filter(|&stmt_idx| {
+                self.ctx.arena.get(stmt_idx).is_some_and(|stmt_node| {
+                    stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+                        && self
+                            .ctx
+                            .arena
+                            .get_export_assignment(stmt_node)
+                            .is_some_and(|assign| assign.is_export_equals)
+                })
+            })
+            .collect()
+    }
+
     /// Eagerly checks all alias symbols in the current file for circular definitions.
     /// Emits TS2303 for any alias that circularly references itself.
     pub(crate) fn check_circular_import_aliases(&mut self) {
@@ -1701,31 +1796,15 @@ impl<'a> CheckerState<'a> {
                 // from the import side.
                 //
                 // tsc reports at EVERY alias declaration in the cycle, so when
-                // this file's `export =` targets the cyclic symbol, emit there
-                // too. Scanning only this file's statements preserves the
-                // current-file ownership the collection scan above is built on.
-                if self.ctx.binder.file_locals.get("export=") == Some(sym_id)
-                    && let Some(source_file) = self.ctx.arena.source_files.first()
-                {
-                    let export_equals_stmts: Vec<NodeIndex> = source_file
-                        .statements
-                        .nodes
-                        .iter()
-                        .copied()
-                        .filter(|&stmt_idx| {
-                            self.ctx.arena.get(stmt_idx).is_some_and(|stmt_node| {
-                                stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
-                                    && self
-                                        .ctx
-                                        .arena
-                                        .get_export_assignment(stmt_node)
-                                        .is_some_and(|assign| assign.is_export_equals)
-                            })
-                        })
-                        .collect();
-                    for stmt_idx in export_equals_stmts {
-                        self.error_at_node(stmt_idx, &message, code);
-                    }
+                // the `export =` that owns this symbol names it, emit there
+                // too. The scan is scoped to the container that declares the
+                // alias — an ambient module's own body when the cycle is
+                // written inside `declare module "..."`, the source file
+                // otherwise — which preserves the current-file ownership the
+                // collection scan above is built on while still reaching a
+                // cycle nested in an ambient module.
+                for stmt_idx in self.export_equals_sites_for_cyclic_alias(decl_idx, sym_id) {
+                    self.error_at_node(stmt_idx, &message, code);
                 }
             }
         }
