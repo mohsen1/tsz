@@ -503,6 +503,8 @@ impl<'a> CheckerState<'a> {
             let mut function_value_count = 0;
             let mut function_name: Option<String> = None;
             let mut function_name_has_body = false;
+            let mut all_function_defaults = true;
+            let mut function_body_count = 0usize;
             // How many of `effective_default_indices` are repeat overload
             // signatures of a function default already counted above. See the
             // `distinct_default_count` comment below.
@@ -522,6 +524,7 @@ impl<'a> CheckerState<'a> {
                 match wrapped_kind {
                     Some(k) if k == syntax_kind_ext::INTERFACE_DECLARATION => {
                         has_interface = true;
+                        all_function_defaults = false;
                     }
                     Some(k) if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                         has_function = true;
@@ -535,6 +538,9 @@ impl<'a> CheckerState<'a> {
                         let name =
                             function_data.map(|f| self.node_text(f.name).unwrap_or_default());
                         let has_body = function_data.is_some_and(|f| !f.body.is_none());
+                        if has_body {
+                            function_body_count += 1;
+                        }
                         match (&function_name, name) {
                             (None, Some(n)) if !n.is_empty() => {
                                 function_name = Some(n);
@@ -566,9 +572,11 @@ impl<'a> CheckerState<'a> {
                     Some(k) if k == syntax_kind_ext::CLASS_DECLARATION => {
                         has_class = true;
                         value_count += 1;
+                        all_function_defaults = false;
                     }
                     _ => {
                         value_count += 1;
+                        all_function_defaults = false;
                     }
                 }
             }
@@ -595,7 +603,42 @@ impl<'a> CheckerState<'a> {
             let is_conflict =
                 value_count > 1 || (distinct_default_count > 1 && !interface_can_merge);
             if is_conflict {
-                if has_function && has_class {
+                if all_function_defaults {
+                    // A run of default-exported function declarations binds one
+                    // exported `default` symbol regardless of the declared
+                    // names, so tsc never reports TS2528 here. Conflicts
+                    // surface through the duplicate-implementation family
+                    // instead: with two or more bodies in the run, every
+                    // declaration that carries a body redeclares the exported
+                    // binding (TS2323) and every declaration in the run —
+                    // overload signatures included — is a duplicate
+                    // implementation site (TS2393). With at most one body the
+                    // run is an overload set and this pass reports nothing;
+                    // TS2391/TS2394 belong to function implementation checking.
+                    if function_body_count > 1 {
+                        for &export_idx in &effective_default_indices {
+                            let has_body = self
+                                .ctx
+                                .arena
+                                .get_export_decl_at(export_idx)
+                                .and_then(|ed| self.ctx.arena.get(ed.export_clause))
+                                .and_then(|n| self.ctx.arena.get_function(n))
+                                .is_some_and(|f| !f.body.is_none());
+                            if has_body {
+                                self.error_at_default_export_anchor(
+                                    export_idx,
+                                    "Cannot redeclare exported variable 'default'.",
+                                    diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
+                                );
+                            }
+                            self.error_at_default_export_anchor(
+                                export_idx,
+                                diagnostic_messages::DUPLICATE_FUNCTION_IMPLEMENTATION,
+                                diagnostic_codes::DUPLICATE_FUNCTION_IMPLEMENTATION,
+                            );
+                        }
+                    }
+                } else if has_function && has_class {
                     // When function + class both export as default, tsc emits
                     // TS2323 + TS2813 + TS2814 (merge conflict diagnostics).
                     self.emit_function_class_default_merge_errors(&effective_default_indices);
@@ -831,8 +874,10 @@ impl<'a> CheckerState<'a> {
 
                 // TS2393: Duplicate function implementation.
                 // When multiple `export default function` declarations have bodies,
-                // tsc emits TS2393 on each, regardless of whether they are named or anonymous.
-                if has_function {
+                // tsc emits TS2393 on each, regardless of whether they are named or
+                // anonymous. The all-function arm above already owns TS2393 for a
+                // pure-function run (where signatures are duplicate sites too).
+                if has_function && !all_function_defaults {
                     let func_impls: Vec<NodeIndex> = effective_default_indices
                         .iter()
                         .filter_map(|&idx| {
