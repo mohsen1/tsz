@@ -223,6 +223,31 @@ impl<'a> TypeFormatter<'a> {
     }
 
     pub(super) fn format_tuple(&mut self, elements: &[TupleElement]) -> String {
+        // Normalize a fixed-tuple spread inline: `["a", ...["b"]]` displays as
+        // `["a", "b"]`. tsc's tuple normalization splices a rest element whose
+        // operand is a fixed-length tuple at construction time, so its printer
+        // never sees the unflattened form. tsz's evaluator performs the same
+        // flattening when a tuple is built from a *concrete* rest operand, but a
+        // rest element left as an unreduced recursive alias application
+        // (`[H, ...Split<R>]`, produced when the recursion is deferred) reaches
+        // the printer un-spliced. Resolve each rest element's display form and
+        // splice fixed tuples inline here so the rendered form matches tsc
+        // regardless of the stored representation. Array spreads (`...T[]`) and
+        // generic spreads (`...T`, `...Split<T>`) keep their `...` form — tsc
+        // only inlines fixed-tuple spreads.
+        //
+        // The un-spliced form is a canonicalization gap upstream: the *same*
+        // `Split<"a.b">` evaluates to a flat `["a", "b"]` on a direct use but to
+        // `["a", ...Split<"b">]` once a named alias `type P = Split<"a.b">`
+        // forces its body through the deferred-recursion path in
+        // `evaluation/evaluate/application.rs`, where the inner concrete
+        // application is not yet cache-resolvable and `visit_tuple` cannot
+        // flatten it. Splicing concrete rest operands here keeps the printer a
+        // faithful view of the type for every path that reaches it; the deeper
+        // fix is to re-normalize that application result before it is cached.
+        if let Some(normalized) = self.splice_display_tuple_spreads(elements, 0) {
+            return self.format_tuple(&normalized);
+        }
         // Normalize: a tuple with a single concrete rest element `[...T[]]`
         // displays as `T[]` to match tsc's display behavior. Type-parameter
         // spreads must keep their tuple wrapper (`[...T]`) so diagnostics can
@@ -278,6 +303,88 @@ impl<'a> TypeFormatter<'a> {
 
     pub fn format_tuple_elements_for_diagnostic(&mut self, elements: &[TupleElement]) -> String {
         self.format_tuple(elements)
+    }
+
+    /// Recursion bound for [`Self::splice_display_tuple_spreads`]. A deeply
+    /// nested recursive spread (`["a", ...["b", ...["c", ...]]]`) is spliced one
+    /// level per iteration; the bound guards a degenerate reduction that never
+    /// stops producing tuple spreads.
+    const MAX_TUPLE_SPREAD_SPLICE_DEPTH: u8 = 64;
+
+    /// Splice any anonymous rest element whose display form resolves to a
+    /// fixed-length tuple, returning `Some(spliced_elements)` when at least one
+    /// element was inlined and `None` when the list already renders as tsc would
+    /// (nothing to splice). Splicing is recursive so a rest operand that itself
+    /// carries a further fixed-tuple spread is fully flattened.
+    fn splice_display_tuple_spreads(
+        &self,
+        elements: &[TupleElement],
+        depth: u8,
+    ) -> Option<Vec<TupleElement>> {
+        // Only a rest element can ever splice; a rest-free tuple (the common
+        // case, rendered for every diagnostic) skips the allocation and the
+        // per-element resolution entirely.
+        if depth >= Self::MAX_TUPLE_SPREAD_SPLICE_DEPTH
+            || !elements.iter().any(|elem| elem.rest)
+        {
+            return None;
+        }
+        let mut out: Vec<TupleElement> = Vec::with_capacity(elements.len());
+        let mut spliced = false;
+        for elem in elements {
+            // Only anonymous, non-optional rest elements inline: a named rest
+            // (`...rest: [A, B]`) keeps its label, and an optional flag on a
+            // rest element is not a shape tsc splices.
+            if elem.rest
+                && !elem.optional
+                && elem.name.is_none()
+                && let Some(inner) = self.resolve_display_spread_tuple_elements(elem.type_id)
+            {
+                let inner = self
+                    .splice_display_tuple_spreads(&inner, depth + 1)
+                    .unwrap_or(inner);
+                out.extend(inner);
+                spliced = true;
+                continue;
+            }
+            out.push(*elem);
+        }
+        spliced.then_some(out)
+    }
+
+    /// Resolve a rest element's operand to the fixed-tuple elements it displays
+    /// as, or `None` when it is not a fixed tuple (an array spread, a bare or
+    /// generic type-parameter spread, or an alias application that reduces to a
+    /// union / stays deferred). Mirrors the fixed-tuple splice tsc performs when
+    /// it normalizes a spread tuple, but works from whatever representation the
+    /// operand happens to carry at display time.
+    fn resolve_display_spread_tuple_elements(&self, type_id: TypeId) -> Option<Vec<TupleElement>> {
+        // A generic spread stays deferred in tsc (`[T, ...Split<T>]`); never
+        // inline one, or the display would fabricate a concrete tuple the type
+        // does not have.
+        if crate::type_queries::contains_type_parameters_db(self.interner, type_id) {
+            return None;
+        }
+        // An alias application (`Split<"b">`) is resolved through the shared
+        // display reduction so the result matches how the operand renders on its
+        // own; every other operand is read directly. `get_tuple_elements` peels
+        // `readonly` and returns `None` for anything that is not a fixed tuple
+        // (an array spread, a union-reducing application), keeping the `...`
+        // form for exactly the cases tsc does not inline.
+        let peeled = crate::type_queries::data::unwrap_readonly(self.interner, type_id);
+        let concrete = match self.interner.lookup(peeled) {
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner.type_application(app_id);
+                match self.application_display_reduction(peeled, &app)? {
+                    super::application_reduction::ApplicationDisplayReduction::Type(reduced) => {
+                        reduced
+                    }
+                    _ => return None,
+                }
+            }
+            _ => peeled,
+        };
+        crate::type_queries::get_tuple_elements(self.interner, concrete)
     }
 
     pub(super) fn format_function(&mut self, shape: &FunctionShape) -> String {

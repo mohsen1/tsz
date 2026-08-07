@@ -98,3 +98,90 @@ fn error_sentinel_renders_as_any_application_base_collapse() {
     let app = db.application(TypeId::ERROR, vec![TypeId::STRING]);
     assert_eq!(fmt.format(app), "any");
 }
+
+// =================================================================
+// Fixed-tuple spread splicing at display time (#16732)
+//
+// tsc normalizes a tuple that spreads a fixed-length tuple by splicing the
+// inner elements inline, so its printer never renders the `...[...]` wrapper.
+// tsz's evaluator does the same when a tuple is built from a concrete rest
+// operand, but a rest element left un-reduced (a deferred recursive alias
+// application `[H, ...Split<R>]`) can reach the printer un-spliced. The
+// formatter re-normalizes so the rendered form matches tsc regardless of the
+// stored representation. Array spreads (`...T[]`) and generic spreads stay.
+// =================================================================
+
+fn rest_of(type_id: TypeId) -> crate::types::TupleElement {
+    crate::types::TupleElement {
+        type_id,
+        name: None,
+        optional: false,
+        rest: true,
+    }
+}
+
+#[test]
+fn format_tuple_splices_fixed_tuple_spread() {
+    // `[string, ...[number, boolean]]` renders `[string, number, boolean]`.
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+    let inner = db.tuple(vec![
+        crate::types::TupleElement::fixed(TypeId::NUMBER),
+        crate::types::TupleElement::fixed(TypeId::BOOLEAN),
+    ]);
+    let outer = db.tuple(vec![
+        crate::types::TupleElement::fixed(TypeId::STRING),
+        rest_of(inner),
+    ]);
+    assert_eq!(fmt.format(outer), "[string, number, boolean]");
+}
+
+#[test]
+fn format_tuple_splices_nested_fixed_tuple_spread() {
+    // `[string, ...[number, ...[boolean]]]` renders `[string, number, boolean]`
+    // — the splice recurses through the inner spread.
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+    let innermost = db.tuple(vec![crate::types::TupleElement::fixed(TypeId::BOOLEAN)]);
+    let inner = db.tuple(vec![
+        crate::types::TupleElement::fixed(TypeId::NUMBER),
+        rest_of(innermost),
+    ]);
+    let outer = db.tuple(vec![
+        crate::types::TupleElement::fixed(TypeId::STRING),
+        rest_of(inner),
+    ]);
+    assert_eq!(fmt.format(outer), "[string, number, boolean]");
+}
+
+#[test]
+fn format_tuple_keeps_array_rest_spread() {
+    // An array spread stays `...T[]` — tsc only inlines fixed-tuple spreads.
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+    let arr = db.array(TypeId::NUMBER);
+    let outer = db.tuple(vec![
+        crate::types::TupleElement::fixed(TypeId::STRING),
+        rest_of(arr),
+    ]);
+    assert_eq!(fmt.format(outer), "[string, ...number[]]");
+}
+
+#[test]
+fn format_tuple_splices_fixed_head_before_array_rest() {
+    // A fixed head spliced out of an inner tuple keeps the inner tuple's own
+    // trailing array rest: `[string, ...[number, ...boolean[]]]` renders
+    // `[string, number, ...boolean[]]`.
+    let db = TypeInterner::new();
+    let mut fmt = TypeFormatter::new(&db);
+    let bool_arr = db.array(TypeId::BOOLEAN);
+    let inner = db.tuple(vec![
+        crate::types::TupleElement::fixed(TypeId::NUMBER),
+        rest_of(bool_arr),
+    ]);
+    let outer = db.tuple(vec![
+        crate::types::TupleElement::fixed(TypeId::STRING),
+        rest_of(inner),
+    ]);
+    assert_eq!(fmt.format(outer), "[string, number, ...boolean[]]");
+}
