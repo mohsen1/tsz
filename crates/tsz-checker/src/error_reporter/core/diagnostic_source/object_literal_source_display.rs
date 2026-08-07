@@ -93,6 +93,37 @@ impl<'a> CheckerState<'a> {
         let mut any_non_entity_wide_key = false;
         for child_idx in literal.elements.nodes.iter().copied() {
             let child = self.ctx.arena.get(child_idx)?;
+            if matches!(
+                child.kind,
+                k if k == syntax_kind_ext::METHOD_DECLARATION
+                    || k == syntax_kind_ext::GET_ACCESSOR
+                    || k == syntax_kind_ext::SET_ACCESSOR
+            ) {
+                // A computed-name method/accessor that folded into an
+                // index-signature bucket displays property-style from the type
+                // captured at computation time (`[ws]: () => number`, a getter
+                // by its return type, a setter by its parameter type), like a
+                // computed-key property assignment. Any other method/accessor
+                // keeps the structural fallback for the whole literal.
+                let member =
+                    self.computed_index_member_source_display(child_idx, target_shape.as_deref())?;
+                match (contextual_index_key_kind, member.computed_index_kind) {
+                    (None, Some(kind)) => contextual_index_key_kind = Some(kind),
+                    (Some(existing), Some(kind)) if existing == kind => {}
+                    _ => all_contextual_index_properties = false,
+                }
+                if member.computed_index_kind.is_some() && !member.key_is_entity_name {
+                    any_non_entity_wide_key = true;
+                }
+                if member.computed_index_kind.is_some() {
+                    contextual_index_value_types.push(member.widened_value);
+                }
+                // A wide computed key never resolves to a static property
+                // name, so it cannot collide in the property table — always
+                // appended.
+                parts.push(member.rendered);
+                continue;
+            }
             let (name_idx, value_idx) = if child.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
                 let prop = self.ctx.arena.get_property_assignment(child)?;
                 (prop.name, prop.initializer)

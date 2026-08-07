@@ -181,6 +181,9 @@ impl<'a> CheckerContext<'a> {
         self.object_literal_tracking.property_diag_targets.clear();
         self.object_literal_tracking.contextual_targets.clear();
         self.object_literal_tracking.partial_initializers.clear();
+        self.object_literal_tracking
+            .computed_index_member_display_types
+            .clear();
         // Spelling candidates and scan results are keyed by binder-local
         // `ScopeId`; clear both so a new file's identically-numbered scopes never
         // inherit the previous file's symbol universe or suggestions.

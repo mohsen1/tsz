@@ -579,6 +579,10 @@ impl<'a> CheckerState<'a> {
                     contextual_type,
                 );
             }
+            self.ctx
+                .object_literal_tracking
+                .computed_index_member_display_types
+                .insert(elem_idx, accessor_type);
             self.route_computed_member_value_to_index_signature(
                 prop_name_type,
                 accessor_type,
