@@ -363,6 +363,8 @@ mod generic_alias_application_display_tests;
 mod generic_argument_suppression_relation_routing_arch_tests;
 #[path = "tests/generic_call_bivariant_callback_nonstrict_tests.rs"]
 mod generic_call_bivariant_callback_nonstrict_tests;
+#[path = "tests/generic_call_const_asserted_property_widening_tests.rs"]
+mod generic_call_const_asserted_property_widening_tests;
 #[path = "tests/generic_call_enclosing_type_param_return_tests.rs"]
 mod generic_call_enclosing_type_param_return_tests;
 #[path = "tests/generic_call_non_fresh_object_widening_tests.rs"]
@@ -915,12 +917,16 @@ mod ts2339_js_this_function_name_display_tests;
 mod ts2341_private_access_via_type_param_constraint_tests;
 #[path = "tests/ts2353_generic_constraint_tests.rs"]
 mod ts2353_generic_constraint_tests;
+#[path = "tests/ts2391_default_export_overload_group_tests.rs"]
+mod ts2391_default_export_overload_group_tests;
 #[path = "tests/ts2445_protected_access_via_subclass_this_tests.rs"]
 mod ts2445_protected_access_via_subclass_this_tests;
 #[path = "tests/ts2515_ambient_class_abstract_member_tests.rs"]
 mod ts2515_ambient_class_abstract_member_tests;
 #[path = "tests/ts2528_default_export_function_overload_tests.rs"]
 mod ts2528_default_export_function_overload_tests;
+#[path = "tests/ts2528_default_export_interface_merge_tests.rs"]
+mod ts2528_default_export_interface_merge_tests;
 #[path = "tests/ts2536_deferred_conditional_indexed_access_tests.rs"]
 mod ts2536_deferred_conditional_indexed_access_tests;
 #[path = "tests/ts2536_error_type_contagion_tests.rs"]
@@ -985,6 +991,8 @@ mod union_constraint_relation_routing_arch_tests;
 mod union_display_longhand_primitive_repaint_tests;
 #[path = "tests/union_excess_property_relation_routing_arch_tests.rs"]
 mod union_excess_property_relation_routing_arch_tests;
+#[path = "tests/union_index_signature_kind_subtype_reduction_tests.rs"]
+mod union_index_signature_kind_subtype_reduction_tests;
 #[path = "tests/union_index_signature_relation_routing_arch_tests.rs"]
 mod union_index_signature_relation_routing_arch_tests;
 #[path = "tests/union_multi_overload_unified_sig_tests.rs"]
