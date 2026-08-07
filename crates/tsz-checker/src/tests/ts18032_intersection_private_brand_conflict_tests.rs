@@ -39,13 +39,15 @@
 //! ES `#`-private members are a separate case: `#x` on two different classes
 //! is never the same name to `tsc` (each is lexically scoped to its own
 //! class body), so real `tsc` neither reduces the intersection to `never`
-//! nor elaborates. tsz's `intersection_has_conflicting_private_brands`
-//! (`crates/tsz-solver/src/intern/normalize.rs`) currently *does* still
-//! reduce that shape to `never` — a separate, pre-existing bug in the
-//! reduction itself, not owned by this elaboration. `find_private_brand_conflict_property`
-//! is deliberately scoped to never attach the TS18032 line to whatever
-//! `TS2339` that reduction bug produces, so fixing the reduction later needs
-//! no matching change here.
+//! nor elaborates. `find_private_brand_conflict_property` is scoped to never
+//! attach the TS18032 line to an ES-private occurrence; three independent
+//! never-reduction gates (`intersection_has_conflicting_private_brands` in
+//! `crates/tsz-solver/src/intern/normalize.rs`,
+//! `intersection_has_private_property_conflict` in
+//! `crates/tsz-checker/src/state/state_checking_members/mixin_member_access.rs`,
+//! and this file's own elaboration query) all now share the same
+//! ES-private exclusion, so `A & B` with same-spelled `#x` members no
+//! longer reduces to `never` at all.
 
 use crate::diagnostics::Diagnostic;
 use crate::test_utils::check_source_strict;
@@ -194,13 +196,10 @@ fn es_private_same_spelled_fields_do_not_carry_ts18032() {
     // `#x` on `A` and `#x` on `B` are never the same name to tsc even though
     // they share identical source text, so this is not a naming collision
     // tsc elaborates (tsc: `Property 'foo' does not exist on type 'A & B'.`,
-    // no relatedInformation, no `never` reduction at all).
-    //
-    // tsz still (incorrectly, as of this test) reduces `A & B` to `never`
-    // here — a pre-existing, separate bug in the reduction itself, not this
-    // elaboration. This test pins only the elaboration's own scope: whatever
-    // TS2339 that reduction bug produces must never carry the TS18032
-    // related-info line, which would misattribute the wrong reason to it.
+    // no relatedInformation, no `never` reduction at all). This test pins
+    // only the elaboration's own scope: no TS2339 here may carry the
+    // TS18032 related-info line. `es_private_same_name_does_not_reduce_to_never`
+    // below covers the reduction itself no longer firing for this shape.
     let diags = check_source_strict(
         r#"
 class A { #x = 1; }
@@ -240,6 +239,112 @@ c.x;
 "#,
     );
     assert!(diags.is_empty(), "got {diags:?}");
+}
+
+#[test]
+fn es_private_same_name_does_not_reduce_to_never() {
+    // `#x` in `A` and `#x` in `B` are different, per-class-scoped names —
+    // structurally nothing to conflict, unlike modifier-`private` `x`/`x`
+    // above. Oracle-verified (`typescript@7.0.2`): 0 errors.
+    let diags = check_source_strict(
+        r#"
+class A { #x = 1; m() { return 1; } }
+class B { #x = 1; n() { return 2; } }
+declare const v: A & B;
+v.m();
+v.n();
+"#,
+    );
+    assert!(diags.is_empty(), "got {diags:?}");
+}
+
+#[test]
+fn es_private_different_names_does_not_reduce_to_never() {
+    let diags = check_source_strict(
+        r#"
+class A { #x = 1; m() { return 1; } }
+class B { #y = 2; n() { return 2; } }
+declare const v: A & B;
+v.m();
+v.n();
+"#,
+    );
+    assert!(diags.is_empty(), "got {diags:?}");
+}
+
+#[test]
+fn modifier_private_and_es_private_mixed_forms_do_not_conflict() {
+    // `private x` (modifier) and `#x` (ES private) are different property
+    // names at the type level (`x` vs `#x`) regardless of the shared
+    // spelling after the sigil, so there is no shared name to conflict on.
+    let diags = check_source_strict(
+        r#"
+class A { private x: number = 1; m() { return 1; } }
+class B { #x = 1; n() { return 2; } }
+declare const v: A & B;
+v.m();
+v.n();
+"#,
+    );
+    assert!(diags.is_empty(), "got {diags:?}");
+}
+
+#[test]
+fn es_private_shared_with_subclass_does_not_conflict() {
+    let diags = check_source_strict(
+        r#"
+class A { #x = 1; m() { return 1; } }
+class D extends A { n() { return 2; } }
+declare const v: A & D;
+v.m();
+v.n();
+"#,
+    );
+    assert!(diags.is_empty(), "got {diags:?}");
+}
+
+#[test]
+fn three_way_intersection_mixing_private_kinds_does_not_conflict() {
+    // A private modifier member, an ES-private member, and a protected
+    // member with three distinct names: no shared name across any pair, so
+    // no reduction — each kind must be excluded from the coarse brand check
+    // independently of the others.
+    let diags = check_source_strict(
+        r#"
+class A { private p: number = 1; m() { return 1; } }
+class B { #x = 1; n() { return 2; } }
+class C { protected r: number = 1; o() { return 3; } }
+declare const v: A & B & C;
+v.m();
+v.n();
+v.o();
+"#,
+    );
+    assert!(diags.is_empty(), "got {diags:?}");
+}
+
+#[test]
+fn modifier_private_conflict_still_reduces_with_es_private_present() {
+    // The fix must not weaken the genuine modifier-`private` same-name
+    // conflict just because an unrelated ES-private member is also present
+    // in the intersection.
+    let diags = check_source_strict(
+        r#"
+class P1 { private x: string = ""; }
+class P2 { private x: string = ""; }
+class B { #y = 1; }
+declare const c: P1 & P2 & B;
+c.x;
+"#,
+    );
+    let diag = only(&diags, TS2339);
+    assert_eq!(
+        related(&diag, TS18032).as_deref(),
+        Some(
+            "The intersection 'P1 & P2 & B' was reduced to 'never' because property 'x' exists in multiple constituents and is private in some."
+        ),
+        "got {diags:?}"
+    );
 }
 
 #[test]
