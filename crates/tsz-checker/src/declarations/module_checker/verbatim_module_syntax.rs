@@ -72,42 +72,48 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            let is_inherent_type = if let Some(ref module_spec) = module_specifier_text {
-                self.is_import_specifier_type_only(module_spec, &source_name)
-            } else {
-                let type_only = self.is_local_symbol_type_only(&source_name);
-                if type_only
-                    && option_name == "isolatedModules"
-                    && (self.is_local_symbol_imported_as_type_only(&source_name)
-                        || self.is_local_symbol_from_type_only_reexport_chain(&source_name))
-                {
-                    false
+            // Decide whether this value re-export is disallowed under
+            // verbatimModuleSyntax / isolatedModules, and which code applies.
+            //
+            // tsc's rule (oracle-verified against typescript@7.0.2 for both
+            // modes): a value re-export is an error when the re-exported
+            // binding is type-only — either an inherent type, or a value that
+            // is reached through a type-only alias (`export type { X }` /
+            // `import type`). The *code* is decided purely by whether the
+            // resolved target carries a runtime value:
+            //   * no runtime value (a pure type)  -> TS1205 (re-exporting a type)
+            //   * runtime value reached type-only -> TS1448 (resolves to a
+            //                                        type-only declaration)
+            //   * runtime value reached normally  -> no error
+            // Both modes select the same code; only the substituted option
+            // name differs.
+            let (is_type_only, target_has_value) =
+                if let Some(ref module_spec) = module_specifier_text {
+                    let type_only = self.is_import_specifier_type_only(module_spec, &source_name)
+                        || self.is_export_type_only_across_binders(module_spec, &source_name);
+                    let has_value = self
+                        .lookup_imported_target_flags(module_spec, &source_name)
+                        .1;
+                    (type_only, has_value)
                 } else {
-                    type_only
-                }
-            };
+                    let type_only = self.is_local_symbol_type_only(&source_name)
+                        || self.is_local_symbol_from_type_only_chain(&source_name);
+                    let has_value = self.local_symbol_target_has_runtime_value(&source_name);
+                    (type_only, has_value)
+                };
 
-            if is_inherent_type {
-                let message = format_message(
-                    diagnostic_messages::RE_EXPORTING_A_TYPE_WHEN_IS_ENABLED_REQUIRES_USING_EXPORT_TYPE,
-                    &[option_name],
-                );
-                self.error_at_node(
-                    source_name_idx,
-                    &message,
-                    diagnostic_codes::RE_EXPORTING_A_TYPE_WHEN_IS_ENABLED_REQUIRES_USING_EXPORT_TYPE,
-                );
-                continue;
-            }
-
-            let is_type_only_chain = if let Some(ref module_spec) = module_specifier_text {
-                self.is_export_type_only_across_binders(module_spec, &source_name)
-            } else {
-                self.is_local_symbol_from_type_only_chain(&source_name)
-            };
-
-            if is_type_only_chain {
-                if option_name == "verbatimModuleSyntax" {
+            if is_type_only {
+                if target_has_value {
+                    let message = format_message(
+                        diagnostic_messages::RESOLVES_TO_A_TYPE_ONLY_DECLARATION_AND_MUST_BE_RE_EXPORTED_USING_A_TYPE_ONLY_RE,
+                        &[&source_name, option_name],
+                    );
+                    self.error_at_node(
+                        source_name_idx,
+                        &message,
+                        diagnostic_codes::RESOLVES_TO_A_TYPE_ONLY_DECLARATION_AND_MUST_BE_RE_EXPORTED_USING_A_TYPE_ONLY_RE,
+                    );
+                } else {
                     let message = format_message(
                         diagnostic_messages::RE_EXPORTING_A_TYPE_WHEN_IS_ENABLED_REQUIRES_USING_EXPORT_TYPE,
                         &[option_name],
@@ -116,19 +122,6 @@ impl<'a> CheckerState<'a> {
                         source_name_idx,
                         &message,
                         diagnostic_codes::RE_EXPORTING_A_TYPE_WHEN_IS_ENABLED_REQUIRES_USING_EXPORT_TYPE,
-                    );
-                } else {
-                    let export_name = self
-                        .get_identifier_text_from_idx(specifier.name)
-                        .unwrap_or_else(|| source_name.clone());
-                    let message = format_message(
-                        diagnostic_messages::RESOLVES_TO_A_TYPE_ONLY_DECLARATION_AND_MUST_BE_RE_EXPORTED_USING_A_TYPE_ONLY_RE,
-                        &[&export_name, option_name],
-                    );
-                    self.error_at_node(
-                        source_name_idx,
-                        &message,
-                        diagnostic_codes::RESOLVES_TO_A_TYPE_ONLY_DECLARATION_AND_MUST_BE_RE_EXPORTED_USING_A_TYPE_ONLY_RE,
                     );
                 }
                 continue;
@@ -229,40 +222,6 @@ impl<'a> CheckerState<'a> {
                 let import_name = sym.import_name().unwrap_or(name);
                 return self.is_export_type_only_across_binders(module_spec, import_name);
             }
-        }
-        false
-    }
-
-    /// Like `is_local_symbol_from_type_only_chain`, but only returns true when
-    /// the chain includes explicit `export type { ... }` syntax (where `is_type_only`
-    /// is set on the export symbol). Does NOT return true for plain type declarations
-    /// like `export type T = number`. This distinction is important for choosing
-    /// between TS1205 (re-exporting a type) and TS1448 (type-only re-export chain).
-    pub(super) fn is_local_symbol_from_type_only_reexport_chain(&self, name: &str) -> bool {
-        use tsz_binder::symbol_flags;
-
-        if let Some(sym_id) = self.ctx.binder.file_locals.get(name)
-            && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
-        {
-            if sym.is_type_only {
-                return false;
-            }
-            if sym.has_any_flags(symbol_flags::ALIAS)
-                && let Some(module_spec) = sym.import_module()
-            {
-                let import_name = sym.import_name().unwrap_or(name);
-                return self.is_export_type_only_syntax_across_binders(module_spec, import_name);
-            }
-        }
-        false
-    }
-
-    /// Check if a local symbol was imported via `import type` (directly type-only import).
-    pub(super) fn is_local_symbol_imported_as_type_only(&self, name: &str) -> bool {
-        if let Some(sym_id) = self.ctx.binder.file_locals.get(name)
-            && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
-        {
-            return sym.is_type_only;
         }
         false
     }
@@ -558,12 +517,41 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Whether the target a *local* symbol ultimately resolves to carries a
+    /// runtime value. Used by the verbatimModuleSyntax / isolatedModules
+    /// re-export check to pick TS1448 (resolves to a type-only declaration —
+    /// the target is a value reached type-only) over TS1205 (re-exporting a
+    /// pure type). Follows an import alias's `import type`/`export type {}`
+    /// chain via `lookup_imported_target_flags`; for a plain local declaration
+    /// it consults the binder directly.
+    pub(super) fn local_symbol_target_has_runtime_value(&self, name: &str) -> bool {
+        use tsz_binder::symbol_flags;
+
+        if let Some(sym_id) = self.ctx.binder.file_locals.get(name)
+            && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
+        {
+            if sym.has_any_flags(symbol_flags::ALIAS)
+                && let Some(module_spec) = sym.import_module()
+            {
+                let import_name = sym.import_name().unwrap_or(name);
+                return self
+                    .lookup_imported_target_flags(module_spec, import_name)
+                    .1;
+            }
+            return self.symbol_has_runtime_value_in_binder(self.ctx.binder, sym_id);
+        }
+        false
+    }
+
     /// Best-effort resolution of an imported symbol's non-local meanings.
     /// Returns `(has_type, has_value)` for the target of `import { name } from module_spec`.
     /// Used by TS1292 / TS2865 isolatedModules checks.
-    fn lookup_imported_target_flags(&self, module_spec: &str, import_name: &str) -> (bool, bool) {
+    pub(crate) fn lookup_imported_target_flags(
+        &self,
+        module_spec: &str,
+        import_name: &str,
+    ) -> (bool, bool) {
         use tsz_binder::symbol_flags;
-        use tsz_parser::parser::syntax_kind_ext;
         let mut has_type = false;
         let mut has_value = false;
 
@@ -598,43 +586,82 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Try regular file exports — follow re-export chains.
+        // Try regular file exports — follow re-export chains, including a
+        // local `import { X } from "./m"; export { X }` hop where the resolved
+        // export is itself an import alias into a further module.
         if !has_value && let Some(target_idx) = self.ctx.resolve_import_target(module_spec) {
-            let mut visited = rustc_hash::FxHashSet::default();
-            if let Some((resolved_sym_id, resolved_file_idx)) =
-                self.resolve_export_in_file(target_idx, import_name, &mut visited)
-                && let Some(resolved_binder) = self.ctx.get_binder_for_file(resolved_file_idx)
-                && let Some(resolved_sym) = resolved_binder.symbols.get(resolved_sym_id)
+            let (t, v) = self.resolved_export_meanings(target_idx, import_name, 0);
+            has_type |= t;
+            has_value |= v;
+        }
+
+        (has_type, has_value)
+    }
+
+    /// `(has_type, has_value)` for the export `name` of `file_idx`, following a
+    /// resolved import alias one further hop into its own source module. This
+    /// closes the `import type` intermediate-chain case: `x` declares `class X`,
+    /// `a` does `import type { X } from "./x"; export { X }`, and `b`'s
+    /// `export { X } from "./a"` must still see `X`'s runtime value (TS1448, not
+    /// TS1205). `depth` bounds the walk defensively; `resolve_export_in_file`'s
+    /// own `visited` set already breaks re-export cycles per hop.
+    fn resolved_export_meanings(&self, file_idx: usize, name: &str, depth: usize) -> (bool, bool) {
+        use tsz_binder::symbol_flags;
+        use tsz_parser::parser::syntax_kind_ext;
+
+        if depth > 8 {
+            return (false, false);
+        }
+
+        let mut visited = rustc_hash::FxHashSet::default();
+        let Some((resolved_sym_id, resolved_file_idx)) =
+            self.resolve_export_in_file(file_idx, name, &mut visited)
+        else {
+            return (false, false);
+        };
+        let Some(resolved_binder) = self.ctx.get_binder_for_file(resolved_file_idx) else {
+            return (false, false);
+        };
+        let Some(resolved_sym) = resolved_binder.symbols.get(resolved_sym_id) else {
+            return (false, false);
+        };
+
+        // Skip namespace pseudo-symbols (`namespace foo { ... }` with only type
+        // members) — they appear in exports but don't introduce a runtime value.
+        let mut has_value =
+            resolved_sym.has_any_flags(symbol_flags::VALUE | symbol_flags::EXPORT_VALUE);
+        if has_value
+            && resolved_sym.has_any_flags(symbol_flags::VALUE_MODULE)
+            && !resolved_sym.has_any_flags(symbol_flags::VALUE & !symbol_flags::VALUE_MODULE)
+        {
+            // declarations carry file-local NodeIndex into the resolved file's
+            // arena, not the current file's arena.
+            let resolved_arena = self.ctx.get_arena_for_file(resolved_file_idx as u32);
+            has_value = resolved_sym.declarations.iter().any(|&decl_idx| {
+                resolved_arena
+                    .get(decl_idx)
+                    // Only namespace declarations contribute runtime value;
+                    // type-only declarations (interface/type alias) do not.
+                    .is_some_and(|decl_node| decl_node.kind == syntax_kind_ext::MODULE_DECLARATION)
+            });
+        }
+        let mut has_type = resolved_sym.has_any_flags(symbol_flags::TYPE);
+
+        // A local import alias (`import { X } from "./m"`, incl. `import type`)
+        // carries no VALUE flag itself — follow it into `./m` to find whether
+        // the ultimate target is a runtime value.
+        if !has_value
+            && resolved_sym.has_any_flags(symbol_flags::ALIAS)
+            && let Some(inner_module) = resolved_sym.import_module()
+        {
+            let inner_name = resolved_sym.import_name().unwrap_or(name);
+            if let Some(inner_idx) = self
+                .ctx
+                .resolve_import_target_from_file(resolved_file_idx, inner_module)
             {
-                // Skip namespace pseudo-symbols (`namespace foo { ... }` with
-                // only type members) — they appear in exports but don't
-                // introduce a runtime value.
-                let mut sym_has_value =
-                    resolved_sym.has_any_flags(symbol_flags::VALUE | symbol_flags::EXPORT_VALUE);
-                if sym_has_value
-                    && resolved_sym.has_any_flags(symbol_flags::VALUE_MODULE)
-                    && !resolved_sym
-                        .has_any_flags(symbol_flags::VALUE & !symbol_flags::VALUE_MODULE)
-                {
-                    // declarations carry file-local NodeIndex into the resolved
-                    // file's arena, not the current file's arena.
-                    let resolved_arena = self.ctx.get_arena_for_file(resolved_file_idx as u32);
-                    let any_instantiated = resolved_sym.declarations.iter().any(|&decl_idx| {
-                        let Some(decl_node) = resolved_arena.get(decl_idx) else {
-                            return false;
-                        };
-                        // Only namespace declarations contribute runtime value;
-                        // type-only declarations (interface/type alias) do not.
-                        decl_node.kind == syntax_kind_ext::MODULE_DECLARATION
-                    });
-                    sym_has_value = any_instantiated;
-                }
-                if resolved_sym.has_any_flags(symbol_flags::TYPE) {
-                    has_type = true;
-                }
-                if sym_has_value {
-                    has_value = true;
-                }
+                let (t, v) = self.resolved_export_meanings(inner_idx, inner_name, depth + 1);
+                has_type |= t;
+                has_value |= v;
             }
         }
 
