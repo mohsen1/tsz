@@ -220,6 +220,44 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+            // tsc's `elaborateElementwise` descends into an elaboratable property
+            // value matched here only through an index signature and anchors the
+            // deepest leaf mismatch, exactly as it does for named-property targets
+            // — it does not report the property-level aggregate. So
+            // `{ [k: string]: { n: number } } = { foo: { n: "x" } }` reports
+            // `string`->`number` at the inner `n`, not a redundant
+            // `{ n: string }`->`{ n: number }` at `foo` the way
+            // `_without_source_elaboration` would (and a fresh function value
+            // anchors at its return expression). This routes through the same
+            // `try_elaborate_assignment_source_error` gateway the named-property
+            // path uses, with the identical elaboratable-source kinds; a
+            // non-elaboratable value (a reference, a call result, ...) keeps the
+            // property-level aggregate below, which is what tsc reports for it.
+            //
+            // Runs before the `TS2418` computed-property branch below and off
+            // `nested_value_idx` (not `object_literal_property_initializer(report_idx)`,
+            // which is `None` for a `symbol` key whose `report_idx` is the whole
+            // literal): a `symbol`-keyed (computed) property whose value is an
+            // elaboratable object literal must anchor the nested leaf mismatch
+            // (`TS2322`) or nested excess (`TS2353`) the same as a string key, not
+            // the flat `TS2418` computed-value aggregate — that report is reserved
+            // for a non-elaboratable computed value (a primitive, a reference) (#16649).
+            if let Some(value_idx) = nested_value_idx {
+                let value_idx = self.ctx.arena.skip_parenthesized(value_idx);
+                if self.ctx.arena.get(value_idx).is_some_and(|node| {
+                    matches!(
+                        node.kind,
+                        syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                            | syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                            | syntax_kind_ext::ARROW_FUNCTION
+                            | syntax_kind_ext::FUNCTION_EXPRESSION
+                    )
+                }) && self.try_elaborate_assignment_source_error(value_idx, target_value_type)
+                {
+                    continue;
+                }
+            }
+
             if let Some((prop_name_idx, prop_value_idx)) = computed_property
                 && self
                     .ctx
@@ -248,34 +286,6 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::TYPE_OF_COMPUTED_PROPERTYS_VALUE_IS_WHICH_IS_NOT_ASSIGNABLE_TO_TYPE,
                 );
                 continue;
-            }
-            // tsc's `elaborateElementwise` descends into an elaboratable property
-            // value matched here only through an index signature and anchors the
-            // deepest leaf mismatch, exactly as it does for named-property targets
-            // — it does not report the property-level aggregate. So
-            // `{ [k: string]: { n: number } } = { foo: { n: "x" } }` reports
-            // `string`->`number` at the inner `n`, not a redundant
-            // `{ n: string }`->`{ n: number }` at `foo` the way
-            // `_without_source_elaboration` would (and a fresh function value
-            // anchors at its return expression). This routes through the same
-            // `try_elaborate_assignment_source_error` gateway the named-property
-            // path uses, with the identical elaboratable-source kinds; a
-            // non-elaboratable value (a reference, a call result, ...) keeps the
-            // property-level aggregate below, which is what tsc reports for it.
-            if let Some(value_idx) = self.object_literal_property_initializer(report_idx) {
-                let value_idx = self.ctx.arena.skip_parenthesized(value_idx);
-                if self.ctx.arena.get(value_idx).is_some_and(|node| {
-                    matches!(
-                        node.kind,
-                        syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                            | syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                            | syntax_kind_ext::ARROW_FUNCTION
-                            | syntax_kind_ext::FUNCTION_EXPRESSION
-                    )
-                }) && self.try_elaborate_assignment_source_error(value_idx, target_value_type)
-                {
-                    continue;
-                }
             }
 
             // tsc's `elaborateDidYouMeanToCallOrConstruct` applies to an
