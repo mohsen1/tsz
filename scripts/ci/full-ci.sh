@@ -349,6 +349,7 @@ run_lint() {
   node scripts/bench/test-project-file-stats.mjs || return $?
   node scripts/bench/validate-project-metadata.mjs || return $?
   node scripts/bench/test-validate-project-metadata.mjs || return $?
+  node scripts/bench/test-row-utils.mjs || return $?
   node scripts/bench/test-merge-results.mjs || return $?
   node scripts/bench/test-perf-hotspots.mjs || return $?
   node scripts/bench/test-tsgo-winner-report.mjs || return $?

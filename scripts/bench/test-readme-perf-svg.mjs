@@ -139,3 +139,59 @@ const tieArtifact = {
 };
 assert.equal(createReadmePerfSummary(tieArtifact).winner, "tie");
 assert.match(renderReadmePerfSvg(tieArtifact), /tsz and tsgo are even/);
+
+// #16196: a row where a compiler was killed (timeout) or exited non-zero must
+// never contribute a speed ratio or an aggregate datapoint, even when the
+// timeout ceiling lands UNDER the 1.5x slowdown-failure threshold and `winner`
+// was left non-error — the case the slowdown heuristic and the `winner ===
+// "error"` check both miss. Exclusion must key on the run's exit flags, not on
+// the ceiling incidentally being large.
+{
+  const ceilingMs = 400;
+  const tsgoMs = 350; // ceiling / tsgo = 1.14x, within the 1.5x slowdown threshold
+  const dnfArtifact = {
+    results: [
+      // A healthy project row so the summary is otherwise non-empty.
+      { name: "rxjs-project", lines: 1500, tsz_ms: 3000, tsgo_ms: 3300, winner: "tsz" },
+      // A short-ceiling timeout: tsz was KILLED at a 400ms ceiling (exit 124),
+      // `winner` left "tsz", ceiling under 1.5x tsgo. Only the explicit DNF
+      // guard excludes it.
+      {
+        name: "large-ts-repo",
+        lines: 200000,
+        tsz_ms: ceilingMs,
+        tsgo_ms: tsgoMs,
+        winner: "tsz",
+        compatibility: { exit_class: "timeout", exit_codes: { tsz: [124], tsgo: [0] } },
+      },
+    ],
+  };
+  const dnfSummary = createReadmePerfSummary(dnfArtifact);
+  assert.equal(dnfSummary.projectRows, 1, "a killed project row must be excluded from the chart");
+  assert.equal(dnfSummary.rows, 1);
+  assert.equal(dnfSummary.tszMs, 3000, "aggregate tsz_ms must exclude the ceiling sentinel");
+  assert.equal(dnfSummary.tsgoMs, 3300);
+  // The invariant from #16196: the excluded row's ratio would have been
+  // ceiling/other_time, a fabricated value that must never reach the aggregate.
+  assert.notEqual(dnfSummary.tszMs, ceilingMs);
+
+  // A non-zero tsgo exit is equally DNF even when tsz itself completed cleanly.
+  const tsgoErrArtifact = {
+    results: [
+      { name: "rxjs-project", lines: 1500, tsz_ms: 3000, tsgo_ms: 3300, winner: "tsz" },
+      {
+        name: "large-ts-repo",
+        lines: 200000,
+        tsz_ms: 300,
+        tsgo_ms: 350,
+        winner: "tsz",
+        compatibility: { exit_class: "exit success", exit_codes: { tsz: [0], tsgo: [1] } },
+      },
+    ],
+  };
+  assert.equal(
+    createReadmePerfSummary(tsgoErrArtifact).projectRows,
+    1,
+    "a non-zero tsgo exit is DNF even when tsz completed",
+  );
+}

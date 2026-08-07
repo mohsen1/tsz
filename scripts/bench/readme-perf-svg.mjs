@@ -7,6 +7,7 @@ import process from "node:process";
 import { pathToFileURL } from "node:url";
 import zlib from "node:zlib";
 import { PROJECT_ROWS_BY_NAME } from "./project-rows.mjs";
+import { didNotFinish } from "./row-utils.mjs";
 
 const SVG_WIDTH = 760;
 const SVG_HEIGHT = 128;
@@ -247,6 +248,12 @@ const SLOWDOWN_FAILURE_FACTOR = 1.5;
 function hasSuccessfulTimingPair(row) {
   return !row?.status
     && row?.winner !== "error"
+    // A killed/errored row's timing is a ceiling/error sentinel, so its ratio is
+    // fabricated (#16196). Exclude it structurally rather than relying on the
+    // ceiling incidentally exceeding the slowdown-failure threshold below — a
+    // short-ceiling timeout can land under 1.5x tsgo and would otherwise leak a
+    // `ceiling / tsgo_time` datapoint into the headline chart and aggregate.
+    && !didNotFinish(row)
     && finiteNumber(row?.tsz_ms) > 0
     && finiteNumber(row?.tsgo_ms) > 0;
 }
