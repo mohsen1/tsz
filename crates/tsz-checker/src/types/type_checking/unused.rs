@@ -1592,24 +1592,26 @@ impl<'a> CheckerState<'a> {
         }
 
         let stmt_idx = statements[start];
-        let Some(node) = self.ctx.arena.get(stmt_idx) else {
-            return (false, None, None);
-        };
 
-        if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+        // See through `export`/`export default` wrappers: an exported function
+        // declaration groups with bare declarations of the same name.
+        if let Some((fn_idx, _)) = self.statement_function_declaration_view(stmt_idx)
+            && let Some(node) = self.ctx.arena.get(fn_idx)
             && let Some(func) = self.ctx.arena.get_function(node)
         {
             // Check if this is an implementation (has body)
             if func.body.is_some() {
-                // This is an implementation - check if name matches
-                let impl_name = self.get_function_name_from_node(stmt_idx);
+                // This is an implementation - check if name matches.
+                // Returns the statement index so callers can anchor anonymous
+                // implementations at the whole (wrapper) statement.
+                let impl_name = self.get_function_name_from_node(fn_idx);
                 return (true, impl_name, Some(stmt_idx));
             }
 
             // Another overload signature without body - need to look further
             // but we should check if this is the same function name
-            let overload_name = self.get_function_name_from_node(stmt_idx);
-            if overload_name.as_ref() == Some(&name.to_string()) {
+            let overload_name = self.get_function_name_from_node(fn_idx);
+            if overload_name.as_deref() == Some(name) {
                 // Same function, continue looking for implementation
                 return self.find_function_impl(statements, start + 1, name);
             }

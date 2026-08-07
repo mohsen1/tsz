@@ -915,6 +915,8 @@ mod ts2339_js_this_function_name_display_tests;
 mod ts2341_private_access_via_type_param_constraint_tests;
 #[path = "tests/ts2353_generic_constraint_tests.rs"]
 mod ts2353_generic_constraint_tests;
+#[path = "tests/ts2391_default_export_overload_group_tests.rs"]
+mod ts2391_default_export_overload_group_tests;
 #[path = "tests/ts2445_protected_access_via_subclass_this_tests.rs"]
 mod ts2445_protected_access_via_subclass_this_tests;
 #[path = "tests/ts2515_ambient_class_abstract_member_tests.rs"]

@@ -1184,31 +1184,63 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Resolve a statement to the function declaration it contributes to
+    /// statement-level function-implementation grouping, seeing through the
+    /// parser's `EXPORT_DECLARATION` wrapper (`export function ...` /
+    /// `export default function ...`). Returns the function node and whether
+    /// the statement is a default export.
+    pub(crate) fn statement_function_declaration_view(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Option<(NodeIndex, bool)> {
+        let node = self.ctx.arena.get(stmt_idx)?;
+        if node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+            return Some((stmt_idx, false));
+        }
+        if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+            let export_decl = self.ctx.arena.get_export_decl(node)?;
+            let clause = self.ctx.arena.get(export_decl.export_clause)?;
+            if clause.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+                return Some((export_decl.export_clause, export_decl.is_default_export));
+            }
+        }
+        None
+    }
+
     /// Check that all top-level function overload signatures have implementations.
     /// Reports errors 2389, 2391.
+    ///
+    /// The walk sees through export wrappers, so `export function` and
+    /// `export default function` declarations join the same name-keyed
+    /// grouping as bare declarations. Anonymous default-exported functions
+    /// have no local name to group under; they are handled by the merged
+    /// `default`-symbol pass (`check_default_export_function_group`), which
+    /// also owns the cross-name TS2394 check tsc runs over the one `default`
+    /// export symbol.
     pub(crate) fn check_function_implementations(&mut self, statements: &[NodeIndex]) {
         use crate::diagnostics::diagnostic_codes;
 
         let mut i = 0;
         while i < statements.len() {
             let stmt_idx = statements[i];
-            let Some(node) = self.ctx.arena.get(stmt_idx) else {
+            let Some((fn_idx, _)) = self.statement_function_declaration_view(stmt_idx) else {
                 i += 1;
                 continue;
             };
 
-            if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                && let Some(func) = self.ctx.arena.get_function(node)
+            if let Some(stmt_node) = self.ctx.arena.get(stmt_idx)
+                && let Some(fn_node) = self.ctx.arena.get(fn_idx)
+                && let Some(func) = self.ctx.arena.get_function(fn_node)
                 && func.body.is_none()
             {
-                // Suppress TS2391 when a parse error occurs within the function declaration span.
-                // When `body.is_none()` and there are parse errors within the function span,
+                // Suppress TS2391 when a parse error occurs within the statement span.
+                // When `body.is_none()` and there are parse errors within the span,
                 // the function was likely malformed (e.g. `function f() => 4;`).
                 // This doesn't affect cases like `function f(a {` because the parser gives
                 // those a body (`body_none=false`) so they never reach this path.
                 if self.has_syntax_parse_errors() {
-                    let fn_start = node.pos;
-                    let fn_end = node.end;
+                    let fn_start = stmt_node.pos;
+                    let fn_end = stmt_node.end;
                     let has_error_in_fn = self
                         .ctx
                         .syntax_parse_error_positions
@@ -1219,7 +1251,7 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
                 }
-                let is_declared = self.is_ambient_declaration(stmt_idx);
+                let is_declared = self.is_ambient_declaration(fn_idx);
                 // Use func.is_async as the parser stores async as a flag, not a modifier
                 let is_async = func.is_async;
                 // TSC reports TS2389/TS2391 at the function name, not the declaration.
@@ -1240,13 +1272,13 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if is_declared {
-                    if let Some(name) = self.get_function_name_from_node(stmt_idx) {
-                        let (has_impl, impl_name, impl_idx) =
+                    if let Some(name) = self.get_function_name_from_node(fn_idx) {
+                        let (has_impl, impl_name, impl_stmt_idx) =
                             self.find_function_impl(statements, i + 1, &name);
                         if has_impl
                             && impl_name.as_deref() == Some(name.as_str())
-                            && let Some(impl_idx) = impl_idx
-                            && !self.is_ambient_declaration(impl_idx)
+                            && let Some(impl_stmt_idx) = impl_stmt_idx
+                            && !self.is_ambient_declaration(impl_stmt_idx)
                         {
                             self.error_at_node(
                                 error_node,
@@ -1265,21 +1297,22 @@ impl<'a> CheckerState<'a> {
                 // Function overload signature - check for implementation.
                 // TSC only reports TS2391 on the LAST overload in a consecutive
                 // group with the same name, so skip ahead to find it.
-                let func_name = self.get_function_name_from_node(stmt_idx);
+                let func_name = self.get_function_name_from_node(fn_idx);
                 if let Some(name) = func_name {
                     // Advance past consecutive bodyless overloads with the same name.
                     let mut last_overload_i = i;
                     let mut j = i + 1;
                     while j < statements.len() {
-                        let next_idx = statements[j];
-                        let Some(next_node) = self.ctx.arena.get(next_idx) else {
+                        let Some((next_fn_idx, _)) =
+                            self.statement_function_declaration_view(statements[j])
+                        else {
                             break;
                         };
-                        if next_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                        if let Some(next_node) = self.ctx.arena.get(next_fn_idx)
                             && let Some(next_func) = self.ctx.arena.get_function(next_node)
                             && next_func.body.is_none()
                         {
-                            let next_name = self.get_function_name_from_node(next_idx);
+                            let next_name = self.get_function_name_from_node(next_fn_idx);
                             if next_name.as_deref() == Some(name.as_str()) {
                                 last_overload_i = j;
                                 j += 1;
@@ -1292,15 +1325,14 @@ impl<'a> CheckerState<'a> {
                     // Report at the last overload in the group
                     let report_stmt_idx = statements[last_overload_i];
                     let report_error_node = self
-                        .ctx
-                        .arena
-                        .get(report_stmt_idx)
+                        .statement_function_declaration_view(report_stmt_idx)
+                        .and_then(|(f, _)| self.ctx.arena.get(f))
                         .and_then(|n| self.ctx.arena.get_function(n))
                         .map(|f| f.name)
                         .filter(|n| n.is_some())
                         .unwrap_or(report_stmt_idx);
 
-                    let (has_impl, impl_name, impl_idx) =
+                    let (has_impl, impl_name, impl_stmt_idx) =
                         self.find_function_impl(statements, last_overload_i + 1, &name);
                     if !has_impl {
                         self.error_at_node(
@@ -1308,26 +1340,26 @@ impl<'a> CheckerState<'a> {
                                     "Function implementation is missing or not immediately following the declaration.",
                                     diagnostic_codes::FUNCTION_IMPLEMENTATION_IS_MISSING_OR_NOT_IMMEDIATELY_FOLLOWING_THE_DECLARATION
                                 );
-                    } else if let Some(impl_idx) = impl_idx {
-                        if let Some(actual_name) = impl_name
-                            && actual_name != name
-                        {
-                            // Implementation has wrong name — report at the implementation name.
+                    } else if let Some(impl_stmt_idx) = impl_stmt_idx {
+                        if impl_name.as_deref() != Some(name.as_str()) {
+                            // Wrong (or missing) implementation name — report at the
+                            // implementation name. An anonymous default-exported
+                            // implementation has no name node; tsc anchors at the
+                            // whole declaration statement then.
                             let impl_error_node = self
-                                .ctx
-                                .arena
-                                .get(impl_idx)
+                                .statement_function_declaration_view(impl_stmt_idx)
+                                .and_then(|(f, _)| self.ctx.arena.get(f))
                                 .and_then(|n| self.ctx.arena.get_function(n))
                                 .map(|f| f.name)
                                 .filter(|n| n.is_some())
-                                .unwrap_or(impl_idx);
+                                .unwrap_or(impl_stmt_idx);
                             self.error_at_node(
                                 impl_error_node,
                                 &format!("Function implementation name must be '{name}'."),
                                 diagnostic_codes::FUNCTION_IMPLEMENTATION_NAME_MUST_BE,
                             );
                         } else {
-                            let impl_is_declared = self.is_ambient_declaration(impl_idx);
+                            let impl_is_declared = self.is_ambient_declaration(impl_stmt_idx);
                             if is_declared != impl_is_declared {
                                 self.error_at_node(
                                     report_error_node,
@@ -1344,6 +1376,8 @@ impl<'a> CheckerState<'a> {
             }
             i += 1;
         }
+
+        self.check_default_export_function_group(statements);
     }
 
     // Section 42: Class Member Utilities
