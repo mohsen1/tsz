@@ -11,6 +11,8 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
+#[path = "elaboration_object_literal_completeness.rs"]
+mod elaboration_object_literal_completeness;
 #[path = "elaboration_object_properties.rs"]
 mod elaboration_object_properties;
 

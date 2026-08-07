@@ -192,7 +192,8 @@ impl<'a> CheckerState<'a> {
         for key in &path[..path.len() - 1] {
             owner_idx = self.annotation_member_type_node(owner_idx, key, 0)?;
         }
-        let (start, length, file) = self.annotation_property_anchor(owner_idx, property_name, 0)?;
+        let (start, length, file) =
+            self.annotation_property_anchor(owner_idx, property_name, None, 0)?;
         Some((owner_idx, start, length, file))
     }
 }

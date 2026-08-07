@@ -33,8 +33,15 @@ impl CheckerState<'_> {
                 continue;
             }
 
-            if (parent_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
-                || parent_node.kind == syntax_kind_ext::FOR_OF_STATEMENT)
+            // Only `for...of` short-circuits its optional-chain LHS to `any` here.
+            // `for...in`'s LHS is not a genuinely invalid target the way a plain
+            // `a?.b = 1` write is: tsc's checkForInStatement computes the LHS's
+            // real (possibly-undefined) type and checks it against the index type
+            // BEFORE deciding whether to also flag the chain itself (TS2405 wins
+            // over TS2780 whenever the type check fails) — see
+            // `check_for_in_of_expression_initializer` in
+            // `state/variable_checking/for_loop.rs`, which needs that real type.
+            if parent_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
                 && self
                     .ctx
                     .arena

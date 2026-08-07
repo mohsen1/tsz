@@ -502,30 +502,131 @@ fn strict_mode_keeps_the_two_cause_answer_for_an_interface_member() {
 }
 
 #[test]
-fn interface_index_signature_value_is_a_known_unfixed_residual() {
-    // NOT fixed here — documented so a future fix has a red test to turn
-    // green, and so this stays visibly a residual rather than silently
-    // regressing further. An index-signature member never reaches the
-    // interface fast path at all (`try_lower_simple_local_interface_object`
-    // rejects any non-`PROPERTY_SIGNATURE` member outright), so it always
-    // falls through to `tsz-lowering`'s `TypeLowering`, whose
-    // `strict_null_checks` field is not reliably wired to the real compiler
-    // option — see the strict-mode control above and this PR's review
-    // discussion. Fixing this either needs fast-path support for index
-    // signatures (mirroring the property-signature handling) or properly
-    // plumbing the option through `tsz-lowering`; both are out of scope for
-    // this fix. Behavior is unchanged from before this PR in both modes.
-    let source = "interface I { [k: string]: null | undefined }\ndeclare const i: I;\ni.m.foo;";
-    let lax = nullish_codes(&non_strict(source));
-    assert!(
-        lax.is_empty(),
-        "index-signature value nullish collapse remains unfixed (non-strict), got: {lax:?}"
+fn interface_index_signature_value_reports_the_reduced_single_cause() {
+    // #16620: previously a documented residual. An index-signature member
+    // never reaches the interface fast path
+    // (`try_lower_simple_local_interface_object` rejects any
+    // non-`PROPERTY_SIGNATURE` member), so it falls through to
+    // `tsz-lowering`'s `TypeLowering`, which did not apply the non-strict
+    // pure-nullish collapse. The general interface-lowering site now opts in
+    // via `with_nonstrict_nullish_union_reduction`, wiring the real
+    // `strictNullChecks`, so a `null | undefined` index value collapses to a
+    // bare `null` exactly like the property-signature paths above — reporting
+    // the single-cause TS18047/TS2721 without `strictNullChecks` and the
+    // two-cause TS18049/TS2723 under it. Binders are varied so nothing keys
+    // on identifier text.
+    for (iface, member) in [("I", "m"), ("Bag", "entry"), ("Store", "slot")] {
+        let source = format!(
+            "interface {iface} {{ [k: string]: null | undefined }}\ndeclare const i: {iface};\ni.{member}.foo;\ni.{member}();"
+        );
+        let codes = non_strict(&source);
+        assert_eq!(
+            count(&codes, TS18047),
+            1,
+            "an index-signature value typed `null | undefined` must report TS18047 (interface {iface}), got: {codes:?}"
+        );
+        assert_eq!(
+            count(&codes, TS2721),
+            1,
+            "an index-signature value typed `null | undefined` callee must report TS2721 (interface {iface}), got: {codes:?}"
+        );
+        assert_eq!(
+            count(&codes, 18049),
+            0,
+            "the non-strict answer must not be the strict two-cause TS18049 (interface {iface}), got: {codes:?}"
+        );
+    }
+}
+
+#[test]
+fn interface_number_index_signature_value_collapses_the_same_way() {
+    // Sibling of the string index signature: a `[k: number]` value union of
+    // pure `null | undefined` collapses identically, observed through element
+    // access. The receiver `g[0]` is an ElementAccessExpression, not an
+    // entity name, so tsc reports the *object* form TS2531 ("Object is
+    // possibly 'null'") rather than the named TS18047 — exactly the
+    // entity-name distinction this file already documents for a `new C().m`
+    // base. Either code proves the collapse fired: before the fix `g[0]` was a
+    // surviving `null | undefined` union (own flags `Union`, non-strict arm
+    // silent) and neither code appeared. The callee `g[0]()` still reports
+    // TS2721, whose reporter does not depend on the entity-name form.
+    let source = "interface Grid { [k: number]: null | undefined }\ndeclare const g: Grid;\ng[0].foo;\ng[0]();";
+    let codes = non_strict(source);
+    assert_eq!(
+        count(&codes, 2531),
+        1,
+        "a number-index-signature value typed `null | undefined` accessed via `g[0]` must report TS2531, got: {codes:?}"
     );
+    assert_eq!(
+        count(&codes, TS2721),
+        1,
+        "a number-index-signature value typed `null | undefined` callee must report TS2721, got: {codes:?}"
+    );
+}
+
+#[test]
+fn interface_index_signature_uniform_undefined_stays_undefined_not_null() {
+    // Regression guard mirroring the annotation case: `undefined | undefined`
+    // has no `null` member, so an index value written that way must resolve to
+    // `undefined` (TS18048), never be dragged to `null` (TS18047).
+    let source =
+        "interface I { [k: string]: undefined | undefined }\ndeclare const i: I;\ni.m.foo;";
+    let codes = non_strict(source);
+    assert_eq!(
+        count(&codes, TS18048),
+        1,
+        "a uniform `undefined | undefined` index value must report TS18048, got: {codes:?}"
+    );
+    assert_eq!(
+        count(&codes, TS18047),
+        0,
+        "a uniform `undefined | undefined` index value must not report TS18047, got: {codes:?}"
+    );
+}
+
+#[test]
+fn heritage_bearing_interface_member_collapses_through_the_general_path() {
+    // A property-signature interface that ALSO carries heritage is rejected by
+    // the simple-interface fast path (`RejectHeritageExtends`) and lowers
+    // through the same general `tsz-lowering` path as the index-signature
+    // cases — so the fix must reach it too, proving the seam is the general
+    // object/interface lowering rather than index signatures specifically.
+    let source = "interface Base {}\ninterface Holder extends Base { m: null | undefined }\ndeclare const h: Holder;\nh.m.foo;\nh.m();";
+    let codes = non_strict(source);
+    assert_eq!(
+        count(&codes, TS18047),
+        1,
+        "a heritage-bearing interface member typed `null | undefined` must report TS18047, got: {codes:?}"
+    );
+    assert_eq!(
+        count(&codes, TS2721),
+        1,
+        "a heritage-bearing interface member typed `null | undefined` callee must report TS2721, got: {codes:?}"
+    );
+}
+
+#[test]
+fn strict_mode_keeps_the_two_cause_answer_for_an_index_signature() {
+    // Regression control: `strictNullChecks` must NOT collapse the index-value
+    // union — the opt-in wires the real option, so strict mode keeps the
+    // two-cause TS18049/TS2723 exactly as it already did.
+    let source =
+        "interface I { [k: string]: null | undefined }\ndeclare const i: I;\ni.m.foo;\ni.m();";
     let strict = check_source_strict_codes(source);
     assert_eq!(
         count(&strict, 18049),
         1,
-        "strict mode already reports the two-cause TS18049 for an interface index signature, got: {strict:?}"
+        "strict mode must keep the two-cause TS18049 for an index signature, got: {strict:?}"
+    );
+    assert_eq!(
+        count(&strict, 2723),
+        1,
+        "strict mode must keep the two-cause TS2723 for an index-signature callee, got: {strict:?}"
+    );
+    assert_eq!(
+        count(&strict, TS18047),
+        0,
+        "strict mode must not collapse an index value to the single-cause TS18047, got: {strict:?}"
     );
 }
 

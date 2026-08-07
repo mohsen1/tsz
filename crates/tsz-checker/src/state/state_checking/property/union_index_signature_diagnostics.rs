@@ -60,6 +60,33 @@ impl<'a> CheckerState<'a> {
             let mut has_deferred_index_value_type = false;
 
             for shape in union_shapes {
+                // A symbol-keyed property is covered only by a `[k: symbol]`
+                // index signature — never by the `[k: string]`/`[k: number]`
+                // branches below. Mirrors tsc `getApplicableIndexInfo`. When the
+                // shape has no symbol signature the property is uncovered and no
+                // value check applies (`applicable_index_value_types` stays empty
+                // for this shape, so the outer guard skips it).
+                if source_prop.is_symbol_named {
+                    if let Some(symbol_index) = shape.symbol_index_signature() {
+                        if self.index_value_type_is_deferred(symbol_index.value_type) {
+                            has_deferred_index_value_type = true;
+                            continue;
+                        }
+                        applicable_index_value_types.push(symbol_index.value_type);
+                        if self
+                            .index_signature_relation_outcome(
+                                source_prop.type_id,
+                                symbol_index.value_type,
+                            )
+                            .related
+                        {
+                            accepted_by_index = true;
+                            break;
+                        }
+                    }
+                    continue;
+                }
+
                 if let Some(string_index) = &shape.string_index {
                     if !self.string_index_key_accepts_property_name(
                         string_index.key_type,
@@ -133,7 +160,44 @@ impl<'a> CheckerState<'a> {
             let report_idx = self
                 .find_object_literal_property_element(obj_literal_idx, source_prop.name)
                 .unwrap_or(obj_literal_idx);
-            if let Some(nested_idx) = self.object_literal_property_initializer(report_idx) {
+
+            // `find_object_literal_property_element` only matches property names
+            // readable straight off the syntax (literals, well-known `Symbol.xxx`
+            // members). A computed name that needs type evaluation to resolve —
+            // `[sym]` for `declare const sym: unique symbol` — falls through to
+            // `obj_literal_idx` above, which is not a property node, so the
+            // initializer lookup below would find nothing and this property's
+            // nested object-literal value would never get its own excess-property
+            // drill-in. Resolve through the same three-tier lookup the
+            // computed-property diagnostic further down already uses (property
+            // node at `report_idx`, then syntax-name match, then
+            // `get_property_name_resolved`'s type-evaluated match) before
+            // deciding there is nothing to drill into.
+            let computed_property = self
+                .ctx
+                .arena
+                .get(report_idx)
+                .and_then(|node| self.ctx.arena.get_property_assignment(node))
+                .map(|prop| (prop.name, prop.initializer))
+                .or_else(|| {
+                    self.object_literal_property_name_and_value(obj_literal_idx, source_prop.name)
+                })
+                .or_else(|| {
+                    let obj_node = self.ctx.arena.get(obj_literal_idx)?;
+                    let obj_lit = self.ctx.arena.get_literal_expr(obj_node)?;
+                    obj_lit.elements.nodes.iter().rev().find_map(|&elem_idx| {
+                        let elem_node = self.ctx.arena.get(elem_idx)?;
+                        let prop = self.ctx.arena.get_property_assignment(elem_node)?;
+                        let resolved = self.get_property_name_resolved(prop.name)?;
+                        (self.ctx.types.intern_string(&resolved) == source_prop.name)
+                            .then_some((prop.name, prop.initializer))
+                    })
+                });
+
+            let nested_value_idx = computed_property
+                .map(|(_, value_idx)| value_idx)
+                .or_else(|| self.object_literal_property_initializer(report_idx));
+            if let Some(nested_idx) = nested_value_idx {
                 let nested_idx = self.ctx.arena.skip_parenthesized(nested_idx);
                 if self
                     .ctx
@@ -156,26 +220,6 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
-            let computed_property = self
-                .ctx
-                .arena
-                .get(report_idx)
-                .and_then(|node| self.ctx.arena.get_property_assignment(node))
-                .map(|prop| (prop.name, prop.initializer))
-                .or_else(|| {
-                    self.object_literal_property_name_and_value(obj_literal_idx, source_prop.name)
-                })
-                .or_else(|| {
-                    let obj_node = self.ctx.arena.get(obj_literal_idx)?;
-                    let obj_lit = self.ctx.arena.get_literal_expr(obj_node)?;
-                    obj_lit.elements.nodes.iter().rev().find_map(|&elem_idx| {
-                        let elem_node = self.ctx.arena.get(elem_idx)?;
-                        let prop = self.ctx.arena.get_property_assignment(elem_node)?;
-                        let resolved = self.get_property_name_resolved(prop.name)?;
-                        (self.ctx.types.intern_string(&resolved) == source_prop.name)
-                            .then_some((prop.name, prop.initializer))
-                    })
-                });
             if let Some((prop_name_idx, prop_value_idx)) = computed_property
                 && self
                     .ctx

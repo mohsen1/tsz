@@ -145,6 +145,9 @@ mod control_flow_type_guard_tests;
 #[path = "../tests/definite_assignment_tests.rs"]
 mod definite_assignment_tests;
 #[cfg(test)]
+#[path = "../tests/duplicate_parameter_names_function_expression_forms_tests.rs"]
+mod duplicate_parameter_names_function_expression_forms_tests;
+#[cfg(test)]
 #[path = "../tests/dynamic_import_defer_tests.rs"]
 mod dynamic_import_defer_tests;
 #[cfg(test)]
@@ -492,6 +495,9 @@ mod for_in_narrowing_tests;
 #[cfg(test)]
 #[path = "../tests/for_in_operand_type_display_tests.rs"]
 mod for_in_operand_type_display_tests;
+#[cfg(test)]
+#[path = "../tests/for_in_optional_chain_ts2405_vs_ts2780_tests.rs"]
+mod for_in_optional_chain_ts2405_vs_ts2780_tests;
 #[cfg(test)]
 #[path = "../tests/for_in_self_reference_and_nullable_operand_tests.rs"]
 mod for_in_self_reference_and_nullable_operand_tests;

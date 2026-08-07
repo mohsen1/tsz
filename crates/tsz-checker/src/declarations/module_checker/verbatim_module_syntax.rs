@@ -5,7 +5,7 @@ use tsz_parser::parser::NodeIndex;
 
 impl<'a> CheckerState<'a> {
     // =========================================================================
-    // verbatimModuleSyntax / isolatedModules Export Checks (TS1205, TS1284, TS1285, TS1448)
+    // verbatimModuleSyntax / isolatedModules Export Checks (TS1205, TS1284, TS1285, TS1286, TS1448)
     // =========================================================================
 
     /// TS1205: Re-exporting a type when 'verbatimModuleSyntax' or 'isolatedModules' is enabled
@@ -336,7 +336,7 @@ impl<'a> CheckerState<'a> {
         !self.ctx.compiler_options.module.is_es_module()
     }
 
-    /// TS1295: ESM exports cannot be written in a CommonJS file under verbatimModuleSyntax.
+    /// TS1286/TS1295: ESM exports cannot be written in a CommonJS file under verbatimModuleSyntax.
     /// TS1287: top-level export on value declarations in CJS.
     /// Returns true if a CJS-specific diagnostic was emitted.
     pub(crate) fn check_verbatim_module_syntax_cjs_export(
@@ -363,17 +363,26 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::A_TOP_LEVEL_EXPORT_MODIFIER_CANNOT_BE_USED_ON_VALUE_DECLARATIONS_IN_A_COMMONJS_M,
             );
         } else {
-            self.error_at_node(
-                export_idx,
-                diagnostic_messages::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT_2,
-                diagnostic_codes::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT_2,
-            );
+            let (message, code) = if self.current_file_commonjs_is_extension_locked() {
+                (
+                    diagnostic_messages::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT,
+                    diagnostic_codes::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT,
+                )
+            } else {
+                (
+                    diagnostic_messages::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT_2,
+                    diagnostic_codes::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT_2,
+                )
+            };
+            self.error_at_node(export_idx, message, code);
         }
         true
     }
 
     /// TS1284/TS1285: export default checks under verbatimModuleSyntax.
-    /// TS1292: export default of a type-only alias under isolatedModules.
+    /// TS1292: export default of a type-only alias under isolatedModules (and,
+    /// alongside TS1284, under verbatimModuleSyntax — tsc double-reports when
+    /// the exported name is an import alias resolving to a pure type).
     pub(crate) fn check_verbatim_module_syntax_export_default(&mut self, clause_idx: NodeIndex) {
         use tsz_binder::symbol_flags;
         use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
@@ -408,15 +417,38 @@ impl<'a> CheckerState<'a> {
             // verbatimModuleSyntax-only: TS1284/TS1285.
             if option_name == "verbatimModuleSyntax" {
                 if sym.is_type_only {
-                    let message = format_message(
-                        diagnostic_messages::AN_EXPORT_DEFAULT_MUST_REFERENCE_A_REAL_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABL,
-                        &[&name],
-                    );
-                    self.error_at_node(
-                        clause_idx,
-                        &message,
-                        diagnostic_codes::AN_EXPORT_DEFAULT_MUST_REFERENCE_A_REAL_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABL,
-                    );
+                    // tsc picks between these two on whether the symbol's
+                    // FULL merged meaning (across the alias chain, ignoring
+                    // this file's own `import type`) still carries Value:
+                    // `getSymbolFlags(sym) & Value` true -> TS1285 ("resolves
+                    // to a type-only declaration"); false -> TS1284 ("only
+                    // refers to a type"), same message the PURE_TYPE branch
+                    // below uses for a local type-only declaration. A plain
+                    // import symbol never carries VALUE flags itself (only
+                    // ALIAS), so `sym`'s own flags can't answer this — the
+                    // resolved import target's flags can, mirroring the
+                    // lookup TS1292 already does further down.
+                    let target_has_value = sym
+                        .import_module()
+                        .map(|module_spec| {
+                            let import_name = sym.import_name().unwrap_or(name.as_str());
+                            self.lookup_imported_target_flags(module_spec, import_name)
+                                .1
+                        })
+                        .unwrap_or(true);
+                    let (message_key, diag_code) = if target_has_value {
+                        (
+                            diagnostic_messages::AN_EXPORT_DEFAULT_MUST_REFERENCE_A_REAL_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABL,
+                            diagnostic_codes::AN_EXPORT_DEFAULT_MUST_REFERENCE_A_REAL_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABL,
+                        )
+                    } else {
+                        (
+                            diagnostic_messages::AN_EXPORT_DEFAULT_MUST_REFERENCE_A_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABLED_BU,
+                            diagnostic_codes::AN_EXPORT_DEFAULT_MUST_REFERENCE_A_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABLED_BU,
+                        )
+                    };
+                    let message = format_message(message_key, &[&name]);
+                    self.error_at_node(clause_idx, &message, diag_code);
                     return;
                 }
 
@@ -455,7 +487,8 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
-            let alias_sym_id = if sym.has_any_flags(symbol_flags::ALIAS) {
+            let sym_is_direct_alias = sym.has_any_flags(symbol_flags::ALIAS);
+            let alias_sym_id = if sym_is_direct_alias {
                 Some(sym_id)
             } else {
                 self.ctx.alias_partner_for(self.ctx.binder, sym_id)
@@ -486,6 +519,32 @@ impl<'a> CheckerState<'a> {
             let (target_has_type, target_has_value) =
                 self.lookup_imported_target_flags(module_spec, &import_name);
             if target_has_type && !target_has_value {
+                // tsc double-reports here for verbatimModuleSyntax: TS1284 is
+                // evaluated directly against `export default <name>` (the
+                // local binding "only refers to a type", same shape as the
+                // PURE_TYPE branch above) *in addition to* TS1292's deeper
+                // resolve-through-the-import check. The PURE_TYPE branch
+                // above cannot see this because a plain import alias symbol
+                // never carries INTERFACE/TYPE_ALIAS flags itself — only its
+                // resolved target does, which is exactly what
+                // `lookup_imported_target_flags` just computed. Oracle-
+                // verified against typescript@7.0.2: both codes fire at the
+                // same position for `import { Foo } from "./m"; export
+                // default Foo;` under verbatimModuleSyntax. isolatedModules
+                // alone does not get TS1284 (verbatimModuleSyntax-only, same
+                // gate as the PURE_TYPE branch).
+                if option_name == "verbatimModuleSyntax" && sym_is_direct_alias {
+                    let message = format_message(
+                        diagnostic_messages::AN_EXPORT_DEFAULT_MUST_REFERENCE_A_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABLED_BU,
+                        &[&name],
+                    );
+                    self.error_at_node(
+                        clause_idx,
+                        &message,
+                        diagnostic_codes::AN_EXPORT_DEFAULT_MUST_REFERENCE_A_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABLED_BU,
+                    );
+                }
+
                 let message = format_message(
                     diagnostic_messages::RESOLVES_TO_A_TYPE_AND_MUST_BE_MARKED_TYPE_ONLY_IN_THIS_FILE_BEFORE_RE_EXPORTING_2,
                     &[&name, option_name],
