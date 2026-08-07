@@ -1855,6 +1855,10 @@ impl<'a, R: TypeResolver> AssignabilityChecker for CompatChecker<'a, R> {
         self.is_assignable_impl(source, target, false)
     }
 
+    fn strict_function_types(&self) -> bool {
+        self.strict_function_types
+    }
+
     fn evaluate_type(&mut self, type_id: TypeId) -> TypeId {
         self.subtype.evaluate_type(type_id)
     }
