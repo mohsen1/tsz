@@ -2685,6 +2685,9 @@ path = "tests/namespace_body_local_declaration_merge_tests.rs"
 [[test]]
 name = "noimplicitany_type_member_accessor_tests"
 path = "tests/noimplicitany_type_member_accessor_tests.rs"
+[[test]]
+name = "missing_prefix_member_suggestion_tests"
+path = "tests/missing_prefix_member_suggestion_tests.rs"
 
 [[test]]
 name = "signature_binding_pattern_typeof_scope_tests"
