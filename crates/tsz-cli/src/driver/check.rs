@@ -1383,7 +1383,17 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                 .and_then(|cache| cache.type_caches.remove(&file_path));
             let compiler_options = options.checker.clone();
             let mut checker = if let Some(cached) = cached {
-                CheckerState::with_cache(
+                // `compiler_options` already went through
+                // `strict_family::apply_strict_family` in the driver's plan
+                // step, so its strict-family members are fully resolved
+                // (including per-member overrides that leave `options.strict`
+                // at its default while overriding one member — #3861's
+                // shape). `with_cache` re-runs `apply_strict_defaults()` and
+                // would silently clobber that override back to the umbrella;
+                // `with_cache_pre_resolved` skips the re-expansion, matching
+                // what the uncached branch below already gets for free via
+                // `CheckerState::new`'s `PRE_RESOLVED` policy.
+                CheckerState::with_cache_pre_resolved(
                     &file.arena,
                     &binder,
                     &query_cache,
