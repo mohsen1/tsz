@@ -1261,3 +1261,118 @@ fn source_without_es_private_member_stays_missing_property() {
         "TS18015 wording must not fire when the source has no same-spelled ES private member, got: {diagnostics:?}"
     );
 }
+
+// -----------------------------------------------------------------------
+// TS2345 (call-argument position): the nominal private-member elaboration
+// previously fired only on the assignment path
+// (`error_reporter/assignability.rs`'s `private_brand_mismatch_error`
+// interception); the call-argument path
+// (`error_reporter/call_errors/error_emission.rs`) fell straight through to
+// generic structural elaboration, which has no notion of private brands, so
+// the detail line was silently dropped. See #16769.
+
+/// Modifier-`private` mismatch in argument position keeps the "separate
+/// declarations" wording, matching the assignment-path behavior.
+#[test]
+fn modifier_private_nominal_mismatch_elaborates_ts2345() {
+    let source = r"
+        class M2 { private s = 1; }
+        class N2 { private s = 1; }
+        declare function g(n: N2): void;
+        g(new M2());
+        ";
+
+    let diagnostics = collect_private_brand_diagnostics(source);
+    let ts2345 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2345)
+        .expect("expected TS2345 for modifier-private nominal mismatch in argument position");
+    assert!(
+        ts2345.related_information.iter().any(|info| info
+            .message_text
+            .contains("Types have separate declarations of a private property 's'.")),
+        "Expected nominal private-property detail in TS2345 related info, got: {ts2345:?}"
+    );
+}
+
+/// ES `#`-private mismatch in argument position uses the TS18015 "refers to
+/// a different member" wording, matching the assignment-path behavior.
+#[test]
+fn es_private_identifier_nominal_mismatch_elaborates_ts2345() {
+    let source = r"
+        class Alpha { #s = 1; }
+        class Beta { #s = 1; }
+        declare function takeBeta(n: Beta): void;
+        takeBeta(new Alpha());
+        ";
+
+    let diagnostics = collect_private_brand_diagnostics(source);
+    let ts2345 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2345)
+        .expect("expected TS2345 for ES private identifier nominal mismatch in argument position");
+    assert!(
+        ts2345.related_information.iter().any(|info| info
+            .message_text
+            .contains("Property '#s' in type 'Alpha' refers to a different member that cannot be accessed from within type 'Beta'.")),
+        "Expected TS18015 wording in TS2345 related info, got: {ts2345:?}"
+    );
+    assert!(
+        !ts2345
+            .related_information
+            .iter()
+            .any(|info| info.message_text.contains("separate declarations")),
+        "ES private identifiers must not use the modifier-private 'separate declarations' wording, got: {ts2345:?}"
+    );
+}
+
+/// Negative control: a structurally-failing argument with no private/nominal
+/// members keeps the plain TS2345 head and never synthesizes a brand-mismatch
+/// related-information line.
+#[test]
+fn structural_argument_mismatch_without_private_members_keeps_plain_ts2345() {
+    let source = r#"
+        class P { x: number = 1; }
+        class Q { x: string = "a"; }
+        declare function h(q: Q): void;
+        h(new P());
+        "#;
+
+    let diagnostics = collect_private_brand_diagnostics(source);
+    let ts2345 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2345)
+        .expect("expected TS2345 for plain structural argument mismatch");
+    assert!(
+        !ts2345
+            .related_information
+            .iter()
+            .any(|info| info.message_text.contains("separate declarations")
+                || info.message_text.contains("refers to a different member")),
+        "Plain structural mismatches must not gain a synthesized private-brand line, got: {ts2345:?}"
+    );
+}
+
+/// Renamed-binder control on the modifier-`private` argument-position case,
+/// with the mismatching class written second to vary source/target order.
+#[test]
+fn modifier_private_nominal_mismatch_elaborates_ts2345_renamed_binders() {
+    let source = r"
+        class Feldspar { private grain = 1; }
+        class Quartzite { private grain = 1; }
+        declare function polish(rock: Feldspar): void;
+        polish(new Quartzite());
+        ";
+
+    let diagnostics = collect_private_brand_diagnostics(source);
+    let ts2345 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2345)
+        .expect("expected TS2345 for modifier-private nominal mismatch in argument position");
+    assert!(
+        ts2345.related_information.iter().any(|info| info
+            .message_text
+            .contains("Types have separate declarations of a private property 'grain'.")),
+        "Expected nominal private-property detail in TS2345 related info, got: {ts2345:?}"
+    );
+}

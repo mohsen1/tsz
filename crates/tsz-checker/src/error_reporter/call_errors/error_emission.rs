@@ -195,6 +195,62 @@ impl<'a> CheckerState<'a> {
             self.ctx.push_diagnostic(diag);
             return;
         }
+
+        // Nominal private-member mismatch: the same interception the
+        // assignment path applies in `error_reporter/assignability.rs`. Two
+        // otherwise-structurally-compatible classes each declare a private
+        // (or ES `#`-private) member of the same name — tsc's relation
+        // check rejects the pair nominally and attaches a
+        // `private_brand_mismatch_error` detail line (TS18015 wording for
+        // `#name`, "separate declarations" wording for modifier `private`)
+        // as related information under the TS2345 head. The call-argument
+        // path previously fell straight to generic structural elaboration,
+        // which has no notion of private brands and rendered no detail line.
+        if let Some(detail) = self.private_brand_mismatch_error(arg_type, param_type) {
+            let Some(anchor) = self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::Exact)
+            else {
+                return;
+            };
+            let arg_str = self.format_type_for_diagnostic_role(
+                arg_type,
+                DiagnosticTypeDisplayRole::CallArgument {
+                    parameter: param_type,
+                    argument_idx: idx,
+                },
+            );
+            let param_str = self.format_type_for_diagnostic_role(
+                param_type,
+                DiagnosticTypeDisplayRole::CallParameter {
+                    argument: arg_type,
+                    argument_idx: idx,
+                },
+            );
+            let (code, msg_template) =
+                self.argument_not_assignable_code_and_template(arg_type, param_type);
+            let message = format_message(msg_template, &[&arg_str, &param_str]);
+            let related = vec![DiagnosticRelatedInformation {
+                category: DiagnosticCategory::Error,
+                code,
+                file: self.ctx.file_name.clone(),
+                start: anchor.start,
+                length: anchor.length,
+                message_text: detail,
+                depth: 0,
+                kind: RelatedInformationKind::ChainLink,
+            }];
+            self.emit_render_request_at_anchor(
+                anchor,
+                DiagnosticRenderRequest::with_related(
+                    DiagnosticAnchorKind::Exact,
+                    code,
+                    message,
+                    related,
+                    RelatedInformationPolicy::ELABORATION,
+                ),
+            );
+            return;
+        }
+
         let analysis = self.analyze_assignability_failure(arg_type, param_type);
 
         // tsc promotes a sole missing-required-property failure to the PRIMARY
