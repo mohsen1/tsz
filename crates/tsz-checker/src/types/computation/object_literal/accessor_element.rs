@@ -561,6 +561,9 @@ impl<'a> CheckerState<'a> {
                     .unwrap_or(TypeId::ANY)
             };
 
+            // The reporter fires the per-property TS2418 only for a syntactic
+            // `Symbol.<member>` accessor key; a wide/plain `symbol` accessor key
+            // defers to the whole-object relation (TS2322). #16662.
             if prop_name_type == TypeId::SYMBOL {
                 self.report_contextual_symbol_index_value_mismatch(
                     accessor.name,

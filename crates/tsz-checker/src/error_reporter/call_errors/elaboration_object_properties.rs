@@ -303,6 +303,23 @@ impl<'a> CheckerState<'a> {
                 }
                 None => continue,
             };
+            // A genuine wide/plain `symbol` computed key is an index-signature
+            // contributor, not a late-bound named member: it folds into a
+            // `[k: symbol]: V` signature, so a value mismatch is owned by the
+            // whole-object relation (TS2322 with a `'symbol' index signatures
+            // are incompatible` chain), exactly like a wide `string`/`number`
+            // key — whose synthetic key name does not resolve, so it is skipped
+            // above. A bare `symbol`-typed const binding otherwise resolves to a
+            // binding-identity (`__unique_<id>`) name here and would wrongly
+            // drill into the late-bound per-property TS2418 below. A syntactic
+            // `Symbol.<member>` well-known key keeps its late-bound TS2418 (via
+            // the object-literal computation reporter) and is excluded. #16662.
+            if is_computed_property
+                && !self.computed_member_key_is_well_known_symbol_syntax(prop_name_idx)
+                && self.computed_member_key_is_wide_symbol(prop_name_idx)
+            {
+                continue;
+            }
             // Resolve the per-property target against the best-matching union
             // member when one exists (tsc's `findBestTypeForObjectLiteral`),
             // else against the whole target. A `None` here — the best member

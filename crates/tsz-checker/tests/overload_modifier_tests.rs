@@ -64,6 +64,93 @@ export function baz(s?: string) { }
     assert!(!has_error(source, 2383));
 }
 
+// TS2383: overloads declared directly inside an ambient module/namespace body
+// are exempt from the export-consistency check (tsc: `export` on a member of
+// an ambient module body doesn't carry module-export meaning). `declare
+// global` is a global augmentation, not an ambient module, and stays subject
+// to the check, as does a bare top-level ambient overload set with no
+// enclosing namespace.
+
+#[test]
+fn ts2383_ambient_namespace_mixed_export_no_error() {
+    let source = r#"
+declare namespace Widgets {
+    function make(): void;
+    export function make(): void;
+    function make(): void;
+}
+"#;
+    assert!(!has_error(source, 2383));
+}
+
+#[test]
+fn ts2383_non_ambient_namespace_mixed_export_error() {
+    let source = r#"
+namespace Widgets {
+    function make(): void;
+    export function make(): void;
+    function make(): void {}
+}
+"#;
+    assert!(has_error(source, 2383));
+}
+
+#[test]
+fn ts2383_ambient_module_string_literal_mixed_export_no_error() {
+    let source = r#"
+declare module "widgets" {
+    function make(): void;
+    export function make(): void;
+}
+"#;
+    assert!(!has_error(source, 2383));
+}
+
+#[test]
+fn ts2383_non_ambient_namespace_nested_inside_ambient_namespace_no_error() {
+    let source = r#"
+declare namespace Outer {
+    namespace Inner {
+        function make(): void;
+        export function make(): void;
+    }
+}
+"#;
+    assert!(!has_error(source, 2383));
+}
+
+#[test]
+fn ts2383_declare_global_mixed_export_still_errors() {
+    let source = r#"
+declare global {
+    function make(): void;
+    export function make(): void;
+}
+export {};
+"#;
+    assert!(has_error(source, 2383));
+}
+
+#[test]
+fn ts2383_bare_top_level_ambient_overloads_mixed_export_still_errors() {
+    let source = r#"
+declare function make(): void;
+export declare function make(): void;
+"#;
+    assert!(has_error(source, 2383));
+}
+
+#[test]
+fn ts2383_ambient_namespace_mixed_export_generic_overloads_no_error() {
+    let source = r#"
+declare namespace Registry {
+    function get<T>(key: string): T;
+    export function get<T>(key: string, fallback: T): T;
+}
+"#;
+    assert!(!has_error(source, 2383));
+}
+
 // TS2386: optionality agreement on interface method overloads
 
 #[test]

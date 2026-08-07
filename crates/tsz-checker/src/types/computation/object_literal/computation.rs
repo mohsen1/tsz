@@ -942,6 +942,11 @@ impl<'a> CheckerState<'a> {
                         value_type = literal_type;
                     }
 
+                    // A `symbol`-typed computed key contributes a
+                    // `[k: symbol]: V` index signature; the reporter fires the
+                    // per-property TS2418 only for a syntactic `Symbol.<member>`
+                    // key and otherwise defers to the whole-object relation
+                    // (TS2322), like a wide `string`/`number` key. #16662.
                     if prop_name_type == TypeId::SYMBOL {
                         self.report_contextual_symbol_index_value_mismatch(
                             prop.name,
@@ -1766,6 +1771,10 @@ impl<'a> CheckerState<'a> {
                         );
                     }
 
+                    // The reporter fires the per-property TS2418 only for a
+                    // syntactic `Symbol.<member>` method key; a wide/plain
+                    // `symbol` method key defers to the whole-object relation
+                    // (TS2322). #16662.
                     if prop_name_type == TypeId::SYMBOL {
                         self.report_contextual_symbol_index_value_mismatch(
                             method.name,

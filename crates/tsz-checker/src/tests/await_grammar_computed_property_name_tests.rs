@@ -435,6 +435,99 @@ namespace Registry { class Holder { [await key]() {} } }
     assert_eq!(codes, vec![1308], "got {codes:?}");
 }
 
+// --- #16104: `export` on a namespace class must not change `await` legality.
+// ---
+// `tsc@7.0.2` has a bug here: adding `export` to a class inside a namespace
+// suppresses TS1308 on the class member's *computed name*. `export` cannot
+// change whether `await` is legal at a position, so tsz is correct to keep
+// reporting TS1308 — this must NOT be patched toward tsc's under-report. These
+// rows pin that correct divergence so a future "tsz over-reports TS1308 in a
+// namespace" row is recognized as tsc under-reporting, not re-derived as a tsz
+// defect.
+//
+// The witness is n2 (below); the plain non-export baseline is n1
+// (`class_computed_name_inside_namespace_still_reports_ts1308`, above). The
+// n3/n4/n5 controls below each kill a specific benign explanation — and, read
+// as tsz pins, each guards against a specific wrong shape a patch-toward-the-bug
+// could take: keying the suppression on the namespace merely *having* an export
+// (n3), on the exported body being skipped (n4), or on one-shot dedup (n5).
+
+/// n2 (the witness): `export` on the class owning the computed name is exactly
+/// what makes `tsc` drop TS1308. tsz keeps it — the namespace body is not the
+/// top level of a module, so TS1308 is the correct answer.
+#[test]
+fn export_namespace_class_computed_name_await_still_reports_ts1308() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+declare const x: string;
+namespace N { export class C { [await x]() {} } }
+"#,
+    );
+    assert_eq!(codes, vec![1308], "got {codes:?}");
+}
+
+/// n3: the namespace has an `export` (of a *different* member — the class `C`
+/// itself is not exported), yet TS1308 still fires. This is the row n1 cannot
+/// cover: it guards specifically against a patch that keys the suppression on
+/// the namespace *containing an export* rather than on the owning class being
+/// exported. `tsc` also reports TS1308 here (its bug needs the class itself
+/// exported), which is what rules out "the namespace became instantiated".
+#[test]
+fn export_sibling_member_leaves_namespace_class_computed_name_ts1308() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+declare const x: string;
+namespace N { export const q = 1; class C { [await x]() {} } }
+"#,
+    );
+    assert_eq!(codes, vec![1308], "got {codes:?}");
+}
+
+/// n4: an `export class`'s property *initializer* is genuinely not top level
+/// and still reports TS1308 in `tsc` too — rules out "the exported class body
+/// is not checked". The `await` here is in an initializer, not a computed
+/// name, so there is no TS1166.
+#[test]
+fn export_namespace_class_property_initializer_await_reports_ts1308() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+declare const x: string;
+namespace N { export class C { p = await x; } }
+"#,
+    );
+    assert_eq!(codes, vec![1308], "got {codes:?}");
+}
+
+/// n5: two exported classes each suppress a diagnostic in `tsc`, so its bug is
+/// not a one-shot `error_at_node` dedup on a shared position. tsz reports both
+/// — the correct answer, one TS1308 per computed name.
+#[test]
+fn two_export_namespace_classes_each_report_their_own_ts1308() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+declare const x: string;
+namespace N {
+  export class A { [await x]() {} }
+  export class B { [await x]() {} }
+}
+"#,
+    );
+    assert_eq!(codes, vec![1308, 1308], "got {codes:?}");
+}
+
+/// Binder-name-invariance control for the export rows (anti-hardcoding): the
+/// rule is structural, not keyed on `N`/`C`/`x`.
+#[test]
+fn export_namespace_class_computed_name_await_is_binder_name_invariant() {
+    let codes = check_source_codes_with_parse_health(
+        r#"
+declare const tokenValue: string;
+namespace Registry { export class ConnectionPool { [await tokenValue]() {} } }
+"#,
+    );
+    assert_eq!(codes, vec![1308], "got {codes:?}");
+}
+
 /// Negative control: a class nested inside a method body is not top level
 /// either — the jump lands on the inner class, and the walk then hits the
 /// enclosing method.
