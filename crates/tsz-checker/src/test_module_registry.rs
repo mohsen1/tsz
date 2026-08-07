@@ -697,6 +697,8 @@ mod optional_chain_parenthesized_target_tests;
 mod optional_chain_read_before_write_tests;
 #[path = "tests/optional_chain_root_nullish_strict_only_tests.rs"]
 mod optional_chain_root_nullish_strict_only_tests;
+#[path = "tests/optional_chain_write_target_nullish_tests.rs"]
+mod optional_chain_write_target_nullish_tests;
 #[path = "tests/optional_key_extraction_tests.rs"]
 mod optional_key_extraction_tests;
 #[path = "tests/optional_private_field_undefined_tests.rs"]

@@ -4,6 +4,7 @@
 //! declaration-inferred call-callee companion in
 //! `computation::call_quick_type_nullish`.
 
+use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_scanner::SyntaxKind;
@@ -236,6 +237,76 @@ impl<'a> CheckerState<'a> {
             skip_flow_narrowing,
             false,
         )
+    }
+
+    /// The write-target short-circuit shared by property-access
+    /// (`property_access_type/resolve.rs`) and element-access
+    /// (`computation/access.rs`) resolution. An invalid optional-chain
+    /// assignment target resolves to `any` so it cannot cascade into
+    /// assignability diagnostics, but the receiver's type is *not* thrown away
+    /// first: a receiver carrying genuine optionality is reported via
+    /// [`report_write_target_chain_nullish_receiver`](Self::report_write_target_chain_nullish_receiver).
+    /// Returns the `any` short-circuit type both callers propagate. Resolving
+    /// `receiver`'s type here is also what populates its optional-chain marker
+    /// bit, which the reporter's marker strip then reads.
+    pub(crate) fn short_circuit_optional_chain_write_target(
+        &mut self,
+        receiver: NodeIndex,
+        link_has_question_dot: bool,
+        read_request: &TypingRequest,
+    ) -> TypeId {
+        let receiver_type = self.get_type_of_node_with_request(receiver, read_request);
+        self.report_write_target_chain_nullish_receiver(
+            receiver,
+            link_has_question_dot,
+            receiver_type,
+        );
+        TypeId::ANY
+    }
+
+    /// Report the possibly-nullish receiver of an optional-chain continuation
+    /// that sits in a *pure-write* position — an assignment target, or a
+    /// `for...in`/`for...of` head — i.e. the write forms that route through the
+    /// write-target short-circuit and never read the target's current value.
+    /// (`+=`/`++`/`--` read before they write and are owned by the
+    /// read-before-write path in `optional_chain_read_before_write_tests`; the
+    /// two mechanisms fire on different nodes and never stack.)
+    ///
+    /// Two conditions gate the report, matching tsc's continuation check:
+    ///
+    /// - A continuation link that carries its own `?.` (`q?.w?.e = 1`) is
+    ///   guarded by the chain and reports nothing, exactly as in a read
+    ///   position — so `link_has_question_dot` suppresses it.
+    /// - The receiver's `undefined` counts only when it is *genuine*
+    ///   optionality. A chain whose receiver is undefined solely because the
+    ///   chain itself may short-circuit (`a.b?.c` where `c` is a required
+    ///   member) carries the chain marker, which tsc's `removeOptionalTypeMarker`
+    ///   strips before checking the continuation. Real member optionality
+    ///   (`q?.w` where `w?` is declared optional) survives the strip and
+    ///   reports; a receiver that is undefined for *both* reasons still reports,
+    ///   because the marker strip is a no-op once the member carries its own
+    ///   `undefined`.
+    ///
+    /// The report names the *receiver* (`'q.w'`), which is what distinguishes it
+    /// from the read-before-write path's whole-target report (`'a.b.c.d'`).
+    pub(crate) fn report_write_target_chain_nullish_receiver(
+        &mut self,
+        receiver: NodeIndex,
+        link_has_question_dot: bool,
+        receiver_type: TypeId,
+    ) {
+        if link_has_question_dot || !self.ctx.compiler_options.strict_null_checks {
+            return;
+        }
+        let receiver_type = self.remove_optional_chain_marker(receiver, receiver_type);
+        let (_, nullish) = self.split_nullish_type(receiver_type);
+        let Some(cause) = nullish else {
+            return;
+        };
+        if matches!(cause, TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN) {
+            return;
+        }
+        self.report_possibly_nullish_expression(receiver, cause);
     }
 
     /// Report a possibly-nullish `expression` the way tsc's

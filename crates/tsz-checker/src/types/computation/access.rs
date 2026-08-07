@@ -99,8 +99,15 @@ impl<'a> CheckerState<'a> {
         // increment/decrement), which needs the real type to detect a
         // chain-marker `undefined` and report `TS18048`/etc.
         if skip_flow_narrowing && self.optional_chain_invalid_assignment_target_context(idx) {
-            let _ = self.get_type_of_node_with_request(access.expression, &read_request);
-            return TypeId::ANY;
+            // Mirror `property_access_type/resolve.rs`: keep the receiver type so
+            // a pure-write optional-chain element target (`idx?.list[0] = 1`)
+            // whose receiver carries genuine optionality reports on the receiver;
+            // a marker-only receiver (`arr.b?.c[0] = 1`) stays silent.
+            return self.short_circuit_optional_chain_write_target(
+                access.expression,
+                access.question_dot_token,
+                &read_request,
+            );
         }
 
         // Get the type of the object. In write context, prefer the receiver's

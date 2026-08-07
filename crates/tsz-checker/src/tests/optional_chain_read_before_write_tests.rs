@@ -239,13 +239,22 @@ a.b?.c.d = 1;
 
 #[test]
 fn plain_assignment_genuine_receiver_still_reports_receiver_once() {
-    // Unaffected by this change (owned by #16650's receiver check once
-    // merged, or by the pre-existing ordinary-read path today), but pinned
-    // here so a future regression in either mechanism is caught.
+    // The write-position half of this family (#16683): a plain `=` reads
+    // nothing, so the read-before-write path never fires, but the receiver's
+    // genuine optionality still reports on the receiver exactly once, via
+    // `report_write_target_chain_nullish_receiver`. See
+    // `optional_chain_write_target_nullish_tests` for the full matrix.
     let source = r#"
 declare const h: { inner?: { leaf: number } };
 h?.inner.leaf = 1;
 "#;
     let codes = strict_codes(source);
     assert!(codes.contains(&2779), "expected TS2779, got {codes:?}");
+    let messages = messages_for(source, 18048);
+    assert_eq!(
+        messages,
+        vec!["'h.inner' is possibly 'undefined'.".to_string()],
+        "plain assignment with a genuinely-optional receiver reports on the \
+         receiver exactly once"
+    );
 }
