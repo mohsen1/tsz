@@ -919,6 +919,8 @@ mod ts2323_variable_redeclaration_two_pass_tests;
 mod ts2339_js_this_function_name_display_tests;
 #[path = "tests/ts2341_private_access_via_type_param_constraint_tests.rs"]
 mod ts2341_private_access_via_type_param_constraint_tests;
+#[path = "tests/ts2345_private_brand_argument_elaboration_tests.rs"]
+mod ts2345_private_brand_argument_elaboration_tests;
 #[path = "tests/ts2353_generic_constraint_tests.rs"]
 mod ts2353_generic_constraint_tests;
 #[path = "tests/ts2383_overload_flag_agreement_tests.rs"]

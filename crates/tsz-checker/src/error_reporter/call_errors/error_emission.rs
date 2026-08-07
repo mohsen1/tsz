@@ -197,6 +197,60 @@ impl<'a> CheckerState<'a> {
         }
         let analysis = self.analyze_assignability_failure(arg_type, param_type);
 
+        // A private/`#`-private brand mismatch between argument and parameter
+        // is a nominal-identity failure, not a structural one: tsc's
+        // `checkTypeRelatedTo` attaches the "separate declarations of a
+        // private property" (modifier-`private`/`protected`) or "refers to a
+        // different member" (`#`-private) detail as an elaboration under the
+        // TS2345 head, ahead of the generic structural-property rendering
+        // below. This mirrors the assignment-statement path's
+        // `private_brand_mismatch_error` interception in
+        // `error_reporter/assignability.rs`.
+        if let Some(detail) = self.private_brand_mismatch_error(arg_type, param_type) {
+            let Some(anchor) = self.resolve_diagnostic_anchor(idx, DiagnosticAnchorKind::Exact)
+            else {
+                return;
+            };
+            let arg_str = self.format_type_for_diagnostic_role(
+                arg_type,
+                DiagnosticTypeDisplayRole::CallArgument {
+                    parameter: param_type,
+                    argument_idx: idx,
+                },
+            );
+            let param_str = self.format_type_for_diagnostic_role(
+                param_type,
+                DiagnosticTypeDisplayRole::CallParameter {
+                    argument: arg_type,
+                    argument_idx: idx,
+                },
+            );
+            let (code, msg_template) =
+                self.argument_not_assignable_code_and_template(arg_type, param_type);
+            let message = format_message(msg_template, &[&arg_str, &param_str]);
+            let related = vec![DiagnosticRelatedInformation {
+                category: DiagnosticCategory::Error,
+                code,
+                file: self.ctx.file_name.clone(),
+                start: anchor.start,
+                length: anchor.length,
+                message_text: detail,
+                depth: 0,
+                kind: RelatedInformationKind::ChainLink,
+            }];
+            self.emit_render_request_at_anchor(
+                anchor,
+                DiagnosticRenderRequest::with_related(
+                    DiagnosticAnchorKind::Exact,
+                    code,
+                    message,
+                    related,
+                    RelatedInformationPolicy::ELABORATION,
+                ),
+            );
+            return;
+        }
+
         // tsc promotes a sole missing-required-property failure to the PRIMARY
         // diagnostic at the argument node — TS2741 (one property), TS2739
         // (2-5), TS2740 (more) replace the generic TS2345 head
