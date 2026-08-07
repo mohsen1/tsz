@@ -1,7 +1,8 @@
 //! Type-member (interface / type-literal) modifier grammar parity with tsc.
 //!
-//! Two positions that `checkGrammarModifiers` rejects but tsz previously did
-//! not, verified against `typescript@7.0.2`:
+//! Positions that `checkGrammarModifiers` (or the parser's own member-shape
+//! dispatch) rejects but tsz previously did not, verified against
+//! `typescript@7.0.2`:
 //!   * `export` / `in` / `out` as a modifier on a type member → TS1070
 //!     (`'{0}' modifier cannot appear on a type member.`), anchored at the
 //!     modifier. tsz previously mis-parsed `export` to TS1005 and dropped
@@ -9,11 +10,28 @@
 //!   * `readonly` on a method or construct signature → TS1024
 //!     (`'readonly' modifier can only appear on a property declaration or index
 //!     signature.`), anchored at `readonly`. tsz previously stayed silent.
+//!   * `readonly` directly followed by a `get`/`set` accessor → TS1131
+//!     (`Property or signature expected.`), anchored at `readonly`. No
+//!     modifier may precede an accessor signature in an interface or type
+//!     literal — unlike a plain method, this fails to parse as any member at
+//!     all in tsc, not a semantic TS1024. tsz previously mis-parsed `get`/`set`
+//!     as the property name and reported a spurious TS1005 at the accessor's
+//!     own property name.
 //!
 //! `readonly` on a property / index signature stays legal, and `export` / `in`
 //! / `out` used as a member *name* (`export: T`, `export(): void`) stay clean —
 //! matching tsc. `import` / `const` / `default` are not type-member modifiers in
 //! tsc (they take a parser-recovery path) and are intentionally not covered.
+//!
+//! Left as follow-up (a separate, larger defect, not fixed here): tsc rejects
+//! *any* modifier before an interface/type-literal accessor with the same
+//! TS1131-plus-retry parse failure — `static`/`public`/`declare`/`abstract` all
+//! reproduce it (with `declare`/`abstract` additionally cascading into
+//! TS1434/TS1005/TS1128 on tsc, since the retry re-parses the accessor's own
+//! name as a fresh statement). tsz currently reports the uniform semantic
+//! TS1070 for those instead. A stacked-modifier chain before an accessor
+//! (`export readonly get x()`) is also unfixed. Both are pre-existing,
+//! unrelated code paths that this change does not touch.
 
 use crate::parser::test_fixture::parse_source;
 use tsz_common::diagnostics::diagnostic_codes;
@@ -47,6 +65,7 @@ fn codes(source: &str) -> Vec<u32> {
 const TS1070: u32 = diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_TYPE_MEMBER;
 const TS1024: u32 =
     diagnostic_codes::READONLY_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION_OR_INDEX_SIGNATURE;
+const TS1131: u32 = diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED;
 
 // ---------------------------------------------------------------------------
 // TS1070: export / in / out modifier on a type member
@@ -201,6 +220,109 @@ fn readonly_on_type_literal_method_reports_ts1024() {
                 .to_string()
         )],
     );
+}
+
+// ---------------------------------------------------------------------------
+// TS1131: readonly directly followed by a get/set accessor
+// ---------------------------------------------------------------------------
+
+#[test]
+fn readonly_before_get_accessor_reports_ts1131_and_recovers_the_accessor() {
+    assert_eq!(
+        fingerprints("interface I { readonly get x(): number; }"),
+        vec![(TS1131, 1, 15, "Property or signature expected.".to_string())],
+    );
+}
+
+#[test]
+fn readonly_before_set_accessor_reports_ts1131_and_recovers_the_accessor() {
+    assert_eq!(
+        fingerprints("interface I { readonly set x(v: number); }"),
+        vec![(TS1131, 1, 15, "Property or signature expected.".to_string())],
+    );
+}
+
+#[test]
+fn readonly_before_accessor_on_type_literal_reports_ts1131() {
+    // `type T = { ` -> `readonly` at column 12.
+    assert_eq!(
+        fingerprints("type T = { readonly get x(): number; };"),
+        vec![(TS1131, 1, 12, "Property or signature expected.".to_string())],
+    );
+    assert_eq!(
+        fingerprints("type T = { readonly set x(v: number); };"),
+        vec![(TS1131, 1, 12, "Property or signature expected.".to_string())],
+    );
+}
+
+#[test]
+fn readonly_before_accessor_renamed_binder_and_asi() {
+    // Renamed property/container binders, and no explicit semicolons (ASI).
+    let source =
+        "interface Widget {\n  readonly get value(): string\n  readonly set value(v: string)\n}";
+    assert_eq!(
+        fingerprints(source),
+        vec![
+            (TS1131, 2, 3, "Property or signature expected.".to_string()),
+            (TS1131, 3, 3, "Property or signature expected.".to_string()),
+        ],
+    );
+}
+
+#[test]
+fn readonly_before_accessor_no_return_type_reports_ts1131() {
+    assert_eq!(
+        fingerprints("interface I { readonly get x() }"),
+        vec![(TS1131, 1, 15, "Property or signature expected.".to_string())],
+    );
+}
+
+#[test]
+fn readonly_before_accessor_still_recovers_following_members() {
+    // The retry that finds the bare accessor must not swallow later members.
+    assert_eq!(
+        codes("interface I { readonly get x(): number; y: string; }"),
+        vec![TS1131],
+    );
+}
+
+#[test]
+fn readonly_before_method_named_get_stays_ts1024_not_ts1131() {
+    // `get` immediately followed by `(` is a method *named* `get`, not an
+    // accessor — this is the already-fixed TS1024 case (#16789/#16795), and
+    // must not be reclassified as TS1131 by the new accessor lookahead.
+    assert_eq!(
+        fingerprints("interface I { readonly get(): number; }"),
+        vec![(
+            TS1024,
+            1,
+            15,
+            "'readonly' modifier can only appear on a property declaration or index signature."
+                .to_string()
+        )],
+    );
+}
+
+#[test]
+fn readonly_get_as_property_name_stays_clean() {
+    // `get` used as an ordinary property name (`get: number`), not the
+    // accessor keyword, is legal with `readonly`.
+    assert!(codes("interface I { readonly get: number; }").is_empty());
+}
+
+#[test]
+fn get_accessor_without_readonly_stays_clean() {
+    assert!(codes("interface I { get x(): number; set x(v: number); }").is_empty());
+}
+
+#[test]
+fn readonly_before_accessor_across_a_line_break_is_unaffected() {
+    // A line break between `readonly` and `get` takes tsc down a completely
+    // different (already-divergent, out-of-scope) ASI path; the new
+    // same-line-only lookahead must not fire here.
+    let with_break = "interface I {\n  readonly\n  get x(): number\n}";
+    let without_break = "interface I {\n  readonly get x(): number\n}";
+    assert_ne!(codes(with_break), codes(without_break));
 }
 
 // ---------------------------------------------------------------------------
