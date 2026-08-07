@@ -1123,3 +1123,141 @@ C.#x++;
         "Got unexpected diagnostics (only TS2339 and TS18013 were being checked for): {unexpected:?}"
     );
 }
+
+// =============================================================================
+// ES private identifier nominal mismatch wording (TS18015 vs TS2446)
+// =============================================================================
+//
+// tsc reserves "Types have separate declarations of a private property" for
+// modifier-`private` members; a same-spelled ES private identifier (`#name`)
+// in two unrelated classes gets the TS18015 wording instead:
+// "Property '#x' in type 'A' refers to a different member that cannot be
+// accessed from within type 'B'."
+
+/// Two unrelated classes with a same-spelled `#field`: the TS2322 elaboration
+/// uses the TS18015 "refers to a different member" wording, naming the source
+/// class first and the target class second.
+#[test]
+fn es_private_identifier_nominal_mismatch_uses_ts18015_wording() {
+    let source = r"
+        class A { #x = 1; }
+        class B { #x = 1; }
+        const b: B = new A();
+        ";
+
+    test_private_brands(source, 1);
+    let diagnostics = collect_private_brand_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .expect("expected TS2322 for ES private identifier nominal mismatch");
+    assert!(
+        ts2322.related_information.iter().any(|info| info
+            .message_text
+            .contains("Property '#x' in type 'A' refers to a different member that cannot be accessed from within type 'B'.")),
+        "Expected TS18015 wording in TS2322 related info, got: {ts2322:?}"
+    );
+    assert!(
+        !ts2322
+            .related_information
+            .iter()
+            .any(|info| info.message_text.contains("separate declarations")),
+        "ES private identifiers must not use the modifier-private 'separate declarations' wording, got: {ts2322:?}"
+    );
+}
+
+/// Same rule with renamed binders and a `#method` instead of a field.
+#[test]
+fn es_private_identifier_ts18015_wording_renamed_binders_method_form() {
+    let source = r"
+        class Granite { #erode() {} }
+        class Basalt { #erode() {} }
+        declare const rock: Granite;
+        const other: Basalt = rock;
+        ";
+
+    test_private_brands(source, 1);
+    let diagnostics = collect_private_brand_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .expect("expected TS2322 for ES private method nominal mismatch");
+    assert!(
+        ts2322.related_information.iter().any(|info| info
+            .message_text
+            .contains("Property '#erode' in type 'Granite' refers to a different member that cannot be accessed from within type 'Basalt'.")),
+        "Expected TS18015 wording in TS2322 related info, got: {ts2322:?}"
+    );
+}
+
+/// Negative control: modifier-`private` members keep the TS2446
+/// "separate declarations" wording and never the TS18015 one.
+#[test]
+fn modifier_private_nominal_mismatch_keeps_separate_declarations_wording() {
+    let source = r"
+        class A { private x = 1; }
+        class B { private x = 1; }
+        const b: B = new A();
+        ";
+
+    test_private_brands(source, 1);
+    let diagnostics = collect_private_brand_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .expect("expected TS2322 for modifier-private nominal mismatch");
+    assert!(
+        ts2322.related_information.iter().any(|info| info
+            .message_text
+            .contains("Types have separate declarations of a private property 'x'.")),
+        "Expected TS2446 wording in TS2322 related info, got: {ts2322:?}"
+    );
+    assert!(
+        !ts2322
+            .related_information
+            .iter()
+            .any(|info| info.message_text.contains("refers to a different member")),
+        "Modifier-private members must not use the TS18015 wording, got: {ts2322:?}"
+    );
+}
+
+/// Negative control: a derived class (with or without a redeclared `#x`)
+/// stays assignable to its base — the per-class slot is inherited.
+#[test]
+fn derived_class_redeclaring_es_private_stays_assignable_to_base() {
+    let source = r"
+        class Base { #x = 1; }
+        class Derived extends Base { }
+        const q: Base = new Derived();
+        class Derived2 extends Base { #x = 2; }
+        const r: Base = new Derived2();
+        ";
+
+    test_private_brands(source, 0);
+}
+
+/// Negative control: a source with no ES private member at all keeps the
+/// plain missing-property diagnostic (TS2741), not the TS18015 wording.
+#[test]
+fn source_without_es_private_member_stays_missing_property() {
+    let source = r"
+        class A { #x = 1; }
+        class C { y = 2; }
+        const c2: A = new C();
+        ";
+
+    assert!(
+        has_error_code(source, 2741),
+        "expected TS2741 missing-property for a source without any ES private member"
+    );
+    let diagnostics = collect_private_brand_diagnostics(source);
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|d| d.message_text.contains("refers to a different member")
+                || d.related_information
+                    .iter()
+                    .any(|info| info.message_text.contains("refers to a different member"))),
+        "TS18015 wording must not fire when the source has no same-spelled ES private member, got: {diagnostics:?}"
+    );
+}

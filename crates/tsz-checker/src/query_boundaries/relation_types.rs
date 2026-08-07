@@ -362,6 +362,7 @@ impl RelationFailure {
             SubtypeFailureReason::OptionalPropertyRequired { property_name }
             | SubtypeFailureReason::ReadonlyPropertyMismatch { property_name }
             | SubtypeFailureReason::PropertyNominalMismatch { property_name }
+            | SubtypeFailureReason::PrivateIdentifierMemberMismatch { property_name }
             | SubtypeFailureReason::PropertyVisibilityMismatch { property_name, .. } => {
                 Self::PropertyModifierMismatch { property_name }
             }

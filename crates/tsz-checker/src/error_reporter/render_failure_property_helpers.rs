@@ -500,6 +500,40 @@ impl<'a> CheckerState<'a> {
         diag
     }
 
+    /// Render a nominal mismatch on an ES private identifier (`#name`).
+    ///
+    /// tsc: `Type 'A' is not assignable to type 'B'.` elaborated with TS18015
+    /// `Property '#x' in type 'A' refers to a different member that cannot be
+    /// accessed from within type 'B'.` — the source class first, the target
+    /// second, both spelled as in the top-level assignability message.
+    pub(super) fn render_private_identifier_member_mismatch(
+        &mut self,
+        reason: &tsz_solver::SubtypeFailureReason,
+        ctx: &RenderContext,
+        property_name: tsz_common::interner::Atom,
+    ) -> Diagnostic {
+        let (source_str, target_str) =
+            self.format_top_level_assignability_message_types_at(ctx.source, ctx.target, ctx.idx);
+        let base = format_message(
+            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &[&source_str, &target_str],
+        );
+        let mut diag = Diagnostic::error(
+            ctx.file_name.clone(),
+            ctx.start,
+            ctx.length,
+            base,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+        );
+        let prop_name = self.ctx.types.resolve_atom_ref(property_name);
+        let detail = format_message(
+            diagnostic_messages::PROPERTY_IN_TYPE_REFERS_TO_A_DIFFERENT_MEMBER_THAT_CANNOT_BE_ACCESSED_FROM_WITHI,
+            &[&prop_name, &source_str, &target_str],
+        );
+        diag.push_elaboration(detail, reason.diagnostic_code(), 0);
+        diag
+    }
+
     pub(super) fn render_return_type_mismatch(
         &mut self,
         reason: &tsz_solver::SubtypeFailureReason,

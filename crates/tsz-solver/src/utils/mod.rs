@@ -148,6 +148,18 @@ pub fn is_synthetic_private_brand_name(name: &str) -> bool {
     !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
 }
 
+/// Checks if a member name spells an ES private identifier (`#name`).
+///
+/// ES private identifiers are per-class slots with hierarchical origin rules,
+/// distinct from modifier-`private` members. `tsc` reports a different
+/// relation-failure elaboration for them: TS18015 ("refers to a different
+/// member") instead of TS2446 ("separate declarations of a private property").
+/// A `#` can never begin a user-spellable ordinary property name, so the
+/// prefix test is structural, not a user-name match.
+pub fn is_es_private_identifier_name(name: &str) -> bool {
+    name.starts_with('#')
+}
+
 /// Checks if a string represents a numeric literal name.
 ///
 /// Returns `true` for:
