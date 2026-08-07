@@ -697,9 +697,19 @@ function foo(a?: number, ...rest: string[]) {
     );
 }
 
-/// Test that multiple required parameters after optional are all flagged
+/// `tsc` reports `TS1016` **once**, on the first required parameter that
+/// follows an optional one — not once per offending parameter.
+///
+/// Verified against `typescript@7.0.2`
+/// (`--singleThreaded --stableTypeOrdering true`): the count stays 1 whether
+/// one, two, or three required parameters follow the optional one, and the
+/// anchor is always the first of them.
+///
+/// ```text
+/// function foo(a?: number, b: string, c: boolean) {}  -> 1x TS1016 at `b`
+/// ```
 #[test]
-fn test_multiple_required_params_after_optional_ts1016() {
+fn test_required_params_after_optional_report_ts1016_once_at_the_first() {
     use crate::binder::BinderState;
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::checker::state::CheckerState;
@@ -707,6 +717,73 @@ fn test_multiple_required_params_after_optional_ts1016() {
 
     let source = r#"
 function foo(a?: number, b: string, c: boolean) {
+    return a;
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors: {:?}",
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    let ts1016: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| {
+            d.code == diagnostic_codes::A_REQUIRED_PARAMETER_CANNOT_FOLLOW_AN_OPTIONAL_PARAMETER
+        })
+        .collect();
+
+    assert_eq!(
+        ts1016.len(),
+        1,
+        "tsc reports TS1016 once, not once per offending parameter. Got: {:?}",
+        checker.ctx.diagnostics
+    );
+    // `b` — the first required parameter after the optional one. Asserting the
+    // anchor as well as the count is what separates "reports once, on the
+    // first" from "reports once, on the last": both produce a count of 1.
+    assert_eq!(
+        ts1016[0].start, 26,
+        "TS1016 must anchor on the first required parameter after the optional one (`b`). Got: {:?}",
+        ts1016[0]
+    );
+}
+
+/// Adding a third required parameter after the optional one must not add a
+/// third diagnostic — the count is a property of the signature, not of the
+/// number of offending parameters.
+///
+/// This is the row that makes the rule falsifiable: a "once per offending
+/// parameter" implementation returns 3 here while still returning the expected
+/// value for a single trailing parameter. Verified 1 against `typescript@7.0.2`.
+#[test]
+fn test_three_required_params_after_optional_still_report_ts1016_once() {
+    use crate::binder::BinderState;
+    use crate::checker::diagnostics::diagnostic_codes;
+    use crate::checker::state::CheckerState;
+    use tsz_solver::construction::TypeInterner;
+
+    let source = r#"
+function foo(a?: number, b: string, c: boolean, d: number) {
     return a;
 }
 "#;
@@ -743,8 +820,8 @@ function foo(a?: number, b: string, c: boolean) {
         .count();
 
     assert_eq!(
-        ts1016_count, 2,
-        "Expected 2 TS1016 errors for two required params after optional. Got: {:?}",
+        ts1016_count, 1,
+        "Three required parameters after an optional one still report TS1016 once. Got: {:?}",
         checker.ctx.diagnostics
     );
 }
