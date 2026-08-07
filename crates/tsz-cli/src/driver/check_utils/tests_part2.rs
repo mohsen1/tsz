@@ -1,4 +1,4 @@
-//! Unit tests for check_utils, part 2. Split out of tests.rs to keep
+//! Unit tests for `check_utils`, part 2. Split out of `tests.rs` to keep
 //! the file under the 2000-line limit (#16733).
 
 use super::*;
