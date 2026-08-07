@@ -67,7 +67,13 @@ impl<'a> CheckerState<'a> {
         // same way tsc reports `TS18048` on a read-before-write target.
         if skip_flow_narrowing && self.optional_chain_invalid_assignment_target_context(idx) {
             let read_request = request.read().normal_origin().contextual_opt(None);
-            let _ = self.get_type_of_node_with_request(access.expression, &read_request);
+            let receiver_type =
+                self.get_type_of_node_with_request(access.expression, &read_request);
+            self.report_write_target_chain_nullish_receiver(
+                access.expression,
+                access.question_dot_token,
+                receiver_type,
+            );
             return TypeId::ANY;
         }
 
