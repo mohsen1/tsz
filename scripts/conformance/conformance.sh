@@ -846,6 +846,7 @@ print(f'{prev - curr:.1f}')
     local detail_file="$REPO_ROOT/scripts/conformance/conformance-detail.json"
     python3 "$REPO_ROOT/scripts/conformance/build-snapshot-detail.py" "$tmpfile" \
         --output "$detail_file" \
+        --git-sha "$git_sha" \
         || { echo "ERROR: failed to build conformance detail snapshot"; return 1; }
 
     # 4) Run analyze with JSON output

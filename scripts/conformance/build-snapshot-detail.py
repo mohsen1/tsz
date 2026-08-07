@@ -155,7 +155,7 @@ def build_aggregates(tests):
     }
 
 
-def build_snapshot_detail(tests):
+def build_snapshot_detail(tests, git_sha=None):
     """Build the compact detail artifact with explicit runnable accounting."""
     aggregates = build_aggregates(tests)
 
@@ -199,7 +199,7 @@ def build_snapshot_detail(tests):
                 entry["reason"] = reason
         fail_detail[path] = entry
 
-    return {
+    detail = {
         "summary": {
             "candidates": candidates,
             # `total` remains the backward-compatible pass denominator.
@@ -217,16 +217,28 @@ def build_snapshot_detail(tests):
         "failures": fail_detail,
         "unsupported": unsupported_detail,
     }
+    # Stamp the measured tree so `refresh-readme.py` can tell a current reading
+    # from a stale local artifact (zero-drift downward writes are legitimate).
+    if git_sha and git_sha.lower() != "unknown":
+        detail["git_sha"] = git_sha
+    return detail
 
 
 def main():
     parser = argparse.ArgumentParser(description="Build conformance detail snapshot")
     parser.add_argument("input_file", help="Raw runner output file (--print-test mode)")
     parser.add_argument("--output", "-o", required=True, help="Output JSON path")
+    parser.add_argument(
+        "--git-sha",
+        default=None,
+        help="commit SHA the runner output was measured against; stamped into "
+        "the artifact so refresh-readme.py can distinguish a current reading "
+        "from a stale local snapshot",
+    )
     args = parser.parse_args()
 
     tests = parse_runner_output(args.input_file)
-    output = build_snapshot_detail(tests)
+    output = build_snapshot_detail(tests, git_sha=args.git_sha)
 
     with open(args.output, "w") as f:
         json.dump(output, f, separators=(",", ":"))

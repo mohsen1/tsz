@@ -63,6 +63,26 @@ class BuildSnapshotDetailTests(unittest.TestCase):
         )
         self.assertEqual(set(detail["failures"]), {"fail.ts"})
 
+    def test_git_sha_is_stamped_when_provided(self):
+        tests = {"pass.ts": {"status": "PASS", "expected": [], "actual": []}}
+
+        detail = build_snapshot_detail.build_snapshot_detail(
+            tests, git_sha="0123456789abcdef0123456789abcdef01234567"
+        )
+
+        self.assertEqual(
+            detail["git_sha"], "0123456789abcdef0123456789abcdef01234567"
+        )
+
+    def test_unknown_git_sha_is_not_stamped(self):
+        tests = {"pass.ts": {"status": "PASS", "expected": [], "actual": []}}
+
+        for value in (None, "unknown", "UNKNOWN", ""):
+            detail = build_snapshot_detail.build_snapshot_detail(
+                tests, git_sha=value
+            )
+            self.assertNotIn("git_sha", detail)
+
 
 if __name__ == "__main__":
     unittest.main()

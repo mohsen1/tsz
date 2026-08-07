@@ -10,7 +10,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { createHash } from 'node:crypto';
-import { execFile as execFileCb } from 'node:child_process';
+import { execFile as execFileCb, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'url';
 import { promisify } from 'node:util';
 import pc from 'picocolors';
@@ -1610,8 +1610,22 @@ async function main() {
 
     const jsTotal = jsPass + jsFail;
     const dtsTotal = dtsPass + dtsFail;
+    // Stamp the measured tree so refresh-readme.py can distinguish a current
+    // reading from a stale local artifact (zero-drift downward writes are
+    // legitimate). Degrades to undefined off a git checkout rather than failing
+    // the emit run.
+    let gitSha: string | undefined;
+    try {
+      gitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+        cwd: ROOT_DIR,
+        encoding: 'utf8',
+      }).trim() || undefined;
+    } catch {
+      gitSha = undefined;
+    }
     const detail = {
       timestamp: new Date().toISOString(),
+      ...(gitSha ? { git_sha: gitSha } : {}),
       detailFingerprint: detailRowsFingerprint(allResults),
       detailResultCount: allResults.length,
       summary: {
