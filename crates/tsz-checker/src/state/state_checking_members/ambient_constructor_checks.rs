@@ -85,6 +85,13 @@ impl<'a> CheckerState<'a> {
         // This applies to both regular constructors and ambient (declare class) constructors.
         if ctor.body.is_none() {
             self.check_parameter_properties(&ctor.parameters.nodes);
+        } else {
+            // A constructor implementation skips `check_parameter_properties`
+            // (parameter properties are legal here), but a parameter *decorator*
+            // is still only valid under `experimentalDecorators`, so run the
+            // universal TS1206 gate directly. Body-less constructors already got
+            // it through `check_parameter_properties` above.
+            self.check_parameter_decorator_grammar(&ctor.parameters.nodes);
         }
         // TS1294: erasableSyntaxOnly — parameter properties are not erasable.
         if self.ctx.compiler_options.erasable_syntax_only {

@@ -469,3 +469,200 @@ mod jsdoc_diagnostic_integration_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod parameter_decorator_grammar_tests {
+    //! TS1206 for parameter decorators.
+    //!
+    //! Structural rule: a parameter decorator is legal only on a class
+    //! constructor/method/set-accessor parameter, and only under
+    //! `experimentalDecorators`. Every other function-like parameter position
+    //! rejects it with TS1206 in both decorator modes. tsc reports it once per
+    //! parameter (at the first decorator) and does not otherwise resolve the
+    //! decorator expression of an invalidly-placed decorator.
+    use crate::test_utils::{check_source_codes, check_source_codes_experimental_decorators};
+
+    const DEC: &str = "declare function dec(...a: any[]): any;\n";
+
+    fn count(codes: &[u32], code: u32) -> usize {
+        codes.iter().filter(|&&c| c == code).count()
+    }
+
+    // --- Non-class function-like positions: TS1206 in both modes (false-negative fix) ---
+
+    #[test]
+    fn function_declaration_parameter_decorator_is_ts1206() {
+        let src = format!("{DEC}function f(@dec a: number) {{}}");
+        assert_eq!(count(&check_source_codes(&src), 1206), 1);
+        assert_eq!(
+            count(&check_source_codes_experimental_decorators(&src), 1206),
+            1
+        );
+    }
+
+    #[test]
+    fn function_expression_parameter_decorator_is_ts1206() {
+        let src = format!("{DEC}const h = function (@dec a: number) {{}};");
+        assert_eq!(count(&check_source_codes(&src), 1206), 1);
+    }
+
+    #[test]
+    fn object_literal_method_parameter_decorator_is_ts1206() {
+        // Shares the MethodDeclaration node kind with a class method, but its
+        // parent is an object literal, so it is never a valid decorator target.
+        let src = format!("{DEC}const o = {{ m(@dec a: number) {{}} }};");
+        assert_eq!(count(&check_source_codes(&src), 1206), 1);
+        assert_eq!(
+            count(&check_source_codes_experimental_decorators(&src), 1206),
+            1
+        );
+    }
+
+    #[test]
+    fn object_literal_setter_parameter_decorator_is_ts1206() {
+        let src = format!("{DEC}const o = {{ set y(@dec v: number) {{}} }};");
+        assert_eq!(count(&check_source_codes(&src), 1206), 1);
+    }
+
+    #[test]
+    fn interface_method_signature_parameter_decorator_is_ts1206() {
+        let src = format!("{DEC}interface I {{ m(@dec a: number): void; }}");
+        assert_eq!(count(&check_source_codes(&src), 1206), 1);
+    }
+
+    #[test]
+    fn call_signature_parameter_decorator_is_ts1206() {
+        let src = format!("{DEC}interface I {{ (@dec a: number): void; }}");
+        assert_eq!(count(&check_source_codes(&src), 1206), 1);
+    }
+
+    #[test]
+    fn construct_signature_parameter_decorator_is_ts1206() {
+        let src = format!("{DEC}interface I {{ new (@dec a: number): void; }}");
+        assert_eq!(count(&check_source_codes(&src), 1206), 1);
+    }
+
+    #[test]
+    fn type_literal_method_parameter_decorator_is_ts1206() {
+        let src = format!("{DEC}type T = {{ m(@dec a: number): void }};");
+        assert_eq!(count(&check_source_codes(&src), 1206), 1);
+    }
+
+    #[test]
+    fn function_nested_in_class_method_parameter_decorator_is_ts1206() {
+        // The container is the inner function, not the enclosing class method,
+        // so nearest-enclosing-class is not enough — the immediate parent must
+        // be a class. The inner function's parent is a block.
+        let src = format!("{DEC}class C {{ m() {{ function g(@dec a: number) {{}} }} }}");
+        assert_eq!(count(&check_source_codes(&src), 1206), 1);
+        assert_eq!(
+            count(&check_source_codes_experimental_decorators(&src), 1206),
+            1
+        );
+    }
+
+    // --- Class-member positions: TS1206 only when experimentalDecorators is off ---
+
+    #[test]
+    fn class_method_parameter_decorator_ts1206_without_experimental() {
+        let src = format!("{DEC}class C {{ m(@dec a: number) {{}} }}");
+        assert_eq!(count(&check_source_codes(&src), 1206), 1);
+        assert_eq!(
+            count(&check_source_codes_experimental_decorators(&src), 1206),
+            0
+        );
+    }
+
+    #[test]
+    fn class_constructor_parameter_decorator_ts1206_without_experimental() {
+        // A constructor implementation skips check_parameter_properties, so this
+        // pins the direct decorator-grammar call on the bodied-constructor path.
+        let src = format!("{DEC}class C {{ constructor(@dec a: number) {{}} }}");
+        assert_eq!(count(&check_source_codes(&src), 1206), 1);
+        assert_eq!(
+            count(&check_source_codes_experimental_decorators(&src), 1206),
+            0
+        );
+    }
+
+    #[test]
+    fn class_setter_parameter_decorator_ts1206_without_experimental() {
+        let src = format!("{DEC}class C {{ set x(@dec v: number) {{}} }}");
+        assert_eq!(count(&check_source_codes(&src), 1206), 1);
+        assert_eq!(
+            count(&check_source_codes_experimental_decorators(&src), 1206),
+            0
+        );
+    }
+
+    #[test]
+    fn class_getter_parameter_decorator_is_ts1206_even_with_experimental() {
+        // A getter cannot carry a parameter (TS1054), and tsc rejects a
+        // decorator on that illegal parameter too — a get accessor is never a
+        // valid parameter-decorator target, so TS1206 fires in both modes.
+        let src = format!("{DEC}class C {{ get x(@dec a: number) {{ return 1; }} }}");
+        assert_eq!(count(&check_source_codes(&src), 1206), 1);
+        assert_eq!(
+            count(&check_source_codes_experimental_decorators(&src), 1206),
+            1
+        );
+    }
+
+    // --- Multiplicity: one TS1206 per parameter, not per decorator ---
+
+    #[test]
+    fn multiple_decorators_on_one_parameter_report_once() {
+        let src = format!("{DEC}function f(@dec @dec a: number) {{}}");
+        assert_eq!(count(&check_source_codes(&src), 1206), 1);
+    }
+
+    #[test]
+    fn class_method_multiple_decorators_on_one_parameter_report_once() {
+        let src = format!("{DEC}class C {{ m(@dec @dec a: number) {{}} }}");
+        assert_eq!(count(&check_source_codes(&src), 1206), 1);
+    }
+
+    #[test]
+    fn each_decorated_parameter_reports_its_own_ts1206() {
+        let src = format!("{DEC}function f(@dec a: number, @dec b: number) {{}}");
+        assert_eq!(count(&check_source_codes(&src), 1206), 2);
+    }
+
+    // --- No spurious semantic checking of an invalidly-placed decorator ---
+
+    #[test]
+    fn invalid_class_parameter_decorator_does_not_resolve_expression() {
+        // Standard mode: TS1206 fires for the invalid position and the
+        // (undefined) decorator expression is not resolved, so there is no
+        // cascaded TS2304. With experimentalDecorators the position becomes
+        // valid and TS1206 disappears.
+        let src = "class C { m(@nope a: number) {} }";
+        let std = check_source_codes(src);
+        assert_eq!(count(&std, 1206), 1);
+        assert_eq!(count(&std, 2304), 0);
+
+        let exp = check_source_codes_experimental_decorators(src);
+        assert_eq!(count(&exp, 1206), 0);
+    }
+
+    #[test]
+    fn invalid_function_parameter_decorator_does_not_resolve_expression() {
+        let src = "function f(@nope a: number) {}";
+        let codes = check_source_codes(src);
+        assert_eq!(count(&codes, 1206), 1);
+        assert_eq!(count(&codes, 2304), 0);
+    }
+
+    #[test]
+    fn this_parameter_decorator_is_not_ts1206() {
+        // A decorator on a `this` parameter is owned by TS1433 ("Neither
+        // decorators nor modifiers may be applied to 'this' parameters."), which
+        // tsc reports *instead of* the generic TS1206. The end-to-end TS1433
+        // emission is covered by the conformance suite
+        // (`decoratorOnFunctionParameter.ts`); here we pin the suppression this
+        // fix owns: the generic TS1206 must not fire on a `this` parameter.
+        let src =
+            format!("{DEC}class C {{ n = true; }}\nfunction f(@dec this: C) {{ return this.n; }}");
+        assert_eq!(count(&check_source_codes(&src), 1206), 0);
+    }
+}
