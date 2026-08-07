@@ -289,7 +289,9 @@ impl<'a> CheckerState<'a> {
 
             for prop in &shape.properties {
                 let name = self.ctx.types.resolve_atom_ref(prop.name);
-                if name.starts_with("__private_brand_") || name.starts_with("__private_brand_node_")
+                if name.starts_with("__private_brand_")
+                    || name.starts_with("__private_brand_node_")
+                    || tsz_solver::utils::is_es_private_identifier_name(&name)
                 {
                     continue;
                 }

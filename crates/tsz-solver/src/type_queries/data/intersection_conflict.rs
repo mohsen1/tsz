@@ -117,7 +117,16 @@ pub fn find_private_brand_conflict_property(
     let mut ingest = |properties: &[crate::types::PropertyInfo]| {
         for prop in properties {
             let name = db.resolve_atom(prop.name);
-            if name.starts_with("__private_brand_") {
+            // ES private identifiers (`#name`) never trigger this reduction
+            // (see `intersection_has_conflicting_private_brands`'s own
+            // exclusion) and their name can never collide with a
+            // modifier-`private` member's name anyway (only `#`-spelled
+            // properties can share a `#`-prefixed atom) — excluded here too
+            // so this query can't misattribute the elaboration to an
+            // ES-private occurrence in some other member's conflict.
+            if name.starts_with("__private_brand_")
+                || crate::utils::is_es_private_identifier_name(&name)
+            {
                 continue;
             }
             let entry = occurrences.entry(prop.name).or_insert((0, false));

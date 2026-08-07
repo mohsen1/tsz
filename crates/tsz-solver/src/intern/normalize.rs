@@ -922,9 +922,23 @@ impl TypeInterner {
                 })
                 .collect();
             if !brands.is_empty() {
+                // ES private identifiers (`#name`) get `Visibility::Private` too
+                // (`get_member_visibility` treats them as non-public for access
+                // checks), but unlike modifier-`private` they are per-class
+                // slots with no shared-name collision rule: `tsc` does not
+                // reduce `A & B` to `never` when both independently declare
+                // `#x` (or any ES-private member at all) — only a genuine
+                // modifier-`private` member makes a class's brand exclusive
+                // here. `#`-named properties still count toward
+                // `has_restricted_member` below so an ES-private-only class is
+                // excluded from `brand_sets` the same way a protected-only
+                // class already is, instead of falling through the
+                // `!has_restricted_member` branch meant for plain classes.
                 let has_private_member = properties.iter().any(|prop| {
+                    let name = self.resolve_atom(prop.name);
                     prop.visibility == Visibility::Private
-                        && !self.resolve_atom(prop.name).starts_with("__private_brand_")
+                        && !name.starts_with("__private_brand_")
+                        && !crate::utils::is_es_private_identifier_name(&name)
                 });
                 let has_restricted_member = properties.iter().any(|prop| {
                     matches!(prop.visibility, Visibility::Private | Visibility::Protected)

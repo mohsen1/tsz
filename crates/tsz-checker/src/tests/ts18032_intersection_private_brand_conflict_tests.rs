@@ -207,6 +207,112 @@ c.x;
 }
 
 #[test]
+fn es_private_same_name_does_not_reduce_to_never() {
+    // `#x` in `A` and `#x` in `B` are different, per-class-scoped names —
+    // structurally nothing to conflict, unlike modifier-`private` `x`/`x`
+    // above. Oracle-verified (`typescript@7.0.2`): 0 errors.
+    let diags = check_source_strict(
+        r#"
+class A { #x = 1; m() { return 1; } }
+class B { #x = 1; n() { return 2; } }
+declare const v: A & B;
+v.m();
+v.n();
+"#,
+    );
+    assert!(diags.is_empty(), "got {diags:?}");
+}
+
+#[test]
+fn es_private_different_names_does_not_reduce_to_never() {
+    let diags = check_source_strict(
+        r#"
+class A { #x = 1; m() { return 1; } }
+class B { #y = 2; n() { return 2; } }
+declare const v: A & B;
+v.m();
+v.n();
+"#,
+    );
+    assert!(diags.is_empty(), "got {diags:?}");
+}
+
+#[test]
+fn modifier_private_and_es_private_mixed_forms_do_not_conflict() {
+    // `private x` (modifier) and `#x` (ES private) are different property
+    // names at the type level (`x` vs `#x`) regardless of the shared
+    // spelling after the sigil, so there is no shared name to conflict on.
+    let diags = check_source_strict(
+        r#"
+class A { private x: number = 1; m() { return 1; } }
+class B { #x = 1; n() { return 2; } }
+declare const v: A & B;
+v.m();
+v.n();
+"#,
+    );
+    assert!(diags.is_empty(), "got {diags:?}");
+}
+
+#[test]
+fn es_private_shared_with_subclass_does_not_conflict() {
+    let diags = check_source_strict(
+        r#"
+class A { #x = 1; m() { return 1; } }
+class D extends A { n() { return 2; } }
+declare const v: A & D;
+v.m();
+v.n();
+"#,
+    );
+    assert!(diags.is_empty(), "got {diags:?}");
+}
+
+#[test]
+fn three_way_intersection_mixing_private_kinds_does_not_conflict() {
+    // A private modifier member, an ES-private member, and a protected
+    // member with three distinct names: no shared name across any pair, so
+    // no reduction — each kind must be excluded from the coarse brand check
+    // independently of the others.
+    let diags = check_source_strict(
+        r#"
+class A { private p: number = 1; m() { return 1; } }
+class B { #x = 1; n() { return 2; } }
+class C { protected r: number = 1; o() { return 3; } }
+declare const v: A & B & C;
+v.m();
+v.n();
+v.o();
+"#,
+    );
+    assert!(diags.is_empty(), "got {diags:?}");
+}
+
+#[test]
+fn modifier_private_conflict_still_reduces_with_es_private_present() {
+    // The fix must not weaken the genuine modifier-`private` same-name
+    // conflict just because an unrelated ES-private member is also present
+    // in the intersection.
+    let diags = check_source_strict(
+        r#"
+class P1 { private x: string = ""; }
+class P2 { private x: string = ""; }
+class B { #y = 1; }
+declare const c: P1 & P2 & B;
+c.x;
+"#,
+    );
+    let diag = only(&diags, TS2339);
+    assert_eq!(
+        related(&diag, TS18032).as_deref(),
+        Some(
+            "The intersection 'P1 & P2 & B' was reduced to 'never' because property 'x' exists in multiple constituents and is private in some."
+        ),
+        "got {diags:?}"
+    );
+}
+
+#[test]
 fn indirect_alias_intersection_has_no_ts18032() {
     // Same scope limit as TS18031: the narrow syntactic walk declines once
     // the receiver's own declared type is an alias rather than a
