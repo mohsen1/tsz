@@ -165,51 +165,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check if a node is part of an optional chain (has `?.` somewhere in its left spine).
-    ///
-    /// Walks through property access, element access, and call expression chains looking
-    /// for any node with `question_dot_token: true` (for accesses) or the `OPTIONAL_CHAIN`
-    /// flag (for calls). For example, in `obj?.a.b`, both `obj?.a` and `obj?.a.b` are
-    /// considered part of the optional chain.
-    ///
-    /// Skips through transparent wrappers (parenthesized, non-null, type assertions, satisfies).
-    pub(crate) fn is_optional_chain_access(&self, idx: NodeIndex) -> bool {
-        let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return false;
-        };
-
-        match node.kind {
-            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
-            {
-                if let Some(access) = self.ctx.arena.get_access_expr(node) {
-                    // This node itself is an optional chain root (has `?.`)
-                    if access.question_dot_token {
-                        return true;
-                    }
-                    // Check if the base expression is part of an optional chain
-                    self.is_optional_chain_access(access.expression)
-                } else {
-                    false
-                }
-            }
-            k if k == syntax_kind_ext::CALL_EXPRESSION => {
-                // Call expressions get the OPTIONAL_CHAIN flag from the parser
-                if node.is_optional_chain() {
-                    return true;
-                }
-                // Check if the callee is part of an optional chain
-                if let Some(call) = self.ctx.arena.get_call_expr(node) {
-                    self.is_optional_chain_access(call.expression)
-                } else {
-                    false
-                }
-            }
-            _ => false,
-        }
-    }
-
     /// Check if a node is a valid target for object rest assignment.
     /// Valid targets are identifiers, property accesses, and element accesses.
     /// Binary expressions like `a + b` are NOT valid rest targets (TS2701).
