@@ -329,6 +329,8 @@ mod fresh_object_literal_union_literal_kind_display_tests;
 mod function_callee_spread_ts2556_tests;
 #[path = "tests/function_parameter_mismatch_elaboration_tests.rs"]
 mod function_parameter_mismatch_elaboration_tests;
+#[path = "tests/function_type_parameter_grammar_tests.rs"]
+mod function_type_parameter_grammar_tests;
 #[path = "tests/function_type_relation_routing_arch_tests.rs"]
 mod function_type_relation_routing_arch_tests;
 #[path = "tests/function_type_return_node_tests.rs"]

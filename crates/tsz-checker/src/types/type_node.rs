@@ -759,6 +759,16 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             &func_data.parameters,
             container_kind,
         );
+        // TS1014/TS1015/TS1016: the same parameter-list grammar every other
+        // signature form gets from `check_parameter_ordering`. tsc runs
+        // `checkGrammarParameterList` for `FunctionType`/`ConstructorType` too,
+        // so a misplaced rest or a required-after-optional parameter is an
+        // error in `(...a: number[], b: string) => void` exactly as it is in a
+        // function declaration.
+        crate::checkers_domain::parameter_checker::check_type_position_parameter_list_grammar_in_ctx(
+            self.ctx,
+            &func_data.parameters,
+        );
 
         use tsz_parser::parser::syntax_kind_ext;
 
