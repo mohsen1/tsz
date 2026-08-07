@@ -65,6 +65,16 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+        // tsc's `getCanonicalOverload` falls back to the group's FIRST
+        // overload in source order, but the binder's declaration push order
+        // can differ from source order for an `export default`-wrapped
+        // member — picking `[0]` unsorted then blames the wrong declaration
+        // in a no-implementation mixed run. Every member is local (same
+        // arena), so positions are comparable. The `TS2385`/`TS2386` arms
+        // consuming the returned list assume source order for the same
+        // reason.
+        overload_signatures
+            .sort_by_key(|&idx| self.ctx.arena.get(idx).map(|n| n.pos).unwrap_or(u32::MAX));
         let export_mismatch = has_exported_func && has_non_exported_func;
         let ambient_mismatch = has_ambient_func && has_non_ambient_func;
         // The flag-agreement check only runs when the group has at least one
