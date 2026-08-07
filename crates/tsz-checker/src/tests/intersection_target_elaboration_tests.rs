@@ -518,3 +518,153 @@ const value: Both = new Animal();
         "Nominal class intersection must elaborate against the nominal member name 'Dog'. Got: {text:?}"
     );
 }
+
+// ===========================================================================
+// Object-first mixed intersections whose merged object is not the LAST
+// member in source order (`{ z: 1 } & [tuple]`, not `[tuple] & { z: 1 }`).
+//
+// `normalize_intersection`'s member-list rebuild (`crates/tsz-solver/src/
+// intern/intersection.rs`) used to special-case the "no merged callable"
+// path: it appended the merged object *after* every other remaining member
+// unconditionally, instead of substituting it at its original position like
+// the callable-merge path already did. A tuple (or any other non-object,
+// non-callable member — primitive, array, ...) that appeared *after* the
+// object in source order was silently promoted ahead of it in the interned
+// `Intersection`'s member list. The written-order elaboration
+// (`IntersectionTargetMismatch` in `crates/tsz-checker/src/assignability/
+// assignability_diagnostics.rs`) then walked that reordered list and named
+// the wrong "first failing constituent" — the tuple instead of tsc's object.
+// Reversing the operands (`[tuple] & { z: 1 }`) happened to keep the correct
+// order by coincidence (the object was already last), which is why the bug
+// was order-sensitive rather than a blanket display defect. (Verified
+// against `tsc` 7.0.2, `--noEmit --strict`.)
+// ===========================================================================
+
+/// The exact #16753 repro: an object-first intersection with a tuple member
+/// (via a nested spread) elaborates the object, matching tsc.
+#[test]
+fn object_first_tuple_intersection_names_object_constituent() {
+    let text = elaboration(
+        r#"
+type B = { z: 1 } & [string, ...[number, boolean]];
+const b: B = 1;
+"#,
+        2322,
+    );
+    assert!(
+        text.contains("is not assignable to type 'B'."),
+        "Expected the alias headline. Got: {text:?}"
+    );
+    assert!(
+        text.contains("Type 'number' is not assignable to type '{ z: 1; }'."),
+        "Expected the object constituent frame (tsc names the object, not the tuple). Got: {text:?}"
+    );
+    assert!(
+        !text.contains("[string, number, boolean]"),
+        "Must not name the tuple constituent when the object is written first. Got: {text:?}"
+    );
+}
+
+/// Control: with the tuple written first, tsc (and tsz, unaffected by this
+/// bug) names the tuple — both compilers already agreed here.
+#[test]
+fn tuple_first_object_intersection_names_tuple_constituent() {
+    let text = elaboration(
+        r#"
+type B = [string, ...[number, boolean]] & { z: 1 };
+const b: B = 1;
+"#,
+        2322,
+    );
+    assert!(
+        text.contains("Type 'number' is not assignable to type '[string, number, boolean]'."),
+        "Expected the tuple constituent frame. Got: {text:?}"
+    );
+}
+
+/// The bug is not specific to a spread-flattened tuple: a plain
+/// no-spread tuple reproduces the same object-first reordering.
+#[test]
+fn object_first_plain_tuple_intersection_names_object_constituent() {
+    let text = elaboration(
+        r#"
+type B = { z: 1 } & [string, number];
+const b: B = 1;
+"#,
+        2322,
+    );
+    assert!(
+        text.contains("Type 'number' is not assignable to type '{ z: 1; }'."),
+        "Expected the object constituent frame. Got: {text:?}"
+    );
+}
+
+/// Three-way intersection: the first-written object constituent still wins
+/// over a trailing tuple, not just a two-member intersection.
+#[test]
+fn three_way_object_first_intersection_names_first_object_constituent() {
+    let text = elaboration(
+        r#"
+type B = { z: 1 } & { w: 2 } & [string, number];
+const b: B = 1;
+"#,
+        2322,
+    );
+    assert!(
+        text.contains("Type 'number' is not assignable to type '{ z: 1; }'."),
+        "Expected the first-written object constituent frame. Got: {text:?}"
+    );
+}
+
+/// The same reordering bug applies to any non-callable, non-object member —
+/// not just tuples. An array member after the object in source order must
+/// not be promoted ahead of it either.
+#[test]
+fn object_first_array_intersection_names_object_constituent() {
+    let text = elaboration(
+        r#"
+type B = { z: 1 } & string[];
+const b: B = 1;
+"#,
+        2322,
+    );
+    assert!(
+        text.contains("Type 'number' is not assignable to type '{ z: 1; }'."),
+        "Expected the object constituent frame. Got: {text:?}"
+    );
+}
+
+/// Control: a bare primitive first (no object member at all — nothing for
+/// the merge step to reorder) already kept source order before this fix and
+/// must remain unaffected by it.
+#[test]
+fn primitive_first_tuple_intersection_names_primitive_constituent() {
+    let text = elaboration(
+        r#"
+type B = number & [string, number];
+const b: B = "x";
+"#,
+        2322,
+    );
+    assert!(
+        text.contains("Type 'string' is not assignable to type 'number'."),
+        "Expected the first-written primitive constituent frame. Got: {text:?}"
+    );
+}
+
+/// Renamed-binder control: the rule is structural, not keyed on the
+/// property/tuple-element spelling.
+#[test]
+fn renamed_object_first_tuple_intersection_names_object_constituent() {
+    let text = elaboration(
+        r#"
+type Widget = { kind: "circle" } & [boolean, ...[bigint]];
+const w: Widget = 1;
+"#,
+        2322,
+    );
+    assert!(
+        text.contains(r#"Type 'number' is not assignable to type '{ kind: "circle"; }'."#),
+        "Expected the renamed object constituent frame. Got: {text:?}"
+    );
+}

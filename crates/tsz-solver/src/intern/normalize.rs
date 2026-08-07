@@ -1722,24 +1722,17 @@ impl TypeInterner {
             return None;
         }
 
-        // Build the distributed union
-        // Start with the first non-union member as the base
-        let base_members: Vec<_> = flat
-            .iter()
-            .enumerate()
-            .filter(|(i, _)| !union_indices.contains(i))
-            .map(|(_, &id)| id)
-            .collect();
-
-        // If all members are unions, start with an empty intersection (unknown)
-        let initial_intersection = if base_members.is_empty() {
-            vec![]
-        } else {
-            base_members
-        };
-
-        // Recursively distribute: for each union, create intersections with all combinations
-        let mut combinations = vec![initial_intersection];
+        // Build the distributed union. Each combination is a same-length copy
+        // of `flat`, with every union slot progressively overwritten by one of
+        // its branches — non-union members keep their original index so the
+        // result preserves tsc's source order (`{} & (string | null)`
+        // distributes to `({} & string) | ({} & null)`, not `(string & {}) |
+        // (null & {})`). An earlier version built each combination by
+        // collecting the non-union members first and appending the union
+        // branch last regardless of the union's own position, which silently
+        // reordered any distribution where a union member was not already
+        // the last flat member.
+        let mut combinations: Vec<Vec<TypeId>> = vec![flat.to_vec()];
 
         for &union_idx in &union_indices {
             let union_type = flat[union_idx];
@@ -1754,7 +1747,7 @@ impl TypeInterner {
             for combination in &combinations {
                 for &union_member in union_members.iter() {
                     let mut new_combination = combination.clone();
-                    new_combination.push(union_member);
+                    new_combination[union_idx] = union_member;
                     new_combinations.push(new_combination);
                 }
             }
