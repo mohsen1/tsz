@@ -29,6 +29,8 @@ mod application_target_any_arg_assignability_tests;
 mod application_unknown_args_assignability_tests;
 #[path = "tests/architecture_contract_tests.rs"]
 mod architecture_contract_tests_src;
+#[path = "tests/array_destructuring_assignment_element_ts2322_tests.rs"]
+mod array_destructuring_assignment_element_ts2322_tests;
 #[path = "tests/array_elaboration_relation_routing_arch_tests.rs"]
 mod array_elaboration_relation_routing_arch_tests;
 #[path = "tests/array_like_constraint_relation_routing_arch_tests.rs"]
