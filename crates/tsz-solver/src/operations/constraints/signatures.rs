@@ -97,6 +97,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             match source.name.cmp(&target.name) {
                 std::cmp::Ordering::Equal => {
                     let property_index = source_idx as u32;
+                    // A property carrying its own `as const` (or other
+                    // non-widening source, see `PropertyInfo::non_widening`)
+                    // is a *regular*, not fresh, literal type in tsc's terms
+                    // even when the enclosing object literal itself is fresh
+                    // — `getRegularTypeOfLiteralType` is applied at the
+                    // property, not the object. Excluding it here keeps the
+                    // inferred candidate out of `is_fresh_literal`, so
+                    // `widen_resolved_inference` never widens it away.
+                    let property_is_fresh = source_is_fresh && !source.non_widening;
                     if let Some(&var) = var_map.get(&target.type_id) {
                         ctx.add_property_candidate_with_index(
                             var,
@@ -104,7 +113,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             priority,
                             property_index,
                             Some(source.name),
-                            source_is_fresh,
+                            property_is_fresh,
                         );
                     } else {
                         let was_pending_method = ctx.pending_target_method;
@@ -131,7 +140,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 priority,
                                 property_index,
                                 Some(source.name),
-                                source_is_fresh,
+                                property_is_fresh,
                             );
                         } else {
                             // Skip the reverse-direction write_type constraint when
