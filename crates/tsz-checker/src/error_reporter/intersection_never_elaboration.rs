@@ -1,7 +1,7 @@
-//! `TS18031` related-info elaboration for a `TS2339` property access whose
-//! receiver is `never` because a *directly written* intersection reduced to
-//! it. Split out of `properties.rs` to keep that file under its size
-//! ratchet; the two are otherwise one unit of work.
+//! `TS18031`/`TS18032` related-info elaboration for a `TS2339` property
+//! access whose receiver is `never` because a *directly written*
+//! intersection reduced to it. Split out of `properties.rs` to keep that
+//! file under its size ratchet; the two are otherwise one unit of work.
 
 use crate::diagnostics::diagnostic_codes;
 use crate::error_reporter::fingerprint_policy::DiagnosticAnchorKind;
@@ -61,22 +61,22 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// The `TS18031` related-info line for a property access on a `never`
-    /// receiver, when that `never` came from a *directly written*
-    /// intersection whose members conflict over a required literal property
-    /// (`declare const c: A & B` where `A`/`B` disagree on it). tsc: `The
-    /// intersection '{0}' was reduced to 'never' because property '{1}' has
-    /// conflicting types in some constituents.`
+    /// The `TS18031`/`TS18032` related-info line for a property access on a
+    /// `never` receiver, when that `never` came from a *directly written*
+    /// intersection whose members conflict either over a required literal
+    /// property (`declare const c: A & B` where `A`/`B` disagree on it,
+    /// TS18031) or over a private-brand-carrying property declared on two
+    /// or more members (TS18032).
     ///
     /// `TypeInterner::intern` collapses such an intersection to the single
     /// canonical `TypeId::NEVER` at construction time, so by the time this
     /// `TS2339` is reported the member list is gone from `type_id` itself —
     /// this recovers it from the receiver's own declared-type syntax instead.
     /// Deliberately narrow (only the single-literal-per-member discriminant
-    /// shape, only a directly-written intersection annotation, not an alias/
-    /// generic-application/heritage chain): every early return here just
-    /// leaves the diagnostic as it is today, with no elaboration line, so
-    /// under-covering is safe and never produces a wrong message.
+    /// shape for TS18031, only a directly-written intersection annotation,
+    /// not an alias/generic-application/heritage chain): every early return
+    /// here just leaves the diagnostic as it is today, with no elaboration
+    /// line, so under-covering is safe and never produces a wrong message.
     pub(super) fn intersection_reduced_to_never_related_info(
         &mut self,
         type_id: TypeId,
@@ -95,11 +95,32 @@ impl<'a> CheckerState<'a> {
             .into_iter()
             .map(|member| self.resolve_type_for_property_access(member))
             .collect();
-        let conflict_atom =
-            crate::query_boundaries::intersection_display::find_disjoint_literal_property_across_intersection(
+        // Two independent reasons an intersection reduces to `never`: a
+        // literal-discriminant conflict (TS18031) or a private-brand
+        // conflict (TS18032). Try the literal check first — it matches
+        // tsc's own message-selection precedent from the sibling TS18015
+        // (ES-private) vs TS2442 (modifier-private "separate declarations")
+        // split, where the more specific structural reason wins when both
+        // could apply.
+        let (code, conflict_atom) =
+            if let Some(atom) = crate::query_boundaries::intersection_display::find_disjoint_literal_property_across_intersection(
                 self.ctx.types,
                 &members,
-            )?;
+            ) {
+                (
+                    diagnostic_codes::THE_INTERSECTION_WAS_REDUCED_TO_NEVER_BECAUSE_PROPERTY_HAS_CONFLICTING_TYPES_IN,
+                    atom,
+                )
+            } else {
+                let atom = crate::query_boundaries::intersection_display::find_private_brand_conflict_property(
+                    self.ctx.types,
+                    &members,
+                )?;
+                (
+                    diagnostic_codes::THE_INTERSECTION_WAS_REDUCED_TO_NEVER_BECAUSE_PROPERTY_EXISTS_IN_MULTIPLE_CONSTI,
+                    atom,
+                )
+            };
         // tsc's elaboration names the discriminant that reduced the whole
         // intersection to `never`, not necessarily the property actually
         // accessed — once the receiver type itself is `never`, every access
@@ -117,13 +138,20 @@ impl<'a> CheckerState<'a> {
             .collect::<Vec<_>>()
             .join(" & ");
         use crate::diagnostics::{Diagnostic, diagnostic_messages, format_message};
+        let message_template = if code
+            == diagnostic_codes::THE_INTERSECTION_WAS_REDUCED_TO_NEVER_BECAUSE_PROPERTY_HAS_CONFLICTING_TYPES_IN
+        {
+            diagnostic_messages::THE_INTERSECTION_WAS_REDUCED_TO_NEVER_BECAUSE_PROPERTY_HAS_CONFLICTING_TYPES_IN
+        } else {
+            diagnostic_messages::THE_INTERSECTION_WAS_REDUCED_TO_NEVER_BECAUSE_PROPERTY_EXISTS_IN_MULTIPLE_CONSTI
+        };
         Some(Diagnostic::related_message(
-            diagnostic_codes::THE_INTERSECTION_WAS_REDUCED_TO_NEVER_BECAUSE_PROPERTY_HAS_CONFLICTING_TYPES_IN,
+            code,
             self.ctx.file_name.clone(),
             0,
             0,
             format_message(
-                diagnostic_messages::THE_INTERSECTION_WAS_REDUCED_TO_NEVER_BECAUSE_PROPERTY_HAS_CONFLICTING_TYPES_IN,
+                message_template,
                 &[&intersection_display, &conflict_prop_name],
             ),
         ))

@@ -95,3 +95,54 @@ pub fn find_disjoint_literal_property_across_intersection(
         .into_iter()
         .find(|name| by_name.get(name).is_some_and(|values| values.len() >= 2))
 }
+
+/// The property name responsible for `tsc`'s `TS18032` elaboration (`The
+/// intersection '{0}' was reduced to 'never' because property '{1}' exists
+/// in multiple constituents and is private in some.`): a name declared by
+/// two or more `members`, where at least one declaration is modifier-`private`.
+///
+/// Oracle-verified (`typescript@7.0.2`) that this fires even when only ONE
+/// side is `private` and the other is `public` with an identical type — the
+/// conflict is about the private member's nominal brand, not about the
+/// property's structural type, so no type-compatibility check is needed
+/// here (unlike [`find_disjoint_literal_property_across_intersection`]'s
+/// literal-value comparison). Mirrors that function's scope discipline:
+/// under-covering (returning `None`) just leaves the diagnostic as it is
+/// today, so a name this helper doesn't recognize is safe, never wrong.
+pub fn find_private_brand_conflict_property(
+    db: &dyn TypeDatabase,
+    members: &[TypeId],
+) -> Option<Atom> {
+    let mut occurrences: FxHashMap<Atom, (u32, bool)> = FxHashMap::default();
+    let mut ingest = |properties: &[crate::types::PropertyInfo]| {
+        for prop in properties {
+            let name = db.resolve_atom(prop.name);
+            if name.starts_with("__private_brand_") {
+                continue;
+            }
+            let entry = occurrences.entry(prop.name).or_insert((0, false));
+            entry.0 += 1;
+            if prop.visibility == crate::types::Visibility::Private {
+                entry.1 = true;
+            }
+        }
+    };
+    for &member in members {
+        if member.is_intrinsic() {
+            continue;
+        }
+        match db.lookup(member) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                ingest(&db.object_shape(shape_id).properties);
+            }
+            Some(TypeData::Callable(callable_id)) => {
+                ingest(&db.callable_shape(callable_id).properties);
+            }
+            _ => {}
+        }
+    }
+    occurrences
+        .into_iter()
+        .find(|(_, (count, saw_private))| *count >= 2 && *saw_private)
+        .map(|(name, _)| name)
+}
