@@ -1311,16 +1311,19 @@ const i: I = { [sym]: { a: 1 } };
     }
 
     #[test]
-    fn ts2418_symbol_index_nested_object_literal_type_mismatch_not_excess_preexisting_gap() {
-        // Oracle (`typescript@7.0.2`) reports TS2322 at the mismatched nested
-        // `a` value here, not TS2418 — but that gap is pre-existing on `main`
-        // independent of this fix (confirmed by probing unmodified `main`
-        // directly) and is a distinct structural defect: the flat TS2418
-        // computed-property message wins over `try_elaborate_assignment_source_error`
-        // unconditionally, rather than only when there is nothing to elaborate.
-        // Filed as a follow-up rather than folded into this PR's excess-property
-        // drill-in fix (see #16649's own adjacent-matrix note). This test pins
-        // the current (wrong) behavior so a future fix updates it deliberately.
+    fn ts2322_symbol_index_nested_object_literal_type_mismatch_drills_in() {
+        // This row previously pinned the *wrong* behavior on purpose — the flat
+        // TS2418 computed-property message won over
+        // `try_elaborate_assignment_source_error` unconditionally, rather than
+        // only when there was nothing to elaborate — with a note that a future
+        // fix should update it deliberately. This is that update: the
+        // elaboration now drills into the nested literal for a member
+        // *mismatch* the same way #16649/#16651 made it drill in for an excess
+        // property.
+        //
+        // Oracle (`typescript@7.0.2`, `--strict --lib es2024 --target es2022`):
+        //
+        //   error TS2322: Type 'string' is not assignable to type 'number'.
         let diags = check_source_diagnostics(
             r#"
 declare const sym: unique symbol;
@@ -1329,11 +1332,15 @@ interface I { [k: string]: number; [k: symbol]: Val; }
 const i3: I = { [sym]: { a: "wrong" } };
 "#,
         );
-        let ts2418: Vec<_> = diags.iter().filter(|d| d.code == 2418).collect();
-        assert_eq!(
-            ts2418.len(),
-            1,
-            "expected the pre-existing flat TS2418 (not yet TS2322) for a nested type mismatch, got: {diags:?}"
+        let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&2322),
+            "a nested member mismatch drills in to TS2322, got: {diags:?}"
+        );
+        assert!(
+            !codes.contains(&2418),
+            "the flat TS2418 computed-property message must not also fire once \
+             the mismatch elaborates, got: {diags:?}"
         );
     }
 
