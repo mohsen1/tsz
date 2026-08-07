@@ -119,6 +119,29 @@ rdbg def | hover | refs <file> <line> <col>
   `--test <name> … -- <test_name>` for `tests/<name>.rs`; break at the
   assertion or inside the code under test.
 
+## When breakpoints don't bind
+
+A `launch` that reports `no stop/exit event` and runs to completion without ever
+pausing — even on a function you know is on the path — is a **binding failure**,
+not a wrong line or symbol. `rdbg breaks` shows the breakpoint `NOT BOUND` (or
+bound with `0 hits`) and there was no `>>> STOP`. The `tsz-checker --lib`
+unit-test binary is the known offender (#15653): it carries hundreds of MB of
+debug info and rdbg/lldb can fail to attach to or resolve symbols on it
+(reported on macOS with rdbg 0.4.0). Route around it:
+
+- **Break in a small `--test <stem>` integration target, not `--lib`.** The
+  `SKILL.md` tsz recipe already uses `--test crates/tsz-checker/tests/<stem>.rs`
+  for this reason — the giant `--lib` binary is the one that fails to bind, and
+  most checker behavior reproduces from an integration test.
+- **Last-resort fallback when nothing binds.** Build once with `cargo test -p
+  tsz-checker --lib --no-run`, then run the compiled binary directly
+  (`.target/debug/deps/tsz_checker-<hash> <test_name> --nocapture
+  --test-threads=1`), adding a temporary sentinel `return` at the top of the
+  suspect function to surface its inputs. Revert the sentinel afterward — it is
+  throwaway scaffolding, and `dbg!`/`println!` remain forbidden.
+- **If `cargo nextest` hangs at 0% CPU on a lock** (disk pressure), run the
+  compiled test binary directly as above instead of through the runner.
+
 ## Notes
 
 - `eval`, `set`, and conditions take variable paths and simple comparisons, not
