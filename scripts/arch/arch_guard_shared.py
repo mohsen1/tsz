@@ -267,7 +267,6 @@ _CRATE_SRC_LINE_LIMIT_ALLOWLISTS = [
     }),
     ("tsz-core", "Core", {
         "crates/tsz-core/src/config/mod.rs",
-        "crates/tsz-core/src/parallel/core/parse_and_libs.rs",
         "crates/tsz-core/src/config/tests/module_resolution.rs",
     }),
     ("tsz-emitter", "Emitter", {
