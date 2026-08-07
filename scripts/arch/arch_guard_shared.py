@@ -251,13 +251,17 @@ SRC_LINE_LIMIT = 2000
 # the mechanism works.
 _CRATE_SRC_LINE_LIMIT_ALLOWLISTS = [
     ("tsz-checker", "Checker", set()),
-    ("tsz-binder", "Binder", {
-        "crates/tsz-binder/src/state/core.rs",
-    }),
-    ("tsz-cli", "CLI", {
-        "crates/tsz-cli/src/driver/check_utils/tests.rs",
-        "crates/tsz-cli/src/bin/tsz_server/main.rs",
-    }),
+    # `tsz-binder` and `tsz-cli` carry no grandfathered debt, for the same
+    # reason `tsz-checker` does not: the splits in this change drove both crates
+    # to full compliance, so every file that was over the cap when these roots
+    # were registered is now under it —
+    #   crates/tsz-binder/src/state/core.rs             2006 -> 1744
+    #   crates/tsz-cli/src/bin/tsz_server/main.rs       2038 -> 1625
+    #   crates/tsz-cli/src/driver/check_utils/tests.rs  2258 -> 1152
+    # Leaving the entries in place fails `test_excluded_files_actually_exceed_limit`,
+    # which is exactly the honesty check working.
+    ("tsz-binder", "Binder", set()),
+    ("tsz-cli", "CLI", set()),
     ("tsz-common", "Common", {
         "crates/tsz-common/src/perf_counters/tests.rs",
     }),
@@ -318,6 +322,25 @@ LINE_LIMIT_CHECKS = [
         "Checker computation boundary: type-computation monoliths must stay below 3100 LOC (#8226)",
         ROOT / "crates" / "tsz-checker" / "src" / "types" / "computation",
         3100,
+    ),
+    (
+        "Binder boundary: src files must stay under 2000 LOC (#16733)",
+        ROOT / "crates" / "tsz-binder" / "src",
+        2000,
+        # (empty — all files are under the 2000-line limit; #16733 split
+        # `state/core.rs` into `state/core.rs` + `state/core_incremental.rs`
+        # to bring the crate into compliance)
+        set(),
+    ),
+    (
+        "CLI boundary: src files must stay under 2000 LOC (#16733)",
+        ROOT / "crates" / "tsz-cli" / "src",
+        2000,
+        # (empty — all files are under the 2000-line limit; #16733 split
+        # `bin/tsz_server/main.rs` into `bracket_match.rs` and
+        # `driver/check_utils/tests.rs` into `tests_part2.rs` to bring the
+        # crate into compliance)
+        set(),
     ),
 ]
 
