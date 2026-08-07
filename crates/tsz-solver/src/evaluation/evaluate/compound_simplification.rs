@@ -153,6 +153,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         checker.max_depth = MAX_SUBTYPE_DEPTH;
         checker.no_unchecked_indexed_access = self.no_unchecked_indexed_access;
         checker.exact_optional_property_types = self.exact_optional_property_types;
+        // Union narrowing must apply the same weak-type ("no common properties",
+        // TS2559) veto tsc's own `removeSubtypes` gets from `strictSubtypeRelation`:
+        // that relation is not `ComparableRelation`, so `isPerformingCommonPropertyChecks`
+        // still runs. Without this, a member that structurally satisfies an
+        // all-optional ("weak") sibling only because it shares no properties with
+        // it — e.g. `(() => T) | { get?(): T }` — reads as redundant and gets
+        // dropped, collapsing the union to just the weak member. A later
+        // assignability check against an argument that only matches the dropped
+        // member then reports TS2559 against the sole remaining (weak) member
+        // instead of succeeding through the one that was removed (#16707).
+        // Intersection simplification (`OtherSubsumedBySource`) is unaffected:
+        // tsc's intersection construction does not run this relation.
+        if matches!(direction, SubtypeDirection::SourceSubsumedByOther) {
+            checker.enforce_weak_types = true;
+        }
 
         // Snapshot per-member veto facts before the pair loop. These facts are
         // pure, per-call data, so relation probes can mutably borrow `self`
