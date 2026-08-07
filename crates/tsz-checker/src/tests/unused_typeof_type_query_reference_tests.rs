@@ -152,21 +152,13 @@ fn a_module_local_read_by_an_exported_type_alias_query_is_used() {
     );
 }
 
-/// Tripwire for the one spelling this fix does **not** reach: a `typeof` written
-/// inside the **type arguments** of a type reference. Measured through the built
-/// CLI (`--strict --target es2022 --noUnusedLocals --noUnusedParameters`), the
-/// parameter is still reported as unread for `Wrap<typeof a>`, `Array<typeof a>`,
-/// `ReadonlyArray<typeof a>`, `Map<string, typeof a>` and `Wrap<(typeof a)>`,
-/// while every non-type-argument spelling above is now correct. tsc reports
-/// nothing for any of them.
-///
-/// The `--noUnusedLocals` half of the same spelling is already correct
-/// (`const w = 1; export const y: Wrap<typeof w> = { v: 1 };` is clean), which
-/// places the remaining defect on the parameter re-scan rather than on reference
-/// tracking. Left as a failing assertion under `#[ignore]` so it flips loudly
-/// when the type-argument cell is closed rather than sitting as a silent absence.
+/// The acceptance criterion: a `typeof` written inside the **type arguments**
+/// of a type reference (`Wrap<typeof a>`) reads its operand. The non-`import()`
+/// lowering path that computes a type reference resolves the whole subtree in
+/// one pass and never records the query's value read, so the operand's binding
+/// was falsely reported unused. `CheckerState::mark_nested_type_query_reads`
+/// now records those reads before the reference is lowered.
 #[test]
-#[ignore = "type-argument-nested typeof is a separate open cell; see the module docs"]
 fn a_parameter_read_by_a_type_argument_type_query_is_used() {
     let codes = unused_codes(
         "type Wrap<T> = { v: T };\nexport function m2(a: number, b: Wrap<typeof a>) { return b; }\n",
@@ -175,6 +167,66 @@ fn a_parameter_read_by_a_type_argument_type_query_is_used() {
     assert!(
         !codes.contains(&6133),
         "a `typeof` in type-argument position reads its operand. Got: {codes:?}"
+    );
+}
+
+/// The whole type-argument family from the oracle, each on varied binder names
+/// so no row keys on a spelling. `Array`/`ReadonlyArray`/`Map` are lib generics,
+/// `Holder`/`Pair` are user aliases; every operand is read by a nested `typeof`
+/// and tsc reports nothing for any of them.
+#[test]
+fn every_type_argument_nested_type_query_shape_reads_its_operand() {
+    let rows = [
+        // user single-parameter alias
+        "type Holder<T> = { v: T };\nexport function u1(alpha: number, beta: Holder<typeof alpha>) { return beta; }\n",
+        // lib Array<T>
+        "export function u2(gamma: number, delta: Array<typeof gamma>) { return delta; }\n",
+        // lib ReadonlyArray<T>
+        "export function u3(epsilon: number, zeta: ReadonlyArray<typeof epsilon>) { return zeta; }\n",
+        // lib Map<K, V> — the query sits in the *second* type argument
+        "export function u4(eta: number, theta: Map<string, typeof eta>) { return theta; }\n",
+        // parenthesized query inside the type argument
+        "type Box<T> = { v: T };\nexport function u5(iota: number, kappa: Box<(typeof iota)>) { return kappa; }\n",
+        // nested type reference two levels deep
+        "type Box2<T> = { v: T };\nexport function u6(mu: number, nu: Box2<Box2<typeof mu>>) { return nu; }\n",
+    ];
+    for row in rows {
+        let codes = unused_codes(row);
+        assert!(
+            !codes.contains(&6133),
+            "a `typeof` in type-argument position reads its operand. Row: {row:?} Got: {codes:?}"
+        );
+    }
+}
+
+/// The `--noUnusedLocals` half of the type-argument family: a *local* whose only
+/// reference is a `typeof` nested in a type-argument annotation with no
+/// initializer forcing evaluation. Before the fix the local half happened to
+/// pass only when an initializer forced the type to materialize; a bare
+/// annotation (`let r: Holder<typeof w>;`) did not.
+#[test]
+fn a_local_read_by_a_type_argument_type_query_is_used() {
+    let codes = unused_codes(
+        "type Holder<T> = { v: T };\nexport function g() { const w = 1; let r: Holder<typeof w>; return r; }\n",
+    );
+
+    assert!(
+        !codes.contains(&6133),
+        "a local named by a type-argument `typeof` is read. Got: {codes:?}"
+    );
+}
+
+/// A qualified operand nested in a type argument (`Holder<typeof ns.p>`): the
+/// read is of the *root* `ns`, not the property.
+#[test]
+fn a_qualified_type_argument_type_query_reads_its_root() {
+    let codes = unused_codes(
+        "type Holder<T> = { v: T };\nexport function w1(ns: { p: number }, q: Holder<typeof ns.p>) { return q; }\n",
+    );
+
+    assert!(
+        !codes.contains(&6133),
+        "the root of a qualified type-argument `typeof` operand is read. Got: {codes:?}"
     );
 }
 
@@ -225,5 +277,44 @@ fn a_type_only_reference_beside_an_unrelated_type_query_still_reports_ts6133() {
     assert!(
         codes.contains(&6133),
         "an unrelated `typeof` in the same signature must not mark `Wye` as read. Got: {codes:?}"
+    );
+}
+
+/// Negative control for the new type-argument marker: it records only the read
+/// the `typeof` actually performs. A genuinely unread parameter that merely sits
+/// in the same signature as a type-argument `typeof` of a *different* binding
+/// must still report `TS6133`.
+///
+/// ```text
+/// tsc: error TS6133: 'unread' is declared but its value is never read.
+/// ```
+#[test]
+fn an_unread_parameter_beside_a_type_argument_type_query_still_reports_ts6133() {
+    let codes = unused_codes(
+        "type Holder<T> = { v: T };\nexport function x1(used: number, unread: number, h: Holder<typeof used>) { return h; }\n",
+    );
+
+    assert!(
+        codes.contains(&6133),
+        "an unread parameter must still report even beside a type-argument `typeof`. Got: {codes:?}"
+    );
+}
+
+/// Negative control: a parameter used *only* as a bare type-argument type
+/// reference (not a `typeof`) is not a value read — the marker must not touch
+/// it. `Holder<Fx>` names the *type* `Fx`, so the parameter `Fx` is unread.
+///
+/// ```text
+/// tsc: error TS6133: 'Fx' is declared but its value is never read.
+/// ```
+#[test]
+fn a_parameter_used_only_as_a_bare_type_argument_reference_still_reports_ts6133() {
+    let codes = unused_codes(
+        "interface Fx { z: number }\ntype Holder<T> = { v: T };\nexport function x2(Fx: number, h: Holder<Fx>) { return h; }\n",
+    );
+
+    assert!(
+        codes.contains(&6133),
+        "a bare type-argument type reference is not a value read of the parameter. Got: {codes:?}"
     );
 }

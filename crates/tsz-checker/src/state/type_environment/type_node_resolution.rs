@@ -158,6 +158,26 @@ impl<'a> CheckerState<'a> {
             }
 
             if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                // A `typeof` type query nested in a type argument
+                // (`Wrap<typeof a>`, `Map<string, typeof a>`, …) is a value read
+                // of its operand, exactly as tsc treats it. Unlike every other
+                // type-node kind — which reaches a nested query through the
+                // per-child `check` traversal that records the read — a type
+                // reference lowers its whole subtree in one non-`import()` pass
+                // whose value resolver never touches `referenced_symbols`, and
+                // the cache short-circuits below can return before it runs at
+                // all. Record the reads here so an operand read only by such a
+                // query is not falsely reported unused (#16680). Gated to
+                // references that actually carry type arguments — a bare
+                // reference cannot contain a query.
+                if self.ctx.arena.get_type_ref(node).is_some_and(|type_ref| {
+                    type_ref
+                        .type_arguments
+                        .as_ref()
+                        .is_some_and(|args| !args.nodes.is_empty())
+                }) {
+                    self.mark_nested_type_query_reads(idx);
+                }
                 let should_refresh_cached_defaulted_reference =
                     self.ctx.arena.get_type_ref(node).is_some_and(|type_ref| {
                         let has_type_args = type_ref
@@ -579,6 +599,79 @@ impl<'a> CheckerState<'a> {
         }
 
         result
+    }
+
+    /// Record the value read performed by every `typeof` type query nested in
+    /// the type-node subtree rooted at `root`.
+    ///
+    /// A `TYPE_QUERY`'s entity name resolves in the *value* namespace and is a
+    /// genuine read of the binding it names — tsc routes it through
+    /// `checkExpressionOrQualifiedName` in `checkTypeQuery`. Most type-node
+    /// kinds (array, tuple, union, type literal, conditional, mapped, …) reach a
+    /// nested query through the per-child `check` traversal, whose identifier
+    /// resolution records the read into `referenced_symbols`. A type reference
+    /// is the exception: its non-`import()` form lowers the whole
+    /// `TYPE_REFERENCE` subtree in one pass (`lower_with_resolvers`), and that
+    /// lowering's value resolver deliberately does not touch
+    /// `referenced_symbols`. So a `typeof` nested in a type argument
+    /// (`Wrap<typeof a>`) never recorded its operand read, and a parameter or
+    /// local whose only use was such a query was falsely reported unused
+    /// (`TS6133`/`TS6196`). Walking the subtree here and resolving each query's
+    /// root identifier in the value namespace records the reads the lowering
+    /// skips, mirroring the direct-`typeof` path. See #16680.
+    pub(super) fn mark_nested_type_query_reads(&self, root: NodeIndex) {
+        use tsz_parser::parser::node::NodeAccess;
+
+        let mut stack = vec![root];
+        // Real annotations are shallow; the budget only guards against a
+        // pathological arena (it is far above any genuine type-node depth).
+        let mut budget = 0u32;
+        while let Some(idx) = stack.pop() {
+            budget += 1;
+            if budget > 8192 {
+                break;
+            }
+            let Some(node) = self.ctx.arena.get(idx) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::TYPE_QUERY
+                && let Some(query) = self.ctx.arena.get_type_query(node)
+            {
+                let root_ident = self.entity_name_root_identifier(query.expr_name);
+                if !root_ident.is_none() {
+                    // The identifier's parent is the `TYPE_QUERY`, so it is not
+                    // classified as a type context: this resolves `X` in the
+                    // value namespace and records the read, exactly as the
+                    // top-level `typeof X` annotation path does.
+                    self.resolve_identifier_symbol(root_ident);
+                }
+            }
+            for child in self.ctx.arena.get_children(idx) {
+                stack.push(child);
+            }
+        }
+    }
+
+    /// The leftmost identifier of an entity name (`ns.a.b` → `ns`), or
+    /// `NodeIndex::NONE` when the entity name is not an identifier-rooted chain.
+    fn entity_name_root_identifier(&self, mut idx: NodeIndex) -> NodeIndex {
+        use tsz_scanner::SyntaxKind;
+        for _ in 0..64 {
+            let Some(node) = self.ctx.arena.get(idx) else {
+                return NodeIndex::NONE;
+            };
+            if node.kind == SyntaxKind::Identifier as u16 {
+                return idx;
+            }
+            if node.kind == syntax_kind_ext::QUALIFIED_NAME
+                && let Some(qn) = self.ctx.arena.get_qualified_name(node)
+            {
+                idx = qn.left;
+                continue;
+            }
+            return NodeIndex::NONE;
+        }
+        NodeIndex::NONE
     }
 
     /// Walk the AST subtree rooted at `idx` and emit TS2314 for any
