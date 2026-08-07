@@ -94,6 +94,16 @@ impl<'a> CheckerState<'a> {
             && source_member == target_member
             && source_visibility == target_visibility
         {
+            // An ES private identifier (`#name`) is a per-class slot: tsc
+            // reports TS18015 ("refers to a different member") for it, and
+            // reserves the "separate declarations" wording for
+            // modifier-`private`/`protected` members.
+            if tsz_solver::utils::is_es_private_identifier_name(&source_member) {
+                return Some(format_message(
+                    diagnostic_messages::PROPERTY_IN_TYPE_REFERS_TO_A_DIFFERENT_MEMBER_THAT_CANNOT_BE_ACCESSED_FROM_WITHI,
+                    &[&source_member, &self.format_type(source), &self.format_type(target)],
+                ));
+            }
             return Some(match source_visibility {
                 tsz_solver::Visibility::Private => format_message(
                     diagnostic_messages::TYPES_HAVE_SEPARATE_DECLARATIONS_OF_A_PRIVATE_PROPERTY,
@@ -114,11 +124,13 @@ impl<'a> CheckerState<'a> {
             .or_else(|| self.get_private_field_name_from_brand(source))
             .unwrap_or_else(|| "[private field]".to_string());
 
-        Some(format!(
-            "Property '{}' in type '{}' refers to a different member that cannot be accessed from within type '{}'.",
-            field_name,
-            self.format_type(source),
-            self.format_type(target)
+        Some(format_message(
+            diagnostic_messages::PROPERTY_IN_TYPE_REFERS_TO_A_DIFFERENT_MEMBER_THAT_CANNOT_BE_ACCESSED_FROM_WITHI,
+            &[
+                &field_name,
+                &self.format_type(source),
+                &self.format_type(target),
+            ],
         ))
     }
 }

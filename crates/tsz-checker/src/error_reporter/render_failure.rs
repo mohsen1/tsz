@@ -995,6 +995,9 @@ impl<'a> CheckerState<'a> {
             SubtypeFailureReason::PropertyNominalMismatch { property_name } => {
                 self.render_property_nominal_mismatch(reason, &rctx, *property_name)
             }
+            SubtypeFailureReason::PrivateIdentifierMemberMismatch { property_name } => {
+                self.render_private_identifier_member_mismatch(reason, &rctx, *property_name)
+            }
             SubtypeFailureReason::ExcessProperty {
                 property_name,
                 target_type: _,

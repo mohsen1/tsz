@@ -129,6 +129,10 @@ pub enum SubtypeFailureReason {
     },
     /// Property nominal mismatch (separate declarations of private/protected property).
     PropertyNominalMismatch { property_name: Atom },
+    /// ES private identifier (`#name`) member originates from a different
+    /// declaring class, so the target's slot is unreachable from the source
+    /// (TS18015: "refers to a different member").
+    PrivateIdentifierMemberMismatch { property_name: Atom },
     /// Return types are incompatible.
     ReturnTypeMismatch {
         source_return: TypeId,
@@ -782,6 +786,7 @@ pub mod codes {
     pub use dc::CANNOT_ASSIGN_AN_ABSTRACT_CONSTRUCTOR_TYPE_TO_A_NON_ABSTRACT_CONSTRUCTOR_TYPE as ABSTRACT_CONSTRUCTOR_ASSIGNMENT;
     pub use dc::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_READ_ONLY_PROPERTY as READONLY_PROPERTY;
     pub use dc::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE as EXCESS_PROPERTY;
+    pub use dc::PROPERTY_IN_TYPE_REFERS_TO_A_DIFFERENT_MEMBER_THAT_CANNOT_BE_ACCESSED_FROM_WITHI as PRIVATE_IDENTIFIER_MEMBER_MISMATCH;
     pub use dc::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE as PROPERTY_MISSING;
     pub use dc::PROPERTY_IS_OPTIONAL_IN_TYPE_BUT_REQUIRED_IN_TYPE as PROPERTY_OPTIONAL_BUT_REQUIRED;
     pub use dc::PROPERTY_IS_PRIVATE_AND_ONLY_ACCESSIBLE_WITHIN_CLASS as PROPERTY_VISIBILITY_MISMATCH;
@@ -922,6 +927,9 @@ impl SubtypeFailureReason {
             Self::ReadonlyPropertyMismatch { .. } => codes::READONLY_PROPERTY,
             Self::PropertyVisibilityMismatch { .. } => codes::PROPERTY_VISIBILITY_MISMATCH,
             Self::PropertyNominalMismatch { .. } => codes::PROPERTY_NOMINAL_MISMATCH,
+            Self::PrivateIdentifierMemberMismatch { .. } => {
+                codes::PRIVATE_IDENTIFIER_MEMBER_MISMATCH
+            }
             Self::TypePredicateMismatch {
                 source_predicate: None,
                 ..
@@ -1093,6 +1101,19 @@ impl SubtypeFailureReason {
                 .with_related(PendingDiagnostic::error(
                     codes::PROPERTY_NOMINAL_MISMATCH,
                     vec![(*property_name).into()],
+                ))
+            }
+
+            Self::PrivateIdentifierMemberMismatch { property_name } => {
+                // TS18015: Property '#x' in type 'A' refers to a different
+                // member that cannot be accessed from within type 'B'
+                PendingDiagnostic::error(
+                    codes::TYPE_NOT_ASSIGNABLE,
+                    vec![source.into(), target.into()],
+                )
+                .with_related(PendingDiagnostic::error(
+                    codes::PRIVATE_IDENTIFIER_MEMBER_MISMATCH,
+                    vec![(*property_name).into(), source.into(), target.into()],
                 ))
             }
 

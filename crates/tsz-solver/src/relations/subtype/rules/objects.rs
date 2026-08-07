@@ -549,11 +549,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // `private` (modifier) requires strict declaration identity, which just
         // failed — unless the member is an ES private identifier (`#name`),
         // which is a per-class slot that a derived class always inherits.
-        let is_es_private_identifier = self
-            .interner
-            .resolve_atom_ref(member_name)
-            .as_ref()
-            .starts_with('#');
+        let is_es_private_identifier = crate::utils::is_es_private_identifier_name(
+            self.interner.resolve_atom_ref(member_name).as_ref(),
+        );
         if target_visibility != Visibility::Protected && !is_es_private_identifier {
             return false;
         }

@@ -1690,9 +1690,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         t_prop.parent_id,
                         t_prop.visibility,
                     ) {
-                        return Some(SubtypeFailureReason::PropertyNominalMismatch {
-                            property_name: t_prop.name,
-                        });
+                        // An ES private identifier (`#name`) is a per-class
+                        // slot: tsc reports "refers to a different member"
+                        // (TS18015), while a modifier-`private` member gets
+                        // "separate declarations" (TS2446).
+                        return Some(
+                            if crate::utils::is_es_private_identifier_name(
+                                self.interner.resolve_atom_ref(t_prop.name).as_ref(),
+                            ) {
+                                SubtypeFailureReason::PrivateIdentifierMemberMismatch {
+                                    property_name: t_prop.name,
+                                }
+                            } else {
+                                SubtypeFailureReason::PropertyNominalMismatch {
+                                    property_name: t_prop.name,
+                                }
+                            },
+                        );
                     }
                 }
                 // Cannot assign private/protected source to public target
