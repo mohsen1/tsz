@@ -352,3 +352,176 @@ export var b: ClassB;"#,
         ],
     );
 }
+
+// ---------------------------------------------------------------------------
+// Ambient-module alias cycles
+//
+// `declare module "m" { import self = require("m"); export = self; }` is the
+// same cycle as the file-level `recursiveExportAssignmentAndFindAliasedType4-6`
+// shapes above, written inside an ambient module body instead of at file top
+// level. `tsc` reports TS2303 identically in both: once at the `import` and
+// once at the `export =`. These pin the ambient half, whose `export =` site
+// lives in the module block rather than in `SourceFile.statements`.
+//
+// Offsets are pinned rather than counted: a count-only assertion cannot tell
+// "two sites" from "one site reported twice", which is exactly the distinction
+// at issue here.
+// ---------------------------------------------------------------------------
+
+/// Single-file diagnostics carrying the start offset of each report.
+fn get_diagnostics_positioned(source: &str, file_name: &str) -> Vec<(u32, u32, String)> {
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        file_name.to_string(),
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            isolated_modules: true,
+            ..Default::default()
+        },
+    );
+
+    checker.check_source_file(root);
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.start, d.message_text.clone()))
+        .collect()
+}
+
+/// Start offsets of every TS2303 in `source`, sorted.
+///
+/// Sorting is deliberate: the emission order of the import site and its
+/// companion `export =` site is a checker-traversal artifact, not a parity
+/// claim, so only the set of anchors is asserted on.
+fn ts2303_offsets(source: &str, file_name: &str) -> Vec<u32> {
+    let mut offsets: Vec<u32> = get_diagnostics_positioned(source, file_name)
+        .into_iter()
+        .filter(|(code, _, _)| *code == 2303)
+        .map(|(_, start, _)| start)
+        .collect();
+    offsets.sort_unstable();
+    offsets
+}
+
+/// Byte offset of the `nth` (0-based) occurrence of `needle` in `source`.
+fn nth_offset(source: &str, needle: &str, nth: usize) -> u32 {
+    let mut from = 0usize;
+    for _ in 0..nth {
+        let at = source[from..]
+            .find(needle)
+            .unwrap_or_else(|| panic!("occurrence {nth} of {needle:?} not found"));
+        from += at + needle.len();
+    }
+    let at = source[from..]
+        .find(needle)
+        .unwrap_or_else(|| panic!("occurrence {nth} of {needle:?} not found"));
+    u32::try_from(from + at).unwrap()
+}
+
+#[test]
+fn ambient_module_self_alias_cycle_reports_ts2303_at_import_and_export_equals() {
+    // `recursiveExportAssignmentAndFindAliasedType1`. tsc 7.0.2:
+    //   def.d.ts(2,5) TS2303  <- import self = require("moduleC");
+    //   def.d.ts(3,5) TS2303  <- export = self;
+    const SOURCE: &str = r#"declare module "moduleC" {
+    import self = require("moduleC");
+    export = self;
+}
+"#;
+
+    assert_eq!(
+        ts2303_offsets(SOURCE, "def.d.ts"),
+        vec![
+            nth_offset(SOURCE, "import self", 0),
+            nth_offset(SOURCE, "export = self", 0),
+        ],
+        "Expected TS2303 at both the import and the `export =` inside the ambient module"
+    );
+}
+
+#[test]
+fn ambient_module_two_module_alias_cycle_reports_ts2303_at_every_site() {
+    // `recursiveExportAssignmentAndFindAliasedType2`: a two-module cycle whose
+    // members each contribute an import site and an `export =` site (4 total).
+    const SOURCE: &str = r#"declare module "moduleC" {
+    import self = require("moduleD");
+    export = self;
+}
+declare module "moduleD" {
+    import self = require("moduleC");
+    export = self;
+}
+"#;
+
+    assert_eq!(
+        ts2303_offsets(SOURCE, "def.d.ts"),
+        vec![
+            nth_offset(SOURCE, "import self", 0),
+            nth_offset(SOURCE, "export = self", 0),
+            nth_offset(SOURCE, "import self", 1),
+            nth_offset(SOURCE, "export = self", 1),
+        ],
+        "Expected TS2303 at all four alias sites of the two-module ambient cycle"
+    );
+}
+
+#[test]
+fn ambient_module_alias_cycle_export_site_does_not_depend_on_the_binder_name() {
+    // Same cycle as above with the alias renamed: the `export =` companion is
+    // found through the enclosing module's export table, never by name.
+    const SOURCE: &str = r#"declare module "cyc" {
+    import zzz = require("cyc");
+    export = zzz;
+}
+"#;
+
+    assert_eq!(
+        ts2303_offsets(SOURCE, "renamed.d.ts"),
+        vec![
+            nth_offset(SOURCE, "import zzz", 0),
+            nth_offset(SOURCE, "export = zzz", 0),
+        ],
+        "Renaming the alias must not change which sites report TS2303"
+    );
+}
+
+#[test]
+fn ambient_module_export_equals_outside_the_cycle_stays_clean() {
+    // Negative control, and the reason the companion scan is scoped to the
+    // container that declares the alias: two more ambient modules in the SAME
+    // file each carry their own `export =`, and neither is circular. A scan
+    // that walked the file rather than the cyclic alias's own module body
+    // would light all three up.
+    const SOURCE: &str = r#"declare module "cyc" {
+    import zzz = require("cyc");
+    export = zzz;
+}
+declare module "sane" {
+    class Real { }
+    export = Real;
+}
+declare module "borrows" {
+    import ok = require("sane");
+    export = ok;
+}
+"#;
+
+    assert_eq!(
+        ts2303_offsets(SOURCE, "mixed.d.ts"),
+        vec![
+            nth_offset(SOURCE, "import zzz", 0),
+            nth_offset(SOURCE, "export = zzz", 0),
+        ],
+        "Only the circular ambient module may report TS2303; its non-circular siblings' `export =` must stay clean"
+    );
+}
