@@ -287,7 +287,14 @@ impl<'a> CheckerState<'a> {
             }
 
             if elem_node.kind == syntax_kind_ext::GET_ACCESSOR {
-                if accessor.type_annotation.is_none() {
+                // A `ThisType[ T ]` marker makes `this` denote `T`, not the
+                // literal under construction, so `this.<member>` in the body
+                // reads a member of `T` and can never be the getter's own
+                // circular self-reference. Without this gate the receiver
+                // heuristic in `object_literal_getter_has_self_reference` —
+                // which treats every `this.` receiver as the literal — turns a
+                // legitimate `this.x` under a marker into a spurious TS7023.
+                if accessor.type_annotation.is_none() && marker_this_type.is_none() {
                     use crate::diagnostics::diagnostic_codes;
                     if self.object_literal_getter_has_self_reference(elem_idx, accessor.body, &name)
                     {
@@ -561,6 +568,9 @@ impl<'a> CheckerState<'a> {
                     .unwrap_or(TypeId::ANY)
             };
 
+            // The reporter fires the per-property TS2418 only for a syntactic
+            // `Symbol.<member>` accessor key; a wide/plain `symbol` accessor key
+            // defers to the whole-object relation (TS2322). #16662.
             if prop_name_type == TypeId::SYMBOL {
                 self.report_contextual_symbol_index_value_mismatch(
                     accessor.name,

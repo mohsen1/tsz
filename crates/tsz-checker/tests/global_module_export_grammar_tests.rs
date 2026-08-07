@@ -328,3 +328,30 @@ fn modifier_before_global_module_export_ts1314_column_is_unaffected_by_leading_c
         "TS1315 must anchor at `private`, not `export`, for {source:?}"
     );
 }
+
+/// #16403 (stacked): a run of *two or more* stray modifiers before
+/// `export as namespace` collapses to a single TS1184 at the first modifier,
+/// and TS1314 must anchor there too (column 1) — the run-length generalization
+/// of the single-modifier #16540 fix. Varied kinds, order, and exported name
+/// pin that none of them steer the anchor. Oracle-pinned (`typescript@7.0.2`).
+#[test]
+fn stacked_modifier_run_before_global_module_export_anchors_ts1314_at_the_run_start() {
+    for source in [
+        "static readonly export as namespace Foo;\n",
+        "readonly static export as namespace Bar;\n",
+        "public static export as namespace qux$_0;\n",
+        "private protected public readonly export as namespace N;\n",
+        "static async accessor export as namespace M;\n",
+    ] {
+        assert_eq!(
+            ts1314_start(source, "a.ts"),
+            0,
+            "TS1314 must anchor at the first modifier (column 1), not at `export`, for {source:?}"
+        );
+        assert_eq!(
+            global_module_export_codes(source, "a.ts"),
+            vec![1314],
+            "the stacked run must leave only the family's TS1314 in range for {source:?}"
+        );
+    }
+}

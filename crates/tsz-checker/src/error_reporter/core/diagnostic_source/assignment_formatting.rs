@@ -128,6 +128,19 @@ impl<'a> CheckerState<'a> {
         {
             return display;
         }
+        // A longhand primitive-keyword union source annotation
+        // (`string | number | symbol`) likewise carries no `aliasSymbol`; render
+        // it by its members instead of a coincidentally-shaped alias (#16610).
+        if let Some(display) = self.longhand_primitive_union_source_display(anchor_idx, source) {
+            return display;
+        }
+        // A `keyof any` / `keyof unknown` / `keyof never` source annotation
+        // resolves to its fixed key-space result at type-construction time in
+        // tsc (`getIndexType`), so it likewise carries no `aliasSymbol` — same
+        // family as the longhand-union case above, different written spelling.
+        if let Some(display) = self.keyof_degenerate_operand_source_display(anchor_idx, source) {
+            return display;
+        }
         // A deferred meta-type source — a bare conditional (`T extends U ? X : Y`)
         // or indexed-access (`T["x"]`), or an `Application` of a conditional/
         // indexed-bodied alias (`T95<U>`) — that still carries free type
@@ -918,6 +931,31 @@ impl<'a> CheckerState<'a> {
         Some(self.format_type_for_assignability_message_anonymous_composite_structural(resolved))
     }
 
+    /// Structural display for an assignment **source** whose declared type
+    /// annotation node satisfies `annotation_matches` — an inline shape that
+    /// carries no `aliasSymbol` and so should render by its structure rather than
+    /// a coincidentally-shaped alias reached through the reverse type-to-def
+    /// lookup. Shared by the anonymous-composite and longhand-primitive-union
+    /// source paths, which differ only in that annotation predicate.
+    pub(super) fn annotation_gated_structural_source_display(
+        &mut self,
+        anchor_idx: NodeIndex,
+        source: TypeId,
+        annotation_matches: fn(&tsz_parser::NodeArena, NodeIndex) -> bool,
+    ) -> Option<String> {
+        let expr_idx = self
+            .direct_diagnostic_source_expression(anchor_idx)
+            .or_else(|| self.assignment_source_expression(anchor_idx))?;
+        let matches = self
+            .declared_type_annotation_node_for_expression(expr_idx)
+            .is_some_and(|(arena, annotation_idx)| annotation_matches(arena, annotation_idx));
+        if !matches {
+            return None;
+        }
+        let resolved = self.resolve_lazy_type(source);
+        Some(self.format_type_for_assignability_message_anonymous_composite_structural(resolved))
+    }
+
     /// Structural display for an assignment **source** written as an inline /
     /// anonymous composite annotation. The source mirror of
     /// [`Self::anonymous_composite_annotation_target_display`].
@@ -926,19 +964,32 @@ impl<'a> CheckerState<'a> {
         anchor_idx: NodeIndex,
         source: TypeId,
     ) -> Option<String> {
-        let expr_idx = self
-            .direct_diagnostic_source_expression(anchor_idx)
-            .or_else(|| self.assignment_source_expression(anchor_idx))?;
-        let is_anonymous_composite = self
-            .declared_type_annotation_node_for_expression(expr_idx)
-            .is_some_and(|(arena, annotation_idx)| {
-                Self::annotation_is_anonymous_structural_composite(arena, annotation_idx)
-            });
-        if !is_anonymous_composite {
-            return None;
-        }
-        let resolved = self.resolve_lazy_type(source);
-        Some(self.format_type_for_assignability_message_anonymous_composite_structural(resolved))
+        self.annotation_gated_structural_source_display(
+            anchor_idx,
+            source,
+            Self::annotation_is_anonymous_structural_composite,
+        )
+    }
+
+    /// Structural display for an assignment **source** whose declared type was
+    /// written as a longhand primitive-keyword union (`string | number | symbol`,
+    /// `string | number`). Such an inline union carries no `aliasSymbol`, so tsc
+    /// renders it by its members rather than repainting it with a
+    /// coincidentally-shaped non-generic alias (`PropertyKey`, a user `type`)
+    /// reached through the reverse type-to-def lookup (#16610). Returns `None`
+    /// for any other source shape — including a written-through alias reference
+    /// (`: Zed`), which is a `TYPE_REFERENCE`, not a longhand union — leaving the
+    /// established display path untouched.
+    pub(in crate::error_reporter) fn longhand_primitive_union_source_display(
+        &mut self,
+        anchor_idx: NodeIndex,
+        source: TypeId,
+    ) -> Option<String> {
+        self.annotation_gated_structural_source_display(
+            anchor_idx,
+            source,
+            Self::annotation_is_longhand_primitive_keyword_union,
+        )
     }
 
     pub(in crate::error_reporter) fn format_assignment_target_type_for_diagnostic(

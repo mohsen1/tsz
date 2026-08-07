@@ -23,6 +23,17 @@ use tsz_solver::TypeId;
 struct ReturnContribution {
     type_id: TypeId,
     widen_expr: Option<NodeIndex>,
+    /// `Some(expr)` when this is a bare top-level `null`/`undefined` contribution
+    /// whose non-strict `-> any` widening was DEFERRED past the union reduction
+    /// (#16580 b5). tsc computes the return union with `UnionReduction.Subtype`
+    /// and widens the survivor afterwards (`getWidenedType(getUnionType(...))`),
+    /// so a nullish member is dropped when a non-nullish sibling exists
+    /// (`if (c) return 1; return null` → `number`) and only a *surviving*
+    /// widening-source nullish widens to `any` (`return null` → `any`). Widening
+    /// per branch first (the old behavior) let the resulting `any` swallow the
+    /// whole union. `expr` re-runs the widening-source-aware widen after the
+    /// reduction so the sole-nullish case still reaches `any`.
+    nullish_widen_expr: Option<NodeIndex>,
 }
 
 impl<'a> CheckerState<'a> {
@@ -316,185 +327,6 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Infer the return type of a function body by collecting return expressions.
-    ///
-    /// This function walks through all statements in a function body, collecting
-    /// the types of all return expressions. It then infers the return type as:
-    /// - `void`: If there are no return expressions
-    /// - `union` of all return types: If there are multiple return expressions
-    /// - The single return type: If there's only one return expression
-    ///
-    /// ## Parameters:
-    /// - `body_idx`: The function body node index
-    /// - `return_context`: Optional contextual type for return expressions
-    ///
-    /// ## Examples:
-    /// ```typescript
-    /// // No returns → void
-    /// function foo() {}
-    ///
-    /// // Single return → string
-    /// function bar() { return "hello"; }
-    ///
-    /// // Multiple returns → string | number
-    /// function baz() {
-    ///     if (cond) return "hello";
-    ///     return 42;
-    /// }
-    ///
-    /// // Empty return included → string | number | void
-    /// function qux() {
-    ///     if (cond) return;
-    ///     return "hello";
-    /// }
-    /// ```
-    pub(crate) fn has_only_explicit_any_assertion_returns(&mut self, body_idx: NodeIndex) -> bool {
-        if body_idx.is_none() {
-            return false;
-        }
-        let mut saw_value_return = false;
-        let mut all_value_returns_explicit_any = true;
-        self.collect_explicit_any_assertion_returns(
-            body_idx,
-            &mut saw_value_return,
-            &mut all_value_returns_explicit_any,
-        );
-        saw_value_return && all_value_returns_explicit_any
-    }
-
-    fn collect_explicit_any_assertion_returns(
-        &mut self,
-        stmt_idx: NodeIndex,
-        saw_value_return: &mut bool,
-        all_value_returns_explicit_any: &mut bool,
-    ) {
-        let Some(node) = self.ctx.arena.get(stmt_idx) else {
-            return;
-        };
-
-        match node.kind {
-            syntax_kind_ext::RETURN_STATEMENT => {
-                if let Some(return_data) = self.ctx.arena.get_return_statement(node)
-                    && return_data.expression.is_some()
-                {
-                    *saw_value_return = true;
-                    if !self.is_explicit_any_assertion_expression(return_data.expression) {
-                        *all_value_returns_explicit_any = false;
-                    }
-                }
-            }
-            syntax_kind_ext::BLOCK => {
-                if let Some(block) = self.ctx.arena.get_block(node) {
-                    for &stmt in &block.statements.nodes {
-                        self.collect_explicit_any_assertion_returns(
-                            stmt,
-                            saw_value_return,
-                            all_value_returns_explicit_any,
-                        );
-                    }
-                }
-            }
-            syntax_kind_ext::IF_STATEMENT => {
-                if let Some(if_data) = self.ctx.arena.get_if_statement(node) {
-                    self.collect_explicit_any_assertion_returns(
-                        if_data.then_statement,
-                        saw_value_return,
-                        all_value_returns_explicit_any,
-                    );
-                    if if_data.else_statement.is_some() {
-                        self.collect_explicit_any_assertion_returns(
-                            if_data.else_statement,
-                            saw_value_return,
-                            all_value_returns_explicit_any,
-                        );
-                    }
-                }
-            }
-            syntax_kind_ext::SWITCH_STATEMENT => {
-                if let Some(switch_data) = self.ctx.arena.get_switch(node)
-                    && let Some(case_block_node) = self.ctx.arena.get(switch_data.case_block)
-                    && let Some(case_block) = self.ctx.arena.get_block(case_block_node)
-                {
-                    for &clause_idx in &case_block.statements.nodes {
-                        if let Some(clause_node) = self.ctx.arena.get(clause_idx)
-                            && let Some(clause) = self.ctx.arena.get_case_clause(clause_node)
-                        {
-                            for &stmt in &clause.statements.nodes {
-                                self.collect_explicit_any_assertion_returns(
-                                    stmt,
-                                    saw_value_return,
-                                    all_value_returns_explicit_any,
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-            syntax_kind_ext::TRY_STATEMENT => {
-                if let Some(try_data) = self.ctx.arena.get_try(node) {
-                    self.collect_explicit_any_assertion_returns(
-                        try_data.try_block,
-                        saw_value_return,
-                        all_value_returns_explicit_any,
-                    );
-                    if try_data.catch_clause.is_some() {
-                        self.collect_explicit_any_assertion_returns(
-                            try_data.catch_clause,
-                            saw_value_return,
-                            all_value_returns_explicit_any,
-                        );
-                    }
-                    if try_data.finally_block.is_some() {
-                        self.collect_explicit_any_assertion_returns(
-                            try_data.finally_block,
-                            saw_value_return,
-                            all_value_returns_explicit_any,
-                        );
-                    }
-                }
-            }
-            syntax_kind_ext::CATCH_CLAUSE => {
-                if let Some(catch_data) = self.ctx.arena.get_catch_clause(node) {
-                    self.collect_explicit_any_assertion_returns(
-                        catch_data.block,
-                        saw_value_return,
-                        all_value_returns_explicit_any,
-                    );
-                }
-            }
-            syntax_kind_ext::WHILE_STATEMENT
-            | syntax_kind_ext::DO_STATEMENT
-            | syntax_kind_ext::FOR_STATEMENT => {
-                if let Some(loop_data) = self.ctx.arena.get_loop(node) {
-                    self.collect_explicit_any_assertion_returns(
-                        loop_data.statement,
-                        saw_value_return,
-                        all_value_returns_explicit_any,
-                    );
-                }
-            }
-            syntax_kind_ext::FOR_IN_STATEMENT | syntax_kind_ext::FOR_OF_STATEMENT => {
-                if let Some(for_in_of_data) = self.ctx.arena.get_for_in_of(node) {
-                    self.collect_explicit_any_assertion_returns(
-                        for_in_of_data.statement,
-                        saw_value_return,
-                        all_value_returns_explicit_any,
-                    );
-                }
-            }
-            syntax_kind_ext::LABELED_STATEMENT => {
-                if let Some(labeled_data) = self.ctx.arena.get_labeled_statement(node) {
-                    self.collect_explicit_any_assertion_returns(
-                        labeled_data.statement,
-                        saw_value_return,
-                        all_value_returns_explicit_any,
-                    );
-                }
-            }
-            _ => {}
-        }
-    }
-
     /// Apply literal widening to a single return expression's inferred type,
     /// matching tsc's `getReturnTypeFromBody` widening rules per-contribution:
     ///
@@ -569,6 +401,17 @@ impl<'a> CheckerState<'a> {
             return self.is_fresh_literal_expression(expr_idx);
         }
         self.is_enum_member_type_for_widening(type_id)
+    }
+
+    /// Whether a return contribution is a bare top-level `null`/`undefined`
+    /// scalar whose non-strict `-> any` widening must be DEFERRED past the return
+    /// union reduction (#16580 b5). `has_ts_nullable_flag` matches exactly `null`
+    /// and `undefined` — never `void`, never a union — which is the set the
+    /// reduction may drop or collapse; a nullish leaf nested in a fresh composite
+    /// (`return [undefined]`) is a composite type here and widens in place.
+    const fn is_bare_nonstrict_nullish_return(&self, type_id: TypeId) -> bool {
+        !self.ctx.strict_null_checks()
+            && crate::query_boundaries::type_predicates::has_ts_nullable_flag(type_id)
     }
 
     /// Whether a single return-expression contribution would be widened by
@@ -810,26 +653,6 @@ impl<'a> CheckerState<'a> {
                 && let Some(assertion) = self.ctx.arena.get_type_assertion(node)
             {
                 return self.is_const_assertion_type_node(assertion.type_node);
-            }
-            return false;
-        }
-        false
-    }
-
-    fn is_explicit_any_assertion_expression(&mut self, expr_idx: NodeIndex) -> bool {
-        let mut current = expr_idx;
-        while let Some(node) = self.ctx.arena.get(current) {
-            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
-                && let Some(paren) = self.ctx.arena.get_parenthesized(node)
-            {
-                current = paren.expression;
-                continue;
-            }
-            if (node.kind == syntax_kind_ext::AS_EXPRESSION
-                || node.kind == syntax_kind_ext::TYPE_ASSERTION)
-                && let Some(assertion) = self.ctx.arena.get_type_assertion(node)
-            {
-                return self.get_type_from_type_node(assertion.type_node) == TypeId::ANY;
             }
             return false;
         }
@@ -1161,6 +984,38 @@ impl<'a> CheckerState<'a> {
         hasher.finish()
     }
 
+    /// Whether an empty (or `return;`-only) function body contextually typed by
+    /// `ctx` should infer `undefined` rather than its natural `void`.
+    ///
+    /// An empty body returns `void`. `tsc` lets it be treated as `undefined` only
+    /// when the contextual return type needs `undefined` specifically — e.g.
+    /// `const f: () => undefined = () => {}`. When the context also accepts `void`
+    /// (a bare `void`, a `void | T` union, or a still-unresolved generic return
+    /// position a `void` lower bound satisfies), `void` is correct. Preferring
+    /// `undefined` there is unsound for generic-call inference: a naked type
+    /// parameter in a callback-return union (`(v) => U | X`) would infer
+    /// `U = undefined` instead of `void`, and the inferred body type would
+    /// oscillate between `void` and `undefined` across inference rounds as `U` is
+    /// fixed and re-substituted — corrupting the call and producing spurious
+    /// `TS2345`s (#16632).
+    fn empty_body_prefers_undefined(&mut self, ctx: TypeId) -> bool {
+        // Keep the natural `void` whenever the context accepts it — the top types
+        // (`any`/`unknown`), `void` itself, or a still-unresolved inference target
+        // (a type parameter or, since that predicate also matches them, an `infer`
+        // placeholder).
+        if ctx == TypeId::VOID
+            || ctx == TypeId::ANY
+            || ctx == TypeId::UNKNOWN
+            || self.contains_type_parameters_cached(ctx)
+        {
+            return false;
+        }
+        // Otherwise narrow to `undefined` only when the context needs it
+        // specifically: it accepts `undefined` but not `void` (`() => undefined`).
+        self.return_relation_outcome(TypeId::UNDEFINED, ctx).related
+            && !self.return_relation_outcome(TypeId::VOID, ctx).related
+    }
+
     /// Inner implementation of return type inference (no diagnostic/cache cleanup).
     fn infer_return_type_from_body_inner(
         &mut self,
@@ -1185,6 +1040,12 @@ impl<'a> CheckerState<'a> {
 
         let mut return_types = Vec::new();
         let mut saw_empty = false;
+        // Records whether the implicit fall-through / bare-`return;` `undefined`
+        // contribution was added below. tsc gives that member the *non-widening*
+        // `undefinedType` (not `undefinedWideningType`), so a return union that
+        // reduces to only nullish members must stay `null`/`undefined` rather
+        // than widen to `any` when this implicit member is one of them.
+        let mut pushed_implicit_undefined = false;
 
         if let Some(block) = self.ctx.arena.get_block(node) {
             for &stmt_idx in &block.statements.nodes {
@@ -1242,14 +1103,13 @@ impl<'a> CheckerState<'a> {
             // (e.g., `number`), fall through to the void/contextual check below.
             if saw_empty {
                 if let Some(ctx) = return_context {
-                    // Only narrow to `undefined` when the contextual return type is a
-                    // specific undefined-compatible type (not `any`/`unknown`/`void`).
-                    // `any`/`unknown` accept everything — don't change inference for them.
-                    if ctx != TypeId::VOID
-                        && ctx != TypeId::ANY
-                        && ctx != TypeId::UNKNOWN
-                        && self.return_relation_outcome(TypeId::UNDEFINED, ctx).related
-                    {
+                    // Only narrow to `undefined` when the context needs it
+                    // specifically. Keep the natural `void` whenever the context
+                    // also accepts `void` (`void`, `void | T`, or a not-yet-fixed
+                    // inference target): coercing those to `undefined` makes an
+                    // empty callback body's inferred return type oscillate as a
+                    // contextual union's type parameters get fixed (see below).
+                    if self.empty_body_prefers_undefined(ctx) {
                         return TypeId::UNDEFINED;
                     }
                 } else {
@@ -1265,13 +1125,8 @@ impl<'a> CheckerState<'a> {
                 // When contextual return type expects `undefined` (not void/any/unknown),
                 // use `undefined` so `const f: () => undefined = () => {}` doesn't produce TS2322.
                 // tsc applies contextual typing to infer the return type of such lambdas.
-                // Exclude `any`/`unknown` — they accept everything and shouldn't change inference.
-                if let Some(ctx) = return_context
-                    && ctx != TypeId::VOID
-                    && ctx != TypeId::ANY
-                    && ctx != TypeId::UNKNOWN
-                    && self.return_relation_outcome(TypeId::UNDEFINED, ctx).related
-                {
+                // Keep `void` whenever the context also accepts it (see the helper).
+                if return_context.is_some_and(|ctx| self.empty_body_prefers_undefined(ctx)) {
                     TypeId::UNDEFINED
                 } else {
                     TypeId::VOID
@@ -1292,7 +1147,9 @@ impl<'a> CheckerState<'a> {
             return_types.push(ReturnContribution {
                 type_id: TypeId::UNDEFINED,
                 widen_expr: None,
+                nullish_widen_expr: None,
             });
+            pushed_implicit_undefined = true;
         }
 
         // NOTE: error-typed contributions are intentionally NOT filtered here.
@@ -1318,17 +1175,67 @@ impl<'a> CheckerState<'a> {
         // expression's AST-aware widener — preserving per-property `const`
         // subtrees (#14530).
         let widen_expr = return_types.iter().find_map(|c| c.widen_expr);
-        let union = factory.union(return_types.iter().map(|c| c.type_id).collect());
-        // tsc computes this union with `UnionReduction.Subtype`, so
-        // `if (c) return new Base(); return new Derived();` infers `Base`. The
-        // plain constructor keeps `Lazy` class refs deferred; run the
-        // class-scoped, heritage-guarded reduction with the checker resolver.
+        let nullish_widen_expr = return_types.iter().find_map(|c| c.nullish_widen_expr);
+
+        // tsc computes the return union with `UnionReduction.Subtype`, which in
+        // non-strict mode drops a scalar `null`/`undefined` member whenever a
+        // non-nullish sibling exists (`if (c) return 1; return null` → `number`;
+        // the implicit fall-through `undefined` is dropped the same way). Apply
+        // that reduction here with the checker's authoritative `strictNullChecks`,
+        // mirroring the written-union seam in `get_type_from_union_type`: the
+        // interner-level reduction is not reliably threaded through this
+        // construction path (#16624), which made the drop path-dependent
+        // (#16309 / #16580 b5). The bare-nullish contributions were collected
+        // WITHOUT the per-branch `-> any` widening for exactly this reason, so the
+        // drop can see the raw `null`/`undefined` scalars.
+        //
+        // This explicit block can be retired once #16624 threads the real
+        // `strictNullChecks` flag into the `factory.union` interner path below,
+        // whose own `reduce_and_collapse_nonstrict` already performs the same
+        // drop when the flag is set — unlike the `type_node.rs` seam, whose
+        // constructor never subtype-reduces and so must keep pre-reducing here.
+        let strict = self.ctx.strict_null_checks();
+        let contribution_types: Vec<TypeId> = return_types.iter().map(|c| c.type_id).collect();
+        let all_nullish_collapse =
+            crate::query_boundaries::type_predicates::collapse_pure_nullish_union_nonstrict(
+                strict,
+                &contribution_types,
+            );
+        let all_nullish_collapsed = all_nullish_collapse.is_some();
+        let reduced_members = match all_nullish_collapse {
+            Some(collapsed) => vec![collapsed],
+            None => crate::query_boundaries::type_predicates::nonstrict_union_members_absorb_nullish_scalars(
+                strict,
+                &contribution_types,
+            )
+            .unwrap_or(contribution_types),
+        };
+
+        let union = factory.union(reduced_members);
+        // The plain constructor keeps `Lazy` class refs deferred; run the
+        // class-scoped, heritage-guarded reduction with the checker resolver so
+        // `if (c) return new Base(); return new Derived();` infers `Base`.
         let union =
             crate::query_boundaries::type_computation::core::reduce_class_subtype_union_members(
                 self.ctx.types,
                 &self.ctx,
                 union,
             );
+
+        // getWidenedType over a *surviving* widening-source nullish: when the
+        // union reduced to only `null`/`undefined` (a sole-nullish return), the
+        // `null` keyword / global `undefined` carries tsc's widening flavour and
+        // widens to `any` (`function f() { return null; }` → `any`), while a
+        // *typed* nullish stays `null`/`undefined`. Skip this when the implicit
+        // fall-through `undefined` is part of the collapse: tsc gives that member
+        // the non-widening `undefinedType`, so the union keeps its nullish scalar.
+        if all_nullish_collapsed
+            && !pushed_implicit_undefined
+            && let Some(expr_idx) = nullish_widen_expr
+        {
+            return self.widen_nullish_return_contribution(expr_idx, union);
+        }
+
         if let Some(expr_idx) = widen_expr
             && crate::query_boundaries::common::is_literal_type(self.ctx.types, union)
         {
@@ -1666,7 +1573,7 @@ impl<'a> CheckerState<'a> {
                             return_type,
                             return_context,
                         );
-                        let (contribution_type, widen_expr) = if widenable
+                        let contribution = if widenable
                             && !crate::query_boundaries::common::is_literal_type(
                                 self.ctx.types,
                                 return_type,
@@ -1683,23 +1590,50 @@ impl<'a> CheckerState<'a> {
                                     return_type,
                                 );
                             let widened = self.widen_enum_member_type(widened);
-                            // Non-strict nullish widening, the block-body twin of
-                            // the expression-body seam in
-                            // `maybe_widen_return_contribution`: under
-                            // `strictNullChecks: false` tsc maps the widening
-                            // `null`/`undefined` leaves of a fresh return
-                            // contribution to `any`, so `return [undefined]`
-                            // infers `any[]`, not `undefined[]`.
-                            let widened = self
-                                .widen_nullish_return_contribution(return_data.expression, widened);
-                            (widened, None)
+                            if self.is_bare_nonstrict_nullish_return(widened) {
+                                // DEFER a bare top-level `null`/`undefined` (the `null`
+                                // keyword) past the union reduction (#16580 b5): widening
+                                // it to `any` here would let `any` swallow a non-nullish
+                                // sibling. A nullish leaf *nested* in a fresh composite
+                                // (`return [undefined]` → `any[]`) is not a bare scalar
+                                // and still widens in place below.
+                                ReturnContribution {
+                                    type_id: widened,
+                                    widen_expr: None,
+                                    nullish_widen_expr: Some(return_data.expression),
+                                }
+                            } else {
+                                // Non-strict nullish widening, the block-body twin of
+                                // the expression-body seam in
+                                // `maybe_widen_return_contribution`: under
+                                // `strictNullChecks: false` tsc maps the widening
+                                // `null`/`undefined` leaves of a fresh return
+                                // contribution to `any`, so `return [undefined]`
+                                // infers `any[]`, not `undefined[]`.
+                                let widened = self.widen_nullish_return_contribution(
+                                    return_data.expression,
+                                    widened,
+                                );
+                                ReturnContribution {
+                                    type_id: widened,
+                                    widen_expr: None,
+                                    nullish_widen_expr: None,
+                                }
+                            }
                         } else {
-                            (return_type, widenable.then_some(return_data.expression))
+                            // A raw scalar `null`/`undefined` contribution (e.g. a
+                            // non-widenable global `undefined` reference) also defers its
+                            // widening to the union reduction, so a nullish sibling is
+                            // dropped rather than kept alongside a non-nullish member.
+                            ReturnContribution {
+                                type_id: return_type,
+                                widen_expr: widenable.then_some(return_data.expression),
+                                nullish_widen_expr: self
+                                    .is_bare_nonstrict_nullish_return(return_type)
+                                    .then_some(return_data.expression),
+                            }
                         };
-                        return_types.push(ReturnContribution {
-                            type_id: contribution_type,
-                            widen_expr,
-                        });
+                        return_types.push(contribution);
                     }
                 }
             }

@@ -53,7 +53,7 @@ mod resolver;
 // under both `exactOptionalPropertyTypes` settings (matching tsc), so the result
 // does not depend on that option and it is intentionally not part of this key.
 type ElementAccessTypeCacheKey = (TypeId, TypeId, Option<u32>, bool);
-type PropertyAccessCacheKey = (TypeId, Atom, bool, bool);
+type PropertyAccessCacheKey = (TypeId, Atom, bool, bool, bool);
 type ConditionalBranchVerdictCacheKey = (TypeId, TypeId, bool, bool);
 type PermissiveFalseBranchCacheKey = (TypeId, TypeId, bool, bool);
 
@@ -1864,14 +1864,17 @@ impl QueryDatabase for QueryCache<'_> {
 
     fn set_no_unchecked_indexed_access(&self, enabled: bool) {
         self.no_unchecked_indexed_access.set(enabled);
+        self.interner.set_no_unchecked_indexed_access(enabled);
     }
 
     fn set_exact_optional_property_types(&self, enabled: bool) {
         self.exact_optional_property_types.set(enabled);
+        self.interner.set_exact_optional_property_types(enabled);
     }
 
     fn set_strict_null_checks(&self, enabled: bool) {
         self.strict_null_checks.set(enabled);
+        self.interner.set_strict_null_checks(enabled);
     }
 
     fn get_type_param_variance(&self, def_id: DefId) -> Option<Arc<[Variance]>> {

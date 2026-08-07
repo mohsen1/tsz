@@ -477,6 +477,9 @@ impl CheckerState<'_> {
         // so any `__infer_*` witness that surfaces in a diagnostic is stable
         // across runs and across parallel file checks.
         self.ctx.begin_file_inference_placeholders();
+        // Parameter-list grammar suppression spans are recomputed per file by
+        // `check_parameter_ordering`; clear any left over from a reused checker.
+        self.ctx.parameter_grammar_suppress_spans.clear();
         let Some(root_idx) = self.prepare_source_file_for_checking(root_idx) else {
             return;
         };

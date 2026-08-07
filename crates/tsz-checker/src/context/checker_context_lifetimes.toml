@@ -114,6 +114,7 @@ has_real_syntax_errors = { lifetime = "DiagnosticsOnly", capability = "Diagnosti
 has_structural_parse_errors = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
 real_syntax_error_positions = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
 all_parse_error_positions = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
+parameter_grammar_suppress_spans = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
 nullable_type_parse_error_positions = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
 diagnostics = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
 diagnostic_indices = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic dedupe and auxiliary suppression indices; clear at file-session boundary and rebuild after speculation rollbacks" }

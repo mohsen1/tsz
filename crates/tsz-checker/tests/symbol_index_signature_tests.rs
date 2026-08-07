@@ -127,7 +127,13 @@ const table: { [k: symbol]: string } = {
 }
 
 #[test]
-fn plain_symbol_property_access_reports_computed_property_value_mismatch() {
+fn plain_symbol_property_access_reports_whole_object_ts2322() {
+    // A plain (non-`unique`) `symbol`-typed property-access key that is NOT
+    // well-known syntax (`Sym.foo`, not `Symbol.foo`) is an index contributor,
+    // not a late-bound named member: it folds into a `[k: symbol]: number`
+    // index signature, so the whole-object relation owns the failure with
+    // TS2322 (`'symbol' index signatures are incompatible`), NOT a per-property
+    // TS2418. Oracled against `tsc` 6.0.2 (`--strict`). See #16662.
     let codes = diagnostic_codes_for_ts(
         r#"
 declare const Sym: { readonly foo: symbol };
@@ -139,14 +145,14 @@ const table: { [k: symbol]: string } = {
     );
 
     assert!(
-        codes.contains(
-            &diagnostic_codes::TYPE_OF_COMPUTED_PROPERTYS_VALUE_IS_WHICH_IS_NOT_ASSIGNABLE_TO_TYPE
-        ),
-        "expected TS2418 for plain-symbol property access, got {codes:?}",
+        codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "expected whole-object TS2322 for a plain-symbol index-contributor key, got {codes:?}",
     );
     assert!(
-        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
-        "did not expect the object-level TS2322 fallback, got {codes:?}",
+        !codes.contains(
+            &diagnostic_codes::TYPE_OF_COMPUTED_PROPERTYS_VALUE_IS_WHICH_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
+        "a wide-symbol index-contributor key must not take the late-bound TS2418, got {codes:?}",
     );
     assert!(
         !codes.contains(
@@ -1293,23 +1299,58 @@ const o: { foo: string } = { ["foo"]: 42 };
     );
 }
 
-// Negative: a computed key against a real index signature must still use TS2418.
+// A *literal-spelled* computed key against a real index signature uses TS2322,
+// not TS2418 — the same code it uses when the key resolves to a named property
+// just above. This test previously asserted the opposite, drawing the boundary
+// at named-member-vs-index-signature; the real boundary is how the key is
+// *spelled*. `tsc` 7.0.2 on the exact fixture below:
+//
+//   $ tsc --noEmit --strict --pretty false --target es2020 exact.ts
+//   exact.ts(1,38): error TS2322: Type 'number' is not assignable to type 'string'.
+//
+// `isComputedNonLiteralName` is false for `[0]`, so the member is an ordinary
+// property and never reaches the computed-property message. The negative
+// control for the index-signature half is the late-bound row below.
 #[test]
-fn computed_key_against_real_number_index_signature_keeps_ts2418() {
+fn literal_spelled_computed_key_against_real_number_index_signature_uses_ts2322() {
     let codes = diagnostic_codes_for_ts(
         r#"
 const o: { [k: number]: string } = { [0]: 42 };
 "#,
     );
     assert!(
+        codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "expected TS2322 for a literal-spelled computed key against a number index signature, got {codes:?}",
+    );
+    assert!(
+        !codes.contains(
+            &diagnostic_codes::TYPE_OF_COMPUTED_PROPERTYS_VALUE_IS_WHICH_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
+        "did not expect TS2418 for a literal-spelled computed key, got {codes:?}",
+    );
+}
+
+// Negative: a *late-bound* computed key against a real index signature does
+// still use TS2418. Same target, same value, different spelling — this is the
+// row that stops the rule above from widening into "every computed key against
+// an index signature takes TS2322".
+#[test]
+fn late_bound_computed_key_against_real_number_index_signature_keeps_ts2418() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+const slot = 0;
+const o: { [k: number]: string } = { [slot]: 42 };
+"#,
+    );
+    assert!(
         codes.contains(
             &diagnostic_codes::TYPE_OF_COMPUTED_PROPERTYS_VALUE_IS_WHICH_IS_NOT_ASSIGNABLE_TO_TYPE
         ),
-        "expected TS2418 for computed key against a number index signature, got {codes:?}",
+        "expected TS2418 for a late-bound computed key against a number index signature, got {codes:?}",
     );
     assert!(
         !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
-        "did not expect TS2322 for index-signature mismatch, got {codes:?}",
+        "did not expect TS2322 for a late-bound key, got {codes:?}",
     );
 }
 

@@ -54,6 +54,28 @@ impl<'a> CheckerState<'a> {
             || kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
     }
 
+    /// Whether `name_idx` is a *computed* name spelled with a literal —
+    /// `["p"]`, `[0]`, `` [`p`] `` — as opposed to a late-bound one (`[label]`
+    /// for a `const`, `[E.A]`, `[sym]`, `[Symbol.iterator]`).
+    ///
+    /// This is tsc's `isComputedNonLiteralName` negated, and it is what
+    /// selects between the computed-property diagnostic `TS2418` and ordinary
+    /// property assignability: a literal-spelled computed name is not a
+    /// late-bound name at all, so a value mismatch under it reports `TS2322`
+    /// and an excess property reports `TS2353` — whether the target matches
+    /// the name by a declared member or only by an index signature. Distinct
+    /// from `is_eagerly_bound_member_name`, which answers `true` for every
+    /// non-computed name; callers here have already established that the
+    /// member carries a computed name and need the two computed spellings
+    /// told apart.
+    pub(crate) fn computed_member_name_is_literal_spelled(&self, name_idx: NodeIndex) -> bool {
+        self.ctx
+            .arena
+            .get(name_idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+            && self.is_eagerly_bound_member_name(name_idx)
+    }
+
     /// Check if a computed property name resolves to a string literal type
     /// (e.g. `[hundredStr]` where `const hundredStr = "100"`).
     pub(crate) fn is_computed_string_property_name(&mut self, name_idx: NodeIndex) -> bool {

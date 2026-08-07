@@ -117,6 +117,9 @@ impl<'a> CheckerState<'a> {
         let is_arrow_function = node.kind == syntax_kind_ext::ARROW_FUNCTION;
 
         if !is_function_declaration && !is_method_or_constructor {
+            // TS2300 for function expressions, arrows and accessors (the other
+            // forms run it via their own declaration/object-literal check sites).
+            self.check_duplicate_parameters(parameters, body.is_some());
             self.check_parameter_ordering(parameters, Some(idx));
             self.check_binding_pattern_optionality(&parameters.nodes, body.is_some(), Some(idx));
             self.check_rest_parameter_types(&parameters.nodes);

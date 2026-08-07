@@ -1139,6 +1139,46 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             .map(|sym_id| (sym_id, file_idx))
     }
 
+    /// Whether every class/function declaration of `sym` found in the binder at
+    /// `binder_idx` is ambient (`declare class` / `declare function`) or a bodyless
+    /// function overload signature. Mirrors the same-file carve-out this check already
+    /// grants (a `declare class`/`declare function` merge is not an error, only a
+    /// non-ambient one is) — the cross-file candidate search skipped that carve-out
+    /// entirely, so a namespace merged across files with only an ambient class/function
+    /// falsely reported TS2433. `NodeArena::is_in_ambient_context` reads the node's own
+    /// `declare` modifier/AMBIENT flag, so it is correct against the *other* file's arena
+    /// without needing that file's name.
+    fn cross_file_class_or_function_all_ambient(
+        &self,
+        binder_idx: usize,
+        sym: &tsz_binder::Symbol,
+    ) -> bool {
+        let arena = self.ctx.get_arena_for_file(binder_idx as u32);
+        let mut found_any = false;
+        for &decl_idx in &sym.declarations {
+            let Some(decl_node) = arena.get(decl_idx) else {
+                continue;
+            };
+            let is_class = decl_node.kind == syntax_kind_ext::CLASS_DECLARATION;
+            let is_function = decl_node.kind == syntax_kind_ext::FUNCTION_DECLARATION;
+            if !is_class && !is_function {
+                continue;
+            }
+            found_any = true;
+            if arena.is_in_ambient_context(decl_idx) {
+                continue;
+            }
+            if is_function
+                && let Some(func) = arena.get_function(decl_node)
+                && func.body.is_none()
+            {
+                continue;
+            }
+            return false;
+        }
+        found_any
+    }
+
     /// Check TS2433/TS2434: Namespace merging with class/function across files or out of order.
     ///
     /// TS2433: A namespace declaration cannot be in a different file from a class or function
@@ -1242,20 +1282,33 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     };
 
                 for (binder_idx, found_sym_id) in candidates {
-                    let _ = binder_idx; // used in nested path
+                    // `found_sym_id` was found in the *other* file's `file_locals`/`exports`
+                    // map, so it must be resolved against that file's own binder
+                    // (`all_binders[binder_idx]`) — `self.ctx.binder` is always the
+                    // *current* file's binder, and a raw `SymbolId` is only meaningful
+                    // within the binder that minted it.
+                    let Some(other_binder) = all_binders.get(binder_idx) else {
+                        continue;
+                    };
 
                     // For top-level namespaces (no enclosing names), check file_locals
                     if enclosing_names.is_empty() {
                         let other_sym_id = found_sym_id;
                         if other_sym_id != sym_id
-                            && let Some(other_symbol) = self.ctx.binder.get_symbol(other_sym_id)
+                            && let Some(other_symbol) = other_binder.get_symbol(other_sym_id)
                         {
                             let is_class =
                                 (other_symbol.flags & tsz_binder::symbol_flags::CLASS) != 0;
                             let is_function =
                                 (other_symbol.flags & tsz_binder::symbol_flags::FUNCTION) != 0;
 
-                            if (is_class || is_function) && !other_symbol.declarations.is_empty() {
+                            if (is_class || is_function)
+                                && !other_symbol.declarations.is_empty()
+                                && !self.cross_file_class_or_function_all_ambient(
+                                    binder_idx,
+                                    other_symbol,
+                                )
+                            {
                                 if let Some(name_node) = self.ctx.arena.get(module.name) {
                                     self.ctx.error(
                                         name_node.pos,
@@ -1279,7 +1332,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     let mut current_sym_id = root_sym_id;
                     let mut found = true;
                     for intermediate_name in &enclosing_names[1..] {
-                        if let Some(sym) = self.ctx.binder.get_symbol(current_sym_id)
+                        if let Some(sym) = other_binder.get_symbol(current_sym_id)
                             && let Some(exports) = &sym.exports
                             && let Some(next_id) = exports.get(intermediate_name.as_str())
                         {
@@ -1295,17 +1348,21 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     }
 
                     // Now look for the target name in the innermost container's exports
-                    if let Some(container_sym) = self.ctx.binder.get_symbol(current_sym_id)
+                    if let Some(container_sym) = other_binder.get_symbol(current_sym_id)
                         && let Some(exports) = &container_sym.exports
                         && let Some(target_sym_id) = exports.get(namespace_name.as_str())
                         && target_sym_id != sym_id
-                        && let Some(target_sym) = self.ctx.binder.get_symbol(target_sym_id)
+                        && let Some(target_sym) = other_binder.get_symbol(target_sym_id)
                     {
                         let is_class = (target_sym.flags & tsz_binder::symbol_flags::CLASS) != 0;
                         let is_function =
                             (target_sym.flags & tsz_binder::symbol_flags::FUNCTION) != 0;
 
-                        if (is_class || is_function) && !target_sym.declarations.is_empty() {
+                        if (is_class || is_function)
+                            && !target_sym.declarations.is_empty()
+                            && !self
+                                .cross_file_class_or_function_all_ambient(binder_idx, target_sym)
+                        {
                             if let Some(name_node) = self.ctx.arena.get(module.name) {
                                 self.ctx.error(
                                     name_node.pos,

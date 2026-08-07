@@ -59,23 +59,28 @@ fn find_tsz_binary() -> Option<PathBuf> {
 }
 
 fn emit_dts(name: &str, source: &str) -> Option<String> {
+    emit_dts_with_args(name, source, &["--target", "es2015", "--lib", "es6"])
+}
+
+/// Emit with the default (es2018) lib so `AsyncGenerator` and a bare `Generator`
+/// delegate resolve. Used by the delegated-`TNext` pins, whose delegate carries
+/// `TNext = any` from the lib default — a shape the es6-only harness cannot name.
+fn emit_dts_default_lib(name: &str, source: &str) -> Option<String> {
+    emit_dts_with_args(name, source, &["--target", "es2018"])
+}
+
+fn emit_dts_with_args(name: &str, source: &str, extra_args: &[&str]) -> Option<String> {
     let tsz_bin = find_tsz_binary()?;
     let temp = TempDir::new(name).expect("temp dir");
     let src_path = temp.path.join("repro.ts");
     std::fs::write(&src_path, source).expect("write repro file");
 
+    let mut args = vec!["repro.ts", "--declaration", "--emitDeclarationOnly"];
+    args.extend_from_slice(extra_args);
+    args.extend_from_slice(&["--pretty", "false"]);
+
     let output = Command::new(tsz_bin)
-        .args([
-            "repro.ts",
-            "--declaration",
-            "--emitDeclarationOnly",
-            "--target",
-            "es2015",
-            "--lib",
-            "es6",
-            "--pretty",
-            "false",
-        ])
+        .args(&args)
         .current_dir(&temp.path)
         .output()
         .expect("run tsz declaration emit");
@@ -215,5 +220,106 @@ fn yield_star_unresolvable_operand_keeps_any_fallback() {
     assert!(
         dts.contains("gen(x: Iterable<unknown>): Generator<"),
         "unresolvable yield* should still emit a Generator return type:\n{dts}"
+    );
+}
+
+/// Delegating to a bare `Generator` (`Generator<unknown, any, any>`) contributes
+/// the delegate's own `TNext` — `any` — to the enclosing generator's inferred
+/// `TNext`. `tsc` renders a *computed* generator return type with all three type
+/// arguments and never drops a trailing one that equals its default, so the
+/// delegated `any` survives:
+///
+/// ```ts
+/// declare function src(): Generator;
+/// function* relay() { yield* src(); }
+/// // tsc: relay(): Generator<unknown, void, any>
+/// ```
+///
+/// tsz previously trimmed the trailing `any` because it equaled the lib default,
+/// emitting `Generator<unknown, void>` — the divergence #15632 tracks. The
+/// declaration function, the function expression, and a renamed binder all share
+/// the same body-driven inference, so all three must keep the third argument.
+#[test]
+fn yield_star_bare_generator_delegation_keeps_any_next_type() {
+    let Some(dts) = emit_dts_default_lib(
+        "bare_next",
+        r#"
+declare function src(): Generator;
+function* relay() { yield* src(); }
+const relayExpr = function* () { yield* src(); };
+function* zzz() { yield* src(); }
+export { relay, relayExpr, zzz };
+"#,
+    ) else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+
+    assert!(
+        dts.contains("relay(): Generator<unknown, void, any>"),
+        "a bare-`Generator` delegate contributes `TNext = any`; the trailing \
+         argument must not be trimmed against the lib default:\n{dts}"
+    );
+    assert!(
+        dts.contains("relayExpr: () => Generator<unknown, void, any>"),
+        "the function-expression path shares the same delegated-`TNext`:\n{dts}"
+    );
+    assert!(
+        dts.contains("zzz(): Generator<unknown, void, any>"),
+        "the delegated-`TNext` rendering must not depend on the binder name:\n{dts}"
+    );
+    assert!(
+        !dts.contains("Generator<unknown, void>"),
+        "the trailing `any` must not be elided as a default:\n{dts}"
+    );
+}
+
+/// The async arm carries the same delegated `TNext = any` into `AsyncGenerator`.
+#[test]
+fn async_yield_star_bare_generator_delegation_keeps_any_next_type() {
+    let Some(dts) = emit_dts_default_lib(
+        "bare_next_async",
+        r#"
+declare function asrc(): AsyncGenerator;
+async function* arelay() { yield* asrc(); }
+export { arelay };
+"#,
+    ) else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+
+    assert!(
+        dts.contains("arelay(): AsyncGenerator<unknown, void, any>"),
+        "async delegation to a bare `AsyncGenerator` must keep the delegated \
+         `TNext = any`:\n{dts}"
+    );
+}
+
+/// The same all-arguments rule beyond generators: a *computed* re-export of a
+/// value whose type instantiates a generic with trailing arguments equal to
+/// their defaults keeps every argument, matching `tsc`
+/// (`const r = w` where `w: Foo<boolean, string>` emits
+/// `Foo<boolean, string, number>`, not `Foo<boolean>`). This guards the printer
+/// change from being narrowed back to a generator-only special case.
+#[test]
+fn computed_reexport_keeps_all_default_equal_type_arguments() {
+    let Some(dts) = emit_dts_default_lib(
+        "computed_defaults",
+        r#"
+interface Foo<A, B = string, C = number> { a: A; b: B; c: C; }
+declare const w: Foo<boolean, string>;
+const r = w;
+export { r };
+"#,
+    ) else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+
+    assert!(
+        dts.contains("r: Foo<boolean, string, number>"),
+        "a computed reference renders its full argument list, including trailing \
+         arguments that equal their defaults:\n{dts}"
     );
 }

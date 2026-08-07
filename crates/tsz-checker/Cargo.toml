@@ -264,6 +264,9 @@ path = "tests/union_protected_intersection_property_tests.rs"
 name = "weak_object_union_member_subtype_reduction_tests"
 path = "tests/weak_object_union_member_subtype_reduction_tests.rs"
 [[test]]
+name = "weak_type_union_member_instantiated_relation_tests"
+path = "tests/weak_type_union_member_instantiated_relation_tests.rs"
+[[test]]
 name = "tuple_element_mismatch_tests"
 path = "tests/tuple_element_mismatch_tests.rs"
 [[test]]
@@ -614,6 +617,9 @@ path = "tests/ts1240_accessor_decorator_tests.rs"
 [[test]]
 name = "ts1241_method_decorator_tests"
 path = "tests/ts1241_method_decorator_tests.rs"
+[[test]]
+name = "ts1271_parameter_decorator_return_type_tests"
+path = "tests/ts1271_parameter_decorator_return_type_tests.rs"
 [[test]]
 name = "ts1249_method_overload_decorator_tests"
 path = "tests/ts1249_method_overload_decorator_tests.rs"
@@ -1119,6 +1125,9 @@ path = "tests/well_known_symbol_syntactic_key_parity_tests.rs"
 name = "wide_symbol_computed_member_index_signature_tests"
 path = "tests/wide_symbol_computed_member_index_signature_tests.rs"
 [[test]]
+name = "wide_computed_index_source_display_tests"
+path = "tests/wide_computed_index_source_display_tests.rs"
+[[test]]
 name = "well_known_symbol_type_query_alias_key_tests"
 path = "tests/well_known_symbol_type_query_alias_key_tests.rs"
 [[test]]
@@ -1526,6 +1535,9 @@ path = "tests/ts2344_keyof_bare_tparam_defer_tests.rs"
 [[test]]
 name = "ts2344_keyof_constraint_display_tests"
 path = "tests/ts2344_keyof_constraint_display_tests.rs"
+[[test]]
+name = "ts2344_primitive_key_union_alias_constraint_display_tests"
+path = "tests/ts2344_primitive_key_union_alias_constraint_display_tests.rs"
 [[test]]
 name = "ts2344_conditional_constraint_display_tests"
 path = "tests/ts2344_conditional_constraint_display_tests.rs"
@@ -2042,6 +2054,9 @@ path = "tests/string_mapping_alias_display_tests.rs"
 [[test]]
 name = "template_intrinsic_literal_union_alias_display_tests"
 path = "tests/template_intrinsic_literal_union_alias_display_tests.rs"
+[[test]]
+name = "mapped_conditional_keyof_indexed_access_tests"
+path = "tests/mapped_conditional_keyof_indexed_access_tests.rs"
 [[test]]
 name = "class_field_mapped_type_indexed_access_tests"
 path = "tests/class_field_mapped_type_indexed_access_tests.rs"
@@ -2697,3 +2712,18 @@ path = "tests/qualified_default_import_enum_namespace_merge_root_tests.rs"
 [[test]]
 name = "union_display_alias_repaint_parity_tests"
 path = "tests/union_display_alias_repaint_parity_tests.rs"
+[[test]]
+name = "symbol_key_index_signature_selection_tests"
+path = "tests/symbol_key_index_signature_selection_tests.rs"
+[[test]]
+name = "symbol_key_nested_literal_excess_property_tests"
+path = "tests/symbol_key_nested_literal_excess_property_tests.rs"
+[[test]]
+name = "symbol_index_nested_literal_drill_in_ts2353_tests"
+path = "tests/symbol_index_nested_literal_drill_in_ts2353_tests.rs"
+[[test]]
+name = "optional_chain_any_receiver_no_expando_read_tests"
+path = "tests/optional_chain_any_receiver_no_expando_read_tests.rs"
+[[test]]
+name = "ts2433_cross_file_ambient_class_merge_tests"
+path = "tests/ts2433_cross_file_ambient_class_merge_tests.rs"

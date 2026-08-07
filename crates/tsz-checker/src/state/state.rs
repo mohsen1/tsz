@@ -310,6 +310,30 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Like [`Self::with_cache`], but for callers whose `compiler_options` is
+    /// already fully resolved. See
+    /// [`CheckerContext::with_cache_pre_resolved`] for why this matters.
+    pub fn with_cache_pre_resolved(
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
+        types: &'a dyn QueryDatabase,
+        file_name: String,
+        cache: crate::TypeCache,
+        compiler_options: CheckerOptions,
+    ) -> Self {
+        tsz_common::perf_counters::record_checker_state_constructed();
+        CheckerState {
+            ctx: CheckerContext::with_cache_pre_resolved(
+                arena,
+                binder,
+                types,
+                file_name,
+                cache,
+                compiler_options,
+            ),
+        }
+    }
+
     /// Thread-local guard for cross-arena delegation depth.
     /// All cross-arena delegation points (`delegate_cross_arena_symbol_resolution`,
     /// `get_type_params_for_symbol`, `type_of_value_declaration`) MUST call this

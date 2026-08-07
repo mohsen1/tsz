@@ -57,9 +57,23 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         }
 
-        if self.optional_chain_invalid_assignment_target_context(idx) {
+        // The ANY short-circuit exists so an invalid write target can't cascade
+        // into assignability diagnostics (TS2322 etc.) — it does not apply to a
+        // genuine read of this node. Compound assignment and increment/decrement
+        // read the target's value before writing it (`get_type_of_node`, default
+        // Read flow), and that read must see the target's real type — including
+        // any `undefined` introduced by an optional chain's own short-circuit
+        // marker — so the existing nullish-operand checks can fire on it, the
+        // same way tsc reports `TS18048` on a read-before-write target.
+        if skip_flow_narrowing && self.optional_chain_invalid_assignment_target_context(idx) {
             let read_request = request.read().normal_origin().contextual_opt(None);
-            let _ = self.get_type_of_node_with_request(access.expression, &read_request);
+            let receiver_type =
+                self.get_type_of_node_with_request(access.expression, &read_request);
+            self.report_write_target_chain_nullish_receiver(
+                access.expression,
+                access.question_dot_token,
+                receiver_type,
+            );
             return TypeId::ANY;
         }
 

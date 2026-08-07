@@ -559,6 +559,34 @@ impl ParserState {
             );
             self.next_token();
             self.parse_statement()
+        } else if self.look_ahead_is_stacked_modifier_run_before_export_as_namespace() {
+            // `<modifier> <modifier> ... export as namespace Foo;` — a run of
+            // two or more stray modifiers before a `NamespaceExportDeclaration`.
+            // This generalizes the single-modifier case (#16540) to a run of
+            // any length: `modified_export_form` only looks one modifier past
+            // the current token, so a run never reached that path and fell into
+            // the `TS1128` recovery below instead. tsc reports a single TS1184
+            // anchored at the first modifier and threads the declaration's span
+            // from there so its own placement diagnostic (TS1314/TS1315/TS1316)
+            // anchors at the first modifier too — regardless of the run's
+            // length, the modifier kinds, their order, or the container, since a
+            // `NamespaceExportDeclaration` admits no modifiers anywhere
+            // (oracle-pinned, `typescript@7.0.2`, #16403). The lookahead already
+            // excluded the two runs tsc does *not* answer this way (a repeated
+            // `static`, and a run containing `override`), so every run reaching
+            // here takes the uniform answer.
+            let run_start = self.token_pos();
+            self.parse_error_at_current_token(
+                "Modifiers cannot appear here.",
+                diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+            );
+            self.next_token(); // consume the first modifier
+            while Self::is_stacked_export_run_modifier(self.token())
+                && !self.scanner.has_preceding_line_break()
+            {
+                self.next_token();
+            }
+            self.parse_export_declaration_from(run_start)
         } else if self.look_ahead_is_modifier_before_declaration() {
             // `static`/`public`/`protected`/`private`/`readonly` share the
             // same container split (#16403 slices 1-2): a Block body gets
@@ -1079,6 +1107,90 @@ impl ParserState {
         self.scanner.restore_state(snapshot);
         self.current_token = current;
         form
+    }
+
+    /// The stray modifier keywords that may lead or fill a run before an
+    /// `export as namespace` declaration and that tsc collapses into a single
+    /// TS1184. `override` is deliberately excluded — it has its own
+    /// unconditional TS1434 recovery (see `parse_statement_top_level_modifier`)
+    /// — and so is `export` itself, which terminates the run.
+    const fn is_stacked_export_run_modifier(kind: SyntaxKind) -> bool {
+        matches!(
+            kind,
+            SyntaxKind::StaticKeyword
+                | SyntaxKind::PublicKeyword
+                | SyntaxKind::ProtectedKeyword
+                | SyntaxKind::PrivateKeyword
+                | SyntaxKind::ReadonlyKeyword
+                | SyntaxKind::AccessorKeyword
+                | SyntaxKind::AsyncKeyword
+                | SyntaxKind::AbstractKeyword
+                | SyntaxKind::DeclareKeyword
+        )
+    }
+
+    /// True when a run of **two or more** modifier keywords (no intervening
+    /// line break) immediately precedes `export as` — a stacked-modifier
+    /// `NamespaceExportDeclaration` such as `static readonly export as
+    /// namespace N;`. tsc collapses the whole run into one TS1184 at the first
+    /// modifier and anchors the declaration's placement diagnostic
+    /// (TS1314/TS1315/TS1316) there too, independent of the run's length, the
+    /// modifier kinds, their order, or the container. This generalizes the
+    /// single-modifier case (#16540) to a run.
+    ///
+    /// Two runs are deliberately excluded because tsc does **not** take the
+    /// uniform path for them, so firing here would produce a *wrong* answer,
+    /// not merely a different one (both oracle-pinned, `typescript@7.0.2`):
+    /// - a run containing `override` — tsc reports its own TS1434/TS1128
+    ///   recovery at the `override` token — which drops out naturally because
+    ///   `override` is not an `is_stacked_export_run_modifier`, so the run ends
+    ///   there and the `export` check below fails; and
+    /// - a run with a repeated `static`, which tsc recovers as TS1146
+    ///   ("Declaration expected.") at the second `static`.
+    ///
+    /// The single-modifier case is left to the ordinary `modified_export_form`
+    /// path and excluded here by the two-or-more requirement. The decision
+    /// turns only on token *kinds*, never on the exported name or the specific
+    /// modifier text (anti-hardcoding).
+    fn look_ahead_is_stacked_modifier_run_before_export_as_namespace(&mut self) -> bool {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+
+        // A first token that is not a run modifier leaves `count` at 0, which
+        // the `count >= 2` guard below already rejects — no separate early
+        // return is needed.
+        let mut count = 0usize;
+        let mut static_count = 0usize;
+        // Consume the leading run of modifier keywords, requiring same-line
+        // adjacency (a line break ends the run — ASI — so the leading modifier
+        // is an expression statement instead, matching tsc).
+        loop {
+            let kind = self.token();
+            if !Self::is_stacked_export_run_modifier(kind) {
+                break;
+            }
+            if kind == SyntaxKind::StaticKeyword {
+                static_count += 1;
+            }
+            count += 1;
+            self.next_token();
+            if self.scanner.has_preceding_line_break() {
+                break;
+            }
+        }
+
+        let matched = count >= 2
+            && static_count <= 1
+            && self.token() == SyntaxKind::ExportKeyword
+            && !self.scanner.has_preceding_line_break()
+            && {
+                self.next_token(); // skip `export`
+                self.token() == SyntaxKind::AsKeyword && !self.scanner.has_preceding_line_break()
+            };
+
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        matched
     }
 
     /// Look ahead to see if we have "async function"

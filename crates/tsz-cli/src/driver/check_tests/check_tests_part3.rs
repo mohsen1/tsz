@@ -1063,6 +1063,136 @@ interface Node {
         );
     }
 
+    // TS2499 ("An interface can only extend an identifier/qualified-name with
+    // optional type arguments") for a parenthesized/bracketed heritage
+    // expression is reported by both the parser
+    // (`parse_interface_heritage_type_reference`) and the checker's
+    // independent generic heritage walk (`heritage.rs`) for the same node.
+    // tsc emits it exactly once (oracle: `typescript@7.0.2`); these pin the
+    // dedup in `post_process_checker_diagnostics` and the Direction-B
+    // suppression via `is_parser_grammar_code`.
+
+    fn ts2499_count(diagnostics: &[Diagnostic], file: &str) -> usize {
+        diagnostics
+            .iter()
+            .filter(|diag| diag.file == file && diag.code == 2499)
+            .count()
+    }
+
+    #[test]
+    fn interface_extends_parenthesized_expression_reports_ts2499_once() {
+        let diagnostics =
+            collect_test_diagnostics(&[("/a.ts", "interface I extends (1 + 2) {}\n")]);
+        assert_eq!(
+            ts2499_count(&diagnostics, "/a.ts"),
+            1,
+            "expected exactly one TS2499, not a parser+checker double-report: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn interface_extends_bracketed_expression_reports_ts2499_once() {
+        let diagnostics =
+            collect_test_diagnostics(&[("/a.ts", "interface I extends [1, 2] {}\n")]);
+        assert_eq!(
+            ts2499_count(&diagnostics, "/a.ts"),
+            1,
+            "expected exactly one TS2499, not a parser+checker double-report: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn interface_extends_class_expression_reports_ts2499_once() {
+        // Checker-only shape: the parenthesized operand is a class
+        // expression rather than a binary/array literal, but the parser's
+        // open-paren grammar check still fires alongside the checker's
+        // generic heritage walk, so this exercises the same dedup.
+        let diagnostics =
+            collect_test_diagnostics(&[("/a.ts", "interface I extends (class {}) {}\n")]);
+        assert_eq!(
+            ts2499_count(&diagnostics, "/a.ts"),
+            1,
+            "expected exactly one TS2499: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn interface_extends_renamed_binder_reports_ts2499_once() {
+        // Anti-hardcoding: a differently-named interface/binder must not
+        // change the dedup outcome.
+        let diagnostics =
+            collect_test_diagnostics(&[("/a.ts", "interface Zeta extends (99 - 1) {}\n")]);
+        assert_eq!(
+            ts2499_count(&diagnostics, "/a.ts"),
+            1,
+            "expected exactly one TS2499: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn two_invalid_interface_heritage_clauses_each_report_ts2499_once() {
+        // Distinct nodes at distinct positions must not cross-cancel each
+        // other in the position-keyed dedup.
+        let diagnostics = collect_test_diagnostics(&[(
+            "/a.ts",
+            "interface A extends (1 + 2) {}\ninterface B extends [3, 4] {}\n",
+        )]);
+        assert_eq!(
+            ts2499_count(&diagnostics, "/a.ts"),
+            2,
+            "expected one TS2499 per interface, not merged or duplicated: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn real_syntax_error_suppresses_parenthesized_interface_heritage_ts2499() {
+        // Direction B: tsc's grammar-error suppression (hasParseDiagnostics)
+        // drops TS2499 program-wide when a real, unrelated syntax error is
+        // also present — matching the already-listed grammar codes' behavior.
+        let diagnostics = collect_test_diagnostics(&[(
+            "/a.ts",
+            "interface I extends (1 + 2) {}\nlet x: = 1;\n",
+        )]);
+        assert_eq!(
+            ts2499_count(&diagnostics, "/a.ts"),
+            0,
+            "expected TS2499 to be suppressed alongside a real syntax error: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn interface_extends_valid_qualified_name_reports_no_ts2499() {
+        // Negative control: a genuinely valid heritage clause (a namespaced
+        // qualified name) must not trip either emission site.
+        let diagnostics = collect_test_diagnostics(&[(
+            "/a.ts",
+            "declare namespace N { interface Base {} }\ninterface I extends N.Base {}\n",
+        )]);
+        assert_eq!(
+            ts2499_count(&diagnostics, "/a.ts"),
+            0,
+            "expected no TS2499 for a valid qualified-name heritage clause: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn class_implements_parenthesized_expression_still_reports_ts2500_once() {
+        // Negative control for the fix's blast radius: TS2500 (class
+        // `implements`) has no parser-side emission site for this shape, so
+        // it must be unaffected by the new TS2499-specific dedup and
+        // grammar-list entry.
+        let diagnostics =
+            collect_test_diagnostics(&[("/a.ts", "class C implements (1 as any) {}\n")]);
+        assert_eq!(
+            diagnostics
+                .iter()
+                .filter(|diag| diag.file == "/a.ts" && diag.code == 2500)
+                .count(),
+            1,
+            "expected exactly one TS2500: {diagnostics:?}"
+        );
+    }
+
     // --- topological_file_order tests ---
 
     #[test]

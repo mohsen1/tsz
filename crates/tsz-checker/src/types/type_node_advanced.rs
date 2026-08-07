@@ -85,6 +85,17 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         return evaluated;
                     }
                 }
+                // tsc's `getIndexType` resolves a `any`/`unknown`/`never` operand
+                // to its fixed key-space result (`string | number | symbol` /
+                // `never` / `string | number | symbol`) immediately, rather than
+                // building a deferred `IndexType` node — the operator itself
+                // never survives to the printer for these operands, so a bare
+                // `keyof any` annotation displays as the resolved union, not
+                // `keyof any`. Other operands (object/interface/generic) keep
+                // the deferred `KeyOf` node so the printer still shows `keyof T`.
+                if matches!(inner_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::NEVER) {
+                    return self.ctx.types.evaluate_keyof(inner_type);
+                }
                 return factory.keyof(inner_type);
             }
 

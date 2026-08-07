@@ -156,7 +156,12 @@ impl<'a> CheckerState<'a> {
             if let Some(param) = decl_arena.get_parameter(decl)
                 && param.type_annotation.is_some()
             {
-                if self.annotation_names_type_query_alias(decl_arena, param.type_annotation) {
+                if self.annotation_names_type_query_alias(decl_arena, param.type_annotation)
+                    || Self::annotation_is_keyof_over_degenerate_operand(
+                        decl_arena,
+                        param.type_annotation,
+                    )
+                {
                     return None;
                 }
                 let mut text =
@@ -181,7 +186,12 @@ impl<'a> CheckerState<'a> {
             if let Some(var_decl) = decl_arena.get_variable_declaration(decl)
                 && var_decl.type_annotation.is_some()
             {
-                if self.annotation_names_type_query_alias(decl_arena, var_decl.type_annotation) {
+                if self.annotation_names_type_query_alias(decl_arena, var_decl.type_annotation)
+                    || Self::annotation_is_keyof_over_degenerate_operand(
+                        decl_arena,
+                        var_decl.type_annotation,
+                    )
+                {
                     return None;
                 }
                 return node_text_in_arena(decl_arena, var_decl.type_annotation).and_then(|text| {
@@ -194,7 +204,12 @@ impl<'a> CheckerState<'a> {
             if let Some(prop_decl) = decl_arena.get_property_decl(decl)
                 && prop_decl.type_annotation.is_some()
             {
-                if self.annotation_names_type_query_alias(decl_arena, prop_decl.type_annotation) {
+                if self.annotation_names_type_query_alias(decl_arena, prop_decl.type_annotation)
+                    || Self::annotation_is_keyof_over_degenerate_operand(
+                        decl_arena,
+                        prop_decl.type_annotation,
+                    )
+                {
                     return None;
                 }
                 return node_text_in_arena(decl_arena, prop_decl.type_annotation).and_then(
@@ -275,7 +290,12 @@ impl<'a> CheckerState<'a> {
         if let Some(param) = decl_arena.get_parameter(decl)
             && param.type_annotation.is_some()
         {
-            if self.annotation_names_type_query_alias(decl_arena, param.type_annotation) {
+            if self.annotation_names_type_query_alias(decl_arena, param.type_annotation)
+                || Self::annotation_is_keyof_over_degenerate_operand(
+                    decl_arena,
+                    param.type_annotation,
+                )
+            {
                 return None;
             }
             return node_text_in_arena(decl_arena, param.type_annotation).and_then(|text| {
@@ -286,7 +306,12 @@ impl<'a> CheckerState<'a> {
         if let Some(var_decl) = decl_arena.get_variable_declaration(decl)
             && var_decl.type_annotation.is_some()
         {
-            if self.annotation_names_type_query_alias(decl_arena, var_decl.type_annotation) {
+            if self.annotation_names_type_query_alias(decl_arena, var_decl.type_annotation)
+                || Self::annotation_is_keyof_over_degenerate_operand(
+                    decl_arena,
+                    var_decl.type_annotation,
+                )
+            {
                 return None;
             }
             return node_text_in_arena(decl_arena, var_decl.type_annotation).and_then(|text| {
@@ -425,6 +450,84 @@ impl<'a> CheckerState<'a> {
             }
             _ => false,
         }
+    }
+
+    /// Whether `annotation_idx` is a `UNION` type written longhand whose every
+    /// member is a built-in primitive keyword type (`string`, `number`,
+    /// `symbol`, …) — e.g. `string | number | symbol`.
+    ///
+    /// tsc gives such an inline union no `aliasSymbol` and renders it
+    /// structurally; tsz otherwise repaints it with a coincidentally-shaped
+    /// non-generic alias (`PropertyKey`, a user `type`) reached through the
+    /// reverse type-to-def lookup (#16610). This is deliberately narrower than
+    /// [`Self::annotation_is_anonymous_structural_composite`]: it admits no
+    /// object-literal or named/nested constituent, so rendering the type through
+    /// the structural formatter can never erase a nested member's name (the way
+    /// a `number | { [k: string]: Named }` annotation would). A reference to an
+    /// actual named type — even one whose body is a primitive union — is
+    /// excluded, so a written-through alias keeps its name.
+    pub(in crate::error_reporter) fn annotation_is_longhand_primitive_keyword_union(
+        arena: &tsz_parser::NodeArena,
+        annotation_idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = arena.get(annotation_idx) else {
+            return false;
+        };
+        // Peel a single layer of parentheses (`(string | number)`).
+        let node = if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE {
+            let Some(inner) = arena
+                .get_wrapped_type(node)
+                .and_then(|wrapped| arena.get(wrapped.type_node))
+            else {
+                return false;
+            };
+            inner
+        } else {
+            node
+        };
+        if node.kind != syntax_kind_ext::UNION_TYPE {
+            return false;
+        }
+        arena.get_composite_type(node).is_some_and(|composite| {
+            composite.types.nodes.len() >= 2
+                && composite
+                    .types
+                    .nodes
+                    .iter()
+                    .all(|&member_idx| Self::type_node_is_primitive_keyword(arena, member_idx))
+        })
+    }
+
+    /// Whether `member_idx` denotes a built-in primitive keyword type, whether
+    /// written as a bare `TYPE_REFERENCE` (`string`) or a keyword node
+    /// (`StringKeyword`). A reference with type arguments, a qualified name, or a
+    /// user/lib alias name returns `false`; the keyword set is the canonical
+    /// built-in mapping, and these names are reserved so a reference to one can
+    /// never denote a user alias.
+    fn type_node_is_primitive_keyword(
+        arena: &tsz_parser::NodeArena,
+        member_idx: NodeIndex,
+    ) -> bool {
+        use crate::types_domain::queries::lib_resolution::{
+            keyword_name_to_type_id, keyword_syntax_to_type_id,
+        };
+        let Some(node) = arena.get(member_idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            return arena
+                .get_type_ref(node)
+                .filter(|type_ref| {
+                    type_ref
+                        .type_arguments
+                        .as_ref()
+                        .is_none_or(|args| args.nodes.is_empty())
+                })
+                .and_then(|type_ref| arena.get(type_ref.type_name))
+                .and_then(|name_node| arena.get_identifier(name_node))
+                .is_some_and(|ident| keyword_name_to_type_id(&ident.escaped_text).is_some());
+        }
+        keyword_syntax_to_type_id(node.kind).is_some()
     }
 
     fn declared_annotation_can_name_union_source(&self, sym_id: SymbolId) -> bool {

@@ -142,14 +142,42 @@ export const t: { [k: symbol]: number } = i;
 }
 
 // ---------------------------------------------------------------------------
-// Known-failing rows, filed as their own issue rather than fixed here.
+// Known-failing rows (#16605), filed as their own issue rather than fixed here.
 //
-// The two rows below are `keyof` / indexed-access over a WELL-KNOWN symbol
-// key. They are the same `UniqueSymbol(SymbolRef)` <-> `[Symbol.xxx]` atom
-// round-trip that `TypeEvaluator::symbol_named_atom_from_unique_symbol_ref`
-// exists for, not applied on these two paths. Pinned as asserting `#[ignore]`d
-// tests carrying their oracle rows so they flip loudly when the round-trip is
-// fixed, instead of staying a silent absence.
+// The two rows below are `keyof` / indexed-access over a WELL-KNOWN symbol key,
+// the `UniqueSymbol(SymbolRef)` <-> `[Symbol.xxx]` atom round-trip. The failure
+// is NOT merely that `symbol_named_atom_from_unique_symbol_ref` is unapplied on
+// these paths — applying it is necessary but not sufficient, because of two
+// coupled defects the pins below the rows document and verify:
+//
+//   1. The `TypeLowering` fast path (`compute_type_of_symbol` ->
+//      `precompute_symbol_named_computed_property_names`) leaves a well-known
+//      member's `is_symbol_named` unset, disagreeing with the canonical
+//      `is_symbol_property_name` path, so `keyof` projects the member's shape
+//      atom as a plain string key. Flagging it symbol-named (or projecting a
+//      `unique symbol` key in `keyof`) makes `keyof I` a symbol, but routes
+//      well-known members through the ref-based key path a HOMOMORPHIC mapped
+//      type materializes through, regressing `for..of`/`for await..of`/spread
+//      over `DeepReadonly<Iterable<...>>` (TS2488/TS2504). The two are coupled.
+//
+//   2. `crates/tsz-lowering/src/lower/advanced.rs` mints a `unique symbol` ref
+//      from the ARENA-LOCAL node index (`SymbolRef(node_idx.0)`), so well-known
+//      members declared in different lib-file arenas collide on one shared ref
+//      — `typeof Symbol.iterator` and `typeof Symbol.asyncIterator` are the
+//      SAME type to tsz (pinned by `well_known_unique_symbols_are_conflated`).
+//      Under that collision the name<->ref registry cannot address one
+//      canonical `[Symbol.xxx]` atom, so the reverse lookup is ambiguous and
+//      the round-trip misses regardless of where it is applied.
+//
+// The fix is to make `unique symbol` refs globally unique (keyed off the
+// declaring member symbol, not an arena-local node index), after which flagging
+// well-known members symbol-named projects the correct key in both `keyof` and
+// indexed access without disturbing mapped-type materialization. Then the two
+// `#[ignore]`d rows below un-ignore and `well_known_unique_symbols_are_conflated`
+// flips to `contains(&2322)`.
+//
+// Pinned as asserting `#[ignore]`d tests carrying their oracle rows so they
+// flip loudly when the round-trip is fixed, instead of staying a silent absence.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -212,5 +240,29 @@ export const b: number = null as any as V;
         codes.is_empty(),
         "an indexed access keyed by a well-known symbol type must resolve the \
          member stored under its canonical `[Symbol.xxx]` atom; got: {codes:?}"
+    );
+}
+
+// Root-cause pin for the rows above (defect 2). tsz currently CONFLATES
+// distinct well-known unique symbols: `typeof Symbol.iterator` and
+// `typeof Symbol.asyncIterator` intern to the same `SymbolRef` (the arena-local
+// node index of their `unique symbol` type-operator nodes collides across lib
+// files), so assigning one to the other is wrongly accepted where tsc reports
+// TS2322. This asserts the CURRENT (buggy) behaviour so it flips loudly when
+// `unique symbol` refs are made globally unique — the prerequisite for
+// un-ignoring the two rows above. Update it to `contains(&2322)` as part of
+// that fix.
+#[test]
+fn well_known_unique_symbols_are_conflated() {
+    let codes = diagnostic_codes(
+        r#"
+export const a: typeof Symbol.iterator = Symbol.asyncIterator;
+"#,
+    );
+    assert!(
+        !codes.contains(&2322),
+        "PIN: tsz currently conflates distinct well-known unique symbols; when \
+         this starts reporting TS2322 the ref-collision fix has landed and the \
+         two #[ignore]d rows above should be un-ignored; got: {codes:?}"
     );
 }

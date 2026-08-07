@@ -238,7 +238,31 @@ impl<'a> CheckerState<'a> {
                 evaluated_type,
                 self.ctx.compiler_options.no_implicit_any,
             );
-            let evaluated_type = if helper_probe.get_this_type().is_none()
+            // tsc's `getIntersectedSignatures` (the >1-signature branch of
+            // `getContextualCallSignature`) returns undefined outright unless
+            // `noImplicitAny` is on — an overloaded, non-generic callable target
+            // contextually types nothing at all under a non-strict program, even
+            // when the probe above found no per-position type through the
+            // ordinary extractor. Synthesizing a merged mono `FunctionShape` here
+            // regardless of `noImplicitAny` would reintroduce that same
+            // cross-signature union the extractor now declines, just through this
+            // fallback instead. A single-signature callable is unaffected: tsc
+            // returns it unconditionally, so the merge below is a no-op there.
+            let overloaded_without_no_implicit_any = !self.ctx.compiler_options.no_implicit_any
+                && crate::query_boundaries::common::callable_shape_id(
+                    self.ctx.types,
+                    evaluated_type,
+                )
+                .is_some_and(|shape_id| {
+                    self.ctx
+                        .types
+                        .callable_shape(shape_id)
+                        .call_signatures
+                        .len()
+                        > 1
+                });
+            let evaluated_type = if !overloaded_without_no_implicit_any
+                && helper_probe.get_this_type().is_none()
                 && helper_probe.get_return_type().is_none()
                 && helper_probe.get_parameter_type(0).is_none()
                 && helper_probe.get_rest_parameter_type(0).is_none()

@@ -87,6 +87,22 @@ fn span_text(source: &str, start: u32, length: u32) -> &str {
     &source[start as usize..(start + length) as usize]
 }
 
+/// Each `TS2741`'s declared-here `(anchor start, anchor text)`, in source order
+/// of the diagnostics themselves. Shared by the per-element tuple rows, which
+/// all assert that every failing element carries its own pointer.
+fn ts2741_anchors_in_order(source: &str) -> Vec<(u32, String)> {
+    let diagnostics = check_source_diagnostics(source);
+    let mut ts2741: Vec<_> = diagnostics.iter().filter(|d| d.code == TS2741).collect();
+    ts2741.sort_by_key(|d| d.start);
+    ts2741
+        .iter()
+        .map(|d| {
+            let (_, start, length, _) = declared_here(d);
+            (start, span_text(source, start, length).to_string())
+        })
+        .collect()
+}
+
 /// The pointer models tsc's `relatedInformation`, not a `messageText` chain
 /// link, so it must carry that tag through to the reporter. Oracled on
 /// `typescript@7.0.2`: `tsc --noEmit --strict --pretty false` on this source
@@ -1572,46 +1588,85 @@ fn a_tuple_element_type_reference_resolves_through_its_alias() {
     assert_eq!(span_text(source, start, length), "eq");
 }
 
-/// The second half of the same remaining gap: an array *of* tuples stops at
-/// the inner whole-tuple `TS2322` (`Type '[{ kp: number; }]' is not assignable
-/// to type '[{ kp: number; kq: number; }]'`), so the walk is never reached
-/// here either. Both descents this file needs (`ARRAY_TYPE` then `TUPLE_TYPE`)
-/// are in place; the primary is the blocker.
-///
-/// Oracle: `t8.ts:2:24 - TS2741 Property 'kq' is missing …` with
-/// `t8.ts:1:33 - 'kq' is declared here.`
+// The array-*of*-tuples half of the gap — an array literal in a tuple-typed
+// element slot stopping at the inner whole-tuple `TS2322` — is closed at the
+// elaboration owner (#16631) rather than in this walk; its rows live in the
+// block at the end of this file (`an_array_of_tuples_reaches_ts2741_at_the_inner_element`
+// and siblings). Both descents this file needs (`ARRAY_TYPE` then `TUPLE_TYPE`)
+// were already in place; the primary was the blocker.
+
+/// Two elements declare the *same* property name. Each failing element is a
+/// distinct literal, so each is reported as its own `TS2741`, and the pointer
+/// is resolved by the failing element's *position* — the first `qq` anchors in
+/// the first element's type, the second in the second's. tsc does exactly this
+/// (`t5.ts:1:33` and `t5.ts:1:61`); uniqueness alone could not choose between
+/// the two identical declarations, so the element index threaded from the
+/// failing array-literal element is what disambiguates.
 #[test]
-fn an_array_of_tuples_still_reports_the_inner_whole_tuple_mismatch() {
-    let source = "type K1 = { tup: [{ kp: number; kq: number }][] };\nconst k: K1 = { tup: [[{ kp: 1 }]] };\n";
-    let diagnostics = check_source_diagnostics(source);
-    assert!(
-        diagnostics.iter().all(|d| d.code != TS2741),
-        "array-of-tuples primary is expected to still be a whole-tuple TS2322: {diagnostics:?}"
+fn two_tuple_elements_declaring_the_same_property_anchor_by_position() {
+    let source = "type A1 = { tup: [{ xp: number; qq: number }, { yp: number; qq: number }] };\nconst a: A1 = { tup: [{ xp: 1 }, { yp: 2 }] };\n";
+    let anchors = ts2741_anchors_in_order(source);
+    assert_eq!(
+        anchors.len(),
+        2,
+        "each failing tuple element is its own TS2741"
+    );
+    // Both name `qq`, but each points at a *different* `qq` declaration — the
+    // one inside its own element's type, in source order.
+    assert_eq!(anchors[0].1, "qq");
+    assert_eq!(anchors[1].1, "qq");
+    assert_eq!(
+        anchors[0].0,
+        source.find("qq").unwrap() as u32,
+        "first element points at the first qq"
+    );
+    assert_eq!(
+        anchors[1].0,
+        source.rfind("qq").unwrap() as u32,
+        "second element points at the second qq"
     );
 }
 
-/// Negative / declining case, and the remaining gap. Two elements declare the
-/// same property name, so the walk has no basis to pick between the two
-/// declaration sites and attaches no pointer — the same answer
-/// `unique_type_argument_anchor` gives for an ambiguous type argument.
-///
-/// tsc does better here because it carries the failing element's *position*:
-/// it reports two `TS2741`s and anchors each at its own element
-/// (`t5.ts:1:33` and `t5.ts:1:61`). Closing that needs an element index
-/// threaded from the failing array-literal element through the annotation
-/// walk, which `contextual_property_path` currently discards. Pinned so the
-/// gap is a recorded decline, not a silent wrong anchor.
+/// The false-negative twin: two elements each miss a *different* required
+/// property. tsz used to report only the first (`ax`) and silently drop the
+/// second; tsc reports both. Each is now its own `TS2741` anchored at its own
+/// element.
 #[test]
-fn two_tuple_elements_declaring_the_same_property_decline_the_pointer() {
-    let source = "type A1 = { tup: [{ xp: number; qq: number }, { yp: number; qq: number }] };\nconst a: A1 = { tup: [{ xp: 1 }, { yp: 2 }] };\n";
-    let diagnostics = check_source_diagnostics(source);
-    assert!(
-        !diagnostics
-            .iter()
-            .flat_map(|d| d.related_information.iter())
-            .any(|info| info.code == TS2728),
-        "an ambiguous element declaration must decline rather than guess: {diagnostics:?}"
+fn two_tuple_elements_missing_different_properties_both_report() {
+    let source = "type B1 = { tup: [{ xp: number; ax: number }, { yp: number; by: number }] };\nconst b: B1 = { tup: [{ xp: 1 }, { yp: 2 }] };\n";
+    let names: Vec<String> = ts2741_anchors_in_order(source)
+        .into_iter()
+        .map(|(_, name)| name)
+        .collect();
+    assert_eq!(
+        names,
+        vec!["ax", "by"],
+        "each element anchors its own missing prop"
     );
+}
+
+/// Renamed binders: the per-element anchoring keys on structure and position,
+/// never on the property spelling, so renaming every binder leaves the two
+/// same-named-property pointers landing on their own elements.
+#[test]
+fn two_tuple_elements_same_property_position_is_binder_name_independent() {
+    let source = "type Payload = { slots: [{ alpha: number; shared: number }, { beta: number; shared: number }] };\nconst p: Payload = { slots: [{ alpha: 1 }, { beta: 2 }] };\n";
+    let anchors = ts2741_anchors_in_order(source);
+    assert_eq!(anchors.len(), 2);
+    assert_eq!(anchors[0].0, source.find("shared").unwrap() as u32);
+    assert_eq!(anchors[1].0, source.rfind("shared").unwrap() as u32);
+}
+
+/// A `readonly` two-element tuple: the `readonly` `TYPE_OPERATOR` peel is
+/// transparent and carries the element index through, so both same-named
+/// pointers still land by position.
+#[test]
+fn readonly_two_tuple_elements_same_property_anchor_by_position() {
+    let source = "type R2 = { tup: readonly [{ xp: number; qq: number }, { yp: number; qq: number }] };\nconst r: R2 = { tup: [{ xp: 1 }, { yp: 2 }] };\n";
+    let anchors = ts2741_anchors_in_order(source);
+    assert_eq!(anchors.len(), 2);
+    assert_eq!(anchors[0].0, source.find("qq").unwrap() as u32);
+    assert_eq!(anchors[1].0, source.rfind("qq").unwrap() as u32);
 }
 
 /// `keyof` is not transparent the way `readonly` is, and the tuple arm must
@@ -1626,5 +1681,190 @@ fn keyof_over_a_tuple_stays_opaque_to_the_element_descent() {
             .flat_map(|d| d.related_information.iter())
             .any(|info| info.code == TS2728),
         "`keyof` must not descend into the tuple element: {diagnostics:?}"
+    );
+}
+
+// An array literal written for a tuple-typed *element slot* recovers its
+// tuple form, exactly as one written for a tuple-typed *property* does.
+//
+// Structural rule, oracled against `typescript@7.0.2`
+// (`--noEmit --strict --pretty --target es2022 --lib es2022`): when an array
+// literal is written for a slot whose declared type is a tuple, tsc
+// (`elaborateElementwise`) compares the *written* element list against the
+// tuple, so a missing property in one of its object-literal elements is
+// reported as `TS2741` with the `'x' is declared here.` pointer into the
+// element's own written type.
+//
+// tsz cached that inner literal as the widened array (`{ kp: number }[]`) —
+// its own check ran before the slot's contextual type was available — and
+// handed the widened form to the relation. An unbounded source against a
+// closed tuple takes the arity branch, so every one of these rows reported
+// `TS2322` plus the sub-message `Target requires 1 element(s) but source may
+// have fewer.`, which is false on its face for a literal that wrote exactly
+// one element, and it hid the real missing-property failure and its pointer.
+//
+// The owner is the array-element half of the elaborator
+// (`error_reporter/call_errors/elaboration_object_properties.rs`,
+// `try_elaborate_array_literal_elements`), which now applies the same
+// `contextual_tuple_recovers_elementwise_failure` predicate the object-literal
+// property half already applied for this shape. The recovery is gated on the
+// cached form having lost tuple-ness, the contextual form having regained it,
+// and the target slot being a tuple, so a genuinely unbounded source (an array
+// *variable*, not a literal) keeps today's arity reason — see
+// `an_unbounded_array_variable_in_a_tuple_slot_keeps_the_arity_reason`.
+//
+// tsz anchors the primary at the inner array literal where tsc anchors it at
+// the failing object literal one node further in; that difference is shared
+// with the already-accepted single-level tuple rows above (where tsz anchors at
+// the property name) and is not what these rows pin. The `TS2728` offsets below
+// are the oracle's exact ones.
+// ---------------------------------------------------------------------------
+
+/// `[ T ][]` — an array of tuples, the row #16552 left open at the elaboration
+/// owner after #16599 closed the anchor walk's own tuple descent.
+///
+/// Oracle: `k1.ts:2:24 - TS2741 Property 'kq' is missing …` with
+/// `k1.ts:1:33 - 'kq' is declared here.`
+#[test]
+fn an_array_of_tuples_reaches_ts2741_at_the_inner_element() {
+    let source = "type K1 = { tup: [{ kp: number; kq: number }][] };\nconst k: K1 = { tup: [[{ kp: 1 }]] };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, _) = declared_here(&diagnostic);
+    assert_eq!(span_text(source, start, length), "kq");
+}
+
+/// The `readonly` spelling of the same array: the recovery keys on the target
+/// slot being a tuple, which `is_tuple_type` already sees through a `readonly`
+/// wrapper, so this row composes without its own arm.
+///
+/// Oracle: `k2.ts:1:42 - 'kq' is declared here.`
+#[test]
+fn a_readonly_array_of_tuples_reaches_ts2741_at_the_inner_element() {
+    let source = "type K2 = { tup: readonly [{ kp: number; kq: number }][] };\nconst k: K2 = { tup: [[{ kp: 1 }]] };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, _) = declared_here(&diagnostic);
+    assert_eq!(span_text(source, start, length), "kq");
+}
+
+/// The same array of tuples written directly as the binding's own annotation,
+/// with no enclosing object literal — the recovery is an element-slot rule, not
+/// a property-value one, so it must not depend on there being a member above.
+///
+/// Oracle: `k3.ts:1:26 - 'kq' is declared here.`
+#[test]
+fn a_directly_annotated_array_of_tuples_reaches_ts2741() {
+    let source = "type K3 = [{ kp: number; kq: number }][];\nconst k: K3 = [[{ kp: 1 }]];\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, _) = declared_here(&diagnostic);
+    assert_eq!(span_text(source, start, length), "kq");
+}
+
+/// A tuple *of* tuples: here the enclosing literal is the one whose cached form
+/// is a widened array, so the source-tuple slot the elaborator recovers is
+/// itself widened. This is the row that needs the recovery applied to the
+/// recovered slot as well as to the context-free element type.
+///
+/// Oracle: `k5.ts:1:34 - 'kq' is declared here.`
+#[test]
+fn a_tuple_of_tuples_reaches_ts2741_at_the_inner_element() {
+    let source = "type K5 = { tup: [[{ kp: number; kq: number }]] };\nconst k: K5 = { tup: [[{ kp: 1 }]] };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, _) = declared_here(&diagnostic);
+    assert_eq!(span_text(source, start, length), "kq");
+}
+
+/// Two levels of array around the tuple: the recovery runs per element slot, so
+/// it composes at every depth rather than only at the first.
+///
+/// Oracle: `m6.ts:2:25 - TS2741 …` (the pointer lands on `kq` in the element).
+#[test]
+fn an_array_of_arrays_of_tuples_reaches_ts2741_at_the_inner_element() {
+    let source = "type M6 = { tup: [{ kp: number; kq: number }][][] };\nconst m: M6 = { tup: [[[{ kp: 1 }]]] };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, _) = declared_here(&diagnostic);
+    assert_eq!(span_text(source, start, length), "kq");
+}
+
+/// The `Array< [ T ] >` spelling, which reaches the same slot through the
+/// generic reference rather than the `T[]` shorthand. Needs the real lib.
+///
+/// Oracle: `m1.ts:2:24 - TS2741 Property 'kq' is missing …`
+#[test]
+fn a_generic_array_of_tuples_reaches_ts2741_at_the_inner_element() {
+    let source = "type M1 = { tup: Array<[{ kp: number; kq: number }]> };\nconst m: M1 = { tup: [[{ kp: 1 }]] };\n";
+    let diagnostic = only(&check_source_diagnostics_with_libs(source), TS2741);
+    let (_, start, length, _) = declared_here(&diagnostic);
+    assert_eq!(span_text(source, start, length), "kq");
+}
+
+/// Renamed binders and different property names: the recovery keys on the
+/// target slot's *shape*, never on an identifier written above it.
+///
+/// Oracle: `m5.ts:2:29 - TS2741 Property 'beta' is missing …`
+#[test]
+fn the_array_of_tuples_recovery_is_not_identifier_keyed() {
+    let source = "type Roster = { rows: [{ alpha: string; beta: string }][] };\nconst r: Roster = { rows: [[{ alpha: \"a\" }]] };\n";
+    let diagnostic = only(&check_source_diagnostics(source), TS2741);
+    let (_, start, length, _) = declared_here(&diagnostic);
+    assert_eq!(span_text(source, start, length), "beta");
+}
+
+/// Negative control, and the reason the recovery is gated rather than blanket:
+/// an array *variable* handed to a tuple-typed slot really may have fewer
+/// elements, so tsc keeps the arity reason there. The contextual retype of an
+/// identifier is still the array, so the predicate declines and this row is
+/// unchanged.
+///
+/// Oracle: `m3.ts(3,23): TS2322 Type '{ kp: number; }[]' is not assignable to
+/// type '[{ kp: number; }]'.` / `Target requires 1 element(s) but source may
+/// have fewer.`
+#[test]
+fn an_unbounded_array_variable_in_a_tuple_slot_keeps_the_arity_reason() {
+    let source = "type M3 = { tup: [{ kp: number }][] };\ndeclare const loose: { kp: number }[];\nconst m: M3 = { tup: [loose] };\n";
+    let diagnostics = check_source_diagnostics(source);
+    assert!(
+        diagnostics.iter().all(|d| d.code != TS2741),
+        "an unbounded array source must keep the arity reason: {diagnostics:?}"
+    );
+}
+
+/// Negative control: a *genuine* element shortfall inside the written literal
+/// stays an arity failure. Recovering the tuple form does not invent elements,
+/// so a one-element literal against a two-element tuple keeps tsc's
+/// `Source has 1 element(s) but target requires 2.`
+///
+/// Oracle: `m2.ts(2,23): TS2322 …` / `Source has 1 element(s) but target
+/// requires 2.`
+#[test]
+fn a_real_element_shortfall_inside_a_tuple_slot_stays_an_arity_failure() {
+    let source = "type M2 = { tup: [{ ka: number }, { kb: number }][] };\nconst m: M2 = { tup: [[{ ka: 1 }]] };\n";
+    let diagnostics = check_source_diagnostics(source);
+    assert!(
+        diagnostics.iter().all(|d| d.code != TS2741),
+        "a real shortfall must not be recast as a missing property: {diagnostics:?}"
+    );
+}
+
+/// Negative control: a property whose *type* is wrong (not missing) inside the
+/// nested tuple element keeps the property-level `TS2322` and grows no
+/// `TS2728` pointer — `TS2728` pairs only with the missing-property form.
+///
+/// Oracle: `m4.ts(2,26): TS2322 Type 'string' is not assignable to type
+/// 'number'.`
+#[test]
+fn a_wrong_property_type_inside_a_tuple_slot_stays_ts2322() {
+    let source =
+        "type M4 = { tup: [{ kp: number }][] };\nconst m: M4 = { tup: [[{ kp: \"s\" }]] };\n";
+    let diagnostics = check_source_diagnostics(source);
+    assert!(
+        diagnostics.iter().all(|d| d.code != TS2741),
+        "a wrong property type is not a missing property: {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .flat_map(|d| d.related_information.iter())
+            .any(|info| info.code == TS2728),
+        "no declared-here pointer belongs on a value mismatch: {diagnostics:?}"
     );
 }

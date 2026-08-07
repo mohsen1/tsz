@@ -238,6 +238,43 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    /// Report the possibly-nullish receiver of an optional-chain continuation
+    /// that sits in a write position (assignment target, increment/decrement
+    /// operand, `for...in`/`for...of` head).
+    ///
+    /// The write-target paths in `property_access_type::resolve` and
+    /// `computation::access` short-circuit to `TypeId::ANY` so an invalid
+    /// target cannot cascade into assignability diagnostics. tsc still checks
+    /// the receiver of that target, so the receiver type they compute has to
+    /// reach the possibly-nullish reporter instead of being discarded.
+    ///
+    /// A link that carries its own `?.` is guarded by the chain and reports
+    /// nothing, exactly as in a read position.
+    ///
+    /// The receiver's `undefined` only counts when it is real optionality. A
+    /// chain whose receiver is undefined solely because the chain itself may
+    /// short-circuit (`a.b?.c` where `c` is a required member) carries the
+    /// chain marker, which tsc strips before checking the continuation.
+    pub(crate) fn report_write_target_chain_nullish_receiver(
+        &mut self,
+        receiver: NodeIndex,
+        link_has_question_dot: bool,
+        receiver_type: TypeId,
+    ) {
+        if link_has_question_dot || !self.ctx.compiler_options.strict_null_checks {
+            return;
+        }
+        let receiver_type = self.remove_optional_chain_marker(receiver, receiver_type);
+        let (_, nullish) = self.split_nullish_type(receiver_type);
+        let Some(cause) = nullish else {
+            return;
+        };
+        if cause == TypeId::ERROR || cause == TypeId::ANY || cause == TypeId::UNKNOWN {
+            return;
+        }
+        self.report_possibly_nullish_expression(receiver, cause);
+    }
+
     /// Report a possibly-nullish `expression` the way tsc's
     /// `reportObjectPossiblyNullOrUndefinedError` does: a literal `null` or
     /// `undefined` reports TS18050, entity names report the

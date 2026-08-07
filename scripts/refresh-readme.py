@@ -20,6 +20,7 @@ Usage:
 """
 
 import argparse
+import functools
 import json
 import os
 import re
@@ -49,6 +50,103 @@ def progress_bar(current, total, width=20):
 def load_metric_json(path):
     with open(path) as f:
         return json.load(f)
+
+
+@functools.lru_cache(maxsize=1)
+def current_head_sha():
+    """Return the repo's current ``HEAD`` SHA, or ``None`` when unavailable.
+
+    Used to decide whether a suite artifact describes the tree the README is
+    being refreshed for. Any failure (not a git checkout, git missing, a
+    detached or unborn ``HEAD``) degrades to ``None`` so the caller keeps the
+    magnitude-based staleness guard rather than crashing the refresh. Cached
+    because ``HEAD`` cannot move within one refresh and both suite loaders ask.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    sha = result.stdout.strip()
+    return sha or None
+
+
+def artifact_sha(data):
+    """Return the git SHA a suite artifact recorded for its measured tree.
+
+    Suite snapshots stamp the commit they measured under ``git_sha``.
+    ``conformance.sh`` writes the literal ``"unknown"`` when ``git rev-parse``
+    fails during a snapshot; that is not a tree identity, so it is treated as
+    absent. Returns ``None`` when the artifact does not self-identify its tree.
+    """
+    if not isinstance(data, dict):
+        return None
+    sha = data.get("git_sha")
+    if not isinstance(sha, str):
+        return None
+    sha = sha.strip()
+    if not sha or sha.lower() == "unknown":
+        return None
+    return sha
+
+
+def artifact_describes_current_tree(data, head_sha):
+    """True when ``data`` was measured against the repo's current ``HEAD``.
+
+    Zero drift is the one case where a *lower* number is known to be a current
+    reading rather than a stale local artifact left over from an older tree, so
+    the monotonic publish guard must yield to it and let a genuine regression
+    surface. The comparison is prefix-tolerant so an abbreviated recorded
+    ``git_sha`` still matches a full 40-char ``HEAD``; fewer than 7 shared
+    characters is too little to trust as a commit identity.
+    """
+    recorded = artifact_sha(data)
+    if recorded is None or not head_sha:
+        return False
+    shared = min(len(recorded), len(head_sha))
+    if shared < 7:
+        return False
+    return recorded[:shared] == head_sha[:shared]
+
+
+def resolve_published_summary(
+    summary, readme_summary, data, path, *, is_ahead, suite_label
+):
+    """Pick between a freshly measured artifact summary and the README's block.
+
+    A local suite artifact may be stale, so the default is to keep the README's
+    higher block when it is ``is_ahead``. But when the artifact records the
+    current ``HEAD`` it is a *current* reading -- not a stale leftover -- and is
+    published even downward so a genuine regression, or a flaky run the monotonic
+    guard would otherwise ratchet in permanently, can surface. ``is_ahead`` is
+    the suite's magnitude guard; ``suite_label`` names the suite in the stderr
+    note/warning.
+    """
+    rel = path.relative_to(ROOT)
+    if artifact_describes_current_tree(data, current_head_sha()):
+        if is_ahead(summary, readme_summary):
+            print(
+                f"note: publishing {suite_label} metrics from {rel} even though "
+                "they are below the existing README block, because the artifact "
+                "records the current HEAD (zero drift -- a current reading, not a "
+                "stale artifact)",
+                file=sys.stderr,
+            )
+        return summary
+    if is_ahead(summary, readme_summary):
+        print(
+            f"warning: preserving README {suite_label} metrics because {rel} is "
+            f"behind the existing README {suite_label} block and does not record "
+            "the current HEAD",
+            file=sys.stderr,
+        )
+        return readme_summary
+    return summary
 
 
 def normalize_suite_summary(data, suite):
@@ -178,12 +276,6 @@ def readme_suite_summary_is_ahead(candidate, readme_summary):
     )
 
 
-def prefer_readme_suite_summary(candidate, readme_summary):
-    if readme_suite_summary_is_ahead(candidate, readme_summary):
-        return readme_summary
-    return candidate
-
-
 def load_conformance(args, readme_text):
     readme_summary = conformance_summary_from_readme(readme_text)
     explicit_path = args.conformance_metrics_json
@@ -195,19 +287,18 @@ def load_conformance(args, readme_text):
     for p in suite_metric_candidates(explicit_path, default_paths):
         if not p.exists():
             continue
-        summary = normalize_suite_summary(load_metric_json(p), "conformance")
+        data = load_metric_json(p)
+        summary = normalize_suite_summary(data, "conformance")
         if summary is None:
             continue
         if summary.get("passed") is None or summary.get("total") is None:
             continue
         if explicit_path is None and p in default_paths[1:]:
-            if readme_suite_summary_is_ahead(summary, readme_summary):
-                print(
-                    "warning: preserving README conformance metrics because "
-                    f"{p.relative_to(ROOT)} is behind the existing README conformance block",
-                    file=sys.stderr,
-                )
-            return prefer_readme_suite_summary(summary, readme_summary)
+            return resolve_published_summary(
+                summary, readme_summary, data, p,
+                is_ahead=readme_suite_summary_is_ahead,
+                suite_label="conformance",
+            )
         return summary
     return None
 
@@ -260,12 +351,6 @@ def emit_summary_from_readme(text):
     return None
 
 
-def prefer_readme_emit_summary(candidate, readme_summary):
-    if readme_emit_summary_is_ahead(candidate, readme_summary):
-        return readme_summary
-    return candidate
-
-
 def readme_emit_summary_is_ahead(candidate, readme_summary):
     if readme_summary is None:
         return False
@@ -302,13 +387,11 @@ def load_emit(args, readme_text):
         summary = normalize_emit_summary(data)
         if summary is not None:
             if args.emit_metrics_json is None and p == ROOT / "scripts" / "emit" / "emit-detail.json":
-                if readme_emit_summary_is_ahead(summary, readme_summary):
-                    print(
-                        "warning: preserving README emit metrics because "
-                        f"{p.relative_to(ROOT)} is behind the existing README emit block",
-                        file=sys.stderr,
-                    )
-                return prefer_readme_emit_summary(summary, readme_summary)
+                return resolve_published_summary(
+                    summary, readme_summary, data, p,
+                    is_ahead=readme_emit_summary_is_ahead,
+                    suite_label="emit",
+                )
             return summary
     return None
 

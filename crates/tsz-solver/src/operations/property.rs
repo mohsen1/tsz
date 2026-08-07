@@ -1089,16 +1089,24 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
                     self.skip_this_binding.set(prev);
                     result
-                } else {
-                    // Unconstrained type parameters have no properties in tsc.
-                    // In TypeScript 6.0+, an unconstrained T is treated as `{}`
-                    // which does NOT include Object prototype methods (toString,
-                    // valueOf, hasOwnProperty, etc.). Accessing any property on
-                    // bare T emits TS2339 "Property X does not exist on type T".
+                } else if self.db.strict_null_checks() {
+                    // Under strictNullChecks, tsc's unconstrained-type-parameter
+                    // apparent type does not expose Object.prototype's members:
+                    // `function f<T>(x: T) { x.toString(); }` reports TS2339 on
+                    // `toString` itself, not just on a genuinely missing member.
                     PropertyAccessResult::PropertyNotFound {
                         type_id: obj_type,
                         property_name: prop_atom,
                     }
+                } else {
+                    // With strictNullChecks off, an unconstrained type parameter's
+                    // apparent type is the empty object type `{}`, which exposes
+                    // `Object.prototype`'s members (`toString`, `valueOf`,
+                    // `hasOwnProperty`, ...) but nothing else. Mirrors the
+                    // `IntrinsicKind::Object` case above via the same global-`Object`
+                    // fallback, so arbitrary properties still emit TS2339 while the
+                    // apparent members resolve.
+                    self.resolve_object_member_or_not_found(obj_type, prop_atom)
                 }
             }
 

@@ -920,7 +920,20 @@ impl TypeLowering<'_> {
         // Check which operator it is
         match data.operator {
             // KeyOfKeyword = 143
-            143 => self.interner.keyof(inner_type),
+            //
+            // tsc's `getIndexType` resolves an `any`/`unknown`/`never` operand to
+            // its fixed key-space result (`string | number | symbol` / `never` /
+            // `string | number | symbol`) immediately rather than building a
+            // deferred `IndexType`, so the operator itself never survives to a
+            // declared type or the printer for these operands. Other operands
+            // (object/interface/generic) keep the deferred `KeyOf` node so later
+            // consumers still see `keyof T`.
+            143 => match inner_type {
+                TypeId::ANY | TypeId::UNKNOWN | TypeId::NEVER => {
+                    tsz_solver::computation::evaluate_keyof(self.interner, inner_type)
+                }
+                _ => self.interner.keyof(inner_type),
+            },
             // ReadonlyKeyword = 148
             148 => self.interner.readonly_type(inner_type),
             // UniqueKeyword = 158 - unique symbol

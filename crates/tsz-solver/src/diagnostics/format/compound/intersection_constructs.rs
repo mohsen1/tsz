@@ -238,6 +238,8 @@ impl<'a> TypeFormatter<'a> {
                 return inner.into_owned();
             }
         }
+        let spliced = self.splice_concrete_rest_elements_for_display(elements);
+        let elements: &[TupleElement] = spliced.as_deref().unwrap_or(elements);
         // Format each element's type independently, then apply namespace
         // disambiguation across elements whose display names collide —
         // e.g. `[Foo.Yep, Bar.Yep]` instead of `[Yep, Yep]` when two different
@@ -278,6 +280,125 @@ impl<'a> TypeFormatter<'a> {
 
     pub fn format_tuple_elements_for_diagnostic(&mut self, elements: &[TupleElement]) -> String {
         self.format_tuple(elements)
+    }
+
+    /// Splice a rest element whose type *evaluates* to a concrete tuple
+    /// inline, mirroring `splice_concrete_tuple_spreads` (intern-time
+    /// construction) at display time.
+    ///
+    /// A recursive-conditional spread (`[H, ...Split]` where `Split<S> = S
+    /// extends ... ? [H, ...Split<R>] : [S]`) interns its rest element while
+    /// the nested `Split<R>` application is still unresolved, so the
+    /// construction-time splice can't fire (matching its own documented
+    /// caveat: a self-referential spread never resolves to a concrete tuple
+    /// *at that point*). By the time the whole recursion bottoms out, the
+    /// rest element's `type_id` now evaluates to a concrete tuple, but the
+    /// outer `Tuple` was already interned — nothing re-visits it to splice.
+    /// `tsc` never has this two-phase gap (its recursive instantiation
+    /// resolves the spread before the tuple is ever materialized), so this
+    /// re-checks the same splice rule here, using an evaluated read rather
+    /// than a raw lookup. Returns `None` when nothing changes, so the caller
+    /// can keep formatting the original slice without an extra allocation.
+    ///
+    /// A single pass only resolves one recursion level: splicing in a resolved
+    /// inner tuple can itself introduce a fresh rest element that is *still*
+    /// an unresolved `Application` one level deeper (`Split<"a.b.c">` resolves
+    /// its immediate rest to `["b", ...Split<"c">]`, whose own rest hasn't
+    /// been re-checked yet). Re-run the splice on the result until it stops
+    /// changing, bounded the same way `reducing_application_display` bounds
+    /// its own alias-chain walk.
+    fn splice_concrete_rest_elements_for_display(
+        &self,
+        elements: &[TupleElement],
+    ) -> Option<Vec<TupleElement>> {
+        let mut current = self.splice_concrete_rest_elements_for_display_once(elements)?;
+        for _ in 0..8 {
+            match self.splice_concrete_rest_elements_for_display_once(&current) {
+                Some(next) => current = next,
+                None => break,
+            }
+        }
+        Some(current)
+    }
+
+    fn splice_concrete_rest_elements_for_display_once(
+        &self,
+        elements: &[TupleElement],
+    ) -> Option<Vec<TupleElement>> {
+        let parent_rest_count = elements.iter().filter(|e| e.rest).count();
+        if parent_rest_count == 0 {
+            return None;
+        }
+        let has_spliceable = elements.iter().any(|e| {
+            e.rest && !e.optional && self.resolve_display_concrete_tuple(e.type_id).is_some()
+        });
+        if !has_spliceable {
+            return None;
+        }
+        let last_index = elements.len().saturating_sub(1);
+        let mut out: Vec<TupleElement> = Vec::with_capacity(elements.len());
+        for (index, elem) in elements.iter().enumerate() {
+            if elem.rest
+                && !elem.optional
+                && let Some(inner_list) = self.resolve_display_concrete_tuple(elem.type_id)
+            {
+                let inner = self.interner.tuple_list(inner_list);
+                let (inner_rest_count, inner_has_optional) =
+                    inner.iter().fold((0usize, false), |(rests, optional), e| {
+                        (rests + usize::from(e.rest), optional || e.optional)
+                    });
+                // Same shape guard as the construction-time splice: only
+                // inline a middle-position variadic inner tuple when it
+                // won't push an optional element ahead of a required suffix,
+                // and only ever keep the result down to one rest element.
+                let splice_middle = inner_rest_count == 1 && !inner_has_optional;
+                let splice_variadic =
+                    parent_rest_count == 1 && (index == last_index || splice_middle);
+                if inner_rest_count == 0 || splice_variadic {
+                    out.extend(inner.iter().copied());
+                    continue;
+                }
+            }
+            out.push(*elem);
+        }
+        Some(out)
+    }
+
+    /// Resolve `type_id` (through one `readonly` wrapper and, for an
+    /// `Application`, the same alias-reduction chase the formatter already
+    /// applies when rendering that node directly) to a concrete tuple's
+    /// element list for display splicing, or `None` if it doesn't resolve to
+    /// one. Read-only: never interns or mutates a type.
+    ///
+    /// A bare `evaluate_type` cannot do this on its own — the display-time
+    /// evaluator has no def-store resolver (see `reducing_application_display`'s
+    /// own doc comment), so an `Application` referencing a generic alias
+    /// (`Split<R>`) evaluates to itself unchanged. `application_display_reduction`
+    /// is the mechanism the formatter already uses to turn that same
+    /// `Application` into its evaluated form when formatting it as a standalone
+    /// type; reusing it here is what lets a self-referential recursive
+    /// conditional's rest element (`[H, ...Split]`) resolve to a concrete tuple.
+    fn resolve_display_concrete_tuple(&self, type_id: TypeId) -> Option<TupleListId> {
+        let unwrap_readonly = |id: TypeId| match self.interner.lookup(id) {
+            Some(TypeData::ReadonlyType(inner)) => inner,
+            _ => id,
+        };
+        let peeled = unwrap_readonly(type_id);
+        if let Some(TypeData::Tuple(list_id)) = self.interner.lookup(peeled) {
+            return Some(list_id);
+        }
+        let Some(TypeData::Application(app_id)) = self.interner.lookup(peeled) else {
+            return None;
+        };
+        let app = self.interner.type_application(app_id);
+        let reduced = match self.application_display_reduction(peeled, &app)? {
+            super::application_reduction::ApplicationDisplayReduction::Type(reduced) => reduced,
+            _ => return None,
+        };
+        match self.interner.lookup(unwrap_readonly(reduced)) {
+            Some(TypeData::Tuple(list_id)) => Some(list_id),
+            _ => None,
+        }
     }
 
     pub(super) fn format_function(&mut self, shape: &FunctionShape) -> String {

@@ -275,11 +275,23 @@ impl<'a> CheckerState<'a> {
             // Track whether the computed key is a numeric/string literal (text-resolvable).
             // Symbol-keyed computed properties (`[sym]`, `[Symbol.iterator]`) fall through to
             // `get_property_name_resolved` and must always use TS2418, not TS2322.
+            //
+            // `object_literal_property_name_text` also resolves a *symbol* computed
+            // name (a `unique symbol` const, or a well-known symbol like
+            // `Symbol.iterator` via `get_symbol_property_name_from_expr`) to a display
+            // string, so its success alone cannot tell a literal-spelled key apart from
+            // a symbol one — checked separately with the purely syntactic
+            // `is_eagerly_bound_member_name`, which is `true` for a computed name only
+            // when its expression is itself a string/numeric/no-substitution-template
+            // literal (`["p"]`, `[0]`, `` [`p`] ``), never for an identifier or
+            // property-access expression. Oracled against `typescript@7.0.2`:
+            // `{ [Symbol.iterator]: string } = { [Symbol.iterator]: 1 }` against a
+            // *declared* member reports TS2418, not TS2322 (#16662).
             let mut is_computed_literal_key = false;
             let prop_name = match self.object_literal_property_name_text(prop_name_idx) {
                 Some(name) => {
                     if is_computed_property {
-                        is_computed_literal_key = true;
+                        is_computed_literal_key = self.is_eagerly_bound_member_name(prop_name_idx);
                     }
                     name
                 }
@@ -291,6 +303,23 @@ impl<'a> CheckerState<'a> {
                 }
                 None => continue,
             };
+            // A genuine wide/plain `symbol` computed key is an index-signature
+            // contributor, not a late-bound named member: it folds into a
+            // `[k: symbol]: V` signature, so a value mismatch is owned by the
+            // whole-object relation (TS2322 with a `'symbol' index signatures
+            // are incompatible` chain), exactly like a wide `string`/`number`
+            // key — whose synthetic key name does not resolve, so it is skipped
+            // above. A bare `symbol`-typed const binding otherwise resolves to a
+            // binding-identity (`__unique_<id>`) name here and would wrongly
+            // drill into the late-bound per-property TS2418 below. A syntactic
+            // `Symbol.<member>` well-known key keeps its late-bound TS2418 (via
+            // the object-literal computation reporter) and is excluded. #16662.
+            if is_computed_property
+                && !self.computed_member_key_is_well_known_symbol_syntax(prop_name_idx)
+                && self.computed_member_key_is_wide_symbol(prop_name_idx)
+            {
+                continue;
+            }
             // Resolve the per-property target against the best-matching union
             // member when one exists (tsc's `findBestTypeForObjectLiteral`),
             // else against the whole target. A `None` here — the best member
@@ -833,12 +862,18 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // TS2418 applies when:
-                //   (a) the key is computed, AND
-                //   (b) either the key is a symbol (unique/well-known, never TS2322)
-                //       or the key is a numeric/string literal but the target has
-                //       no named property for it (matches only via index signature).
-                // When a literal key like `[0]` or `["x"]` resolves to a named
-                // property in the target, tsc uses TS2322 instead.
+                //   (a) the key is computed AND late-bound — an identifier over
+                //       a `const`, an enum member, or a symbol reference — since
+                //       tsc's `isComputedNonLiteralName` is false for a
+                //       literal-spelled computed name (`["x"]`, `[0]`,
+                //       `` [`x`] ``), which is an ordinary property name and
+                //       takes TS2322/TS2353 no matter how the target matches it,
+                //       AND
+                //   (b) the late-bound key has no named property in the target
+                //       (it matches only via an index signature), since a
+                //       late-bound key resolving to a named member takes TS2322.
+                let key_is_late_bound = is_computed_property
+                    && !self.computed_member_name_is_literal_spelled(prop_name_idx);
                 let target_has_named_member_for_key = is_computed_property
                     && self.target_has_named_property_for_key(effective_param_type, &prop_name);
                 // A *missing-property* failure keeps its own code even when the
@@ -862,7 +897,7 @@ impl<'a> CheckerState<'a> {
                                 | RelationFailure::MissingProperties { .. }
                         )
                     );
-                if is_computed_property
+                if key_is_late_bound
                     && !(is_computed_literal_key && target_has_named_member_for_key)
                     && !computed_failure_is_missing_property
                 {
@@ -1503,6 +1538,35 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // An array literal written for a *tuple-typed element slot* is
+            // cached as the widened array (`{ kp: number }[]`) for exactly the
+            // reason an array literal written for a tuple-typed *property* is:
+            // its own check ran before the slot's contextual type was
+            // available. Handing that widened form to the relation loses the
+            // element count, so the failure is classified as the
+            // unbounded-source arity gap (`TS2620` "Target requires N
+            // element(s) but source may have fewer") — false on its face for a
+            // literal that wrote exactly N elements — and it hides the real
+            // per-element failure underneath.
+            //
+            // `contextual_tuple_recovers_elementwise_failure` is the same
+            // predicate the object-literal property path already applies for
+            // this shape; the element slot is the other half of `tsc`'s
+            // `elaborateElementwise`, which recurses through array and object
+            // literals alike. Restricted identically: the cached form lost
+            // tuple-ness, the contextual form regained it, and the target slot
+            // is a tuple, so the swap can only turn a whole-array arity reason
+            // into the element-wise one.
+            let elem_type = if self.contextual_tuple_recovers_elementwise_failure(
+                elem_type,
+                contextual_elem_type,
+                target_element_type,
+            ) {
+                contextual_elem_type
+            } else {
+                elem_type
+            };
+
             // For object/array literal elements, use contextually-typed type
             // to decide whether to elaborate (avoids false positives from widening).
             // Pass the target element type as contextual type so literal types
@@ -1567,6 +1631,7 @@ impl<'a> CheckerState<'a> {
                 if elem_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                     && self.all_object_literal_properties_assignable_with_literals(
                         elem_idx,
+                        elem_type,
                         target_element_type,
                     )
                 {
@@ -1596,6 +1661,20 @@ impl<'a> CheckerState<'a> {
                         .unwrap_or(elem_type)
                 } else {
                     elem_type
+                };
+                // The recovered source tuple slot can itself be the widened
+                // array form when the *enclosing* literal was the one cached
+                // before its contextual type arrived (a tuple of tuples). Apply
+                // the same recovery to the slot so the nested case cannot
+                // reintroduce the arity reason the rebind above removed.
+                let relation_elem_type = if self.contextual_tuple_recovers_elementwise_failure(
+                    relation_elem_type,
+                    contextual_elem_type,
+                    target_element_type,
+                ) {
+                    contextual_elem_type
+                } else {
+                    relation_elem_type
                 };
                 tracing::debug!(
                     "try_elaborate_array_literal_elements: elem_type = {:?}, target_element_type = {:?}, file = {}",
@@ -1723,91 +1802,6 @@ impl<'a> CheckerState<'a> {
             &message,
             diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
         );
-        true
-    }
-
-    /// Check if all properties of an object literal are assignable to the
-    /// target type when using literal types from the initializers. This catches
-    /// cases where the widened object type (e.g., `{ kind: string }`) fails
-    /// assignability against a discriminated union, but the literal property
-    /// values (e.g., `"bluray"`) actually match a union member.
-    fn all_object_literal_properties_assignable_with_literals(
-        &mut self,
-        obj_idx: NodeIndex,
-        target_type: TypeId,
-    ) -> bool {
-        use tsz_parser::parser::syntax_kind_ext;
-
-        let obj_node = match self.ctx.arena.get(obj_idx) {
-            Some(node) if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => node,
-            _ => return false,
-        };
-
-        let obj = match self.ctx.arena.get_literal_expr(obj_node) {
-            Some(obj) => obj.clone(),
-            None => return false,
-        };
-
-        if obj.elements.nodes.is_empty() {
-            return false;
-        }
-
-        for &elem_idx in &obj.elements.nodes {
-            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
-                continue;
-            };
-
-            let (prop_name_idx, prop_value_idx) = match elem_node.kind {
-                k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
-                    match self.ctx.arena.get_property_assignment(elem_node) {
-                        Some(prop) => (prop.name, prop.initializer),
-                        None => continue,
-                    }
-                }
-                k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
-                    match self.ctx.arena.get_shorthand_property(elem_node) {
-                        Some(prop) => (prop.name, prop.name),
-                        None => continue,
-                    }
-                }
-                _ => continue,
-            };
-
-            let Some(prop_name) = self.object_literal_property_name_text(prop_name_idx) else {
-                continue;
-            };
-
-            let Some((target_prop_type, _)) =
-                self.object_literal_target_property_type(target_type, prop_name_idx, &prop_name)
-            else {
-                // Target doesn't have this property — can't confirm assignability
-                return false;
-            };
-
-            if target_prop_type == TypeId::ERROR || target_prop_type == TypeId::ANY {
-                continue;
-            }
-
-            // Try literal type first, then cached type
-            let source_prop_type =
-                if let Some(literal_type) = self.literal_type_from_initializer(prop_value_idx) {
-                    literal_type
-                } else {
-                    self.get_type_of_node(prop_value_idx)
-                };
-
-            if source_prop_type == TypeId::ERROR || source_prop_type == TypeId::ANY {
-                continue;
-            }
-
-            if !self
-                .call_arg_relation_outcome(source_prop_type, target_prop_type)
-                .related
-            {
-                return false;
-            }
-        }
-
         true
     }
 

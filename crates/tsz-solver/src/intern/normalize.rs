@@ -131,10 +131,25 @@ impl TypeInterner {
     /// tsc's `addTypeToUnion` drops a `null`/`undefined` constituent from every
     /// union it constructs when `strictNullChecks` is off: the nullable is a
     /// subtype of every non-nullish type there, so it is never added to the member
-    /// set (`checker.ts`), independent of the requested `UnionReduction` mode. The
-    /// lone survivor is an *all-nullish* union (`null | undefined`, or `null`
-    /// alone) — with no non-nullish sibling to absorb into, tsc keeps the nullish
-    /// members rather than collapsing to `never`.
+    /// set (`checker.ts`), independent of the requested `UnionReduction` mode. That
+    /// exclusion is **unconditional** — both are held out regardless of what else
+    /// is in the set — so an all-nullish input leaves tsc's `typeSet` empty and
+    /// `getUnionType` falls through to its empty-set branch, which prefers the
+    /// scalar `null` over `undefined` (on presence, not position) over `never`:
+    ///
+    /// ```text
+    /// includes & TypeFlags.Null      ? nullType :
+    /// includes & TypeFlags.Undefined ? undefinedType :
+    ///                                  neverType
+    /// ```
+    ///
+    /// So `null | undefined` (in either written order) interns as the scalar
+    /// `null`, `undefined` alone as the scalar `undefined`, and only a genuinely
+    /// empty set becomes `never`. Modelling this as "no sibling to absorb into, so
+    /// leave the union alone" got the union-vs-scalar distinction wrong: a
+    /// two-member `Union` node carries `Union` flags, so every `type.flags &
+    /// Nullable` reader (e.g. the possibly-null/undefined diagnostics) stays silent
+    /// where the scalar would report (#16657).
     ///
     /// This is the general union-construction seam #16580 calls for. The checker's
     /// array-literal element path (#16574) was one witness of a rule that has to
@@ -154,19 +169,39 @@ impl TypeInterner {
         if self.strict_null_checks() {
             return;
         }
-        let mut has_nullish = false;
+        let mut has_null = false;
+        let mut has_undefined = false;
         let mut has_non_nullish = false;
         for &id in flat.iter() {
-            if id == TypeId::NULL || id == TypeId::UNDEFINED {
-                has_nullish = true;
+            if id == TypeId::NULL {
+                has_null = true;
+            } else if id == TypeId::UNDEFINED {
+                has_undefined = true;
             } else if id != TypeId::NEVER {
                 has_non_nullish = true;
             }
         }
-        if !has_nullish || !has_non_nullish {
+        if !has_null && !has_undefined {
             return;
         }
-        flat.retain(|id| *id != TypeId::NULL && *id != TypeId::UNDEFINED);
+        if has_non_nullish {
+            // A surviving non-nullish sibling absorbs every nullish member.
+            flat.retain(|id| !id.is_nullish());
+            return;
+        }
+        // All-nullish set (optionally with the `never` identity): collapse to the
+        // scalar survivor tsc's empty-`typeSet` branch yields — `null` preferred
+        // over `undefined` on presence, not written position. `narrowing`'s
+        // `collapse_pure_nullish_union_nonstrict` encodes the same survivor rule a
+        // layer up as a pre-construction origin gate; if this rule ever changes,
+        // both must move together.
+        let survivor = if has_null {
+            TypeId::NULL
+        } else {
+            TypeId::UNDEFINED
+        };
+        flat.clear();
+        flat.push(survivor);
     }
 
     /// Apply [`reduce_nonstrict_nullish_members`](Self::reduce_nonstrict_nullish_members)

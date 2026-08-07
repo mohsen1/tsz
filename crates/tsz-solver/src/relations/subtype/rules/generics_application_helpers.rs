@@ -29,6 +29,36 @@ pub(crate) struct AnyNeverVarianceClassification {
 /// exponential evaluate<->subtype expansion.
 pub(crate) const ONE_SIDED_APP_EXPANSION_MAX_DEPTH: u32 = 5;
 
+/// OR `Variance::BIVARIANT_USAGE` from `effective` onto `declared` wherever
+/// the effective (context-aware) computation marks a position bivariant,
+/// leaving every other position exactly as declared-mode measured it.
+///
+/// `BIVARIANT_USAGE` alone forces `Variance::needs_structural_fallback` for
+/// that position, so this can only ever turn a conclusive variance-fast-path
+/// rejection into a structural retry — it never manufactures a new
+/// rejection, and it never touches positions declared-mode did not mark
+/// bivariant-eligible for a reason of its own (mapped-type modifiers,
+/// unreliable rejection, ...).
+pub(crate) fn merge_bivariant_usage(
+    declared: &[Variance],
+    effective: &[Variance],
+) -> Arc<[Variance]> {
+    if declared.len() != effective.len() {
+        return Arc::from(declared);
+    }
+    declared
+        .iter()
+        .zip(effective.iter())
+        .map(|(&d, &e)| {
+            if e.has_bivariant_usage() {
+                d | Variance::BIVARIANT_USAGE
+            } else {
+                d
+            }
+        })
+        .collect()
+}
+
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Reject a same-base application when a direct `any`/`never` argument pair
     /// is incompatible in a reliably measured variance position.
@@ -194,7 +224,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 continue;
             };
 
-            let Some(variances) = self.resolve_any_never_application_variances(def_id) else {
+            let Some(variances) = self.resolve_effective_application_variances(def_id) else {
                 continue;
             };
             if variances.len() != s_app.args.len() {
@@ -309,7 +339,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return None;
         }
         let def_id = self.any_never_variance_owner_def(def_id)?;
-        let variances = self.resolve_any_never_application_variances(def_id)?;
+        let variances = self.resolve_effective_application_variances(def_id)?;
         if variances.len() != source_args.len() {
             return None;
         }
@@ -368,13 +398,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         })
     }
 
-    /// Resolve variance for the already-proven exceptional `any`/`never` path.
+    /// Resolve the context-aware ("effective") variance mask for `def_id`.
     ///
-    /// The result merges partial annotations at every nested declaration and
-    /// observes the active `strictFunctionTypes` callback rule. The
-    /// generation-scoped evaluation-session cache keeps repeated exceptional
-    /// queries O(arity) without retaining stale publication generations.
-    fn resolve_any_never_application_variances(&self, def_id: DefId) -> Option<Arc<[Variance]>> {
+    /// The result merges declared annotations with structural holes and
+    /// observes the active `strictFunctionTypes`/method-bivariance settings —
+    /// a function-typed property compares bivariantly here whenever
+    /// `strictFunctionTypes` is off, exactly like a method. The
+    /// generation-scoped evaluation-session cache keeps repeated queries
+    /// O(arity) without retaining stale publication generations.
+    fn resolve_effective_application_variances(&self, def_id: DefId) -> Option<Arc<[Variance]>> {
         let outcome =
             crate::relations::variance::compute_effective_type_param_variances_with_resolver_cached(
                 self.interner,
@@ -1028,19 +1060,51 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     /// Resolve the per-type-parameter variance mask for a generic definition,
-    /// preferring declared/cached variances and computing (and caching) them
-    /// only when missing. Shared by the variance-aware relation fast path and
-    /// the same-generic error-elaboration path so both observe identical
-    /// variance facts.
+    /// preferring an explicit declared `in`/`out` annotation and falling back
+    /// to the structural ("declared-mode") computation. Shared by the
+    /// variance-aware relation fast path and the same-generic
+    /// error-elaboration path so both observe identical variance facts.
+    ///
+    /// Declared-mode is session-stable and backed by the universe-shared
+    /// variance store, which is exactly the robustness a complex builtin
+    /// generic (`AsyncGenerator`, `Map`, ...) needs — swapping it out
+    /// wholesale for the context-aware ("effective") computation regressed
+    /// generic call inference through such types (a not-yet-inferred type
+    /// parameter on the target side lost its structural-fallback protection
+    /// and got hard-rejected before inference could extract a candidate).
+    ///
+    /// But declared-mode also ignores `strictFunctionTypes`/method-bivariance
+    /// entirely, so a function-typed property (`{ member: (cb: T) => void
+    /// }`) always measures as strictly contravariant there even when
+    /// `strictFunctionTypes` is off. The fix is a targeted *merge*, not a
+    /// replacement: keep the declared mask as the base (preserving its other
+    /// markers — `needs_structural_fallback`, `rejection_unreliable` — for
+    /// every position untouched by this rule), and OR in `BIVARIANT_USAGE`
+    /// only at positions the effective computation marks bivariant. That bit
+    /// alone forces the position to structural fallback (see
+    /// `Variance::needs_structural_fallback`), so it can only ever loosen a
+    /// conclusive rejection into a structural retry, never introduce a new
+    /// one.
     pub(crate) fn resolve_application_variances(&self, def_id: DefId) -> Option<Arc<[Variance]>> {
-        self.resolver.get_type_param_variance(def_id).or_else(|| {
+        if let Some(explicit) = self.resolver.get_type_param_variance(def_id) {
+            return Some(explicit);
+        }
+        let declared =
             crate::relations::variance::compute_type_param_variances_with_resolver_cached(
                 self.interner,
                 self.resolver,
                 self.query_db,
                 def_id,
-            )
-        })
+            )?;
+        if self.strict_function_types {
+            // No bivariance loosening applies under strict semantics; the
+            // effective computation would not add anything here.
+            return Some(declared);
+        }
+        let Some(effective) = self.resolve_effective_application_variances(def_id) else {
+            return Some(declared);
+        };
+        Some(merge_bivariant_usage(&declared, &effective))
     }
 
     /// Explain a same-generic application failure (`C<A..>` vs `C<B..>`) by

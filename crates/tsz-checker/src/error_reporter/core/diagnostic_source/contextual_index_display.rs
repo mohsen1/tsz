@@ -32,6 +32,33 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// `tsc`'s printer can only re-spell a computed key it can name as an
+    /// entity — a plain identifier or a dotted `a.b.c` chain of identifiers
+    /// (`ts.isEntityNameExpression`). For any other expression (a binary
+    /// operation, a call, a template literal, ...) it falls back to the
+    /// synthesized `[x: kind]: V` index-signature form instead, and doing so
+    /// for even ONE member of a homogeneous wide-key group folds every sibling
+    /// in that group into the same synthesized clause, entity-named or not.
+    /// Oracle-verified against `typescript@7.0.2`: `[ws]`/`[box.key]` keep
+    /// their own spelling; `[""+"foo"]`/`[ws.toUpperCase()]`/`` [`${ws}`] ``
+    /// do not, even alone.
+    pub(crate) fn computed_key_is_entity_name_reference(&self, name_idx: NodeIndex) -> bool {
+        let Some(name_node) = self.ctx.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+        let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
+            return false;
+        };
+        crate::symbols_domain::name_text::expression_name_text_in_arena(
+            self.ctx.arena,
+            computed.expression,
+        )
+        .is_some()
+    }
+
     pub(crate) fn contextual_index_signature_source_display(
         &mut self,
         all_contextual_index_properties: bool,

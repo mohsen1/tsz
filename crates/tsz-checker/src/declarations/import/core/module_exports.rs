@@ -234,12 +234,25 @@ impl<'a> CheckerState<'a> {
                                     ident.escaped_text.as_str(),
                                 )
                         {
+                            // tsc reports TS2303 at EVERY alias declaration
+                            // participating in the cycle (module_checker.rs'
+                            // check_circular_import_aliases documents the
+                            // same rule for the general case): both the
+                            // `export = X` statement itself and the
+                            // `export as namespace X` that closes the loop
+                            // back to the `declare global` namespace X.
+                            let message = format_message(
+                                diagnostic_messages::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS,
+                                &[ident.escaped_text.as_str()],
+                            );
+                            self.error_at_node(
+                                stmt_idx,
+                                &message,
+                                diagnostic_codes::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS,
+                            );
                             self.error_at_node(
                                 report_node,
-                                &format_message(
-                                    diagnostic_messages::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS,
-                                    &[ident.escaped_text.as_str()],
-                                ),
+                                &message,
                                 diagnostic_codes::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS,
                             );
                         } else if let Some(expected_type) =
@@ -324,8 +337,22 @@ impl<'a> CheckerState<'a> {
                                             )
                                         },
                                     );
+                                // A default export nested in a namespace body is
+                                // itself invalid there (TS1319, emitted by
+                                // `check_export_declaration` in
+                                // `statement_callback_bridge.rs` under this exact
+                                // gate), and tsc's grammar check returns as soon
+                                // as that placement diagnostic fires — the
+                                // ambient-expression check never runs for the same
+                                // node. Mirror that early-return here so a
+                                // `declare`d bare-expression default export inside
+                                // a namespace does not additionally draw TS2714.
+                                let namespace_placement_wins = !self.ctx.has_parse_errors
+                                    && !self.is_in_non_module_element_context(stmt_idx)
+                                    && self.is_inside_namespace_declaration(stmt_idx);
                                 if is_ambient
                                     && !is_declaration
+                                    && !namespace_placement_wins
                                     && export_data.export_clause.is_some()
                                     && !self
                                         .is_identifier_or_qualified_name(export_data.export_clause)
@@ -475,6 +502,11 @@ impl<'a> CheckerState<'a> {
             let mut value_count = 0;
             let mut function_value_count = 0;
             let mut function_name: Option<String> = None;
+            let mut function_name_has_body = false;
+            // How many of `effective_default_indices` are repeat overload
+            // signatures of a function default already counted above. See the
+            // `distinct_default_count` comment below.
+            let mut merged_overload_count = 0usize;
 
             for &export_idx in &effective_default_indices {
                 if self.export_decl_has_named_default_export(export_idx) {
@@ -494,21 +526,36 @@ impl<'a> CheckerState<'a> {
                     Some(k) if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                         has_function = true;
                         // Check if all function defaults share the same name (overloads)
-                        let name = self
+                        let function_data = self
                             .ctx
                             .arena
                             .get_export_decl_at(export_idx)
                             .and_then(|ed| self.ctx.arena.get(ed.export_clause))
-                            .and_then(|n| self.ctx.arena.get_function(n))
-                            .map(|f| self.node_text(f.name).unwrap_or_default());
+                            .and_then(|n| self.ctx.arena.get_function(n));
+                        let name =
+                            function_data.map(|f| self.node_text(f.name).unwrap_or_default());
+                        let has_body = function_data.is_some_and(|f| !f.body.is_none());
                         match (&function_name, name) {
                             (None, Some(n)) if !n.is_empty() => {
                                 function_name = Some(n);
+                                function_name_has_body = has_body;
                                 value_count += 1;
                                 function_value_count += 1;
                             }
-                            (Some(existing), Some(n)) if !n.is_empty() && *existing == n => {
+                            // A repeat of the tracked name is another overload
+                            // signature of the same function only while at most
+                            // one declaration in the run carries a body. Two
+                            // bodies are duplicate implementations, which tsc
+                            // keeps as separate conflicting declarations rather
+                            // than merging into one `default` symbol.
+                            (Some(existing), Some(n))
+                                if !n.is_empty()
+                                    && *existing == n
+                                    && !(has_body && function_name_has_body) =>
+                            {
                                 // Same non-empty function name: overload, don't count again
+                                function_name_has_body |= has_body;
+                                merged_overload_count += 1;
                             }
                             _ => {
                                 value_count += 1;
@@ -527,15 +574,44 @@ impl<'a> CheckerState<'a> {
             }
 
             // Emit TS2528 for any multiple default exports that are not
-            // function overloads. tsc allows interface + value (function/class)
-            // to coexist as a declaration merge, so interface+function is NOT a
-            // conflict. However, interface + type re-export IS a conflict.
-            // The merge is only valid when: (1) one default is an interface
-            // declaration, AND (2) the other is a function or class (value).
-            let interface_can_merge =
-                has_interface && (has_function || has_class) && value_count == 1;
+            // function overloads. tsc keys the `default` export on the name
+            // `default`, so any number of `export default interface` DECLARATIONS
+            // merge into the one `default` interface symbol — exactly like a
+            // named interface merge — and optionally absorb a single value
+            // (function or class) declaration alongside them. The merge is valid
+            // when at least one default is an interface DECLARATION and the
+            // non-interface defaults are either:
+            //   - none at all (`value_count == 0`): a run of `export default
+            //     interface` declarations, which merge into one symbol; or
+            //   - exactly one value declaration (function/class): the classic
+            //     `export default interface` + `export default function`/`class`
+            //     merge.
+            // A non-interface, non-value default — a type-only identifier
+            // (`export default SomeTypeAlias`) or a value expression
+            // (`export default 1`) — does NOT merge with the interface and stays
+            // a genuine TS2528 conflict. `value_count` counts every non-interface
+            // default (function/class and the identifier/expression fallback),
+            // so `value_count == 0` uniquely identifies the all-interface run and
+            // `(has_function || has_class) && value_count == 1` the single-value
+            // merge; an unmergeable type/expression default leaves `value_count
+            // == 1` with neither `has_function` nor `has_class`, correctly
+            // failing both arms.
+            let interface_can_merge = has_interface
+                && value_count <= 1
+                && (value_count == 0 || has_function || has_class);
+            // A run of `export default function f(...)` declarations that share
+            // a name is ONE default-exported symbol, not N: tsc merges overload
+            // signatures into a single `default` symbol before it ever asks
+            // whether the module has multiple default exports. `value_count`
+            // already collapses them, so the *statement* count has to as well —
+            // otherwise a plain overload set (no other default export in the
+            // file at all) trips the second disjunct on its statement count
+            // alone and every signature gets a false TS2528.
+            let distinct_default_count = effective_default_indices
+                .len()
+                .saturating_sub(merged_overload_count);
             let is_conflict =
-                value_count > 1 || (effective_default_indices.len() > 1 && !interface_can_merge);
+                value_count > 1 || (distinct_default_count > 1 && !interface_can_merge);
             if is_conflict {
                 if has_function && has_class {
                     // When function + class both export as default, tsc emits
@@ -747,11 +823,24 @@ impl<'a> CheckerState<'a> {
                             diagnostic_codes::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
                         );
                     }
+                } else if has_function && !has_interface && value_count == function_value_count {
+                    // Every conflicting default export is a function declaration.
+                    // tsc binds each of them to the single `default` export
+                    // symbol regardless of the local name, so the
+                    // multiple-default complaint (TS2528) never fires for this
+                    // shape: duplicate bodies surface as TS2323 + TS2393 (the
+                    // shared block below), and a run of signature-only groups
+                    // is left to overload validation.
                 } else {
                     // Fallback: TS2528 "A module cannot have multiple default exports"
                     // Skip interface declarations when a function or class exists
-                    // (interface can merge with those). When no function/class is
-                    // present, the interface is truly conflicting and must get TS2528.
+                    // (interface can merge with those). A run of interface
+                    // declarations with no other default never reaches here — it
+                    // merges upstream (`interface_can_merge`, `value_count == 0`)
+                    // and is not a conflict. When the interface is instead paired
+                    // with a non-mergeable default (a type-only identifier or a
+                    // value expression), no function/class is present, so the
+                    // interface is truly conflicting and must get TS2528.
                     for &export_idx in &effective_default_indices {
                         let is_interface = self
                             .ctx
@@ -771,11 +860,18 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                // TS2393: Duplicate function implementation.
-                // When multiple `export default function` declarations have bodies,
-                // tsc emits TS2393 on each, regardless of whether they are named or anonymous.
+                // TS2393 + TS2323: duplicate default function implementations.
+                // When two or more `export default function` declarations carry
+                // bodies, tsc treats them as duplicate implementations of the one
+                // merged `default` symbol: TS2393 goes on *every* function
+                // declaration in the set (overload signatures included), and
+                // TS2323 on each declaration that carries a body — never on a
+                // signature. Both anchor at the function name (or the statement
+                // when anonymous). TS2323 is owned by the class/interface/named
+                // arms above when those shapes are present, so it is only added
+                // here for the function-only and function+value-expression arms.
                 if has_function {
-                    let func_impls: Vec<NodeIndex> = effective_default_indices
+                    let func_decls: Vec<(NodeIndex, bool)> = effective_default_indices
                         .iter()
                         .filter_map(|&idx| {
                             let ed = self.ctx.arena.get_export_decl_at(idx)?;
@@ -784,35 +880,44 @@ impl<'a> CheckerState<'a> {
                                 return None;
                             }
                             let func = self.ctx.arena.get_function(clause_node)?;
-                            if func.body.is_some() { Some(idx) } else { None }
+                            Some((idx, func.body.is_some()))
                         })
                         .collect();
+                    let impl_count = func_decls.iter().filter(|(_, has_body)| *has_body).count();
 
-                    if func_impls.len() > 1 {
-                        for &impl_idx in &func_impls {
-                            self.error_at_node(
-                                impl_idx,
+                    if impl_count > 1 {
+                        let emit_redeclare =
+                            !has_class && !has_interface && !has_named_default_export;
+                        for &(decl_idx, has_body) in &func_decls {
+                            if emit_redeclare && has_body {
+                                self.error_at_default_export_anchor(
+                                    decl_idx,
+                                    "Cannot redeclare exported variable 'default'.",
+                                    diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
+                                );
+                            }
+                            self.error_at_default_export_anchor(
+                                decl_idx,
                                 diagnostic_messages::DUPLICATE_FUNCTION_IMPLEMENTATION,
                                 diagnostic_codes::DUPLICATE_FUNCTION_IMPLEMENTATION,
                             );
                         }
                     }
                 }
-            } else if has_interface && !(has_function && value_count == 1) {
-                // Multiple default exports with at least one interface but not a valid
-                // interface + function merge. E.g.:
-                //   export default interface A {}
-                //   export default B;  // B is an interface
-                // TSC reports TS2528 because these can't merge.
-                for &export_idx in &effective_default_indices {
-                    let anchor = self.get_default_export_anchor(export_idx);
-                    self.error_at_node(
-                        anchor,
-                        diagnostic_messages::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
-                        diagnostic_codes::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
-                    );
-                }
             }
+            // No `else` arm: when `is_conflict` is false and an interface is
+            // present, the defaults necessarily form a valid merge — a run of
+            // `export default interface` declarations (`value_count == 0`), or
+            // those interfaces plus a single function/class value
+            // (`interface_can_merge`). tsc reports nothing for such merges. A
+            // genuinely unmergeable interface pairing (interface + a type-only
+            // identifier or a value expression, `value_count == 1` with neither
+            // `has_function` nor `has_class`) makes `is_conflict` true and is
+            // handled by the fallback arm above, which emits TS2528 there. An
+            // earlier `else if has_interface && !(has_function && value_count == 1)`
+            // arm re-emitted TS2528 for every non-function merge — including
+            // interface + interface and interface + class, both clean in tsc —
+            // and is removed (issue #16730).
         }
     }
 
@@ -1021,16 +1126,42 @@ impl<'a> CheckerState<'a> {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
         // TS2323: "Cannot redeclare exported variable 'default'." on every declaration
-        for &export_idx in export_default_indices {
-            let message = format_message(
-                diagnostic_messages::CANNOT_REDECLARE_EXPORTED_VARIABLE,
-                &["default"],
-            );
-            self.error_at_default_export_anchor(
-                export_idx,
-                &message,
-                diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
-            );
+        // that contributes a value: a class, or a function declaration carrying a
+        // body. Overload signatures never redeclare anything, so a signature-only
+        // function set beside a class reports the merge family alone.
+        let value_sites: Vec<NodeIndex> = export_default_indices
+            .iter()
+            .copied()
+            .filter(|&export_idx| {
+                let Some(clause_node) = self
+                    .ctx
+                    .arena
+                    .get_export_decl_at(export_idx)
+                    .and_then(|ed| self.ctx.arena.get(ed.export_clause))
+                else {
+                    return true;
+                };
+                if clause_node.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+                    return true;
+                }
+                self.ctx
+                    .arena
+                    .get_function(clause_node)
+                    .is_some_and(|func| func.body.is_some())
+            })
+            .collect();
+        if value_sites.len() > 1 {
+            for &export_idx in &value_sites {
+                let message = format_message(
+                    diagnostic_messages::CANNOT_REDECLARE_EXPORTED_VARIABLE,
+                    &["default"],
+                );
+                self.error_at_default_export_anchor(
+                    export_idx,
+                    &message,
+                    diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
+                );
+            }
         }
 
         // TS2813: "Class declaration cannot implement overload list for 'default'." on class

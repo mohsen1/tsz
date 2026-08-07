@@ -9,6 +9,7 @@ mod class_member_context;
 mod class_member_modifiers;
 mod class_type_param_checks;
 mod decorator_signature_checks;
+mod default_export_overload_group;
 mod function_declaration_checks;
 mod implicit_any_checks;
 mod implicit_any_param_context;

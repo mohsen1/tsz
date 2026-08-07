@@ -78,9 +78,19 @@ impl<'a> CheckerState<'a> {
         // `push_object_literal_display_member`).
         let mut member_slots: rustc_hash::FxHashMap<tsz_common::Atom, usize> =
             rustc_hash::FxHashMap::default();
+        // Whether every property so far is a wide (non-literal) `string`/
+        // `number` computed key of ONE consistent kind that folds into the
+        // target's index signature — and, among those, whether at least one
+        // is NOT a re-spellable entity-name reference. `tsc` merges the whole
+        // homogeneous group into one synthesized `[x: kind]: V` clause
+        // (`contextual_index_signature_source_display`, below) as soon as any
+        // single member can't be re-spelled from its own syntax; when every
+        // member CAN be (a plain identifier or dotted `a.b.c` chain), it shows
+        // each individually instead, unmerged. #16721.
         let mut contextual_index_key_kind: Option<&'static str> = None;
         let mut contextual_index_value_types = Vec::new();
         let mut all_contextual_index_properties = !literal.elements.nodes.is_empty();
+        let mut any_non_entity_wide_key = false;
         for child_idx in literal.elements.nodes.iter().copied() {
             let child = self.ctx.arena.get(child_idx)?;
             let (name_idx, value_idx) = if child.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
@@ -126,6 +136,11 @@ impl<'a> CheckerState<'a> {
                 (None, Some(kind)) => contextual_index_key_kind = Some(kind),
                 (Some(existing), Some(kind)) if existing == kind => {}
                 _ => all_contextual_index_properties = false,
+            }
+            if computed_index_kind.is_some()
+                && !self.computed_key_is_entity_name_reference(name_idx)
+            {
+                any_non_entity_wide_key = true;
             }
             let property_name = self
                 .get_property_name(name_idx)
@@ -305,11 +320,13 @@ impl<'a> CheckerState<'a> {
             return Some("{}".to_string());
         }
 
-        if let Some(index_display) = self.contextual_index_signature_source_display(
-            all_contextual_index_properties,
-            contextual_index_key_kind,
-            contextual_index_value_types,
-        ) {
+        if any_non_entity_wide_key
+            && let Some(index_display) = self.contextual_index_signature_source_display(
+                all_contextual_index_properties,
+                contextual_index_key_kind,
+                contextual_index_value_types,
+            )
+        {
             return Some(index_display);
         }
 

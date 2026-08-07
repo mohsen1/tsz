@@ -756,7 +756,7 @@ impl<'a> CheckerState<'a> {
         (has_type && !has_value).then_some(root_name)
     }
 
-    fn leftmost_entity_name_node(&self, idx: NodeIndex) -> Option<NodeIndex> {
+    pub(crate) fn leftmost_entity_name_node(&self, idx: NodeIndex) -> Option<NodeIndex> {
         let node = self.ctx.arena.get(idx)?;
         if node.kind == SyntaxKind::Identifier as u16 {
             return Some(idx);

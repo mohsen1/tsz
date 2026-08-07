@@ -1647,7 +1647,14 @@ export namespace C {
 }
 
 #[test]
-fn test_type_application_elides_trailing_default_type_argument() {
+fn test_type_application_keeps_trailing_default_type_argument() {
+    // A *computed* type reference renders its full argument list; `tsc`'s
+    // `typeToTypeNodeHelper` never trims a trailing argument that equals its
+    // type parameter's default. Oracled: `const c = w` where
+    // `w: TPromise<string, any>` (`RejectType = any`) emits
+    // `TPromise<string, any>`, not `TPromise<string>`. (Trailing defaults are
+    // only dropped on the node-reuse path, which copies a written annotation
+    // verbatim and never reaches this printer.)
     let (parser, _root) = parse_test_source("");
     let binder = BinderState::new();
 
@@ -1687,7 +1694,7 @@ fn test_type_application_elides_trailing_default_type_argument() {
     let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
     let printed = emitter.print_type_id(promise_type);
 
-    assert_eq!(printed, "TPromise<string>");
+    assert_eq!(printed, "TPromise<string, any>");
 }
 
 #[test]

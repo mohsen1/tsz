@@ -1210,6 +1210,30 @@ impl<'a> CheckerState<'a> {
             return fallback_type;
         }
 
+        // Only recover an expando-assigned type when the receiver actually
+        // qualifies for expando property reads — the same eligibility gate the
+        // non-optional property-read path applies (see the
+        // `is_expando_property_read` branch in
+        // `property_access_type/identifier_resolution.rs`). This function is only
+        // reached from the optional-chain property fast path, whose caller passes
+        // the raw property-resolution result as `fallback_type`; without the gate
+        // it would recover a value for *any* `any`-typed receiver by walking the
+        // file for a matching `recv.prop = <value>` assignment, even when that
+        // receiver is a plain `any` and not an expando root.
+        //
+        // That mismatch is exactly `#16710`: `declare const obj: any; obj?.a = 1;`
+        // followed by `obj?.a` narrowed away from `any` to the written value's
+        // type, while `tsc` keeps it `any` (the write target is itself the
+        // invalid-optional-assignment `TS2779`, and `any` has no synthesized
+        // members). The non-optional spelling `obj.a` already stays `any` because
+        // it is gated this way; gating here keeps the optional-chain fast path
+        // consistent with it, while genuine expando roots (whose property already
+        // resolves to a concrete type, so `fallback_type != ANY`, or which pass
+        // `is_expando_property_read`) are unaffected.
+        if !self.is_expando_property_read(object_expr_idx, property_name) {
+            return fallback_type;
+        }
+
         self.expando_property_read_type(property_access_idx, object_expr_idx, property_name)
             .unwrap_or(fallback_type)
     }
@@ -1683,12 +1707,24 @@ impl<'a> CheckerState<'a> {
                 .map(|ident| ident.escaped_text.to_string()),
             syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                 let access = self.ctx.arena.get_access_expr(node)?;
+                // An optional-chain hop (`obj?.a = 1`) is never a valid
+                // assignment target (TS2779) and tsc's expando/special-property
+                // detection requires a "bindable static name expression" — a
+                // chain of plain property accesses, which an optional hop is
+                // not. Such a write must not be read back as an expando
+                // property declaration on a later access of the same name.
+                if access.question_dot_token {
+                    return None;
+                }
                 let left = self.expando_assignment_access_key(access.expression)?;
                 let right = self.ctx.arena.get_identifier_at(access.name_or_argument)?;
                 Some(format!("{left}.{}", right.escaped_text))
             }
             syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
                 let access = self.ctx.arena.get_access_expr(node)?;
+                if access.question_dot_token {
+                    return None;
+                }
                 let left = self.expando_assignment_access_key(access.expression)?;
                 let right = self.expando_element_key_name(access.name_or_argument)?;
                 Some(format!("{left}.{right}"))

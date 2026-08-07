@@ -20,7 +20,10 @@ type MemberModifierMap = Option<FxHashMap<u32, (bool, bool)>>;
 struct CompoundMemberFacts {
     property_names: MemberPropertyNames,
     property_modifiers: MemberModifierMap,
-    carries_index_signature: bool,
+    /// Bitset of [`INDEX_KIND_STRING`] / [`INDEX_KIND_NUMBER`] /
+    /// [`INDEX_KIND_SYMBOL`] recording which index-signature key kinds this
+    /// member carries. Zero means no index signatures at all.
+    index_signature_kinds: u8,
     is_empty_object_type: bool,
     is_intrinsic: bool,
     is_intrinsic_or_literal_type: bool,
@@ -29,6 +32,17 @@ struct CompoundMemberFacts {
     is_opaque_under_bypass_eval: bool,
     is_branded_primitive_intersection: bool,
 }
+
+/// The member carries a `[k: string]`-keyed index signature (including
+/// template-literal and other string-domain key types).
+const INDEX_KIND_STRING: u8 = 1 << 0;
+/// The member carries a `[k: number]`-keyed index signature.
+const INDEX_KIND_NUMBER: u8 = 1 << 1;
+/// The member carries a `[k: symbol]`-keyed index signature.
+const INDEX_KIND_SYMBOL: u8 = 1 << 2;
+/// A mapped type's key domain is its constraint, which is not inspectable
+/// here without evaluation; treat it as covering every kind.
+const INDEX_KIND_ALL: u8 = INDEX_KIND_STRING | INDEX_KIND_NUMBER | INDEX_KIND_SYMBOL;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct CompoundMemberFactsKey {
@@ -153,6 +167,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         checker.max_depth = MAX_SUBTYPE_DEPTH;
         checker.no_unchecked_indexed_access = self.no_unchecked_indexed_access;
         checker.exact_optional_property_types = self.exact_optional_property_types;
+        // Union narrowing must apply the same weak-type ("no common properties",
+        // TS2559) veto tsc's own `removeSubtypes` gets from `strictSubtypeRelation`:
+        // that relation is not `ComparableRelation`, so `isPerformingCommonPropertyChecks`
+        // still runs. Without this, a member that structurally satisfies an
+        // all-optional ("weak") sibling only because it shares no properties with
+        // it — e.g. `(() => T) | { get?(): T }` — reads as redundant and gets
+        // dropped, collapsing the union to just the weak member. A later
+        // assignability check against an argument that only matches the dropped
+        // member then reports TS2559 against the sole remaining (weak) member
+        // instead of succeeding through the one that was removed (#16707).
+        // Intersection simplification (`OtherSubsumedBySource`) is unaffected:
+        // tsc's intersection construction does not run this relation.
+        if matches!(direction, SubtypeDirection::SourceSubsumedByOther) {
+            checker.enforce_weak_types = true;
+        }
 
         // Snapshot per-member veto facts before the pair loop. These facts are
         // pure, per-call data, so relation probes can mutably borrow `self`
@@ -407,7 +436,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let facts = CompoundMemberFacts {
             property_names,
             property_modifiers,
-            carries_index_signature: Self::carries_index_signature(self.interner, type_id),
+            index_signature_kinds: Self::index_signature_kinds(self.interner, type_id),
             is_empty_object_type: crate::visitors::visitor_predicates::is_empty_object_type(
                 self.interner,
                 type_id,
@@ -567,22 +596,60 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         has_widening_primitive && has_empty_object
     }
 
-    /// Check if `candidate` has an index signature that `subsuming` lacks.
+    /// Check if `candidate` carries an index signature of a key kind
+    /// (`string` / `number` / `symbol`) that `subsuming` lacks.
+    ///
+    /// Kind-blind comparison is not enough: `{ [k: string]: number }` is a
+    /// structural subtype of `{ [k: number]: number }` (a string index covers
+    /// numeric keys), but dropping the string-indexed member from a union
+    /// shrinks the union's admitted key domain — a fresh object literal's
+    /// string-keyed property then reads as excess (TS2353) against the
+    /// surviving number-indexed member even though tsc admits it through the
+    /// removed sibling (`isKnownProperty` over the union as written).
     const fn has_index_signature_not_in(
         candidate: &CompoundMemberFacts,
         subsuming: &CompoundMemberFacts,
     ) -> bool {
-        candidate.carries_index_signature && !subsuming.carries_index_signature
+        candidate.index_signature_kinds & !subsuming.index_signature_kinds != 0
     }
 
-    fn carries_index_signature(db: &dyn crate::caches::db::TypeDatabase, type_id: TypeId) -> bool {
+    /// Which index-signature key kinds (`string` / `number` / `symbol`) the
+    /// member carries, as an `INDEX_KIND_*` bitset.
+    fn index_signature_kinds(db: &dyn crate::caches::db::TypeDatabase, type_id: TypeId) -> u8 {
         match db.lookup(type_id) {
-            Some(TypeData::ObjectWithIndex(_) | TypeData::Mapped(_)) => true,
+            Some(TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = db.object_shape(shape_id);
+                let mut kinds = 0;
+                if shape.string_index_signature().is_some() {
+                    kinds |= INDEX_KIND_STRING;
+                }
+                if shape.number_index.is_some() {
+                    kinds |= INDEX_KIND_NUMBER;
+                }
+                if shape.symbol_index_signature().is_some() {
+                    kinds |= INDEX_KIND_SYMBOL;
+                }
+                kinds
+            }
+            Some(TypeData::Mapped(_)) => INDEX_KIND_ALL,
             Some(TypeData::Callable(shape_id)) => {
                 let shape = db.callable_shape(shape_id);
-                shape.string_index.is_some() || shape.number_index.is_some()
+                let mut kinds = 0;
+                // `CallableShape` keeps the single-slot convention: a `symbol`
+                // index rides in `string_index` discriminated by its key type.
+                if let Some(string_index) = &shape.string_index {
+                    if string_index.key_type == TypeId::SYMBOL {
+                        kinds |= INDEX_KIND_SYMBOL;
+                    } else {
+                        kinds |= INDEX_KIND_STRING;
+                    }
+                }
+                if shape.number_index.is_some() {
+                    kinds |= INDEX_KIND_NUMBER;
+                }
+                kinds
             }
-            _ => false,
+            _ => 0,
         }
     }
 
@@ -799,7 +866,7 @@ mod tests {
         let evaluator = TypeEvaluator::new(&interner);
 
         let indexed_facts = evaluator.compound_member_facts(indexed, true);
-        assert!(indexed_facts.carries_index_signature);
+        assert_eq!(indexed_facts.index_signature_kinds, INDEX_KIND_STRING);
         assert!(
             indexed_facts
                 .property_names

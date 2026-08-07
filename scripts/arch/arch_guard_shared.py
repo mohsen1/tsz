@@ -221,32 +221,170 @@ def _load_all_checks(
 
 CHECKS, MANIFEST_CHECKS = _load_all_checks()
 
+# Repo-wide physical-line cap. `.claude/CLAUDE.md` states the 2000-LOC rule
+# without qualification ("No hand-authored source ... shard may exceed 2000
+# physical lines"), but for a long time only `tsz-checker/src` was registered
+# here, so every other crate drifted past the cap while `arch-size` stayed
+# green (#16733). The list below now registers one directory-level check per
+# `crates/*/src` root, so a *new* file crossing 2000 lines in any crate fails
+# the size gate — not just files that already happen to carry a per-file
+# ratchet in `FILE_LINE_LIMIT_CHECKS`.
+#
+# `scan_line_limit_coverage` (below) plus its unit test assert that the set of
+# registered roots equals the set of `crates/*/src` roots on disk, so a newly
+# added crate cannot silently reappear as an unguarded blind spot.
+#
+# Each crate's fourth tuple element is its audited allowlist of files already
+# over 2000 lines when repo-wide coverage landed. These are grandfathered
+# debt: `test_excluded_files_actually_exceed_limit` keeps every entry honest
+# (must exist and actually exceed the cap), and `FILE_LINE_LIMIT_CHECKS` pins
+# the ones that also need an exact-size ratchet. Delete an entry in the same
+# diff that splits the file below the cap; the allowlist can only shrink.
+SRC_LINE_LIMIT = 2000
+
+# One row per `crates/*/src` root: (crate directory, display label, audited
+# allowlist of files already over the cap when repo-wide coverage landed). The
+# check name is uniformly "<label> boundary: src files must stay under 2000
+# LOC" — for "Checker" that reproduces the historical string several unit tests
+# key off, so no special case is needed. tsz-checker's allowlist stays empty:
+# this guard drove it to full compliance and holds it there, which is the proof
+# the mechanism works.
+_CRATE_SRC_LINE_LIMIT_ALLOWLISTS = [
+    ("tsz-checker", "Checker", set()),
+    # `tsz-binder` and `tsz-cli` carry no grandfathered debt, for the same
+    # reason `tsz-checker` does not: the splits in this change drove both crates
+    # to full compliance, so every file that was over the cap when these roots
+    # were registered is now under it —
+    #   crates/tsz-binder/src/state/core.rs             2006 -> 1744
+    #   crates/tsz-cli/src/bin/tsz_server/main.rs       2038 -> 1625
+    #   crates/tsz-cli/src/driver/check_utils/tests.rs  2258 -> 1152
+    # Leaving the entries in place fails `test_excluded_files_actually_exceed_limit`,
+    # which is exactly the honesty check working.
+    ("tsz-binder", "Binder", set()),
+    ("tsz-cli", "CLI", set()),
+    ("tsz-common", "Common", {
+        "crates/tsz-common/src/perf_counters/tests.rs",
+    }),
+    ("tsz-core", "Core", {
+        "crates/tsz-core/src/config/mod.rs",
+        "crates/tsz-core/src/parallel/core/parse_and_libs.rs",
+        "crates/tsz-core/src/config/tests/module_resolution.rs",
+    }),
+    ("tsz-emitter", "Emitter", {
+        "crates/tsz-emitter/src/declaration_emitter/tests/type_info.rs",
+        "crates/tsz-emitter/src/emitter/functions.rs",
+        "crates/tsz-emitter/src/transforms/helpers.rs",
+        "crates/tsz-emitter/src/emitter/helpers.rs",
+        "crates/tsz-emitter/src/emitter/expressions/call.rs",
+        "crates/tsz-emitter/src/emitter/source_file/emit.rs",
+        "crates/tsz-emitter/src/emitter/source_file/es5_emit_tests.rs",
+        "crates/tsz-emitter/src/emitter/declarations/class/emit_es6.rs",
+        "crates/tsz-emitter/src/transforms/class_es5_ir_members.rs",
+        "crates/tsz-emitter/src/declaration_emitter/helpers/portability_resolve.rs",
+    }),
+    ("tsz-lowering", "Lowering", {
+        "crates/tsz-lowering/src/lower/core.rs",
+    }),
+    ("tsz-lsp", "LSP", set()),
+    ("tsz-parser", "Parser", {
+        "crates/tsz-parser/src/parser/state_expressions_literals_regex.rs",
+        "crates/tsz-parser/src/parser/state_statements_class_members.rs",
+        "crates/tsz-parser/src/parser/state_declarations.rs",
+    }),
+    ("tsz-scanner", "Scanner", set()),
+    ("tsz-solver", "Solver", {
+        "crates/tsz-solver/src/type_queries/core.rs",
+        "crates/tsz-solver/src/type_queries/flow.rs",
+        "crates/tsz-solver/src/operations/constraints/walker.rs",
+        "crates/tsz-solver/src/relations/subtype/rules/objects.rs",
+        "crates/tsz-solver/src/type_queries/data/tests.rs",
+        "crates/tsz-solver/src/evaluation/evaluate_rules/conditional.rs",
+        "crates/tsz-solver/src/def/core.rs",
+        "crates/tsz-solver/src/intern/core/constructors.rs",
+        "crates/tsz-solver/src/relations/subtype/explain.rs",
+        "crates/tsz-solver/src/contextual/extractors.rs",
+    }),
+    ("tsz-wasm", "WASM", set()),
+    ("tsz-website", "Website", set()),
+    ("conformance", "Conformance", set()),
+]
+
 LINE_LIMIT_CHECKS = [
     (
-        "Checker boundary: src files must stay under 2000 LOC",
-        ROOT / "crates" / "tsz-checker" / "src",
-        2000,
-        # Exclusion list pruned 2026-05-01: removed 15 entries for files
-        # that no longer exist (split or renamed) and 16 entries for files
-        # that have since dropped below 2000 lines.
-        #
-        # Refreshed 2026-05-12: removed entries that had since dropped below
-        # 2000 raw lines. The set below is the audited current set of files
-        # above 2000 raw lines.
-        {
-            # ≥2000 LOC, real files. When a file drops below the limit,
-            # delete it from this set in the same diff and the
-            # `test_excluded_files_actually_exceed_limit` test will catch
-            # any regression.
-            # (empty — all files are now under the 2000-line limit)
-        },
-    ),
+        f"{label} boundary: src files must stay under 2000 LOC",
+        ROOT / "crates" / crate / "src",
+        SRC_LINE_LIMIT,
+        allowlist,
+    )
+    for crate, label, allowlist in _CRATE_SRC_LINE_LIMIT_ALLOWLISTS
+] + [
     (
         "Checker computation boundary: type-computation monoliths must stay below 3100 LOC (#8226)",
         ROOT / "crates" / "tsz-checker" / "src" / "types" / "computation",
         3100,
     ),
+    (
+        "Binder boundary: src files must stay under 2000 LOC (#16733)",
+        ROOT / "crates" / "tsz-binder" / "src",
+        2000,
+        # (empty — all files are under the 2000-line limit; #16733 split
+        # `state/core.rs` into `state/core.rs` + `state/core_incremental.rs`
+        # to bring the crate into compliance)
+        set(),
+    ),
+    (
+        "CLI boundary: src files must stay under 2000 LOC (#16733)",
+        ROOT / "crates" / "tsz-cli" / "src",
+        2000,
+        # (empty — all files are under the 2000-line limit; #16733 split
+        # `bin/tsz_server/main.rs` into `bracket_match.rs` and
+        # `driver/check_utils/tests.rs` into `tests_part2.rs` to bring the
+        # crate into compliance)
+        set(),
+    ),
 ]
+
+
+LINE_LIMIT_COVERAGE_NAME = (
+    "Architecture boundary: every crates/*/src root must be registered in the "
+    "2000-LOC LINE_LIMIT_CHECKS (repo-wide coverage cannot silently diverge; #16733)"
+)
+
+
+def crate_src_roots(crates_dir: Optional[pathlib.Path] = None) -> list[pathlib.Path]:
+    """Every ``crates/*/src`` directory on disk, sorted for deterministic output."""
+    crates_dir = crates_dir if crates_dir is not None else (ROOT / "crates")
+    if not crates_dir.is_dir():
+        return []
+    return sorted(
+        child / "src"
+        for child in crates_dir.iterdir()
+        if (child / "src").is_dir()
+    )
+
+
+def scan_line_limit_coverage(
+    checks=None, crates_dir: Optional[pathlib.Path] = None
+) -> list[str]:
+    """Report ``crates/*/src`` roots missing a directory-level 2000-LOC check.
+
+    The 2000-LOC cap is documented repo-wide, so every crate's ``src`` tree must
+    be registered as a base in ``LINE_LIMIT_CHECKS`` at ``SRC_LINE_LIMIT``.
+    Coverage gaps are invisible by construction — a path that is never scanned
+    never fails — so this makes the *coverage* itself a checked invariant
+    (#16733). A newly added crate that forgets to register here fails the guard.
+    """
+    checks = checks if checks is not None else LINE_LIMIT_CHECKS
+    registered = {
+        base.resolve()
+        for _name, base, limit, *_rest in checks
+        if limit == SRC_LINE_LIMIT
+    }
+    missing = []
+    for src in crate_src_roots(crates_dir):
+        if src.resolve() not in registered:
+            missing.append(src.relative_to(ROOT).as_posix())
+    return missing
 
 # Ratcheted 1901 -> 1740 by the #15643 arch-health paydown: FunctionShape
 # instantiation, parameter-list transformation, and redeclaration-widening
@@ -1198,6 +1336,70 @@ FILE_LINE_LIMIT_CHECKS = [
         ROOT / "crates" / "tsz-solver" / "src" / "intern" / "normalize.rs",
         2010,
     ),
+    # Repo-wide coverage refresh (2026-08-07, #16733): when the directory-level
+    # 2000-LOC cap was extended from tsz-checker/src to every crates/*/src root,
+    # the unguarded-oversized-file smoke test surfaced these production files
+    # already past 2000 lines on main with no per-file ratchet. Pinned at their
+    # live counts so they cannot grow further; ratchet down as submodules land
+    # (§19).
+    (
+        "Parser boundary: parser/state_expressions_literals_regex.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-parser"
+        / "src"
+        / "parser"
+        / "state_expressions_literals_regex.rs",
+        2438,
+    ),
+    (
+        "CLI boundary: driver/check_utils/tests.rs size ratchet",
+        ROOT / "crates" / "tsz-cli" / "src" / "driver" / "check_utils" / "tests.rs",
+        2258,
+    ),
+    (
+        "Solver boundary: relations/subtype/rules/objects.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-solver"
+        / "src"
+        / "relations"
+        / "subtype"
+        / "rules"
+        / "objects.rs",
+        2075,
+    ),
+    (
+        "Lowering boundary: lower/core.rs size ratchet",
+        ROOT / "crates" / "tsz-lowering" / "src" / "lower" / "core.rs",
+        2032,
+    ),
+    (
+        "Core boundary: parallel/core/parse_and_libs.rs size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-core"
+        / "src"
+        / "parallel"
+        / "core"
+        / "parse_and_libs.rs",
+        2029,
+    ),
+    (
+        "Binder boundary: state/core.rs size ratchet",
+        ROOT / "crates" / "tsz-binder" / "src" / "state" / "core.rs",
+        2006,
+    ),
+    (
+        "Solver boundary: contextual/extractors.rs size ratchet",
+        ROOT / "crates" / "tsz-solver" / "src" / "contextual" / "extractors.rs",
+        2004,
+    ),
+    (
+        "Parser boundary: parser/state_declarations.rs size ratchet",
+        ROOT / "crates" / "tsz-parser" / "src" / "parser" / "state_declarations.rs",
+        2001,
+    ),
 ]
 
 # Pin field counts on giant coordination structs so workstream-4 (Checker
@@ -1213,7 +1415,11 @@ STRUCT_FIELD_COUNT_CHECKS = [
         "Checker boundary: CheckerContext field count (architecture health metric 1)",
         ROOT / "crates" / "tsz-checker" / "src" / "context" / "mod.rs",
         "CheckerContext",
-        255,
+        # 255 -> 256: `parameter_grammar_suppress_spans` records the rest
+        # parameters whose parser-emitted grammar diagnostics tsc's single
+        # early-return `checkGrammarParameterList` never reached, so the driver
+        # can drop them (#16644).
+        256,
     ),
 ]
 

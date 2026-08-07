@@ -578,3 +578,153 @@ export const via: (() => number) | (() => string) = c[other];
 // compatibility check (which reads the explicit `number` index directly),
 // unrelated to the implicit-fold union this change owns. That divergence is
 // left to its own fix so this suite pins only the implicit-fold behavior.
+
+// ---------------------------------------------------------------------------
+// #16662 residual 1: a wide/plain `symbol` computed key is an index-signature
+// contributor, so a VALUE mismatch against the contextual symbol index is owned
+// by the whole-object relation (TS2322 with a `'symbol' index signatures are
+// incompatible` chain), exactly like a wide `string`/`number` key — never the
+// per-property TS2418 that a late-bound NAMED symbol key (`unique symbol`, or a
+// syntactic `Symbol.<member>` well-known key) takes. Every row below is oracled
+// against `tsc` 6.0.2 (`--strict`).
+// ---------------------------------------------------------------------------
+
+fn assert_whole_object_ts2322_not_ts2418(source: &str) {
+    let diags = check_source_diagnostics(source);
+    assert!(
+        diags.iter().any(|d| d.code == 2322),
+        "a wide-symbol index-contributor value mismatch must be the whole-object \
+         TS2322, got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 2418),
+        "a wide-symbol index-contributor key must NOT take the late-bound \
+         per-property TS2418, got: {diags:?}"
+    );
+}
+
+#[test]
+fn wide_symbol_bare_binding_key_value_mismatch_is_whole_object_ts2322() {
+    assert_whole_object_ts2322_not_ts2418(
+        r#"
+declare const w: symbol;
+interface OnlySym { [k: symbol]: string }
+const h: OnlySym = { [w]: 1 };
+"#,
+    );
+}
+
+#[test]
+fn wide_symbol_property_access_key_value_mismatch_is_whole_object_ts2322() {
+    // `Sym.foo` is a property access whose base is NOT the syntactic `Symbol`,
+    // so it is a genuine wide-symbol index contributor, not a well-known key.
+    assert_whole_object_ts2322_not_ts2418(
+        r#"
+declare const Sym: { readonly foo: symbol };
+interface OnlySym { [k: symbol]: string }
+const h: OnlySym = { [Sym.foo]: 1 };
+"#,
+    );
+}
+
+#[test]
+fn wide_symbol_call_result_key_value_mismatch_is_whole_object_ts2322() {
+    assert_whole_object_ts2322_not_ts2418(
+        r#"
+declare function getSymbol(): symbol;
+interface OnlySym { [k: symbol]: string }
+const h: OnlySym = { [getSymbol()]: 1 };
+"#,
+    );
+}
+
+#[test]
+fn wide_symbol_element_access_key_value_mismatch_is_whole_object_ts2322() {
+    assert_whole_object_ts2322_not_ts2418(
+        r#"
+declare const box: symbol[];
+interface OnlySym { [k: symbol]: string }
+const h: OnlySym = { [box[0]]: 1 };
+"#,
+    );
+}
+
+#[test]
+fn wide_symbol_method_key_value_mismatch_is_whole_object_ts2322() {
+    assert_whole_object_ts2322_not_ts2418(
+        r#"
+declare const w: symbol;
+interface OnlySym { [k: symbol]: () => string }
+const h: OnlySym = { [w]() { return 1; } };
+"#,
+    );
+}
+
+#[test]
+fn wide_symbol_getter_key_value_mismatch_is_whole_object_ts2322() {
+    assert_whole_object_ts2322_not_ts2418(
+        r#"
+declare const w: symbol;
+interface OnlySym { [k: symbol]: string }
+const h: OnlySym = { get [w]() { return 1; } };
+"#,
+    );
+}
+
+#[test]
+fn wide_symbol_setter_key_value_mismatch_is_whole_object_ts2322() {
+    assert_whole_object_ts2322_not_ts2418(
+        r#"
+declare const w: symbol;
+interface OnlySym { [k: symbol]: string }
+const h: OnlySym = { set [w](v: number) {} };
+"#,
+    );
+}
+
+#[test]
+fn wide_symbol_key_whole_object_ts2322_renamed_binders() {
+    // Anti-hardcoding: the same shape with every identifier renamed behaves
+    // identically — the classification is structural, not name-keyed.
+    assert_whole_object_ts2322_not_ts2418(
+        r#"
+declare const registryKey: symbol;
+interface Store { [pk: symbol]: string }
+const s: Store = { [registryKey]: 42 };
+"#,
+    );
+}
+
+#[test]
+fn wide_symbol_key_ts2322_message_names_symbol_index_incompatibility() {
+    // The whole-object TS2322 carries the same index-signature-incompatible
+    // chain tsc emits, keyed on `symbol` (not `string`).
+    let diags = check_source_diagnostics(
+        r#"
+declare const w: symbol;
+interface OnlySym { [k: symbol]: string }
+const h: OnlySym = { [w]: 1 };
+"#,
+    );
+    let ts2322 = diags
+        .iter()
+        .find(|d| d.code == 2322)
+        .unwrap_or_else(|| panic!("expected a whole-object TS2322, got: {diags:?}"));
+    let full_text: String = std::iter::once(ts2322.message_text.clone())
+        .chain(
+            ts2322
+                .related_information
+                .iter()
+                .map(|info| info.message_text.clone()),
+        )
+        .collect::<Vec<_>>()
+        .join(" | ");
+    assert!(
+        full_text.contains("symbol") && full_text.contains("index signature"),
+        "TS2322 must describe the `symbol` index-signature incompatibility, got: {full_text:?}"
+    );
+}
+
+// NOTE: the well-known-syntax negative control (`[Symbol.iterator]` keeps the
+// late-bound TS2418) is pinned in `symbol_index_signature_tests.rs`, which
+// supplies the `Symbol` lib binding this suite's minimal harness does not.

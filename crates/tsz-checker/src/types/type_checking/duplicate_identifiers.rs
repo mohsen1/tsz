@@ -6,6 +6,8 @@
 //! - Overload signature consistency (TS2383, TS2385, TS2386)
 //! - Built-in global identifier conflicts (TS2397)
 
+#[path = "duplicate_identifiers_flag_agreement.rs"]
+mod duplicate_identifiers_flag_agreement;
 #[path = "duplicate_identifiers_followup.rs"]
 mod duplicate_identifiers_followup;
 #[path = "duplicate_identifiers_merge.rs"]
@@ -19,6 +21,7 @@ use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
 
 pub(super) type OuterDeclResult = Option<(tsz_binder::SymbolId, Vec<(NodeIndex, u32)>)>;
 type DuplicateDeclList = Vec<(NodeIndex, u32, bool, bool, DuplicateDeclarationOrigin)>;
@@ -60,6 +63,33 @@ impl<'a> CheckerState<'a> {
             return Some((start, node.end.saturating_sub(start)));
         }
         None
+    }
+
+    /// `true` when `decl_idx`'s nearest enclosing `MODULE_DECLARATION` (namespace
+    /// or `module`/`declare module "x"`) is itself ambient and is not a global
+    /// augmentation (`declare global { ... }`). Used to exempt overload-signature
+    /// members of an ambient module/namespace body from the TS2383 export-
+    /// consistency check, which tsc does not apply there.
+    fn is_within_ambient_module_container(&self, decl_idx: NodeIndex) -> bool {
+        let mut current = decl_idx;
+        for _ in 0..100 {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            let parent = ext.parent;
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return false;
+            };
+            if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                return !parent_node.is_global_augmentation()
+                    && self.is_ambient_declaration(parent);
+            }
+            current = parent;
+        }
+        false
     }
 
     /// Check for duplicate identifiers (TS2300, TS2451, TS2392).
@@ -226,106 +256,10 @@ impl<'a> CheckerState<'a> {
             if declarations.len() <= 1 {
                 continue;
             }
-            let mut func_decls_for_2384 = Vec::new();
-            // The implementation is excluded from the overload list but is still
-            // needed: tsc's `getCanonicalOverload` may take the canonical flags
-            // from it. See the TS2384 report below.
-            let mut implementation_for_2384: Option<NodeIndex> = None;
-            let mut has_ambient_func = false;
-            let mut has_non_ambient_func = false;
-            for &(decl_idx, flags, is_local, _, _) in &declarations {
-                if is_local && (flags & (symbol_flags::FUNCTION | symbol_flags::METHOD)) != 0 {
-                    // TS2384 only applies to overload signatures (bodyless declarations).
-                    // Skip implementations (declarations with bodies) — a non-ambient
-                    // implementation following ambient overloads is valid.
-                    if self.function_has_body(decl_idx) {
-                        if implementation_for_2384.is_none() {
-                            implementation_for_2384 = Some(decl_idx);
-                        }
-                        continue;
-                    }
-                    func_decls_for_2384.push(decl_idx);
-                    if self.is_ambient_declaration(decl_idx) {
-                        has_ambient_func = true;
-                    } else {
-                        has_non_ambient_func = true;
-                    }
-                }
-            }
-            if has_ambient_func && has_non_ambient_func {
-                // tsc's `getCanonicalOverload` (checker.ts:43088) takes the
-                // canonical set of flags from the *implementation* when it
-                // shares a container with the first overload, and only
-                // otherwise from the first overload. The container check is
-                // what keeps lib.d.ts overloads from being blamed for a local
-                // implementation. Reading the flags off the first overload
-                // unconditionally blames the wrong declaration whenever the
-                // implementation is the one the majority agrees with.
-                let first_overload = func_decls_for_2384[0];
-                let first_parent = self
-                    .ctx
-                    .arena
-                    .get_extended(first_overload)
-                    .map(|ext| ext.parent);
-                let canonical = implementation_for_2384
-                    .filter(|&impl_idx| {
-                        first_parent.is_some()
-                            && self.ctx.arena.get_extended(impl_idx).map(|ext| ext.parent)
-                                == first_parent
-                    })
-                    .unwrap_or(first_overload);
-                let ref_is_ambient = self.is_ambient_declaration(canonical);
-                for &decl_idx in &func_decls_for_2384 {
-                    if self.is_ambient_declaration(decl_idx) != ref_is_ambient {
-                        let error_node =
-                            self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
-                        self.error_at_node(
-                            error_node,
-                            diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_AMBIENT_OR_NON_AMBIENT,
-                            diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_AMBIENT_OR_NON_AMBIENT,
-                        );
-                    }
-                }
-            }
-
-            // TS2383: all bodyless overload signatures must agree on export status.
-            // The rule applies when 2+ overload signatures exist; the implementation
-            // is not an overload signature and is not checked for export agreement.
-            if func_decls_for_2384.len() >= 2 {
-                // Restrict to bodyless overload signatures only by looking up export
-                // status for each entry in func_decls_for_2384. The implementation
-                // (absent from func_decls_for_2384) must not influence the check.
-                let func_export_info: Vec<(NodeIndex, bool)> = func_decls_for_2384
-                    .iter()
-                    .filter_map(|&decl_idx| {
-                        declarations
-                            .iter()
-                            .find(|&&(di, _, _, _, _)| di == decl_idx)
-                            .map(|&(di, _, _, is_exported, _)| (di, is_exported))
-                    })
-                    .collect();
-                let (has_exported, has_non_exported) = func_export_info
-                    .iter()
-                    .fold((false, false), |(exp, non_exp), &(_, e)| {
-                        (exp || e, non_exp || !e)
-                    });
-                // has_exported && has_non_exported already implies len >= 2
-                if has_exported && has_non_exported {
-                    // declarations is ordered, so [0] is always the first overload signature.
-                    let ref_exported = func_export_info[0].1;
-                    for &(decl_idx, is_exported) in &func_export_info {
-                        if is_exported != ref_exported {
-                            let error_node =
-                                self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
-                            self.error_at_node(
-                                error_node,
-                                diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_EXPORTED_OR_NON_EXPORTED,
-                                diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_EXPORTED_OR_NON_EXPORTED,
-                            );
-                        }
-                    }
-                }
-            }
+            // TS2383 / TS2384: overload-group export/ambient flag agreement,
+            // extracted to `duplicate_identifiers_flag_agreement.rs`. Returns the
+            // bodyless overload signatures the TS2385/TS2386 arms below consume.
+            let func_decls_for_2384 = self.check_overload_flag_agreement(&declarations);
 
             // TS2385: Overload signatures must all be public, private or protected
             // Applies to class method overloads with mixed access modifiers
@@ -594,7 +528,18 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                     let non_default_spaces = exported_spaces | non_exported_spaces;
-                    let default_conflict_spaces = default_exported_spaces & non_default_spaces;
+                    // A group made entirely of function declarations is one
+                    // overload group, not a merged declaration: visibility
+                    // disagreements there are overload flag-agreement errors
+                    // (TS2383, via the pass above) or duplicate-implementation
+                    // errors (TS2393), never TS2652/TS2395. A single non-function
+                    // member (namespace, class, variable) restores both checks
+                    // for the whole group.
+                    let default_conflict_spaces = if all_functions {
+                        0
+                    } else {
+                        default_exported_spaces & non_default_spaces
+                    };
                     let export_local_conflict_spaces =
                         if all_functions || suppress_ts2395_for_ambient {
                             0

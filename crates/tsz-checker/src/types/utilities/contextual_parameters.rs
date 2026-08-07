@@ -171,6 +171,28 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // tsc's `getContextualCallSignature` only returns a signature outright
+        // when exactly one arity-applicable call signature exists; with 2+ it
+        // defers to `getIntersectedSignatures`, which returns `undefined`
+        // unconditionally unless `noImplicitAny` is on. An overloaded
+        // (non-generic) callable target therefore contextually types nothing
+        // at all under a non-strict program — skip the `get_contextual_signature`
+        // fallback below rather than let it read a merged signature's combined
+        // parameter/rest type back in.
+        if !self.ctx.compiler_options.no_implicit_any
+            && crate::query_boundaries::common::callable_shape_id(self.ctx.types, expected)
+                .is_some_and(|shape_id| {
+                    self.ctx
+                        .types
+                        .callable_shape(shape_id)
+                        .call_signatures
+                        .len()
+                        > 1
+                })
+        {
+            return true;
+        }
+
         let Some(shape) = crate::query_boundaries::checkers::call::get_contextual_signature(
             self.ctx.types,
             expected,

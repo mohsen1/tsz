@@ -97,6 +97,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             match source.name.cmp(&target.name) {
                 std::cmp::Ordering::Equal => {
                     let property_index = source_idx as u32;
+                    // A property carrying an `as const` assertion (`{ v: "x" as const }`)
+                    // is a *non-widening* literal even when the enclosing object
+                    // literal is fresh: tsc's `getWidenedLiteralType` widens only
+                    // fresh literals, so the per-property assertion pins the literal
+                    // at its inference site. `source_is_fresh` reflects the whole
+                    // object's freshness; fold in the property's own non-widening
+                    // flag so the inferred type parameter keeps `"x"` rather than
+                    // widening to `string`.
+                    let property_source_is_fresh = source_is_fresh && !source.non_widening;
                     if let Some(&var) = var_map.get(&target.type_id) {
                         ctx.add_property_candidate_with_index(
                             var,
@@ -104,7 +113,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             priority,
                             property_index,
                             Some(source.name),
-                            source_is_fresh,
+                            property_source_is_fresh,
                         );
                     } else {
                         let was_pending_method = ctx.pending_target_method;
@@ -131,7 +140,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                 priority,
                                 property_index,
                                 Some(source.name),
-                                source_is_fresh,
+                                property_source_is_fresh,
                             );
                         } else {
                             // Skip the reverse-direction write_type constraint when
