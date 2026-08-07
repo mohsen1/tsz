@@ -254,115 +254,117 @@ impl<'a> CheckerState<'a> {
             if declarations.len() <= 1 {
                 continue;
             }
+            // TS2383 / TS2384: export and ambient agreement across an overload
+            // group, mirroring tsc's `checkFunctionOrConstructorSymbol` /
+            // `checkFlagAgreementBetweenOverloads`. Mismatch detection
+            // accumulates over the symbol's function-like declarations —
+            // implementation included, so a lone `export function f(sig);`
+            // above a non-exported implementation is a mismatch. Reporting then
+            // runs over every local declaration of the merged symbol (an
+            // exported `namespace f {}` merged into a mixed function group is
+            // blamed too), comparing each against the canonical declaration:
+            // the implementation when it shares a statement container with the
+            // first overload, otherwise the first overload. A declaration
+            // deviating on both axes reports only TS2383 — tsc's else-if chain
+            // gives the export mismatch precedence over the ambient one.
+            // tsc's `getEffectiveDeclarationFlags` treats a member of an
+            // ambient module/namespace body (`declare namespace M`,
+            // `declare module "m"`, including namespaces nested inside one) as
+            // implicitly exported, so mismatched `export` keywords there are
+            // not overload-consistency errors (#16698). `declare global` is a
+            // global augmentation, not an ambient module, and stays subject to
+            // the check, as does a bare top-level `declare function`.
+            let effective_exported = |state: &Self, decl_idx: NodeIndex, is_exported: bool| {
+                is_exported || state.is_within_ambient_module_container(decl_idx)
+            };
             let mut func_decls_for_2384 = Vec::new();
-            // The implementation is excluded from the overload list but is still
-            // needed: tsc's `getCanonicalOverload` may take the canonical flags
-            // from it. See the TS2384 report below.
-            let mut implementation_for_2384: Option<NodeIndex> = None;
+            let mut implementation: Option<NodeIndex> = None;
+            let mut has_exported_func = false;
+            let mut has_non_exported_func = false;
             let mut has_ambient_func = false;
             let mut has_non_ambient_func = false;
-            for &(decl_idx, flags, is_local, _, _) in &declarations {
+            for &(decl_idx, flags, is_local, is_exported, _) in &declarations {
                 if is_local && (flags & (symbol_flags::FUNCTION | symbol_flags::METHOD)) != 0 {
-                    // TS2384 only applies to overload signatures (bodyless declarations).
-                    // Skip implementations (declarations with bodies) — a non-ambient
-                    // implementation following ambient overloads is valid.
-                    if self.function_has_body(decl_idx) {
-                        if implementation_for_2384.is_none() {
-                            implementation_for_2384 = Some(decl_idx);
-                        }
-                        continue;
+                    if effective_exported(self, decl_idx, is_exported) {
+                        has_exported_func = true;
+                    } else {
+                        has_non_exported_func = true;
                     }
-                    func_decls_for_2384.push(decl_idx);
                     if self.is_ambient_declaration(decl_idx) {
                         has_ambient_func = true;
                     } else {
                         has_non_ambient_func = true;
                     }
+                    if self.function_has_body(decl_idx) {
+                        if implementation.is_none() {
+                            implementation = Some(decl_idx);
+                        }
+                    } else {
+                        func_decls_for_2384.push(decl_idx);
+                    }
                 }
             }
-            if has_ambient_func && has_non_ambient_func {
-                // tsc's `getCanonicalOverload` (checker.ts:43088) takes the
-                // canonical set of flags from the *implementation* when it
-                // shares a container with the first overload, and only
-                // otherwise from the first overload. The container check is
-                // what keeps lib.d.ts overloads from being blamed for a local
-                // implementation. Reading the flags off the first overload
-                // unconditionally blames the wrong declaration whenever the
-                // implementation is the one the majority agrees with.
+            let export_mismatch = has_exported_func && has_non_exported_func;
+            let ambient_mismatch = has_ambient_func && has_non_ambient_func;
+            // The flag-agreement check only runs when the group has at least
+            // one bodyless overload signature: two duplicate implementations
+            // are TS2393 territory and report no flag disagreement.
+            if !func_decls_for_2384.is_empty() && (export_mismatch || ambient_mismatch) {
+                // tsc's `getCanonicalOverload` takes the canonical flags from
+                // the *implementation* when it shares a container with the
+                // first overload, and only otherwise from the first overload.
+                // The container check is what keeps lib.d.ts overloads from
+                // being blamed for a local implementation. An
+                // `EXPORT_DECLARATION` wrapper is not a container: hoist
+                // through it so `export function` declarations compare equal
+                // to bare siblings in the same statement list.
+                let statement_container = |decl_idx: NodeIndex| -> Option<NodeIndex> {
+                    let parent = self.ctx.arena.get_extended(decl_idx)?.parent;
+                    let parent_node = self.ctx.arena.get(parent)?;
+                    if parent_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                        Some(self.ctx.arena.get_extended(parent)?.parent)
+                    } else {
+                        Some(parent)
+                    }
+                };
                 let first_overload = func_decls_for_2384[0];
-                let first_parent = self
-                    .ctx
-                    .arena
-                    .get_extended(first_overload)
-                    .map(|ext| ext.parent);
-                let canonical = implementation_for_2384
+                let first_container = statement_container(first_overload);
+                let canonical = implementation
                     .filter(|&impl_idx| {
-                        first_parent.is_some()
-                            && self.ctx.arena.get_extended(impl_idx).map(|ext| ext.parent)
-                                == first_parent
+                        first_container.is_some()
+                            && statement_container(impl_idx) == first_container
                     })
                     .unwrap_or(first_overload);
-                let ref_is_ambient = self.is_ambient_declaration(canonical);
-                for &decl_idx in &func_decls_for_2384 {
-                    if self.is_ambient_declaration(decl_idx) != ref_is_ambient {
-                        let error_node =
-                            self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                let canonical_exported = declarations
+                    .iter()
+                    .find(|&&(di, _, _, _, _)| di == canonical)
+                    .is_some_and(|&(_, _, _, is_exported, _)| {
+                        effective_exported(self, canonical, is_exported)
+                    });
+                let canonical_ambient = self.is_ambient_declaration(canonical);
+                for &(decl_idx, _, is_local, is_exported, origin) in &declarations {
+                    if !is_local || origin != DuplicateDeclarationOrigin::SymbolDeclaration {
+                        continue;
+                    }
+                    let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                    // Both deviation checks are ungated once the loop is
+                    // entered (tsc computes each declaration's deviation
+                    // against the canonical flags regardless of which axis
+                    // tripped the mismatch): an ambient-only mismatch among
+                    // the function-likes still blames a merged namespace
+                    // whose export status deviates.
+                    if effective_exported(self, decl_idx, is_exported) != canonical_exported {
+                        self.error_at_node(
+                            error_node,
+                            diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_EXPORTED_OR_NON_EXPORTED,
+                            diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_EXPORTED_OR_NON_EXPORTED,
+                        );
+                    } else if self.is_ambient_declaration(decl_idx) != canonical_ambient {
                         self.error_at_node(
                             error_node,
                             diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_AMBIENT_OR_NON_AMBIENT,
                             diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_AMBIENT_OR_NON_AMBIENT,
                         );
-                    }
-                }
-            }
-
-            // TS2383: all bodyless overload signatures must agree on export status.
-            // The rule applies when 2+ overload signatures exist; the implementation
-            // is not an overload signature and is not checked for export agreement.
-            //
-            // tsc does not apply this check to overloads declared directly inside an
-            // ambient module/namespace body (`declare namespace M { ... }` /
-            // `declare module "m" { ... }`, including namespaces nested inside one):
-            // `export` on a member of an ambient module body does not carry the same
-            // meaning as a module-level `export`, so mismatched `export` keywords
-            // there are not overload-consistency errors. `declare global { ... }` is
-            // a global augmentation, not an ambient module, and stays subject to the
-            // check, as does a bare top-level `declare function` with no enclosing
-            // namespace/module.
-            if func_decls_for_2384.len() >= 2
-                && !self.is_within_ambient_module_container(func_decls_for_2384[0])
-            {
-                // Restrict to bodyless overload signatures only by looking up export
-                // status for each entry in func_decls_for_2384. The implementation
-                // (absent from func_decls_for_2384) must not influence the check.
-                let func_export_info: Vec<(NodeIndex, bool)> = func_decls_for_2384
-                    .iter()
-                    .filter_map(|&decl_idx| {
-                        declarations
-                            .iter()
-                            .find(|&&(di, _, _, _, _)| di == decl_idx)
-                            .map(|&(di, _, _, is_exported, _)| (di, is_exported))
-                    })
-                    .collect();
-                let (has_exported, has_non_exported) = func_export_info
-                    .iter()
-                    .fold((false, false), |(exp, non_exp), &(_, e)| {
-                        (exp || e, non_exp || !e)
-                    });
-                // has_exported && has_non_exported already implies len >= 2
-                if has_exported && has_non_exported {
-                    // declarations is ordered, so [0] is always the first overload signature.
-                    let ref_exported = func_export_info[0].1;
-                    for &(decl_idx, is_exported) in &func_export_info {
-                        if is_exported != ref_exported {
-                            let error_node =
-                                self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
-                            self.error_at_node(
-                                error_node,
-                                diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_EXPORTED_OR_NON_EXPORTED,
-                                diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_EXPORTED_OR_NON_EXPORTED,
-                            );
-                        }
                     }
                 }
             }
@@ -634,7 +636,18 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                     let non_default_spaces = exported_spaces | non_exported_spaces;
-                    let default_conflict_spaces = default_exported_spaces & non_default_spaces;
+                    // A group made entirely of function declarations is one
+                    // overload group, not a merged declaration: visibility
+                    // disagreements there are overload flag-agreement errors
+                    // (TS2383, via the pass above) or duplicate-implementation
+                    // errors (TS2393), never TS2652/TS2395. A single non-function
+                    // member (namespace, class, variable) restores both checks
+                    // for the whole group.
+                    let default_conflict_spaces = if all_functions {
+                        0
+                    } else {
+                        default_exported_spaces & non_default_spaces
+                    };
                     let export_local_conflict_spaces =
                         if all_functions || suppress_ts2395_for_ambient {
                             0
