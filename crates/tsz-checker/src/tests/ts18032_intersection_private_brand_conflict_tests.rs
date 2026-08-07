@@ -30,12 +30,22 @@
 //! Deliberately narrow scope, matching TS18031's own precedent: only a
 //! directly-written intersection annotation (no alias/generic-application/
 //! heritage indirection). Cases that don't reduce to `never` at all
-//! (protected-only conflicts report `TS2445` instead; ES `#`-private
-//! members don't merge into a brand conflict at all; the same class
+//! (protected-only conflicts report `TS2445` instead; the same class
 //! intersected with itself is not a conflict) are documented as negative
 //! controls below — they never reach this helper's `type_id == NEVER` gate,
 //! so they're regression coverage for the surrounding machinery, not for the
 //! new query itself.
+//!
+//! ES `#`-private members are a separate case: `#x` on two different classes
+//! is never the same name to `tsc` (each is lexically scoped to its own
+//! class body), so real `tsc` neither reduces the intersection to `never`
+//! nor elaborates. tsz's `intersection_has_conflicting_private_brands`
+//! (`crates/tsz-solver/src/intern/normalize.rs`) currently *does* still
+//! reduce that shape to `never` — a separate, pre-existing bug in the
+//! reduction itself, not owned by this elaboration. `find_private_brand_conflict_property`
+//! is deliberately scoped to never attach the TS18032 line to whatever
+//! `TS2339` that reduction bug produces, so fixing the reduction later needs
+//! no matching change here.
 
 use crate::diagnostics::Diagnostic;
 use crate::test_utils::check_source_strict;
@@ -176,6 +186,32 @@ c.x;
         diags.iter().all(|d| d.code != TS2339),
         "protected-only conflicts must not reduce to never, got {diags:?}"
     );
+}
+
+#[test]
+fn es_private_same_spelled_fields_do_not_carry_ts18032() {
+    // ES `#`-private fields are lexically scoped to their declaring class —
+    // `#x` on `A` and `#x` on `B` are never the same name to tsc even though
+    // they share identical source text, so this is not a naming collision
+    // tsc elaborates (tsc: `Property 'foo' does not exist on type 'A & B'.`,
+    // no relatedInformation, no `never` reduction at all).
+    //
+    // tsz still (incorrectly, as of this test) reduces `A & B` to `never`
+    // here — a pre-existing, separate bug in the reduction itself, not this
+    // elaboration. This test pins only the elaboration's own scope: whatever
+    // TS2339 that reduction bug produces must never carry the TS18032
+    // related-info line, which would misattribute the wrong reason to it.
+    let diags = check_source_strict(
+        r#"
+class A { #x = 1; }
+class B { #x = 1; }
+declare const v: A & B;
+v.foo;
+"#,
+    );
+    for diag in diags.iter().filter(|d| d.code == TS2339) {
+        assert!(related(diag, TS18032).is_none(), "got {diags:?}");
+    }
 }
 
 #[test]
