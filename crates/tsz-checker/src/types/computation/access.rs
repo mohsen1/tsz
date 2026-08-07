@@ -99,7 +99,13 @@ impl<'a> CheckerState<'a> {
         // increment/decrement), which needs the real type to detect a
         // chain-marker `undefined` and report `TS18048`/etc.
         if skip_flow_narrowing && self.optional_chain_invalid_assignment_target_context(idx) {
-            let _ = self.get_type_of_node_with_request(access.expression, &read_request);
+            let receiver_type =
+                self.get_type_of_node_with_request(access.expression, &read_request);
+            self.report_write_target_chain_nullish_receiver(
+                access.expression,
+                access.question_dot_token,
+                receiver_type,
+            );
             return TypeId::ANY;
         }
 
