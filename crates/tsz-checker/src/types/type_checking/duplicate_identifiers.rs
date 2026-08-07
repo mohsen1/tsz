@@ -19,6 +19,7 @@ use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
 
 pub(super) type OuterDeclResult = Option<(tsz_binder::SymbolId, Vec<(NodeIndex, u32)>)>;
 type DuplicateDeclList = Vec<(NodeIndex, u32, bool, bool, DuplicateDeclarationOrigin)>;
@@ -60,6 +61,33 @@ impl<'a> CheckerState<'a> {
             return Some((start, node.end.saturating_sub(start)));
         }
         None
+    }
+
+    /// `true` when `decl_idx`'s nearest enclosing `MODULE_DECLARATION` (namespace
+    /// or `module`/`declare module "x"`) is itself ambient and is not a global
+    /// augmentation (`declare global { ... }`). Used to exempt overload-signature
+    /// members of an ambient module/namespace body from the TS2383 export-
+    /// consistency check, which tsc does not apply there.
+    fn is_within_ambient_module_container(&self, decl_idx: NodeIndex) -> bool {
+        let mut current = decl_idx;
+        for _ in 0..100 {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            if ext.parent.is_none() {
+                return false;
+            }
+            let parent = ext.parent;
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return false;
+            };
+            if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                return !parent_node.is_global_augmentation()
+                    && self.is_ambient_declaration(parent);
+            }
+            current = parent;
+        }
+        false
     }
 
     /// Check for duplicate identifiers (TS2300, TS2451, TS2392).
@@ -291,7 +319,19 @@ impl<'a> CheckerState<'a> {
             // TS2383: all bodyless overload signatures must agree on export status.
             // The rule applies when 2+ overload signatures exist; the implementation
             // is not an overload signature and is not checked for export agreement.
-            if func_decls_for_2384.len() >= 2 {
+            //
+            // tsc does not apply this check to overloads declared directly inside an
+            // ambient module/namespace body (`declare namespace M { ... }` /
+            // `declare module "m" { ... }`, including namespaces nested inside one):
+            // `export` on a member of an ambient module body does not carry the same
+            // meaning as a module-level `export`, so mismatched `export` keywords
+            // there are not overload-consistency errors. `declare global { ... }` is
+            // a global augmentation, not an ambient module, and stays subject to the
+            // check, as does a bare top-level `declare function` with no enclosing
+            // namespace/module.
+            if func_decls_for_2384.len() >= 2
+                && !self.is_within_ambient_module_container(func_decls_for_2384[0])
+            {
                 // Restrict to bodyless overload signatures only by looking up export
                 // status for each entry in func_decls_for_2384. The implementation
                 // (absent from func_decls_for_2384) must not influence the check.
