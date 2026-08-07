@@ -8,85 +8,75 @@ impl CheckerState<'_> {
             return false;
         }
 
-        let mut current = idx;
-        loop {
-            if self.property_access_is_direct_write_target(current) {
-                return true;
-            }
-
-            let Some(parent) = self.ctx.arena.parent_of(current) else {
-                return false;
-            };
-            let Some(parent_node) = self.ctx.arena.get(parent) else {
-                return false;
-            };
-
-            if (parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                || parent_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
-                && self
-                    .ctx
-                    .arena
-                    .get_access_expr(parent_node)
-                    .is_some_and(|access| access.expression == current)
-            {
-                current = parent;
-                continue;
-            }
-
-            // Only `for...of` short-circuits its optional-chain LHS to `any` here.
-            // `for...in`'s LHS is not a genuinely invalid target the way a plain
-            // `a?.b = 1` write is: tsc's checkForInStatement computes the LHS's
-            // real (possibly-undefined) type and checks it against the index type
-            // BEFORE deciding whether to also flag the chain itself (TS2405 wins
-            // over TS2780 whenever the type check fails) — see
-            // `check_for_in_of_expression_initializer` in
-            // `state/variable_checking/for_loop.rs`, which needs that real type.
-            if parent_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
-                && self
-                    .ctx
-                    .arena
-                    .get_for_in_of(parent_node)
-                    .is_some_and(|for_data| for_data.initializer == current)
-            {
-                return true;
-            }
-
-            if self.ctx.in_destructuring_target {
-                if parent_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
-                    && self
-                        .ctx
-                        .arena
-                        .get_property_assignment(parent_node)
-                        .is_some_and(|prop| prop.initializer == current)
-                {
-                    return true;
-                }
-
-                if parent_node.kind == syntax_kind_ext::SPREAD_ELEMENT
-                    || parent_node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT
-                {
-                    let spread_expr = self
-                        .ctx
-                        .arena
-                        .get_spread(parent_node)
-                        .map(|spread| spread.expression)
-                        .or_else(|| {
-                            self.ctx
-                                .arena
-                                .get_unary_expr_ex(parent_node)
-                                .map(|unary| unary.expression)
-                        });
-                    if spread_expr == Some(current) {
-                        return true;
-                    }
-                }
-
-                if parent_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
-                    return true;
-                }
-            }
-
-            return false;
+        // Answer for `idx` itself alone — a continuation *below* the target
+        // (the receiver of a further `.prop`/`[expr]` access) is an ordinary
+        // read, not part of the invalid target, so this must not walk up
+        // through the chain looking for an eventual write-target ancestor.
+        // Walking up made every link below the real target short-circuit to
+        // `any` too: for `a?.b.c = 1`, resolving the outer `.c` access needs
+        // `a?.b`'s own type, and if that lookup answered "yes, I'm also
+        // heading toward a write target" it never got a real type — silently
+        // erasing the receiver's own possibly-nullish diagnostic, and (via
+        // `get_type_of_write_target_base_expression`'s write-flow probe of a
+        // receiver even during an otherwise ordinary read) any read-before-write
+        // check on a deeper chain link.
+        if self.property_access_is_direct_write_target(idx) {
+            return true;
         }
+
+        let Some(parent) = self.ctx.arena.parent_of(idx) else {
+            return false;
+        };
+        let Some(parent_node) = self.ctx.arena.get(parent) else {
+            return false;
+        };
+
+        if (parent_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
+            || parent_node.kind == syntax_kind_ext::FOR_OF_STATEMENT)
+            && self
+                .ctx
+                .arena
+                .get_for_in_of(parent_node)
+                .is_some_and(|for_data| for_data.initializer == idx)
+        {
+            return true;
+        }
+
+        if self.ctx.in_destructuring_target {
+            if parent_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
+                && self
+                    .ctx
+                    .arena
+                    .get_property_assignment(parent_node)
+                    .is_some_and(|prop| prop.initializer == idx)
+            {
+                return true;
+            }
+
+            if parent_node.kind == syntax_kind_ext::SPREAD_ELEMENT
+                || parent_node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT
+            {
+                let spread_expr = self
+                    .ctx
+                    .arena
+                    .get_spread(parent_node)
+                    .map(|spread| spread.expression)
+                    .or_else(|| {
+                        self.ctx
+                            .arena
+                            .get_unary_expr_ex(parent_node)
+                            .map(|unary| unary.expression)
+                    });
+                if spread_expr == Some(idx) {
+                    return true;
+                }
+            }
+
+            if parent_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+                return true;
+            }
+        }
+
+        false
     }
 }

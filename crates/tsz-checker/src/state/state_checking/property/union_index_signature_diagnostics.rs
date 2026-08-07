@@ -218,14 +218,34 @@ impl<'a> CheckerState<'a> {
                     if self.ctx.diagnostics.len() > before_nested {
                         continue;
                     }
+                    // Other polarity of the same drill-in: a member that is
+                    // *present* but wrongly typed. tsc's `elaborateElementwise`
+                    // descends into the nested literal and anchors TS2322 at the
+                    // member either way, regardless of whether the outer key is
+                    // late-bound via a string or a symbol. Without this, a
+                    // late-bound key with a mismatched (not excess) nested member
+                    // falls through to the flat TS2418 below instead.
+                    if self.try_elaborate_assignment_source_error(nested_idx, target_value_type) {
+                        continue;
+                    }
                 }
             }
+            // A computed name spelled with a literal (`["p"]`, `[0]`,
+            // `` [`p`] ``) is not a late-bound name: tsc's
+            // `isComputedNonLiteralName` is false for it, so it never reaches
+            // the computed-property message and is judged as the ordinary
+            // property it is. Only a late-bound spelling (`[label]` for a
+            // `const`, `[E.A]`, `[sym]`, `[Symbol.iterator]`) takes TS2418
+            // when it matches the target through an index signature. Falling
+            // through hands a literal-spelled name to the elaboration below,
+            // which anchors at the value and reports TS2322/TS2353.
             if let Some((prop_name_idx, prop_value_idx)) = computed_property
                 && self
                     .ctx
                     .arena
                     .get(prop_name_idx)
                     .is_some_and(|node| node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+                && !self.computed_member_name_is_literal_spelled(prop_name_idx)
             {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 

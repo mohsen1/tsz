@@ -268,6 +268,33 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // An optional chain's own top-level result always carries `| undefined`
+        // once *any* link in it uses `?.` (tsc's static chain typing), even
+        // when that `undefined` already surfaced — and was already reported —
+        // on an inner continuation (e.g. `h?.inner.leaf`, where `inner` is
+        // genuinely optional: the possibly-nullish check on the `.leaf` access
+        // already named `'h.inner'`). Reporting again here on the outer node
+        // would stack a second, redundant diagnostic that tsc does not emit.
+        // Suppress only when the earlier report is strictly *inside* this
+        // node's span (a real inner continuation) — a same-span diagnostic
+        // means nothing has fired for this exact node yet.
+        if let Some((start, end)) = self.get_node_span(idx)
+            && self.ctx.diagnostics.iter().any(|diag| {
+                matches!(
+                    diag.code,
+                    diagnostic_codes::OBJECT_IS_POSSIBLY_NULL
+                        | diagnostic_codes::OBJECT_IS_POSSIBLY_UNDEFINED
+                        | diagnostic_codes::OBJECT_IS_POSSIBLY_NULL_OR_UNDEFINED
+                        | diagnostic_codes::IS_POSSIBLY_NULL
+                        | diagnostic_codes::IS_POSSIBLY_UNDEFINED
+                        | diagnostic_codes::IS_POSSIBLY_NULL_OR_UNDEFINED
+                ) && diag.start >= start
+                    && diag.start + diag.length < end
+            })
+        {
+            return;
+        }
+
         let is_literal = self.is_literal_null_or_undefined_node(idx);
 
         if is_literal {
