@@ -1331,3 +1331,166 @@ fn source_without_es_private_member_stays_missing_property() {
         "TS18015 wording must not fire when the source has no same-spelled ES private member, got: {diagnostics:?}"
     );
 }
+
+// =============================================================================
+// #16769 — nominal private-member elaboration on the TS2345 argument path and
+// on instantiated generic classes.
+//
+// The nominal-mismatch elaboration must attach wherever the relation failure is
+// rendered, not only on the assignment (TS2322) surface. Two unrelated classes
+// that each declare a same-spelled `private`/`#private` member are nominally
+// distinct; tsc attaches "Types have separate declarations of a private
+// property 'x'." (modifier-private) or TS18015 "Property '#x' in type 'A'
+// refers to a different member ..." (ES-private) to both TS2322 and TS2345, and
+// names the *uninstantiated* declaring class in the TS18015 detail even for an
+// instantiated generic.
+// =============================================================================
+
+fn related_or_message_contains(diagnostics: &[Diagnostic], code: u32, needle: &str) -> bool {
+    diagnostics.iter().filter(|d| d.code == code).any(|d| {
+        d.message_text.contains(needle)
+            || d.related_information
+                .iter()
+                .any(|info| info.message_text.contains(needle))
+    })
+}
+
+/// Leg 1, modifier-`private`: the TS2345 argument path carries the same
+/// "separate declarations" elaboration as the assignment path.
+#[test]
+fn ts2345_argument_modifier_private_carries_separate_declarations() {
+    let source = r"
+        class M2 { private s = 1; }
+        class N2 { private s = 1; }
+        declare function g(n: N2): void;
+        g(new M2());
+        ";
+    let diagnostics = collect_private_brand_diagnostics(source);
+    assert!(
+        related_or_message_contains(
+            &diagnostics,
+            2345,
+            "Types have separate declarations of a private property 's'."
+        ),
+        "TS2345 argument mismatch must carry the nominal elaboration, got: {diagnostics:?}"
+    );
+}
+
+/// Leg 1, ES-private (`#name`) via a `new`-expression argument: TS2345 carries
+/// the TS18015 detail naming each side's declaring class.
+#[test]
+fn ts2345_argument_es_private_carries_ts18015() {
+    let source = r"
+        class Alpha { #s = 1; }
+        class Beta { #s = 1; }
+        declare function takeBeta(b: Beta): void;
+        takeBeta(new Alpha());
+        ";
+    let diagnostics = collect_private_brand_diagnostics(source);
+    assert!(
+        related_or_message_contains(
+            &diagnostics,
+            2345,
+            "Property '#s' in type 'Alpha' refers to a different member that cannot be accessed from within type 'Beta'."
+        ),
+        "TS2345 argument mismatch must carry the TS18015 detail, got: {diagnostics:?}"
+    );
+}
+
+/// Renamed binders must not matter — the rule is structural, keyed on the
+/// nominal member, not on the class/parameter identifiers.
+#[test]
+fn ts2345_argument_modifier_private_renamed_binders() {
+    let source = r"
+        class Zeta { private q = 1; }
+        class Omega { private q = 1; }
+        declare function needOmega(o: Omega): void;
+        needOmega(new Zeta());
+        ";
+    let diagnostics = collect_private_brand_diagnostics(source);
+    assert!(
+        related_or_message_contains(
+            &diagnostics,
+            2345,
+            "Types have separate declarations of a private property 'q'."
+        ),
+        "renamed binders must still carry the nominal elaboration, got: {diagnostics:?}"
+    );
+}
+
+/// Leg 2, ES-private on instantiated generic classes: the TS2322 elaboration
+/// names the *uninstantiated* declaring classes (`G`/`H`) even though the
+/// top-level line shows `G<number>`/`H<string>`.
+#[test]
+fn ts2322_generic_es_private_names_uninstantiated_classes() {
+    let source = r"
+        class G<T> { #v: T; constructor(v: T) { this.#v = v; } }
+        class H<T> { #v: T; constructor(v: T) { this.#v = v; } }
+        const h: H<string> = new G<number>(1);
+        ";
+    let diagnostics = collect_private_brand_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .expect("expected TS2322 for the generic nominal mismatch");
+    assert!(
+        ts2322.message_text.contains("G<number>") && ts2322.message_text.contains("H<string>"),
+        "top-level line keeps the instantiated spelling, got: {ts2322:?}"
+    );
+    assert!(
+        ts2322.related_information.iter().any(|info| info.message_text.contains(
+            "Property '#v' in type 'G' refers to a different member that cannot be accessed from within type 'H'."
+        )),
+        "elaboration must name the uninstantiated declaring classes, got: {ts2322:?}"
+    );
+}
+
+/// Leg 2, modifier-`private` on instantiated generic classes: the TS2322
+/// assignment path now also carries the "separate declarations" elaboration
+/// (previously dropped because the brand query could not see through the
+/// instantiated form).
+#[test]
+fn ts2322_generic_modifier_private_carries_separate_declarations() {
+    let source = r"
+        class G<T> { private v: T; constructor(v: T) { this.v = v; } }
+        class H<T> { private v: T; constructor(v: T) { this.v = v; } }
+        const h: H<string> = new G<number>(1);
+        ";
+    let diagnostics = collect_private_brand_diagnostics(source);
+    assert!(
+        related_or_message_contains(
+            &diagnostics,
+            2322,
+            "Types have separate declarations of a private property 'v'."
+        ),
+        "instantiated generic modifier-private assignment must carry the nominal elaboration, got: {diagnostics:?}"
+    );
+}
+
+/// Negative control: a structural argument failure with no shared nominal
+/// member keeps its ordinary missing-property elaboration (TS2741) and never
+/// grows a spurious nominal line.
+#[test]
+fn ts2345_argument_structural_failure_has_no_nominal_line() {
+    let source = r"
+        class P { a = 1; }
+        declare function needsB(x: { b: number }): void;
+        needsB(new P());
+        ";
+    let diagnostics = collect_private_brand_diagnostics(source);
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2345 || d.code == 2741),
+        "expected a structural argument failure, got: {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|d| {
+            d.message_text.contains("separate declarations")
+                || d.message_text.contains("refers to a different member")
+                || d.related_information.iter().any(|info| {
+                    info.message_text.contains("separate declarations")
+                        || info.message_text.contains("refers to a different member")
+                })
+        }),
+        "a purely structural failure must not carry a nominal elaboration, got: {diagnostics:?}"
+    );
+}

@@ -525,10 +525,16 @@ impl<'a> CheckerState<'a> {
             base,
             diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
         );
-        let prop_name = self.ctx.types.resolve_atom_ref(property_name);
-        let detail = format_message(
-            diagnostic_messages::PROPERTY_IN_TYPE_REFERS_TO_A_DIFFERENT_MEMBER_THAT_CANNOT_BE_ACCESSED_FROM_WITHI,
-            &[&prop_name, &source_str, &target_str],
+        // The elaboration names each side's *declaring class* (uninstantiated),
+        // not the top-level `source_str`/`target_str` — so `G<number>` still
+        // elaborates as `G`, matching `tsc`. The top-level strings remain the
+        // fallback for a side with no resolvable owning class.
+        let detail = self.private_identifier_mismatch_detail(
+            ctx.source,
+            ctx.target,
+            property_name,
+            &source_str,
+            &target_str,
         );
         diag.push_elaboration(detail, reason.diagnostic_code(), 0);
         diag
