@@ -573,8 +573,9 @@ fn test_union_with_deferred_member_and_concrete_member_property_found() {
 }
 
 #[test]
-fn test_unconstrained_type_parameter_has_no_properties() {
+fn test_unconstrained_type_parameter_has_no_properties_under_strict_null_checks() {
     let interner = TypeInterner::new();
+    interner.set_strict_null_checks(true);
     let evaluator = PropertyAccessEvaluator::new(&interner);
 
     let t_info = TypeParamInfo {
@@ -586,10 +587,41 @@ fn test_unconstrained_type_parameter_has_no_properties() {
     };
     let t_param = interner.intern(TypeData::TypeParameter(t_info));
 
-    // tsc 6.0: unconstrained T has NO properties. The implicit constraint is {}
-    // which does NOT include Object prototype methods. Accessing toString on
-    // bare T emits TS2339 "Property 'toString' does not exist on type 'T'".
+    // Under strictNullChecks, tsc's unconstrained T does NOT expose Object
+    // prototype methods. `function f<T>(x: T) { x.toString(); }` reports
+    // TS2339 on `toString` itself under the pinned tsc 7.0.2 oracle with
+    // strictNullChecks on (the default).
     assert_property_not_found(&evaluator.resolve_property_access(t_param, "toString"));
+    assert_property_not_found(&evaluator.resolve_property_access(t_param, "nonExistentProp"));
+}
+
+#[test]
+fn test_unconstrained_type_parameter_exposes_object_prototype_members_without_strict_null_checks() {
+    let interner = TypeInterner::new();
+    interner.set_strict_null_checks(false);
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let t_info = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+        origin: crate::types::TypeParamOrigin::User,
+    };
+    let t_param = interner.intern(TypeData::TypeParameter(t_info));
+
+    // With strictNullChecks off, an unconstrained T's apparent type is the
+    // empty object type `{}`, which (per tsc) exposes `Object.prototype`'s
+    // members (toString, valueOf, ...) but nothing else.
+    // `function f<T>(x: T) { x.toString(); x.b; }` compiles clean on
+    // `x.toString()` and reports TS2339 only on `x.b` under the pinned tsc
+    // 7.0.2 oracle with `strictNullChecks: false`.
+    assert!(
+        evaluator
+            .resolve_property_access(t_param, "toString")
+            .is_success(),
+        "unconstrained type parameter should expose Object.prototype members when strictNullChecks is off"
+    );
     assert_property_not_found(&evaluator.resolve_property_access(t_param, "nonExistentProp"));
 }
 
