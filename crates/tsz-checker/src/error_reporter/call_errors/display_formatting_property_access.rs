@@ -232,6 +232,142 @@ impl<'a> CheckerState<'a> {
         ))
     }
 
+    /// The structural display for the type substituted into a naked
+    /// type-parameter call-parameter surface when that substituted type is the
+    /// canonical primitive key union `string | number | symbol` **and** the
+    /// type parameter's constraint was written structurally (`keyof any`,
+    /// `keyof unknown`, `keyof never`, or the longhand `string | number |
+    /// symbol`).
+    ///
+    /// tsz interns one `TypeId` for every spelling of the key union and, via
+    /// the reverse type-to-def lookup, repaints it with whatever coincidentally
+    /// shaped alias is in scope (the lib `PropertyKey`, a user alias). That
+    /// reverse lookup already yields the correct name for a constraint written
+    /// *as* an alias (`PropertyKey`, `type Zed = …`), so those are left
+    /// untouched — this only intercepts the two structural spellings, which
+    /// `tsc` prints by their members. The written spelling is read from the
+    /// callee's type-parameter constraint node in the AST because every
+    /// spelling collapses to the same interned `TypeId` (the type level cannot
+    /// tell them apart). This is the TS2345 call-argument counterpart of the
+    /// TS2344 explicit-type-argument recovery.
+    fn key_union_type_param_replacement_display(
+        &mut self,
+        callee_expr: NodeIndex,
+        tp_name: tsz_common::interner::Atom,
+        replacement_type: TypeId,
+    ) -> Option<String> {
+        let evaluated_replacement = self.evaluate_type_for_assignability(replacement_type);
+        if !self.is_primitive_key_union_type(evaluated_replacement) {
+            return None;
+        }
+        let constraint_idx = self.callee_type_parameter_constraint_node(callee_expr, tp_name)?;
+        let structural =
+            Self::annotation_is_keyof_over_degenerate_operand(self.ctx.arena, constraint_idx)
+                || Self::annotation_is_longhand_primitive_keyword_union(
+                    self.ctx.arena,
+                    constraint_idx,
+                );
+        structural.then(|| self.format_type_diagnostic_constraint(evaluated_replacement))
+    }
+
+    /// The AST constraint node (`extends …`) of the callee's type parameter
+    /// named `tp_name`, when the callee resolves to a function/method-like
+    /// declaration whose type-parameter list declares it. Covers a plain
+    /// function (`f`), a method (`obj.m`, resolved through the qualified-symbol
+    /// path), and a value whose declared type is a function/constructor type
+    /// (`declare const f: <K extends …>(…) => …`, whose variable declaration's
+    /// type annotation carries the parameters). Returns `None` for an
+    /// unconstrained parameter or a callee with no resolvable declaration — the
+    /// ordinary display path then stands.
+    fn callee_type_parameter_constraint_node(
+        &self,
+        callee_expr: NodeIndex,
+        tp_name: tsz_common::interner::Atom,
+    ) -> Option<NodeIndex> {
+        let sym_id = self
+            .resolve_qualified_symbol(callee_expr)
+            .or_else(|| self.resolve_identifier_symbol(callee_expr))?;
+        let symbol = self
+            .ctx
+            .binder
+            .get_symbol(sym_id)
+            .or_else(|| self.get_cross_file_symbol(sym_id))?;
+        let wanted = self.ctx.types.resolve_atom_ref(tp_name);
+        for &decl_idx in &symbol.declarations {
+            let Some(type_parameters) = self.node_type_parameters(decl_idx) else {
+                continue;
+            };
+            for &tp_idx in &type_parameters.nodes {
+                let Some(tp_node) = self.ctx.arena.get(tp_idx) else {
+                    continue;
+                };
+                let Some(tp_data) = self.ctx.arena.get_type_parameter(tp_node) else {
+                    continue;
+                };
+                if tp_data.constraint.is_none() {
+                    continue;
+                }
+                if self
+                    .ctx
+                    .arena
+                    .get(tp_data.name)
+                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                    .is_some_and(|ident| ident.escaped_text == *wanted)
+                {
+                    return Some(tp_data.constraint);
+                }
+            }
+        }
+        None
+    }
+
+    /// The type-parameter list declared directly on a function/method-like
+    /// declaration node, across the node kinds that can own one. Returns `None`
+    /// for any other node kind (the callee is then displayed the ordinary way).
+    fn node_type_parameters(&self, node_idx: NodeIndex) -> Option<tsz_parser::parser::NodeList> {
+        let node = self.ctx.arena.get(node_idx)?;
+        match node.kind {
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                || k == syntax_kind_ext::ARROW_FUNCTION =>
+            {
+                self.ctx.arena.get_function(node)?.type_parameters.clone()
+            }
+            k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                .ctx
+                .arena
+                .get_method_decl(node)?
+                .type_parameters
+                .clone(),
+            k if k == syntax_kind_ext::METHOD_SIGNATURE
+                || k == syntax_kind_ext::CALL_SIGNATURE
+                || k == syntax_kind_ext::CONSTRUCT_SIGNATURE =>
+            {
+                self.ctx.arena.get_signature(node)?.type_parameters.clone()
+            }
+            k if k == syntax_kind_ext::FUNCTION_TYPE || k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
+                self.ctx
+                    .arena
+                    .get_function_type(node)?
+                    .type_parameters
+                    .clone()
+            }
+            // `declare const f: <K extends …>(…) => …`: the type parameters live
+            // on the variable's function/constructor-type annotation.
+            k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
+                // A null `type_annotation` resolves to `None` one frame down
+                // (`arena.get` returns `None` for a null `NodeIndex`).
+                let annotation = self
+                    .ctx
+                    .arena
+                    .get_variable_declaration(node)?
+                    .type_annotation;
+                self.node_type_parameters(annotation)
+            }
+            _ => None,
+        }
+    }
+
     pub(in crate::error_reporter::call_errors) fn generic_call_parameter_alias_display(
         &mut self,
         param_type: TypeId,
@@ -298,7 +434,15 @@ impl<'a> CheckerState<'a> {
                 } else {
                     replacement_type
                 };
-                let replacement = self.format_type_for_assignability_message(replacement_type);
+                let replacement = self
+                    .key_union_type_param_replacement_display(
+                        callee_expr,
+                        tp.name,
+                        replacement_type,
+                    )
+                    .unwrap_or_else(|| {
+                        self.format_type_for_assignability_message(replacement_type)
+                    });
                 let tp_name = self.ctx.types.resolve_atom_ref(tp.name);
                 display =
                     Self::replace_type_param_name_in_display(&display, &tp_name, &replacement);
