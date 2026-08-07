@@ -1,13 +1,17 @@
 //! A wide (non-literal) computed-key object literal, mismatched against a
-//! target's declared index signature, must display its `TS2322` source type
-//! using the key's own source spelling — `{ [ws]: number; }` — not a
-//! synthesized `{ [x: string]: number; }` index-signature form. `tsc`'s
-//! `checkObjectLiteral` never collapses distinct computed members into one
-//! index-signature clause for display purposes, even when every member is a
-//! wide `string`/`number`/`symbol` key that structurally folds into the same
-//! index signature for assignability. Oracled against pinned `typescript@7.0.2`
+//! target's declared index signature, displays its `TS2322` source type using
+//! the key's own source spelling — `{ [ws]: number; }` — only when `tsc` can
+//! re-spell that key from its own syntax: a plain identifier or a dotted
+//! `a.b.c` chain of identifiers (`ts.isEntityNameExpression`). For any other
+//! computed-key expression (a binary operation, a call, a template literal,
+//! ...) `tsc` falls back to a synthesized `{ [x: string]: V; }`
+//! index-signature clause instead, and doing so for even ONE member of an
+//! otherwise-homogeneous wide-key group folds every sibling in that group —
+//! entity-named or not — into that same single clause, unioning every
+//! member's value type. Oracled against pinned `typescript@7.0.2`
 //! (`--strict --pretty false`). See issue #16662 (residual 1's cosmetic
-//! sub-note).
+//! sub-note) and the regression caught in review on #16721
+//! (`computedPropertyNamesContextualType{8,9,10}_ES{5,6}.ts`).
 use tsz_checker::test_utils::check_source_diagnostics;
 
 fn ts2322_message(source: &str) -> String {
@@ -119,6 +123,80 @@ const h: OnlyStr = { [s]: 1, [s]: "x" };
     assert_eq!(
         message,
         "Type '{ [s]: number; [s]: string; }' is not assignable to type 'OnlyStr'."
+    );
+}
+
+#[test]
+fn property_access_entity_name_key_source_display_uses_source_spelling() {
+    // `box.key` is a dotted entity-name reference, not a plain identifier —
+    // `tsc` still re-spells it verbatim (oracle-verified).
+    let message = ts2322_message(
+        r#"
+declare const box: { key: string };
+interface OnlyStr { [k: string]: number }
+const h: OnlyStr = { [box.key]: "a" };
+"#,
+    );
+    assert_eq!(
+        message,
+        "Type '{ [box.key]: string; }' is not assignable to type 'OnlyStr'."
+    );
+}
+
+#[test]
+fn single_non_entity_wide_string_key_folds_to_synthesized_index_signature() {
+    // A binary expression is NOT an entity-name reference, so even alone it
+    // falls back to the synthesized `[x: string]: V` form instead of its own
+    // source spelling `[""+"foo"]` (oracle-verified; this is the exact shape
+    // of the regressed conformance rows `computedPropertyNamesContextualType
+    // {8,9,10}_ES{5,6}.ts` caught in review on #16721).
+    let message = ts2322_message(
+        r#"
+interface OnlyStr { [k: string]: number }
+const h: OnlyStr = { [""+"foo"]: "a" };
+"#,
+    );
+    assert_eq!(
+        message,
+        "Type '{ [x: string]: string; }' is not assignable to type 'OnlyStr'."
+    );
+}
+
+#[test]
+fn two_non_entity_wide_string_keys_merge_and_union_their_value_types() {
+    // Two non-entity-name computed keys of the same kind fold into ONE
+    // synthesized clause with the UNION of their value types — unlike two
+    // entity-name keys, which stay separate and unmerged (oracle-verified;
+    // matches `computedPropertyNamesContextualType8_ES5.ts` exactly).
+    let message = ts2322_message(
+        r#"
+interface OnlyStr { [k: string]: number }
+const h: OnlyStr = { [""+"foo"]: "a", [""+"bar"]: 1 };
+"#,
+    );
+    assert_eq!(
+        message,
+        "Type '{ [x: string]: string | number; }' is not assignable to type 'OnlyStr'."
+    );
+}
+
+#[test]
+fn mixing_one_non_entity_key_folds_the_entity_named_sibling_too() {
+    // A single non-entity-name member is enough to fold its entity-named
+    // sibling into the same merged clause too — the entity-named member's own
+    // spelling and individual entry are both lost, and its value type is
+    // absorbed into the union (oracle-verified: `[ws]` does NOT keep its name
+    // once `[""+"foo"]` is present in the same kind-group).
+    let message = ts2322_message(
+        r#"
+declare const ws: string;
+interface OnlyStr { [k: string]: boolean }
+const h: OnlyStr = { [ws]: 1, [""+"foo"]: "b" };
+"#,
+    );
+    assert_eq!(
+        message,
+        "Type '{ [x: string]: string | number; }' is not assignable to type 'OnlyStr'."
     );
 }
 
