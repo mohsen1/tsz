@@ -239,6 +239,15 @@ impl<'a> CheckerState<'a> {
             .find_modifier(modifiers, SyntaxKind::OverrideKeyword)
     }
 
+    pub(crate) fn find_readonly_modifier(
+        &self,
+        modifiers: &Option<tsz_parser::parser::NodeList>,
+    ) -> Option<NodeIndex> {
+        self.ctx
+            .arena
+            .find_modifier(modifiers, SyntaxKind::ReadonlyKeyword)
+    }
+
     /// Check if a node has the `abstract` modifier.
     pub(crate) fn has_abstract_modifier(
         &self,
