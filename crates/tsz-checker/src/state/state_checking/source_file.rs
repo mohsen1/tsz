@@ -25,6 +25,96 @@ impl CheckerState<'_> {
         true
     }
 
+    /// Eagerly seed the well-known-symbol name registry from the global
+    /// `Symbol` (`SymbolConstructor`) declaration.
+    ///
+    /// The canonical `[Symbol.xxx]` object-shape key and the `UniqueSymbol(ref)`
+    /// that `typeof Symbol.xxx`/`keyof`/indexed-access produce round-trip through
+    /// this registry on the solver's `TypeResolver`. The per-member
+    /// computed-name resolution path also populates it, but lazily — as each
+    /// `[Symbol.xxx]`-keyed member is resolved. A `keyof`/indexed-access
+    /// evaluated *before* that member pass (e.g. a `type K = keyof I` alias
+    /// resolved while building the type environment, ahead of `I`'s member pass)
+    /// reads an empty registry, caches the wrong (string-literal) key, and never
+    /// reduces to the well-known symbol. Seeding the canonical lib-declared
+    /// members up front removes that ordering dependence.
+    ///
+    /// The registered `SymbolRef` is read from each member's own type
+    /// (`readonly iterator: unique symbol` is `typeof Symbol.iterator`), so it is
+    /// exactly the ref a use-site `typeof Symbol.iterator` resolves to — the two
+    /// `UniqueSymbol` type ids are then identical. The registry is a field of the
+    /// per-file `type_env`, so the seed runs per file.
+    fn seed_well_known_symbol_names(&mut self) {
+        let Some(symbol_ctor_sym) =
+            crate::types_domain::queries::lib_resolution::resolve_name_to_lib_symbol(
+                "SymbolConstructor",
+                self.ctx.binder,
+                self.ctx.global_file_locals_index.as_deref(),
+                self.ctx
+                    .all_binders
+                    .as_ref()
+                    .map(|binders| binders.as_ref().as_slice()),
+                &self.ctx.lib_contexts,
+            )
+        else {
+            return;
+        };
+        let symbol_ctor_type = self.type_reference_symbol_type(symbol_ctor_sym);
+        let symbol_ctor_resolved = self.resolve_lazy_type(symbol_ctor_type);
+        // Eagerly evaluating `SymbolConstructor` here — ahead of the normal
+        // `declare var Symbol: SymbolConstructor` annotation check that would
+        // otherwise perform this same resolution first — must not cost the
+        // diagnostic printer its "SymbolConstructor" display name. A
+        // property-access failure on `Symbol` (e.g. `Symbol.nonsense`) shows
+        // the source-text annotation instead of the expanded structural type
+        // only when `TypeDatabase::get_display_alias` has an entry for the
+        // resolved type (`property_receiver_display_for_node` in
+        // `error_reporter/properties.rs`). Record that provenance explicitly so
+        // this pre-pass wins the race safely instead of leaving it to whichever
+        // caller happens to resolve the reference first — otherwise the
+        // structural intersection prints in full instead of `SymbolConstructor`
+        // (regressed `conformance/es6/Symbols/symbolProperty52.ts` and two
+        // sibling ES5-parser rows in #16628, reverted in #16764).
+        if symbol_ctor_resolved != symbol_ctor_type {
+            self.ctx
+                .types
+                .store_display_alias(symbol_ctor_resolved, symbol_ctor_type);
+        }
+        let tsz_solver::objects::PropertyCollectionResult::Properties { properties, .. } =
+            tsz_solver::objects::collect_properties(
+                symbol_ctor_resolved,
+                self.ctx.types,
+                &self.ctx,
+            )
+        else {
+            return;
+        };
+        // A well-known member is typed `unique symbol`; its property type carries
+        // the same `UniqueSymbol(ref)` a use-site `typeof Symbol.<name>` resolves
+        // to. Its bare member name (`iterator`) is the `[Symbol.iterator]`
+        // object-shape key. Ordinary members and augmented plain-`symbol` members
+        // carry no unique-symbol ref and are skipped, matching tsc treating them
+        // as ordinary named members rather than well-known symbols.
+        let registrations: Vec<(String, tsz_solver::SymbolRef)> = properties
+            .iter()
+            .filter_map(|prop| {
+                let name = self.ctx.types.resolve_atom_ref(prop.name);
+                if name.starts_with("[Symbol.") || name.starts_with("__") {
+                    return None;
+                }
+                let sym_ref = crate::query_boundaries::common::unique_symbol_ref(
+                    self.ctx.types,
+                    prop.type_id,
+                )?;
+                Some((format!("[Symbol.{name}]"), sym_ref))
+            })
+            .collect();
+        for (name, sym_ref) in registrations {
+            self.ctx
+                .register_well_known_symbol_name_in_envs(name, sym_ref);
+        }
+    }
+
     fn prepare_source_file_for_checking(&mut self, root_idx: NodeIndex) -> Option<NodeIndex> {
         // Reset per-file flags
         self.ctx.is_in_ambient_declaration_file = false;
@@ -77,6 +167,11 @@ impl CheckerState<'_> {
         if !self.ctx.definition_store.is_fully_populated() {
             self.ctx.resolve_cross_batch_heritage();
         }
+
+        // Seed the well-known-symbol name registry from the lib `Symbol`
+        // members before the environment build eagerly evaluates (and caches)
+        // `keyof`/indexed-access type aliases over well-known-symbol keys.
+        self.seed_well_known_symbol_names();
 
         // Build TypeEnvironment with all type-defining symbols.
         // This populates both ctx.type_env and ctx.type_environment in-place
