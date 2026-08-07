@@ -670,6 +670,22 @@ const fn is_parser_grammar_code(code: u32) -> bool {
         | 1156 // '{0}' declarations can only be declared inside a block
         | 1358 // Tagged template expressions are not permitted in an optional chain
         | 18024 // An enum member cannot be named with a private identifier
+        | 18016 // Private identifiers are not allowed outside class bodies.
+                // tsc's checkGrammarPrivateIdentifierExpression reports this
+                // via grammarErrorOnNode (checker-side); tsz's parser emits it
+                // directly for a private-identifier-keyed interface/type-literal
+                // member (`state_declarations.rs`) and object-literal member
+                // (`state_expressions_literals/object_members.rs`). #16279
+                // audit round 8: oracle-confirmed against `typescript@7.0.2` —
+                // Direction A, `interface I { #foo: number }` alone reports
+                // TS18016 exactly once; Direction B, the same line plus an
+                // unrelated real syntax error (`let x: = 1;`) elsewhere in the
+                // file drops TS18016 entirely on the real compiler, which
+                // tsz's parser-emitted copy did not. Unlisted, it also
+                // silently deleted a listed sibling's diagnostics in the same
+                // file (verified with `interface I { #foo: number }` next to
+                // a class with a parameterless `set` accessor: tsc keeps both
+                // TS18016 and TS1049/TS7032; tsz kept only TS18016).
         | 8038 // Decorators may not appear after 'export' or 'export default' if they also appear before 'export'
         | 18037 // 'await' expression cannot be used inside a class static block
         | 18041 // A 'return' statement cannot be used inside a class static block

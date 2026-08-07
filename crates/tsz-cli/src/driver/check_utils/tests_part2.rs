@@ -631,6 +631,99 @@ fn filtered_parse_diagnostics_keeps_16279_audit_codes_when_alone() {
 }
 
 #[test]
+fn filtered_parse_diagnostics_suppresses_ts18016_when_real_parse_error_present() {
+    use tsz::parser::ParseDiagnostic;
+
+    // #16279 audit round 8: TS18016 ("Private identifiers are not allowed
+    // outside class bodies.") is checker-emitted in tsc via
+    // `checkGrammarPrivateIdentifierExpression`'s `grammarErrorOnNode` call,
+    // but tsz's parser emits it directly for a private-identifier-keyed
+    // interface/type-literal/object-literal member. Oracle-confirmed against
+    // `typescript@7.0.2`: `interface I { #foo: number }` plus an unrelated
+    // real syntax error (`let x: = 1;`) drops TS18016 entirely on the real
+    // compiler. Before this fix it was unlisted, so it not only survived on
+    // its own but also silently deleted every listed sibling in the same file.
+    let diagnostics = vec![
+        ParseDiagnostic {
+            start: 0,
+            length: 1,
+            message: "Private identifiers are not allowed outside class bodies.".to_string(),
+            code: 18016,
+        },
+        ParseDiagnostic {
+            start: 10,
+            length: 1,
+            message: "Expression expected.".to_string(),
+            code: 1109,
+        },
+    ];
+    let filtered = filtered_parse_diagnostics(&diagnostics, false);
+    let codes: Vec<u32> = filtered.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&18016),
+        "TS18016 should be suppressed when a real parse error (TS1109) is present, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&1109),
+        "TS1109 (real parse error) should survive, got: {codes:?}"
+    );
+}
+
+#[test]
+fn filtered_parse_diagnostics_keeps_ts18016_when_alone() {
+    use tsz::parser::ParseDiagnostic;
+
+    let diagnostics = vec![ParseDiagnostic {
+        start: 0,
+        length: 1,
+        message: "Private identifiers are not allowed outside class bodies.".to_string(),
+        code: 18016,
+    }];
+    let filtered = filtered_parse_diagnostics(&diagnostics, false);
+    let codes: Vec<u32> = filtered.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&18016),
+        "TS18016 should be kept when it is the only diagnostic, got: {codes:?}"
+    );
+}
+
+#[test]
+fn filtered_parse_diagnostics_ts18016_does_not_self_suppress_listed_sibling() {
+    use tsz::parser::ParseDiagnostic;
+
+    // Before TS18016 was listed, its presence (an unlisted grammar code)
+    // made `has_non_grammar_parse_error` true and suppressed every *listed*
+    // sibling in the same file — even with no real structural syntax error.
+    // `interface I { #foo: number }` next to a class with a parameterless
+    // `set` accessor: tsc keeps both TS18016 and TS1049; tsz kept only
+    // TS18016.
+    let diagnostics = vec![
+        ParseDiagnostic {
+            start: 0,
+            length: 1,
+            message: "Private identifiers are not allowed outside class bodies.".to_string(),
+            code: 18016,
+        },
+        ParseDiagnostic {
+            start: 10,
+            length: 1,
+            message: "A 'set' accessor must have exactly one parameter.".to_string(),
+            code: 1049,
+        },
+    ];
+    let filtered = filtered_parse_diagnostics(&diagnostics, false);
+    let codes: Vec<u32> = filtered.iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&18016),
+        "TS18016 should survive alongside a listed sibling, got: {codes:?}"
+    );
+    assert!(
+        codes.contains(&1049),
+        "TS1049 must not be self-suppressed by the unlisted TS18016, got: {codes:?}"
+    );
+}
+
+#[test]
 fn filtered_parse_diagnostics_keeps_ts1433_and_ts1436_alongside_real_parse_error() {
     use tsz::parser::ParseDiagnostic;
 
