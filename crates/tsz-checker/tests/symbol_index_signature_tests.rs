@@ -127,7 +127,13 @@ const table: { [k: symbol]: string } = {
 }
 
 #[test]
-fn plain_symbol_property_access_reports_computed_property_value_mismatch() {
+fn plain_symbol_property_access_reports_whole_object_ts2322() {
+    // A plain (non-`unique`) `symbol`-typed property-access key that is NOT
+    // well-known syntax (`Sym.foo`, not `Symbol.foo`) is an index contributor,
+    // not a late-bound named member: it folds into a `[k: symbol]: number`
+    // index signature, so the whole-object relation owns the failure with
+    // TS2322 (`'symbol' index signatures are incompatible`), NOT a per-property
+    // TS2418. Oracled against `tsc` 6.0.2 (`--strict`). See #16662.
     let codes = diagnostic_codes_for_ts(
         r#"
 declare const Sym: { readonly foo: symbol };
@@ -139,14 +145,14 @@ const table: { [k: symbol]: string } = {
     );
 
     assert!(
-        codes.contains(
-            &diagnostic_codes::TYPE_OF_COMPUTED_PROPERTYS_VALUE_IS_WHICH_IS_NOT_ASSIGNABLE_TO_TYPE
-        ),
-        "expected TS2418 for plain-symbol property access, got {codes:?}",
+        codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "expected whole-object TS2322 for a plain-symbol index-contributor key, got {codes:?}",
     );
     assert!(
-        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
-        "did not expect the object-level TS2322 fallback, got {codes:?}",
+        !codes.contains(
+            &diagnostic_codes::TYPE_OF_COMPUTED_PROPERTYS_VALUE_IS_WHICH_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
+        "a wide-symbol index-contributor key must not take the late-bound TS2418, got {codes:?}",
     );
     assert!(
         !codes.contains(
