@@ -138,11 +138,9 @@ impl<'a> CheckerState<'a> {
         // Check for ThisType<T> marker in contextual type (Vue 2 / Options API
         // pattern) after union narrowing so discriminated object literals choose
         // the matching union member's marker.
-        let marker_this_type: Option<TypeId> = if let Some(ctx_type) = contextual_type {
-            self.contextual_this_type_from_marker(ctx_type)
-        } else {
-            None
-        };
+        let marker_this_type: Option<TypeId> = contextual_type
+            .and_then(|ctx_type| self.contextual_this_type_from_marker(ctx_type))
+            .or_else(|| self.enclosing_object_literal_this_type_marker(idx));
 
         // Push this type onto stack if found (methods will pick it up)
         if let Some(mut this_type) = marker_this_type {
@@ -195,6 +193,67 @@ impl<'a> CheckerState<'a> {
             contextual_receiver_this_type,
             base_request,
             partial_initializer_stack_index,
+        }
+    }
+
+    /// The `ThisType[ T ]` marker owned by an *enclosing* object literal, found
+    /// by walking outward from `literal_idx` through property assignments.
+    ///
+    /// `tsc`'s `getContextualThisParameter` does not stop at the literal that
+    /// directly contains the member. When that literal's own contextual type
+    /// carries no marker it re-reads the contextual type of the enclosing
+    /// literal, and keeps climbing for as long as the current literal sits in a
+    /// `PropertyAssignment`:
+    ///
+    /// ```text
+    /// while (type) {
+    ///     const thisType = getThisTypeFromContextualType(type);
+    ///     if (thisType) { return ...; }
+    ///     if (literal.parent.kind !== SyntaxKind.PropertyAssignment) break;
+    ///     literal = literal.parent.parent;
+    ///     type = getApparentTypeOfContextualType(literal);
+    /// }
+    /// ```
+    ///
+    /// That climb is what makes the Vue options shape work: in
+    /// `new Vue({ methods: { f() { return this.x; } } })` with
+    /// `VueOptions[ D, M, P ] = ThisType[ D & M & P ] & { methods?: M; ... }`,
+    /// the inner `methods` literal is contextually typed by bare `M` — the
+    /// marker lives one level out, on the options literal. The same applies to
+    /// the `Object.defineProperties` shape, where
+    /// `PropDescMap[ U ] & ThisType[ T ]` types the outer descriptor map and
+    /// each per-key descriptor literal only sees `PropDesc[ U ]`.
+    ///
+    /// The enclosing literal is always computed before its property
+    /// initializers, so its (nullish-stripped, discriminant-narrowed)
+    /// contextual type is already recorded in
+    /// `object_literal_tracking.contextual_targets`; an ancestor with no
+    /// recorded contextual type ends the walk, mirroring the `while (type)`
+    /// condition.
+    fn enclosing_object_literal_this_type_marker(
+        &mut self,
+        literal_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let mut literal_idx = literal_idx;
+        loop {
+            let property_idx = self.ctx.arena.get_extended(literal_idx)?.parent;
+            if self.ctx.arena.get(property_idx)?.kind != syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                return None;
+            }
+            let enclosing_idx = self.ctx.arena.get_extended(property_idx)?.parent;
+            if self.ctx.arena.get(enclosing_idx)?.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            {
+                return None;
+            }
+            let enclosing_contextual_type = *self
+                .ctx
+                .object_literal_tracking
+                .contextual_targets
+                .get(&enclosing_idx)?;
+            if let Some(marker) = self.contextual_this_type_from_marker(enclosing_contextual_type) {
+                return Some(marker);
+            }
+            literal_idx = enclosing_idx;
         }
     }
 }
