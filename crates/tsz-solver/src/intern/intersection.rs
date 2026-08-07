@@ -589,7 +589,7 @@ impl TypeInterner {
             .collect();
 
         // Step 2: Extract and merge callables from remaining members
-        let (merged_callable, remaining_after_callables) =
+        let (merged_callable, _remaining_after_callables) =
             self.extract_and_merge_callables(&remaining_after_objects);
 
         // When 2+ callables are merged into one, store a display alias from the
@@ -607,47 +607,46 @@ impl TypeInterner {
             }
         }
 
-        // Step 3: Rebuild the member list. Keep the existing canonical rebuild
-        // for non-callable object intersections so `{}`/primitive normalization
-        // remains stable. When callables participate, walk the original list and
-        // replace the first object/callable occurrence with its merged
+        // Step 3: Rebuild the member list by walking the original list and
+        // replacing the first object/callable occurrence with its merged
         // representative; this keeps tsc's source-order display for mixed
-        // intersections such as `(() => void) & { prop: any }`.
+        // intersections such as `(() => void) & { prop: any }` and, just as
+        // importantly, for a merged-object member that is *not* last in
+        // source order (`{ z: 1 } & [string, number]` must keep the object
+        // first — appending it unconditionally after every other remaining
+        // member, as an earlier version of this rebuild did, silently
+        // reordered any object-first mixed intersection whose merged object
+        // had no callable co-member, which also skewed which constituent
+        // `tsc`-parity elaboration (`IntersectionTargetMismatch`) names as
+        // the first failing one).
         let mut final_flat: TypeListBuffer = SmallVec::new();
-        if merged_callable.is_some() {
-            let mut emitted_object = false;
-            let mut emitted_callable = false;
-            for &member in &flat {
-                if let Some(obj_id) = merged_object
-                    && matches!(
-                        self.lookup(member),
-                        Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_))
-                    )
-                {
-                    if !emitted_object {
-                        final_flat.push(obj_id);
-                        emitted_object = true;
-                    }
-                    continue;
+        let mut emitted_object = false;
+        let mut emitted_callable = false;
+        for &member in &flat {
+            if let Some(obj_id) = merged_object
+                && matches!(
+                    self.lookup(member),
+                    Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_))
+                )
+            {
+                if !emitted_object {
+                    final_flat.push(obj_id);
+                    emitted_object = true;
                 }
+                continue;
+            }
 
-                if let Some(call_id) = merged_callable
-                    && crate::type_queries::is_callable_type(self, member)
-                {
-                    if !emitted_callable {
-                        final_flat.push(call_id);
-                        emitted_callable = true;
-                    }
-                    continue;
+            if let Some(call_id) = merged_callable
+                && crate::type_queries::is_callable_type(self, member)
+            {
+                if !emitted_callable {
+                    final_flat.push(call_id);
+                    emitted_callable = true;
                 }
+                continue;
+            }
 
-                final_flat.push(member);
-            }
-        } else {
-            final_flat.extend(remaining_after_callables.iter().copied());
-            if let Some(obj_id) = merged_object {
-                final_flat.push(obj_id);
-            }
+            final_flat.push(member);
         }
 
         // Early exit if simplified to single type
