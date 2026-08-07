@@ -607,6 +607,8 @@ mod mapped_optional_target_excess_property_tests;
 mod mapped_true_base_constraint_relation_routing_arch_tests;
 #[path = "tests/member_assignment_narrowing_join_tests.rs"]
 mod member_assignment_narrowing_join_tests;
+#[path = "tests/member_modifier_placement_grammar_tests.rs"]
+mod member_modifier_placement_grammar_tests;
 #[path = "tests/member_name_source_quote_fidelity_tests.rs"]
 mod member_name_source_quote_fidelity_tests;
 #[path = "tests/merged_interface_constraint_relation_routing_arch_tests.rs"]

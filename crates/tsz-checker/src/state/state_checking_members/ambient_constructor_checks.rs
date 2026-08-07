@@ -61,6 +61,20 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // Error 1024: 'readonly' modifier can only appear on a property
+        // declaration or index signature. A constructor is neither, so tsc's
+        // `checkGrammarModifiers` reports TS1024 anchored at the `readonly`
+        // keyword — the same code it already reports for `readonly` on a
+        // method/accessor (see `state_checking/class.rs`), which excludes the
+        // constructor node kind, leaving this the only site that can cover it.
+        if let Some(readonly_mod) = self.find_readonly_modifier(&ctor.modifiers) {
+            self.error_at_node(
+                readonly_mod,
+                diagnostic_messages::READONLY_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION_OR_INDEX_SIGNATURE,
+                diagnostic_codes::READONLY_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION_OR_INDEX_SIGNATURE,
+            );
+        }
+
         // Error 1183: An implementation cannot be declared in ambient contexts
         // Check if we're in a declared class and the constructor has a body.
         // TSC anchors the error at the body node (the `{`).
