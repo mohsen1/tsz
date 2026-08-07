@@ -20,13 +20,20 @@
 //!     mis-parsed `get`/`set` as the property name (single `readonly`, TS1005)
 //!     or reported the uniform semantic TS1070 (every other modifier in the
 //!     set, single or stacked).
-//!   * `readonly` and `async` together on a type member: `checkGrammarModifiers`
-//!     checks each leading modifier in SOURCE ORDER and reports (and stops at)
-//!     the first one invalid for the member's own kind — `readonly` before
-//!     `async` on a method reports TS1024 only (not tsz's previous bogus
-//!     TS1005), and an earlier illegal modifier (`static`) suppresses a
-//!     would-be-duplicate TS1070/TS1024 from a trailing `readonly`/`async`
-//!     (tsz previously double-reported).
+//!   * `readonly` and a second modifier together on a type member:
+//!     `checkGrammarModifiers` checks each leading modifier in SOURCE ORDER and
+//!     reports (and stops at) the first one invalid for the member's own kind
+//!     — `readonly` before any other illegal modifier (`async`, or any of
+//!     `private`/`protected`/`public`/`static`/`accessor`/`override`/
+//!     `abstract`/`declare`/`export`/`in`/`out`) on a *method* reports TS1024
+//!     only (not tsz's previous bogus TS1005/mis-parse), and on a *property*
+//!     reports TS1070 at the second modifier (readonly is legal on a
+//!     property, so it is not the offender there). An earlier illegal
+//!     modifier (`static`) suppresses a would-be-duplicate TS1070/TS1024 from
+//!     a trailing `readonly`/second-modifier (tsz previously double-reported
+//!     for `async`; the other nine modifiers previously mis-parsed instead of
+//!     reporting at all, since only `async` had this second-modifier
+//!     lookahead).
 //!
 //! `readonly` on a property / index signature stays legal, and `export` / `in`
 //! / `out` used as a member *name* (`export: T`, `export(): void`) stay clean —
@@ -812,5 +819,110 @@ fn readonly_async_optional_property_reports_ts1070_at_async() {
     assert_eq!(
         codes("interface I { readonly async x?: number; }"),
         vec![TS1070],
+    );
+}
+
+// ---------------------------------------------------------------------------
+// `readonly` before a second modifier OTHER than `async`: the same
+// source-order / member-kind rule generalizes to all eleven illegal
+// type-member modifiers, oracle-verified (`typescript@7.0.2`) across the full
+// set. Previously only `async` had the second-modifier lookahead, so every
+// other modifier here (`static`/`public`/`private`/`protected`/`accessor`/
+// `override`/`abstract`/`declare`/`export`/`in`/`out`) mis-parsed the second
+// modifier as the property/method name instead of reporting at all.
+// ---------------------------------------------------------------------------
+
+const READONLY_SECOND_MODIFIERS: [&str; 11] = [
+    "static",
+    "public",
+    "private",
+    "protected",
+    "accessor",
+    "override",
+    "abstract",
+    "declare",
+    "export",
+    "in",
+    "out",
+];
+
+#[test]
+fn readonly_before_second_modifier_method_reports_ts1024_at_readonly() {
+    // Method kind: `readonly` is illegal on a method/construct signature and
+    // is first in source order, so it wins over every second modifier —
+    // uniformly TS1024 at column 15, regardless of which modifier follows.
+    for modifier in READONLY_SECOND_MODIFIERS {
+        let source = format!("interface I {{ readonly {modifier} m(): number; }}");
+        assert_eq!(
+            fingerprints(&source),
+            vec![(
+                TS1024,
+                1,
+                15,
+                "'readonly' modifier can only appear on a property declaration or index signature."
+                    .to_string()
+            )],
+            "source: {source}",
+        );
+    }
+}
+
+#[test]
+fn readonly_before_second_modifier_property_reports_ts1070_at_second_modifier() {
+    // Property kind: `readonly` is legal here, so the second modifier is the
+    // first (and only) offender — anchored at its own position (column 24),
+    // not at `readonly`.
+    for modifier in READONLY_SECOND_MODIFIERS {
+        let source = format!("interface I {{ readonly {modifier} p: number; }}");
+        assert_eq!(
+            fingerprints(&source),
+            vec![(
+                TS1070,
+                1,
+                24,
+                format!("'{modifier}' modifier cannot appear on a type member.")
+            )],
+            "source: {source}",
+        );
+    }
+}
+
+#[test]
+fn readonly_before_second_modifier_on_type_literal_reports_ts1024() {
+    assert_eq!(
+        codes("type T = { readonly static m(): number };"),
+        vec![TS1024],
+    );
+}
+
+#[test]
+fn readonly_before_second_modifier_keeps_following_member() {
+    // Exactly one diagnostic; the following `y` member is not lost, matching
+    // the existing `readonly_before_async_method_keeps_following_member`
+    // guard for the other ten modifiers.
+    assert_eq!(
+        codes("interface I { readonly static m(): number; y: string; }"),
+        vec![TS1024],
+    );
+}
+
+#[test]
+fn readonly_second_modifier_used_as_property_name_stays_clean() {
+    // `static` immediately followed by `:` is the property's own name, not a
+    // modifier — mirrors `readonly_async_used_as_property_name_stays_clean`.
+    assert_eq!(
+        codes("interface I { readonly static: number; }"),
+        Vec::<u32>::new()
+    );
+}
+
+#[test]
+fn readonly_second_modifier_used_as_method_name_reports_ts1024() {
+    // `static` immediately followed by `(` is the method's own name here;
+    // `readonly` on this (static-named) method is the pre-existing,
+    // unrelated TS1024 rule — mirrors the `async`-as-name control.
+    assert_eq!(
+        codes("interface I { readonly static(): number; }"),
+        vec![TS1024]
     );
 }
