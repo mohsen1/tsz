@@ -156,7 +156,9 @@ impl<'a> CheckerState<'a> {
             if let Some(param) = decl_arena.get_parameter(decl)
                 && param.type_annotation.is_some()
             {
-                if self.annotation_names_type_query_alias(decl_arena, param.type_annotation) {
+                if self.annotation_names_type_query_alias(decl_arena, param.type_annotation)
+                    || Self::annotation_is_keyof_any(decl_arena, param.type_annotation)
+                {
                     return None;
                 }
                 let mut text =
@@ -181,7 +183,9 @@ impl<'a> CheckerState<'a> {
             if let Some(var_decl) = decl_arena.get_variable_declaration(decl)
                 && var_decl.type_annotation.is_some()
             {
-                if self.annotation_names_type_query_alias(decl_arena, var_decl.type_annotation) {
+                if self.annotation_names_type_query_alias(decl_arena, var_decl.type_annotation)
+                    || Self::annotation_is_keyof_any(decl_arena, var_decl.type_annotation)
+                {
                     return None;
                 }
                 return node_text_in_arena(decl_arena, var_decl.type_annotation).and_then(|text| {
@@ -194,7 +198,9 @@ impl<'a> CheckerState<'a> {
             if let Some(prop_decl) = decl_arena.get_property_decl(decl)
                 && prop_decl.type_annotation.is_some()
             {
-                if self.annotation_names_type_query_alias(decl_arena, prop_decl.type_annotation) {
+                if self.annotation_names_type_query_alias(decl_arena, prop_decl.type_annotation)
+                    || Self::annotation_is_keyof_any(decl_arena, prop_decl.type_annotation)
+                {
                     return None;
                 }
                 return node_text_in_arena(decl_arena, prop_decl.type_annotation).and_then(
@@ -473,6 +479,36 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// Whether `annotation_idx` is a written `keyof any` type-operator node.
+    ///
+    /// `keyof any` reduces to the small, closed `string | number | symbol`
+    /// union, which tsc always shows expanded — never the `keyof any` spelling,
+    /// and never repainted as the coincidentally-shaped `PropertyKey` alias
+    /// (unlike some other `PropertyKey`-typed surfaces, where tsc legitimately
+    /// keeps the alias name). Structural, not text-based: `any` written after
+    /// `keyof` parses as a `TYPE_REFERENCE` to the identifier `any` in this
+    /// parser, not the raw `AnyKeyword` token used for a bare `any` annotation,
+    /// so this reuses [`Self::type_node_is_primitive_keyword`]'s handling of
+    /// both representations.
+    pub(in crate::error_reporter) fn annotation_is_keyof_any(
+        arena: &tsz_parser::NodeArena,
+        annotation_idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = arena.get(annotation_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::TYPE_OPERATOR {
+            return false;
+        }
+        let Some(op) = arena.get_type_operator(node) else {
+            return false;
+        };
+        if op.operator != tsz_scanner::SyntaxKind::KeyOfKeyword as u16 {
+            return false;
+        }
+        Self::type_node_is_specific_primitive_keyword(arena, op.type_node, TypeId::ANY)
+    }
+
     /// Whether `member_idx` denotes a built-in primitive keyword type, whether
     /// written as a bare `TYPE_REFERENCE` (`string`) or a keyword node
     /// (`StringKeyword`). A reference with type arguments, a qualified name, or a
@@ -483,12 +519,34 @@ impl<'a> CheckerState<'a> {
         arena: &tsz_parser::NodeArena,
         member_idx: NodeIndex,
     ) -> bool {
+        Self::type_node_primitive_keyword_type_id(arena, member_idx).is_some()
+    }
+
+    /// Whether `member_idx` denotes the specific primitive keyword type
+    /// `expected` (`TypeId::ANY`, `TypeId::STRING`, …), under the same
+    /// dual-representation handling as [`Self::type_node_is_primitive_keyword`].
+    fn type_node_is_specific_primitive_keyword(
+        arena: &tsz_parser::NodeArena,
+        member_idx: NodeIndex,
+        expected: TypeId,
+    ) -> bool {
+        Self::type_node_primitive_keyword_type_id(arena, member_idx) == Some(expected)
+    }
+
+    /// The primitive keyword `TypeId` `member_idx` denotes, whether written as
+    /// a bare `TYPE_REFERENCE` (`string`) or a keyword node (`StringKeyword`),
+    /// or `None` for any other node. A reference with type arguments, a
+    /// qualified name, or a user/lib alias name returns `None`; the keyword set
+    /// is the canonical built-in mapping, and these names are reserved so a
+    /// reference to one can never denote a user alias.
+    fn type_node_primitive_keyword_type_id(
+        arena: &tsz_parser::NodeArena,
+        member_idx: NodeIndex,
+    ) -> Option<TypeId> {
         use crate::types_domain::queries::lib_resolution::{
             keyword_name_to_type_id, keyword_syntax_to_type_id,
         };
-        let Some(node) = arena.get(member_idx) else {
-            return false;
-        };
+        let node = arena.get(member_idx)?;
         if node.kind == syntax_kind_ext::TYPE_REFERENCE {
             return arena
                 .get_type_ref(node)
@@ -500,9 +558,9 @@ impl<'a> CheckerState<'a> {
                 })
                 .and_then(|type_ref| arena.get(type_ref.type_name))
                 .and_then(|name_node| arena.get_identifier(name_node))
-                .is_some_and(|ident| keyword_name_to_type_id(&ident.escaped_text).is_some());
+                .and_then(|ident| keyword_name_to_type_id(&ident.escaped_text));
         }
-        keyword_syntax_to_type_id(node.kind).is_some()
+        keyword_syntax_to_type_id(node.kind)
     }
 
     fn declared_annotation_can_name_union_source(&self, sym_id: SymbolId) -> bool {

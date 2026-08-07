@@ -179,13 +179,16 @@ fn an_alias_declared_after_the_use_site_does_not_repaint_the_longhand_union() {
 
 /// A separate mechanism in the same display family: tsc resolves `keyof any` to
 /// `string | number | symbol` eagerly, so the operator never reaches the
-/// printer. tsz keeps the `KeyOf` node and renders it verbatim.
+/// printer.
 ///
 /// Kept in this file because the two interact — once `keyof any` resolves to
 /// the union, it lands on exactly the `TypeId` the rows above show is
-/// repainted, so fixing this one alone would render `PropertyKey` here.
+/// repainted as `PropertyKey`; the fix (`diagnostic_source_annotation_is_keyof_any`
+/// in `error_reporter/render_failure/{type_mismatch,nested_application_property_mismatch}.rs`)
+/// opts a confirmed `keyof any` annotation into the always-expanded formatter
+/// used by TS2344 constraint messages, without touching the general
+/// `PropertyKey` alias display other surfaces still rely on.
 #[test]
-#[ignore = "known divergence: `keyof any` is not resolved to its member union for display"]
 fn keyof_any_renders_as_its_resolved_member_union() {
     let source = "declare const value: keyof any;\n\
                   const target: boolean = value;\n";

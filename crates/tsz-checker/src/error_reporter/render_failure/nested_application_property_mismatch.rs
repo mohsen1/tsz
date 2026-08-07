@@ -1150,6 +1150,29 @@ impl<'a> CheckerState<'a> {
             .unwrap_or_else(|| self.format_type_diagnostic(member))
     }
 
+    /// `true` when the assignment/return source at `anchor_idx` was written as
+    /// a `keyof any` type annotation. `keyof any` reduces to the canonical
+    /// primitive key union, which shares its `TypeId` with the registered
+    /// `PropertyKey` alias body — the general display path keeps that alias for
+    /// other `PropertyKey`-typed surfaces (`Object.groupBy<K extends
+    /// PropertyKey, T>`), so this is checked structurally, from the written
+    /// annotation, before opting into the always-expanded formatter.
+    pub(super) fn diagnostic_source_annotation_is_keyof_any(
+        &self,
+        anchor_idx: tsz_parser::parser::NodeIndex,
+    ) -> bool {
+        let Some(expr_idx) = self
+            .direct_diagnostic_source_expression(anchor_idx)
+            .or_else(|| self.assignment_source_expression(anchor_idx))
+        else {
+            return false;
+        };
+        self.declared_type_annotation_node_for_expression(expr_idx)
+            .is_some_and(|(arena, annotation_idx)| {
+                Self::annotation_is_keyof_any(arena, annotation_idx)
+            })
+    }
+
     /// Render a depth-0 plain-leaf union-source mismatch (`Type 'A | B' is not
     /// assignable to type 'T'.` -> `Type '<failing member>' is not assignable to
     /// type 'T'.`), displaying the failing constituent with the source

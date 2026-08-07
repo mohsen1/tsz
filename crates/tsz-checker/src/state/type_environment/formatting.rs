@@ -213,6 +213,23 @@ impl<'a> CheckerState<'a> {
         formatter.format(type_id).into_owned()
     }
 
+    /// Format a `keyof any`-derived assignment source. `keyof any` reduces to
+    /// the canonical primitive key union, which `PropertyKey`'s alias also
+    /// registers on the same `TypeId` — the general TS2322 source-display path
+    /// keeps that alias for other `PropertyKey`-typed surfaces (notably
+    /// `Object.groupBy<K extends PropertyKey, T>`), so this narrow opt-in is
+    /// only for callers that have independently confirmed the *written*
+    /// annotation was `keyof any` (see [`Self::format_type_diagnostic_constraint`]
+    /// for the equivalent TS2344 case).
+    pub fn format_type_diagnostic_keyof_any_source(&self, type_id: TypeId) -> String {
+        let mut formatter = self
+            .ctx
+            .create_diagnostic_type_formatter()
+            .with_display_properties()
+            .with_expanded_primitive_key_union();
+        formatter.format(type_id).into_owned()
+    }
+
     fn evaluate_call_signature_for_instantiation_display(
         &mut self,
         sig: &tsz_solver::CallSignature,
