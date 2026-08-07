@@ -36,6 +36,7 @@ pub mod state;
 mod state_declarations;
 mod state_declarations_enums;
 mod state_declarations_exports;
+mod state_declarations_exports_decorator_position;
 mod state_declarations_modules;
 mod state_declarations_type_member_modifiers;
 mod state_diagnostics;
@@ -281,6 +282,10 @@ mod close_brace_node_end_position_remaining_tests;
 #[cfg(test)]
 #[path = "../../tests/decorator_tests.rs"]
 mod decorator_tests;
+
+#[cfg(test)]
+#[path = "../../tests/decorator_export_position_grammar_tests.rs"]
+mod decorator_export_position_grammar_tests;
 
 #[cfg(test)]
 #[path = "../../tests/regex_octal_decimal_class_escape_tests.rs"]

@@ -219,13 +219,23 @@ pub(super) fn parse_diagnostic_to_checker(
     file_name: &str,
     diagnostic: &ParseDiagnostic,
 ) -> Diagnostic {
-    Diagnostic::error(
+    let mut result = Diagnostic::error(
         file_name.to_string(),
         diagnostic.start,
         diagnostic.length,
         diagnostic.message.clone(),
         diagnostic.code,
-    )
+    );
+    if let Some(related) = &diagnostic.related {
+        result.related_information.push(Diagnostic::related_pointer(
+            related.code,
+            file_name.to_string(),
+            related.start,
+            related.length,
+            related.message.clone(),
+        ));
+    }
+    result
 }
 
 pub(super) fn collect_no_check_parse_diagnostics_for_file(

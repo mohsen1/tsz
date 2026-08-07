@@ -108,6 +108,20 @@ pub struct ParseDiagnostic {
     pub length: u32,
     pub message: String,
     pub code: u32,
+    /// `tsc`'s `relatedInformation`: a single secondary pointer into the same
+    /// file (e.g. TS1486 `Decorator used before 'export' here.` alongside
+    /// TS8038). Boxed so the overwhelming majority of diagnostics that carry
+    /// no related info do not pay for the extra fields inline.
+    pub related: Option<Box<ParseDiagnosticRelated>>,
+}
+
+/// A single `relatedInformation` entry attached to a [`ParseDiagnostic`].
+#[derive(Clone, Debug)]
+pub struct ParseDiagnosticRelated {
+    pub start: u32,
+    pub length: u32,
+    pub message: String,
+    pub code: u32,
 }
 
 impl ParseDiagnostic {

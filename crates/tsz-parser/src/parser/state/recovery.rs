@@ -40,9 +40,35 @@ impl ParserState {
             length,
             message: message.to_string(),
             code,
+            related: None,
         });
         // After pushing a parser diagnostic, the effective "lastError" is
         // ours; subsequent scanner emissions reset the comparison frame.
+        self.scanner_diagnostics_high_water_mark = self.scanner.get_scanner_diagnostics().len();
+    }
+
+    /// Like [`Self::parse_error_at`], but attaches a single `relatedInformation`
+    /// pointer (`tsc`: `DiagnosticRelatedInformation`) into the same file —
+    /// e.g. TS1486 `Decorator used before 'export' here.` alongside TS8038.
+    /// Bypasses `parse_error_at`'s same-position/scanner dedup: a diagnostic
+    /// that carries related info is always a deliberate single emission from
+    /// its call site, not a cascade the dedup heuristics need to guard.
+    pub(crate) fn parse_error_at_with_related(
+        &mut self,
+        start: u32,
+        length: u32,
+        message: &str,
+        code: u32,
+        related: ParseDiagnosticRelated,
+    ) {
+        self.last_error_pos = start;
+        self.parse_diagnostics.push(ParseDiagnostic {
+            start,
+            length,
+            message: message.to_string(),
+            code,
+            related: Some(Box::new(related)),
+        });
         self.scanner_diagnostics_high_water_mark = self.scanner.get_scanner_diagnostics().len();
     }
 

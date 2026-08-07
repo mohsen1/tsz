@@ -14,6 +14,7 @@ fn diag(start: u32, length: u32, code: u32, message: &str) -> ParseDiagnostic {
         length,
         message: message.to_string(),
         code,
+        related: None,
     }
 }
 

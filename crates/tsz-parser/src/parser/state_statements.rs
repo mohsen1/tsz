@@ -154,6 +154,7 @@ impl ParserState {
                 length: self.u32_from_usize(diag.length),
                 message,
                 code: diag.code,
+                related: None,
             });
         }
         // Sort diagnostics into tsc's canonical `compareDiagnostics` order after
