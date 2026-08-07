@@ -1703,6 +1703,20 @@ impl<'a> CheckerState<'a> {
         {
             return true;
         }
+        // Intersections carry their members' canonical literal properties just
+        // like unions do — a declared `number & { tag: "x" }` source keeps its
+        // `"x"` member in tsc diagnostics. This must run before the
+        // `array_element_type`/`tuple_elements` probes below: unlike
+        // `object_shape_for_type`, `get_tuple_elements` reduces a *tuple-typed*
+        // intersection member down to just that tuple's own elements (picking
+        // the most specific tuple for contextual typing), so an intersection
+        // whose OTHER member is an object literal (`{ z: 1 } & [string, ...]`)
+        // would short-circuit through the tuple arm and never see the object's
+        // `z` property — silently widening it in the non-literal-target
+        // fallback below (`{ z: number } & [...]`) instead of preserving `1`.
+        if let Some(members) = crate::query_boundaries::diagnostics::intersection_members(db, ty) {
+            return members.iter().any(|&m| recurse(m, visiting));
+        }
         if let Some(elem) = crate::query_boundaries::diagnostics::array_element_type(db, ty) {
             return recurse(elem, visiting);
         }
@@ -1710,14 +1724,6 @@ impl<'a> CheckerState<'a> {
             return elements.iter().any(|e| recurse(e.type_id, visiting));
         }
         if let Some(members) = crate::query_boundaries::diagnostics::union_members(db, ty) {
-            return members.iter().any(|&m| recurse(m, visiting));
-        }
-        // Intersections carry their members' canonical literal properties just
-        // like unions do — a declared `number & { tag: "x" }` source keeps its
-        // `"x"` member in tsc diagnostics. Without this arm the object member is
-        // not reached, so the source falls through to the non-literal-target
-        // widening below and renders `number & { tag: string }`.
-        if let Some(members) = crate::query_boundaries::diagnostics::intersection_members(db, ty) {
             return members.iter().any(|&m| recurse(m, visiting));
         }
         super::assignability_type_helpers::signature_carries_canonical_literal_member(
