@@ -391,25 +391,54 @@ impl ParserState {
     /// Parse a single type member (property signature, method signature, call signature, construct signature)
     pub(crate) fn parse_type_member(&mut self, in_interface_declaration: bool) -> NodeIndex {
         let start_pos = self.token_pos();
-        if let Some(member) = self.parse_type_member_explicit_signature(start_pos) {
+        let (modifier_diagnostic_reported, explicit) =
+            self.parse_type_member_explicit_signature(start_pos);
+        if let Some(member) = explicit {
             member
         } else {
-            self.parse_type_member_property_or_method(start_pos, in_interface_declaration)
+            self.parse_type_member_property_or_method(
+                start_pos,
+                in_interface_declaration,
+                modifier_diagnostic_reported,
+            )
         }
     }
 
-    fn parse_type_member_explicit_signature(&mut self, start_pos: u32) -> Option<NodeIndex> {
-        if let Some(node) = self.parse_type_member_visibility_modifier_error(start_pos) {
-            return Some(node);
+    /// Returns `(modifier_diagnostic_reported, node)`. `modifier_diagnostic_reported`
+    /// tracks whether an illegal-modifier (TS1070/TS1071) or `async` (TS1070)
+    /// diagnostic already fired for this member's leading-modifier run — `tsc`
+    /// reports at most one such diagnostic per member and returns immediately, so
+    /// `parse_type_member_property_or_method`'s own `readonly`-on-method (TS1024)
+    /// check must be suppressed once this is `true`.
+    fn parse_type_member_explicit_signature(
+        &mut self,
+        start_pos: u32,
+    ) -> (bool, Option<NodeIndex>) {
+        let (illegal_modifier_reported, node) =
+            self.parse_type_member_visibility_modifier_error(start_pos);
+        if node.is_some() {
+            return (illegal_modifier_reported, node);
         }
 
-        self.parse_async_type_member_restriction();
+        // A trailing `async` is never legal here regardless of an earlier
+        // illegal modifier, so it must still be consumed — but once an illegal
+        // modifier (e.g. `static`) already reported, `tsc` never reports a
+        // second diagnostic for the same member (`static async x(): number` is
+        // TS1070 once, at `static`, not twice).
+        let async_found = self.parse_async_type_member_restriction(!illegal_modifier_reported);
+        let modifier_diagnostic_reported = illegal_modifier_reported || async_found;
 
         if self.is_token(SyntaxKind::LessThanToken) {
-            return Some(self.parse_call_signature(start_pos));
+            return (
+                modifier_diagnostic_reported,
+                Some(self.parse_call_signature(start_pos)),
+            );
         }
         if self.is_token(SyntaxKind::OpenParenToken) {
-            return Some(self.parse_call_signature(start_pos));
+            return (
+                modifier_diagnostic_reported,
+                Some(self.parse_call_signature(start_pos)),
+            );
         }
 
         if self.is_token(SyntaxKind::NewKeyword) {
@@ -424,29 +453,39 @@ impl ParserState {
             self.scanner.restore_state(snapshot);
             self.current_token = current;
             if !is_property_name {
-                return Some(self.parse_construct_signature(start_pos));
+                return (
+                    modifier_diagnostic_reported,
+                    Some(self.parse_construct_signature(start_pos)),
+                );
             }
         }
 
         if self.is_token(SyntaxKind::GetKeyword)
             && !self.look_ahead_is_property_name_after_keyword()
         {
-            return Some(self.parse_get_accessor_signature(start_pos));
+            return (
+                modifier_diagnostic_reported,
+                Some(self.parse_get_accessor_signature(start_pos)),
+            );
         }
 
         if self.is_token(SyntaxKind::SetKeyword)
             && !self.look_ahead_is_property_name_after_keyword()
         {
-            return Some(self.parse_set_accessor_signature(start_pos));
+            return (
+                modifier_diagnostic_reported,
+                Some(self.parse_set_accessor_signature(start_pos)),
+            );
         }
 
-        None
+        (modifier_diagnostic_reported, None)
     }
 
     fn parse_type_member_property_or_method(
         &mut self,
         start_pos: u32,
         in_interface_declaration: bool,
+        modifier_diagnostic_reported: bool,
     ) -> NodeIndex {
         // Capture the `readonly` keyword span so a TS1024 (readonly on a
         // method/construct signature) can be anchored at the modifier itself,
@@ -461,6 +500,31 @@ impl ParserState {
             None
         };
         let readonly = readonly_span.is_some();
+
+        // `readonly async x(): number` / `readonly async x: number`: `async` is a
+        // second leading modifier, not the member name. `tsc` checks `readonly`
+        // first in source order (legal only on a property/index signature — see
+        // the TS1024 check below) and, only when that doesn't already reject the
+        // member, checks `async` next (always illegal on a type member — TS1070).
+        // Detected here, before name parsing, so `async` is never misread as the
+        // property name (it isn't a valid property-name continuation). It must
+        // still be consumed even when `modifier_diagnostic_reported` is already
+        // true (an earlier illegal modifier fired) — only the diagnostic, not
+        // the consumption, is suppressed in that case.
+        let async_span = if readonly
+            && self.is_token(SyntaxKind::AsyncKeyword)
+            && !self.look_ahead_is_property_name_after_keyword()
+        {
+            let span = (self.token_pos(), self.token_end());
+            self.next_token();
+            if modifier_diagnostic_reported {
+                None
+            } else {
+                Some(span)
+            }
+        } else {
+            None
+        };
 
         let Some(name) = self.parse_type_member_property_or_method_name(start_pos, readonly) else {
             return NodeIndex::NONE;
@@ -479,8 +543,9 @@ impl ParserState {
         if self.is_token(SyntaxKind::OpenParenToken) || self.is_token(SyntaxKind::LessThanToken) {
             // `readonly` is legal only on a property declaration or index
             // signature; on a method or construct signature tsc reports TS1024,
-            // anchored at the `readonly` keyword.
-            if let Some((ro_start, ro_end)) = readonly_span {
+            // anchored at the `readonly` keyword, and (per single-diagnostic-per-
+            // member) never separately reports the trailing `async`.
+            if !modifier_diagnostic_reported && let Some((ro_start, ro_end)) = readonly_span {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at(
                     ro_start,
@@ -494,6 +559,18 @@ impl ParserState {
                 name,
                 modifiers,
                 question_token,
+            );
+        }
+
+        // Property: `readonly` (if present) is legal here, so `async` (if
+        // present) is the first — and only — offending modifier.
+        if !modifier_diagnostic_reported && let Some((as_start, as_end)) = async_span {
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at(
+                as_start,
+                as_end.saturating_sub(as_start),
+                "'async' modifier cannot appear on a type member.",
+                diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_TYPE_MEMBER,
             );
         }
 

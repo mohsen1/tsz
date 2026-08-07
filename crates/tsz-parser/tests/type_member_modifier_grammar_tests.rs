@@ -20,6 +20,13 @@
 //!     mis-parsed `get`/`set` as the property name (single `readonly`, TS1005)
 //!     or reported the uniform semantic TS1070 (every other modifier in the
 //!     set, single or stacked).
+//!   * `readonly` and `async` together on a type member: `checkGrammarModifiers`
+//!     checks each leading modifier in SOURCE ORDER and reports (and stops at)
+//!     the first one invalid for the member's own kind — `readonly` before
+//!     `async` on a method reports TS1024 only (not tsz's previous bogus
+//!     TS1005), and an earlier illegal modifier (`static`) suppresses a
+//!     would-be-duplicate TS1070/TS1024 from a trailing `readonly`/`async`
+//!     (tsz previously double-reported).
 //!
 //! `readonly` on a property / index signature stays legal, and `export` / `in`
 //! / `out` used as a member *name* (`export: T`, `export(): void`) stay clean —
@@ -629,4 +636,181 @@ fn clean_modifier_used_as_accessor_own_name_stays_ts1070() {
     // semantic TS1070.
     assert_eq!(codes("interface I { static get(): number; }"), vec![TS1070]);
     assert_eq!(codes("interface I { static get: number; }"), vec![TS1070]);
+}
+
+// ---------------------------------------------------------------------------
+// `readonly` + `async` on a type member: tsc's `checkGrammarModifiers` checks
+// each leading modifier in SOURCE ORDER and reports (and stops at) the first
+// one that is invalid for the member's own kind. `readonly` is invalid only
+// on a method/construct signature (TS1024); `async` is invalid on any type
+// member (TS1070). Verified against `typescript@7.0.2`.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn readonly_before_async_property_reports_ts1070_at_async() {
+    // `readonly` is legal on a property, so `async` — invalid on any type
+    // member — is the first (and only) offending modifier.
+    assert_eq!(
+        fingerprints("interface I { readonly async x: number; }"),
+        vec![(
+            TS1070,
+            1,
+            24,
+            "'async' modifier cannot appear on a type member.".to_string()
+        )],
+    );
+}
+
+#[test]
+fn readonly_before_async_method_reports_ts1024_at_readonly() {
+    // `readonly` is checked first in source order and is invalid on a
+    // method — tsc reports TS1024 there and never reaches `async`.
+    assert_eq!(
+        fingerprints("interface I { readonly async x(): number; }"),
+        vec![(
+            TS1024,
+            1,
+            15,
+            "'readonly' modifier can only appear on a property declaration or index signature."
+                .to_string()
+        )],
+    );
+}
+
+#[test]
+fn readonly_before_async_property_on_type_literal_reports_ts1070() {
+    assert_eq!(
+        fingerprints("type T = { readonly async x: number };"),
+        vec![(
+            TS1070,
+            1,
+            21,
+            "'async' modifier cannot appear on a type member.".to_string()
+        )],
+    );
+}
+
+#[test]
+fn readonly_before_async_method_on_type_literal_reports_ts1024() {
+    assert_eq!(
+        codes("type T = { readonly async x(): number };"),
+        vec![TS1024]
+    );
+}
+
+#[test]
+fn readonly_before_async_method_keeps_following_member() {
+    // Exactly one diagnostic; the following `y` member is not lost.
+    assert_eq!(
+        codes("interface I { readonly async x(): number; y: string; }"),
+        vec![TS1024],
+    );
+}
+
+#[test]
+fn readonly_before_async_before_method_named_get_reports_ts1024() {
+    // `get` here is an ordinary method name, not an accessor — disambiguated
+    // from the unrelated `readonly get()` accessor-lookahead path.
+    assert_eq!(
+        codes("interface I { readonly async get(): number; }"),
+        vec![TS1024],
+    );
+}
+
+#[test]
+fn async_before_readonly_property_reports_ts1070_at_async() {
+    // `async` comes first in source order: always invalid, reported and
+    // stopped on immediately — `readonly` (which would be legal on this
+    // property) is never separately evaluated.
+    assert_eq!(
+        fingerprints("interface I { async readonly x: number; }"),
+        vec![(
+            TS1070,
+            1,
+            15,
+            "'async' modifier cannot appear on a type member.".to_string()
+        )],
+    );
+}
+
+#[test]
+fn async_before_readonly_method_reports_ts1070_only_not_ts1024_too() {
+    // Regression guard: `async` fires first and tsc's single-diagnostic-per-
+    // member rule means the trailing `readonly`-on-method check must not
+    // also fire TS1024 for the same member.
+    assert_eq!(
+        codes("interface I { async readonly x(): number; }"),
+        vec![TS1070],
+    );
+}
+
+#[test]
+fn static_before_async_reports_ts1070_once_not_twice() {
+    // Regression guard: an earlier illegal modifier (`static`) already
+    // reports TS1070; the trailing `async` must still be consumed (so the
+    // member parses cleanly) but must not report its own second TS1070.
+    assert_eq!(
+        codes("interface I { static async x(): number; }"),
+        vec![TS1070],
+    );
+}
+
+#[test]
+fn static_readonly_async_reports_ts1070_at_static_only() {
+    // Three-modifier run: `static` (first, illegal) wins; neither the
+    // trailing `readonly` (TS1024) nor `async` (TS1070) separately report.
+    assert_eq!(
+        fingerprints("interface I { static readonly async x(): number; }"),
+        vec![(
+            TS1070,
+            1,
+            15,
+            "'static' modifier cannot appear on a type member.".to_string()
+        )],
+    );
+}
+
+#[test]
+fn static_async_readonly_reports_ts1070_at_static_only() {
+    assert_eq!(
+        codes("interface I { static async readonly x(): number; }"),
+        vec![TS1070],
+    );
+}
+
+#[test]
+fn export_before_readonly_async_reports_ts1070_at_export_only() {
+    assert_eq!(
+        codes("interface I { export readonly async x(): number; }"),
+        vec![TS1070],
+    );
+}
+
+#[test]
+fn readonly_async_used_as_property_name_stays_clean() {
+    // `async` immediately followed by `:` is the property's own name, not a
+    // modifier — `readonly async: number` is an ordinary readonly property.
+    assert_eq!(
+        codes("interface I { readonly async: number; }"),
+        Vec::<u32>::new()
+    );
+}
+
+#[test]
+fn readonly_async_used_as_method_name_reports_ts1024_unrelated_to_async_fix() {
+    // `async` immediately followed by `(` is the method's own name here;
+    // `readonly` on this (async-named) method is the pre-existing,
+    // unrelated TS1024 rule.
+    assert_eq!(
+        codes("interface I { readonly async(): number; }"),
+        vec![TS1024]
+    );
+}
+
+#[test]
+fn readonly_async_optional_property_reports_ts1070_at_async() {
+    assert_eq!(
+        codes("interface I { readonly async x?: number; }"),
+        vec![TS1070],
+    );
 }
