@@ -415,6 +415,73 @@ impl<'a> CheckerState<'a> {
             .map(|annotation| (annotation, initializer))
     }
 
+    /// The read-before-write value of a marker-only optional-chain write
+    /// target: a compound-assignment or increment/decrement LHS (`a.b?.c.d`
+    /// in `a.b?.c.d += 1`) whose only source of `undefined` is the chain's
+    /// own short-circuit marker, not a genuinely optional member (`c` above
+    /// is required). `optional_chain_invalid_assignment_target_context`
+    /// short-circuits such a target's write-context type to `any` so an
+    /// invalid target cannot cascade into assignability diagnostics — but a
+    /// compound assignment/increment/decrement also READS the target before
+    /// writing it, and tsc reports that read's `T | undefined` result as
+    /// possibly undefined (TS18047/18048/18049), naming the whole target,
+    /// right alongside the reference-grammar error (TS2777/TS2779). The
+    /// write-context `any` swallows this read entirely.
+    ///
+    /// Returns `None` for anything that is not this exact marker-only shape,
+    /// including a genuinely optional receiver (`h?.inner.leaf += 1`) — tsc
+    /// reports that case once, naming the receiver, via the ordinary
+    /// possibly-nullish property-access path; re-deriving it here would
+    /// double-report. Callers fall back to the existing (short-circuited)
+    /// read for every `None`.
+    pub(crate) fn marker_only_optional_chain_target_read_type(
+        &mut self,
+        idx: NodeIndex,
+    ) -> Option<TypeId> {
+        use tsz_parser::parser::syntax_kind_ext;
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.ctx.arena.get_access_expr(node)?;
+        if access.question_dot_token
+            || !crate::types_domain::computation::access::is_optional_chain(
+                self.ctx.arena,
+                access.expression,
+            )
+        {
+            return None;
+        }
+        let name_node = self.ctx.arena.get(access.name_or_argument)?;
+        let property_name = self
+            .ctx
+            .arena
+            .get_identifier(name_node)?
+            .escaped_text
+            .clone();
+
+        let receiver_type = self.get_type_of_node(access.expression);
+        let non_optional = self.remove_optional_chain_marker(access.expression, receiver_type);
+        if non_optional == receiver_type {
+            // Not marker-only: no chain undefined to strip, or the receiver's
+            // undefined is genuine (owned by the write-target receiver check).
+            return None;
+        }
+
+        use crate::query_boundaries::common::PropertyAccessResult;
+        let PropertyAccessResult::Success { type_id, .. } =
+            self.resolve_property_access_with_env(non_optional, &property_name)
+        else {
+            return None;
+        };
+        Some(
+            crate::query_boundaries::optional_chain::add_undefined_if_missing(
+                self.ctx.types,
+                type_id,
+            ),
+        )
+    }
+
     fn type_contains_nullish_kind(&self, type_id: TypeId, nullish: TypeId) -> bool {
         if type_id == nullish {
             return true;

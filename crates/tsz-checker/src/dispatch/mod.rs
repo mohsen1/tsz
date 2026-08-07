@@ -286,7 +286,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         return TypeId::NUMBER;
                     }
 
-                    let operand_raw = self.checker.get_type_of_node(unary.operand);
+                    let operand_raw = self
+                        .checker
+                        .marker_only_optional_chain_target_read_type(unary.operand)
+                        .unwrap_or_else(|| self.checker.get_type_of_node(unary.operand));
                     let operand_type = self.checker.resolve_type_query_type(operand_raw);
                     // TS18046: postfix ++/-- on unknown is not allowed (strictNullChecks only).
                     // tsc emits TS18046 instead of TS2356 for unknown operands.

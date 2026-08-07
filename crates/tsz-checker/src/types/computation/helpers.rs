@@ -567,7 +567,9 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Get operand type for validation.
-                let operand_type = self.get_type_of_node(unary.operand);
+                let operand_type = self
+                    .marker_only_optional_chain_target_read_type(unary.operand)
+                    .unwrap_or_else(|| self.get_type_of_node(unary.operand));
 
                 // TS18046: ++/-- on unknown is not allowed (strictNullChecks only).
                 // tsc emits TS18046 instead of TS2356 for unknown operands.

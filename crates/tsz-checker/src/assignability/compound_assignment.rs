@@ -90,7 +90,9 @@ impl<'a> CheckerState<'a> {
         // Compound assignments also read the LHS value. For private setter-only
         // accessors, this triggers TS2806 ("Private accessor was defined without
         // a getter"). Evaluate in read context first.
-        let left_read_raw = self.get_type_of_node(left_idx);
+        let left_read_raw = self
+            .marker_only_optional_chain_target_read_type(left_idx)
+            .unwrap_or_else(|| self.get_type_of_node(left_idx));
         let left_read_type = self.resolve_type_query_type(left_read_raw);
 
         let left_target = self.get_type_of_assignment_target(left_idx);
