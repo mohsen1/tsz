@@ -107,4 +107,12 @@ pub struct ObjectLiteralTracking {
     pub contextual_targets: FxHashMap<NodeIndex, TypeId>,
     /// Stack of in-progress object literal variable initializers.
     pub partial_initializers: Vec<PartialObjectLiteralInitializer>,
+    /// Property-level type of a computed-name method/accessor that routed
+    /// into an index-signature bucket (wide `string`/`number`/`symbol` key),
+    /// keyed by the member element node. Captured at object-literal
+    /// computation time — when the member's type is already safely inferred —
+    /// so `object_literal_source_type_display` can re-spell the member
+    /// (`[ws]: () => number`) without re-running function inference at
+    /// display time. #16662.
+    pub computed_index_member_display_types: FxHashMap<NodeIndex, TypeId>,
 }
