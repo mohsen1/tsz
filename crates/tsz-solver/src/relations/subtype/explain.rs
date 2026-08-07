@@ -1694,15 +1694,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         // slot: tsc reports "refers to a different member"
                         // (TS18015), while a modifier-`private` member gets
                         // "separate declarations" (TS2446).
-                        return Some(if self.is_es_private_identifier_name(t_prop.name) {
-                            SubtypeFailureReason::PrivateIdentifierMemberMismatch {
-                                property_name: t_prop.name,
-                            }
-                        } else {
-                            SubtypeFailureReason::PropertyNominalMismatch {
-                                property_name: t_prop.name,
-                            }
-                        });
+                        return Some(
+                            if crate::utils::is_es_private_identifier_name(
+                                self.interner.resolve_atom_ref(t_prop.name).as_ref(),
+                            ) {
+                                SubtypeFailureReason::PrivateIdentifierMemberMismatch {
+                                    property_name: t_prop.name,
+                                }
+                            } else {
+                                SubtypeFailureReason::PropertyNominalMismatch {
+                                    property_name: t_prop.name,
+                                }
+                            },
+                        );
                     }
                 }
                 // Cannot assign private/protected source to public target

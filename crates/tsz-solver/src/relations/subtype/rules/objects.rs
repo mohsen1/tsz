@@ -507,20 +507,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         SubtypeResult::True
     }
 
-    /// Whether `member_name` spells an ES private identifier (`#name`).
-    ///
-    /// ES private identifiers are per-class slots with hierarchical origin
-    /// rules, distinct from modifier-`private` members, and `tsc` reports a
-    /// different relation-failure elaboration for them (TS18015 vs TS2446).
-    pub(crate) fn is_es_private_identifier_name(
-        &self,
-        member_name: tsz_common::interner::Atom,
-    ) -> bool {
-        crate::utils::is_es_private_identifier_name(
-            self.interner.resolve_atom_ref(member_name).as_ref(),
-        )
-    }
-
     /// Decide whether a source property satisfies a *nominal* (private or
     /// protected) target property, given the member name, the two
     /// declaring-class symbols (`parent_id`s), and the target member's
@@ -563,7 +549,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // `private` (modifier) requires strict declaration identity, which just
         // failed — unless the member is an ES private identifier (`#name`),
         // which is a per-class slot that a derived class always inherits.
-        let is_es_private_identifier = self.is_es_private_identifier_name(member_name);
+        let is_es_private_identifier = crate::utils::is_es_private_identifier_name(
+            self.interner.resolve_atom_ref(member_name).as_ref(),
+        );
         if target_visibility != Visibility::Protected && !is_es_private_identifier {
             return false;
         }
