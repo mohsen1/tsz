@@ -396,6 +396,17 @@ impl<'a> CheckerState<'a> {
     ) -> String {
         let direct_param_display = self.format_type_diagnostic(param_type);
 
+        // A generic call that clamps an un-inferable type parameter to its
+        // constraint reports the argument against the canonical primitive key
+        // union (`string | number | symbol`), which borrows `PropertyKey`'s
+        // alias. tsc strips that alias for a longhand / `keyof any` constraint
+        // but keeps it for `K extends PropertyKey`; recover the written form.
+        if let Some(display) =
+            self.call_argument_key_union_constraint_target_display(arg_idx, param_type)
+        {
+            return display;
+        }
+
         if let Some(display) = self.overloaded_recursive_typeof_parameter_display(param_type) {
             return display;
         }
@@ -836,24 +847,8 @@ impl<'a> CheckerState<'a> {
     }
 
     fn enclosing_call_arg_position(&mut self, arg_idx: NodeIndex) -> Option<(TypeId, usize)> {
-        let mut current = arg_idx;
-        loop {
-            let node = self.ctx.arena.get(current)?;
-            if node.kind == syntax_kind_ext::CALL_EXPRESSION
-                || node.kind == syntax_kind_ext::NEW_EXPRESSION
-            {
-                let call = self.ctx.arena.get_call_expr(node)?;
-                let args = call.arguments.as_ref()?;
-                let arg_pos = args.nodes.iter().position(|&a| a == arg_idx)?;
-                let callee_type = self.get_type_of_node(call.expression);
-                return Some((callee_type, arg_pos));
-            }
-            let ext = self.ctx.arena.get_extended(current)?;
-            if ext.parent.is_none() {
-                return None;
-            }
-            current = ext.parent;
-        }
+        let (callee_expr, arg_pos) = self.enclosing_call_expression_and_arg_pos(arg_idx)?;
+        Some((self.get_type_of_node(callee_expr), arg_pos))
     }
 
     fn expanded_rest_tuple_parameter_display_for_call(
