@@ -1329,6 +1329,24 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    /// Like `is_export_type_only_across_binders` but only returns true when the
+    /// export uses `export type { ... }` syntax (where `is_type_only` is set on
+    /// the export symbol). Does NOT return true for plain type declarations like
+    /// `export type T = number`.
+    pub(crate) fn is_export_type_only_syntax_across_binders(
+        &self,
+        module_specifier: &str,
+        export_name: &str,
+    ) -> bool {
+        let mut visited = rustc_hash::FxHashSet::default();
+        self.is_export_type_only_syntax_in_file(
+            self.ctx.current_file_idx,
+            module_specifier,
+            export_name,
+            &mut visited,
+        )
+    }
+
     /// Like `is_export_type_only_across_binders` but resolves the module specifier
     /// from a specific source file index. This is needed for cross-file namespace
     /// type construction where the module specifier is relative to the declaring
