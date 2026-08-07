@@ -37,6 +37,7 @@ mod state_declarations;
 mod state_declarations_enums;
 mod state_declarations_exports;
 mod state_declarations_modules;
+mod state_declarations_type_member_modifiers;
 mod state_diagnostics;
 mod state_exports_recovery;
 mod state_expressions;

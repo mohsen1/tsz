@@ -63,6 +63,7 @@ fn codes(source: &str) -> Vec<u32> {
 }
 
 const TS1070: u32 = diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_TYPE_MEMBER;
+const TS1071: u32 = diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_AN_INDEX_SIGNATURE;
 const TS1024: u32 =
     diagnostic_codes::READONLY_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION_OR_INDEX_SIGNATURE;
 const TS1131: u32 = diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED;
@@ -371,5 +372,114 @@ fn previously_covered_modifiers_still_report_ts1070() {
     ] {
         let source = format!("interface I {{ {modifier} x: number; }}");
         assert_eq!(codes(&source), vec![TS1070], "modifier `{modifier}`");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TS1071: illegal modifier on an index signature
+// ---------------------------------------------------------------------------
+
+#[test]
+fn export_modifier_on_index_signature_reports_ts1071() {
+    // `export` at column 17 (`interface Bag { `).
+    assert_eq!(
+        fingerprints("interface Bag { export [key: string]: number; }"),
+        vec![(
+            TS1071,
+            1,
+            17,
+            "'export' modifier cannot appear on an index signature.".to_string(),
+        )],
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Multi-modifier runs: `tsc` reports once, anchored on and naming the FIRST
+// modifier, then recovers the underlying member/index signature cleanly.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn two_modifiers_report_once_naming_the_first() {
+    // `public static value` — one TS1070 on `public` (column 15), no cascade
+    // on the trailing `static`.
+    assert_eq!(
+        fingerprints("interface I { public static value: number; }"),
+        vec![(
+            TS1070,
+            1,
+            15,
+            "'public' modifier cannot appear on a type member.".to_string(),
+        )],
+    );
+}
+
+#[test]
+fn two_modifiers_reordered_names_the_first() {
+    // `static public value` — the first modifier is now `static`.
+    assert_eq!(
+        fingerprints("interface I { static public value: number; }"),
+        vec![(
+            TS1070,
+            1,
+            15,
+            "'static' modifier cannot appear on a type member.".to_string(),
+        )],
+    );
+}
+
+#[test]
+fn export_leading_a_modifier_run_names_export() {
+    let source = "interface I { export static value: number; }";
+    assert_eq!(codes(source), vec![TS1070]);
+    assert!(fingerprints(source)[0].3.starts_with("'export'"));
+}
+
+#[test]
+fn three_modifiers_report_once_and_keep_the_readonly_member() {
+    // `public static readonly x` — one TS1070 on `public`; the trailing
+    // `readonly x` still parses as a member (no cascade).
+    assert_eq!(
+        codes("interface I { public static readonly x: number; }"),
+        vec![TS1070],
+    );
+}
+
+#[test]
+fn modifier_run_before_index_signature_is_a_single_ts1071() {
+    assert_eq!(
+        fingerprints("interface I { public static [key: string]: number; }"),
+        vec![(
+            TS1071,
+            1,
+            15,
+            "'public' modifier cannot appear on an index signature.".to_string(),
+        )],
+    );
+}
+
+#[test]
+fn declare_export_type_literal_run_names_declare() {
+    let source = "type T = { declare export field: number; };";
+    assert_eq!(codes(source), vec![TS1070]);
+    assert!(fingerprints(source)[0].3.starts_with("'declare'"));
+}
+
+#[test]
+fn illegal_modifier_member_does_not_swallow_following_members() {
+    // Exactly one diagnostic; the following `y` member is not lost to a cascade.
+    assert_eq!(
+        codes("interface I { export x: number; y: string; }"),
+        vec![TS1070],
+    );
+}
+
+#[test]
+fn multi_modifier_run_is_not_keyed_to_a_binder_name() {
+    // Structural, not tied to any identifier spelling.
+    for src in [
+        "interface Alpha { static public beta: number; }",
+        "type Gamma = { public static delta: string; };",
+    ] {
+        assert_eq!(codes(src), vec![TS1070], "structural rule: {src}");
     }
 }
