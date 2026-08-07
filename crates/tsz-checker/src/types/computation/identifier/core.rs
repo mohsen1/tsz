@@ -469,7 +469,20 @@ impl<'a> CheckerState<'a> {
         // TS2815: 'arguments' cannot be referenced in property initializers
         // or class static initialization blocks. Must check BEFORE regular
         // function body check because arrow functions are transparent.
-        if self.is_arguments_in_class_initializer_or_static_block(idx) {
+        //
+        // tsc only reports TS2815 when the reference would otherwise capture
+        // an *enclosing* function's `arguments` object — i.e. the class whose
+        // field initializer or static block holds the reference is itself
+        // nested inside a (non-arrow) function. When the class sits at module
+        // or global scope there is no such function, so `arguments` is just an
+        // undefined name and tsc reports the ordinary "cannot find name"
+        // diagnostic (TS2662 with a static-member suggestion, or TS2304 for a
+        // computed property name whose expression is evaluated in the class's
+        // enclosing scope). Gating on `has_enclosing_regular_function` lets
+        // those out-of-function references fall through to normal resolution.
+        if self.is_arguments_in_class_initializer_or_static_block(idx)
+            && self.has_enclosing_regular_function(idx)
+        {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             self.error_at_node(
                     idx,
