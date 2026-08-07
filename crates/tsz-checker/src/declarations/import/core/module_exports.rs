@@ -502,6 +502,11 @@ impl<'a> CheckerState<'a> {
             let mut value_count = 0;
             let mut function_value_count = 0;
             let mut function_name: Option<String> = None;
+            let mut function_name_has_body = false;
+            // How many of `effective_default_indices` are repeat overload
+            // signatures of a function default already counted above. See the
+            // `distinct_default_count` comment below.
+            let mut merged_overload_count = 0usize;
 
             for &export_idx in &effective_default_indices {
                 if self.export_decl_has_named_default_export(export_idx) {
@@ -521,21 +526,36 @@ impl<'a> CheckerState<'a> {
                     Some(k) if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                         has_function = true;
                         // Check if all function defaults share the same name (overloads)
-                        let name = self
+                        let function_data = self
                             .ctx
                             .arena
                             .get_export_decl_at(export_idx)
                             .and_then(|ed| self.ctx.arena.get(ed.export_clause))
-                            .and_then(|n| self.ctx.arena.get_function(n))
-                            .map(|f| self.node_text(f.name).unwrap_or_default());
+                            .and_then(|n| self.ctx.arena.get_function(n));
+                        let name =
+                            function_data.map(|f| self.node_text(f.name).unwrap_or_default());
+                        let has_body = function_data.is_some_and(|f| !f.body.is_none());
                         match (&function_name, name) {
                             (None, Some(n)) if !n.is_empty() => {
                                 function_name = Some(n);
+                                function_name_has_body = has_body;
                                 value_count += 1;
                                 function_value_count += 1;
                             }
-                            (Some(existing), Some(n)) if !n.is_empty() && *existing == n => {
+                            // A repeat of the tracked name is another overload
+                            // signature of the same function only while at most
+                            // one declaration in the run carries a body. Two
+                            // bodies are duplicate implementations, which tsc
+                            // keeps as separate conflicting declarations rather
+                            // than merging into one `default` symbol.
+                            (Some(existing), Some(n))
+                                if !n.is_empty()
+                                    && *existing == n
+                                    && !(has_body && function_name_has_body) =>
+                            {
                                 // Same non-empty function name: overload, don't count again
+                                function_name_has_body |= has_body;
+                                merged_overload_count += 1;
                             }
                             _ => {
                                 value_count += 1;
@@ -561,8 +581,19 @@ impl<'a> CheckerState<'a> {
             // declaration, AND (2) the other is a function or class (value).
             let interface_can_merge =
                 has_interface && (has_function || has_class) && value_count == 1;
+            // A run of `export default function f(...)` declarations that share
+            // a name is ONE default-exported symbol, not N: tsc merges overload
+            // signatures into a single `default` symbol before it ever asks
+            // whether the module has multiple default exports. `value_count`
+            // already collapses them, so the *statement* count has to as well —
+            // otherwise a plain overload set (no other default export in the
+            // file at all) trips the second disjunct on its statement count
+            // alone and every signature gets a false TS2528.
+            let distinct_default_count = effective_default_indices
+                .len()
+                .saturating_sub(merged_overload_count);
             let is_conflict =
-                value_count > 1 || (effective_default_indices.len() > 1 && !interface_can_merge);
+                value_count > 1 || (distinct_default_count > 1 && !interface_can_merge);
             if is_conflict {
                 if has_function && has_class {
                     // When function + class both export as default, tsc emits
