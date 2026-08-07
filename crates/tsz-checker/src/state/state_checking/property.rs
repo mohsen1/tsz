@@ -1311,16 +1311,13 @@ const i: I = { [sym]: { a: 1 } };
     }
 
     #[test]
-    fn ts2418_symbol_index_nested_object_literal_type_mismatch_not_excess_preexisting_gap() {
-        // Oracle (`typescript@7.0.2`) reports TS2322 at the mismatched nested
-        // `a` value here, not TS2418 — but that gap is pre-existing on `main`
-        // independent of this fix (confirmed by probing unmodified `main`
-        // directly) and is a distinct structural defect: the flat TS2418
-        // computed-property message wins over `try_elaborate_assignment_source_error`
-        // unconditionally, rather than only when there is nothing to elaborate.
-        // Filed as a follow-up rather than folded into this PR's excess-property
-        // drill-in fix (see #16649's own adjacent-matrix note). This test pins
-        // the current (wrong) behavior so a future fix updates it deliberately.
+    fn ts2322_symbol_index_nested_object_literal_type_mismatch_elaborates() {
+        // The other polarity of the same drill-in: `a` is present but wrongly
+        // typed (a mismatch, not an excess property). tsc drills into the
+        // nested literal for a mismatch exactly as it does for an excess
+        // property and reports TS2322 at the member, not the outer TS2418.
+        // `try_elaborate_assignment_source_error` must run before the flat
+        // computed-property TS2418 message, not after it.
         let diags = check_source_diagnostics(
             r#"
 declare const sym: unique symbol;
@@ -1329,11 +1326,16 @@ interface I { [k: string]: number; [k: symbol]: Val; }
 const i3: I = { [sym]: { a: "wrong" } };
 "#,
         );
-        let ts2418: Vec<_> = diags.iter().filter(|d| d.code == 2418).collect();
+        let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
         assert_eq!(
-            ts2418.len(),
+            ts2322.len(),
             1,
-            "expected the pre-existing flat TS2418 (not yet TS2322) for a nested type mismatch, got: {diags:?}"
+            "expected one TS2322 for the mismatched nested 'a' value, got: {diags:?}"
+        );
+        let ts2418: Vec<_> = diags.iter().filter(|d| d.code == 2418).collect();
+        assert!(
+            ts2418.is_empty(),
+            "expected no outer TS2418 once the nested mismatch is elaborated, got: {diags:?}"
         );
     }
 

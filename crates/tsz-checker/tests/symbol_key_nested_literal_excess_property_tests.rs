@@ -108,12 +108,9 @@ const i2: I = { x: { a: 1, b: 2 } };
     );
 }
 
-// ---- Residual: the mismatch half of the same drill-in is still outer-only ---
+// ---- The other polarity of the same drill-in: a member mismatch -------------
 
 #[test]
-#[ignore = "known divergence (#16649 residual): a member *mismatch* inside a \
-            symbol-keyed nested literal still reports the outer TS2418 instead \
-            of drilling in to TS2322"]
 fn symbol_keyed_nested_literal_member_mismatch_reports_ts2322() {
     // Same drill-in, other polarity: `a` is present but wrongly typed, so this
     // is a mismatch rather than an excess property. tsc drills into the nested
@@ -121,9 +118,10 @@ fn symbol_keyed_nested_literal_member_mismatch_reports_ts2322() {
     //
     //   error TS2322: Type 'string' is not assignable to type 'number'.
     //
-    // tsz reports TS2418 at the computed property. The excess-property half is
-    // fixed; this half is not, so the rows above pass while this one pins the
-    // remaining gap.
+    // Previously tsz reported the outer TS2418 at the computed property
+    // instead: the flat computed-property message fired as soon as the
+    // property name resolved to a `COMPUTED_PROPERTY_NAME` node, before
+    // `try_elaborate_assignment_source_error` ever got a chance to drill in.
     let source = r#"
 declare const sym: unique symbol;
 interface Val { a: number; }
