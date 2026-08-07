@@ -109,6 +109,17 @@ pub fn find_disjoint_literal_property_across_intersection(
 /// literal-value comparison). Mirrors that function's scope discipline:
 /// under-covering (returning `None`) just leaves the diagnostic as it is
 /// today, so a name this helper doesn't recognize is safe, never wrong.
+///
+/// Deliberately excludes ES `#`-private names
+/// ([`crate::utils::is_es_private_identifier_name`]): unlike modifier-
+/// `private`, two classes' `#x` fields are lexically scoped to their own
+/// class body and are never the same name to `tsc` even when they share
+/// identical source text, so `#x` on `A` and `#x` on `B` is not a naming
+/// collision at all — tsc reports no elaboration (and, correctly, no
+/// `never` reduction) for that shape. Matching on the interned `Atom`'s
+/// text alone (as the modifier-`private` case does) would wrongly treat
+/// same-spelled `#`-private fields from different classes as one
+/// conflicting name.
 pub fn find_private_brand_conflict_property(
     db: &dyn TypeDatabase,
     members: &[TypeId],
@@ -117,7 +128,9 @@ pub fn find_private_brand_conflict_property(
     let mut ingest = |properties: &[crate::types::PropertyInfo]| {
         for prop in properties {
             let name = db.resolve_atom(prop.name);
-            if name.starts_with("__private_brand_") {
+            if name.starts_with("__private_brand_")
+                || crate::utils::is_es_private_identifier_name(&name)
+            {
                 continue;
             }
             let entry = occurrences.entry(prop.name).or_insert((0, false));
