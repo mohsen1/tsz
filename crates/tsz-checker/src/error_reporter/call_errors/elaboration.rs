@@ -145,6 +145,7 @@ impl<'a> CheckerState<'a> {
                             &sig,
                             arg_pos,
                             evaluated_param,
+                            call.expression,
                             &mut display,
                             &mut ambiguous,
                         );
@@ -163,6 +164,7 @@ impl<'a> CheckerState<'a> {
                             &sig,
                             arg_pos,
                             evaluated_param,
+                            call.expression,
                             &mut display,
                             &mut ambiguous,
                         );
@@ -331,6 +333,7 @@ impl<'a> CheckerState<'a> {
         sig: &tsz_solver::CallSignature,
         arg_pos: usize,
         evaluated_param: TypeId,
+        callee_expr: NodeIndex,
         display: &mut Option<String>,
         ambiguous: &mut bool,
     ) {
@@ -354,6 +357,34 @@ impl<'a> CheckerState<'a> {
         let matches_evaluated = evaluated_constraint == evaluated_param
             || self.types_are_mutually_assignable(evaluated_constraint, evaluated_param);
         if !matches_evaluated {
+            return;
+        }
+
+        // A type parameter's constraint written as `keyof any` / `keyof
+        // unknown` / `keyof never`, or longhand as `string | number | symbol`,
+        // resolves eagerly to its fixed key-space union at type-construction
+        // time (tsc's `getIndexType`) and so carries no `aliasSymbol` — the
+        // written operator/union never reaches `typeToString`. tsz's generic
+        // type-formatter reverse-lookup can still repaint that union with a
+        // coincidentally-shaped alias reached elsewhere (the lib
+        // `PropertyKey`), the same family as #16610/#16748's source-display
+        // fix, here on the TS2345 call-argument TARGET side. Render
+        // structurally instead when the constraint's own written clause
+        // matches one of those degenerate shapes.
+        if self.written_type_param_constraint_is_degenerate_key_union(callee_expr, type_param.name)
+        {
+            let candidate = self
+                .format_type_for_assignability_message_anonymous_composite_structural(
+                    evaluated_constraint,
+                );
+            if display
+                .as_ref()
+                .is_some_and(|existing| existing != &candidate)
+            {
+                *ambiguous = true;
+                return;
+            }
+            *display = Some(candidate);
             return;
         }
 
@@ -391,6 +422,57 @@ impl<'a> CheckerState<'a> {
             return;
         }
         *display = Some(candidate);
+    }
+
+    /// Whether the type parameter named `type_param_name`, declared on the
+    /// callee reached by `callee_expr`, was written with a constraint clause
+    /// matching one of the degenerate key-union shapes tsc resolves eagerly
+    /// and displays structurally: `keyof any` / `keyof unknown` / `keyof
+    /// never`, or the longhand `string | number | symbol`. A named alias
+    /// constraint (`K extends PropertyKey`) is a `TYPE_REFERENCE`, not either
+    /// shape, and keeps its existing alias-name display.
+    pub(in crate::error_reporter::call_errors) fn written_type_param_constraint_is_degenerate_key_union(
+        &self,
+        callee_expr: NodeIndex,
+        type_param_name: tsz_common::interner::Atom,
+    ) -> bool {
+        let Some(callee_sym) = self
+            .resolve_identifier_symbol(callee_expr)
+            .or_else(|| self.resolve_qualified_symbol(callee_expr))
+        else {
+            return false;
+        };
+        let Some(callee) = self.ctx.binder.get_symbol(callee_sym) else {
+            return false;
+        };
+        let type_param_name = self.ctx.types.resolve_atom_ref(type_param_name);
+        let Some(constraint_idx) = callee.declarations.iter().copied().find_map(|decl_idx| {
+            let node = self.ctx.arena.get(decl_idx)?;
+            // `const f = <K extends ...>(...) => ...` records the callee
+            // symbol's declaration as the `VariableDeclaration`, not the
+            // arrow-function initializer; unwrap it so arrow/function-
+            // expression callees reach their own type-parameter list too.
+            let func = self.ctx.arena.get_function(node).or_else(|| {
+                let var_decl = self.ctx.arena.get_variable_declaration(node)?;
+                let init_node = self.ctx.arena.get(var_decl.initializer)?;
+                self.ctx.arena.get_function(init_node)
+            })?;
+            let type_params = func.type_parameters.as_ref()?;
+            type_params.nodes.iter().copied().find_map(|tp_idx| {
+                let tp_node = self.ctx.arena.get(tp_idx)?;
+                let tp = self.ctx.arena.get_type_parameter(tp_node)?;
+                let name_node = self.ctx.arena.get(tp.name)?;
+                let ident = self.ctx.arena.get_identifier(name_node)?;
+                (ident.escaped_text.as_ref() == type_param_name.as_ref()).then_some(tp.constraint)
+            })
+        }) else {
+            return false;
+        };
+        if !constraint_idx.is_some() {
+            return false;
+        }
+        Self::annotation_is_keyof_over_degenerate_operand(self.ctx.arena, constraint_idx)
+            || Self::annotation_is_longhand_primitive_keyword_union(self.ctx.arena, constraint_idx)
     }
 
     /// Try to elaborate a generic assignability mismatch when the source expression is

@@ -298,7 +298,37 @@ impl<'a> CheckerState<'a> {
                 } else {
                     replacement_type
                 };
-                let replacement = self.format_type_for_assignability_message(replacement_type);
+                // When the displayed substitution for `tp` is exactly its own
+                // constraint (the inference-candidate-violates-constraint
+                // fallback tsc's `getInferredType` performs), and that
+                // constraint was written as `keyof any` / `keyof unknown` /
+                // `keyof never` or the longhand `string | number | symbol`,
+                // tsc's `getIndexType` already resolved it to its fixed
+                // key-space union at type-construction time with no
+                // `aliasSymbol` attached. `format_type_for_assignability_message`
+                // would otherwise repaint that union with a coincidentally-
+                // shaped alias reached elsewhere (the lib `PropertyKey`) via
+                // its reverse type-to-def lookup — the same family as
+                // #16610/#16748's assignment-source fix, here on the TS2345
+                // call-argument TARGET side (#16751).
+                let degenerate_constraint_replacement = tp
+                    .constraint
+                    .map(|constraint| self.evaluate_type_for_assignability(constraint))
+                    .filter(|&evaluated_constraint| evaluated_constraint == replacement_type)
+                    .filter(|_| {
+                        self.written_type_param_constraint_is_degenerate_key_union(
+                            callee_expr,
+                            tp.name,
+                        )
+                    });
+                let replacement =
+                    if let Some(evaluated_constraint) = degenerate_constraint_replacement {
+                        self.format_type_for_assignability_message_anonymous_composite_structural(
+                            evaluated_constraint,
+                        )
+                    } else {
+                        self.format_type_for_assignability_message(replacement_type)
+                    };
                 let tp_name = self.ctx.types.resolve_atom_ref(tp.name);
                 display =
                     Self::replace_type_param_name_in_display(&display, &tp_name, &replacement);
