@@ -1017,6 +1017,95 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
+
+    /// TS2383: every declaration of a function overload run must agree on export
+    /// status. tsc's `checkFlagAgreementBetweenOverloads` computes the export flag
+    /// over ALL of the symbol's function declarations — every bodyless overload
+    /// signature AND the implementation body — and reports at each declaration
+    /// whose export flag deviates from the canonical overload. The implementation
+    /// therefore participates: a lone exported signature over a non-exported
+    /// implementation (or the reverse) is a mismatch, and two exported signatures
+    /// over a non-exported implementation flag both signatures.
+    ///
+    /// The canonical overload (tsc's `getCanonicalOverload`) is the implementation
+    /// when present, otherwise the first overload in source order. Reading the
+    /// reference off the implementation is what anchors the diagnostic at the
+    /// deviating *signature* in `function f(sig); export function f(impl) {}`
+    /// rather than at the body. `export default function` carries the `export`
+    /// modifier, so it counts as exported here; a uniformly `export default` (or
+    /// mixed `export`/`export default`) run stays clean.
+    ///
+    /// The check runs only when at least one bodyless overload signature exists
+    /// (tsc's `hasOverloads`); a run of only implementations is a duplicate, not an
+    /// overload set. tsc does not apply it to overloads declared directly inside an
+    /// ambient module/namespace body (`declare namespace M { ... }` /
+    /// `declare module "m" { ... }`, including namespaces nested inside one):
+    /// `export` on a member of an ambient module body does not carry the same
+    /// meaning as a module-level `export`. `declare global { ... }` is a global
+    /// augmentation, not an ambient module, and stays subject to the check, as does
+    /// a bare top-level `declare function` with no enclosing namespace/module.
+    pub(super) fn check_overload_export_agreement(
+        &mut self,
+        declarations: &[(NodeIndex, u32, bool, bool, DuplicateDeclarationOrigin)],
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        // `symbol.declarations` (and hence `declarations`) is not guaranteed to be
+        // in source order — an exported declaration can be registered after a
+        // non-exported sibling. tsc's `getCanonicalOverload` reads `overloads[0]` in
+        // source order, and its `bodyDeclaration` is the first implementation in
+        // source order, so sort by declaration start position to recover it.
+        let mut all_func_decls: Vec<(NodeIndex, bool, bool)> = declarations
+            .iter()
+            .filter(|&&(_, flags, is_local, _, _)| {
+                is_local && (flags & (symbol_flags::FUNCTION | symbol_flags::METHOD)) != 0
+            })
+            .map(|&(decl_idx, _, _, is_exported, _)| {
+                (decl_idx, is_exported, self.function_has_body(decl_idx))
+            })
+            .collect();
+        all_func_decls.sort_by_key(|&(decl_idx, _, _)| {
+            self.ctx.arena.get(decl_idx).map(|n| n.pos).unwrap_or(0)
+        });
+
+        let has_overload_signature = all_func_decls.iter().any(|&(_, _, has_body)| !has_body);
+        if !(has_overload_signature
+            && all_func_decls.len() >= 2
+            && !self.is_within_ambient_module_container(all_func_decls[0].0))
+        {
+            return;
+        }
+
+        let first_exported = all_func_decls[0].1;
+        let mixed_export = all_func_decls.iter().any(|&(_, e, _)| e != first_exported);
+        if !mixed_export {
+            return;
+        }
+
+        // getCanonicalOverload: the reference flags come from the implementation
+        // when it shares a container with the first overload, otherwise from the
+        // first declaration. tsc's container guard exists to avoid taking the
+        // canonical flags from an implementation in a *different* file (a lib.d.ts
+        // overload paired with a local body). `all_func_decls` is already restricted
+        // to local declarations of this one symbol, which share their container, so
+        // the first local implementation is the canonical overload; with no
+        // implementation the first overload is canonical.
+        let canonical_exported = all_func_decls
+            .iter()
+            .find(|&&(_, _, has_body)| has_body)
+            .map(|&(_, e, _)| e)
+            .unwrap_or(first_exported);
+        for &(decl_idx, is_exported, _) in &all_func_decls {
+            if is_exported != canonical_exported {
+                let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                self.error_at_node(
+                    error_node,
+                    diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_EXPORTED_OR_NON_EXPORTED,
+                    diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_EXPORTED_OR_NON_EXPORTED,
+                );
+            }
+        }
+    }
 }
 
 #[cfg(test)]

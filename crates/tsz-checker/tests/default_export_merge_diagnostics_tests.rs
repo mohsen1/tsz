@@ -171,15 +171,36 @@ function overload(value: string | number): void {}
 }
 
 #[test]
-fn all_function_group_still_reports_default_non_default_overlap() {
-    // The all-function exception suppresses ordinary TS2395 overload noise,
-    // not the default/non-default declaration-space invariant.
+fn all_function_group_default_non_default_is_ts2383_not_ts2652() {
+    // A same-name function overload run — even one mixing `export default` with a
+    // plain signature — is one overload group, not a merged declaration. tsc
+    // reports the export-agreement error (TS2383) and, here, a missing-impl error
+    // (TS2391); it never reports the merged-default TS2652. Pinned against
+    // tsc@7.0.2: `(2,10) TS2383` + `(2,10) TS2391`, no TS2652.
     let source = r#"
 export default function Execute(): void;
 function Execute(): void;
 "#;
 
-    assert_merge_diagnostics(source, "Execute", &[(TS2652, 0), (TS2652, 1)]);
+    // No merged-declaration conflicts survive for an all-function overload run.
+    assert_merge_diagnostics(source, "Execute", &[]);
+
+    let diagnostics = check_source(
+        source,
+        "test.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2383),
+        "the export-status mismatch must surface as TS2383"
+    );
+    assert!(
+        !diagnostics.iter().any(|d| d.code == TS2652),
+        "an all-function overload run is not a merged default-export declaration"
+    );
 }
 
 #[test]

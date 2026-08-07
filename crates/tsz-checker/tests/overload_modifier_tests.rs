@@ -186,30 +186,51 @@ class C {
     assert!(has_error(source, 2386));
 }
 
-// TS2383: only 2+ bodyless overload signatures must agree on export status.
-// The implementation is not an overload signature; tsc does not check it.
-// Single-overload + implementation export mismatches are silently accepted.
+// TS2383: every declaration of a function overload run — every bodyless
+// signature AND the implementation body — must agree on export status. This
+// mirrors tsc's `checkFlagAgreementBetweenOverloads`, which computes the export
+// flag over all of the symbol's function declarations and reports at each one
+// whose flag deviates from the canonical overload (the implementation when
+// present, else the first overload in source order). The rows below are pinned
+// against `tsc@7.0.2`. `export default function` carries the `export` modifier,
+// so it counts as exported.
 
-#[test]
-fn ts2383_single_overload_exported_implementation_not_exported_no_error() {
-    let source = r#"
-export function compute(x: number): number;
-function compute(x: any): number { return x; }
-"#;
-    assert!(!has_error(source, 2383));
+/// The 2383 error(s) must anchor at the deviating signature, never at the
+/// implementation body. `impl_body_marker` is a substring unique to the
+/// implementation line; every 2383 must start before it.
+fn assert_2383_before(source: &str, impl_body_marker: &str) {
+    let diags = check_source_diagnostics(source);
+    let errors: Vec<_> = diags.iter().filter(|d| d.code == 2383).collect();
+    assert!(!errors.is_empty(), "expected TS2383 for:\n{source}");
+    let impl_at = source
+        .find(impl_body_marker)
+        .expect("impl marker present in source");
+    for e in &errors {
+        assert!(
+            (e.start as usize) < impl_at,
+            "TS2383 at start={} should anchor at a signature (before byte {impl_at}), not the implementation:\n{source}",
+            e.start
+        );
+    }
 }
 
 #[test]
-fn ts2383_single_overload_not_exported_implementation_exported_no_error() {
-    let source = r#"
-function transform(x: number): number;
-export function transform(x: any): number { return x; }
-"#;
-    assert!(!has_error(source, 2383));
+fn ts2383_exported_signature_non_exported_impl_error() {
+    // tsc: (1,17) TS2383 — the exported signature deviates from the impl.
+    let source = "export function compute(x: number): number;\nfunction compute(x: any): number { return x; }\n";
+    assert_2383_before(source, "{ return x; }");
 }
 
 #[test]
-fn ts2383_single_overload_both_exported_no_error() {
+fn ts2383_non_exported_signature_exported_impl_error() {
+    // tsc: (1,10) TS2383 — anchored at the signature even though the impl is the
+    // one carrying `export`, because the impl is the canonical overload.
+    let source = "function transform(x: number): number;\nexport function transform(x: any): number { return x; }\n";
+    assert_2383_before(source, "{ return x; }");
+}
+
+#[test]
+fn ts2383_signature_impl_both_exported_no_error() {
     let source = r#"
 export function process(x: number): number;
 export function process(x: any): number { return x; }
@@ -218,7 +239,7 @@ export function process(x: any): number { return x; }
 }
 
 #[test]
-fn ts2383_single_overload_both_non_exported_no_error() {
+fn ts2383_signature_impl_both_non_exported_no_error() {
     let source = r#"
 function process(x: number): number;
 function process(x: any): number { return x; }
@@ -227,21 +248,16 @@ function process(x: any): number { return x; }
 }
 
 #[test]
-fn ts2383_single_overload_impl_export_mismatch_different_name_no_error() {
-    let source = r#"
-export function handle(x: string): string;
-function handle(x: any): string { return x; }
-"#;
-    assert!(!has_error(source, 2383));
+fn ts2383_exported_signature_non_exported_impl_same_name_error() {
+    // Same binder name on both declarations — still an overload run, still TS2383.
+    let source = "export function handle(x: string): string;\nfunction handle(x: any): string { return x; }\n";
+    assert_2383_before(source, "{ return x; }");
 }
 
 #[test]
-fn ts2383_single_overload_reversed_impl_export_mismatch_no_error() {
-    let source = r#"
-function serialize(x: number): string;
-export function serialize(x: any): string { return String(x); }
-"#;
-    assert!(!has_error(source, 2383));
+fn ts2383_reversed_non_exported_signature_exported_impl_error() {
+    let source = "function serialize(x: number): string;\nexport function serialize(x: any): string { return String(x); }\n";
+    assert_2383_before(source, "{ return String(x); }");
 }
 
 #[test]
@@ -265,24 +281,75 @@ export function route(x: any): void {}
 }
 
 #[test]
-fn ts2383_two_exported_overloads_non_exported_impl_no_error() {
-    // Implementation export status is not checked — only bodyless signatures matter.
-    let source = r#"
-export function compute(x: number): number;
-export function compute(x: string): number;
-function compute(x: any): number { return 0; }
-"#;
-    assert!(!has_error(source, 2383));
+fn ts2383_two_exported_signatures_non_exported_impl_error() {
+    // tsc: (1,17) AND (2,17) — both exported signatures deviate from the
+    // non-exported implementation (the canonical overload). Two TS2383 errors.
+    let source = "export function compute(x: number): number;\nexport function compute(x: string): number;\nfunction compute(x: any): number { return 0; }\n";
+    let count = get_diagnostics(source)
+        .iter()
+        .filter(|d| d.0 == 2383)
+        .count();
+    assert_eq!(count, 2, "expected TS2383 on both exported signatures");
+    assert_2383_before(source, "{ return 0; }");
 }
 
 #[test]
-fn ts2383_two_non_exported_overloads_exported_impl_no_error() {
-    let source = r#"
-function transform(x: number): string;
-function transform(x: string): string;
-export function transform(x: any): string { return ""; }
-"#;
+fn ts2383_two_non_exported_signatures_exported_impl_error() {
+    // tsc: (1,10) AND (2,10) — both non-exported signatures deviate from the
+    // exported implementation.
+    let source = "function transform(x: number): string;\nfunction transform(x: string): string;\nexport function transform(x: any): string { return \"\"; }\n";
+    let count = get_diagnostics(source)
+        .iter()
+        .filter(|d| d.0 == 2383)
+        .count();
+    assert_eq!(count, 2, "expected TS2383 on both non-exported signatures");
+    assert_2383_before(source, "{ return \"\"; }");
+}
+
+// TS2383 / TS2652: `export default` on a function overload run. tsc reports the
+// export-agreement error (TS2383) and NOT a merged-default conflict (TS2652):
+// a signature/implementation pair is one overload group, not a merge. This is
+// the regression from issue #16742.
+
+#[test]
+fn ts2383_default_export_signature_non_exported_impl_error_no_2652() {
+    // tsc: (1,25) TS2383 only. tsz previously emitted TS2652 x2 and no TS2383.
+    let source = "export default function fn(a: string): string;\nfunction fn(a: string): string { return a; }\nexport {};\n";
+    assert_2383_before(source, "{ return a; }");
+    assert!(
+        !has_error(source, 2652),
+        "a same-name signature/impl overload pair is not a merged default-export declaration"
+    );
+}
+
+#[test]
+fn ts2383_reversed_default_export_impl_error_no_2652() {
+    // tsc: (1,10) TS2383 only — the non-exported signature deviates from the
+    // `export default` implementation.
+    let source = "function fn(a: string): string;\nexport default function fn(a: string): string { return a; }\nexport {};\n";
+    assert_2383_before(source, "{ return a; }");
+    assert!(!has_error(source, 2652));
+}
+
+#[test]
+fn ts2383_default_export_signature_plain_exported_impl_no_error() {
+    // Both carry `export` (one via `export default`, one via `export`), so the
+    // run is uniformly exported: tsc reports nothing.
+    let source = "export default function fn(a: string): string;\nexport function fn(a: string): string { return a; }\nexport {};\n";
     assert!(!has_error(source, 2383));
+    assert!(!has_error(source, 2652));
+}
+
+#[test]
+fn ts2652_still_fires_for_function_namespace_default_merge() {
+    // A genuine merge (function + namespace) with a default export is not an
+    // all-function overload run, so the TS2652 suppression must not reach it.
+    let source =
+        "export default function fn(): void {}\nnamespace fn { export const x = 1; }\nexport {};\n";
+    assert!(
+        has_error(source, 2652),
+        "function+namespace default-export merge must still report TS2652"
+    );
 }
 
 // TS2394: overload signature must be compatible with implementation signature

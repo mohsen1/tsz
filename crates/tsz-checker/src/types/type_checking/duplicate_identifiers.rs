@@ -68,7 +68,7 @@ impl<'a> CheckerState<'a> {
     /// augmentation (`declare global { ... }`). Used to exempt overload-signature
     /// members of an ambient module/namespace body from the TS2383 export-
     /// consistency check, which tsc does not apply there.
-    fn is_within_ambient_module_container(&self, decl_idx: NodeIndex) -> bool {
+    pub(super) fn is_within_ambient_module_container(&self, decl_idx: NodeIndex) -> bool {
         let mut current = decl_idx;
         for _ in 0..100 {
             let Some(ext) = self.ctx.arena.get_extended(current) else {
@@ -316,56 +316,9 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // TS2383: all bodyless overload signatures must agree on export status.
-            // The rule applies when 2+ overload signatures exist; the implementation
-            // is not an overload signature and is not checked for export agreement.
-            //
-            // tsc does not apply this check to overloads declared directly inside an
-            // ambient module/namespace body (`declare namespace M { ... }` /
-            // `declare module "m" { ... }`, including namespaces nested inside one):
-            // `export` on a member of an ambient module body does not carry the same
-            // meaning as a module-level `export`, so mismatched `export` keywords
-            // there are not overload-consistency errors. `declare global { ... }` is
-            // a global augmentation, not an ambient module, and stays subject to the
-            // check, as does a bare top-level `declare function` with no enclosing
-            // namespace/module.
-            if func_decls_for_2384.len() >= 2
-                && !self.is_within_ambient_module_container(func_decls_for_2384[0])
-            {
-                // Restrict to bodyless overload signatures only by looking up export
-                // status for each entry in func_decls_for_2384. The implementation
-                // (absent from func_decls_for_2384) must not influence the check.
-                let func_export_info: Vec<(NodeIndex, bool)> = func_decls_for_2384
-                    .iter()
-                    .filter_map(|&decl_idx| {
-                        declarations
-                            .iter()
-                            .find(|&&(di, _, _, _, _)| di == decl_idx)
-                            .map(|&(di, _, _, is_exported, _)| (di, is_exported))
-                    })
-                    .collect();
-                let (has_exported, has_non_exported) = func_export_info
-                    .iter()
-                    .fold((false, false), |(exp, non_exp), &(_, e)| {
-                        (exp || e, non_exp || !e)
-                    });
-                // has_exported && has_non_exported already implies len >= 2
-                if has_exported && has_non_exported {
-                    // declarations is ordered, so [0] is always the first overload signature.
-                    let ref_exported = func_export_info[0].1;
-                    for &(decl_idx, is_exported) in &func_export_info {
-                        if is_exported != ref_exported {
-                            let error_node =
-                                self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
-                            self.error_at_node(
-                                error_node,
-                                diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_EXPORTED_OR_NON_EXPORTED,
-                                diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_EXPORTED_OR_NON_EXPORTED,
-                            );
-                        }
-                    }
-                }
-            }
+            // TS2383: every declaration of a function overload run must agree on
+            // export status (see `check_overload_export_agreement`).
+            self.check_overload_export_agreement(&declarations);
 
             // TS2385: Overload signatures must all be public, private or protected
             // Applies to class method overloads with mixed access modifiers
@@ -634,7 +587,20 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                     let non_default_spaces = exported_spaces | non_exported_spaces;
-                    let default_conflict_spaces = default_exported_spaces & non_default_spaces;
+                    // A same-named function overload run (all declarations are
+                    // functions) is one overload group, not a merged declaration.
+                    // tsc routes a default-export-vs-plain mismatch across such a run
+                    // through TS2383 (export agreement, above), never TS2652: a
+                    // signature/implementation pair like
+                    // `export default function f(sig); function f(impl) {}` is not a
+                    // "merged declaration that includes a default export". Only a
+                    // genuine merge (function+namespace, class+namespace, ...) yields
+                    // TS2652, and such a group is not all-functions.
+                    let default_conflict_spaces = if all_functions {
+                        0
+                    } else {
+                        default_exported_spaces & non_default_spaces
+                    };
                     let export_local_conflict_spaces =
                         if all_functions || suppress_ts2395_for_ambient {
                             0
