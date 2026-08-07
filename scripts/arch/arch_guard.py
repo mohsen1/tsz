@@ -158,6 +158,10 @@ def main() -> int:
             size_total += len(hits)
             if hits:
                 size_failures.append((name, hits))
+        coverage_missing = scan_line_limit_coverage()
+        size_total += len(coverage_missing)
+        if coverage_missing:
+            size_failures.append((LINE_LIMIT_COVERAGE_NAME, coverage_missing))
         for name, path, limit in FILE_LINE_LIMIT_CHECKS:
             # The #8225 common-quarantine ratchets carry their own arch-owner
             # green-campaign headroom policy and are tracked as debt separately;
@@ -220,6 +224,11 @@ def main() -> int:
         total_hits += len(hits)
         if hits:
             failures.append((name, hits))
+
+    coverage_missing = scan_line_limit_coverage()
+    total_hits += len(coverage_missing)
+    if coverage_missing:
+        failures.append((LINE_LIMIT_COVERAGE_NAME, coverage_missing))
 
     for name, path, limit in FILE_LINE_LIMIT_CHECKS:
         hits = scan_file_line_limit(path, limit)
