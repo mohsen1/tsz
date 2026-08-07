@@ -110,13 +110,12 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|name| obj_getter_names.contains(name));
             // Check if accessor JSDoc has @param type annotations
             let accessor_jsdoc = self.get_jsdoc_for_function(elem_idx);
-            // A zero-parameter setter (`{ set z() {} }`) is grammatically
-            // invalid (`TS1049` fires separately) but still "lacks a
-            // parameter type annotation" for `TS7032` purposes — the loop
-            // below never runs for this shape, so start from `true` instead
-            // of `false` and let an actual annotated/JSDoc-typed parameter
-            // clear it.
-            let mut first_param_lacks_annotation = accessor.parameters.nodes.is_empty();
+            // A setter gives its property no type when it has no parameter at
+            // all, or a parameter with no annotation (and no JSDoc supplying
+            // one) — "no parameter" subsumes "no annotation", so seed the flag
+            // from the empty case and let the loop set it for the unannotated
+            // case; the loop below never runs for a zero-parameter setter.
+            let mut setter_lacks_property_type = accessor.parameters.nodes.is_empty();
             for (pi, &param_idx) in accessor.parameters.nodes.iter().enumerate() {
                 if let Some(param_node) = self.ctx.arena.get(param_idx)
                     && let Some(param) = self.ctx.arena.get_parameter(param_node)
@@ -130,25 +129,20 @@ impl<'a> CheckerState<'a> {
                             false
                         };
                     if param.type_annotation.is_none() && !has_jsdoc {
-                        first_param_lacks_annotation = true;
+                        setter_lacks_property_type = true;
                     }
                     self.maybe_report_implicit_any_parameter(param, has_jsdoc, pi);
                 }
             }
-            // TS7032: emit on property name when the setter has no parameter type
-            // annotation and no paired getter (TSC checks this at accessor symbol
+            // TS7032: emit on property name when the setter supplies no property
+            // type and has no paired getter (TSC checks this at accessor symbol
             // resolution time; we emit it here during object literal checking).
-            if first_param_lacks_annotation
+            if setter_lacks_property_type
                 && !has_paired_getter
                 && self.ctx.no_implicit_any()
                 && let Some(prop_name) = name_opt.as_deref()
             {
-                use crate::diagnostics::diagnostic_codes;
-                self.error_at_node_msg(
-                            accessor.name,
-                            diagnostic_codes::PROPERTY_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_ITS_SET_ACCESSOR_LACKS_A_PARAMETER_TYPE,
-                            &[prop_name],
-                        );
+                self.report_set_accessor_lacks_parameter_type_annotation(accessor.name, prop_name);
             }
         }
 
