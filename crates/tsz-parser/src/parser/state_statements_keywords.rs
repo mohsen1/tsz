@@ -1486,11 +1486,19 @@ impl ParserState {
     /// In tsc, `let` is only treated as a declaration keyword when followed by
     /// an identifier, `{` (object destructuring), or `[` (array destructuring).
     /// Otherwise (e.g. `let;`), `let` is treated as an identifier expression.
+    ///
+    /// A `PrivateIdentifier` also counts (`let #x = 1;`, `for (let #x of arr)`):
+    /// tsc still treats `let` as the declaration keyword there and reports
+    /// TS18029 on the binding name, rather than falling back to parsing `let`
+    /// as an identifier expression. `is_identifier_or_keyword` (the free
+    /// function, not `ParserState::is_identifier_or_keyword`) does not cover
+    /// `PrivateIdentifier`, so this needs its own arm.
     pub(crate) fn look_ahead_is_let_declaration(&mut self) -> bool {
         look_ahead_is(&mut self.scanner, self.current_token, |token| {
             is_identifier_or_keyword(token)
                 || token == SyntaxKind::OpenBraceToken
                 || token == SyntaxKind::OpenBracketToken
+                || token == SyntaxKind::PrivateIdentifier
         })
     }
 
