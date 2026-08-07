@@ -933,3 +933,144 @@ export const unset = Symbol.for('@ts-pattern/unset');
         "bare `Symbol.for` must resolve to the global SymbolConstructor; got {consumer_2339:#?}"
     );
 }
+
+/// A JSON property value that is not one of tsc's `validateJsonValue` shapes
+/// (string/numeric/true/false/null/object/array) is TS1328, anchored at the
+/// value's own start, not TS1327 (which is only for the property *name*).
+#[test]
+fn test_parse_file_single_json_reports_property_value_violation() {
+    let result = parse_file_single(
+        "settings.json".to_string(),
+        r#"{ "a": undefined }"#.to_string(),
+    );
+
+    let got: Vec<(u32, u32)> = result
+        .parse_diagnostics
+        .iter()
+        .map(|d| (d.code, d.start))
+        .collect();
+    assert_eq!(
+        got,
+        vec![(1328, 7)],
+        "expected TS1328 anchored at the value, got: {:?}",
+        result.parse_diagnostics
+    );
+}
+
+/// A single-quoted property *value* gets the same quote-style diagnostic
+/// (TS1327) as a single-quoted property name, not TS1328 — tsc's JSON parser
+/// treats quote style as one rule regardless of position.
+#[test]
+fn test_parse_file_single_json_single_quoted_value_reports_ts1327() {
+    let result = parse_file_single(
+        "settings.json".to_string(),
+        r#"{ "a": 'x' }"#.to_string(),
+    );
+
+    let codes: Vec<u32> = result.parse_diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(codes, vec![1327], "got: {:?}", result.parse_diagnostics);
+}
+
+/// Every JSON value shape tsc's `validateJsonValue` accepts (string, negative
+/// and positive numeric literals, the three keyword literals, and nested
+/// object/array — including an empty array and an empty object) must stay
+/// clean.
+#[test]
+fn test_parse_file_single_json_accepts_every_valid_value_shape() {
+    let result = parse_file_single(
+        "settings.json".to_string(),
+        r#"{
+  "str": "x",
+  "neg": -5,
+  "pos": 5,
+  "t": true,
+  "f": false,
+  "n": null,
+  "obj": { "nested": 1 },
+  "arr": [1, "x", true, null, [2, 3], {}],
+  "emptyArr": [],
+  "emptyObj": {}
+}"#
+        .to_string(),
+    );
+
+    assert!(
+        result.parse_diagnostics.is_empty(),
+        "expected no diagnostics, got: {:?}",
+        result.parse_diagnostics
+    );
+}
+
+/// `+5` is not `validateJsonValue`'s accepted numeric shape (only a bare
+/// numeric literal or a lone `-`-prefixed one), so it is TS1328 like any
+/// other non-literal expression.
+#[test]
+fn test_parse_file_single_json_unary_plus_value_reports_ts1328() {
+    let result = parse_file_single("settings.json".to_string(), r#"{ "a": +5 }"#.to_string());
+
+    let codes: Vec<u32> = result.parse_diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(codes, vec![1328], "got: {:?}", result.parse_diagnostics);
+}
+
+/// A template literal is a value shape tsc's JSON grammar never accepts.
+#[test]
+fn test_parse_file_single_json_template_literal_value_reports_ts1328() {
+    let result = parse_file_single(
+        "settings.json".to_string(),
+        "{ \"a\": `x` }".to_string(),
+    );
+
+    let codes: Vec<u32> = result.parse_diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(codes, vec![1328], "got: {:?}", result.parse_diagnostics);
+}
+
+/// `validateJsonValue` recurses into array elements too, not just object
+/// property values — an invalid element anywhere in the array is its own
+/// TS1328, and valid siblings before/after it stay silent.
+#[test]
+fn test_parse_file_single_json_array_element_violation() {
+    let result = parse_file_single(
+        "settings.json".to_string(),
+        r#"{ "arr": [1, 2, undefined, "ok"] }"#.to_string(),
+    );
+
+    let got: Vec<(u32, u32)> = result
+        .parse_diagnostics
+        .iter()
+        .map(|d| (d.code, d.start))
+        .collect();
+    assert_eq!(
+        got,
+        vec![(1328, 16)],
+        "expected exactly one TS1328 at the invalid element, got: {:?}",
+        result.parse_diagnostics
+    );
+}
+
+/// A root-level array (no wrapping object) still validates its own elements —
+/// the value check is not gated on being inside an object.
+#[test]
+fn test_parse_file_single_json_root_level_array_element_violation() {
+    let result = parse_file_single("settings.json".to_string(), "[1, undefined, 2]".to_string());
+
+    let codes: Vec<u32> = result.parse_diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(codes, vec![1328], "got: {:?}", result.parse_diagnostics);
+}
+
+/// The bind path (`parse_and_bind_single`) shares the same synthetic JSON
+/// source-file construction as the parse-only path, so it must report the
+/// same TS1328 rather than silently accepting the value.
+#[test]
+fn test_parse_and_bind_single_json_reports_property_value_violation() {
+    let result = parse_and_bind_single(
+        "settings.json".to_string(),
+        r#"{ "a": someIdentifier }"#.to_string(),
+    );
+
+    let codes: Vec<u32> = result
+        .parse_diagnostics
+        .iter()
+        .map(|d| d.code)
+        .collect();
+    assert_eq!(codes, vec![1328], "got: {:?}", result.parse_diagnostics);
+}

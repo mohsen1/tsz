@@ -1610,12 +1610,23 @@ pub(super) const fn is_real_syntax_error(code: u32) -> bool {
         | 1438 // Interface must be given a name (recovery creates invalid expression statements)
         | 1442 // Identifier or expression expected (TS-only construct in JS)
         | 1477 // Member must have an initializer
-        // TS18030 is emitted by tsc's parser (`parseErrorAtRange` on a private
-        // identifier in an optional chain), so it belongs to the syntactic
-        // phase: tsc reports it and then skips the whole program's semantic
-        // diagnostics. Without this entry a chain continuation such as
-        // `o?.a.#b` would still surface the receiver's possibly-nullish
-        // TS2532/TS18048, which tsc suppresses.
+        // The private-identifier-in-a-value-position family. All three are tsc
+        // *parser* diagnostics (`parseErrorAtRange`) that land in
+        // `sourceFile.parseDiagnostics` and drive `hasParseDiagnostics()`, so tsc
+        // short-circuits the program's whole semantic phase: `o?.a.#b` stops
+        // surfacing the receiver's TS2532/TS18048, and a `const #x` / `function
+        // f(#x)` file stops surfacing trailing TS2322/TS2304. tsz emits all three
+        // from the parser too (`parse_error_at`), so they must be classified
+        // together here (TS18029/TS18009 were previously missing — issue #16817).
+        // Distinct from the checker-routed private-identifier grammar codes
+        // TS18016/TS18024, which tsc raises via `grammarErrorOnNode` and are
+        // suppressed *by* — not triggers of — a parse error, so they live in
+        // `is_parser_grammar_code`. Oracle evidence: #16817 and the #16279 audit
+        // round 6, which found all of these "survive Direction B" (tsc keeps them
+        // alongside an unrelated real syntax error — the signature of a genuine
+        // parser diagnostic rather than a checker grammar check).
+        | 18009 // Private identifiers cannot be used as parameters
+        | 18029 // Private identifiers are not allowed in variable declarations
         | 18030 // An optional chain cannot contain private identifiers
     )
 }
@@ -1890,3 +1901,7 @@ mod class_static_block_grammar_tests;
 #[cfg(test)]
 #[path = "check_utils/import_call_type_arguments_grammar_tests.rs"]
 mod import_call_type_arguments_grammar_tests;
+
+#[cfg(test)]
+#[path = "check_utils/private_identifier_parse_error_suppression_tests.rs"]
+mod private_identifier_parse_error_suppression_tests;

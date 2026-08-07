@@ -1464,6 +1464,24 @@ impl ParserState {
             );
         }
 
+        // TS18029: a private identifier is not allowed as a declaration name,
+        // including a `for`-header entry (`for (const #x of arr)`,
+        // `for (var #x = 0; ...)`). Sibling of the plain-statement check in
+        // `parse_variable_declaration_with_flags_pre_checks`
+        // (`state_variable_declarations.rs`) — `for`-header entries are
+        // parsed by this wholly separate function, so that check does not
+        // cover them.
+        if self.is_token(SyntaxKind::PrivateIdentifier) {
+            let start = self.token_pos();
+            let length = self.token_end() - start;
+            self.parse_error_at(
+                start,
+                length,
+                "Private identifiers are not allowed in variable declarations.",
+                diagnostic_codes::PRIVATE_IDENTIFIERS_ARE_NOT_ALLOWED_IN_VARIABLE_DECLARATIONS,
+            );
+        }
+
         let name = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_object_binding_pattern()
         } else if self.is_token(SyntaxKind::OpenBracketToken) {

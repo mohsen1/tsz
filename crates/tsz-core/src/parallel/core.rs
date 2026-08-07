@@ -58,6 +58,7 @@ use tsz_common::interner::{AstAtom, Interner};
 use tsz_common::options::module_detection::ModuleDetectionKind;
 use tsz_scanner::SyntaxKind;
 
+include!("core/json_validation.rs");
 include!("core/parse_and_libs.rs");
 include!("core/premerged_lib_compaction.rs");
 include!("core/merge_support.rs");

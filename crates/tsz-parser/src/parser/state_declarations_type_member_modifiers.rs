@@ -33,10 +33,15 @@ impl ParserState {
         )
     }
 
+    /// Returns `(diagnostic_emitted, node)`. `tsc`'s `checkGrammarModifiers`
+    /// reports at most one diagnostic for a member's leading-modifier run and
+    /// returns immediately, so callers use `diagnostic_emitted` to suppress
+    /// later modifier-specific checks (e.g. `readonly`-on-method TS1024,
+    /// `async`-on-type-member TS1070) once this pass has already reported.
     pub(crate) fn parse_type_member_visibility_modifier_error(
         &mut self,
         start_pos: u32,
-    ) -> Option<NodeIndex> {
+    ) -> (bool, Option<NodeIndex>) {
         if Self::is_illegal_type_member_modifier(self.token())
             && !self.look_ahead_is_property_name_after_keyword()
             && !self.look_ahead_has_line_break_after_keyword()
@@ -87,23 +92,38 @@ impl ParserState {
                 if self.is_token(SyntaxKind::ReadonlyKeyword) {
                     self.next_token();
                 }
-                return Some(self.parse_index_signature_with_modifiers(None, start_pos));
+                return (
+                    true,
+                    Some(self.parse_index_signature_with_modifiers(None, start_pos)),
+                );
             }
+            return (true, None);
         }
 
-        None
+        (false, None)
     }
 
-    pub(crate) fn parse_async_type_member_restriction(&mut self) {
+    /// If the current token is a leading `async` modifier, consumes it and,
+    /// when `report` is set, emits the TS1070 diagnostic. `report` is `false`
+    /// when an earlier modifier in the same member already reported — `tsc`'s
+    /// single-diagnostic-per-member rule means `async` must still be consumed
+    /// (it is never legal here) but must not report its own TS1070. Returns
+    /// whether `async` was found (and consumed).
+    pub(crate) fn parse_async_type_member_restriction(&mut self, report: bool) -> bool {
         if self.is_token(SyntaxKind::AsyncKeyword)
             && !self.look_ahead_is_property_name_after_keyword()
         {
-            use tsz_common::diagnostics::diagnostic_codes;
-            self.parse_error_at_current_token(
-                "'async' modifier cannot appear on a type member.",
-                diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_TYPE_MEMBER,
-            );
+            if report {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token(
+                    "'async' modifier cannot appear on a type member.",
+                    diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_TYPE_MEMBER,
+                );
+            }
             self.next_token();
+            true
+        } else {
+            false
         }
     }
 }

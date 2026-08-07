@@ -485,38 +485,26 @@ impl ParserState {
             return;
         }
 
-        // If the expression text is already an exact keyword (e.g., `from`, `get`, `set`),
-        // the identifier appeared in error recovery from an upstream parse failure.
-        // Emitting TS1434 "Unexpected keyword or identifier" here is a cascade artifact —
-        // the real error was already reported. tsc suppresses this via different parsing
-        // flow that doesn't reach this fallback for exact keywords.
-        if spelling::VIABLE_KEYWORD_SUGGESTIONS
+        // An exact-keyword identifier (e.g. `is`, `from`) immediately followed
+        // by a closing delimiter still gets TS1434 in tsc — that shape shows up
+        // in nested expression-recovery (e.g. a failed type-predicate/assertion
+        // parse) where the keyword is not itself a cascade artifact. This is
+        // the one case where the general `)`/`]` suppression below does not
+        // apply to keyword-exact text.
+        if matches!(
+            self.token(),
+            SyntaxKind::CloseParenToken | SyntaxKind::CloseBracketToken
+        ) && spelling::VIABLE_KEYWORD_SUGGESTIONS
             .iter()
             .any(|&kw| kw == expression_text)
         {
-            if matches!(
-                self.token(),
-                SyntaxKind::CloseParenToken | SyntaxKind::CloseBracketToken
-            ) {
-                self.parse_error_at(
-                    pos,
-                    len,
-                    diagnostic_messages::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
-                    diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
-                );
-                return;
-            }
-            // Keep the suppression for bare keyword recovery, but allow keyword-like
-            // statements followed by a literal (notably `from "./mod"`) to report
-            // TS1434 like tsc does.
-            if !matches!(
-                self.token(),
-                SyntaxKind::StringLiteral
-                    | SyntaxKind::NoSubstitutionTemplateLiteral
-                    | SyntaxKind::TemplateHead
-            ) {
-                return;
-            }
+            self.parse_error_at(
+                pos,
+                len,
+                diagnostic_messages::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+            );
+            return;
         }
 
         // tsc emits TS1434 "Unexpected keyword or identifier" at the expression
