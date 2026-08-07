@@ -109,6 +109,36 @@ fn abstract_before_accessor_shaped_tail_reports_two_ts1434_then_ts1005() {
     );
 }
 
+/// `yield(foo)` outside a generator is a genuine regression witness, not a
+/// synthetic case: `parse_yield_expression`'s outside-generator fallback
+/// (`crates/tsz-parser/src/parser/state_expressions_unary.rs`) intentionally
+/// returns a bare `yield` identifier node without continuing into
+/// postfix/call parsing, as its own disambiguation strategy against a real
+/// `YieldExpression` — unlike an ordinary identifier, it never reaches
+/// `parse_postfix_expression`'s call-continuation. That leaves `(foo)`
+/// unconsumed and this recovery path reached with `expression_text ==
+/// "yield"`, which — absent the dedicated `"yield" => true` suppression
+/// case in `parse_missing_semicolon_keyword_error` — would report a spurious
+/// TS1434 that `tsc` never emits here (`tsc`'s own parser never reaches this
+/// fallback for `yield`, since it does continue into the call). The checker's own
+/// reserved-word check on the `yield` identifier (TS1212) plus the
+/// unresolved-name check (TS2304) already reproduce `tsc`'s exact output
+/// independently of this parser-level gap. Found via
+/// `TypeScript/tests/cases/conformance/es6/yieldExpressions/{YieldExpression8,YieldExpression18}_es6.ts`
+/// during this fix's own conformance verification.
+#[test]
+fn bare_yield_called_outside_generator_stays_suppressed() {
+    assert_eq!(fingerprints("yield(foo);"), vec![]);
+}
+
+/// Inside a generator, `yield` always builds a full `YieldExpression` node
+/// (never the bare-identifier fallback above), so this path is unaffected
+/// either way — kept as a control.
+#[test]
+fn yield_inside_generator_parses_clean() {
+    assert_eq!(fingerprints("function* g() { yield(foo); }"), vec![],);
+}
+
 // ---------------------------------------------------------------------------
 // Negative / adjacent cases: keyword-exact identifiers that ARE valid
 // continuations, or fall into tsc's own special-cased suppression, must stay
