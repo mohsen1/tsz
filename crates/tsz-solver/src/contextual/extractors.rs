@@ -1260,6 +1260,29 @@ impl TypeVisitor for ParameterExtractor<'_> {
             return None;
         }
 
+        // tsc's getContextualCallSignature only returns a signature directly
+        // when exactly one arity-applicable signature exists; with 2+ it defers
+        // to getIntersectedSignatures, which itself returns undefined outright
+        // unless `noImplicitAny` is on:
+        //
+        //   func (c *Checker) getIntersectedSignatures(signatures []*Signature) *Signature {
+        //       if !c.noImplicitAny { return nil }
+        //       ...
+        //   }
+        //
+        // So under a non-strict / non-noImplicitAny program, an overloaded
+        // (non-generic) callable target never contextually types a function
+        // expression's parameters at all — even when every signature agrees on
+        // the parameter type at this position — and the parameter falls back to
+        // implicit `any`. Confirmed against `typescript@7.0.2`: two identical
+        // `(x: string): void` overloads still leave `x` untyped (`x.bogus`
+        // reports nothing) under `--strict false`, but the same shape under
+        // `--noImplicitAny` unions mismatched positions (`x: string | number`)
+        // and reports TS2339 for a member missing on one arm.
+        if shape.call_signatures.len() > 1 && !self.no_implicit_any {
+            return None;
+        }
+
         // Collect parameter types from all signatures at the given index.
         let param_types: Vec<TypeId> = shape
             .call_signatures
