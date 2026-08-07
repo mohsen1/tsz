@@ -27,9 +27,10 @@
 //! Deliberately narrow scope, matching the helper's own doc comments: only
 //! the single-required-literal-per-member discriminant shape, only a
 //! directly-written intersection annotation (no alias/generic-application/
-//! heritage indirection, no private-brand conflicts — TS18032 is a separate,
-//! unimplemented follow-up). Every case outside that scope keeps today's
-//! behavior (`TS2339` with no elaboration), never a wrong one.
+//! heritage indirection). Private-brand conflicts are `TS18032`, a separate
+//! diagnostic covered by `ts18032_private_brand_intersection_tests.rs`.
+//! Every case outside that scope keeps today's behavior (`TS2339` with no
+//! elaboration), never a wrong one.
 
 use crate::diagnostics::Diagnostic;
 use crate::test_utils::check_source_strict;

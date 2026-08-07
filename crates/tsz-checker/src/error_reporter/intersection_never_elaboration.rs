@@ -95,15 +95,31 @@ impl<'a> CheckerState<'a> {
             .into_iter()
             .map(|member| self.resolve_type_for_property_access(member))
             .collect();
-        let conflict_atom =
-            crate::query_boundaries::intersection_display::find_disjoint_literal_property_across_intersection(
-                self.ctx.types,
-                &members,
-            )?;
         // tsc's elaboration names the discriminant that reduced the whole
         // intersection to `never`, not necessarily the property actually
         // accessed — once the receiver type itself is `never`, every access
         // on it carries the same reason.
+        let (code, conflict_atom) =
+            if let Some(atom) =
+                crate::query_boundaries::intersection_display::find_disjoint_literal_property_across_intersection(
+                    self.ctx.types,
+                    &members,
+                )
+            {
+                (
+                    diagnostic_codes::THE_INTERSECTION_WAS_REDUCED_TO_NEVER_BECAUSE_PROPERTY_HAS_CONFLICTING_TYPES_IN,
+                    atom,
+                )
+            } else {
+                let atom = crate::query_boundaries::intersection_display::find_private_brand_conflicting_property_across_intersection(
+                    self.ctx.types,
+                    &members,
+                )?;
+                (
+                    diagnostic_codes::THE_INTERSECTION_WAS_REDUCED_TO_NEVER_BECAUSE_PROPERTY_EXISTS_IN_MULTIPLE_CONSTI,
+                    atom,
+                )
+            };
         let conflict_prop_name = self.ctx.types.resolve_atom(conflict_atom);
         // Built directly from the recovered member types rather than
         // `declared_intersection_annotation_display_for_expression`: that
@@ -117,13 +133,20 @@ impl<'a> CheckerState<'a> {
             .collect::<Vec<_>>()
             .join(" & ");
         use crate::diagnostics::{Diagnostic, diagnostic_messages, format_message};
+        let message_template = if code
+            == diagnostic_codes::THE_INTERSECTION_WAS_REDUCED_TO_NEVER_BECAUSE_PROPERTY_HAS_CONFLICTING_TYPES_IN
+        {
+            diagnostic_messages::THE_INTERSECTION_WAS_REDUCED_TO_NEVER_BECAUSE_PROPERTY_HAS_CONFLICTING_TYPES_IN
+        } else {
+            diagnostic_messages::THE_INTERSECTION_WAS_REDUCED_TO_NEVER_BECAUSE_PROPERTY_EXISTS_IN_MULTIPLE_CONSTI
+        };
         Some(Diagnostic::related_message(
-            diagnostic_codes::THE_INTERSECTION_WAS_REDUCED_TO_NEVER_BECAUSE_PROPERTY_HAS_CONFLICTING_TYPES_IN,
+            code,
             self.ctx.file_name.clone(),
             0,
             0,
             format_message(
-                diagnostic_messages::THE_INTERSECTION_WAS_REDUCED_TO_NEVER_BECAUSE_PROPERTY_HAS_CONFLICTING_TYPES_IN,
+                message_template,
                 &[&intersection_display, &conflict_prop_name],
             ),
         ))

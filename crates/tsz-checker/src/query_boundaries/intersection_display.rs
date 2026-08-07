@@ -20,6 +20,21 @@ pub(crate) fn find_disjoint_literal_property_across_intersection(
     tsz_solver::type_queries::find_disjoint_literal_property_across_intersection(db, members)
 }
 
+/// The property name whose required occurrences across a *written*
+/// intersection's members come from two or more distinct declaring classes
+/// with at least one `private` occurrence, forcing that intersection to
+/// reduce to `never` (`tsc`'s TS18032). See
+/// [`tsz_solver::type_queries::find_private_brand_conflicting_property_across_intersection`]
+/// for the declaring-class identity rule.
+pub(crate) fn find_private_brand_conflicting_property_across_intersection(
+    db: &dyn TypeDatabase,
+    members: &[TypeId],
+) -> Option<tsz_common::interner::Atom> {
+    tsz_solver::type_queries::find_private_brand_conflicting_property_across_intersection(
+        db, members,
+    )
+}
+
 pub(crate) fn collect_properties<R: TypeResolver>(
     type_id: TypeId,
     db: &dyn TypeDatabase,
