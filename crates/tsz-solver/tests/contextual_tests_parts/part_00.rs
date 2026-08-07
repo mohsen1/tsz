@@ -1268,9 +1268,19 @@ fn test_contextual_callable_overload_no_implicit_any_false() {
     // Use no_implicit_any: false - should return None for parameter type
     let ctx = ContextualTypeContext::with_expected_and_options(&interner, callable, false);
 
-    // With noImplicitAny: false, different parameter types are unioned
-    let expected_param0 = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
-    assert_eq!(ctx.get_parameter_type(0), Some(expected_param0));
+    // With `noImplicitAny` off, an overloaded target contributes no contextual
+    // parameter type at all — tsc's `getIntersectedSignatures` returns nil
+    // before it ever combines the signatures:
+    //
+    //     func (c *Checker) getIntersectedSignatures(signatures []*Signature) *Signature {
+    //         if !c.noImplicitAny { return nil }
+    //
+    // so the parameter stays implicitly `any` rather than being unioned. This
+    // row previously asserted `Some(string | number)`, contradicting its own
+    // comment two lines above; #16692 made the behaviour match tsc and this
+    // assertion is updated to match. The `noImplicitAny: true` sibling below
+    // still exercises the combining path.
+    assert_eq!(ctx.get_parameter_type(0), None);
 }
 
 // =============================================================================
