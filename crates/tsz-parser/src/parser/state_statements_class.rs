@@ -13,6 +13,42 @@ use tsz_common::diagnostics::diagnostic_codes;
 use tsz_common::interner::{AstAtom, IdentText};
 use tsz_scanner::SyntaxKind;
 
+/// Modifiers already seen while walking a parameter's modifier run, used by
+/// `parse_parameter_modifiers` to mirror tsc's `checkGrammarModifiers` flag
+/// accumulator for a `Parameter` node.
+#[derive(Clone, Copy, Default)]
+struct SeenParamModifiers {
+    accessibility: bool,
+    readonly: bool,
+    override_: bool,
+    static_: bool,
+    async_: bool,
+    abstract_: bool,
+    accessor: bool,
+    declare: bool,
+    export: bool,
+}
+
+impl SeenParamModifiers {
+    /// Record a modifier token into the accumulator. Unknown tokens are ignored.
+    const fn record(&mut self, kind: SyntaxKind) {
+        match kind {
+            SyntaxKind::PublicKeyword
+            | SyntaxKind::PrivateKeyword
+            | SyntaxKind::ProtectedKeyword => self.accessibility = true,
+            SyntaxKind::ReadonlyKeyword => self.readonly = true,
+            SyntaxKind::OverrideKeyword => self.override_ = true,
+            SyntaxKind::StaticKeyword => self.static_ = true,
+            SyntaxKind::AsyncKeyword => self.async_ = true,
+            SyntaxKind::AbstractKeyword => self.abstract_ = true,
+            SyntaxKind::AccessorKeyword => self.accessor = true,
+            SyntaxKind::DeclareKeyword => self.declare = true,
+            SyntaxKind::ExportKeyword => self.export = true,
+            _ => {}
+        }
+    }
+}
+
 impl ParserState {
     fn report_missing_close_paren_after_body_recovery(&mut self) {
         let snapshot = self.scanner.save_state();
@@ -788,86 +824,34 @@ impl ParserState {
         suppress_invalid_modifier_diagnostics: bool,
     ) -> Option<NodeList> {
         let mut modifiers = Vec::new();
-        let mut seen_readonly = false;
-        let mut seen_accessibility = false;
-        let mut seen_override = false;
-        let mut reported_accessibility_duplicate = false;
+        // Flag accumulator mirroring tsc's `checkGrammarModifiers` for a
+        // `Parameter` node: we walk the modifier run left-to-right, report the
+        // FIRST grammar violation, and then suppress further grammar diagnostics
+        // for this parameter (tsc `return`s after the first). Tokens are still
+        // consumed and pushed into the AST regardless.
+        let mut seen = SeenParamModifiers::default();
+        let mut reported = false;
 
         while self.is_parameter_modifier() {
             let mod_start = self.token_pos();
             let mod_kind = self.current_token;
 
-            // Emit TS1090 for modifiers that cannot appear on parameters.
-            // tsc does this in the checker via checkGrammarModifiers, but we
-            // emit it here during parsing so we don't need checker support yet.
-            if !self.is_valid_parameter_modifier() && !suppress_invalid_modifier_diagnostics {
-                use tsz_common::diagnostics::diagnostic_codes;
-                let modifier_name = match mod_kind {
-                    SyntaxKind::StaticKeyword => "static",
-                    SyntaxKind::ExportKeyword => "export",
-                    SyntaxKind::DeclareKeyword => "declare",
-                    SyntaxKind::AsyncKeyword => "async",
-                    SyntaxKind::AbstractKeyword => "abstract",
-                    SyntaxKind::AccessorKeyword => "accessor",
-                    SyntaxKind::ConstKeyword => "const",
-                    SyntaxKind::DefaultKeyword => "default",
-                    SyntaxKind::InKeyword => "in",
-                    SyntaxKind::OutKeyword => "out",
-                    _ => "modifier",
-                };
-                self.parse_error_at_current_token(
-                    &format!("'{modifier_name}' modifier cannot appear on a parameter."),
-                    diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_PARAMETER,
-                );
+            // tsc reports at most one modifier-grammar error per parameter, and
+            // for `this` parameters it collapses the whole run into a single
+            // TS1433 (`suppress_invalid_modifier_diagnostics`).
+            if !suppress_invalid_modifier_diagnostics
+                && !reported
+                && let Some((message, code)) =
+                    Self::parameter_modifier_grammar_error(mod_kind, seen)
+            {
+                self.parse_error_at_current_token(&message, code);
+                reported = true;
             }
 
-            // Check for modifier ordering violations
-            // Parameter modifiers must be in order: accessibility, override, readonly
-            if matches!(
-                mod_kind,
-                SyntaxKind::PublicKeyword
-                    | SyntaxKind::PrivateKeyword
-                    | SyntaxKind::ProtectedKeyword
-            ) {
-                if seen_accessibility && !reported_accessibility_duplicate {
-                    use tsz_common::diagnostics::diagnostic_codes;
-                    self.parse_error_at_current_token(
-                        "Accessibility modifier already seen.",
-                        diagnostic_codes::ACCESSIBILITY_MODIFIER_ALREADY_SEEN,
-                    );
-                    reported_accessibility_duplicate = true;
-                }
-                // TS1029: Accessibility modifier must precede override and readonly
-                if seen_override || seen_readonly {
-                    use tsz_common::diagnostics::diagnostic_codes;
-                    let modifier_name = match mod_kind {
-                        SyntaxKind::PrivateKeyword => "private",
-                        SyntaxKind::ProtectedKeyword => "protected",
-                        _ => "public",
-                    };
-                    let other = if seen_override {
-                        "override"
-                    } else {
-                        "readonly"
-                    };
-                    self.parse_error_at_current_token(
-                        &format!("'{modifier_name}' modifier must precede '{other}' modifier."),
-                        diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
-                    );
-                }
-                seen_accessibility = true;
-            } else if mod_kind == SyntaxKind::OverrideKeyword {
-                seen_override = true;
-            } else if mod_kind == SyntaxKind::ReadonlyKeyword {
-                if seen_readonly {
-                    use tsz_common::diagnostics::diagnostic_codes;
-                    self.parse_error_at_current_token(
-                        "'readonly' modifier already seen.",
-                        diagnostic_codes::MODIFIER_ALREADY_SEEN,
-                    );
-                }
-                seen_readonly = true;
-            }
+            // Accumulate the modifier flag whether or not it produced an error,
+            // so a later modifier in the same run is judged against everything
+            // written before it (matching tsc's flag accumulator).
+            seen.record(mod_kind);
 
             self.next_token();
             let mod_end = self.token_end();
@@ -878,6 +862,186 @@ impl ParserState {
             None
         } else {
             Some(Self::make_node_list(modifiers))
+        }
+    }
+
+    /// Human-readable spelling of a modifier keyword, used to fill the `{0}`/`{1}`
+    /// slots of the modifier grammar diagnostics.
+    const fn parameter_modifier_text(kind: SyntaxKind) -> &'static str {
+        match kind {
+            SyntaxKind::PublicKeyword => "public",
+            SyntaxKind::PrivateKeyword => "private",
+            SyntaxKind::ProtectedKeyword => "protected",
+            SyntaxKind::ReadonlyKeyword => "readonly",
+            SyntaxKind::OverrideKeyword => "override",
+            SyntaxKind::StaticKeyword => "static",
+            SyntaxKind::AsyncKeyword => "async",
+            SyntaxKind::AbstractKeyword => "abstract",
+            SyntaxKind::AccessorKeyword => "accessor",
+            SyntaxKind::DeclareKeyword => "declare",
+            SyntaxKind::ExportKeyword => "export",
+            SyntaxKind::ConstKeyword => "const",
+            SyntaxKind::DefaultKeyword => "default",
+            SyntaxKind::InKeyword => "in",
+            SyntaxKind::OutKeyword => "out",
+            _ => "modifier",
+        }
+    }
+
+    /// Decide which grammar diagnostic (if any) a modifier on a `Parameter` node
+    /// produces, given the modifiers already seen earlier in the same run. This
+    /// is a faithful port of the `Parameter`-relevant arms of tsc's
+    /// `checkGrammarModifiers`: duplicates -> TS1030/TS1028, out-of-order ->
+    /// TS1029, `abstract` -> TS1242, `accessor` -> TS1243 (with `readonly`/
+    /// `declare`) or TS1275, `in`/`out` -> TS1274, and the
+    /// static/export/declare/async fallthrough -> TS1090. The valid
+    /// parameter-property modifiers (`public`/`private`/`protected`/`readonly`/
+    /// `override`) return `None` here; their misuse outside a constructor is the
+    /// semantic TS2369, emitted by the checker.
+    ///
+    /// `const`/`default` keep the historical TS1090 fallback: tsc treats them as
+    /// reserved words on a parameter (a separate parser-recovery path), which is
+    /// out of scope for this modifier-code selection.
+    fn parameter_modifier_grammar_error(
+        kind: SyntaxKind,
+        seen: SeenParamModifiers,
+    ) -> Option<(String, u32)> {
+        let text = Self::parameter_modifier_text(kind);
+        let precede = |current: &str, earlier: &str| {
+            Some((
+                format!("'{current}' modifier must precede '{earlier}' modifier."),
+                diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
+            ))
+        };
+        let already_seen = |name: &str| {
+            Some((
+                format!("'{name}' modifier already seen."),
+                diagnostic_codes::MODIFIER_ALREADY_SEEN,
+            ))
+        };
+        let cannot_on_parameter = |name: &str| {
+            Some((
+                format!("'{name}' modifier cannot appear on a parameter."),
+                diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_PARAMETER,
+            ))
+        };
+        let cannot_with = |current: &str, earlier: &str| {
+            Some((
+                format!("'{current}' modifier cannot be used with '{earlier}' modifier."),
+                diagnostic_codes::MODIFIER_CANNOT_BE_USED_WITH_MODIFIER,
+            ))
+        };
+
+        match kind {
+            SyntaxKind::PublicKeyword
+            | SyntaxKind::PrivateKeyword
+            | SyntaxKind::ProtectedKeyword => {
+                if seen.accessibility {
+                    Some((
+                        "Accessibility modifier already seen.".to_string(),
+                        diagnostic_codes::ACCESSIBILITY_MODIFIER_ALREADY_SEEN,
+                    ))
+                } else if seen.static_ {
+                    precede(text, "static")
+                } else if seen.override_ {
+                    precede(text, "override")
+                } else if seen.readonly {
+                    precede(text, "readonly")
+                } else if seen.async_ {
+                    precede(text, "async")
+                } else if seen.abstract_ {
+                    precede(text, "abstract")
+                } else {
+                    None
+                }
+            }
+            SyntaxKind::OverrideKeyword => {
+                if seen.override_ {
+                    already_seen("override")
+                } else if seen.declare {
+                    cannot_with("override", "declare")
+                } else if seen.readonly {
+                    precede("override", "readonly")
+                } else if seen.accessor {
+                    precede("override", "accessor")
+                } else {
+                    None
+                }
+            }
+            SyntaxKind::ReadonlyKeyword => {
+                if seen.readonly {
+                    already_seen("readonly")
+                } else {
+                    // `readonly` is a valid parameter-property modifier.
+                    None
+                }
+            }
+            SyntaxKind::StaticKeyword => {
+                if seen.static_ {
+                    already_seen("static")
+                } else if seen.readonly {
+                    precede("static", "readonly")
+                } else if seen.async_ {
+                    precede("static", "async")
+                } else {
+                    cannot_on_parameter("static")
+                }
+            }
+            SyntaxKind::AsyncKeyword => {
+                if seen.async_ {
+                    already_seen("async")
+                } else {
+                    cannot_on_parameter("async")
+                }
+            }
+            SyntaxKind::AbstractKeyword => {
+                if seen.abstract_ {
+                    already_seen("abstract")
+                } else {
+                    Some((
+                        "'abstract' modifier can only appear on a class, method, or property declaration."
+                            .to_string(),
+                        diagnostic_codes::ABSTRACT_MODIFIER_CAN_ONLY_APPEAR_ON_A_CLASS_METHOD_OR_PROPERTY_DECLARATION,
+                    ))
+                }
+            }
+            SyntaxKind::AccessorKeyword => {
+                if seen.accessor {
+                    already_seen("accessor")
+                } else if seen.readonly {
+                    cannot_with("accessor", "readonly")
+                } else if seen.declare {
+                    cannot_with("accessor", "declare")
+                } else {
+                    Some((
+                        "'accessor' modifier can only appear on a property declaration.".to_string(),
+                        diagnostic_codes::ACCESSOR_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION,
+                    ))
+                }
+            }
+            SyntaxKind::InKeyword | SyntaxKind::OutKeyword => Some((
+                format!(
+                    "'{text}' modifier can only appear on a type parameter of a class, interface or type alias"
+                ),
+                diagnostic_codes::MODIFIER_CAN_ONLY_APPEAR_ON_A_TYPE_PARAMETER_OF_A_CLASS_INTERFACE_OR_TYPE_ALIAS,
+            )),
+            SyntaxKind::DeclareKeyword => {
+                if seen.declare {
+                    already_seen("declare")
+                } else {
+                    cannot_on_parameter("declare")
+                }
+            }
+            SyntaxKind::ExportKeyword => {
+                if seen.export {
+                    already_seen("export")
+                } else {
+                    cannot_on_parameter("export")
+                }
+            }
+            // `const`/`default` (and any other modifier token that reaches here)
+            // keep the generic TS1090 fallback.
+            _ => cannot_on_parameter(text),
         }
     }
 
