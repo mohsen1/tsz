@@ -275,11 +275,23 @@ impl<'a> CheckerState<'a> {
             // Track whether the computed key is a numeric/string literal (text-resolvable).
             // Symbol-keyed computed properties (`[sym]`, `[Symbol.iterator]`) fall through to
             // `get_property_name_resolved` and must always use TS2418, not TS2322.
+            //
+            // `object_literal_property_name_text` also resolves a *symbol* computed
+            // name (a `unique symbol` const, or a well-known symbol like
+            // `Symbol.iterator` via `get_symbol_property_name_from_expr`) to a display
+            // string, so its success alone cannot tell a literal-spelled key apart from
+            // a symbol one — checked separately with the purely syntactic
+            // `is_eagerly_bound_member_name`, which is `true` for a computed name only
+            // when its expression is itself a string/numeric/no-substitution-template
+            // literal (`["p"]`, `[0]`, `` [`p`] ``), never for an identifier or
+            // property-access expression. Oracled against `typescript@7.0.2`:
+            // `{ [Symbol.iterator]: string } = { [Symbol.iterator]: 1 }` against a
+            // *declared* member reports TS2418, not TS2322 (#16662).
             let mut is_computed_literal_key = false;
             let prop_name = match self.object_literal_property_name_text(prop_name_idx) {
                 Some(name) => {
                     if is_computed_property {
-                        is_computed_literal_key = true;
+                        is_computed_literal_key = self.is_eagerly_bound_member_name(prop_name_idx);
                     }
                     name
                 }
