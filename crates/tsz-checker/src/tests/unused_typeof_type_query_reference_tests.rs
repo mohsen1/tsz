@@ -230,6 +230,51 @@ fn a_qualified_type_argument_type_query_reads_its_root() {
     );
 }
 
+/// The type-argument family also has to be reached when the bearing type
+/// reference is itself nested inside a compound type that lowers monolithically
+/// — a function/constructor type, a tuple, a mapped type, or a type literal —
+/// none of which route their inner references back through the per-reference
+/// marking path. tsc reports nothing for any of these; each operand is read.
+#[test]
+fn a_type_argument_type_query_inside_a_compound_type_reads_its_operand() {
+    let rows = [
+        // parameter type of a function type
+        "type Wrap<T> = { v: T };\nexport function c1(a: number, b: (p: Wrap<typeof a>) => void) { return b; }\n",
+        // return type of a function type
+        "type Wrap<T> = { v: T };\nexport function c2(a: number, b: () => Wrap<typeof a>) { return b; }\n",
+        // constructor type
+        "type Wrap<T> = { v: T };\nexport function c3(a: number, b: new () => Wrap<typeof a>) { return b; }\n",
+        // tuple element
+        "type Wrap<T> = { v: T };\nexport function c4(a: number, b: [Wrap<typeof a>]) { return b; }\n",
+        // type-literal member
+        "type Wrap<T> = { v: T };\nexport function c5(a: number, b: { readonly f: Wrap<typeof a> }) { return b; }\n",
+        // mapped-type value position
+        "type Wrap<T> = { v: T };\nexport function c6(a: number, b: { [K in 'x']: Wrap<typeof a> }) { return b; }\n",
+    ];
+    for row in rows {
+        let codes = unused_codes(row);
+        assert!(
+            !codes.contains(&6133),
+            "a `typeof` in a type argument nested in a compound type reads its operand. Row: {row:?} Got: {codes:?}"
+        );
+    }
+}
+
+/// Negative control for the compound broadening: an unread parameter beside a
+/// compound-nested type-argument `typeof` of a *different* binding still
+/// reports `TS6133` — the walk records only the read the `typeof` performs.
+#[test]
+fn an_unread_parameter_beside_a_compound_nested_type_query_still_reports_ts6133() {
+    let codes = unused_codes(
+        "type Wrap<T> = { v: T };\nexport function c7(used: number, unread: number, b: (p: Wrap<typeof used>) => void) { return b; }\n",
+    );
+
+    assert!(
+        codes.contains(&6133),
+        "an unread parameter must still report even beside a compound-nested type-argument `typeof`. Got: {codes:?}"
+    );
+}
+
 /// Negative control: a genuinely unread parameter still reports `TS6133`.
 ///
 /// ```text
