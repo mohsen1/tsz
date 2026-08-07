@@ -783,6 +783,8 @@ mod recursive_accumulator_depth_tests;
 mod recursive_callable_infer_cycle_tests;
 #[path = "tests/recursive_conditional_infer_termination_tests.rs"]
 mod recursive_conditional_infer_termination_tests;
+#[path = "tests/recursive_conditional_tuple_spread_display_tests.rs"]
+mod recursive_conditional_tuple_spread_display_tests;
 #[path = "tests/recursive_generic_arrow_tests.rs"]
 mod recursive_generic_arrow_tests;
 #[path = "tests/recursive_mapped_intersection_nested_excess_property_tests.rs"]
