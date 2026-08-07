@@ -93,7 +93,12 @@ impl<'a> CheckerState<'a> {
             index_type_for_access
         };
 
-        if self.optional_chain_invalid_assignment_target_context(idx) {
+        // See the matching comment in `property_access_type/resolve.rs`: this
+        // short-circuit only applies to write-target computation, not to a
+        // genuine read of the target's value (compound assignment,
+        // increment/decrement), which needs the real type to detect a
+        // chain-marker `undefined` and report `TS18048`/etc.
+        if skip_flow_narrowing && self.optional_chain_invalid_assignment_target_context(idx) {
             let _ = self.get_type_of_node_with_request(access.expression, &read_request);
             return TypeId::ANY;
         }
