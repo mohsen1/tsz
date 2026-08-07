@@ -2718,3 +2718,6 @@ path = "tests/symbol_index_nested_literal_drill_in_ts2353_tests.rs"
 [[test]]
 name = "optional_chain_any_receiver_no_expando_read_tests"
 path = "tests/optional_chain_any_receiver_no_expando_read_tests.rs"
+[[test]]
+name = "ts2433_cross_file_ambient_class_merge_tests"
+path = "tests/ts2433_cross_file_ambient_class_merge_tests.rs"
