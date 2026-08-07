@@ -8,6 +8,46 @@ use crate::types::TypeId;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
 
+/// Invoke `visit` once per property of the intersection's object/callable
+/// members, in *combined declaration order*: members left to right, and within
+/// each member its own properties sorted by `declaration_order` (since
+/// `ObjectShape::properties` is `Atom`-id-sorted for canonical hashing and so
+/// does not preserve source order). Intrinsic and non-object members carry no
+/// properties and are skipped.
+///
+/// This owns the ordered member-walk that both the `TS18031` and `TS18032`
+/// elaboration queries fold into their own first-seen accumulators — the
+/// combined declaration order is the property `tsc`'s `elaborateNeverIntersection`
+/// depends on for both diagnostics, so it lives in one place rather than being
+/// re-established identically in each query.
+fn for_each_member_property_in_declaration_order(
+    db: &dyn TypeDatabase,
+    members: &[TypeId],
+    mut visit: impl FnMut(&crate::types::PropertyInfo),
+) {
+    let mut visit_member = |properties: &[crate::types::PropertyInfo]| {
+        let mut ordered: Vec<&crate::types::PropertyInfo> = properties.iter().collect();
+        ordered.sort_by_key(|prop| prop.declaration_order);
+        for prop in ordered {
+            visit(prop);
+        }
+    };
+    for &member in members {
+        if member.is_intrinsic() {
+            continue;
+        }
+        match db.lookup(member) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                visit_member(&db.object_shape(shape_id).properties);
+            }
+            Some(TypeData::Callable(callable_id)) => {
+                visit_member(&db.callable_shape(callable_id).properties);
+            }
+            _ => {}
+        }
+    }
+}
+
 /// The property name whose required occurrences across `members` are literal
 /// values from mutually exclusive value-sets — the shape `tsc` reports as
 /// `TS18031` (`The intersection '{0}' was reduced to 'never' because
@@ -54,43 +94,25 @@ pub fn find_disjoint_literal_property_across_intersection(
     let mut excluded: FxHashSet<Atom> = FxHashSet::default();
     let mut order: Vec<Atom> = Vec::new();
     let mut seen: FxHashSet<Atom> = FxHashSet::default();
-    let mut ingest = |properties: &[crate::types::PropertyInfo]| {
-        let mut by_declaration_order: Vec<&crate::types::PropertyInfo> =
-            properties.iter().collect();
-        by_declaration_order.sort_by_key(|prop| prop.declaration_order);
-        for prop in by_declaration_order {
-            if seen.insert(prop.name) {
-                order.push(prop.name);
-            }
-            if prop.optional || excluded.contains(&prop.name) {
-                continue;
-            }
-            let Some(TypeData::Literal(value)) = db.lookup(prop.type_id) else {
-                // A non-literal (or absent) required occurrence could still
-                // conflict via the fuller `TypeInterner`-internal analysis,
-                // but this helper only recognizes the single-literal shape —
-                // drop the whole name rather than guess at a partial match.
-                excluded.insert(prop.name);
-                by_name.remove(&prop.name);
-                continue;
-            };
-            by_name.entry(prop.name).or_default().insert(value);
+    let ingest = |prop: &crate::types::PropertyInfo| {
+        if seen.insert(prop.name) {
+            order.push(prop.name);
         }
+        if prop.optional || excluded.contains(&prop.name) {
+            return;
+        }
+        let Some(TypeData::Literal(value)) = db.lookup(prop.type_id) else {
+            // A non-literal (or absent) required occurrence could still
+            // conflict via the fuller `TypeInterner`-internal analysis,
+            // but this helper only recognizes the single-literal shape —
+            // drop the whole name rather than guess at a partial match.
+            excluded.insert(prop.name);
+            by_name.remove(&prop.name);
+            return;
+        };
+        by_name.entry(prop.name).or_default().insert(value);
     };
-    for &member in members {
-        if member.is_intrinsic() {
-            continue;
-        }
-        match db.lookup(member) {
-            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
-                ingest(&db.object_shape(shape_id).properties);
-            }
-            Some(TypeData::Callable(callable_id)) => {
-                ingest(&db.callable_shape(callable_id).properties);
-            }
-            _ => {}
-        }
-    }
+    for_each_member_property_in_declaration_order(db, members, ingest);
     order
         .into_iter()
         .find(|name| by_name.get(name).is_some_and(|values| values.len() >= 2))
@@ -120,42 +142,46 @@ pub fn find_disjoint_literal_property_across_intersection(
 /// text alone (as the modifier-`private` case does) would wrongly treat
 /// same-spelled `#`-private fields from different classes as one
 /// conflicting name.
+///
+/// When more than one property name qualifies (each declared in two or more
+/// members with at least one modifier-`private` occurrence), tsc names the
+/// first one by the same combined declaration order as
+/// [`find_disjoint_literal_property_across_intersection`]: both diagnostics
+/// are produced by `elaborateNeverIntersection`, which walks
+/// `getPropertiesOfUnionOrIntersectionType` — members left to right, each
+/// member's own properties in declaration order, positioning each name at its
+/// *first* occurrence across all members — and returns the first match. So
+/// this reads each property's `declaration_order` field (excluded from
+/// hashing, backfilled by the interner from source insertion order) rather
+/// than `ObjectShape::properties`'s `Atom`-id-sorted `Vec` position, which
+/// does not recover written order.
 pub fn find_private_brand_conflict_property(
     db: &dyn TypeDatabase,
     members: &[TypeId],
 ) -> Option<Atom> {
     let mut occurrences: FxHashMap<Atom, (u32, bool)> = FxHashMap::default();
-    let mut ingest = |properties: &[crate::types::PropertyInfo]| {
-        for prop in properties {
-            let name = db.resolve_atom(prop.name);
-            if name.starts_with("__private_brand_")
-                || crate::utils::is_es_private_identifier_name(&name)
-            {
-                continue;
-            }
-            let entry = occurrences.entry(prop.name).or_insert((0, false));
-            entry.0 += 1;
-            if prop.visibility == crate::types::Visibility::Private {
-                entry.1 = true;
-            }
+    let mut order: Vec<Atom> = Vec::new();
+    let mut seen: FxHashSet<Atom> = FxHashSet::default();
+    let ingest = |prop: &crate::types::PropertyInfo| {
+        let name = db.resolve_atom(prop.name);
+        if name.starts_with("__private_brand_")
+            || crate::utils::is_es_private_identifier_name(&name)
+        {
+            return;
+        }
+        if seen.insert(prop.name) {
+            order.push(prop.name);
+        }
+        let entry = occurrences.entry(prop.name).or_insert((0, false));
+        entry.0 += 1;
+        if prop.visibility == crate::types::Visibility::Private {
+            entry.1 = true;
         }
     };
-    for &member in members {
-        if member.is_intrinsic() {
-            continue;
-        }
-        match db.lookup(member) {
-            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
-                ingest(&db.object_shape(shape_id).properties);
-            }
-            Some(TypeData::Callable(callable_id)) => {
-                ingest(&db.callable_shape(callable_id).properties);
-            }
-            _ => {}
-        }
-    }
-    occurrences
-        .into_iter()
-        .find(|(_, (count, saw_private))| *count >= 2 && *saw_private)
-        .map(|(name, _)| name)
+    for_each_member_property_in_declaration_order(db, members, ingest);
+    order.into_iter().find(|name| {
+        occurrences
+            .get(name)
+            .is_some_and(|(count, saw_private)| *count >= 2 && *saw_private)
+    })
 }

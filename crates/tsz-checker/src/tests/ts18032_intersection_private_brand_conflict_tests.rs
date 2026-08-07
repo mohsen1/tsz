@@ -168,6 +168,106 @@ anything.other;
 }
 
 // ---------------------------------------------------------------------------
+// Multi-conflict ordering: when more than one property qualifies (declared in
+// two or more members, private in at least one), tsc names the first one by a
+// combined declaration order — the same walk `elaborateNeverIntersection`
+// uses for TS18031: members left to right, and within each member its own
+// properties in declaration order, positioning each name at its *first*
+// occurrence. The pick is independent of alphabetical order, of which property
+// was accessed, and of a later member's own declaration order.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn multi_conflict_names_first_declared_private_property() {
+    // Both `x` and `y` are private in both members; `x` is declared first, so
+    // `x` wins even though the access is on `x` itself.
+    let diags = check_source_strict(
+        r#"
+class A { private x: string = ""; private y: string = ""; }
+class B { private x: string = ""; private y: string = ""; }
+declare const c: A & B;
+c.x;
+"#,
+    );
+    let diag = only(&diags, TS2339);
+    assert_eq!(
+        related(&diag, TS18032).as_deref(),
+        Some(
+            "The intersection 'A & B' was reduced to 'never' because property 'x' exists in multiple constituents and is private in some."
+        ),
+        "got {diags:?}"
+    );
+}
+
+#[test]
+fn multi_conflict_order_follows_declaration_order_not_alphabetical() {
+    // Source order is `zz` then `aa` (reverse of alphabetical); the winner is
+    // `zz`, proving the pick is declaration order, not name order — the same
+    // guarantee the sibling TS18031 rule makes.
+    let diags = check_source_strict(
+        r#"
+class P { private zz: string = ""; private aa: string = ""; }
+class Q { private zz: string = ""; private aa: string = ""; }
+declare const r: P & Q;
+r.zz;
+"#,
+    );
+    let diag = only(&diags, TS2339);
+    assert_eq!(
+        related(&diag, TS18032).as_deref(),
+        Some(
+            "The intersection 'P & Q' was reduced to 'never' because property 'zz' exists in multiple constituents and is private in some."
+        ),
+        "got {diags:?}"
+    );
+}
+
+#[test]
+fn multi_conflict_order_ignores_second_members_declaration_order() {
+    // `A` declares `y` before `x`; `B` declares `x` before `y`. tsc uses the
+    // FIRST member's order, so `y` wins even though the access is on `x`.
+    let diags = check_source_strict(
+        r#"
+class A { private y: string = ""; private x: string = ""; }
+class B { private x: string = ""; private y: string = ""; }
+declare const c: A & B;
+c.x;
+"#,
+    );
+    let diag = only(&diags, TS2339);
+    assert_eq!(
+        related(&diag, TS18032).as_deref(),
+        Some(
+            "The intersection 'A & B' was reduced to 'never' because property 'y' exists in multiple constituents and is private in some."
+        ),
+        "got {diags:?}"
+    );
+}
+
+#[test]
+fn multi_conflict_skips_non_conflicting_private_and_names_first_shared_private() {
+    // `A`'s `solo` is private but declared in only one member — it never
+    // conflicts, so it is skipped. `shared` (private in both) is the first
+    // name that qualifies, even though `solo` is declared before it.
+    let diags = check_source_strict(
+        r#"
+class A { private solo: string = ""; private shared: string = ""; }
+class B { private shared: string = ""; }
+declare const c: A & B;
+c.shared;
+"#,
+    );
+    let diag = only(&diags, TS2339);
+    assert_eq!(
+        related(&diag, TS18032).as_deref(),
+        Some(
+            "The intersection 'A & B' was reduced to 'never' because property 'shared' exists in multiple constituents and is private in some."
+        ),
+        "got {diags:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Negative / control cases: no TS18032 elaboration.
 // ---------------------------------------------------------------------------
 
