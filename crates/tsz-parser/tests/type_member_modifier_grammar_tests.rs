@@ -916,6 +916,81 @@ fn readonly_second_modifier_used_as_property_name_stays_clean() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Longer modifier chains after `readonly` (3+ leading modifiers): tsc still
+// reports a single diagnostic naming only the first offender, and every
+// modifier past it must still be consumed so the member parses cleanly.
+// Regression coverage for a reviewer-flagged residual on #16827: before this,
+// `readonly async static x` only consumed the first trailing modifier and
+// left the second unconsumed, mis-parsing it as the name (bogus TS1005).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn readonly_three_modifier_chain_method_reports_ts1024_at_readonly() {
+    assert_eq!(
+        fingerprints("interface D { readonly async static m(): void; }"),
+        vec![(
+            TS1024,
+            1,
+            15,
+            "'readonly' modifier can only appear on a property declaration or index signature."
+                .to_string()
+        )],
+    );
+}
+
+#[test]
+fn readonly_three_modifier_chain_property_reports_ts1070_at_first_offender() {
+    assert_eq!(
+        fingerprints("interface D { readonly async static p: number; }"),
+        vec![(
+            TS1070,
+            1,
+            24,
+            "'async' modifier cannot appear on a type member.".to_string()
+        )],
+    );
+}
+
+#[test]
+fn readonly_three_modifier_chain_property_reordered_names_the_first() {
+    // Same three modifiers, `static` before `async`: the offender is
+    // whichever comes first in source order after `readonly`.
+    assert_eq!(
+        fingerprints("interface D { readonly static async p: number; }"),
+        vec![(
+            TS1070,
+            1,
+            24,
+            "'static' modifier cannot appear on a type member.".to_string()
+        )],
+    );
+}
+
+#[test]
+fn readonly_three_modifier_chain_without_async_reports_ts1070_once() {
+    assert_eq!(
+        codes("interface D { readonly static public p: number; }"),
+        vec![TS1070],
+    );
+}
+
+#[test]
+fn readonly_four_modifier_chain_method_reports_ts1024_once() {
+    assert_eq!(
+        codes("interface D { readonly static public accessor override m(): void; }"),
+        vec![TS1024],
+    );
+}
+
+#[test]
+fn readonly_three_modifier_chain_keeps_following_member() {
+    assert_eq!(
+        codes("interface D { readonly async static p: number; y: string; }"),
+        vec![TS1070],
+    );
+}
+
 #[test]
 fn readonly_second_modifier_used_as_method_name_reports_ts1024() {
     // `static` immediately followed by `(` is the method's own name here;

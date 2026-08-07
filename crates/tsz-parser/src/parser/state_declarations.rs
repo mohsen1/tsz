@@ -524,6 +524,21 @@ impl ParserState {
             let text = self.scanner.get_token_text();
             let span = (self.token_pos(), self.token_end());
             self.next_token();
+
+            // A longer chain (`readonly async static x`, `readonly static
+            // public x`, ...) still reports a single diagnostic naming only
+            // the first offender — every modifier past it must still be
+            // consumed silently so the member parses cleanly, matching
+            // `parse_type_member_visibility_modifier_error`'s equivalent
+            // "consume the whole run" step for the illegal-modifier-first
+            // case.
+            while (self.is_token(SyntaxKind::AsyncKeyword)
+                || Self::is_illegal_type_member_modifier(self.token()))
+                && !self.look_ahead_is_property_name_after_keyword()
+            {
+                self.next_token();
+            }
+
             if modifier_diagnostic_reported {
                 None
             } else {
