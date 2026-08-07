@@ -1489,20 +1489,39 @@ impl<'a> CheckerState<'a> {
         reason
     }
 
-    /// The written constituents of an intersection `target`, or `None` if it is
-    /// not an intersection.
+    /// The written constituents of an intersection `target` in source order, or
+    /// `None` if it is not an intersection.
     ///
-    /// Resolves lazy aliases (`type T = A & B`) without evaluating/merging so the
-    /// constituents survive. Anonymous object intersections (`{ x } & { y }`) are
-    /// eagerly merged into a single object at construction but retain the written
-    /// intersection as a display alias — a structural `TypeId` back-reference, not
-    /// rendered text — so fall back to that to recover the constituents.
+    /// Order is load-bearing: `tsc` (`typeRelatedToEachType`) elaborates the
+    /// first constituent the source fails in *written* order. `normalize_
+    /// intersection` moves the object member of a mixed object / non-object
+    /// intersection last for a stable identity (`{ z: 1 } & [T]` interns as
+    /// `[T] & { z: 1 }`) but records the written order as a display alias, so
+    /// prefer that alias (also the anonymous-object-intersection recovery path)
+    /// over the reordered interned members.
+    ///
+    /// Adjacent object members are likewise merged into one object at
+    /// construction (`{ a } & { b }` interns as one object, aliased back to its
+    /// written form), so expand each merged-object member through its own alias:
+    /// `tsc` never merges, so `{ a } & { b } & [T]` elaborates the first written
+    /// object `{ a }`, not the merged `{ a; b }`.
     fn target_intersection_constituents(&mut self, target: TypeId) -> Option<Vec<TypeId>> {
         let resolved = self.resolve_lazy_type(target);
-        crate::query_boundaries::common::intersection_members(self.ctx.types, resolved)
-            .map(|list| list.iter().copied().collect())
-            .or_else(|| self.display_alias_intersection_constituents(resolved))
+        let members: Vec<TypeId> = self
+            .display_alias_intersection_constituents(resolved)
             .or_else(|| self.display_alias_intersection_constituents(target))
+            .or_else(|| {
+                crate::query_boundaries::common::intersection_members(self.ctx.types, resolved)
+                    .map(|list| list.iter().copied().collect())
+            })?;
+        let mut expanded = Vec::with_capacity(members.len());
+        for member in members {
+            match self.display_alias_intersection_constituents(member) {
+                Some(inner) => expanded.extend(inner),
+                None => expanded.push(member),
+            }
+        }
+        Some(expanded)
     }
 
     /// The intersection constituents of `ty`'s display alias, if it has one whose

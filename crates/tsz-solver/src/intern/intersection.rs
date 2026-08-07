@@ -614,6 +614,14 @@ impl TypeInterner {
         // representative; this keeps tsc's source-order display for mixed
         // intersections such as `(() => void) & { prop: any }`.
         let mut final_flat: TypeListBuffer = SmallVec::new();
+        // The written source order, with the merged object substituted in place
+        // of its first constituent. The canonical rebuild below moves the object
+        // member to the end for a stable identity (`A & {}` and `{} & A` intern
+        // to one type), but `tsc` preserves written order in both display and the
+        // target-intersection diagnostic elaboration. Recorded as a display alias
+        // after interning so those consumers can recover it without disturbing
+        // canonical identity. Empty when the rebuild already matches source order.
+        let mut source_ordered: TypeListBuffer = SmallVec::new();
         if merged_callable.is_some() {
             let mut emitted_object = false;
             let mut emitted_callable = false;
@@ -647,6 +655,25 @@ impl TypeInterner {
             final_flat.extend(remaining_after_callables.iter().copied());
             if let Some(obj_id) = merged_object {
                 final_flat.push(obj_id);
+                // Written order: place the merged object where its first
+                // constituent was written, keeping every other member in place.
+                let mut emitted_object = false;
+                for &member in &flat {
+                    if matches!(
+                        self.lookup(member),
+                        Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_))
+                    ) {
+                        if !emitted_object {
+                            source_ordered.push(obj_id);
+                            emitted_object = true;
+                        }
+                        continue;
+                    }
+                    source_ordered.push(member);
+                }
+                if source_ordered[..] == final_flat[..] {
+                    source_ordered.clear();
+                }
             }
         }
 
@@ -678,7 +705,25 @@ impl TypeInterner {
         }
 
         let list_id = self.intern_type_list_from_slice(&flat);
-        self.intern(TypeData::Intersection(list_id))
+        let canonical = self.intern(TypeData::Intersection(list_id));
+
+        // Record the written source order (captured before the objects-last
+        // rebuild) as a display alias, so the formatter and the target-
+        // intersection diagnostic elaboration name members in written order. Only
+        // when subtype reduction did not change the member set — otherwise the
+        // captured order is stale and the canonical order is used as-is.
+        if !source_ordered.is_empty() && source_ordered.len() == flat.len() {
+            let canonical_set: FxHashSet<TypeId> = flat.iter().copied().collect();
+            if source_ordered.iter().all(|id| canonical_set.contains(id)) {
+                let source_list = self.intern_type_list_from_slice(&source_ordered);
+                let source_intersection = self.intern(TypeData::Intersection(source_list));
+                if source_intersection != canonical {
+                    self.store_display_alias(canonical, source_intersection);
+                }
+            }
+        }
+
+        canonical
     }
 
     fn try_merge_callables_in_intersection(&self, members: &[TypeId]) -> Option<TypeId> {

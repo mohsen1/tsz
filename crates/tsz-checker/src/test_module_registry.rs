@@ -489,6 +489,8 @@ mod intersection_callable_constraint_ts2344_tests;
 mod intersection_source_literal_member_display_tests;
 #[path = "tests/intersection_target_elaboration_tests.rs"]
 mod intersection_target_elaboration_tests;
+#[path = "tests/intersection_target_member_order_tests.rs"]
+mod intersection_target_member_order_tests;
 #[path = "tests/invalid_thenable_no_fulfillment_payload_tests.rs"]
 mod invalid_thenable_no_fulfillment_payload_tests;
 #[path = "tests/invocation_signature_detail_tests.rs"]
