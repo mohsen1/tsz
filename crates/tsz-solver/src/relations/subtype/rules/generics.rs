@@ -23,6 +23,7 @@ use crate::visitors::visitor_predicates::is_primitive_type;
 mod generics_application_helpers;
 #[cfg(test)]
 pub(crate) use generics_application_helpers::ONE_SIDED_APP_EXPANSION_MAX_DEPTH;
+pub(crate) use generics_application_helpers::merge_bivariant_usage;
 
 fn args_contain_type_parameters(
     interner: &dyn crate::construction::TypeDatabase,
