@@ -397,6 +397,173 @@ fn public_optional_chain_continuation_keeps_possibly_nullish_diagnostic() {
     );
 }
 
+/// Regression test for #16817.
+///
+/// A private identifier used as a variable-declaration binding name
+/// (`const #x = 1;`) is a parser grammar error (`TS18029`, emitted by
+/// `state_variable_declarations.rs` via `parseErrorAtRange`), the sibling of
+/// `TS18030`'s optional-chain case above. tsc surfaces it in the syntactic
+/// phase and then skips `getSemanticDiagnostics` for the whole program, so an
+/// unrelated semantic error — even in another file — must be suppressed,
+/// while `TS18029` itself survives. Oracle-confirmed against
+/// `typescript@7.0.2`.
+#[test]
+fn private_identifier_variable_declaration_grammar_error_suppresses_semantic_diagnostics_program_wide()
+ {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let base = dir.path();
+
+    fs::write(base.join("a.ts"), "const #x = 1;\n").expect("write a.ts");
+    // An unrelated semantic error in a second file proves the gate is
+    // program-wide, not just file-local.
+    fs::write(base.join("b.ts"), "let n: number = \"s\";\n").expect("write b.ts");
+    fs::write(
+        base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "strict": true,
+            "target": "esnext",
+            "noEmit": true
+          },
+          "files": ["a.ts", "b.ts"]
+        }"#,
+    )
+    .expect("write tsconfig");
+
+    let args = CliArgs::try_parse_from(["tsz", "--project", "tsconfig.json"]).expect("parse args");
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&18029),
+        "Expected TS18029 for the private identifier binding name, got: {:?}",
+        result.diagnostics,
+    );
+    assert!(
+        !codes.contains(&2322),
+        "TS2322 must be suppressed program-wide when a TS18029 grammar error exists; got: {:?}",
+        result.diagnostics,
+    );
+}
+
+/// Adjacent positions for #16817's `TS18029` fence: `for...of`/`for...in`
+/// heads, the C-style `for` initializer, and a `catch` clause binding all
+/// emit `TS18029` from a distinct parser call site
+/// (`state_variable_declarations.rs`'s `for`-header path, and the exports/
+/// catch-clause siblings) and must suppress trailing same-file semantics the
+/// same way the plain-statement form above does. Oracle-confirmed against
+/// `typescript@7.0.2`: each shape below reports only `TS18029`.
+#[test]
+fn private_identifier_binding_adjacent_positions_suppress_trailing_semantics() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let base = dir.path();
+    fs::write(
+        base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "strict": true,
+            "target": "esnext",
+            "noEmit": true
+          }
+        }"#,
+    )
+    .expect("write tsconfig");
+
+    let shapes: &[(&str, &str)] = &[
+        (
+            "for_of.ts",
+            "const arr = [1];\nfor (const #x of arr) {}\nconst bad: number = \"str\";\nnope();\n",
+        ),
+        (
+            "for_in.ts",
+            "const obj = {};\nfor (const #x in obj) {}\nconst bad: number = \"str\";\nnope();\n",
+        ),
+        (
+            "c_style_for.ts",
+            "for (const #x = 0; ; ) {}\nconst bad: number = \"str\";\nnope();\n",
+        ),
+        (
+            "catch_clause.ts",
+            "try {} catch (#x) {}\nconst bad: number = \"str\";\nnope();\n",
+        ),
+    ];
+
+    for (file_name, source) in shapes {
+        fs::write(base.join(file_name), source).expect("write shape file");
+        let args =
+            CliArgs::try_parse_from(["tsz", "--project", "tsconfig.json"]).expect("parse args");
+        let result = compile(&args, base).expect("compile should succeed");
+        let codes: Vec<u32> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.file.ends_with(file_name))
+            .map(|d| d.code)
+            .collect();
+
+        assert!(
+            codes.contains(&18029),
+            "{file_name}: expected TS18029, got: {:?}",
+            result.diagnostics,
+        );
+        for &suppressed in &[2322_u32, 2304] {
+            assert!(
+                !codes.contains(&suppressed),
+                "{file_name}: TS{suppressed} must be suppressed alongside TS18029; got: {:?}",
+                result.diagnostics,
+            );
+        }
+        fs::remove_file(base.join(file_name)).expect("remove shape file");
+    }
+}
+
+/// Control for the gate above: a *legal* private identifier (a class field
+/// access, or an `in`-based brand check) is not a parse error, so trailing
+/// same-file semantics must still be fully reported. Guards against
+/// over-suppression keyed on any private-identifier token rather than the
+/// specific `TS18029` grammar violation.
+#[test]
+fn legal_private_identifier_usage_keeps_full_semantic_checking() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let base = dir.path();
+    fs::write(
+        base.join("a.ts"),
+        "class C {\n  #p = 1;\n  m() { return this.#p; }\n  has(o: any) { return #p in o; }\n}\nconst bad: number = \"str\";\nnope();\n",
+    )
+    .expect("write a.ts");
+    fs::write(
+        base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "strict": true,
+            "target": "esnext",
+            "noEmit": true
+          },
+          "files": ["a.ts"]
+        }"#,
+    )
+    .expect("write tsconfig");
+
+    let args = CliArgs::try_parse_from(["tsz", "--project", "tsconfig.json"]).expect("parse args");
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        !codes.contains(&18029),
+        "No parse error here, TS18029 must not appear, got: {:?}",
+        result.diagnostics,
+    );
+    assert!(
+        codes.contains(&2322),
+        "Expected TS2322 to still be reported (no grammar error to suppress it), got: {:?}",
+        result.diagnostics,
+    );
+    assert!(
+        codes.contains(&2304),
+        "Expected TS2304 to still be reported (no grammar error to suppress it), got: {:?}",
+        result.diagnostics,
+    );
+}
+
 /// Regression test for `conformance/salsa/plainJSGrammarErrors.ts`.
 ///
 /// When a JavaScript file emits a TS-only-syntactic diagnostic (e.g. `TS8009`

@@ -1617,6 +1617,23 @@ pub(super) const fn is_real_syntax_error(code: u32) -> bool {
         // `o?.a.#b` would still surface the receiver's possibly-nullish
         // TS2532/TS18048, which tsc suppresses.
         | 18030 // An optional chain cannot contain private identifiers
+        // TS18029 is the sibling of TS18030 (#16817): tsc's parser rejects a
+        // private identifier used as a variable-declaration binding name
+        // (`parseErrorAtRange`, `state_variable_declarations.rs` and its
+        // `for`-header/exports siblings) and then skips the whole file's
+        // semantic diagnostics — a downstream `TS2304`/`TS2322` in the same
+        // file is never reached. This is a NARROWER shape than TS18009
+        // (private identifier as a parameter, deliberately excluded above):
+        // TS18029 is oracle-confirmed (`typescript@7.0.2`) to suppress
+        // trailing semantics in Direction A (`for (const #x of arr) {}` next
+        // to `const bad: number = "str"; nope();` reports only TS18029),
+        // which is the opposite of what disqualified TS18009/TS18029-as-a-
+        // `is_parser_grammar_code`-candidate above — that test asked whether
+        // an UNRELATED syntax error elsewhere suppresses this code, not
+        // whether this code suppresses everything else. Confirmed across all
+        // TS18029 emission sites: plain statement, catch clause, `for...of`/
+        // `for...in` head, and the C-style `for` initializer.
+        | 18029 // Private identifiers are not allowed in variable declarations
     )
 }
 
