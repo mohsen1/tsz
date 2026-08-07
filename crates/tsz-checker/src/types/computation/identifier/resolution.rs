@@ -365,41 +365,103 @@ impl<'a> CheckerState<'a> {
         TypeId::ERROR
     }
 
+    /// The declared member nodes and name text of the class at `class_idx`.
+    fn class_members_and_name(&self, class_idx: NodeIndex) -> Option<(Vec<NodeIndex>, String)> {
+        let class_node = self.ctx.arena.get(class_idx)?;
+        let class = self.ctx.arena.get_class(class_node)?;
+        let members = class.members.nodes.clone();
+        let name_node = self.ctx.arena.get(class.name)?;
+        let name = self
+            .ctx
+            .arena
+            .get_identifier(name_node)?
+            .escaped_text
+            .to_string();
+        Some((members, name))
+    }
+
+    /// Whether the global `Function` interface has a member `name`. Every class
+    /// constructor type is a subtype of `Function` (which extends `Object`), so
+    /// tsc's `getPropertyOfType(typeof Class, name)` resolves the `Function`
+    /// (and `Object`) members on it — `arguments`, `caller`, `length`, `name`,
+    /// `prototype`, `apply`, `call`, `bind`, `hasOwnProperty`, … This is the same
+    /// subtype-of-`Function` mechanism, applied to any name (not an
+    /// `arguments`-specific special case), and it is stable across the two
+    /// resolution passes because it depends only on the global lib type, not on
+    /// the enclosing class's own (mid-computation) constructor type.
+    fn global_function_type_has_member(&mut self, name: &str) -> bool {
+        let Some(function_type) = self.resolve_lib_type_by_name("Function") else {
+            return false;
+        };
+        matches!(
+            self.resolve_property_access_with_env(function_type, name),
+            tsz_solver::operations::property::PropertyAccessResult::Success {
+                from_index_signature: false,
+                ..
+            }
+        )
+    }
+
     /// Handle a truly unresolved identifier — not a type parameter, not in the
-    /// binder, not a known global. Emits TS2304, TS2524, TS2662 as appropriate.
+    /// binder, not a known global. Emits the member-prefix suggestion
+    /// (`TS2662`/`TS2663`), `TS2524`/`TS2523`, or falls through to the bare
+    /// `TS2304`/`TS2552` name-resolution boundary.
     fn resolve_truly_unknown_identifier(&mut self, idx: NodeIndex, name: &str) -> TypeId {
         // Note: TS1212/1213/1214 strict-mode reserved word check is now handled
         // centrally in error_cannot_find_name_at to cover both value and type contexts.
 
-        // Check static member suggestion (error 2662)
-        if let Some(ref class_info) = self.ctx.enclosing_class.clone()
-            && self.is_static_member(&class_info.member_nodes, name)
+        // Member-prefix suggestion (tsc's `checkAndReportErrorForMissingPrefix`):
+        // an unresolved identifier inside a class that names a member reachable on
+        // the class's constructor type gets `TS2662` ("Did you mean the static
+        // member 'C.x'?"), or — in a non-static context — its instance type gets
+        // `TS2663` ("Did you mean the instance member 'this.x'?"), instead of a
+        // bare `TS2304`.
+        //
+        // The class is found from the AST (`nearest_enclosing_class`) rather than
+        // the ambient `enclosing_class` context, which is unset during on-demand
+        // class-type computation (evaluating member initializers to type them).
+        // A suggestion keyed on that context would fire in the statement-walk
+        // pass but not the type-computation pass; since both passes resolve the
+        // same identifier and diagnostics dedupe by `(start, code)`, a suggestion
+        // in one pass and a bare `TS2304` in the other would *both* survive.
+        // Deciding from the AST (and the global-lib `Function` type) makes the two
+        // passes agree — one diagnostic. `nearest_enclosing_class` walks through
+        // function boundaries, so a class's statics are suggestable from a nested
+        // function too; the `this`-rebind boundary is enforced on the instance
+        // arm below.
+        if let Some(class_idx) = self.nearest_enclosing_class(idx)
+            && let Some((member_nodes, class_name)) = self.class_members_and_name(class_idx)
         {
-            self.error_cannot_find_name_static_member_at(name, &class_info.name, idx);
-            return TypeId::ERROR;
-        }
-        // TS2663: Check instance member suggestion — "Did you mean 'this.X'?"
-        // When an unresolved name matches an instance member of the enclosing class
-        // AND we're in a non-static context where `this` refers to the class instance,
-        // suggest 'this.X'. Don't suggest when:
-        // - We're in a static method (this refers to constructor)
-        // - We're inside a regular function expression (this is rebound)
-        if let Some(ref class_info) = self.ctx.enclosing_class.clone()
-            && !class_info.in_static_member
-            && self.is_instance_member(&class_info.member_nodes, name)
-            && !self.has_regular_function_boundary_to_class(idx)
-        {
-            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-            let message = format_message(
-                diagnostic_messages::CANNOT_FIND_NAME_DID_YOU_MEAN_THE_INSTANCE_MEMBER_THIS,
-                &[name],
-            );
-            self.error_at_node(
-                idx,
-                &message,
-                diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_THE_INSTANCE_MEMBER_THIS,
-            );
-            return TypeId::ERROR;
+            // Static (TS2662): a declared static, or a member of `Function`
+            // (`arguments`/`caller`/… — every constructor type is a subtype of
+            // `Function`). Checked before the instance arm, matching tsc.
+            if self.is_static_member(&member_nodes, name)
+                || self.global_function_type_has_member(name)
+            {
+                self.error_cannot_find_name_static_member_at(name, &class_name, idx);
+                return TypeId::ERROR;
+            }
+            // Instance (TS2663): a declared instance member, in a non-static
+            // context (in a static member `this` is the constructor, so tsc
+            // reports the bare `TS2304`) with no regular-function boundary
+            // between the reference and the class (a function rebinds `this`, so
+            // `this.x` would not reach the class instance).
+            if !self.is_in_static_class_member_context(idx)
+                && !self.has_regular_function_boundary_to_class(idx)
+                && self.is_instance_member(&member_nodes, name)
+            {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+                let message = format_message(
+                    diagnostic_messages::CANNOT_FIND_NAME_DID_YOU_MEAN_THE_INSTANCE_MEMBER_THIS,
+                    &[name],
+                );
+                self.error_at_node(
+                    idx,
+                    &message,
+                    diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_THE_INSTANCE_MEMBER_THIS,
+                );
+                return TypeId::ERROR;
+            }
         }
         // TS2524: 'await' in default parameter
         if name == "await" && self.is_in_default_parameter(idx) {
