@@ -9,7 +9,7 @@ use crate::parser::{
     node::{ClassData, IdentifierData},
     syntax_kind_ext,
 };
-use tsz_common::diagnostics::diagnostic_codes;
+use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use tsz_common::interner::{AstAtom, IdentText};
 use tsz_scanner::SyntaxKind;
 
@@ -866,25 +866,12 @@ impl ParserState {
     }
 
     /// Human-readable spelling of a modifier keyword, used to fill the `{0}`/`{1}`
-    /// slots of the modifier grammar diagnostics.
+    /// slots of the modifier grammar diagnostics. Delegates to the scanner's
+    /// canonical keyword table so the spelling never drifts.
     const fn parameter_modifier_text(kind: SyntaxKind) -> &'static str {
-        match kind {
-            SyntaxKind::PublicKeyword => "public",
-            SyntaxKind::PrivateKeyword => "private",
-            SyntaxKind::ProtectedKeyword => "protected",
-            SyntaxKind::ReadonlyKeyword => "readonly",
-            SyntaxKind::OverrideKeyword => "override",
-            SyntaxKind::StaticKeyword => "static",
-            SyntaxKind::AsyncKeyword => "async",
-            SyntaxKind::AbstractKeyword => "abstract",
-            SyntaxKind::AccessorKeyword => "accessor",
-            SyntaxKind::DeclareKeyword => "declare",
-            SyntaxKind::ExportKeyword => "export",
-            SyntaxKind::ConstKeyword => "const",
-            SyntaxKind::DefaultKeyword => "default",
-            SyntaxKind::InKeyword => "in",
-            SyntaxKind::OutKeyword => "out",
-            _ => "modifier",
+        match tsz_scanner::keyword_to_text_static(kind) {
+            Some(text) => text,
+            None => "modifier",
         }
     }
 
@@ -909,25 +896,34 @@ impl ParserState {
         let text = Self::parameter_modifier_text(kind);
         let precede = |current: &str, earlier: &str| {
             Some((
-                format!("'{current}' modifier must precede '{earlier}' modifier."),
+                format_message(
+                    diagnostic_messages::MODIFIER_MUST_PRECEDE_MODIFIER,
+                    &[current, earlier],
+                ),
                 diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
             ))
         };
         let already_seen = |name: &str| {
             Some((
-                format!("'{name}' modifier already seen."),
+                format_message(diagnostic_messages::MODIFIER_ALREADY_SEEN, &[name]),
                 diagnostic_codes::MODIFIER_ALREADY_SEEN,
             ))
         };
         let cannot_on_parameter = |name: &str| {
             Some((
-                format!("'{name}' modifier cannot appear on a parameter."),
+                format_message(
+                    diagnostic_messages::MODIFIER_CANNOT_APPEAR_ON_A_PARAMETER,
+                    &[name],
+                ),
                 diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_PARAMETER,
             ))
         };
         let cannot_with = |current: &str, earlier: &str| {
             Some((
-                format!("'{current}' modifier cannot be used with '{earlier}' modifier."),
+                format_message(
+                    diagnostic_messages::MODIFIER_CANNOT_BE_USED_WITH_MODIFIER,
+                    &[current, earlier],
+                ),
                 diagnostic_codes::MODIFIER_CANNOT_BE_USED_WITH_MODIFIER,
             ))
         };
@@ -938,7 +934,7 @@ impl ParserState {
             | SyntaxKind::ProtectedKeyword => {
                 if seen.accessibility {
                     Some((
-                        "Accessibility modifier already seen.".to_string(),
+                        format_message(diagnostic_messages::ACCESSIBILITY_MODIFIER_ALREADY_SEEN, &[]),
                         diagnostic_codes::ACCESSIBILITY_MODIFIER_ALREADY_SEEN,
                     ))
                 } else if seen.static_ {
@@ -999,8 +995,10 @@ impl ParserState {
                     already_seen("abstract")
                 } else {
                     Some((
-                        "'abstract' modifier can only appear on a class, method, or property declaration."
-                            .to_string(),
+                        format_message(
+                            diagnostic_messages::ABSTRACT_MODIFIER_CAN_ONLY_APPEAR_ON_A_CLASS_METHOD_OR_PROPERTY_DECLARATION,
+                            &[],
+                        ),
                         diagnostic_codes::ABSTRACT_MODIFIER_CAN_ONLY_APPEAR_ON_A_CLASS_METHOD_OR_PROPERTY_DECLARATION,
                     ))
                 }
@@ -1014,14 +1012,18 @@ impl ParserState {
                     cannot_with("accessor", "declare")
                 } else {
                     Some((
-                        "'accessor' modifier can only appear on a property declaration.".to_string(),
+                        format_message(
+                            diagnostic_messages::ACCESSOR_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION,
+                            &[],
+                        ),
                         diagnostic_codes::ACCESSOR_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION,
                     ))
                 }
             }
             SyntaxKind::InKeyword | SyntaxKind::OutKeyword => Some((
-                format!(
-                    "'{text}' modifier can only appear on a type parameter of a class, interface or type alias"
+                format_message(
+                    diagnostic_messages::MODIFIER_CAN_ONLY_APPEAR_ON_A_TYPE_PARAMETER_OF_A_CLASS_INTERFACE_OR_TYPE_ALIAS,
+                    &[text],
                 ),
                 diagnostic_codes::MODIFIER_CAN_ONLY_APPEAR_ON_A_TYPE_PARAMETER_OF_A_CLASS_INTERFACE_OR_TYPE_ALIAS,
             )),
