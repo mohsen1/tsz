@@ -448,3 +448,53 @@ q.w.e = 1;
         vec!["'q.w' is possibly 'undefined'.".to_string()]
     );
 }
+
+#[test]
+fn ts16710_optional_chain_write_target_does_not_seed_expando_type() {
+    // #16710: `obj?.a = 1` is an invalid write target (TS2779, optional
+    // chains can never be assignment targets) and must not be read back as
+    // an expando-property declaration for later reads of `obj?.a` — tsc
+    // keeps the receiver's `any` type. Oracle-verified against
+    // `typescript@7.0.2`: TS2779 only, no TS2322.
+    let source = r#"
+declare const obj: any;
+obj?.a = 1;
+let x: string = obj?.a;
+"#;
+    assert_eq!(strict_codes(source), vec![ASSIGNMENT_TARGET]);
+}
+
+#[test]
+fn ts16710_nonoptional_write_target_control_is_unchanged() {
+    // Regression guard: the already-correct non-optional case (`obj.a = 1`
+    // never went through the expando fast path in the first place) must
+    // stay clean.
+    let source = r#"
+declare const obj: any;
+obj.a = 1;
+let x: string = obj.a;
+"#;
+    assert_eq!(strict_codes(source), Vec::<u32>::new());
+}
+
+#[test]
+fn ts16710_plain_identifier_any_control_is_unchanged() {
+    // Regression guard: plain-identifier `any` narrowing (unrelated to
+    // property access) must stay clean.
+    let source = r#"
+let x: any;
+x = 1;
+let y: string = x;
+"#;
+    assert_eq!(strict_codes(source), Vec::<u32>::new());
+}
+
+#[test]
+fn ts16710_renamed_binder_does_not_change_the_outcome() {
+    let source = r#"
+declare const holder: any;
+holder?.value = 42;
+let out: string = holder?.value;
+"#;
+    assert_eq!(strict_codes(source), vec![ASSIGNMENT_TARGET]);
+}
