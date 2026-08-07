@@ -186,26 +186,31 @@ class C {
     assert!(has_error(source, 2386));
 }
 
-// TS2383: only 2+ bodyless overload signatures must agree on export status.
-// The implementation is not an overload signature; tsc does not check it.
-// Single-overload + implementation export mismatches are silently accepted.
+// TS2383: every bodyless overload signature's export status is compared
+// against the canonical declaration — the implementation, when it shares a
+// container with the first overload, otherwise the first overload itself
+// (tsc's `getCanonicalOverload`). This holds even for a single bodyless
+// signature: the implementation is not itself flagged, but it can still be
+// the canonical whose export status the lone signature must match. Verified
+// against pinned `typescript@7.0.2` (`--noEmit --strict false --module
+// commonjs --target es2015`).
 
 #[test]
-fn ts2383_single_overload_exported_implementation_not_exported_no_error() {
+fn ts2383_single_overload_exported_implementation_not_exported_error() {
     let source = r#"
 export function compute(x: number): number;
 function compute(x: any): number { return x; }
 "#;
-    assert!(!has_error(source, 2383));
+    assert!(has_error(source, 2383));
 }
 
 #[test]
-fn ts2383_single_overload_not_exported_implementation_exported_no_error() {
+fn ts2383_single_overload_not_exported_implementation_exported_error() {
     let source = r#"
 function transform(x: number): number;
 export function transform(x: any): number { return x; }
 "#;
-    assert!(!has_error(source, 2383));
+    assert!(has_error(source, 2383));
 }
 
 #[test]
@@ -227,21 +232,21 @@ function process(x: any): number { return x; }
 }
 
 #[test]
-fn ts2383_single_overload_impl_export_mismatch_different_name_no_error() {
+fn ts2383_single_overload_impl_export_mismatch_renamed_binder_error() {
     let source = r#"
 export function handle(x: string): string;
 function handle(x: any): string { return x; }
 "#;
-    assert!(!has_error(source, 2383));
+    assert!(has_error(source, 2383));
 }
 
 #[test]
-fn ts2383_single_overload_reversed_impl_export_mismatch_no_error() {
+fn ts2383_single_overload_reversed_impl_export_mismatch_error() {
     let source = r#"
 function serialize(x: number): string;
 export function serialize(x: any): string { return String(x); }
 "#;
-    assert!(!has_error(source, 2383));
+    assert!(has_error(source, 2383));
 }
 
 #[test]
@@ -265,24 +270,46 @@ export function route(x: any): void {}
 }
 
 #[test]
-fn ts2383_two_exported_overloads_non_exported_impl_no_error() {
-    // Implementation export status is not checked — only bodyless signatures matter.
+fn ts2383_two_exported_overloads_non_exported_impl_error() {
+    // The implementation shares the source file container with the first
+    // overload, so it is canonical; both agreeing-with-each-other overloads
+    // still deviate from it and are each flagged.
     let source = r#"
 export function compute(x: number): number;
 export function compute(x: string): number;
 function compute(x: any): number { return 0; }
 "#;
-    assert!(!has_error(source, 2383));
+    assert!(has_error(source, 2383));
 }
 
 #[test]
-fn ts2383_two_non_exported_overloads_exported_impl_no_error() {
+fn ts2383_two_non_exported_overloads_exported_impl_error() {
     let source = r#"
 function transform(x: number): string;
 function transform(x: string): string;
 export function transform(x: any): string { return ""; }
 "#;
-    assert!(!has_error(source, 2383));
+    assert!(has_error(source, 2383));
+}
+
+#[test]
+fn ts2383_single_overload_generic_export_mismatch_error() {
+    let source = r#"
+export function identity<T>(x: T): T;
+function identity<T>(x: T): T { return x; }
+"#;
+    assert!(has_error(source, 2383));
+}
+
+#[test]
+fn ts2383_non_ambient_namespace_single_overload_export_mismatch_error() {
+    let source = r#"
+namespace Widgets {
+    export function make(): void;
+    function make(): void {}
+}
+"#;
+    assert!(has_error(source, 2383));
 }
 
 // TS2394: overload signature must be compatible with implementation signature

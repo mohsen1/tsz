@@ -280,7 +280,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
-            if has_ambient_func && has_non_ambient_func {
+            if !func_decls_for_2384.is_empty() {
                 // tsc's `getCanonicalOverload` (checker.ts:43088) takes the
                 // canonical set of flags from the *implementation* when it
                 // shares a container with the first overload, and only
@@ -302,58 +302,58 @@ impl<'a> CheckerState<'a> {
                                 == first_parent
                     })
                     .unwrap_or(first_overload);
-                let ref_is_ambient = self.is_ambient_declaration(canonical);
-                for &decl_idx in &func_decls_for_2384 {
-                    if self.is_ambient_declaration(decl_idx) != ref_is_ambient {
-                        let error_node =
-                            self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
-                        self.error_at_node(
-                            error_node,
-                            diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_AMBIENT_OR_NON_AMBIENT,
-                            diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_AMBIENT_OR_NON_AMBIENT,
-                        );
+
+                if has_ambient_func && has_non_ambient_func {
+                    let ref_is_ambient = self.is_ambient_declaration(canonical);
+                    for &decl_idx in &func_decls_for_2384 {
+                        if self.is_ambient_declaration(decl_idx) != ref_is_ambient {
+                            let error_node =
+                                self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                            self.error_at_node(
+                                error_node,
+                                diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_AMBIENT_OR_NON_AMBIENT,
+                                diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_AMBIENT_OR_NON_AMBIENT,
+                            );
+                        }
                     }
                 }
-            }
 
-            // TS2383: all bodyless overload signatures must agree on export status.
-            // The rule applies when 2+ overload signatures exist; the implementation
-            // is not an overload signature and is not checked for export agreement.
-            //
-            // tsc does not apply this check to overloads declared directly inside an
-            // ambient module/namespace body (`declare namespace M { ... }` /
-            // `declare module "m" { ... }`, including namespaces nested inside one):
-            // `export` on a member of an ambient module body does not carry the same
-            // meaning as a module-level `export`, so mismatched `export` keywords
-            // there are not overload-consistency errors. `declare global { ... }` is
-            // a global augmentation, not an ambient module, and stays subject to the
-            // check, as does a bare top-level `declare function` with no enclosing
-            // namespace/module.
-            if func_decls_for_2384.len() >= 2
-                && !self.is_within_ambient_module_container(func_decls_for_2384[0])
-            {
-                // Restrict to bodyless overload signatures only by looking up export
-                // status for each entry in func_decls_for_2384. The implementation
-                // (absent from func_decls_for_2384) must not influence the check.
-                let func_export_info: Vec<(NodeIndex, bool)> = func_decls_for_2384
-                    .iter()
-                    .filter_map(|&decl_idx| {
-                        declarations
+                // TS2383: every bodyless overload signature must agree on export
+                // status with the canonical declaration (implementation, or first
+                // overload if none shares its container). tsc's
+                // `checkFlagAgreementBetweenOverloads` runs this even for a single
+                // bodyless signature against the implementation, unlike the TS2384
+                // ambient check's 2+-signature grouping above.
+                //
+                // Uses `effective_declaration_container`, not raw `.parent`: the
+                // parser wraps an exported statement in an `EXPORT_DECLARATION`
+                // node, so an exported/non-exported pair in the same block would
+                // otherwise look like different containers, defeating this check.
+                //
+                // Exempt inside an ambient module/namespace body (`export` there
+                // doesn't carry module-export meaning); `declare global { ... }`
+                // and a bare top-level `declare function` stay subject to it.
+                if !self.is_within_ambient_module_container(first_overload) {
+                    let first_overload_container =
+                        self.effective_declaration_container(first_overload);
+                    let export_canonical = implementation_for_2384
+                        .filter(|&impl_idx| {
+                            first_overload_container.is_some()
+                                && self.effective_declaration_container(impl_idx)
+                                    == first_overload_container
+                        })
+                        .unwrap_or(first_overload);
+                    let ref_exported = declarations
+                        .iter()
+                        .find(|&&(di, _, _, _, _)| di == export_canonical)
+                        .map(|&(_, _, _, is_exported, _)| is_exported)
+                        .unwrap_or(false);
+                    for &decl_idx in &func_decls_for_2384 {
+                        let is_exported = declarations
                             .iter()
                             .find(|&&(di, _, _, _, _)| di == decl_idx)
-                            .map(|&(di, _, _, is_exported, _)| (di, is_exported))
-                    })
-                    .collect();
-                let (has_exported, has_non_exported) = func_export_info
-                    .iter()
-                    .fold((false, false), |(exp, non_exp), &(_, e)| {
-                        (exp || e, non_exp || !e)
-                    });
-                // has_exported && has_non_exported already implies len >= 2
-                if has_exported && has_non_exported {
-                    // declarations is ordered, so [0] is always the first overload signature.
-                    let ref_exported = func_export_info[0].1;
-                    for &(decl_idx, is_exported) in &func_export_info {
+                            .map(|&(_, _, _, is_exported, _)| is_exported)
+                            .unwrap_or(false);
                         if is_exported != ref_exported {
                             let error_node =
                                 self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
