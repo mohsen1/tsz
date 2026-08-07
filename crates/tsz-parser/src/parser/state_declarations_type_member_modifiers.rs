@@ -16,7 +16,7 @@ impl ParserState {
     /// A class-member modifier keyword that is illegal on a *type* member.
     /// `readonly` is deliberately excluded: it is the one member modifier `tsc`
     /// accepts on a property signature or index signature.
-    const fn is_illegal_type_member_modifier(kind: SyntaxKind) -> bool {
+    pub(crate) const fn is_illegal_type_member_modifier(kind: SyntaxKind) -> bool {
         matches!(
             kind,
             SyntaxKind::PrivateKeyword

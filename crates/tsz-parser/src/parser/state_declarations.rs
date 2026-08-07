@@ -501,26 +501,48 @@ impl ParserState {
         };
         let readonly = readonly_span.is_some();
 
-        // `readonly async x(): number` / `readonly async x: number`: `async` is a
+        // `readonly async x(): number` / `readonly static m(): number` / etc:
+        // any other type-member modifier written directly after `readonly` is a
         // second leading modifier, not the member name. `tsc` checks `readonly`
         // first in source order (legal only on a property/index signature — see
         // the TS1024 check below) and, only when that doesn't already reject the
-        // member, checks `async` next (always illegal on a type member — TS1070).
-        // Detected here, before name parsing, so `async` is never misread as the
-        // property name (it isn't a valid property-name continuation). It must
-        // still be consumed even when `modifier_diagnostic_reported` is already
-        // true (an earlier illegal modifier fired) — only the diagnostic, not
-        // the consumption, is suppressed in that case.
-        let async_span = if readonly
-            && self.is_token(SyntaxKind::AsyncKeyword)
+        // member, checks the second modifier next (always illegal on a type
+        // member — TS1070). Detected here, before name parsing, so the second
+        // modifier is never misread as the property name (oracle-verified: it
+        // is not a valid property-name continuation in this position, e.g.
+        // `readonly static: number` — `static` used AS the name — stays clean,
+        // guarded by the same `look_ahead_is_property_name_after_keyword` check
+        // used for the leading-modifier case). It must still be consumed even
+        // when `modifier_diagnostic_reported` is already true (an earlier
+        // illegal modifier fired) — only the diagnostic, not the consumption,
+        // is suppressed in that case.
+        let second_modifier_span = if readonly
+            && (self.is_token(SyntaxKind::AsyncKeyword)
+                || Self::is_illegal_type_member_modifier(self.token()))
             && !self.look_ahead_is_property_name_after_keyword()
         {
+            let text = self.scanner.get_token_text();
             let span = (self.token_pos(), self.token_end());
             self.next_token();
+
+            // A longer chain (`readonly async static x`, `readonly static
+            // public x`, ...) still reports a single diagnostic naming only
+            // the first offender — every modifier past it must still be
+            // consumed silently so the member parses cleanly, matching
+            // `parse_type_member_visibility_modifier_error`'s equivalent
+            // "consume the whole run" step for the illegal-modifier-first
+            // case.
+            while (self.is_token(SyntaxKind::AsyncKeyword)
+                || Self::is_illegal_type_member_modifier(self.token()))
+                && !self.look_ahead_is_property_name_after_keyword()
+            {
+                self.next_token();
+            }
+
             if modifier_diagnostic_reported {
                 None
             } else {
-                Some(span)
+                Some((span, text))
             }
         } else {
             None
@@ -544,7 +566,7 @@ impl ParserState {
             // `readonly` is legal only on a property declaration or index
             // signature; on a method or construct signature tsc reports TS1024,
             // anchored at the `readonly` keyword, and (per single-diagnostic-per-
-            // member) never separately reports the trailing `async`.
+            // member) never separately reports a trailing second modifier.
             if !modifier_diagnostic_reported && let Some((ro_start, ro_end)) = readonly_span {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at(
@@ -562,14 +584,16 @@ impl ParserState {
             );
         }
 
-        // Property: `readonly` (if present) is legal here, so `async` (if
-        // present) is the first — and only — offending modifier.
-        if !modifier_diagnostic_reported && let Some((as_start, as_end)) = async_span {
+        // Property: `readonly` (if present) is legal here, so the second
+        // modifier (if present) is the first — and only — offending one.
+        if !modifier_diagnostic_reported
+            && let Some(((mod_start, mod_end), modifier_text)) = second_modifier_span
+        {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at(
-                as_start,
-                as_end.saturating_sub(as_start),
-                "'async' modifier cannot appear on a type member.",
+                mod_start,
+                mod_end.saturating_sub(mod_start),
+                &format!("'{modifier_text}' modifier cannot appear on a type member."),
                 diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_TYPE_MEMBER,
             );
         }
