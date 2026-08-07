@@ -1372,6 +1372,27 @@ impl ParserState {
                 return mapped_type;
             }
 
+            // `readonly` directly followed by a `get`/`set` accessor is grammar-invalid
+            // in tsc: no modifier may precede an accessor signature in a type literal,
+            // matching the same restriction in an interface body (see
+            // `parse_type_members`'s identical check). tsc's parser cannot build any
+            // member starting at `readonly` here, reports TS1131 anchored at the
+            // modifier, and retries from the accessor keyword.
+            if self.is_token(SyntaxKind::ReadonlyKeyword)
+                && self.look_ahead_is_accessor_after_readonly()
+            {
+                let ro_start = self.token_pos();
+                let ro_end = self.token_end();
+                self.next_token(); // consume `readonly`
+                self.parse_error_at(
+                    ro_start,
+                    ro_end.saturating_sub(ro_start),
+                    tsz_common::diagnostics::diagnostic_messages::PROPERTY_OR_SIGNATURE_EXPECTED,
+                    tsz_common::diagnostics::diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED,
+                );
+                continue;
+            }
+
             let saved_pos = self.token_pos();
             let member = self.parse_type_member(false);
 
@@ -1878,6 +1899,27 @@ impl ParserState {
         self.scanner.restore_state(snapshot);
         self.current_token = current;
         is_property_name
+    }
+
+    /// Check if `readonly` (the current token) is directly followed, on the same
+    /// line, by a `get`/`set` accessor signature (`readonly get x()`), as opposed
+    /// to `get`/`set` used as an ordinary property/method name
+    /// (`readonly get(): void`, `readonly get: number`). Used by
+    /// `parse_type_members` to detect tsc's "no modifier before an interface/type
+    /// literal accessor" grammar restriction before the normal readonly-property
+    /// parse path misreads `get`/`set` as the property name.
+    pub(crate) fn look_ahead_is_accessor_after_readonly(&mut self) -> bool {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+
+        self.next_token(); // skip `readonly`
+        let is_accessor = !self.scanner.has_preceding_line_break()
+            && (self.is_token(SyntaxKind::GetKeyword) || self.is_token(SyntaxKind::SetKeyword))
+            && !self.look_ahead_is_property_name_after_keyword();
+
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        is_accessor
     }
 
     /// Check if there is a line break between the current keyword and the next token.
