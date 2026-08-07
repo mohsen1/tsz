@@ -1221,6 +1221,76 @@ fn modifier_private_nominal_mismatch_keeps_separate_declarations_wording() {
     );
 }
 
+/// Instantiated generic classes: two *unrelated* generic classes with a
+/// same-spelled `#v` still get the TS18015 "refers to a different member"
+/// elaboration, and tsc names the *uninstantiated* class in that detail
+/// (`'G'`/`'H'`, not `'G<number>'`/`'H<number>'`) even though the enclosing
+/// TS2322 head names the instantiated form.
+#[test]
+fn es_private_identifier_nominal_mismatch_uses_ts18015_wording_for_generic_classes() {
+    let source = r"
+        class G<T> { #v: T; constructor(v: T) { this.#v = v; } }
+        class H<T> { #v: T; constructor(v: T) { this.#v = v; } }
+        const h: H<number> = new G(1);
+        ";
+
+    test_private_brands(source, 1);
+    let diagnostics = collect_private_brand_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .expect("expected TS2322 for generic ES private identifier nominal mismatch");
+    assert_eq!(
+        ts2322.message_text, "Type 'G<number>' is not assignable to type 'H<number>'.",
+        "the head names the instantiated forms"
+    );
+    assert!(
+        ts2322.related_information.iter().any(|info| info
+            .message_text
+            .contains("Property '#v' in type 'G' refers to a different member that cannot be accessed from within type 'H'.")),
+        "Expected TS18015 wording naming the uninstantiated classes in TS2322 related info, got: {ts2322:?}"
+    );
+    assert!(
+        !ts2322
+            .related_information
+            .iter()
+            .any(|info| info.message_text.contains("separate declarations")),
+        "ES private identifiers must not use the modifier-private 'separate declarations' wording, got: {ts2322:?}"
+    );
+}
+
+/// Same rule for modifier-`private` generic classes: the "separate
+/// declarations" wording, not TS18015, and still the uninstantiated class
+/// names.
+#[test]
+fn modifier_private_nominal_mismatch_generic_classes_keeps_separate_declarations_wording() {
+    let source = r"
+        class G<T> { private v: T; constructor(v: T) { this.v = v; } }
+        class H<T> { private v: T; constructor(v: T) { this.v = v; } }
+        const h: H<number> = new G(1);
+        ";
+
+    test_private_brands(source, 1);
+    let diagnostics = collect_private_brand_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .expect("expected TS2322 for generic modifier-private nominal mismatch");
+    assert!(
+        ts2322.related_information.iter().any(|info| info
+            .message_text
+            .contains("Types have separate declarations of a private property 'v'.")),
+        "Expected 'separate declarations' wording in TS2322 related info, got: {ts2322:?}"
+    );
+    assert!(
+        !ts2322
+            .related_information
+            .iter()
+            .any(|info| info.message_text.contains("refers to a different member")),
+        "Modifier-private members must not use the TS18015 wording, got: {ts2322:?}"
+    );
+}
+
 /// Negative control: a derived class (with or without a redeclared `#x`)
 /// stays assignable to its base — the per-class slot is inherited.
 #[test]
