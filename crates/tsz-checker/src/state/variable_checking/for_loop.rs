@@ -756,23 +756,23 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // TS2780/TS2781: The left-hand side of a 'for...in'/'for...of' statement
-        // may not be an optional property access.
-        if self.is_optional_chain_access(initializer) {
+        // TS2781: The left-hand side of a 'for...of' statement may not be an
+        // optional property access. tsc's checkForOfStatement calls
+        // checkReferenceExpression (the source of TS2781) unconditionally.
+        //
+        // 'for...in' is NOT unconditional this way: tsc's checkForInStatement
+        // only calls checkReferenceExpression (source of TS2780) in the `else`
+        // branch of `if !isTypeAssignableTo(indexType, leftType) { TS2405 }
+        // else { checkReferenceExpression(...) }` — TS2405 wins whenever it
+        // fires. See the TS2405 block below, which owns for-in's TS2780
+        // emission for optional-chain heads once the type check passes.
+        if is_for_of && self.is_optional_chain_access(initializer) {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-            if is_for_of {
-                self.error_at_node(
-                    initializer,
-                    diagnostic_messages::THE_LEFT_HAND_SIDE_OF_A_FOR_OF_STATEMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
-                    diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_OF_STATEMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
-                );
-            } else {
-                self.error_at_node(
-                    initializer,
-                    diagnostic_messages::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
-                    diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
-                );
-            }
+            self.error_at_node(
+                initializer,
+                diagnostic_messages::THE_LEFT_HAND_SIDE_OF_A_FOR_OF_STATEMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
+                diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_OF_STATEMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
+            );
         }
 
         // TS2487: For-of LHS must be a variable or a property access.
@@ -860,11 +860,15 @@ impl<'a> CheckerState<'a> {
         }
 
         // TS2405: For for-in, also check that the LHS type is string or any.
-        // This applies only to valid LHS forms (identifiers and property/element access).
-        // Skip if we already emitted TS2491 (destructuring) or TS2406 (invalid form).
-        // Also skip for optional chain accesses — TS2777 already covers those.
+        // This applies only to valid LHS forms (identifiers and property/element
+        // access, including optional chains). Skip if we already emitted TS2491
+        // (destructuring) or TS2406 (invalid form).
+        //
+        // TS2780: Only once the TS2405 check passes does an optional-chain LHS
+        // get its own TS2780 ("may not be an optional property access") — tsc's
+        // checkForInStatement calls checkReferenceExpression (the source of
+        // TS2780) only in the `else` branch of the type-assignability check.
         if !is_for_of
-            && !self.is_optional_chain_access(initializer)
             && let Some(_init_node) = self.ctx.arena.get(initializer)
             && {
                 let unwrapped = self
@@ -880,7 +884,22 @@ impl<'a> CheckerState<'a> {
             }
         {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-            let var_type = self.get_type_of_assignment_target(initializer);
+            let is_optional_chain = self.is_optional_chain_access(initializer);
+            // The precedence decision needs the head's real type, computed the
+            // way tsc's checkExpression computes it for `leftType` — a plain
+            // read, not the assignment-target/write-target path (which
+            // short-circuits optional chains to `any` for real writes and has
+            // its own nullish-receiver diagnostic). Speculative because this
+            // is a probe for a precedence decision, not a checked position:
+            // any diagnostic the read itself would raise along the chain is
+            // not this check's diagnostic to emit — the real read at the end
+            // of this function (which does NOT short-circuit for for-in) owns
+            // that.
+            let var_type = if is_optional_chain {
+                self.speculative_type_of_node(initializer, &TypingRequest::NONE)
+            } else {
+                self.get_type_of_assignment_target(initializer)
+            };
             // The LHS type must accept the for-in element type. TSC checks
             // `isTypeAssignableTo(indexType, variableType)` where indexType
             // comes from the source expression's key type (keyof T & string
@@ -898,6 +917,12 @@ impl<'a> CheckerState<'a> {
                     initializer,
                     diagnostic_messages::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_MUST_BE_OF_TYPE_STRING_OR_ANY,
                     diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_MUST_BE_OF_TYPE_STRING_OR_ANY,
+                );
+            } else if is_optional_chain {
+                self.error_at_node(
+                    initializer,
+                    diagnostic_messages::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
+                    diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_MAY_NOT_BE_AN_OPTIONAL_PROPERTY_ACCESS,
                 );
             }
         }
