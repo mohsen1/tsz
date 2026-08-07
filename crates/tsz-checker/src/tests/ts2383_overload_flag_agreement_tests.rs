@@ -452,3 +452,59 @@ fn ambient_namespace_body_mixed_export_stays_exempt() {
                   }\n";
     assert_family_exactly(source, &[]);
 }
+
+// -- No-implementation groups: canonical is the FIRST signature in SOURCE
+// -- order, so the deviator is always the later one (#16742 follow-up). The
+// -- binder's declaration push order differs from source order for an
+// -- `export default`-wrapped member, which mis-anchored the first row.
+
+/// A default-exported signature above a plain one: the plain signature
+/// deviates.
+///
+/// ```text
+/// tsc: (2,10) TS2383 (+ TS2391, outside this filter)
+/// ```
+#[test]
+fn no_impl_default_then_plain_blames_the_plain_signature() {
+    let source = "export default function Execute(): void;\n\
+                  function Execute(): void;\n";
+    assert_family_exactly(source, &[DiagnosticShape::code(2383).at(2, 10)]);
+}
+
+/// Reverse order: the default-exported signature deviates from the plain
+/// canonical one.
+///
+/// ```text
+/// tsc: (2,25) TS2383
+/// ```
+#[test]
+fn no_impl_plain_then_default_blames_the_default_signature() {
+    let source = "function Launch(): void;\n\
+                  export default function Launch(): void;\n";
+    assert_family_exactly(source, &[DiagnosticShape::code(2383).at(2, 25)]);
+}
+
+/// Named-export variant: the plain signature deviates from the exported
+/// canonical one.
+///
+/// ```text
+/// tsc: (2,10) TS2383
+/// ```
+#[test]
+fn no_impl_export_then_plain_blames_the_plain_signature() {
+    let source = "export function relay(x: string): string;\n\
+                  function relay(x: number): number;\n";
+    assert_family_exactly(source, &[DiagnosticShape::code(2383).at(2, 10)]);
+}
+
+/// Named-export variant, reverse order: the exported signature deviates.
+///
+/// ```text
+/// tsc: (2,17) TS2383
+/// ```
+#[test]
+fn no_impl_plain_then_export_blames_the_export_signature() {
+    let source = "function relay(x: string): string;\n\
+                  export function relay(x: number): number;\n";
+    assert_family_exactly(source, &[DiagnosticShape::code(2383).at(2, 17)]);
+}
