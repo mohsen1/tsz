@@ -234,7 +234,7 @@ impl SubtypeReductionCache {
 
     /// Returns `true` if the cache is empty.
     #[must_use]
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Dead in the lib build; exercised only by tests.
     pub fn is_empty(&self) -> bool {
         self.inner.borrow().is_empty()
     }

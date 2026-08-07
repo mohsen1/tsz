@@ -9,7 +9,7 @@ use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     /// Check a constructor declaration.
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub(crate) fn check_constructor_declaration(&mut self, member_idx: NodeIndex) {
         self.check_constructor_declaration_with_request(member_idx, &TypingRequest::NONE);
     }

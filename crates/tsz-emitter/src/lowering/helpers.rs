@@ -1787,7 +1787,7 @@ impl<'a> LoweringPass<'a> {
         node.kind == SyntaxKind::StringLiteral as u16
     }
 
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub(super) fn export_decl_has_runtime_value(
         &self,
         export_decl: &tsz_parser::parser::node::ExportDeclData,
