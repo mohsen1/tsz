@@ -14,7 +14,6 @@ fn validate_json_syntax(source: &str) -> Vec<ParseDiagnostic> {
     let len = bytes.len();
     let mut i = 0;
 
-    let is_ws = |b: u8| matches!(b, b' ' | b'\t' | b'\n' | b'\r');
     let is_ident_start = |b: u8| b.is_ascii_alphabetic() || b == b'_' || b == b'$';
     let is_ident_part = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'$';
 
@@ -25,10 +24,10 @@ fn validate_json_syntax(source: &str) -> Vec<ParseDiagnostic> {
     //   end of run        -> TS1005 "'}' expected."
     //
     // Valid JSON roots `true` / `false` / `null` are explicitly allowed.
-    let mut j = 0usize;
-    while j < len && is_ws(bytes[j]) {
-        j += 1;
-    }
+    // Leading trivia (whitespace and comments) is skipped first, so a bare
+    // identifier root preceded by a `// header` comment still triggers the
+    // recovery rather than being masked by the unrecognized `/`.
+    let j = skip_json_trivia(bytes, 0, len);
     if j < len && is_ident_start(bytes[j]) {
         let mut spans: Vec<(usize, usize)> = Vec::new();
         let mut k = j;
@@ -39,9 +38,10 @@ fn validate_json_syntax(source: &str) -> Vec<ParseDiagnostic> {
             }
             spans.push((start, k));
 
-            while k < len && is_ws(bytes[k]) {
-                k += 1;
-            }
+            // Trivia (whitespace and comments alike) separates identifiers in
+            // this recovery run, matching how tsc's scanner tokenizes the same
+            // bytes — so `foo /*c*/ bar` recovers identically to `foo bar`.
+            k = skip_json_trivia(bytes, k, len);
 
             if k < len && is_ident_start(bytes[k]) {
                 continue;
@@ -100,13 +100,20 @@ fn validate_json_syntax(source: &str) -> Vec<ParseDiagnostic> {
     let mut expecting_value = false;
 
     while i < len {
-        let b = bytes[i];
-
-        // Skip whitespace
-        if b == b' ' || b == b'\t' || b == b'\n' || b == b'\r' {
-            i += 1;
+        // Skip whitespace and JSON comment trivia (`//` line and `/* */`
+        // block). tsc's JSON scanner treats both as trivia. This runs before
+        // value/property classification below so a comment sitting between a
+        // property's `:` and its value is skipped rather than mis-reported as
+        // TS1328. Strings are consumed atomically by the string-skip block
+        // further down, so a `//` or `/* */` *inside* a string never reaches
+        // this point and stays part of the value.
+        let after_trivia = skip_json_trivia(bytes, i, len);
+        if after_trivia != i {
+            i = after_trivia;
             continue;
         }
+
+        let b = bytes[i];
 
         // When expecting a property value (just past a property's `:`) or an
         // array element (just past `[` or a `,` inside an array), check what
@@ -250,6 +257,45 @@ fn validate_json_syntax(source: &str) -> Vec<ParseDiagnostic> {
     }
 
     diagnostics
+}
+
+/// Advance `idx` past JSON trivia: ASCII whitespace and `//` line / `/* */`
+/// block comments, which tsc's JSON scanner skips as trivia. Stops at the
+/// first byte that begins neither. A `/` not followed by `/` or `*` is not a
+/// comment and is left in place for the caller to classify. An unterminated
+/// block comment consumes to end of input, matching the scanner treating the
+/// rest of the file as comment.
+///
+/// Callers must only invoke this outside of string literals: a `//` or `/* */`
+/// appearing inside a JSON string is ordinary string content, and the caller's
+/// string handling is responsible for consuming the string whole before this
+/// runs.
+fn skip_json_trivia(bytes: &[u8], mut idx: usize, len: usize) -> usize {
+    loop {
+        idx = tsz_common::text_scan::skip_ascii_whitespace(bytes, idx);
+
+        if idx + 1 < len && bytes[idx] == b'/' && bytes[idx + 1] == b'/' {
+            idx += 2;
+            while idx < len && bytes[idx] != b'\n' {
+                idx += 1;
+            }
+            continue;
+        }
+
+        if idx + 1 < len && bytes[idx] == b'/' && bytes[idx + 1] == b'*' {
+            idx += 2;
+            while idx + 1 < len && !(bytes[idx] == b'*' && bytes[idx + 1] == b'/') {
+                idx += 1;
+            }
+            // Consume the closing `*/`, or run to end of input if the block
+            // comment is unterminated.
+            idx = (idx + 2).min(len);
+            continue;
+        }
+
+        break;
+    }
+    idx
 }
 
 /// Returns whether `bytes[i..]` starts with the exact keyword `word` (`true`,
