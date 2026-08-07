@@ -181,14 +181,26 @@ export const t: { [k: symbol]: number } = i;
 // ---------------------------------------------------------------------------
 
 #[test]
-#[ignore = "known failure: keyof over a well-known-symbol-keyed interface does not reduce to the well-known symbol (false TS2322)"]
 fn keyof_a_well_known_symbol_keyed_interface_reduces_to_the_well_known_symbol() {
     // tsc 7.0.2: exit 0 — `keyof I` IS `typeof Symbol.iterator`.
-    // tsz today: TS2322 "Type 'keyof I' is not assignable to type 'unique symbol'."
     //
-    // The equivalent shape keyed by a user-authored `unique symbol` binding
-    // (`declare const u: unique symbol; interface I { [u]: number }`) is
-    // already clean, so the gap is specific to the well-known leg.
+    // A well-known-symbol-keyed member is a *named* member (`is_symbol_named`
+    // is false) stored under its canonical `[Symbol.iterator]` atom, so `keyof`
+    // took the literal-key branch and produced the string literal
+    // `"[Symbol.iterator]"` instead of `typeof Symbol.iterator`. `keyof` now
+    // recovers the unique-symbol key for such a named key through the
+    // well-known-symbol registry, which is seeded from the lib `SymbolConstructor`
+    // members up front so the registry is populated before the alias is
+    // evaluated. The equivalent shape keyed by a user-authored `unique symbol`
+    // binding (`declare const u: unique symbol; interface I { [u]: number }`)
+    // was already clean; this closes the well-known leg.
+    //
+    // First landed as #16628, reverted as #16764 because seeding the registry
+    // eagerly (via `collect_properties` over `SymbolConstructor`'s resolved
+    // type) cost the `SymbolConstructor` display name on unrelated `TS2339`
+    // property-lookup failures — see
+    // `well_known_symbol_property_lookup_failure_keeps_symbol_constructor_name`
+    // below, the regression this reland must not reintroduce (#16765).
     let codes = diagnostic_codes(
         r#"
 interface I { [Symbol.iterator]: number }
@@ -204,6 +216,46 @@ export const a: typeof Symbol.iterator = k;
     );
 }
 
+// Pins #16765's acceptance criterion 4: a `TS2339` property-lookup failure on
+// `Symbol` (typed `SymbolConstructor`) must keep showing the alias name, not
+// the structural intersection `SymbolConstructor`'s per-file lib declarations
+// merge into. `seed_well_known_symbol_names` (called from
+// `prepare_source_file_for_checking`, ahead of the normal environment build)
+// resolves and collects `SymbolConstructor`'s properties eagerly; without
+// explicitly re-recording that resolution's display-alias provenance, whichever
+// caller reaches `SymbolConstructor` first "wins" the alias registration, and
+// losing that race prints ~400 characters of merged interface shape instead of
+// one word. This is a rendered-message assertion, deliberately narrower than
+// `diagnostic_codes` — the corpus regression in #16628/#16764 had an identical
+// diagnostic *code* set on both sides of the bug, so a code-only assertion here
+// would not have caught it.
+#[test]
+fn well_known_symbol_property_lookup_failure_keeps_symbol_constructor_name() {
+    use tsz_checker::test_utils::check_source_with_libs_code_messages;
+    let libs = load_default_lib_files();
+    let diags = check_source_with_libs_code_messages(
+        r#"
+Symbol.nonsense;
+"#,
+        "test.ts",
+        CheckerOptions::default(),
+        &libs,
+    );
+    let messages: Vec<&str> = diags.iter().map(|(_, m)| m.as_str()).collect();
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("does not exist on type 'SymbolConstructor'")),
+        "TS2339 on `Symbol.<unknown>` must name 'SymbolConstructor', not its \
+         expanded structural shape; got: {messages:?}"
+    );
+    assert!(
+        !messages.iter().any(|m| m.contains("readonly iterator")),
+        "must not leak SymbolConstructor's merged structural shape into the \
+         message; got: {messages:?}"
+    );
+}
+
 #[test]
 #[ignore = "known failure: indexed access by a well-known symbol type leaks the __unique_N placeholder (TS2339/TS2538)"]
 fn indexed_access_by_a_well_known_symbol_type_resolves_the_member() {
@@ -213,6 +265,15 @@ fn indexed_access_by_a_well_known_symbol_type_resolves_the_member() {
     //   TS2339 "Property '__unique_5' does not exist on type 'I'."
     //   TS2538 "Type 'unique symbol' cannot be used as an index type."
     //   TS2322 "Type 'undefined' is not assignable to type 'number'."
+    //
+    // The forward direction (this member's `keyof` key) is fixed; the reverse
+    // direction here (`typeof Symbol.iterator` = `UniqueSymbol(ref)` back to the
+    // `[Symbol.iterator]` atom to find the member) reads the lazily-populated
+    // reverse index, which is still empty when this type alias is evaluated.
+    // It cannot be seeded eagerly like the forward index without regressing the
+    // reverse lookup, because several well-known members share one `SymbolRef`
+    // (lib cross-file `SymbolId` collision), so the reverse map would become
+    // ambiguous. Closing this needs globally-unique lib `SymbolId`s.
     let codes = diagnostic_codes(
         r#"
 interface I { [Symbol.iterator]: number }
