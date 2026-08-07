@@ -2739,3 +2739,6 @@ path = "tests/ts2345_primitive_key_union_constraint_display_tests.rs"
 [[test]]
 name = "ts2369_source_order_anchor_tests"
 path = "tests/ts2369_source_order_anchor_tests.rs"
+[[test]]
+name = "ts7032_zero_parameter_setter_tests"
+path = "tests/ts7032_zero_parameter_setter_tests.rs"

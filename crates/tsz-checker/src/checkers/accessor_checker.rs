@@ -277,6 +277,26 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|getter| getter.type_annotation.is_some() || getter.body.is_some());
         let accessor_name = accessor.name;
 
+        if accessor.parameters.nodes.is_empty() {
+            // A zero-parameter setter (`set a() {}` in an interface/type
+            // literal) is grammatically invalid (`TS1049` fires separately)
+            // but still "lacks a parameter type annotation" for `TS7032`
+            // purposes — the loop below never runs for this shape.
+            if !paired_getter_supplies_type
+                && let Some(prop_name) = self.property_name_for_error(accessor_name)
+            {
+                let message = format!(
+                    "Property '{prop_name}' implicitly has type 'any', because its set accessor lacks a parameter type annotation."
+                );
+                self.error_at_node(
+                    accessor_name,
+                    &message,
+                    diagnostic_codes::PROPERTY_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_ITS_SET_ACCESSOR_LACKS_A_PARAMETER_TYPE,
+                );
+            }
+            return;
+        }
+
         for (param_index, &param_idx) in accessor.parameters.nodes.iter().enumerate() {
             let Some(param_node) = self.ctx.arena.get(param_idx) else {
                 continue;
@@ -619,6 +639,31 @@ impl<'a> CheckerState<'a> {
         accessor_jsdoc: Option<&str>,
         accessor_name: Option<NodeIndex>,
     ) {
+        if parameters.is_empty() {
+            // A zero-parameter setter (`set y() {}`) is grammatically invalid
+            // (`TS1049` fires separately, from `check_setter_parameter_grammar`)
+            // but `tsc` still reports `TS7032`: "lacks a parameter type
+            // annotation" is true of a setter with no parameter at all, not
+            // only of one whose sole parameter is unannotated. The loop below
+            // never runs for this shape, so the check needs its own arm.
+            let property_type_supplied = has_paired_getter && paired_getter_supplies_type;
+            if !property_type_supplied
+                && self.ctx.no_implicit_any()
+                && let Some(name_idx) = accessor_name
+            {
+                let prop_name = self.parameter_name_for_error(name_idx);
+                let message = format!(
+                    "Property '{prop_name}' implicitly has type 'any', because its set accessor lacks a parameter type annotation."
+                );
+                self.error_at_node(
+                    name_idx,
+                    &message,
+                    diagnostic_codes::PROPERTY_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_ITS_SET_ACCESSOR_LACKS_A_PARAMETER_TYPE,
+                );
+            }
+            return;
+        }
+
         for &param_idx in parameters {
             let Some(param_node) = self.ctx.arena.get(param_idx) else {
                 continue;

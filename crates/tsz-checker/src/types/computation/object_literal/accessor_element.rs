@@ -110,7 +110,13 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|name| obj_getter_names.contains(name));
             // Check if accessor JSDoc has @param type annotations
             let accessor_jsdoc = self.get_jsdoc_for_function(elem_idx);
-            let mut first_param_lacks_annotation = false;
+            // A zero-parameter setter (`{ set z() {} }`) is grammatically
+            // invalid (`TS1049` fires separately) but still "lacks a
+            // parameter type annotation" for `TS7032` purposes — the loop
+            // below never runs for this shape, so start from `true` instead
+            // of `false` and let an actual annotated/JSDoc-typed parameter
+            // clear it.
+            let mut first_param_lacks_annotation = accessor.parameters.nodes.is_empty();
             for (pi, &param_idx) in accessor.parameters.nodes.iter().enumerate() {
                 if let Some(param_node) = self.ctx.arena.get(param_idx)
                     && let Some(param) = self.ctx.arena.get_parameter(param_node)
