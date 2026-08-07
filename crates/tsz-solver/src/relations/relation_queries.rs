@@ -1022,10 +1022,29 @@ pub fn check_application_variance<R: TypeResolver>(
 
     let variances = {
         let def_id = lazy_def_id(db, s_app.base)?;
+        // The structural fallback must be the *effective* mask, not the raw
+        // declared-mode one: `compute_type_param_variances_with_resolver_cached`
+        // is session-stable and ignores `strictFunctionTypes`/method-bivariance
+        // entirely, so a function-typed property (`{ member: (cb: T) => void
+        // }`) always measures as strictly contravariant even when
+        // `strictFunctionTypes` is off. That misclassification made this
+        // public-variance prepass hard-reject a pair the downstream structural
+        // relation (which does honor the policy) would accept — this boundary
+        // must see the same bivariance a method parameter already gets.
         resolver.get_type_param_variance(def_id).or_else(|| {
-            crate::relations::variance::compute_type_param_variances_with_resolver_cached(
-                db, resolver, query_db, def_id,
-            )
+            let outcome =
+                crate::relations::variance::compute_effective_type_param_variances_with_resolver_cached(
+                    db,
+                    resolver,
+                    context.evaluation_session,
+                    def_id,
+                    policy.strict_function_types(),
+                    policy.disable_method_bivariance(),
+                )?;
+            if outcome.incomplete {
+                return None;
+            }
+            Some(outcome.variances)
         })?
     };
     if variances.len() != s_app.args.len() {

@@ -194,7 +194,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 continue;
             };
 
-            let Some(variances) = self.resolve_any_never_application_variances(def_id) else {
+            let Some(variances) = self.resolve_effective_application_variances(def_id) else {
                 continue;
             };
             if variances.len() != s_app.args.len() {
@@ -309,7 +309,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return None;
         }
         let def_id = self.any_never_variance_owner_def(def_id)?;
-        let variances = self.resolve_any_never_application_variances(def_id)?;
+        let variances = self.resolve_effective_application_variances(def_id)?;
         if variances.len() != source_args.len() {
             return None;
         }
@@ -368,13 +368,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         })
     }
 
-    /// Resolve variance for the already-proven exceptional `any`/`never` path.
+    /// Resolve the context-aware ("effective") variance mask for `def_id`.
     ///
-    /// The result merges partial annotations at every nested declaration and
-    /// observes the active `strictFunctionTypes` callback rule. The
-    /// generation-scoped evaluation-session cache keeps repeated exceptional
-    /// queries O(arity) without retaining stale publication generations.
-    fn resolve_any_never_application_variances(&self, def_id: DefId) -> Option<Arc<[Variance]>> {
+    /// The result merges declared annotations with structural holes and
+    /// observes the active `strictFunctionTypes`/method-bivariance settings —
+    /// a function-typed property compares bivariantly here whenever
+    /// `strictFunctionTypes` is off, exactly like a method. The
+    /// generation-scoped evaluation-session cache keeps repeated queries
+    /// O(arity) without retaining stale publication generations.
+    fn resolve_effective_application_variances(&self, def_id: DefId) -> Option<Arc<[Variance]>> {
         let outcome =
             crate::relations::variance::compute_effective_type_param_variances_with_resolver_cached(
                 self.interner,
@@ -1028,19 +1030,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     /// Resolve the per-type-parameter variance mask for a generic definition,
-    /// preferring declared/cached variances and computing (and caching) them
-    /// only when missing. Shared by the variance-aware relation fast path and
-    /// the same-generic error-elaboration path so both observe identical
-    /// variance facts.
+    /// preferring an explicit declared `in`/`out` annotation and falling back
+    /// to the context-aware structural computation. Shared by the
+    /// variance-aware relation fast path and the same-generic
+    /// error-elaboration path so both observe identical variance facts.
+    ///
+    /// The fallback must be the *effective* mask, not the raw structural
+    /// ("declared-mode") one: the declared-mode computer is session-stable
+    /// and ignores `strictFunctionTypes`/method-bivariance entirely, so a
+    /// function-typed property (`{ member: (cb: T) => void }`) would always
+    /// measure as strictly contravariant even when `strictFunctionTypes` is
+    /// off. This assignability fast path must see the same bivariance a
+    /// method parameter already gets in that mode, or it hard-rejects a pair
+    /// the structural relation (which does honor the flag) would accept.
     pub(crate) fn resolve_application_variances(&self, def_id: DefId) -> Option<Arc<[Variance]>> {
-        self.resolver.get_type_param_variance(def_id).or_else(|| {
-            crate::relations::variance::compute_type_param_variances_with_resolver_cached(
-                self.interner,
-                self.resolver,
-                self.query_db,
-                def_id,
-            )
-        })
+        self.resolver
+            .get_type_param_variance(def_id)
+            .or_else(|| self.resolve_effective_application_variances(def_id))
     }
 
     /// Explain a same-generic application failure (`C<A..>` vs `C<B..>`) by
