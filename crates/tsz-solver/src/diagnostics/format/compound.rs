@@ -8,7 +8,7 @@ use super::TypeFormatter;
 use crate::types::{
     CallSignature, CallableShape, ConditionalType, FunctionShape, LiteralValue, MappedModifier,
     MappedType, ObjectShape, ParamInfo, PropertyInfo, SymbolRef, TemplateSpan, TupleElement,
-    TypeData, TypeId, TypeParamInfo,
+    TupleListId, TypeData, TypeId, TypeParamInfo,
 };
 use std::borrow::Cow;
 use tsz_binder::SymbolId;
