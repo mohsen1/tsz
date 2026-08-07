@@ -190,6 +190,16 @@ impl<'a> CheckerState<'a> {
             && let Some(ref name) = name_text
             && let Some(&param_type) = self.ctx.typeof_param_scope.get(name.as_str())
         {
+            // This branch answers `typeof <name>` from the precomputed
+            // signature-scope type rather than by resolving `expr_name`
+            // through the normal identifier path, so the resolver that
+            // marks a symbol as read (`resolve_identifier_symbol`) never
+            // runs for it. tsc's `checkTypeQuery` always routes the operand
+            // through `checkExpressionOrQualifiedName`, i.e. every `typeof`
+            // operand is a genuine read regardless of which path answers its
+            // type; mark it explicitly here so `--noUnusedParameters` does
+            // not report the named parameter as unread.
+            self.resolve_identifier_symbol(type_query.expr_name);
             return param_type;
         }
 

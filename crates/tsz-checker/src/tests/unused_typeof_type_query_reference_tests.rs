@@ -152,21 +152,17 @@ fn a_module_local_read_by_an_exported_type_alias_query_is_used() {
     );
 }
 
-/// Tripwire for the one spelling this fix does **not** reach: a `typeof` written
-/// inside the **type arguments** of a type reference. Measured through the built
-/// CLI (`--strict --target es2022 --noUnusedLocals --noUnusedParameters`), the
-/// parameter is still reported as unread for `Wrap<typeof a>`, `Array<typeof a>`,
-/// `ReadonlyArray<typeof a>`, `Map<string, typeof a>` and `Wrap<(typeof a)>`,
-/// while every non-type-argument spelling above is now correct. tsc reports
-/// nothing for any of them.
-///
-/// The `--noUnusedLocals` half of the same spelling is already correct
-/// (`const w = 1; export const y: Wrap<typeof w> = { v: 1 };` is clean), which
-/// places the remaining defect on the parameter re-scan rather than on reference
-/// tracking. Left as a failing assertion under `#[ignore]` so it flips loudly
-/// when the type-argument cell is closed rather than sitting as a silent absence.
+/// A `typeof` written inside the **type arguments** of a type reference
+/// (`Wrap<typeof a>`). The signature-building pass answers this query from
+/// `typeof_param_scope` (a precomputed name → `TypeId` map covering exactly
+/// this shape) rather than by resolving `expr_name` through the normal
+/// identifier path, so the resolver that marks a symbol as read never ran for
+/// it — the type-argument spelling never got a second, post-signature
+/// evaluation the way a direct annotation spelling does. Fixed by marking the
+/// operand referenced directly inside that shortcut branch
+/// (`get_type_from_type_query_flow_sensitive_with_request` in
+/// `state/type_analysis/core_type_query.rs`).
 #[test]
-#[ignore = "type-argument-nested typeof is a separate open cell; see the module docs"]
 fn a_parameter_read_by_a_type_argument_type_query_is_used() {
     let codes = unused_codes(
         "type Wrap<T> = { v: T };\nexport function m2(a: number, b: Wrap<typeof a>) { return b; }\n",
@@ -175,6 +171,55 @@ fn a_parameter_read_by_a_type_argument_type_query_is_used() {
     assert!(
         !codes.contains(&6133),
         "a `typeof` in type-argument position reads its operand. Got: {codes:?}"
+    );
+}
+
+/// Same shape, a lib-builtin generic instead of a local alias — the fix lives
+/// in the general `typeof_param_scope` shortcut, not in local-alias handling.
+#[test]
+fn a_parameter_read_by_a_typeof_type_argument_to_a_builtin_generic_is_used() {
+    let codes = unused_codes("export function m3(a: number, b: Array<typeof a>) { return b; }\n");
+
+    assert!(
+        !codes.contains(&6133),
+        "a `typeof` type argument to a builtin generic reads its operand. Got: {codes:?}"
+    );
+}
+
+/// The second of two type arguments (`Map<string, typeof a>`) — the fix must
+/// not depend on the query sitting in the first argument slot.
+#[test]
+fn a_parameter_read_by_a_typeof_second_type_argument_is_used() {
+    let codes =
+        unused_codes("export function m4(a: number, b: Map<string, typeof a>) { return b; }\n");
+
+    assert!(
+        !codes.contains(&6133),
+        "a `typeof` in a later type-argument slot reads its operand. Got: {codes:?}"
+    );
+}
+
+/// Parenthesized inside the type argument (`Wrap<(typeof a)>`) — a separate,
+/// still-open residual. Traced live (`TSZ_LOG`, dev CLI build): neither the
+/// `typeof_param_scope` shortcut in
+/// `get_type_from_type_query_flow_sensitive_with_request`
+/// (`state/type_analysis/core_type_query.rs`, fixed by this PR for the
+/// unparenthesized sibling) nor the mirrored `type_query_override` shortcut
+/// in `lower_with_resolvers_impl` (`type_node_lowering.rs`, also fixed here)
+/// is ever entered for this shape — zero hits on both, confirmed by tracing
+/// every call to each. The parenthesized type argument resolves through a
+/// third, unidentified path. Left `#[ignore]`d with its own oracle row
+/// rather than banked, per #16704's next-probe note.
+#[test]
+#[ignore = "parenthesized-type-argument typeof is a separate open cell (neither known typeof_param_scope shortcut is entered); see #16704"]
+fn a_parameter_read_by_a_parenthesized_type_argument_type_query_is_used() {
+    let codes = unused_codes(
+        "type Wrap<T> = { v: T };\nexport function m5(a: number, b: Wrap<(typeof a)>) { return b; }\n",
+    );
+
+    assert!(
+        !codes.contains(&6133),
+        "a parenthesized `typeof` type argument reads its operand. Got: {codes:?}"
     );
 }
 

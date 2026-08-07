@@ -249,6 +249,20 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 && let Some(&param_type) =
                     self.ctx.typeof_param_scope.get(ident.escaped_text.as_str())
             {
+                // Mirrors the `typeof_param_scope` shortcut in
+                // `get_type_from_type_query_flow_sensitive_with_request`
+                // (`state/type_analysis/core_type_query.rs`): this answers
+                // `typeof <name>` from the precomputed signature-scope type
+                // instead of resolving `expr_name_idx` through the normal
+                // identifier path, so mark the operand referenced explicitly
+                // — every `typeof` operand is a genuine read regardless of
+                // which path answers its type.
+                if let Some(sym_id) = value_resolver(expr_name_idx) {
+                    self.ctx
+                        .referenced_symbols
+                        .borrow_mut()
+                        .insert(tsz_binder::SymbolId(sym_id));
+                }
                 return Some(param_type);
             }
 
