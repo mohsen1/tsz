@@ -1135,13 +1135,24 @@ impl<'a> CheckerState<'a> {
             };
 
             match node.kind {
-                // TS1042: 'async' modifier cannot be used on getters/setters
+                // TS1042: 'async' modifier cannot be used on getters/setters.
+                // Anchor at the `async` keyword (tsc's `checkGrammarModifiers`
+                // points at the offending modifier, not the accessor name, so
+                // `public async get x()` still points at `async`). When the
+                // accessor also carries `readonly`, defer to that member's
+                // TS1024 (`readonly`-on-accessor, reported from `class.rs`):
+                // tsc emits a single modifier-grammar diagnostic per member and
+                // `readonly` wins over `async` on an accessor in either source
+                // order (`readonly async get`, `async readonly get` both report
+                // only TS1024). `readonly` on a *property* is legal and does not
+                // fire TS1024, so the property arm below keeps its lone TS1042.
                 syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => {
                     if let Some(accessor) = self.ctx.arena.get_accessor(node)
-                        && self.has_async_modifier(&accessor.modifiers)
+                        && !self.has_readonly_modifier(&accessor.modifiers)
+                        && let Some(async_mod_idx) = self.find_async_modifier(&accessor.modifiers)
                     {
                         self.error_at_node(
-                            member_idx,
+                            async_mod_idx,
                             "'async' modifier cannot be used here.",
                             diagnostic_codes::MODIFIER_CANNOT_BE_USED_HERE,
                         );

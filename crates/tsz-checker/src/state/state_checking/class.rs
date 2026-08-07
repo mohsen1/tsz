@@ -522,28 +522,34 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                // TS1024: 'readonly' modifier can only appear on a property declaration or index signature.
+                // TS1024: 'readonly' modifier can only appear on a property
+                // declaration or index signature. tsc's `checkGrammarModifiers`
+                // anchors this at the `readonly` keyword itself, not the member
+                // name or the declaration start, so a `readonly` that is not the
+                // first modifier — `static readonly m()`, `public readonly get x()`,
+                // `abstract readonly get x()` — still points at `readonly`. Anchor
+                // at the modifier node the same way the constructor arm in
+                // `ambient_constructor_checks.rs` already does, rather than at the
+                // whole member node.
                 {
-                    let has_readonly_on_non_property = match member_node.kind {
-                        syntax_kind_ext::METHOD_DECLARATION => {
-                            if let Some(method) = self.ctx.arena.get_method_decl(member_node) {
-                                self.has_readonly_modifier(&method.modifiers)
-                            } else {
-                                false
-                            }
-                        }
-                        syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => {
-                            if let Some(accessor) = self.ctx.arena.get_accessor(member_node) {
-                                self.has_readonly_modifier(&accessor.modifiers)
-                            } else {
-                                false
-                            }
-                        }
-                        _ => false,
+                    let readonly_mod = match member_node.kind {
+                        syntax_kind_ext::METHOD_DECLARATION => self
+                            .ctx
+                            .arena
+                            .get_method_decl(member_node)
+                            .map(|method| method.modifiers.clone())
+                            .and_then(|modifiers| self.find_readonly_modifier(&modifiers)),
+                        syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => self
+                            .ctx
+                            .arena
+                            .get_accessor(member_node)
+                            .map(|accessor| accessor.modifiers.clone())
+                            .and_then(|modifiers| self.find_readonly_modifier(&modifiers)),
+                        _ => None,
                     };
-                    if has_readonly_on_non_property {
+                    if let Some(readonly_mod) = readonly_mod {
                         self.error_at_node(
-                            member_idx,
+                            readonly_mod,
                             diagnostic_messages::READONLY_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION_OR_INDEX_SIGNATURE,
                             diagnostic_codes::READONLY_MODIFIER_CAN_ONLY_APPEAR_ON_A_PROPERTY_DECLARATION_OR_INDEX_SIGNATURE,
                         );
