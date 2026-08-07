@@ -729,6 +729,8 @@ mod overload_param_relation_routing_arch_tests;
 mod overload_two_pass_any_source_tests;
 #[path = "tests/overload_union_context_callback_tests.rs"]
 mod overload_union_context_callback_tests;
+#[path = "tests/overloaded_callable_param_no_implicit_any_tests.rs"]
+mod overloaded_callable_param_no_implicit_any_tests;
 #[path = "tests/overloaded_contextual_rest_tuple_tests.rs"]
 mod overloaded_contextual_rest_tuple_tests;
 #[path = "tests/override_incompatibility_elaboration_tests.rs"]
