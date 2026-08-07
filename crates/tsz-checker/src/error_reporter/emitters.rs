@@ -105,6 +105,24 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// [`Self::error_at_anchor`] with `related_information` already attached,
+    /// built as one complete `Diagnostic` value before it is pushed — the
+    /// anchor-resolving counterpart to [`Self::error_at_span_with_related`],
+    /// for callers whose primary span comes from the shared anchor policy
+    /// rather than a raw node span.
+    pub(crate) fn error_at_anchor_with_related(
+        &mut self,
+        node_idx: NodeIndex,
+        anchor_kind: DiagnosticAnchorKind,
+        message: &str,
+        code: u32,
+        related: Vec<crate::diagnostics::DiagnosticRelatedInformation>,
+    ) {
+        if let Some(anchor) = self.resolve_diagnostic_anchor(node_idx, anchor_kind) {
+            self.error_at_span_with_related(anchor.start, anchor.length, message, code, related);
+        }
+    }
+
     /// Emit a generator-related error (TS1221/TS1222) at the `*` asterisk token.
     ///
     /// TSC's `grammarErrorOnNode(node.asteriskToken!, ...)` anchors these errors

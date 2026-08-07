@@ -1821,7 +1821,7 @@ impl<'a> CheckerState<'a> {
                     format!("Property '{prop_name}' does not exist on type '{type_display}'."),
                 )
             };
-            self.error_at_anchor(idx, DiagnosticAnchorKind::PropertyToken, &message, code);
+            self.error_property_does_not_exist_with_never_elaboration(idx, code, &message, type_id);
         }
     }
 }

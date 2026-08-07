@@ -189,26 +189,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         annotation_idx: NodeIndex,
     ) -> Option<String> {
-        let mut annotation_idx = annotation_idx;
-        while self.ctx.arena.get(annotation_idx).is_some_and(|node| {
-            node.kind == tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_TYPE
-        }) {
-            annotation_idx = self
-                .ctx
-                .arena
-                .get_wrapped_type_at(annotation_idx)?
-                .type_node;
-        }
-
-        let node = self.ctx.arena.get(annotation_idx)?;
-        if node.kind != tsz_parser::parser::syntax_kind_ext::INTERSECTION_TYPE {
-            return None;
-        }
-
-        let member_nodes = self.ctx.arena.get_composite_type(node)?.types.nodes.clone();
-        if member_nodes.len() < 2 {
-            return None;
-        }
+        let member_nodes = self.declared_intersection_annotation_member_nodes(annotation_idx)?;
 
         let mut members = Vec::with_capacity(member_nodes.len());
         let mut saw_type_literal_member = false;
@@ -235,5 +216,62 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         Some(members.join(" & "))
+    }
+
+    /// The member type nodes of `annotation_idx` when it is (after peeling
+    /// wrapping parentheses) a written `IntersectionType` with at least two
+    /// members, shared by [`Self::format_declared_intersection_annotation_node`]
+    /// and [`Self::declared_intersection_member_types_for_expression`] so the
+    /// peel-and-validate walk is not re-spelled between a display-oriented
+    /// caller and a type-oriented one.
+    fn declared_intersection_annotation_member_nodes(
+        &self,
+        annotation_idx: NodeIndex,
+    ) -> Option<Vec<NodeIndex>> {
+        let mut annotation_idx = annotation_idx;
+        while self.ctx.arena.get(annotation_idx).is_some_and(|node| {
+            node.kind == tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_TYPE
+        }) {
+            annotation_idx = self
+                .ctx
+                .arena
+                .get_wrapped_type_at(annotation_idx)?
+                .type_node;
+        }
+
+        let node = self.ctx.arena.get(annotation_idx)?;
+        if node.kind != tsz_parser::parser::syntax_kind_ext::INTERSECTION_TYPE {
+            return None;
+        }
+
+        let members = self.ctx.arena.get_composite_type(node)?.types.nodes.clone();
+        (members.len() >= 2).then_some(members)
+    }
+
+    /// The evaluated types of a property-access receiver's *declared*
+    /// written-intersection members (`declare const c: A & B` — each member
+    /// evaluated independently), when the receiver's declared type is
+    /// directly a written intersection.
+    ///
+    /// Unlike [`Self::declared_intersection_annotation_display_for_expression`],
+    /// this carries no type-literal display gate: a conflict-detection query
+    /// over the members is just as valid when every member is a plain
+    /// interface/type-alias reference as when one is a type literal. Returns
+    /// `None` for every case the caller must silently accept (no explicit
+    /// annotation, not an intersection, fewer than two members) rather than
+    /// guessing — the primary diagnostic is unaffected either way.
+    pub(in crate::error_reporter) fn declared_intersection_member_types_for_expression(
+        &mut self,
+        expr_idx: NodeIndex,
+    ) -> Option<Vec<tsz_solver::TypeId>> {
+        let annotation_idx =
+            self.declared_current_arena_annotation_node_for_expression(expr_idx)?;
+        let member_nodes = self.declared_intersection_annotation_member_nodes(annotation_idx)?;
+        Some(
+            member_nodes
+                .iter()
+                .map(|&member_node| self.get_type_from_type_node(member_node))
+                .collect(),
+        )
     }
 }
