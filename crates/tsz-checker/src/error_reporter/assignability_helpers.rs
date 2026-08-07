@@ -1004,12 +1004,64 @@ impl<'a> CheckerState<'a> {
             })
     }
 
+    /// Resolve the *declaring class* name of `property_name` on `ty`.
+    ///
+    /// Evaluates through instantiated (`Application`) forms first, then reads
+    /// the member's owning class symbol, so an instantiated generic
+    /// (`G<number>`) reports its bare class name `G`. That is the spelling
+    /// `tsc` uses inside a nominal-member elaboration — the top-level
+    /// assignability line still shows the instantiated `G<number>`, but the
+    /// `refers to a different member` detail names the uninstantiated class.
+    pub(super) fn member_declaring_class_name(
+        &mut self,
+        ty: TypeId,
+        property_name: tsz_common::interner::Atom,
+    ) -> Option<String> {
+        let evaluated = self.evaluate_type_with_env(ty);
+        let info = self.property_info_for_display(evaluated, property_name)?;
+        let sym = self.ctx.binder.get_symbol(info.parent_id?)?;
+        Some(sym.escaped_name.clone())
+    }
+
+    /// Build the TS18015 elaboration for an ES private identifier (`#name`)
+    /// nominal mismatch, naming each side's declaring class (uninstantiated).
+    ///
+    /// `fallback_source` / `fallback_target` supply the top-level type display
+    /// for the rare case a side has no resolvable owning class symbol (e.g. an
+    /// anonymous structural source), preserving the historical spelling there.
+    pub(super) fn private_identifier_mismatch_detail(
+        &mut self,
+        source_type: TypeId,
+        target_type: TypeId,
+        property_name: tsz_common::interner::Atom,
+        fallback_source: &str,
+        fallback_target: &str,
+    ) -> String {
+        let prop_name = self.ctx.types.resolve_atom_ref(property_name).to_string();
+        let source_owner = self
+            .member_declaring_class_name(source_type, property_name)
+            .unwrap_or_else(|| fallback_source.to_string());
+        let target_owner = self
+            .member_declaring_class_name(target_type, property_name)
+            .unwrap_or_else(|| fallback_target.to_string());
+        format_message(
+            diagnostic_messages::PROPERTY_IN_TYPE_REFERS_TO_A_DIFFERENT_MEMBER_THAT_CANNOT_BE_ACCESSED_FROM_WITHI,
+            &[&prop_name, &source_owner, &target_owner],
+        )
+    }
+
     pub(super) fn nominal_mismatch_detail(
-        &self,
+        &mut self,
         source_type: TypeId,
         target_type: TypeId,
         property_name: tsz_common::interner::Atom,
     ) -> Option<String> {
+        // Evaluate through instantiated (`Application`) forms so a generic
+        // modifier-`private` pair (`class A<T> { private s } … : B<U> = new A()`)
+        // resolves the member and its visibility rather than dropping the
+        // elaboration.
+        let source_type = self.evaluate_type_with_env(source_type);
+        let target_type = self.evaluate_type_with_env(target_type);
         let source_prop = self.property_info_for_display(source_type, property_name)?;
         let target_prop = self.property_info_for_display(target_type, property_name)?;
         if source_prop.visibility != target_prop.visibility
