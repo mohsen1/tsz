@@ -28,6 +28,20 @@ use tsz_common::interner::Atom;
 /// returning `None` for a conflict shape it doesn't recognize leaves the
 /// primary `TS2339` diagnostic exactly as it is today (no elaboration line),
 /// never a wrong one, so under-covering here is safe.
+///
+/// When more than one property name conflicts, tsc always names the first
+/// one by a combined declaration order: walk `members` left to right, and
+/// within each member walk its own properties in declaration order, adding
+/// each name to the combined order only the first time it is seen (a
+/// property introduced by a later member is ordered after every name the
+/// earlier members already declared, even ones that didn't conflict).
+/// Oracle-verified against `typescript@7.0.2`: the picked property tracks
+/// this combined order regardless of which property was actually accessed,
+/// and is independent of alphabetical order or which operand later members
+/// re-declare the name in. `ObjectShape::properties` itself is sorted by
+/// interned `Atom` id for canonical hashing identity, so this reads each
+/// property's own `declaration_order` field (excluded from hashing, backfilled
+/// by the interner from source insertion order) rather than `Vec` position.
 pub fn find_disjoint_literal_property_across_intersection(
     db: &dyn TypeDatabase,
     members: &[TypeId],
@@ -38,8 +52,16 @@ pub fn find_disjoint_literal_property_across_intersection(
     // regardless of whether it is observed before or after a literal
     // occurrence of the same name.
     let mut excluded: FxHashSet<Atom> = FxHashSet::default();
+    let mut order: Vec<Atom> = Vec::new();
+    let mut seen: FxHashSet<Atom> = FxHashSet::default();
     let mut ingest = |properties: &[crate::types::PropertyInfo]| {
-        for prop in properties {
+        let mut by_declaration_order: Vec<&crate::types::PropertyInfo> =
+            properties.iter().collect();
+        by_declaration_order.sort_by_key(|prop| prop.declaration_order);
+        for prop in by_declaration_order {
+            if seen.insert(prop.name) {
+                order.push(prop.name);
+            }
             if prop.optional || excluded.contains(&prop.name) {
                 continue;
             }
@@ -69,8 +91,7 @@ pub fn find_disjoint_literal_property_across_intersection(
             _ => {}
         }
     }
-    by_name
+    order
         .into_iter()
-        .find(|(_, values)| values.len() >= 2)
-        .map(|(name, _)| name)
+        .find(|name| by_name.get(name).is_some_and(|values| values.len() >= 2))
 }
