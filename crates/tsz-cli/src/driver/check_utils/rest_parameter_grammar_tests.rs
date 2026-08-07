@@ -281,3 +281,47 @@ fn filtered_parse_diagnostics_ts1015_ts1016_are_not_listed() {
     assert!(!is_parser_grammar_code(1015));
     assert!(!is_parser_grammar_code(1016));
 }
+
+/// `suppress_parameter_grammar_losers` drops exactly the rest-parameter
+/// grammar codes (TS1014/1047/1048) whose anchor falls inside a checker-
+/// recorded half-open span, and nothing else (#16644). The span models the
+/// loser rest parameter tsc's single-early-return `checkGrammarParameterList`
+/// never reached after an earlier TS1015/TS1016 already won the list: it runs
+/// `[..., boundary)` where `boundary` is the start of the parameter's type
+/// annotation or default value, so the parameter head's three anchors are
+/// caught but the subtrees (which can carry a nested function's own grammar)
+/// are not.
+#[test]
+fn suppress_parameter_grammar_losers_drops_only_in_span_rest_codes() {
+    let make = |code: u32, start: u32| Diagnostic::error("main.ts", start, 1, "m", code);
+    // Winner recorded a loser rest parameter whose head spans [40, 50); its
+    // type annotation / default value subtree begins at 50.
+    let spans = [(40u32, 50u32)];
+
+    let mut diagnostics = vec![
+        make(1016, 30), // the winner, earlier than the span — must survive
+        make(1014, 40), // loser rest-not-last at the `...` token (span start) — dropped
+        make(1048, 42), // loser rest-initializer on the name — dropped
+        make(1047, 44), // loser rest-optional on the `?` token — dropped
+        make(1014, 50), // a nested grammar error at the boundary (subtree start) — survives
+        make(1014, 80), // an unrelated rest-not-last outside the span — survives
+        make(2322, 42), // a non-family code inside the span — never touched
+    ];
+    suppress_parameter_grammar_losers(&mut diagnostics, &spans);
+
+    let survivors: Vec<(u32, u32)> = diagnostics.iter().map(|d| (d.code, d.start)).collect();
+    assert_eq!(
+        survivors,
+        vec![(1016, 30), (1014, 50), (1014, 80), (2322, 42)],
+        "only in-head rest-grammar codes should be dropped, got: {survivors:?}"
+    );
+}
+
+/// With no recorded spans the pass is a no-op — a lone rest-grammar diagnostic
+/// (its list's own winner) is never dropped.
+#[test]
+fn suppress_parameter_grammar_losers_is_noop_without_spans() {
+    let mut diagnostics = vec![Diagnostic::error("main.ts", 18, 1, "m", 1014)];
+    suppress_parameter_grammar_losers(&mut diagnostics, &[]);
+    assert_eq!(diagnostics.len(), 1, "no spans means nothing is suppressed");
+}

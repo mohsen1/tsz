@@ -83,6 +83,9 @@ mod lib_interface_merge_flatarray_cli_tests;
 #[path = "../tests/lib_shadow_cli_tests.rs"]
 mod lib_shadow_cli_tests;
 #[cfg(test)]
+#[path = "../tests/parameter_list_grammar_one_per_list_tests.rs"]
+mod parameter_list_grammar_one_per_list_tests;
+#[cfg(test)]
 #[path = "../tests/prettify_empty_object_intersection_cli_tests.rs"]
 mod prettify_empty_object_intersection_cli_tests;
 #[cfg(test)]

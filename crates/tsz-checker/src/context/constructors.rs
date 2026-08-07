@@ -352,6 +352,7 @@ impl<'a> CheckerContext<'a> {
             real_syntax_error_positions: Vec::new(),
             all_parse_error_positions: Vec::new(),
             nullable_type_parse_error_positions: Vec::new(),
+            parameter_grammar_suppress_spans: Vec::new(),
             diagnostics: Vec::new(),
             diagnostics_discarded: false,
             diagnostic_indices: DiagnosticIndices::default(),

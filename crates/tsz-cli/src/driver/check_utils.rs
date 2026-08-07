@@ -378,6 +378,47 @@ pub(super) fn filtered_parse_diagnostics(
         .collect()
 }
 
+/// Parser-emitted rest-parameter grammar codes that belong to tsc's single
+/// `checkGrammarParameterList` early-return chain: TS1014 (a rest parameter
+/// must be last), TS1047 (a rest parameter cannot be optional), and TS1048 (a
+/// rest parameter cannot have an initializer). `is_parser_grammar_code` and
+/// `is_non_suppressing_parse_error` also list these three (as `const fn` match
+/// arms that cannot reference a slice), so this constant is the single source
+/// for *this* pass rather than a global unification of the family.
+const PARAMETER_LIST_REST_GRAMMAR_CODES: [u32; 3] = [1014, 1047, 1048];
+
+fn is_parameter_grammar_rest_code(code: u32) -> bool {
+    PARAMETER_LIST_REST_GRAMMAR_CODES.contains(&code)
+}
+
+/// Drop parser-emitted rest-parameter grammar diagnostics that lost tsc's
+/// one-diagnostic-per-parameter-list rule.
+///
+/// `suppress_spans` are half-open `[pos, boundary)` ranges recorded by the
+/// checker (`check_parameter_ordering`) for each rest parameter that follows an
+/// earlier checker-owned grammar error (TS1015/TS1016) in the same list. tsc's
+/// `checkGrammarParameterList` returns at that earlier parameter and never
+/// evaluates the rest parameter, so its TS1014/TS1047/TS1048 must not surface.
+/// `boundary` stops before the parameter's type annotation and default value,
+/// so a nested function's own rest-grammar diagnostic (which anchors inside
+/// those subtrees) is never caught here.
+pub(super) fn suppress_parameter_grammar_losers(
+    diagnostics: &mut Vec<Diagnostic>,
+    suppress_spans: &[(u32, u32)],
+) {
+    if suppress_spans.is_empty() {
+        return;
+    }
+    diagnostics.retain(|diagnostic| {
+        if !is_parameter_grammar_rest_code(diagnostic.code) {
+            return true;
+        }
+        !suppress_spans
+            .iter()
+            .any(|&(start, end)| diagnostic.start >= start && diagnostic.start < end)
+    });
+}
+
 fn is_hard_keyword_interface_name_2427_parse_diagnostic(diagnostic: &ParseDiagnostic) -> bool {
     diagnostic.code == 2427
         && (diagnostic.message == "Interface name cannot be 'void'."
