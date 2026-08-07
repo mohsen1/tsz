@@ -20,11 +20,19 @@ impl QueryCache<'_> {
         // PropertyAccessEvaluator with the current QueryDatabase.
         let exact_optional_property_types =
             crate::caches::db::TypeCompilerOptions::exact_optional_property_types(self);
+        // strictNullChecks must be part of the key: an unconstrained type
+        // parameter's Object.prototype-member fallback is gated on it, so the
+        // same (object_type, prop_atom) pair resolves differently depending on
+        // this flag (#16701's end-to-end gap — the flag-aware answer was
+        // computed correctly but a strictNullChecks-oblivious cache entry from
+        // elsewhere in the same compilation could still win the lookup).
+        let strict_null_checks = crate::caches::db::TypeCompilerOptions::strict_null_checks(self);
         let key = (
             object_type,
             prop_atom,
             no_unchecked_indexed_access,
             exact_optional_property_types,
+            strict_null_checks,
         );
         if let Some(result) = self.check_property_cache(key) {
             return result;

@@ -53,7 +53,7 @@ mod resolver;
 // under both `exactOptionalPropertyTypes` settings (matching tsc), so the result
 // does not depend on that option and it is intentionally not part of this key.
 type ElementAccessTypeCacheKey = (TypeId, TypeId, Option<u32>, bool);
-type PropertyAccessCacheKey = (TypeId, Atom, bool, bool);
+type PropertyAccessCacheKey = (TypeId, Atom, bool, bool, bool);
 type ConditionalBranchVerdictCacheKey = (TypeId, TypeId, bool, bool);
 type PermissiveFalseBranchCacheKey = (TypeId, TypeId, bool, bool);
 

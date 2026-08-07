@@ -702,6 +702,47 @@ impl<'a> CheckerContext<'a> {
         )
     }
 
+    /// Like [`Self::with_cache`], but for callers whose `compiler_options` is
+    /// already fully resolved (strict family expanded with individual
+    /// overrides honored) instead of a raw `strict` umbrella.
+    ///
+    /// `with_cache`'s `EXPAND_STRICT_LOCALLY` policy re-runs
+    /// `apply_strict_defaults()`, which re-expands from `options.strict` and
+    /// silently clobbers an explicit per-member override back to the
+    /// umbrella's value when `strict` itself was never set to `false` (e.g.
+    /// `--strictNullChecks false` alone, with no `--strict` flag, leaves
+    /// `options.strict` at its default `true`). The CLI driver's per-file
+    /// cached path hits exactly this: its `compiler_options` already went
+    /// through `strict_family::apply_strict_family`, so re-expanding here
+    /// discards that resolution — and because `types` is one `QueryDatabase`
+    /// shared across every file in the compilation, a cached lib file
+    /// checked through this path clobbers `strict_null_checks` for every
+    /// file checked afterwards, not just itself.
+    pub fn with_cache_pre_resolved(
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
+        types: &'a dyn QueryDatabase,
+        file_name: String,
+        cache: TypeCache,
+        compiler_options: CheckerOptions,
+    ) -> Self {
+        Self::from_parts(
+            arena,
+            binder,
+            types,
+            ContextParts {
+                file_name,
+                compiler_options,
+                options_policy: OptionsPolicy::PRE_RESOLVED,
+                def_store: DefStorePlan::PerFile,
+                cache: Some(cache),
+                cache_order: CacheRestoreOrder::BeforeWarm,
+                inherit_has_lib: false,
+                symbol_cache_capacity: None,
+            },
+        )
+    }
+
     /// Create a new `CheckerContext` with explicit compiler options and a persistent cache.
     ///
     /// Creates a pre-populated `DefinitionStore` from the binder's
@@ -767,6 +808,18 @@ impl<'a> CheckerContext<'a> {
     /// Important: only caches keyed by globally stable ids (e.g. `TypeId`, `RelationCacheKey`)
     /// are copied from the parent. Arena/binder-local ids (`SymbolId`, `NodeIndex`, `FlowNodeId`)
     /// must be reset to avoid cross-arena cache poisoning.
+    ///
+    /// `compiler_options` is always inherited from a parent context (the sole
+    /// production caller, `CheckerState::delegate_for_arena`, passes
+    /// `parent.ctx.compiler_options.clone()`), so it is already fully
+    /// resolved — never a raw `strict` umbrella needing local expansion.
+    /// `PRE_RESOLVED` avoids re-running `apply_strict_defaults()`, which
+    /// would re-expand from `options.strict` and clobber an explicit
+    /// per-member override the parent already resolved (e.g.
+    /// `strictNullChecks: false` with no `--strict` flag leaves
+    /// `options.strict` at its default `true`) — and because `types` is a
+    /// `QueryDatabase` shared with the parent (and every other file in the
+    /// same compilation), that clobbered flag leaks beyond this one child.
     pub fn with_parent_cache(
         arena: &'a NodeArena,
         binder: &'a BinderState,
@@ -782,7 +835,7 @@ impl<'a> CheckerContext<'a> {
             ContextParts {
                 file_name,
                 compiler_options,
-                options_policy: OptionsPolicy::EXPAND_STRICT_LOCALLY,
+                options_policy: OptionsPolicy::PRE_RESOLVED,
                 // The shared store is installed from the parent below.
                 def_store: DefStorePlan::Deferred,
                 cache: None,
