@@ -841,6 +841,8 @@ mod string_literal_union_display_order_tests;
 mod suggestion_scan_discarded_tests;
 #[path = "tests/super_call_ts2376_ts17009_priority_tests.rs"]
 mod super_call_ts2376_ts17009_priority_tests;
+#[path = "tests/super_order_intra_statement_ts17009_tests.rs"]
+mod super_order_intra_statement_ts17009_tests;
 #[path = "tests/switch_distinct_literal_memo_narrowing_tests.rs"]
 mod switch_distinct_literal_memo_narrowing_tests;
 #[path = "tests/symbol_env_registration_arch_tests.rs"]
