@@ -287,7 +287,14 @@ impl<'a> CheckerState<'a> {
             }
 
             if elem_node.kind == syntax_kind_ext::GET_ACCESSOR {
-                if accessor.type_annotation.is_none() {
+                // A `ThisType[ T ]` marker makes `this` denote `T`, not the
+                // literal under construction, so `this.<member>` in the body
+                // reads a member of `T` and can never be the getter's own
+                // circular self-reference. Without this gate the receiver
+                // heuristic in `object_literal_getter_has_self_reference` —
+                // which treats every `this.` receiver as the literal — turns a
+                // legitimate `this.x` under a marker into a spurious TS7023.
+                if accessor.type_annotation.is_none() && marker_this_type.is_none() {
                     use crate::diagnostics::diagnostic_codes;
                     if self.object_literal_getter_has_self_reference(elem_idx, accessor.body, &name)
                     {

@@ -677,6 +677,8 @@ mod object_define_property_identity_tests;
 mod object_global_identity_helper_tests;
 #[path = "tests/object_literal_computed_symbol_member_tests.rs"]
 mod object_literal_computed_symbol_member_tests;
+#[path = "tests/object_literal_enclosing_this_type_marker_tests.rs"]
+mod object_literal_enclosing_this_type_marker_tests;
 #[path = "tests/object_literal_method_body_check_tests.rs"]
 mod object_literal_method_body_check_tests;
 #[path = "tests/object_literal_method_this_parameter_contextual_tests.rs"]
