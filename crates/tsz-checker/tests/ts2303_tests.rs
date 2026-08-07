@@ -222,6 +222,58 @@ declare module "moduleC" {
     );
 }
 
+/// tsc reports `TS2303` once at EVERY alias declaration participating in a
+/// cycle (the general rule `check_circular_import_aliases` in
+/// `module_checker.rs` already documents), not once for the whole cycle. For
+/// `declare global { namespace N {} } export = N; export as namespace N;`
+/// that means two sites — the `export = N` assignment AND the
+/// `export as namespace N` declaration that closes the loop back to the
+/// global augmentation's `N` — confirmed against the pinned `typescript@7.0.2`
+/// oracle (`a.d.ts(2,1)` and `a.d.ts(3,1)`, both `Circular definition of
+/// import alias 'N'.`).
+fn assert_global_augmentation_cycle_sites(source: &str, file_name: &str, ident: &str) {
+    let diagnostics = get_diagnostics_positioned(source, file_name);
+    let ts2303: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _, _)| *code == 2303)
+        .collect();
+
+    let export_equals_site = u32::try_from(
+        source
+            .find(&format!("export = {ident}"))
+            .expect("export= site"),
+    )
+    .unwrap();
+    let export_as_namespace_site = u32::try_from(
+        source
+            .find(&format!("export as namespace {ident}"))
+            .expect("export as namespace site"),
+    )
+    .unwrap();
+
+    assert!(
+        ts2303
+            .iter()
+            .any(|(_, start, _)| *start == export_equals_site),
+        "Expected TS2303 at the `export = {ident}` statement. Got: {ts2303:#?}"
+    );
+    assert!(
+        ts2303
+            .iter()
+            .any(|(_, start, _)| *start == export_as_namespace_site),
+        "Expected TS2303 at the `export as namespace {ident}` statement. Got: {ts2303:#?}"
+    );
+    assert_eq!(
+        ts2303.len(),
+        2,
+        "Expected exactly the two cycle sites, no more. Got: {ts2303:#?}"
+    );
+    assert!(
+        diagnostics.iter().all(|(code, _, _)| *code != 2686),
+        "Did not expect TS2686 for the export= cycle case. Got: {diagnostics:#?}"
+    );
+}
+
 #[test]
 fn export_equals_global_augmentation_namespace_cycle_reports_ts2303_not_ts2686() {
     let source = r#"
@@ -229,15 +281,45 @@ declare global { namespace N {} }
 export = N;
 export as namespace N;
 "#;
+    assert_global_augmentation_cycle_sites(source, "a.d.ts", "N");
+}
 
-    let diagnostics = get_diagnostics(source, "a.d.ts");
+#[test]
+fn export_equals_global_augmentation_namespace_cycle_is_order_independent() {
+    // Same cycle, `export as namespace` written before `export =` — the scan
+    // is over all of the file's statements, not a fixed sequence, and a
+    // renamed binder (`M`, not `N`) so the fix cannot be keyed off the name.
+    let source = r#"
+declare global { namespace M {} }
+export as namespace M;
+export = M;
+"#;
+    assert_global_augmentation_cycle_sites(source, "swapped.d.ts", "M");
+}
+
+#[test]
+fn export_equals_global_augmentation_namespace_cycle_renamed_binder() {
+    let source = r#"
+declare global { namespace Widget {} }
+export = Widget;
+export as namespace Widget;
+"#;
+    assert_global_augmentation_cycle_sites(source, "renamed.d.ts", "Widget");
+}
+
+#[test]
+fn export_equals_without_matching_umd_export_is_not_circular() {
+    // `export = N` alone, with no `export as namespace N` to close the loop,
+    // is not a cycle — the global augmentation's `N` is a genuine value
+    // target, not an alias back to itself.
+    let source = r#"
+declare global { namespace N {} }
+export = N;
+"#;
+    let diagnostics = get_diagnostics(source, "no-umd.d.ts");
     assert!(
-        diagnostics.iter().any(|(code, _)| *code == 2303),
-        "Expected TS2303 for export= cycle through global augmentation namespace. Got: {diagnostics:?}"
-    );
-    assert!(
-        diagnostics.iter().all(|(code, _)| *code != 2686),
-        "Did not expect TS2686 for the export= cycle case. Got: {diagnostics:?}"
+        diagnostics.iter().all(|(code, _)| *code != 2303),
+        "Did not expect TS2303 without a matching `export as namespace`. Got: {diagnostics:?}"
     );
 }
 

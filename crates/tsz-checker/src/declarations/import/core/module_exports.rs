@@ -234,12 +234,25 @@ impl<'a> CheckerState<'a> {
                                     ident.escaped_text.as_str(),
                                 )
                         {
+                            // tsc reports TS2303 at EVERY alias declaration
+                            // participating in the cycle (module_checker.rs'
+                            // check_circular_import_aliases documents the
+                            // same rule for the general case): both the
+                            // `export = X` statement itself and the
+                            // `export as namespace X` that closes the loop
+                            // back to the `declare global` namespace X.
+                            let message = format_message(
+                                diagnostic_messages::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS,
+                                &[ident.escaped_text.as_str()],
+                            );
+                            self.error_at_node(
+                                stmt_idx,
+                                &message,
+                                diagnostic_codes::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS,
+                            );
                             self.error_at_node(
                                 report_node,
-                                &format_message(
-                                    diagnostic_messages::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS,
-                                    &[ident.escaped_text.as_str()],
-                                ),
+                                &message,
                                 diagnostic_codes::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS,
                             );
                         } else if let Some(expected_type) =
