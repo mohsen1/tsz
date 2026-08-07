@@ -196,10 +196,15 @@ fn test_private_member_prevents_structural_assignment() {
 
 /// Test that protected members are also nominal.
 /// Protected members create a brand just like private members.
+///
+/// Oracle-verified against `typescript@7.0.2`: unlike modifier-`private`,
+/// tsc never reports a "separate declarations" wording for `protected` — it
+/// runs the declaring-class derivation check (`isValidOverrideOf`) and
+/// reports `TS2443` naming each side's declaring class.
 #[test]
 fn test_protected_members_are_nominal() {
     // TS2322: Type 'B' is not assignable to type 'A'.
-    //   Types have separate declarations of a protected property 'x'.
+    //   Property 'x' is protected but type 'B' is not a class derived from 'A'.
     let source = r"
         class A { protected x: number = 1; }
         class B { protected x: number = 1; }
@@ -215,8 +220,49 @@ fn test_protected_members_are_nominal() {
     assert!(
         ts2322.related_information.iter().any(|info| info
             .message_text
-            .contains("Types have separate declarations of a protected property 'x'.")),
-        "Expected nominal protected-property detail in TS2322 related info, got: {ts2322:?}"
+            .contains("Property 'x' is protected but type 'B' is not a class derived from 'A'.")),
+        "Expected TS2443 protected-derivation detail in TS2322 related info, got: {ts2322:?}"
+    );
+}
+
+/// A subclass narrowing an inherited protected member is a *valid* override
+/// (`isValidOverrideOf` succeeds since the source's declaring class — the
+/// subclass — is derived from the target's declaring class). tsc reports no
+/// protected-mismatch elaboration at all here; oracle-verified against
+/// `typescript@7.0.2`.
+#[test]
+fn test_protected_member_valid_override_has_no_mismatch_elaboration() {
+    let source = r"
+        class Base { protected s: number = 1; }
+        class Derived extends Base { protected s: number = 2; }
+        let b: Base = new Derived();
+        ";
+
+    test_private_brands(source, 0);
+}
+
+/// The same `TS2443` derivation check applies to the call-argument (`TS2345`)
+/// path, which routes through the same `private_brand_mismatch_error`.
+/// Oracle-verified against `typescript@7.0.2`.
+#[test]
+fn test_protected_member_mismatch_elaborates_ts2345() {
+    let source = r"
+        class M3 { protected s = 1; }
+        class N3 { protected s = 1; }
+        declare function g(n: N3): void;
+        g(new M3());
+        ";
+
+    let diagnostics = collect_private_brand_diagnostics(source);
+    let ts2345 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2345)
+        .expect("expected TS2345 for protected nominal mismatch on a call argument");
+    assert!(
+        ts2345.related_information.iter().any(|info| info
+            .message_text
+            .contains("Property 's' is protected but type 'M3' is not a class derived from 'N3'.")),
+        "Expected TS2443 protected-derivation detail in TS2345 related info, got: {ts2345:?}"
     );
 }
 

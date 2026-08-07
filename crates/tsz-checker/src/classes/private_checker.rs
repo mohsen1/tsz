@@ -1,6 +1,6 @@
 //! Private field access and brand checking for nominal class typing.
 
-use crate::diagnostics::{diagnostic_messages, format_message, internal_elaboration_messages};
+use crate::diagnostics::{diagnostic_messages, format_message};
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
@@ -84,43 +84,48 @@ impl<'a> CheckerState<'a> {
                         let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
                         (!tsz_solver::utils::is_synthetic_private_brand_name(&prop_name)
                             && prop.visibility != tsz_solver::Visibility::Public)
-                            .then(|| (prop_name.to_string(), prop.visibility))
+                            .then(|| (prop_name.to_string(), prop.visibility, prop.parent_id))
                     })
                 })
         };
 
-        if let (Some((source_member, source_visibility)), Some((target_member, target_visibility))) =
-            (shared_nominal_member(source), shared_nominal_member(target))
+        if let (
+            Some((source_member, source_visibility, source_parent)),
+            Some((target_member, target_visibility, target_parent)),
+        ) = (shared_nominal_member(source), shared_nominal_member(target))
             && source_member == target_member
             && source_visibility == target_visibility
         {
             // An ES private identifier (`#name`) is a per-class slot: tsc
             // reports TS18015 ("refers to a different member") for it, and
             // reserves the "separate declarations" wording for
-            // modifier-`private`/`protected` members.
+            // modifier-`private` members.
             if tsz_solver::utils::is_es_private_identifier_name(&source_member) {
                 return Some(format_message(
                     diagnostic_messages::PROPERTY_IN_TYPE_REFERS_TO_A_DIFFERENT_MEMBER_THAT_CANNOT_BE_ACCESSED_FROM_WITHI,
                     &[&source_member, &self.format_type(source), &self.format_type(target)],
                 ));
             }
-            return Some(match source_visibility {
-                tsz_solver::Visibility::Private => format_message(
+            return match source_visibility {
+                tsz_solver::Visibility::Private => Some(format_message(
                     diagnostic_messages::TYPES_HAVE_SEPARATE_DECLARATIONS_OF_A_PRIVATE_PROPERTY,
                     &[&source_member],
-                ),
-                tsz_solver::Visibility::Protected => format_message(
-                    internal_elaboration_messages::TYPES_HAVE_SEPARATE_DECLARATIONS_OF_A_PROTECTED_PROPERTY,
-                    &[&source_member],
+                )),
+                tsz_solver::Visibility::Protected => self.protected_brand_mismatch_error(
+                    &source_member,
+                    source,
+                    target,
+                    source_parent,
+                    target_parent,
                 ),
                 tsz_solver::Visibility::Public => {
                     unreachable!("public members do not create nominal brands")
                 }
-            });
+            };
         }
 
         let field_name = shared_nominal_member(source)
-            .map(|(member_name, _)| member_name)
+            .map(|(member_name, _, _)| member_name)
             .or_else(|| self.get_private_field_name_from_brand(source))
             .unwrap_or_else(|| "[private field]".to_string());
 
@@ -130,6 +135,55 @@ impl<'a> CheckerState<'a> {
                 &field_name,
                 &self.format_type(source),
                 &self.format_type(target),
+            ],
+        ))
+    }
+
+    // =========================================================================
+    // Protected Brand Mismatch Error
+    // =========================================================================
+
+    /// tsc's `propertyRelatedTo` never treats two differently-declared
+    /// `protected` members as a "separate declarations" mismatch the way it
+    /// does for `private`. It instead runs `isValidOverrideOf`: the mismatch
+    /// is only an error when the source's declaring class is *not* derived
+    /// from the target's declaring class (`hasBaseType`); a subclass legally
+    /// narrowing an inherited protected member is not an error at all. When
+    /// it does fail, tsc reports `TS2443` ("Property '{0}' is protected but
+    /// type '{1}' is not a class derived from '{2}'.") naming each side's
+    /// declaring class, not the receiver type itself.
+    ///
+    /// Returns `None` when the override is valid (no mismatch to report).
+    pub(crate) fn protected_brand_mismatch_error(
+        &self,
+        member_name: &str,
+        source: TypeId,
+        target: TypeId,
+        source_parent: Option<tsz_binder::SymbolId>,
+        target_parent: Option<tsz_binder::SymbolId>,
+    ) -> Option<String> {
+        if let (Some(source_sym), Some(target_sym)) = (source_parent, target_parent)
+            && (source_sym == target_sym
+                || self
+                    .ctx
+                    .inheritance_graph
+                    .is_derived_from(source_sym, target_sym))
+        {
+            return None;
+        }
+
+        let declaring_class_display_name = |sym: Option<tsz_binder::SymbolId>, fallback: TypeId| {
+            sym.and_then(|sym| self.get_class_declaration_from_symbol(sym))
+                .map(|class_idx| self.get_syntactic_class_name_or_anonymous(class_idx))
+                .unwrap_or_else(|| self.format_type(fallback))
+        };
+
+        Some(format_message(
+            diagnostic_messages::PROPERTY_IS_PROTECTED_BUT_TYPE_IS_NOT_A_CLASS_DERIVED_FROM,
+            &[
+                member_name,
+                &declaring_class_display_name(source_parent, source),
+                &declaring_class_display_name(target_parent, target),
             ],
         ))
     }
