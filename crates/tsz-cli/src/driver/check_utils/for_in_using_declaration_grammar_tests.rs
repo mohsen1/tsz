@@ -27,12 +27,14 @@ fn filtered_parse_diagnostics_suppresses_ts1493_when_real_parse_error_present() 
                 "The left-hand side of a 'for...in' statement cannot be a 'using' declaration."
                     .to_string(),
             code: 1493,
+            related: None,
         },
         ParseDiagnostic {
             start: 60,
             length: 1,
             message: "Type expected.".to_string(),
             code: 1110,
+            related: None,
         },
     ];
 
@@ -60,12 +62,14 @@ fn filtered_parse_diagnostics_suppresses_ts1494_when_real_parse_error_present() 
                 "The left-hand side of a 'for...in' statement cannot be an 'await using' declaration."
                     .to_string(),
             code: 1494,
+            related: None,
         },
         ParseDiagnostic {
             start: 60,
             length: 1,
             message: "Type expected.".to_string(),
             code: 1110,
+            related: None,
         },
     ];
 
@@ -100,6 +104,7 @@ fn filtered_parse_diagnostics_keeps_ts1493_ts1494_when_alone() {
             length: 5,
             message: message.to_string(),
             code,
+            related: None,
         }];
 
         let filtered = filtered_parse_diagnostics(&diagnostics, false);
@@ -130,6 +135,7 @@ fn filtered_parse_diagnostics_ts1493_does_not_self_suppress_listed_sibling() {
                 "The left-hand side of a 'for...in' statement cannot be a 'using' declaration."
                     .to_string(),
             code: 1493,
+            related: None,
         },
         ParseDiagnostic {
             start: 60,
@@ -137,6 +143,7 @@ fn filtered_parse_diagnostics_ts1493_does_not_self_suppress_listed_sibling() {
             message: "Only a single variable declaration is allowed in a 'for...in' statement."
                 .to_string(),
             code: 1091,
+            related: None,
         },
     ];
 
@@ -164,6 +171,7 @@ fn filtered_parse_diagnostics_ts1494_does_not_self_suppress_listed_sibling() {
                 "The left-hand side of a 'for...in' statement cannot be an 'await using' declaration."
                     .to_string(),
             code: 1494,
+            related: None,
         },
         ParseDiagnostic {
             start: 60,
@@ -171,6 +179,7 @@ fn filtered_parse_diagnostics_ts1494_does_not_self_suppress_listed_sibling() {
             message: "Only a single variable declaration is allowed in a 'for...in' statement."
                 .to_string(),
             code: 1091,
+            related: None,
         },
     ];
 

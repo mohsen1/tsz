@@ -36,12 +36,14 @@ fn filtered_parse_diagnostics_suppresses_ts18054_when_real_parse_error_present()
             message: "'await using' statements cannot be used inside a class static block."
                 .to_string(),
             code: 18054,
+            related: None,
         },
         ParseDiagnostic {
             start: 60,
             length: 1,
             message: "Type expected.".to_string(),
             code: 1110,
+            related: None,
         },
     ];
 
@@ -66,6 +68,7 @@ fn filtered_parse_diagnostics_keeps_ts18054_when_alone() {
         length: 6,
         message: "'await using' statements cannot be used inside a class static block.".to_string(),
         code: 18054,
+        related: None,
     }];
 
     let filtered = filtered_parse_diagnostics(&diagnostics, false);
@@ -91,6 +94,7 @@ fn filtered_parse_diagnostics_ts18054_does_not_self_suppress_listed_sibling() {
             length: 6,
             message: "'await' expression cannot be used inside a class static block.".to_string(),
             code: 18037,
+            related: None,
         },
         ParseDiagnostic {
             start: 80,
@@ -98,6 +102,7 @@ fn filtered_parse_diagnostics_ts18054_does_not_self_suppress_listed_sibling() {
             message: "'await using' statements cannot be used inside a class static block."
                 .to_string(),
             code: 18054,
+            related: None,
         },
     ];
 
@@ -125,6 +130,7 @@ fn filtered_parse_diagnostics_ts18054_does_not_self_suppress_ts18041_sibling() {
             length: 6,
             message: "A 'return' statement cannot be used inside a class static block.".to_string(),
             code: 18041,
+            related: None,
         },
         ParseDiagnostic {
             start: 80,
@@ -132,6 +138,7 @@ fn filtered_parse_diagnostics_ts18054_does_not_self_suppress_ts18041_sibling() {
             message: "'await using' statements cannot be used inside a class static block."
                 .to_string(),
             code: 18054,
+            related: None,
         },
     ];
 

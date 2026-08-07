@@ -16,12 +16,14 @@ fn assert_suppressed_by_real_parse_error(code: u32, message: &str) {
             length: 6,
             message: message.to_string(),
             code,
+            related: None,
         },
         ParseDiagnostic {
             start: 60,
             length: 1,
             message: "Type expected.".to_string(),
             code: 1110,
+            related: None,
         },
     ];
 
@@ -45,6 +47,7 @@ fn assert_survives_alone(code: u32, message: &str) {
         length: 6,
         message: message.to_string(),
         code,
+        related: None,
     }];
 
     let filtered = filtered_parse_diagnostics(&diagnostics, false);
@@ -89,6 +92,7 @@ fn ts1313_is_not_suppressed_and_must_stay_out_of_the_list() {
         length: 6,
         message: "The body of an 'if' statement cannot be the empty statement.".to_string(),
         code: 1313,
+        related: None,
     }];
 
     // `true` mirrors `program_has_real_syntax_errors(program)` being true
@@ -149,12 +153,14 @@ fn ts2819_not_suppressed_when_real_parse_error_present() {
             length: 6,
             message: "Namespace name cannot be 'true'.".to_string(),
             code: 2819,
+            related: None,
         },
         ParseDiagnostic {
             start: 60,
             length: 1,
             message: "Type expected.".to_string(),
             code: 1110,
+            related: None,
         },
     ];
 

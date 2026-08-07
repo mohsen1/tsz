@@ -41,12 +41,14 @@ fn filtered_parse_diagnostics_suppresses_ts1013_when_real_parse_error_present() 
             message: "A rest parameter or binding pattern may not have a trailing comma."
                 .to_string(),
             code: 1013,
+            related: None,
         },
         ParseDiagnostic {
             start: 60,
             length: 1,
             message: "Type expected.".to_string(),
             code: 1110,
+            related: None,
         },
     ];
 
@@ -71,6 +73,7 @@ fn filtered_parse_diagnostics_keeps_ts1013_when_alone() {
         length: 1,
         message: "A rest parameter or binding pattern may not have a trailing comma.".to_string(),
         code: 1013,
+        related: None,
     }];
 
     let filtered = filtered_parse_diagnostics(&diagnostics, false);
@@ -96,6 +99,7 @@ fn filtered_parse_diagnostics_ts1013_does_not_self_suppress_listed_sibling() {
             length: 6,
             message: "A rest parameter must be last in a parameter list.".to_string(),
             code: 1014,
+            related: None,
         },
         ParseDiagnostic {
             start: 80,
@@ -103,6 +107,7 @@ fn filtered_parse_diagnostics_ts1013_does_not_self_suppress_listed_sibling() {
             message: "A rest parameter or binding pattern may not have a trailing comma."
                 .to_string(),
             code: 1013,
+            related: None,
         },
     ];
 
@@ -128,12 +133,14 @@ fn filtered_parse_diagnostics_suppresses_ts1047_when_real_parse_error_present() 
             length: 6,
             message: "A rest parameter cannot be optional.".to_string(),
             code: 1047,
+            related: None,
         },
         ParseDiagnostic {
             start: 60,
             length: 1,
             message: "Type expected.".to_string(),
             code: 1110,
+            related: None,
         },
     ];
 
@@ -159,12 +166,14 @@ fn filtered_parse_diagnostics_suppresses_ts1048_when_real_parse_error_present() 
             length: 6,
             message: "A rest parameter cannot have an initializer.".to_string(),
             code: 1048,
+            related: None,
         },
         ParseDiagnostic {
             start: 60,
             length: 1,
             message: "Type expected.".to_string(),
             code: 1110,
+            related: None,
         },
     ];
 
@@ -193,6 +202,7 @@ fn filtered_parse_diagnostics_keeps_ts1047_ts1048_when_alone() {
             length: 1,
             message: message.to_string(),
             code,
+            related: None,
         }];
 
         let filtered = filtered_parse_diagnostics(&diagnostics, false);
@@ -219,12 +229,14 @@ fn filtered_parse_diagnostics_ts1047_does_not_self_suppress_listed_sibling() {
             length: 6,
             message: "A rest parameter must be last in a parameter list.".to_string(),
             code: 1014,
+            related: None,
         },
         ParseDiagnostic {
             start: 80,
             length: 6,
             message: "A rest parameter cannot be optional.".to_string(),
             code: 1047,
+            related: None,
         },
     ];
 
@@ -250,12 +262,14 @@ fn filtered_parse_diagnostics_ts1048_does_not_self_suppress_listed_sibling() {
             length: 6,
             message: "A rest parameter must be last in a parameter list.".to_string(),
             code: 1014,
+            related: None,
         },
         ParseDiagnostic {
             start: 80,
             length: 6,
             message: "A rest parameter cannot have an initializer.".to_string(),
             code: 1048,
+            related: None,
         },
     ];
 

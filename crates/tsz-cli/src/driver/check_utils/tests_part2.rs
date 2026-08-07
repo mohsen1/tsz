@@ -14,12 +14,14 @@ fn filtered_parse_diagnostics_suppresses_await_ts1359_when_ts1109_present() {
             message: "Identifier expected. 'await' is a reserved word that cannot be used here."
                 .to_string(),
             code: 1359,
+            related: None,
         },
         ParseDiagnostic {
             start: 200,
             length: 1,
             message: "Expression expected.".to_string(),
             code: 1109,
+            related: None,
         },
     ];
 
@@ -46,12 +48,14 @@ fn filtered_parse_diagnostics_keeps_await_ts1359_with_unrelated_parse_errors() {
             message: "Identifier expected. 'await' is a reserved word that cannot be used here."
                 .to_string(),
             code: 1359,
+            related: None,
         },
         ParseDiagnostic {
             start: 10,
             length: 6,
             message: "A module cannot have multiple default exports.".to_string(),
             code: 2528,
+            related: None,
         },
     ];
 
@@ -73,6 +77,7 @@ fn filtered_parse_diagnostics_keeps_await_ts1359_when_alone() {
         message: "Identifier expected. 'await' is a reserved word that cannot be used here."
             .to_string(),
         code: 1359,
+        related: None,
     }];
 
     let filtered = filtered_parse_diagnostics(&diagnostics, false);
@@ -98,12 +103,14 @@ fn filtered_parse_diagnostics_suppresses_ts1028_when_real_parse_error_present() 
             length: 6,
             message: "Accessibility modifier already seen.".to_string(),
             code: 1028,
+            related: None,
         },
         ParseDiagnostic {
             start: 50,
             length: 6,
             message: "Unexpected keyword or identifier.".to_string(),
             code: 1434,
+            related: None,
         },
     ];
 
@@ -131,6 +138,7 @@ fn filtered_parse_diagnostics_keeps_ts1028_when_alone() {
         length: 6,
         message: "Accessibility modifier already seen.".to_string(),
         code: 1028,
+        related: None,
     }];
 
     let filtered = filtered_parse_diagnostics(&diagnostics, false);
@@ -158,12 +166,14 @@ fn filtered_parse_diagnostics_suppresses_ts1101_when_real_parse_error_present() 
             length: 4,
             message: "'with' statements are not allowed in strict mode.".to_string(),
             code: 1101,
+            related: None,
         },
         ParseDiagnostic {
             start: 80,
             length: 1,
             message: "')' expected.".to_string(),
             code: 1005,
+            related: None,
         },
     ];
 
@@ -188,6 +198,7 @@ fn filtered_parse_diagnostics_keeps_ts1101_when_alone() {
         length: 4,
         message: "'with' statements are not allowed in strict mode.".to_string(),
         code: 1101,
+        related: None,
     }];
 
     let filtered = filtered_parse_diagnostics(&diagnostics, false);
@@ -212,12 +223,14 @@ fn filtered_parse_diagnostics_keeps_ts1101_with_non_real_parse_error() {
             length: 4,
             message: "'with' statements are not allowed in strict mode.".to_string(),
             code: 1101,
+            related: None,
         },
         ParseDiagnostic {
             start: 90,
             length: 1,
             message: "A rest parameter must be last in a parameter list.".to_string(),
             code: 1014,
+            related: None,
         },
     ];
 
@@ -245,12 +258,14 @@ fn accessor_grammar_pair(
             length: 2,
             message: "A 'get' accessor cannot have parameters.".to_string(),
             code: 1054,
+            related: None,
         },
         ParseDiagnostic {
             start: 52,
             length: 2,
             message: setter_message.to_string(),
             code: setter_code,
+            related: None,
         },
     ]
 }
@@ -330,12 +345,14 @@ fn filtered_parse_diagnostics_keeps_repeated_setter_ts1049_without_a_getter() {
             length: 2,
             message: "A 'set' accessor must have exactly one parameter.".to_string(),
             code: 1049,
+            related: None,
         },
         ParseDiagnostic {
             start: 52,
             length: 2,
             message: "A 'set' accessor must have exactly one parameter.".to_string(),
             code: 1049,
+            related: None,
         },
     ];
 
@@ -364,24 +381,28 @@ fn filtered_parse_diagnostics_suppresses_accessor_grammar_family_when_real_parse
             length: 2,
             message: "A 'get' accessor cannot have parameters.".to_string(),
             code: 1054,
+            related: None,
         },
         ParseDiagnostic {
             start: 52,
             length: 2,
             message: "A 'set' accessor must have exactly one parameter.".to_string(),
             code: 1049,
+            related: None,
         },
         ParseDiagnostic {
             start: 70,
             length: 2,
             message: "A 'set' accessor cannot have an optional parameter.".to_string(),
             code: 1051,
+            related: None,
         },
         ParseDiagnostic {
             start: 90,
             length: 1,
             message: "Expression expected.".to_string(),
             code: 1109,
+            related: None,
         },
     ];
 
@@ -418,12 +439,14 @@ fn filtered_parse_diagnostics_suppresses_ts1018_when_real_parse_error_present() 
             message: "An index signature parameter cannot have an accessibility modifier."
                 .to_string(),
             code: 1018,
+            related: None,
         },
         ParseDiagnostic {
             start: 60,
             length: 1,
             message: "Type expected.".to_string(),
             code: 1110,
+            related: None,
         },
     ];
 
@@ -449,12 +472,14 @@ fn filtered_parse_diagnostics_suppresses_ts1020_when_real_parse_error_present() 
             length: 1,
             message: "An index signature parameter cannot have an initializer.".to_string(),
             code: 1020,
+            related: None,
         },
         ParseDiagnostic {
             start: 60,
             length: 1,
             message: "Type expected.".to_string(),
             code: 1110,
+            related: None,
         },
     ];
 
@@ -480,12 +505,14 @@ fn filtered_parse_diagnostics_suppresses_ts1025_when_real_parse_error_present() 
             length: 1,
             message: "An index signature cannot have a trailing comma.".to_string(),
             code: 1025,
+            related: None,
         },
         ParseDiagnostic {
             start: 60,
             length: 1,
             message: "Type expected.".to_string(),
             code: 1110,
+            related: None,
         },
     ];
 
@@ -521,6 +548,7 @@ fn filtered_parse_diagnostics_keeps_ts1018_ts1020_ts1025_when_alone() {
             length: 1,
             message: message.to_string(),
             code,
+            related: None,
         }];
 
         let filtered = filtered_parse_diagnostics(&diagnostics, false);
@@ -547,12 +575,14 @@ fn filtered_parse_diagnostics_ts1018_does_not_self_suppress_listed_sibling() {
             message: "An index signature parameter cannot have an accessibility modifier."
                 .to_string(),
             code: 1018,
+            related: None,
         },
         ParseDiagnostic {
             start: 80,
             length: 3,
             message: "Duplicate label 'foo'.".to_string(),
             code: 1114,
+            related: None,
         },
     ];
 
@@ -587,12 +617,14 @@ fn filtered_parse_diagnostics_suppresses_16279_audit_codes_when_real_parse_error
                 length: 1,
                 message: "candidate".to_string(),
                 code,
+                related: None,
             },
             ParseDiagnostic {
                 start: 10,
                 length: 1,
                 message: "Expression expected.".to_string(),
                 code: 1109,
+                related: None,
             },
         ];
         let filtered = filtered_parse_diagnostics(&diagnostics, false);
@@ -620,6 +652,7 @@ fn filtered_parse_diagnostics_keeps_16279_audit_codes_when_alone() {
             length: 1,
             message: "candidate".to_string(),
             code,
+            related: None,
         }];
         let filtered = filtered_parse_diagnostics(&diagnostics, false);
         let codes: Vec<u32> = filtered.iter().map(|d| d.code).collect();
@@ -649,12 +682,14 @@ fn filtered_parse_diagnostics_suppresses_ts18016_when_real_parse_error_present()
             length: 1,
             message: "Private identifiers are not allowed outside class bodies.".to_string(),
             code: 18016,
+            related: None,
         },
         ParseDiagnostic {
             start: 10,
             length: 1,
             message: "Expression expected.".to_string(),
             code: 1109,
+            related: None,
         },
     ];
     let filtered = filtered_parse_diagnostics(&diagnostics, false);
@@ -678,6 +713,7 @@ fn filtered_parse_diagnostics_keeps_ts18016_when_alone() {
         length: 1,
         message: "Private identifiers are not allowed outside class bodies.".to_string(),
         code: 18016,
+        related: None,
     }];
     let filtered = filtered_parse_diagnostics(&diagnostics, false);
     let codes: Vec<u32> = filtered.iter().map(|d| d.code).collect();
@@ -703,12 +739,14 @@ fn filtered_parse_diagnostics_ts18016_does_not_self_suppress_listed_sibling() {
             length: 1,
             message: "Private identifiers are not allowed outside class bodies.".to_string(),
             code: 18016,
+            related: None,
         },
         ParseDiagnostic {
             start: 10,
             length: 1,
             message: "A 'set' accessor must have exactly one parameter.".to_string(),
             code: 1049,
+            related: None,
         },
     ];
     let filtered = filtered_parse_diagnostics(&diagnostics, false);
@@ -741,12 +779,14 @@ fn filtered_parse_diagnostics_keeps_ts1433_and_ts1436_alongside_real_parse_error
                 length: 1,
                 message: "candidate".to_string(),
                 code,
+                related: None,
             },
             ParseDiagnostic {
                 start: 10,
                 length: 1,
                 message: "Expression expected.".to_string(),
                 code: 1109,
+                related: None,
             },
         ];
         let filtered = filtered_parse_diagnostics(&diagnostics, false);

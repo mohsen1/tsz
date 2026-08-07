@@ -32,12 +32,14 @@ fn filtered_parse_diagnostics_suppresses_ts1326_when_real_parse_error_present() 
             length: 6,
             message: "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments.".to_string(),
             code: 1326,
+            related: None,
         },
         ParseDiagnostic {
             start: 6,
             length: 1,
             message: "Type expected.".to_string(),
             code: 1110,
+            related: None,
         },
     ];
 
@@ -62,6 +64,7 @@ fn filtered_parse_diagnostics_keeps_ts1326_when_alone() {
         length: 6,
         message: "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments.".to_string(),
         code: 1326,
+        related: None,
     }];
 
     let filtered = filtered_parse_diagnostics(&diagnostics, false);
@@ -88,12 +91,14 @@ fn filtered_parse_diagnostics_ts1326_does_not_self_suppress_listed_sibling() {
             message: "A 'declare' modifier cannot be used with an import declaration."
                 .to_string(),
             code: 1079,
+            related: None,
         },
         ParseDiagnostic {
             start: 80,
             length: 6,
             message: "This use of 'import' is invalid. 'import()' calls can be written, but they must have parentheses and cannot have type arguments.".to_string(),
             code: 1326,
+            related: None,
         },
     ];
 

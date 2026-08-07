@@ -25,12 +25,14 @@ fn filtered_parse_diagnostics_suppresses_ts1492_when_real_parse_error_present() 
             length: 5,
             message: "'using' declarations may not have binding patterns.".to_string(),
             code: 1492,
+            related: None,
         },
         ParseDiagnostic {
             start: 60,
             length: 1,
             message: "Type expected.".to_string(),
             code: 1110,
+            related: None,
         },
     ];
 
@@ -55,6 +57,7 @@ fn filtered_parse_diagnostics_keeps_ts1492_when_alone() {
         length: 5,
         message: "'using' declarations may not have binding patterns.".to_string(),
         code: 1492,
+        related: None,
     }];
 
     let filtered = filtered_parse_diagnostics(&diagnostics, false);
@@ -82,12 +85,14 @@ fn filtered_parse_diagnostics_ts1492_does_not_self_suppress_listed_sibling() {
             length: 5,
             message: "'using' declarations may not have binding patterns.".to_string(),
             code: 1492,
+            related: None,
         },
         ParseDiagnostic {
             start: 60,
             length: 7,
             message: "A 'declare' modifier cannot be used with an import declaration.".to_string(),
             code: 1079,
+            related: None,
         },
     ];
 

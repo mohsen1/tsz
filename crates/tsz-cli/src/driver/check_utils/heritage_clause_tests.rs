@@ -27,12 +27,14 @@ fn filtered_parse_diagnostics_suppresses_ts1173_when_real_parse_error_present() 
             length: 6,
             message: "'extends' clause must precede 'implements' clause.".to_string(),
             code: 1173,
+            related: None,
         },
         ParseDiagnostic {
             start: 60,
             length: 1,
             message: "Type expected.".to_string(),
             code: 1110,
+            related: None,
         },
     ];
 
@@ -58,12 +60,14 @@ fn filtered_parse_diagnostics_suppresses_ts1175_when_real_parse_error_present() 
             length: 6,
             message: "'implements' clause already seen.".to_string(),
             code: 1175,
+            related: None,
         },
         ParseDiagnostic {
             start: 60,
             length: 1,
             message: "Type expected.".to_string(),
             code: 1110,
+            related: None,
         },
     ];
 
@@ -89,12 +93,14 @@ fn filtered_parse_diagnostics_suppresses_ts1176_when_real_parse_error_present() 
             length: 6,
             message: "Interface declaration cannot have an 'implements' clause.".to_string(),
             code: 1176,
+            related: None,
         },
         ParseDiagnostic {
             start: 60,
             length: 1,
             message: "Type expected.".to_string(),
             code: 1110,
+            related: None,
         },
     ];
 
@@ -127,6 +133,7 @@ fn filtered_parse_diagnostics_keeps_ts1173_ts1175_ts1176_when_alone() {
             length: 1,
             message: message.to_string(),
             code,
+            related: None,
         }];
 
         let filtered = filtered_parse_diagnostics(&diagnostics, false);
@@ -153,12 +160,14 @@ fn filtered_parse_diagnostics_ts1173_does_not_self_suppress_listed_sibling() {
             length: 8,
             message: "'extends' clause already seen.".to_string(),
             code: 1172,
+            related: None,
         },
         ParseDiagnostic {
             start: 80,
             length: 6,
             message: "'extends' clause must precede 'implements' clause.".to_string(),
             code: 1173,
+            related: None,
         },
     ];
 
@@ -184,12 +193,14 @@ fn filtered_parse_diagnostics_ts1175_does_not_self_suppress_listed_sibling() {
             length: 8,
             message: "'extends' clause already seen.".to_string(),
             code: 1172,
+            related: None,
         },
         ParseDiagnostic {
             start: 80,
             length: 6,
             message: "'implements' clause already seen.".to_string(),
             code: 1175,
+            related: None,
         },
     ];
 
@@ -215,12 +226,14 @@ fn filtered_parse_diagnostics_ts1176_does_not_self_suppress_listed_sibling() {
             length: 8,
             message: "'extends' clause already seen.".to_string(),
             code: 1172,
+            related: None,
         },
         ParseDiagnostic {
             start: 80,
             length: 6,
             message: "Interface declaration cannot have an 'implements' clause.".to_string(),
             code: 1176,
+            related: None,
         },
     ];
 

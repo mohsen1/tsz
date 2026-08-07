@@ -66,6 +66,7 @@ impl ParserState {
             length,
             message: message.to_string(),
             code,
+            related: None,
         });
     }
     pub(crate) fn report_invalid_string_or_template_escape_errors(&mut self) {

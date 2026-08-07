@@ -134,52 +134,43 @@ impl ParserState {
             return self.parse_export_default_with_decorators(start_pos, decorators);
         }
 
-        let declaration = match self.token() {
-            SyntaxKind::ClassKeyword => {
-                self.parse_class_declaration_with_decorators(decorators, self.token_pos())
-            }
-            SyntaxKind::AbstractKeyword => {
-                self.parse_abstract_class_declaration_with_decorators(decorators, self.token_pos())
-            }
-            SyntaxKind::AtToken => {
-                // Decorators after `export` when decorators also appeared before `export`:
-                // @dec export @dec class Foo {}
-                let post_decorators = self.parse_decorators();
-                if decorators.is_some()
-                    && let Some(ref post_decs) = post_decorators
-                {
-                    for &dec_node in &post_decs.nodes {
-                        if let Some(node) = self.arena.get(dec_node) {
-                            self.parse_error_at(
-                                node.pos,
-                                node.end - node.pos,
-                                "Decorators may not appear after 'export' or 'export default' if they also appear before 'export'.",
-                                diagnostic_codes::DECORATORS_MAY_NOT_APPEAR_AFTER_EXPORT_OR_EXPORT_DEFAULT_IF_THEY_ALSO_APPEAR_BEF,
-                            );
+        let declaration =
+            match self.token() {
+                SyntaxKind::ClassKeyword => {
+                    self.parse_class_declaration_with_decorators(decorators, self.token_pos())
+                }
+                SyntaxKind::AbstractKeyword => self
+                    .parse_abstract_class_declaration_with_decorators(decorators, self.token_pos()),
+                SyntaxKind::AtToken => {
+                    // Decorators after `export` when decorators also appeared before `export`:
+                    // @dec export @dec class Foo {}. tsc reports exactly one TS8038,
+                    // anchored at the *first* trailing decorator regardless of how
+                    // many trailing decorators follow, with a TS1486 related-info
+                    // pointer at the *first* leading decorator (oracle-verified,
+                    // `typescript@7.0.2`: extra leading/trailing decorators do not
+                    // multiply the report).
+                    let post_decorators = self.parse_decorators();
+                    self.report_decorator_used_before_export(&decorators, &post_decorators);
+                    // Use pre-export decorators for the class
+                    match self.token() {
+                        SyntaxKind::ClassKeyword => self
+                            .parse_class_declaration_with_decorators(decorators, self.token_pos()),
+                        SyntaxKind::AbstractKeyword => self
+                            .parse_abstract_class_declaration_with_decorators(
+                                decorators,
+                                self.token_pos(),
+                            ),
+                        _ => {
+                            self.error_statement_expected();
+                            self.parse_expression_statement()
                         }
                     }
                 }
-                // Use pre-export decorators for the class
-                match self.token() {
-                    SyntaxKind::ClassKeyword => {
-                        self.parse_class_declaration_with_decorators(decorators, self.token_pos())
-                    }
-                    SyntaxKind::AbstractKeyword => self
-                        .parse_abstract_class_declaration_with_decorators(
-                            decorators,
-                            self.token_pos(),
-                        ),
-                    _ => {
-                        self.error_statement_expected();
-                        self.parse_expression_statement()
-                    }
+                _ => {
+                    self.error_statement_expected();
+                    self.parse_expression_statement()
                 }
-            }
-            _ => {
-                self.error_statement_expected();
-                self.parse_expression_statement()
-            }
-        };
+            };
 
         let end_pos = self.token_end();
         self.arena.add_export_decl(
@@ -206,93 +197,80 @@ impl ParserState {
         let default_pos = self.token_pos();
         self.parse_expected(SyntaxKind::DefaultKeyword);
 
-        let expression = match self.token() {
-            SyntaxKind::ClassKeyword => {
-                self.parse_class_declaration_with_decorators(decorators, self.token_pos())
-            }
-            SyntaxKind::AbstractKeyword => {
-                self.parse_abstract_class_declaration_with_decorators(decorators, self.token_pos())
-            }
-            SyntaxKind::AtToken => {
-                // Decorators after `export default` when decorators also appeared before `export`:
-                // @dec export default @dec class Foo {}
-                let post_decorators = self.parse_decorators();
-                if decorators.is_some()
-                    && let Some(ref post_decs) = post_decorators
-                {
-                    for &dec_node in &post_decs.nodes {
-                        if let Some(node) = self.arena.get(dec_node) {
+        let expression =
+            match self.token() {
+                SyntaxKind::ClassKeyword => {
+                    self.parse_class_declaration_with_decorators(decorators, self.token_pos())
+                }
+                SyntaxKind::AbstractKeyword => self
+                    .parse_abstract_class_declaration_with_decorators(decorators, self.token_pos()),
+                SyntaxKind::AtToken => {
+                    // Decorators after `export default` when decorators also appeared before `export`:
+                    // @dec export default @dec class Foo {}. Same single-report,
+                    // related-info-pointer semantics as the non-default form above.
+                    let post_decorators = self.parse_decorators();
+                    self.report_decorator_used_before_export(&decorators, &post_decorators);
+                    match self.token() {
+                        SyntaxKind::ClassKeyword => self
+                            .parse_class_declaration_with_decorators(decorators, self.token_pos()),
+                        SyntaxKind::AbstractKeyword => self
+                            .parse_abstract_class_declaration_with_decorators(
+                                decorators,
+                                self.token_pos(),
+                            ),
+                        _ => {
                             self.parse_error_at(
-                                node.pos,
-                                node.end - node.pos,
-                                "Decorators may not appear after 'export' or 'export default' if they also appear before 'export'.",
-                                diagnostic_codes::DECORATORS_MAY_NOT_APPEAR_AFTER_EXPORT_OR_EXPORT_DEFAULT_IF_THEY_ALSO_APPEAR_BEF,
+                                start_pos,
+                                0,
+                                "Decorators are not valid here.",
+                                diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
                             );
+                            let expr = self.parse_assignment_expression();
+                            self.parse_semicolon();
+                            expr
                         }
                     }
                 }
-                match self.token() {
-                    SyntaxKind::ClassKeyword => {
-                        self.parse_class_declaration_with_decorators(decorators, self.token_pos())
-                    }
-                    SyntaxKind::AbstractKeyword => self
-                        .parse_abstract_class_declaration_with_decorators(
-                            decorators,
-                            self.token_pos(),
-                        ),
-                    _ => {
-                        self.parse_error_at(
-                            start_pos,
-                            0,
-                            "Decorators are not valid here.",
-                            diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
-                        );
-                        let expr = self.parse_assignment_expression();
-                        self.parse_semicolon();
-                        expr
-                    }
+                SyntaxKind::FunctionKeyword => {
+                    self.parse_error_at(
+                        start_pos,
+                        0,
+                        "Decorators are not valid here.",
+                        diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
+                    );
+                    self.parse_function_declaration_with_async_optional_name(false, None)
                 }
-            }
-            SyntaxKind::FunctionKeyword => {
-                self.parse_error_at(
-                    start_pos,
-                    0,
-                    "Decorators are not valid here.",
-                    diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
-                );
-                self.parse_function_declaration_with_async_optional_name(false, None)
-            }
-            SyntaxKind::AsyncKeyword if self.look_ahead_is_async_function() => {
-                self.parse_error_at(
-                    start_pos,
-                    0,
-                    "Decorators are not valid here.",
-                    diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
-                );
-                self.next_token(); // consume 'async'
-                self.parse_function_declaration_with_async_optional_name(true, None)
-            }
-            SyntaxKind::InterfaceKeyword => {
-                self.parse_error_at(
-                    start_pos,
-                    0,
-                    "Decorators are not valid here.",
-                    diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
-                );
-                self.parse_interface_declaration()
-            }
-            _ => {
-                self.parse_error_at(
-                    start_pos,
-                    0,
-                    "Decorators are not valid here.",
-                    diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
-                );
-                let expr = self.parse_assignment_expression();
-                self.parse_semicolon();
-                expr
-            }
-        };
+                SyntaxKind::AsyncKeyword if self.look_ahead_is_async_function() => {
+                    self.parse_error_at(
+                        start_pos,
+                        0,
+                        "Decorators are not valid here.",
+                        diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
+                    );
+                    self.next_token(); // consume 'async'
+                    self.parse_function_declaration_with_async_optional_name(true, None)
+                }
+                SyntaxKind::InterfaceKeyword => {
+                    self.parse_error_at(
+                        start_pos,
+                        0,
+                        "Decorators are not valid here.",
+                        diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
+                    );
+                    self.parse_interface_declaration()
+                }
+                _ => {
+                    self.parse_error_at(
+                        start_pos,
+                        0,
+                        "Decorators are not valid here.",
+                        diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
+                    );
+                    let expr = self.parse_assignment_expression();
+                    self.parse_semicolon();
+                    expr
+                }
+            };
 
         let end_pos = self.token_end();
         // Use export assignment for default exports

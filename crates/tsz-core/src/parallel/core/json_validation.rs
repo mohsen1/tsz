@@ -67,12 +67,14 @@ fn validate_json_syntax(source: &str) -> Vec<ParseDiagnostic> {
                         length: 1,
                         message: expected_msg.to_string(),
                         code: tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+                        related: None,
                     });
                     diagnostics.push(ParseDiagnostic {
                         start: *start as u32,
                         length: 1,
                         message: tsz_common::diagnostics::diagnostic_messages::PROPERTY_ASSIGNMENT_EXPECTED.to_string(),
                         code: tsz_common::diagnostics::diagnostic_codes::PROPERTY_ASSIGNMENT_EXPECTED,
+                        related: None,
                     });
                 }
                 if let Some((_, end)) = spans.last() {
@@ -81,6 +83,7 @@ fn validate_json_syntax(source: &str) -> Vec<ParseDiagnostic> {
                         length: 1,
                         message: "'}' expected.".to_string(),
                         code: tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+                        related: None,
                     });
                 }
             }
@@ -131,6 +134,7 @@ fn validate_json_syntax(source: &str) -> Vec<ParseDiagnostic> {
                         length: 1,
                         message: tsz_common::diagnostics::diagnostic_messages::STRING_LITERAL_WITH_DOUBLE_QUOTES_EXPECTED.to_string(),
                         code: tsz_common::diagnostics::diagnostic_codes::STRING_LITERAL_WITH_DOUBLE_QUOTES_EXPECTED,
+                        related: None,
                     });
                     true
                 }
@@ -142,6 +146,7 @@ fn validate_json_syntax(source: &str) -> Vec<ParseDiagnostic> {
                     length: 1,
                     message: tsz_common::diagnostics::diagnostic_messages::PROPERTY_VALUE_CAN_ONLY_BE_STRING_LITERAL_NUMERIC_LITERAL_TRUE_FALSE_NULL_OBJECT.to_string(),
                     code: tsz_common::diagnostics::diagnostic_codes::PROPERTY_VALUE_CAN_ONLY_BE_STRING_LITERAL_NUMERIC_LITERAL_TRUE_FALSE_NULL_OBJECT,
+                    related: None,
                 });
             }
             expecting_value = false;
@@ -219,6 +224,7 @@ fn validate_json_syntax(source: &str) -> Vec<ParseDiagnostic> {
                 length: 1,
                 message: tsz_common::diagnostics::diagnostic_messages::STRING_LITERAL_WITH_DOUBLE_QUOTES_EXPECTED.to_string(),
                 code: tsz_common::diagnostics::diagnostic_codes::STRING_LITERAL_WITH_DOUBLE_QUOTES_EXPECTED,
+                related: None,
             });
             expecting_property_name = false;
         }
