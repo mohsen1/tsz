@@ -506,7 +506,6 @@ impl<'a> CheckerContext<'a> {
     /// Used when a speculative path succeeds and its diagnostics should be
     /// kept. Only the dedup set needs reconciliation — diagnostics are already
     /// in the vector.
-    #[allow(dead_code)]
     pub(crate) fn commit_diagnostics(&mut self, snap: &DiagnosticSnapshot) {
         // Diagnostics already in the vector; just rebuild dedup for new entries.
         let start = snap.diagnostics_len.min(self.diagnostics.len());
@@ -722,13 +721,12 @@ impl SpeculationState<'_, '_> {
 /// // OR
 /// drop(snap);         // implicit commit — speculative diagnostics survive
 /// ```
-#[allow(dead_code)]
 pub(crate) struct DiagnosticSpeculationSnapshot {
     snapshot: DiagnosticSnapshot,
     committed: bool,
 }
 
-#[allow(dead_code)]
+#[expect(dead_code)]
 impl DiagnosticSpeculationSnapshot {
     pub(crate) fn new(ctx: &CheckerContext) -> Self {
         Self {
@@ -808,13 +806,11 @@ impl DiagnosticSpeculationSnapshot {
 /// Like `DiagnosticSpeculationSnapshot`, dropping is an implicit commit.
 /// Call `rollback()` explicitly when discarding diagnostics, implicit-any
 /// bookkeeping, and request cache state produced during a speculative probe.
-#[allow(dead_code)]
 pub(crate) struct FullSpeculationSnapshot {
     snapshot: FullSnapshot,
     committed: bool,
 }
 
-#[allow(dead_code)]
 impl FullSpeculationSnapshot {
     pub(crate) fn new(ctx: &CheckerContext) -> Self {
         Self {

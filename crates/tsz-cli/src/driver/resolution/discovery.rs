@@ -12,7 +12,7 @@ use tsz::scanner::scanner_impl::ScannerState;
 #[allow(unused_imports)]
 use super::*;
 
-#[allow(dead_code)]
+#[allow(dead_code)] // Dead in the lib build; exercised only by tests.
 pub(crate) fn collect_module_specifiers_from_text(path: &Path, text: &str) -> Vec<String> {
     collect_module_requests_from_text(path, text)
         .into_iter()

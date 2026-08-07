@@ -26,7 +26,7 @@ impl<'a> CheckerState<'a> {
     ///     return obj;
     /// }
     /// ```
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub(crate) fn get_type_of_await_expression(&mut self, idx: NodeIndex) -> TypeId {
         self.get_type_of_await_expression_with_request(idx, &TypingRequest::NONE)
     }

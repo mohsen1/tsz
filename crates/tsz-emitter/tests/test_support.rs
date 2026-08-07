@@ -16,6 +16,11 @@
 //! Rationale: workstream 8 item 4 in `docs/plan/ROADMAP.md`
 //! ("Add `emit_test_support` with parser/print helpers and table-case support").
 
+// Shared helper module `#[path]`-mounted into several test binaries; each binary
+// exercises a different subset of these helpers, so a symbol unused in one binary
+// is used in another. `allow` (not `expect`) is the correct tool here: `expect`
+// would fire `unfulfilled_lint_expectations` in whichever binary happens to use
+// every helper.
 #![allow(dead_code)]
 
 use tsz_emitter::output::printer::{PrintOptions, Printer, lower_and_print};

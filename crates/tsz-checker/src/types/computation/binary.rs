@@ -14,7 +14,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Handles all binary operators including arithmetic, comparison, logical,
     /// assignment, nullish coalescing, and comma operators.
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub(crate) fn get_type_of_binary_expression(&mut self, idx: NodeIndex) -> TypeId {
         self.get_type_of_binary_expression_with_request(idx, &TypingRequest::NONE)
     }

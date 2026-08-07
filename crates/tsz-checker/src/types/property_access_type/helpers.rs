@@ -1485,7 +1485,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Get type of property access expression.
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub(crate) fn get_type_of_property_access(&mut self, idx: NodeIndex) -> TypeId {
         self.get_type_of_property_access_with_request(idx, &TypingRequest::NONE)
     }

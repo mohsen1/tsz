@@ -11,7 +11,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub(crate) fn check_property_declaration(&mut self, member_idx: NodeIndex) {
         self.check_property_declaration_with_request(member_idx, &TypingRequest::NONE);
     }
@@ -624,7 +624,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check a method declaration.
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub(crate) fn check_method_declaration(&mut self, member_idx: NodeIndex) {
         self.check_method_declaration_with_request(member_idx, &TypingRequest::NONE);
     }
@@ -1342,7 +1342,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check an accessor declaration (getter/setter).
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub(crate) fn check_accessor_declaration(&mut self, member_idx: NodeIndex) {
         self.check_accessor_declaration_with_request(member_idx, &TypingRequest::NONE);
     }

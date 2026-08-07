@@ -13,15 +13,17 @@
 //! Note: The thin checker is the unified checker pipeline; `CheckerState`
 //! is an alias to the thin checker.
 
-// XL: crate-wide `dead_code` is suppressed because lifting it surfaces ~149
-// item-level warnings across ~70 files in this crate (counted via a lib build
-// pass for #13440). Each needs case-by-case judgment (delete vs. local allow
-// vs. intended API) and several candidates are only reachable through tests or
-// macros that a `--lib` pass cannot see, so a safe audit is its own campaign.
+// XL: crate-wide `dead_code` is suppressed because lifting it surfaces ~360
+// item-level warnings across the crate (counted via an `--all-targets` pass for
+// #13440/#16794). Each needs case-by-case judgment (delete vs. local expect vs.
+// intended API) and several candidates are only reachable through tests or
+// macros an item-level pass cannot see, so a safe audit is its own campaign.
 // Scoping per-module would reproduce the blanket across most of the tree. The
 // solver half of #13440 (false `InferenceError` "reserved" label + dead
 // `ConstraintSet` methods) is already resolved by #13534; this crate-wide allow
-// is the remaining XL item tracked by #13440.
+// is the remaining XL item tracked by #13440. The per-symbol `#[expect(dead_code)]`
+// annotations inside this crate still self-police: an item-level `expect` overrides
+// this blanket, so a stale one (its symbol became used) fails the build even here.
 #![allow(dead_code)]
 
 extern crate self as tsz_checker;

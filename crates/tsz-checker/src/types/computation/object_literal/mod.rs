@@ -200,7 +200,7 @@ impl<'a> CheckerState<'a> {
     /// - Duplicate property detection
     /// - Contextual type inference
     /// - Implicit any reporting (TS7008)
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub(crate) fn get_type_of_object_literal(&mut self, idx: NodeIndex) -> TypeId {
         self.get_type_of_object_literal_with_request(idx, &TypingRequest::NONE)
     }

@@ -1279,7 +1279,7 @@ struct BuildProgramResult {
     /// Number of times `merge_bind_results_ref` was called for this result.
     /// 0 means the fast path fired (merge skipped); 1 means a full merge ran.
     /// Only consumed by tests; production call sites only use `program`/`dirty_paths`.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Dead in the lib build; exercised only by tests.
     merge_calls: u32,
 }
 

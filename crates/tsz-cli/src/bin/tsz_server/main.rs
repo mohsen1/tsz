@@ -1357,7 +1357,7 @@ impl Server {
     /// Recognized command that has no implementation yet.
     // No production call site yet — kept as part of the taxonomy so future
     // stub handlers can mark themselves honest without re-deriving the shape.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // Dead in the lib build; exercised only by tests.
     pub(crate) fn unimplemented_response(
         &self,
         seq: u64,

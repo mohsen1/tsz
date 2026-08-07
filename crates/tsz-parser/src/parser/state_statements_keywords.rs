@@ -1568,7 +1568,7 @@ impl ParserState {
         result
     }
 
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub(crate) fn look_ahead_is_await_using(&mut self) -> bool {
         look_ahead_is(&mut self.scanner, self.current_token, |token| {
             token == SyntaxKind::UsingKeyword
@@ -1626,7 +1626,7 @@ impl ParserState {
     }
 
     /// Look ahead to see if we have `export =`.
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub(crate) fn look_ahead_is_export_assignment(&mut self) -> bool {
         let snapshot = self.scanner.save_state();
         let current = self.current_token;

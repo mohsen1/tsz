@@ -422,7 +422,6 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    #[allow(dead_code)]
     pub(crate) fn resolve_symbol_module_path_cached(&mut self, sym_id: SymbolId) -> Option<String> {
         if let Some(cached) = self.symbol_module_specifier_cache.get(&sym_id) {
             return cached.clone();
@@ -1274,7 +1273,7 @@ impl<'a> DeclarationEmitter<'a> {
     /// Group foreign symbols by their module paths.
     ///
     /// Returns a map of module path -> Vec<SymbolId> for all foreign symbols.
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     pub(crate) fn group_foreign_symbols_by_module(&mut self) -> FxHashMap<String, Vec<SymbolId>> {
         let mut module_map: FxHashMap<String, Vec<SymbolId>> = FxHashMap::default();
 
