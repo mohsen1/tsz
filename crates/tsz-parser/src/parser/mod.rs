@@ -36,6 +36,7 @@ pub mod state;
 mod state_declarations;
 mod state_declarations_exports;
 mod state_declarations_modules;
+mod state_declarations_type_member_modifiers;
 mod state_diagnostics;
 mod state_exports_recovery;
 mod state_expressions;
@@ -192,6 +193,9 @@ mod parser_speculative_context_restore_tests;
 #[cfg(test)]
 #[path = "../../tests/parser_top_level_modifier_ts1044_ts1184_tests.rs"]
 mod parser_top_level_modifier_ts1044_ts1184_tests;
+#[cfg(test)]
+#[path = "../../tests/parser_type_member_modifier_grammar_tests.rs"]
+mod parser_type_member_modifier_grammar_tests;
 #[cfg(test)]
 #[path = "../../tests/tests.rs"]
 mod tests;
