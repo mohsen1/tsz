@@ -2,10 +2,12 @@ use crate::context::{CheckerContext, CheckerOptions};
 use crate::diagnostics::diagnostic_codes;
 use crate::query_boundaries::common::TypeInterner;
 use crate::state::CheckerState;
-use crate::test_utils::check_multi_file;
+use crate::test_utils::{
+    check_multi_file, check_multi_file_with_libs_unique_module_locals, load_compiled_lib_files,
+};
 use std::sync::Arc;
 use tsz_binder::BinderState;
-use tsz_common::common::ModuleKind;
+use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_parser::parser::ParserState;
 
 fn parse_bound_source(
@@ -377,5 +379,223 @@ probe.inspect("beta", "not-a-number");
             .iter()
             .map(|diagnostic| (diagnostic.code, diagnostic.message_text.as_str()))
             .collect::<Vec<_>>()
+    );
+}
+
+// -----------------------------------------------------------------------------
+// #16308 — cross-file generic-heritage member resolution (working boundary).
+//
+// When an interface `extends` a *generic* base (`interface Crate<T> extends
+// Array<T>`) and is consumed from another file, every member inherited from that
+// base must remain visible at the use site — exactly mobx's `IObservableArray<T>
+// extends Array<T>`. The arena-local heritage merge reads `extends` clauses
+// through the *checking* file's arena, so the cross-arena `merge_cross_file_
+// heritage` path is what actually supplies the base; if any body-computation
+// path the receiver reads skips it, the inherited members vanish as `TS2339`.
+//
+// These pin the *reproducible* boundary of that family with the real
+// `lib.es5.d.ts` and the driver's globally-unique-`SymbolId` invariant (so a
+// green here is the production heritage mechanism, not a base-0 harness id
+// collision). Every simple/adjacent shape below resolves correctly today —
+// single hop, one- and two-level re-export barrels, an imported program-symbol
+// base, a `declare global` augmentation base, `ReadonlyArray`, and a defaulted
+// type parameter. They are controls: the still-open mobx row (#16308) needs the
+// deep circular `internal.ts` barrel graph that prior sessions could not
+// minimize, and closing it is the cross-arena canonical-materialize-once work
+// tracked by #14345. These guard that work from silently regressing the shapes
+// that already work.
+// -----------------------------------------------------------------------------
+
+/// Build a multi-file project with the real `lib.es5.d.ts` and the driver's
+/// globally-unique-`SymbolId` invariant, returning the `TS2339` messages the
+/// entry file reports (empty when every inherited member resolved).
+fn generic_heritage_ts2339(files: &[(&str, &str)], entry: &str) -> Vec<String> {
+    let lib_files = load_compiled_lib_files(&["lib.es5.d.ts"]);
+    let diagnostics = check_multi_file_with_libs_unique_module_locals(
+        files,
+        entry,
+        CheckerOptions {
+            target: ScriptTarget::ES2020,
+            module: ModuleKind::ESNext,
+            module_explicitly_set: true,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &lib_files,
+    );
+    diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == 2339)
+        .map(|diagnostic| diagnostic.message_text.clone())
+        .collect()
+}
+
+/// Single hop: `Crate<T> extends Array<T>` imported directly.
+#[test]
+fn cross_file_interface_extends_generic_lib_base_keeps_inherited_members() {
+    let missing = generic_heritage_ts2339(
+        &[
+            (
+                "decl.ts",
+                "export interface Crate<T> extends Array<T> { extra(): T; }\n",
+            ),
+            (
+                "main.ts",
+                "import { Crate } from \"./decl\";\ndeclare const c: Crate<number>;\nc.map(v => v);\nc.length;\nc.extra();\n",
+            ),
+        ],
+        "main.ts",
+    );
+    assert!(
+        missing.is_empty(),
+        "inherited generic-lib-base members must resolve, got TS2339: {missing:?}"
+    );
+}
+
+/// One-level re-export barrel (`export * from "./decl"`), mobx's `internal.ts`
+/// routing at depth 1.
+#[test]
+fn cross_file_interface_extends_generic_lib_base_through_barrel_keeps_members() {
+    let missing = generic_heritage_ts2339(
+        &[
+            (
+                "decl.ts",
+                "export interface Crate<T> extends Array<T> { extra(): T; }\n",
+            ),
+            ("barrel.ts", "export * from \"./decl\";\n"),
+            (
+                "main.ts",
+                "import { Crate } from \"./barrel\";\ndeclare const c: Crate<number>;\nc.map(v => v);\nc.length;\nc.extra();\n",
+            ),
+        ],
+        "main.ts",
+    );
+    assert!(
+        missing.is_empty(),
+        "inherited generic-lib-base members must resolve through a barrel, got TS2339: {missing:?}"
+    );
+}
+
+/// Two-level re-export barrel (`main -> barrel -> inner -> decl`).
+#[test]
+fn cross_file_interface_extends_generic_lib_base_through_nested_barrel_keeps_members() {
+    let missing = generic_heritage_ts2339(
+        &[
+            (
+                "decl.ts",
+                "export interface Crate<T> extends Array<T> { extra(): T; }\n",
+            ),
+            ("inner.ts", "export * from \"./decl\";\n"),
+            ("barrel.ts", "export * from \"./inner\";\n"),
+            (
+                "main.ts",
+                "import { Crate } from \"./barrel\";\ndeclare const c: Crate<number>;\nc.map(v => v);\nc.length;\nc.extra();\n",
+            ),
+        ],
+        "main.ts",
+    );
+    assert!(
+        missing.is_empty(),
+        "inherited members must resolve through a two-level barrel, got TS2339: {missing:?}"
+    );
+}
+
+/// The base is a generic *program-symbol* interface imported into the derived
+/// module (not a lib global), consumed a further hop away.
+#[test]
+fn cross_file_interface_extends_imported_generic_program_base_keeps_members() {
+    let missing = generic_heritage_ts2339(
+        &[
+            (
+                "base.ts",
+                "export interface Bag<T> { grab(): T; size: number; }\n",
+            ),
+            (
+                "decl.ts",
+                "import { Bag } from \"./base\";\nexport interface Crate<T> extends Bag<T> { extra(): T; }\n",
+            ),
+            (
+                "main.ts",
+                "import { Crate } from \"./decl\";\ndeclare const c: Crate<number>;\nc.grab();\nc.size;\nc.extra();\n",
+            ),
+        ],
+        "main.ts",
+    );
+    assert!(
+        missing.is_empty(),
+        "inherited imported-program-base members must resolve, got TS2339: {missing:?}"
+    );
+}
+
+/// The base is a generic interface introduced by a `declare global`
+/// augmentation in another module.
+#[test]
+fn cross_file_interface_extends_declare_global_generic_base_keeps_members() {
+    let missing = generic_heritage_ts2339(
+        &[
+            (
+                "globals.ts",
+                "export {};\ndeclare global { interface GBag<T> { grab(): T; size: number; } }\n",
+            ),
+            (
+                "decl.ts",
+                "export interface Crate<T> extends GBag<T> { extra(): T; }\n",
+            ),
+            (
+                "main.ts",
+                "import { Crate } from \"./decl\";\ndeclare const c: Crate<number>;\nc.grab();\nc.size;\nc.extra();\n",
+            ),
+        ],
+        "main.ts",
+    );
+    assert!(
+        missing.is_empty(),
+        "inherited declare-global-base members must resolve, got TS2339: {missing:?}"
+    );
+}
+
+/// `extends ReadonlyArray<T>` — the base's own-name and variance differ from
+/// `Array`, so it exercises a distinct lib generic.
+#[test]
+fn cross_file_interface_extends_generic_readonly_array_base_keeps_members() {
+    let missing = generic_heritage_ts2339(
+        &[
+            (
+                "decl.ts",
+                "export interface Crate<T> extends ReadonlyArray<T> { extra(): T; }\n",
+            ),
+            (
+                "main.ts",
+                "import { Crate } from \"./decl\";\ndeclare const c: Crate<number>;\nc.map(v => v);\nc.length;\nc.extra();\n",
+            ),
+        ],
+        "main.ts",
+    );
+    assert!(
+        missing.is_empty(),
+        "inherited ReadonlyArray members must resolve, got TS2339: {missing:?}"
+    );
+}
+
+/// A defaulted type parameter on the derived interface must not perturb the
+/// inherited member set at a fully-applied use site.
+#[test]
+fn cross_file_interface_extends_generic_lib_base_with_default_type_param_keeps_members() {
+    let missing = generic_heritage_ts2339(
+        &[
+            (
+                "decl.ts",
+                "export interface Crate<T = number> extends Array<T> { extra(): T; }\n",
+            ),
+            (
+                "main.ts",
+                "import { Crate } from \"./decl\";\ndeclare const c: Crate;\nc.map(v => v);\nc.length;\nc.extra();\n",
+            ),
+        ],
+        "main.ts",
+    );
+    assert!(
+        missing.is_empty(),
+        "inherited members must resolve with a defaulted type param, got TS2339: {missing:?}"
     );
 }
