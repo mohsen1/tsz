@@ -38,11 +38,24 @@ pub fn find_disjoint_literal_property_across_intersection(
     // regardless of whether it is observed before or after a literal
     // occurrence of the same name.
     let mut excluded: FxHashSet<Atom> = FxHashSet::default();
-    let mut ingest = |properties: &[crate::types::PropertyInfo]| {
+    // Where each name was *first written*, so a multi-conflict shape names the
+    // property `tsc` names. `tsc` always reports the first-written conflicting
+    // property (intersection-member order, then source declaration order within
+    // a member), independent of which property was accessed — never whichever
+    // name a hashmap happens to iterate first. `PropertyInfo::declaration_order`
+    // still carries source order here even though the interned shape's
+    // `properties` are sorted by atom id for canonical hashing, so the ordering
+    // key survives the shape sort. Members are walked in written order, and a
+    // name's position is recorded at its first occurrence only.
+    let mut first_written: FxHashMap<Atom, (usize, u32)> = FxHashMap::default();
+    let mut ingest = |member_idx: usize, properties: &[crate::types::PropertyInfo]| {
         for prop in properties {
             if prop.optional || excluded.contains(&prop.name) {
                 continue;
             }
+            first_written
+                .entry(prop.name)
+                .or_insert((member_idx, prop.declaration_order));
             let Some(TypeData::Literal(value)) = db.lookup(prop.type_id) else {
                 // A non-literal (or absent) required occurrence could still
                 // conflict via the fuller `TypeInterner`-internal analysis,
@@ -55,22 +68,28 @@ pub fn find_disjoint_literal_property_across_intersection(
             by_name.entry(prop.name).or_default().insert(value);
         }
     };
-    for &member in members {
+    for (member_idx, &member) in members.iter().enumerate() {
         if member.is_intrinsic() {
             continue;
         }
         match db.lookup(member) {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
-                ingest(&db.object_shape(shape_id).properties);
+                ingest(member_idx, &db.object_shape(shape_id).properties);
             }
             Some(TypeData::Callable(callable_id)) => {
-                ingest(&db.callable_shape(callable_id).properties);
+                ingest(member_idx, &db.callable_shape(callable_id).properties);
             }
             _ => {}
         }
     }
     by_name
         .into_iter()
-        .find(|(_, values)| values.len() >= 2)
+        .filter(|(_, values)| values.len() >= 2)
         .map(|(name, _)| name)
+        .min_by_key(|name| {
+            first_written
+                .get(name)
+                .copied()
+                .unwrap_or((usize::MAX, u32::MAX))
+        })
 }

@@ -171,6 +171,81 @@ anything.whatever;
     );
 }
 
+#[test]
+fn multi_conflict_names_the_first_written_property() {
+    // Both `zz` and `aa` are disjoint across the members, so more than one
+    // property drives the reduction. `tsc` names the *first-written* one
+    // (`zz`, declared before `aa` in both members) — never whichever name a
+    // hashmap over the conflicting set happens to yield first.
+    let diags = check_source_strict(
+        r#"
+interface P { zz: 1; aa: "a" }
+interface Q { zz: 2; aa: "b" }
+declare const r: P & Q;
+r.zz;
+"#,
+    );
+    let diag = only(&diags, TS2339);
+    assert_eq!(
+        related(&diag, TS18031).as_deref(),
+        Some(
+            "The intersection 'P & Q' was reduced to 'never' because property 'zz' has conflicting types in some constituents."
+        ),
+        "got {diags:?}"
+    );
+}
+
+#[test]
+fn multi_conflict_first_written_is_independent_of_accessed_property() {
+    // Same two-conflict shape, but the access is the *second*-written
+    // conflicting property. The elaboration still names the first-written
+    // discriminant (`zz`), combining the first-written rule with the
+    // accessed-property-independence rule.
+    let diags = check_source_strict(
+        r#"
+interface P { zz: 1; aa: "a" }
+interface Q { zz: 2; aa: "b" }
+declare const r: P & Q;
+r.aa;
+"#,
+    );
+    let diag = only(&diags, TS2339);
+    assert_eq!(
+        related(&diag, TS18031).as_deref(),
+        Some(
+            "The intersection 'P & Q' was reduced to 'never' because property 'zz' has conflicting types in some constituents."
+        ),
+        "got {diags:?}"
+    );
+}
+
+#[test]
+fn multi_conflict_pick_is_declaration_order_not_atom_order() {
+    // The pick must follow source declaration order, not interned-atom order.
+    // `bb` is interned first (as a value binding) so it carries a lower atom id
+    // than `yy`, yet `yy` is written first in both members. A pick keyed on atom
+    // id would answer `bb`; tsc's first-written rule answers `yy`. (Even if the
+    // atom ids do not diverge in a given build, the asserted answer stays the
+    // tsc-correct one.)
+    let diags = check_source_strict(
+        r#"
+declare const bb: number;
+interface First { yy: 1; bb: "a" }
+interface Second { yy: 2; bb: "b" }
+declare const value: First & Second;
+value.yy;
+"#,
+    );
+    let diag = only(&diags, TS2339);
+    assert_eq!(
+        related(&diag, TS18031).as_deref(),
+        Some(
+            "The intersection 'First & Second' was reduced to 'never' because property 'yy' has conflicting types in some constituents."
+        ),
+        "got {diags:?}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Negative / control cases: no TS18031 elaboration.
 // ---------------------------------------------------------------------------
