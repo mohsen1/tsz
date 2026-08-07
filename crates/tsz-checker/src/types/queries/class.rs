@@ -1167,6 +1167,17 @@ impl<'a> CheckerState<'a> {
         accessor_idx: NodeIndex,
         body_idx: NodeIndex,
     ) -> TypeId {
+        // A get accessor with no body (abstract, ambient, or `declare`) has no
+        // source to infer a return type from. Its implicit type is `any` — tsc's
+        // implicit-any fallback, the same one that drives TS7033 — not the `void`
+        // that empty-body return inference produces. Returning `void` here makes an
+        // overriding member in a derived class fail the TS2416 base-type
+        // assignability check even though every type is assignable to an `any` base
+        // (and would likewise mis-widen any other consumer of a bodyless getter's
+        // type). Concrete getters with an (empty) body keep inferring normally.
+        if body_idx.is_none() {
+            return TypeId::ANY;
+        }
         let prev = self.ctx.preserve_literal_types;
         self.ctx.preserve_literal_types = false;
         let r = self.infer_return_type_from_body(accessor_idx, body_idx, None);
