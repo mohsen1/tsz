@@ -27,12 +27,14 @@ fn filtered_parse_diagnostics_suppresses_ts1091_when_real_parse_error_present() 
             message: "Only a single variable declaration is allowed in a 'for...in' statement."
                 .to_string(),
             code: 1091,
+            related: None,
         },
         ParseDiagnostic {
             start: 60,
             length: 1,
             message: "Type expected.".to_string(),
             code: 1110,
+            related: None,
         },
     ];
 
@@ -59,12 +61,14 @@ fn filtered_parse_diagnostics_suppresses_ts1188_when_real_parse_error_present() 
             message: "Only a single variable declaration is allowed in a 'for...of' statement."
                 .to_string(),
             code: 1188,
+            related: None,
         },
         ParseDiagnostic {
             start: 60,
             length: 1,
             message: "Type expected.".to_string(),
             code: 1110,
+            related: None,
         },
     ];
 
@@ -99,6 +103,7 @@ fn filtered_parse_diagnostics_keeps_ts1091_ts1188_when_alone() {
             length: 1,
             message: message.to_string(),
             code,
+            related: None,
         }];
 
         let filtered = filtered_parse_diagnostics(&diagnostics, false);
@@ -125,6 +130,7 @@ fn filtered_parse_diagnostics_ts1091_does_not_self_suppress_listed_sibling() {
             length: 6,
             message: "An import declaration cannot have modifiers.".to_string(),
             code: 1191,
+            related: None,
         },
         ParseDiagnostic {
             start: 60,
@@ -132,6 +138,7 @@ fn filtered_parse_diagnostics_ts1091_does_not_self_suppress_listed_sibling() {
             message: "Only a single variable declaration is allowed in a 'for...in' statement."
                 .to_string(),
             code: 1091,
+            related: None,
         },
     ];
 
@@ -157,6 +164,7 @@ fn filtered_parse_diagnostics_ts1188_does_not_self_suppress_listed_sibling() {
             length: 6,
             message: "An import declaration cannot have modifiers.".to_string(),
             code: 1191,
+            related: None,
         },
         ParseDiagnostic {
             start: 60,
@@ -164,6 +172,7 @@ fn filtered_parse_diagnostics_ts1188_does_not_self_suppress_listed_sibling() {
             message: "Only a single variable declaration is allowed in a 'for...of' statement."
                 .to_string(),
             code: 1188,
+            related: None,
         },
     ];
 

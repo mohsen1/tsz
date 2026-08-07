@@ -35,12 +35,14 @@ fn grammar_plus_sibling(code: u32, message: &str) -> Vec<ParseDiagnostic> {
             length: 2,
             message: "A 'get' accessor cannot have parameters.".to_string(),
             code: 1054,
+            related: None,
         },
         ParseDiagnostic {
             start: 52,
             length: 2,
             message: message.to_string(),
             code,
+            related: None,
         },
     ]
 }
@@ -136,6 +138,7 @@ fn lone_grammar_code_is_kept() {
         length: 2,
         message: "A 'get' accessor cannot have parameters.".to_string(),
         code: 1054,
+        related: None,
     }];
     let filtered = filtered_parse_diagnostics(&diagnostics, false);
     assert_eq!(filtered.len(), 1, "a lone grammar code must survive");
