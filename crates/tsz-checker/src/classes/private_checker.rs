@@ -66,12 +66,21 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns `Some(error_message)` if there's a private brand mismatch.
     pub(crate) fn private_brand_mismatch_error(
-        &self,
+        &mut self,
         source: TypeId,
         target: TypeId,
     ) -> Option<String> {
-        let source_brand = self.get_private_brand(source)?;
-        let target_brand = self.get_private_brand(target)?;
+        // `get_private_brand`/`object_shape_for_type` only recognize a
+        // materialized `Object`/`ObjectWithIndex`/`Callable` shape; an
+        // instantiated generic class (`Application`) is opaque to them until
+        // evaluated. Route through the canonical materialize-or-defer
+        // gateway (#15396) so a generic receiver's brand is visible the same
+        // way a plain class's already is.
+        let source_resolved = self.apparent_type_of_receiver_light(source).into_type();
+        let target_resolved = self.apparent_type_of_receiver_light(target).into_type();
+
+        let source_brand = self.get_private_brand(source_resolved)?;
+        let target_brand = self.get_private_brand(target_resolved)?;
 
         if source_brand == target_brand {
             return None;
@@ -89,9 +98,10 @@ impl<'a> CheckerState<'a> {
                 })
         };
 
-        if let (Some((source_member, source_visibility)), Some((target_member, target_visibility))) =
-            (shared_nominal_member(source), shared_nominal_member(target))
-            && source_member == target_member
+        if let (Some((source_member, source_visibility)), Some((target_member, target_visibility))) = (
+            shared_nominal_member(source_resolved),
+            shared_nominal_member(target_resolved),
+        ) && source_member == target_member
             && source_visibility == target_visibility
         {
             // An ES private identifier (`#name`) is a per-class slot: tsc
@@ -99,9 +109,22 @@ impl<'a> CheckerState<'a> {
             // reserves the "separate declarations" wording for
             // modifier-`private`/`protected` members.
             if tsz_solver::utils::is_es_private_identifier_name(&source_member) {
+                // tsc names the *uninstantiated* declaring class here, even
+                // when the receiver is a generic application (`G<number>`
+                // reports the detail as `... in type 'G' ...`, not
+                // `'G<number>'`), and walks to the base that actually
+                // declares the member for inherited private identifiers.
+                let source_class =
+                    self.get_declaring_class_name_for_private_member(source, &source_member);
+                let target_class =
+                    self.get_declaring_class_name_for_private_member(target, &target_member);
                 return Some(format_message(
                     diagnostic_messages::PROPERTY_IN_TYPE_REFERS_TO_A_DIFFERENT_MEMBER_THAT_CANNOT_BE_ACCESSED_FROM_WITHI,
-                    &[&source_member, &self.format_type(source), &self.format_type(target)],
+                    &[
+                        &source_member,
+                        &source_class.unwrap_or_else(|| self.format_type(source)),
+                        &target_class.unwrap_or_else(|| self.format_type(target)),
+                    ],
                 ));
             }
             return Some(match source_visibility {
@@ -119,17 +142,20 @@ impl<'a> CheckerState<'a> {
             });
         }
 
-        let field_name = shared_nominal_member(source)
+        let field_name = shared_nominal_member(source_resolved)
             .map(|(member_name, _)| member_name)
-            .or_else(|| self.get_private_field_name_from_brand(source))
+            .or_else(|| self.get_private_field_name_from_brand(source_resolved))
             .unwrap_or_else(|| "[private field]".to_string());
+
+        let source_class = self.get_declaring_class_name_for_private_member(source, &field_name);
+        let target_class = self.get_declaring_class_name_for_private_member(target, &field_name);
 
         Some(format_message(
             diagnostic_messages::PROPERTY_IN_TYPE_REFERS_TO_A_DIFFERENT_MEMBER_THAT_CANNOT_BE_ACCESSED_FROM_WITHI,
             &[
                 &field_name,
-                &self.format_type(source),
-                &self.format_type(target),
+                &source_class.unwrap_or_else(|| self.format_type(source)),
+                &target_class.unwrap_or_else(|| self.format_type(target)),
             ],
         ))
     }
