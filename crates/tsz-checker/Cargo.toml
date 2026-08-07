@@ -2733,3 +2733,6 @@ path = "tests/ts2433_cross_file_ambient_class_merge_tests.rs"
 [[test]]
 name = "ts2345_primitive_key_union_constraint_display_tests"
 path = "tests/ts2345_primitive_key_union_constraint_display_tests.rs"
+[[test]]
+name = "ts18031_intersection_never_conflict_elaboration_tests"
+path = "tests/ts18031_intersection_never_conflict_elaboration_tests.rs"

@@ -35,6 +35,7 @@ pub use self::core::SharedDefVariance;
 pub use self::core::TypeInterner;
 pub use self::core::clear_thread_local_cache;
 pub(crate) use self::core::{PredicateCacheKind, TEMPLATE_LITERAL_EXPANSION_LIMIT, TypeListBuffer};
+pub(crate) use self::normalize::find_disjoint_object_literal_conflict_property;
 pub(crate) use self::tuple_normalization::tuple_normalized;
 pub(crate) use self::union_mode::union_literal_default_enabled;
 // Used by intern_tests.rs (included via #[path] below).

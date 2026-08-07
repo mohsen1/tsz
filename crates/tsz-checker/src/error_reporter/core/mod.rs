@@ -12,4 +12,5 @@ mod diagnostic_source;
 mod excess_display;
 mod identifier_source_display;
 mod intersection_optional_display;
+mod never_reduced_intersection_elaboration;
 mod type_display;

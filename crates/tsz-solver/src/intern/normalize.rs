@@ -10,6 +10,7 @@
 
 use super::shallow_subtype::ShallowReduceKind;
 use super::{TypeInterner, TypeListBuffer};
+use crate::construction::TypeDatabase;
 use crate::types::{
     IntrinsicKind, LiteralValue, PropertyInfo, TemplateLiteralId, TypeData, TypeId, Visibility,
 };
@@ -763,100 +764,7 @@ impl TypeInterner {
     /// occurrences of the name (O(k) for the common single-literal case) rather
     /// than an O(k²) pairwise comparison.
     fn name_occurrences_disjoint(&self, occurrences: &[PropOccurrence]) -> bool {
-        if occurrences.len() < 2 {
-            return false;
-        }
-
-        // Visibility: a `private` member's declaring-class identity cannot be
-        // satisfied by a public or protected member of the same name, so a private
-        // occurrence alongside any differently-visible occurrence reduces to `never`.
-        // Protected/public mixes stay on the merge path — they can still expose a
-        // public property.
-        let mut has_private = false;
-        let mut has_non_private = false;
-        for occ in occurrences {
-            if occ.visibility == Visibility::Private {
-                has_private = true;
-            } else {
-                has_non_private = true;
-            }
-        }
-        if has_private && has_non_private {
-            return true;
-        }
-
-        // Cross-domain: a literal occurrence whose primitive class differs from
-        // another occurrence's class is disjoint (e.g. `a: ""` (string) & `a: number`).
-        // As with the literal value-set check below, two *optional* occurrences only
-        // make the property itself `never`, so a conflicting pair needs at least one
-        // required side. A pair (literal `L` of class `C_L`, occurrence `X` of class
-        // `C_X != C_L`) is a not-both-optional conflict when either `L` is required
-        // (and any differing class exists) or some required occurrence has a class
-        // distinct from a literal's class.
-        let mut classes: SmallVec<[PrimitiveClass; 8]> = SmallVec::new();
-        let mut literal_classes: SmallVec<[PrimitiveClass; 8]> = SmallVec::new();
-        let mut required_classes: SmallVec<[PrimitiveClass; 8]> = SmallVec::new();
-        let mut has_required_literal = false;
-        for occ in occurrences {
-            let Some(class) = self.primitive_class_for(occ.type_id) else {
-                continue;
-            };
-            if !classes.contains(&class) {
-                classes.push(class);
-            }
-            if !occ.optional && !required_classes.contains(&class) {
-                required_classes.push(class);
-            }
-            if self.is_literal(occ.type_id) {
-                if !literal_classes.contains(&class) {
-                    literal_classes.push(class);
-                }
-                has_required_literal |= !occ.optional;
-            }
-        }
-        let required_literal_cross = has_required_literal && classes.len() >= 2;
-        let literal_vs_required_cross = literal_classes
-            .iter()
-            .any(|lit| required_classes.iter().any(|req| req != lit));
-        if required_literal_cross || literal_vs_required_cross {
-            return true;
-        }
-
-        // Literal value-sets: group literal-typed occurrences by domain. A required
-        // occurrence whose value-set is disjoint from any other occurrence's forces
-        // `never`; two *optional* occurrences only make the property itself `never`,
-        // so a conflicting pair needs at least one required side.
-        let mut by_domain: LiteralOccurrencesByDomain = SmallVec::new();
-        let mut has_required_literal = false;
-        for occ in occurrences {
-            let Some(kind) = self.literal_kind_from_type(occ.type_id) else {
-                continue;
-            };
-            has_required_literal |= !occ.optional;
-            let domain = kind.domain();
-            let lit = LiteralOccurrence {
-                kind,
-                optional: occ.optional,
-            };
-            match by_domain.iter_mut().find(|(d, _)| *d == domain) {
-                Some((_, group)) => group.push(lit),
-                None => {
-                    let mut group = SmallVec::new();
-                    group.push(lit);
-                    by_domain.push((domain, group));
-                }
-            }
-        }
-
-        // Literals drawn from two different domains are mutually disjoint; if any of
-        // them is required the intersection is `never`.
-        if has_required_literal && by_domain.len() >= 2 {
-            return true;
-        }
-
-        by_domain
-            .iter()
-            .any(|(_, group)| Self::literal_group_has_disjoint_pair(group))
+        name_occurrences_disjoint_db(self, occurrences)
     }
 
     /// Within a single literal domain, returns true when some *required* occurrence's
@@ -954,31 +862,7 @@ impl TypeInterner {
     }
 
     fn literal_kind_from_type(&self, type_id: TypeId) -> Option<LiteralKind> {
-        let key = self.lookup(type_id)?;
-        match key {
-            TypeData::Literal(literal) => Some(LiteralKind::Single(literal)),
-            TypeData::Union(members) => {
-                let members = self.type_list(members);
-                let mut domain: Option<LiteralDomain> = None;
-                let mut values = FxHashSet::default();
-                for &member in members.iter() {
-                    let Some(TypeData::Literal(literal)) = self.lookup(member) else {
-                        return None;
-                    };
-                    let literal_domain = literal_domain(&literal);
-                    if let Some(existing) = domain {
-                        if existing != literal_domain {
-                            return None;
-                        }
-                    } else {
-                        domain = Some(literal_domain);
-                    }
-                    values.insert(literal);
-                }
-                domain.map(|domain| LiteralKind::Union(domain, values))
-            }
-            _ => None,
-        }
+        literal_kind_from_type_db(self, type_id)
     }
 
     pub(super) fn literal_domain_from_type(&self, type_id: TypeId) -> Option<LiteralDomain> {
@@ -986,39 +870,7 @@ impl TypeInterner {
     }
 
     pub(crate) fn primitive_class_for(&self, type_id: TypeId) -> Option<PrimitiveClass> {
-        match type_id {
-            TypeId::STRING => return Some(PrimitiveClass::String),
-            TypeId::NUMBER => return Some(PrimitiveClass::Number),
-            TypeId::BOOLEAN => return Some(PrimitiveClass::Boolean),
-            TypeId::BIGINT => return Some(PrimitiveClass::Bigint),
-            TypeId::SYMBOL => return Some(PrimitiveClass::Symbol),
-            TypeId::NULL => return Some(PrimitiveClass::Null),
-            TypeId::UNDEFINED | TypeId::VOID => return Some(PrimitiveClass::Undefined),
-            _ => {}
-        }
-
-        let key = self.lookup(type_id)?;
-
-        match key {
-            TypeData::Intrinsic(kind) => match kind {
-                IntrinsicKind::String => Some(PrimitiveClass::String),
-                IntrinsicKind::Number => Some(PrimitiveClass::Number),
-                IntrinsicKind::Boolean => Some(PrimitiveClass::Boolean),
-                IntrinsicKind::Bigint => Some(PrimitiveClass::Bigint),
-                IntrinsicKind::Symbol => Some(PrimitiveClass::Symbol),
-                IntrinsicKind::Null => Some(PrimitiveClass::Null),
-                IntrinsicKind::Undefined | IntrinsicKind::Void => Some(PrimitiveClass::Undefined),
-                _ => None,
-            },
-            TypeData::Literal(literal) => match literal {
-                LiteralValue::String(_) => Some(PrimitiveClass::String),
-                LiteralValue::Number(_) => Some(PrimitiveClass::Number),
-                LiteralValue::Boolean(_) => Some(PrimitiveClass::Boolean),
-                LiteralValue::BigInt(_) => Some(PrimitiveClass::Bigint),
-            },
-            TypeData::UniqueSymbol(_) => Some(PrimitiveClass::Symbol),
-            _ => None,
-        }
+        primitive_class_for_db(self, type_id)
     }
 
     /// Merge `Enum(D, X) | Enum(D, Y)` into `Enum(D, X | Y)` for same-`DefId` enum
@@ -1763,6 +1615,234 @@ impl TypeInterner {
         // Return the union of all intersections
         Some(self.union(intersection_results))
     }
+}
+
+/// `db`-based counterpart of [`TypeInterner::primitive_class_for`].
+///
+/// Lives as a free function (rather than a `TypeInterner` inherent method) so
+/// it can run against any `&dyn TypeDatabase`, not just the concrete intern
+/// table — the checker only ever holds a trait object.
+fn primitive_class_for_db(db: &dyn TypeDatabase, type_id: TypeId) -> Option<PrimitiveClass> {
+    match type_id {
+        TypeId::STRING => return Some(PrimitiveClass::String),
+        TypeId::NUMBER => return Some(PrimitiveClass::Number),
+        TypeId::BOOLEAN => return Some(PrimitiveClass::Boolean),
+        TypeId::BIGINT => return Some(PrimitiveClass::Bigint),
+        TypeId::SYMBOL => return Some(PrimitiveClass::Symbol),
+        TypeId::NULL => return Some(PrimitiveClass::Null),
+        TypeId::UNDEFINED | TypeId::VOID => return Some(PrimitiveClass::Undefined),
+        _ => {}
+    }
+
+    let key = db.lookup(type_id)?;
+
+    match key {
+        TypeData::Intrinsic(kind) => match kind {
+            IntrinsicKind::String => Some(PrimitiveClass::String),
+            IntrinsicKind::Number => Some(PrimitiveClass::Number),
+            IntrinsicKind::Boolean => Some(PrimitiveClass::Boolean),
+            IntrinsicKind::Bigint => Some(PrimitiveClass::Bigint),
+            IntrinsicKind::Symbol => Some(PrimitiveClass::Symbol),
+            IntrinsicKind::Null => Some(PrimitiveClass::Null),
+            IntrinsicKind::Undefined | IntrinsicKind::Void => Some(PrimitiveClass::Undefined),
+            _ => None,
+        },
+        TypeData::Literal(literal) => match literal {
+            LiteralValue::String(_) => Some(PrimitiveClass::String),
+            LiteralValue::Number(_) => Some(PrimitiveClass::Number),
+            LiteralValue::Boolean(_) => Some(PrimitiveClass::Boolean),
+            LiteralValue::BigInt(_) => Some(PrimitiveClass::Bigint),
+        },
+        TypeData::UniqueSymbol(_) => Some(PrimitiveClass::Symbol),
+        _ => None,
+    }
+}
+
+/// `db`-based counterpart of [`TypeInterner::literal_kind_from_type`].
+fn literal_kind_from_type_db(db: &dyn TypeDatabase, type_id: TypeId) -> Option<LiteralKind> {
+    let key = db.lookup(type_id)?;
+    match key {
+        TypeData::Literal(literal) => Some(LiteralKind::Single(literal)),
+        TypeData::Union(members) => {
+            let members = db.type_list(members);
+            let mut domain: Option<LiteralDomain> = None;
+            let mut values = FxHashSet::default();
+            for &member in members.iter() {
+                let Some(TypeData::Literal(literal)) = db.lookup(member) else {
+                    return None;
+                };
+                let literal_domain = literal_domain(&literal);
+                if let Some(existing) = domain {
+                    if existing != literal_domain {
+                        return None;
+                    }
+                } else {
+                    domain = Some(literal_domain);
+                }
+                values.insert(literal);
+            }
+            domain.map(|domain| LiteralKind::Union(domain, values))
+        }
+        _ => None,
+    }
+}
+
+/// `db`-based counterpart of [`TypeInterner::name_occurrences_disjoint`].
+///
+/// Returns true when the occurrences of a single property name across the
+/// members of an intersection are mutually unsatisfiable, forcing the whole
+/// intersection to `never`. See the `TypeInterner` method this delegates from
+/// for the per-check rationale (visibility, cross-domain literal, and
+/// literal-value-set conflicts).
+fn name_occurrences_disjoint_db(db: &dyn TypeDatabase, occurrences: &[PropOccurrence]) -> bool {
+    if occurrences.len() < 2 {
+        return false;
+    }
+
+    let mut has_private = false;
+    let mut has_non_private = false;
+    for occ in occurrences {
+        if occ.visibility == Visibility::Private {
+            has_private = true;
+        } else {
+            has_non_private = true;
+        }
+    }
+    if has_private && has_non_private {
+        return true;
+    }
+
+    let mut classes: SmallVec<[PrimitiveClass; 8]> = SmallVec::new();
+    let mut literal_classes: SmallVec<[PrimitiveClass; 8]> = SmallVec::new();
+    let mut required_classes: SmallVec<[PrimitiveClass; 8]> = SmallVec::new();
+    let mut has_required_literal = false;
+    for occ in occurrences {
+        let Some(class) = primitive_class_for_db(db, occ.type_id) else {
+            continue;
+        };
+        if !classes.contains(&class) {
+            classes.push(class);
+        }
+        if !occ.optional && !required_classes.contains(&class) {
+            required_classes.push(class);
+        }
+        if is_literal_type(db, occ.type_id) {
+            if !literal_classes.contains(&class) {
+                literal_classes.push(class);
+            }
+            has_required_literal |= !occ.optional;
+        }
+    }
+    let required_literal_cross = has_required_literal && classes.len() >= 2;
+    let literal_vs_required_cross = literal_classes
+        .iter()
+        .any(|lit| required_classes.iter().any(|req| req != lit));
+    if required_literal_cross || literal_vs_required_cross {
+        return true;
+    }
+
+    let mut by_domain: LiteralOccurrencesByDomain = SmallVec::new();
+    let mut has_required_literal = false;
+    for occ in occurrences {
+        let Some(kind) = literal_kind_from_type_db(db, occ.type_id) else {
+            continue;
+        };
+        has_required_literal |= !occ.optional;
+        let domain = kind.domain();
+        let lit = LiteralOccurrence {
+            kind,
+            optional: occ.optional,
+        };
+        match by_domain.iter_mut().find(|(d, _)| *d == domain) {
+            Some((_, group)) => group.push(lit),
+            None => {
+                let mut group = SmallVec::new();
+                group.push(lit);
+                by_domain.push((domain, group));
+            }
+        }
+    }
+
+    if has_required_literal && by_domain.len() >= 2 {
+        return true;
+    }
+
+    by_domain
+        .iter()
+        .any(|(_, group)| TypeInterner::literal_group_has_disjoint_pair(group))
+}
+
+/// Returns the conflicting property name when exactly one of `members`'
+/// property names has mutually-unsatisfiable occurrences (the same test
+/// [`name_occurrences_disjoint_db`] runs) — the property tsc's TS18031
+/// elaboration (`The intersection '...' was reduced to 'never' because
+/// property '...' has conflicting types in some constituents.`) names.
+/// Oracle-verified against `typescript@7.0.2` that tsc names the conflicting
+/// property independent of which property was actually accessed.
+///
+/// When *more than one* property name conflicts, this returns `None` rather
+/// than guessing: `ObjectShape::properties` is sorted by interned `Atom` id
+/// (for canonical hashing identity), not source declaration order, so there
+/// is no order-independent way to recover tsc's "first written" choice from
+/// the interned shape alone. Silently skipping the elaboration here is never
+/// a parity regression — the caller already falls back to no elaboration —
+/// it just doesn't (yet) cover the multi-conflict case.
+///
+/// `members` must be independently re-evaluated from the source annotation —
+/// once an intersection's disjoint-object-literal conflict collapses it to
+/// `TypeId::NEVER` at intern time, the member list is gone from the
+/// interned type itself.
+pub(crate) fn find_disjoint_object_literal_conflict_property(
+    db: &dyn TypeDatabase,
+    members: &[TypeId],
+) -> Option<Atom> {
+    fn record_occurrence(
+        by_name: &mut FxHashMap<Atom, SmallVec<[PropOccurrence; 4]>>,
+        prop: &PropertyInfo,
+    ) {
+        by_name.entry(prop.name).or_default().push(PropOccurrence {
+            type_id: prop.type_id,
+            optional: prop.optional,
+            visibility: prop.visibility,
+        });
+    }
+
+    let mut by_name: FxHashMap<Atom, SmallVec<[PropOccurrence; 4]>> = FxHashMap::default();
+
+    for &member in members {
+        if member.is_intrinsic() {
+            continue;
+        }
+        let Some(key) = db.lookup(member) else {
+            continue;
+        };
+        match key {
+            TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
+                let shape = db.object_shape(shape_id);
+                for prop in &shape.properties {
+                    record_occurrence(&mut by_name, prop);
+                }
+            }
+            TypeData::Callable(callable_id) => {
+                let shape = db.callable_shape(callable_id);
+                for prop in &shape.properties {
+                    record_occurrence(&mut by_name, prop);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut conflict: Option<Atom> = None;
+    for (&name, occurrences) in &by_name {
+        if name_occurrences_disjoint_db(db, occurrences) {
+            if conflict.is_some() {
+                return None;
+            }
+            conflict = Some(name);
+        }
+    }
+    conflict
 }
 
 #[cfg(test)]

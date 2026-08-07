@@ -2,6 +2,7 @@
 
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     pub(in crate::error_reporter) fn declared_intersection_annotation_display_for_expression(
@@ -11,6 +12,67 @@ impl<'a> CheckerState<'a> {
         let annotation_idx =
             self.declared_current_arena_annotation_node_for_expression(expr_idx)?;
         self.format_declared_intersection_annotation_node(annotation_idx)
+    }
+
+    /// Like [`Self::declared_intersection_annotation_display_for_expression`],
+    /// but also returns each member's independently-evaluated `TypeId` and has
+    /// no type-literal-member requirement — the sibling function is scoped to
+    /// its own (type-literal-only) callers, while the TS18031 "was reduced to
+    /// never" elaboration needs a plain `interface A & interface B` intersection
+    /// too (oracle-verified against `typescript@7.0.2`).
+    pub(in crate::error_reporter) fn declared_intersection_display_and_members_for_expression(
+        &mut self,
+        expr_idx: NodeIndex,
+    ) -> Option<(String, Vec<TypeId>)> {
+        let annotation_idx =
+            self.declared_current_arena_annotation_node_for_expression(expr_idx)?;
+        self.intersection_display_and_members_from_annotation_node(annotation_idx)
+    }
+
+    fn intersection_display_and_members_from_annotation_node(
+        &mut self,
+        annotation_idx: NodeIndex,
+    ) -> Option<(String, Vec<TypeId>)> {
+        let mut annotation_idx = annotation_idx;
+        while self.ctx.arena.get(annotation_idx).is_some_and(|node| {
+            node.kind == tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_TYPE
+        }) {
+            annotation_idx = self
+                .ctx
+                .arena
+                .get_wrapped_type_at(annotation_idx)?
+                .type_node;
+        }
+
+        let node = self.ctx.arena.get(annotation_idx)?;
+        if node.kind != tsz_parser::parser::syntax_kind_ext::INTERSECTION_TYPE {
+            return None;
+        }
+
+        let member_nodes = self.ctx.arena.get_composite_type(node)?.types.nodes.clone();
+        if member_nodes.len() < 2 {
+            return None;
+        }
+
+        let mut displays = Vec::with_capacity(member_nodes.len());
+        let mut member_types = Vec::with_capacity(member_nodes.len());
+        for member_node in member_nodes {
+            let was_parenthesized = self.ctx.arena.get(member_node).map(|node| node.kind)
+                == Some(tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_TYPE);
+            let member_type = self.get_type_from_type_node(member_node);
+            let display = self.format_type_for_assignability_message(member_type);
+            displays.push(if was_parenthesized {
+                format!("({display})")
+            } else {
+                display
+            });
+            // Resolve `Lazy(DefId)` (a bare interface/class reference) to its
+            // structural shape — the display above intentionally uses the
+            // unresolved type so nominal types still print their name, but the
+            // conflict-property query needs the actual `Object`/`Callable` shape.
+            member_types.push(self.resolve_lazy_type(member_type));
+        }
+        Some((displays.join(" & "), member_types))
     }
 
     fn declared_current_arena_annotation_node_for_expression(
