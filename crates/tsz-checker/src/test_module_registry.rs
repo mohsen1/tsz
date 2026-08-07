@@ -897,6 +897,8 @@ mod ts1539_bigint_literal_property_name_tests;
 mod ts18010_jsdoc_tag_anchor_tests;
 #[path = "tests/ts18017_ts18018_private_identifier_shadow_related_info_tests.rs"]
 mod ts18017_ts18018_private_identifier_shadow_related_info_tests;
+#[path = "tests/ts18031_intersection_conflicting_property_tests.rs"]
+mod ts18031_intersection_conflicting_property_tests;
 #[path = "tests/ts18050_nullish_keyword_without_strict_null_checks_tests.rs"]
 mod ts18050_nullish_keyword_without_strict_null_checks_tests;
 #[path = "tests/ts2322_private_field_narrowing_write_tests.rs"]

@@ -5,6 +5,21 @@ use tsz_solver::{ObjectShape, TypeId};
 
 pub(crate) use tsz_solver::objects::PropertyCollectionResult;
 
+/// The property name whose required occurrences across a *written*
+/// intersection's members are literal values from mutually exclusive
+/// value-sets, forcing that intersection to reduce to `never` (`tsc`'s
+/// TS18031). `members` is the pre-reduction member list recovered from
+/// source syntax — see `declared_intersection_annotation_display_for_expression`
+/// — since the interned intersection has already collapsed to the single
+/// canonical `TypeId::NEVER` by the time a property-access failure is
+/// reported against it.
+pub(crate) fn find_disjoint_literal_property_across_intersection(
+    db: &dyn TypeDatabase,
+    members: &[TypeId],
+) -> Option<tsz_common::interner::Atom> {
+    tsz_solver::type_queries::find_disjoint_literal_property_across_intersection(db, members)
+}
+
 pub(crate) fn collect_properties<R: TypeResolver>(
     type_id: TypeId,
     db: &dyn TypeDatabase,

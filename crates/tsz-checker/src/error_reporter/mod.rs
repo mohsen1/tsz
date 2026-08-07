@@ -40,6 +40,7 @@ mod expected_type_from_return;
 mod fingerprint_policy;
 mod generic_display_helpers;
 mod generics;
+mod intersection_never_elaboration;
 mod literal_alias_display;
 mod literal_alias_rewrites;
 mod missing_property_declared_here;
