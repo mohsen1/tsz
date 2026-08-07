@@ -1022,11 +1022,53 @@ pub fn check_application_variance<R: TypeResolver>(
 
     let variances = {
         let def_id = lazy_def_id(db, s_app.base)?;
-        resolver.get_type_param_variance(def_id).or_else(|| {
+        // Declared-mode (`compute_type_param_variances_with_resolver_cached`)
+        // is session-stable, backed by the universe-shared variance store,
+        // and ignores `strictFunctionTypes`/method-bivariance entirely — so a
+        // function-typed property (`{ member: (cb: T) => void }`) always
+        // measures as strictly contravariant there even when
+        // `strictFunctionTypes` is off, and this public-variance prepass
+        // hard-rejects a pair the downstream structural relation (which does
+        // honor the policy) would accept.
+        //
+        // The fix merges in the effective (context-aware) mask rather than
+        // replacing declared-mode outright: swapping wholesale regressed
+        // generic call inference through complex builtins (`AsyncGenerator`
+        // and friends) whose declared-mode mask carries protective
+        // structural-fallback markers the effective computation does not
+        // reproduce. `merge_bivariant_usage` only ORs in `BIVARIANT_USAGE` at
+        // positions the effective computation marks bivariant, which forces
+        // structural fallback there and can only loosen a rejection, never
+        // introduce one — every other position keeps its declared-mode
+        // characteristics untouched.
+        let declared = resolver.get_type_param_variance(def_id).or_else(|| {
             crate::relations::variance::compute_type_param_variances_with_resolver_cached(
                 db, resolver, query_db, def_id,
             )
-        })?
+        })?;
+        if !policy.strict_function_types() {
+            let outcome =
+                crate::relations::variance::compute_effective_type_param_variances_with_resolver_cached(
+                    db,
+                    resolver,
+                    context.evaluation_session,
+                    def_id,
+                    policy.strict_function_types(),
+                    policy.disable_method_bivariance(),
+                );
+            if let Some(outcome) = outcome
+                && !outcome.incomplete
+            {
+                crate::relations::subtype::rules::generics::merge_bivariant_usage(
+                    &declared,
+                    &outcome.variances,
+                )
+            } else {
+                declared
+            }
+        } else {
+            declared
+        }
     };
     if variances.len() != s_app.args.len() {
         return None;
