@@ -78,6 +78,16 @@ pub trait TypeDisplayProvenance {
         None
     }
 
+    /// Record the written source order of a canonically reordered intersection.
+    /// See [`crate::intern::TypeInterner::store_intersection_source_order`].
+    fn store_intersection_source_order(&self, _canonical: TypeId, _source_order: TypeId) {}
+
+    /// Look up the raw written-source-order `Intersection` for a canonically
+    /// reordered one. Returns `None` when no reorder was recorded.
+    fn get_intersection_source_order(&self, _type_id: TypeId) -> Option<TypeId> {
+        None
+    }
+
     /// Record semantic provenance from an evaluated structural result back
     /// to the nominal `Application` it was produced from (relation-layer
     /// accept-only variance recovery; never read by the printer).
@@ -254,6 +264,14 @@ impl TypeDisplayProvenance for TypeInterner {
 
     fn get_merged_intersection_origin(&self, type_id: TypeId) -> Option<TypeId> {
         Self::get_merged_intersection_origin(self, type_id)
+    }
+
+    fn store_intersection_source_order(&self, canonical: TypeId, source_order: TypeId) {
+        Self::store_intersection_source_order(self, canonical, source_order);
+    }
+
+    fn get_intersection_source_order(&self, type_id: TypeId) -> Option<TypeId> {
+        Self::get_intersection_source_order(self, type_id)
     }
 
     fn record_application_eval_origin(&self, evaluated: TypeId, application: TypeId) {

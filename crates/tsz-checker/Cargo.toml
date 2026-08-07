@@ -327,6 +327,9 @@ path = "tests/homomorphic_mapped_alias_readonly_index_source_tests.rs"
 name = "intersection_modifier_merge_tests"
 path = "tests/intersection_modifier_merge_tests.rs"
 [[test]]
+name = "intersection_source_order_constituent_16753_tests"
+path = "tests/intersection_source_order_constituent_16753_tests.rs"
+[[test]]
 name = "array_declaration_display_summary_tests"
 path = "tests/array_declaration_display_summary_tests.rs"
 [[test]]

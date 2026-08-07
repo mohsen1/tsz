@@ -1499,7 +1499,17 @@ impl<'a> CheckerState<'a> {
     /// rendered text — so fall back to that to recover the constituents.
     fn target_intersection_constituents(&mut self, target: TypeId) -> Option<Vec<TypeId>> {
         let resolved = self.resolve_lazy_type(target);
-        crate::query_boundaries::common::intersection_members(self.ctx.types, resolved)
+        // `normalize_intersection` reorders members into a canonical (object-last)
+        // form for structural identity, which drops tsc's source order. When a
+        // reorder was recorded, elaborate against the written order so the first
+        // failing constituent matches tsc (`typeRelatedToEachType`) — e.g.
+        // `{ z: 1 } & [string, number]` blames `{ z: 1; }`, not the tuple.
+        let ordered = self
+            .ctx
+            .types
+            .get_intersection_source_order(resolved)
+            .unwrap_or(resolved);
+        crate::query_boundaries::common::intersection_members(self.ctx.types, ordered)
             .map(|list| list.iter().copied().collect())
             .or_else(|| self.display_alias_intersection_constituents(resolved))
             .or_else(|| self.display_alias_intersection_constituents(target))

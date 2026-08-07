@@ -357,6 +357,38 @@ impl TypeInterner {
         self.merged_intersection_origin.get(&type_id).map(|r| *r)
     }
 
+    /// Record that the canonically-ordered `canonical` intersection was written
+    /// with its members in the order of `source_order` (a raw, un-normalized
+    /// `Intersection`).
+    ///
+    /// `normalize_intersection` reorders members into a canonical (object-last)
+    /// form so that structurally equal intersections built along different paths
+    /// (e.g. a distributed `(string | null) & {}` vs. the directly written
+    /// `string & {}`) hash-cons to one `TypeId`. That reordering loses tsc's
+    /// source order, which `typeRelatedToEachType` needs to elaborate the first
+    /// *written* failing constituent of a target intersection. This map lets the
+    /// checker recover it. It is never read by the printer or the relation engine
+    /// — diagnostics only. Both ids must be distinct `Intersection` types; first
+    /// write wins.
+    pub fn store_intersection_source_order(&self, canonical: TypeId, source_order: TypeId) {
+        if canonical == source_order || canonical.is_intrinsic() {
+            return;
+        }
+        if !matches!(self.lookup(source_order), Some(TypeData::Intersection(_))) {
+            return;
+        }
+        if let Entry::Vacant(entry) = self.intersection_source_order.entry(canonical) {
+            entry.insert(source_order);
+            self.advance_display_provenance_generation();
+        }
+    }
+
+    /// Look up the raw written-source-order `Intersection` for a canonically
+    /// reordered one. Returns `None` when no reorder was recorded.
+    pub fn get_intersection_source_order(&self, type_id: TypeId) -> Option<TypeId> {
+        self.intersection_source_order.get(&type_id).map(|r| *r)
+    }
+
     /// Record that an application base belongs to a type alias whose body is a
     /// conditional type. This is diagnostic-only provenance.
     pub fn mark_conditional_alias_base(&self, base: TypeId) {

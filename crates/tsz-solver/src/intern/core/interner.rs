@@ -499,6 +499,8 @@ pub struct TypeInterner {
     /// recover the intersection members regardless of any alias the type later
     /// flows through. First write wins.
     pub(super) merged_intersection_origin: DashMap<TypeId, TypeId, FxBuildHasher>,
+    /// Diagnostic-only written-source-order map; see `store_intersection_source_order`.
+    pub(super) intersection_source_order: DashMap<TypeId, TypeId, FxBuildHasher>,
     /// Application bases whose type-alias body is a conditional type.
     ///
     /// Conditional aliases often evaluate to a branch with its own display
@@ -869,6 +871,7 @@ impl TypeInterner {
             display_properties: DashMap::with_hasher(FxBuildHasher),
             display_alias: DashMap::with_hasher(FxBuildHasher),
             merged_intersection_origin: DashMap::with_hasher(FxBuildHasher),
+            intersection_source_order: DashMap::with_hasher(FxBuildHasher),
             application_eval_origin: DashMap::with_hasher(FxBuildHasher),
             conditional_alias_bases: DashMap::with_hasher(FxBuildHasher),
             global_this_surface_display: DashMap::with_hasher(FxBuildHasher),

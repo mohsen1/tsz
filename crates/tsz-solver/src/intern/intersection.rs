@@ -552,6 +552,16 @@ impl TypeInterner {
             .copied()
             .collect();
 
+        // Snapshot the written member order before the partial merge below
+        // reorders it into canonical (object-last) form. Only a mixed
+        // object-plus-non-object intersection can reorder, so skip the
+        // allocation otherwise. Recorded on the canonical result at the final
+        // intern so diagnostics can elaborate the first *written* failing
+        // constituent (`typeRelatedToEachType`) without perturbing identity.
+        let source_order_snapshot: Option<SmallVec<[TypeId; 4]>> = (!original_objects.is_empty()
+            && original_objects.len() < flat.len())
+        .then(|| flat.iter().copied().collect());
+
         // Step 1: Extract and merge objects from mixed intersection
         let (merged_object, remaining_after_objects) = self.extract_and_merge_objects(&flat);
 
@@ -613,6 +623,14 @@ impl TypeInterner {
         // replace the first object/callable occurrence with its merged
         // representative; this keeps tsc's source-order display for mixed
         // intersections such as `(() => void) & { prop: any }`.
+        //
+        // The canonical (object-last) order this rebuild produces is load-bearing
+        // for structural identity: a distributed form such as `(string | null) &
+        // {}` (which builds its `{}`-anchored alternative in a different member
+        // order) must intern to the *same* `TypeId` as the directly written
+        // `string & {}`. The written source order is instead recorded separately
+        // below (`intersection_source_order`) so diagnostics can recover it
+        // without perturbing identity, display, or evaluation.
         let mut final_flat: TypeListBuffer = SmallVec::new();
         if merged_callable.is_some() {
             let mut emitted_object = false;
@@ -678,7 +696,23 @@ impl TypeInterner {
         }
 
         let list_id = self.intern_type_list_from_slice(&flat);
-        self.intern(TypeData::Intersection(list_id))
+        let canonical = self.intern(TypeData::Intersection(list_id));
+
+        // Record the written source order when the canonical rebuild reordered
+        // the members. The raw intersection is built directly (bypassing this
+        // normalizer, exactly as the object-merge display alias above does) so it
+        // keeps source order; `store_intersection_source_order` no-ops when it
+        // matches the canonical order or is not a distinct intersection.
+        // The snapshot is only captured for a mixed object-plus-non-object
+        // intersection, so it already has >= 2 members; the store self-guards
+        // against a no-op (canonical order unchanged) besides.
+        if let Some(snapshot) = source_order_snapshot {
+            let raw_list = self.intern_type_list_from_slice(&snapshot);
+            let raw_written = self.intern(TypeData::Intersection(raw_list));
+            self.store_intersection_source_order(canonical, raw_written);
+        }
+
+        canonical
     }
 
     fn try_merge_callables_in_intersection(&self, members: &[TypeId]) -> Option<TypeId> {

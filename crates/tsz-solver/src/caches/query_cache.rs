@@ -752,6 +752,15 @@ impl TypeDisplayProvenance for QueryCache<'_> {
         self.interner.get_merged_intersection_origin(type_id)
     }
 
+    fn store_intersection_source_order(&self, canonical: TypeId, source_order: TypeId) {
+        self.interner
+            .store_intersection_source_order(canonical, source_order);
+    }
+
+    fn get_intersection_source_order(&self, type_id: TypeId) -> Option<TypeId> {
+        self.interner.get_intersection_source_order(type_id)
+    }
+
     fn record_application_eval_origin(&self, evaluated: TypeId, application: TypeId) {
         self.interner
             .record_application_eval_origin(evaluated, application);
