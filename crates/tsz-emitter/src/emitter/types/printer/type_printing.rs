@@ -813,7 +813,7 @@ impl<'a> TypePrinter<'a> {
         if let Some(def_id) = base_def_id
             && self.printed_as_elided_local_alias_name(def_id, &base_text)
         {
-            let visible = self.visible_type_application_arg_count(app.base, &app.args);
+            let visible = self.elided_alias_visible_arg_count(app.base, &app.args);
             let mut visible_args = app.args.iter().copied().take(visible);
             return match (visible_args.next(), visible_args.next()) {
                 (Some(only_arg), None) => {
@@ -833,18 +833,25 @@ impl<'a> TypePrinter<'a> {
         if app.args.is_empty() || Self::base_text_cannot_carry_type_arguments(&base_text) {
             base_text
         } else {
+            // Print every type argument. `tsc` reconstructs a *computed* type
+            // reference (`typeToTypeNodeHelper`) with all its arguments up to
+            // arity and never trims a trailing one that happens to equal its
+            // default — `const g = mk<number>()` emits `Box<number, number>`,
+            // an unannotated `function* g() { yield* src(); }` emits
+            // `Generator<unknown, void, any>`. Trailing defaults are only
+            // dropped on the node-reuse path, where a *written* annotation is
+            // copied verbatim (`const g: Generator<number>` stays
+            // `Generator<number>`); that path never reaches this printer, so a
+            // computed reference must render its full argument list.
             let args: Vec<String> = app
                 .args
                 .iter()
-                .take(self.visible_type_application_arg_count(app.base, &app.args))
                 .enumerate()
                 .map(|(index, &id)| self.print_type_argument(id, index == 0))
                 .collect();
-            if args.is_empty() {
-                base_text
-            } else {
-                format!("{base_text}<{}>", args.join(", "))
-            }
+            // `app.args` is non-empty here (the outer guard returns early
+            // otherwise) and the map is 1:1, so `args` is always non-empty.
+            format!("{base_text}<{}>", args.join(", "))
         }
     }
 
@@ -1045,7 +1052,14 @@ impl<'a> TypePrinter<'a> {
         parts
     }
 
-    fn visible_type_application_arg_count(&self, base: TypeId, args: &[TypeId]) -> usize {
+    /// Trailing-default-trimmed argument count, used *only* by the elided
+    /// local-alias fallback above to decide between `X | any` and a bare `any`
+    /// for an unnameable recursive alias (#16594). This is deliberately **not**
+    /// applied to the ordinary `Name<...>` render path: `tsc` never trims a
+    /// trailing type argument that equals its default on a computed type
+    /// reference, so a nameable application prints its full argument list. Do
+    /// not reintroduce this as a general arg-count policy.
+    fn elided_alias_visible_arg_count(&self, base: TypeId, args: &[TypeId]) -> usize {
         let Some(type_params) = self.type_application_type_params(base) else {
             return args.len();
         };
