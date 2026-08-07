@@ -917,6 +917,8 @@ mod ts2445_protected_access_via_subclass_this_tests;
 mod ts2515_ambient_class_abstract_member_tests;
 #[path = "tests/ts2528_default_export_function_overload_tests.rs"]
 mod ts2528_default_export_function_overload_tests;
+#[path = "tests/ts2528_default_export_interface_merge_tests.rs"]
+mod ts2528_default_export_interface_merge_tests;
 #[path = "tests/ts2536_deferred_conditional_indexed_access_tests.rs"]
 mod ts2536_deferred_conditional_indexed_access_tests;
 #[path = "tests/ts2536_error_type_contagion_tests.rs"]

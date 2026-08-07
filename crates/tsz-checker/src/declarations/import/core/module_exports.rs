@@ -574,13 +574,31 @@ impl<'a> CheckerState<'a> {
             }
 
             // Emit TS2528 for any multiple default exports that are not
-            // function overloads. tsc allows interface + value (function/class)
-            // to coexist as a declaration merge, so interface+function is NOT a
-            // conflict. However, interface + type re-export IS a conflict.
-            // The merge is only valid when: (1) one default is an interface
-            // declaration, AND (2) the other is a function or class (value).
-            let interface_can_merge =
-                has_interface && (has_function || has_class) && value_count == 1;
+            // function overloads. tsc keys the `default` export on the name
+            // `default`, so any number of `export default interface` DECLARATIONS
+            // merge into the one `default` interface symbol — exactly like a
+            // named interface merge — and optionally absorb a single value
+            // (function or class) declaration alongside them. The merge is valid
+            // when at least one default is an interface DECLARATION and the
+            // non-interface defaults are either:
+            //   - none at all (`value_count == 0`): a run of `export default
+            //     interface` declarations, which merge into one symbol; or
+            //   - exactly one value declaration (function/class): the classic
+            //     `export default interface` + `export default function`/`class`
+            //     merge.
+            // A non-interface, non-value default — a type-only identifier
+            // (`export default SomeTypeAlias`) or a value expression
+            // (`export default 1`) — does NOT merge with the interface and stays
+            // a genuine TS2528 conflict. `value_count` counts every non-interface
+            // default (function/class and the identifier/expression fallback),
+            // so `value_count == 0` uniquely identifies the all-interface run and
+            // `(has_function || has_class) && value_count == 1` the single-value
+            // merge; an unmergeable type/expression default leaves `value_count
+            // == 1` with neither `has_function` nor `has_class`, correctly
+            // failing both arms.
+            let interface_can_merge = has_interface
+                && value_count <= 1
+                && (value_count == 0 || has_function || has_class);
             // A run of `export default function f(...)` declarations that share
             // a name is ONE default-exported symbol, not N: tsc merges overload
             // signatures into a single `default` symbol before it ever asks
@@ -808,8 +826,13 @@ impl<'a> CheckerState<'a> {
                 } else {
                     // Fallback: TS2528 "A module cannot have multiple default exports"
                     // Skip interface declarations when a function or class exists
-                    // (interface can merge with those). When no function/class is
-                    // present, the interface is truly conflicting and must get TS2528.
+                    // (interface can merge with those). A run of interface
+                    // declarations with no other default never reaches here — it
+                    // merges upstream (`interface_can_merge`, `value_count == 0`)
+                    // and is not a conflict. When the interface is instead paired
+                    // with a non-mergeable default (a type-only identifier or a
+                    // value expression), no function/class is present, so the
+                    // interface is truly conflicting and must get TS2528.
                     for &export_idx in &effective_default_indices {
                         let is_interface = self
                             .ctx
@@ -856,21 +879,20 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
-            } else if has_interface && !(has_function && value_count == 1) {
-                // Multiple default exports with at least one interface but not a valid
-                // interface + function merge. E.g.:
-                //   export default interface A {}
-                //   export default B;  // B is an interface
-                // TSC reports TS2528 because these can't merge.
-                for &export_idx in &effective_default_indices {
-                    let anchor = self.get_default_export_anchor(export_idx);
-                    self.error_at_node(
-                        anchor,
-                        diagnostic_messages::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
-                        diagnostic_codes::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
-                    );
-                }
             }
+            // No `else` arm: when `is_conflict` is false and an interface is
+            // present, the defaults necessarily form a valid merge — a run of
+            // `export default interface` declarations (`value_count == 0`), or
+            // those interfaces plus a single function/class value
+            // (`interface_can_merge`). tsc reports nothing for such merges. A
+            // genuinely unmergeable interface pairing (interface + a type-only
+            // identifier or a value expression, `value_count == 1` with neither
+            // `has_function` nor `has_class`) makes `is_conflict` true and is
+            // handled by the fallback arm above, which emits TS2528 there. An
+            // earlier `else if has_interface && !(has_function && value_count == 1)`
+            // arm re-emitted TS2528 for every non-function merge — including
+            // interface + interface and interface + class, both clean in tsc —
+            // and is removed (issue #16730).
         }
     }
 
