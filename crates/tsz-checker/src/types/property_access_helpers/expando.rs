@@ -1683,12 +1683,24 @@ impl<'a> CheckerState<'a> {
                 .map(|ident| ident.escaped_text.to_string()),
             syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                 let access = self.ctx.arena.get_access_expr(node)?;
+                // An optional-chain hop (`obj?.a = 1`) is never a valid
+                // assignment target (TS2779) and tsc's expando/special-property
+                // detection requires a "bindable static name expression" — a
+                // chain of plain property accesses, which an optional hop is
+                // not. Such a write must not be read back as an expando
+                // property declaration on a later access of the same name.
+                if access.question_dot_token {
+                    return None;
+                }
                 let left = self.expando_assignment_access_key(access.expression)?;
                 let right = self.ctx.arena.get_identifier_at(access.name_or_argument)?;
                 Some(format!("{left}.{}", right.escaped_text))
             }
             syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
                 let access = self.ctx.arena.get_access_expr(node)?;
+                if access.question_dot_token {
+                    return None;
+                }
                 let left = self.expando_assignment_access_key(access.expression)?;
                 let right = self.expando_element_key_name(access.name_or_argument)?;
                 Some(format!("{left}.{right}"))
