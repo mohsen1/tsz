@@ -107,9 +107,9 @@ impl<'a> TypeFormatter<'a> {
                 if !self.ignore_union_origins
                     && let Some(origin) = self.interner.get_union_origin(type_id)
                 {
-                    return self.format_union(origin.as_slice()).into();
+                    return self.format_union(origin.as_slice(), Some(type_id)).into();
                 }
-                self.format_union(members.as_ref()).into()
+                self.format_union(members.as_ref(), Some(type_id)).into()
             }
             TypeData::Intersection(members) => {
                 let members = self.interner.type_list(*members);

@@ -1,5 +1,5 @@
 impl<'a> TypeFormatter<'a> {
-    pub(super) fn format_union(&mut self, members: &[TypeId]) -> String {
+    pub(super) fn format_union(&mut self, members: &[TypeId], union_id: Option<TypeId>) -> String {
         // tsc displays union members with null/undefined at the end.
         // Reorder so non-nullish members come first, then null, then undefined.
         let mut ordered: Vec<TypeId> = Vec::with_capacity(members.len());
@@ -42,7 +42,7 @@ impl<'a> TypeFormatter<'a> {
             return factored;
         }
 
-        self.format_ordered_union_members(ordered)
+        self.format_ordered_union_members(ordered, union_id)
     }
 
     /// Partition a single union member into the non-nullish display list plus
@@ -80,12 +80,8 @@ impl<'a> TypeFormatter<'a> {
             return;
         }
         if let Some(TypeData::Union(list_id)) = self.interner.lookup(member)
-            && self.interner.get_display_alias(member).is_none()
             && self.interner.get_union_origin(member).is_none()
-            && self
-                .def_store
-                .and_then(|ds| ds.find_def_for_type(member))
-                .is_none()
+            && self.member_renders_without_name(member)
         {
             let inner = self.interner.type_list(list_id);
             let has_nested_nullish = inner
@@ -114,7 +110,7 @@ impl<'a> TypeFormatter<'a> {
     }
 
     pub(super) fn format_union_preserving_member_order(&mut self, members: &[TypeId]) -> String {
-        self.format_ordered_union_members(members.to_vec())
+        self.format_ordered_union_members(members.to_vec(), None)
     }
 
     /// Order union members for display in TypeScript 7's diagnostic order.
@@ -357,7 +353,11 @@ impl<'a> TypeFormatter<'a> {
         }
     }
 
-    fn format_ordered_union_members(&mut self, mut ordered: Vec<TypeId>) -> String {
+    fn format_ordered_union_members(
+        &mut self,
+        mut ordered: Vec<TypeId>,
+        union_id: Option<TypeId>,
+    ) -> String {
         if let Some(collapsed) = self.collapse_same_enum_members_for_display(&ordered) {
             return collapsed;
         }
@@ -397,10 +397,27 @@ impl<'a> TypeFormatter<'a> {
         // Collapse constituents that are the SAME TYPE, keyed on identity —
         // never on the rendered string. See
         // [`Self::union_member_display_identity`].
+        //
+        // Inline anonymous object literals are exempt: `tsc` mints a fresh
+        // anonymous type per `{ ... }` occurrence, so `{ m: number } | { m:
+        // number }` prints *both* constituents. tsz content-interns structurally
+        // identical anonymous shapes to one `TypeId`, so keying the collapse on
+        // that shared `TypeId` would wrongly merge them. The as-written
+        // multiplicity reaches us through the union's `origin` member list (see
+        // `store_union_origin`); skipping the collapse for a member the source
+        // wrote as an inline `{ ... }` literal *in this union* lets it survive
+        // to the printer. Named declarations (`Foo | Foo` -> `Foo`), alias
+        // references (`Alias | Alias` -> `Alias`), primitive literals
+        // (`1 | 1` -> `1`) and intrinsics keep their shared identity and still
+        // collapse.
         let mut deduped: Vec<String> = Vec::with_capacity(disambiguated.len());
         let mut seen: rustc_hash::FxHashSet<UnionMemberDisplayIdentity> =
             rustc_hash::FxHashSet::default();
         for (&member, name) in ordered.iter().zip(disambiguated) {
+            if self.is_preserved_inline_object_literal(member, union_id) {
+                deduped.push(name);
+                continue;
+            }
             if seen.insert(self.union_member_display_identity(member)) {
                 deduped.push(name);
             }
@@ -480,7 +497,7 @@ impl<'a> TypeFormatter<'a> {
         // Use sorted union_remainders directly rather than round-tripping through
         // self.interner.union(), which canonically re-sorts by TypeId (allocation
         // order) and would discard the numeric-ascending sort above.
-        let remainder_display = self.format_ordered_union_members(union_remainders);
+        let remainder_display = self.format_ordered_union_members(union_remainders, None);
         Some(format!("{common_display} & ({remainder_display})"))
     }
 
@@ -1231,6 +1248,52 @@ impl<'a> TypeFormatter<'a> {
             Some(sym_id) => UnionMemberDisplayIdentity::Declaration(sym_id.0),
             None => UnionMemberDisplayIdentity::Anonymous(type_id.0),
         }
+    }
+
+    /// Whether `member` is a constituent the source wrote as an inline
+    /// `{ ... }` object literal *directly in the union `union_id`*, and which
+    /// therefore must be exempt from the display collapse.
+    ///
+    /// `tsc` treats each written type-literal as a per-occurrence identity, so
+    /// `{ m: number } | { m: number }` prints both — but tsz content-interns
+    /// structurally identical anonymous shapes onto one `TypeId`, which the
+    /// collapse would then merge. Three conditions gate the exemption, so it
+    /// never repaints a case that legitimately collapses in `tsc`:
+    ///
+    /// - `is_union_literal_member`: the checker marked this member as written
+    ///   inline (a `TypeLiteral` node) in *this* union — an alias reference
+    ///   `Alias | Alias`, whose members are references rather than literals,
+    ///   is not marked and still collapses, exactly as `tsc` collapses it.
+    /// - no `display_alias` and no def association: a shape that renders under
+    ///   an alias/declaration name (whether through the `display_alias` side
+    ///   table or a content-addressed `find_def_for_type` match) shares `tsc`'s
+    ///   named identity, so it collapses; only genuinely anonymous output is
+    ///   preserved. This also keeps mixed alias/inline unions at their existing
+    ///   rendering rather than inventing a new divergence.
+    /// - anonymous object shape: a final guard that the constituent is an
+    ///   object literal, not some other literal kind.
+    fn is_preserved_inline_object_literal(
+        &self,
+        member: TypeId,
+        union_id: Option<TypeId>,
+    ) -> bool {
+        union_id.is_some_and(|uid| self.interner.is_union_literal_member(uid, member))
+            && self.member_renders_without_name(member)
+            && crate::type_queries::get_object_shape(self.interner, member)
+                .is_some_and(|shape| shape.symbol.is_none())
+    }
+
+    /// Whether `member` renders as bare structure — no `display_alias` side
+    /// table entry and no content-addressed def association stands a
+    /// declaration name behind it. Shared by the anonymous-member checks in
+    /// [`Self::collect_union_member_for_display`] and
+    /// [`Self::is_preserved_inline_object_literal`].
+    fn member_renders_without_name(&self, member: TypeId) -> bool {
+        self.interner.get_display_alias(member).is_none()
+            && self
+                .def_store
+                .and_then(|ds| ds.find_def_for_type(member))
+                .is_none()
     }
 
     /// The declaring symbol a union constituent names, when it names one.

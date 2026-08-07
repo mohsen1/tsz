@@ -530,7 +530,9 @@ impl TypeInterner {
                 || self.union_origin_overrides_canonical_generic_display_sort(
                     current.as_ref(),
                     &origin_members,
-                );
+                )
+                || self
+                    .origin_collapsed_anonymous_object_duplicate(current.as_ref(), &origin_members);
             if !needs_origin {
                 if !exact_rewrite_fallback
                     && let Entry::Occupied(entry) = self.display_union_origin.entry(union_type_id)
@@ -564,6 +566,46 @@ impl TypeInterner {
                 // exact-rewrite session cannot repaint unrelated provenance on
                 // a shared canonical union target.
             }
+        }
+    }
+
+    /// Whether canonical dedup dropped a written anonymous-object duplicate.
+    ///
+    /// `tsc` mints a fresh anonymous type per `{ ... }` occurrence, so
+    /// `{ m: number } | { m: number } | { p: string }` is a genuine three
+    /// member union there. tsz content-interns the two identical `{ m: number }`
+    /// literals to one `TypeId`, so its canonical union is only two members —
+    /// the display would drop a constituent `tsc` keeps. When the as-written
+    /// `origin_members` carry an anonymous object more than once and the
+    /// canonical `current` list does not, we store the origin so the printer
+    /// (which exempts anonymous objects from its display collapse) can
+    /// reconstruct the written multiplicity. Named types and primitive literals
+    /// share identity in `tsc` too, so their duplicates are *not* preserved.
+    fn origin_collapsed_anonymous_object_duplicate(
+        &self,
+        current: &[TypeId],
+        origin_members: &[TypeId],
+    ) -> bool {
+        if origin_members.len() <= current.len() {
+            return false;
+        }
+        let mut seen: rustc_hash::FxHashSet<TypeId> = rustc_hash::FxHashSet::default();
+        origin_members.iter().any(|&member| {
+            self.is_anonymous_object_type(member)
+                && self.get_display_alias(member).is_none()
+                && !seen.insert(member)
+        })
+    }
+
+    /// Whether `type_id` is an anonymous object type (`{ ... }` with no
+    /// declaration symbol behind it). Named objects (`interface`/`class`) carry
+    /// a `symbol`, so they are excluded.
+    fn is_anonymous_object_type(&self, type_id: TypeId) -> bool {
+        match self.lookup(type_id) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                self.object_shape(shape_id).symbol.is_none()
+            }
+            _ => false,
         }
     }
 
@@ -617,19 +659,7 @@ impl TypeInterner {
         if current.len() != origin.len() {
             return false;
         }
-        let mut has_anon_object = false;
-        for &id in current {
-            if let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) =
-                self.lookup(id)
-            {
-                let shape = self.object_shape(shape_id);
-                if shape.symbol.is_none() {
-                    has_anon_object = true;
-                    break;
-                }
-            }
-        }
-        if !has_anon_object {
+        if !current.iter().any(|&id| self.is_anonymous_object_type(id)) {
             return false;
         }
         current != origin
