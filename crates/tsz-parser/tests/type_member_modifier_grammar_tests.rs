@@ -10,28 +10,31 @@
 //!   * `readonly` on a method or construct signature → TS1024
 //!     (`'readonly' modifier can only appear on a property declaration or index
 //!     signature.`), anchored at `readonly`. tsz previously stayed silent.
-//!   * `readonly` directly followed by a `get`/`set` accessor → TS1131
-//!     (`Property or signature expected.`), anchored at `readonly`. No
-//!     modifier may precede an accessor signature in an interface or type
-//!     literal — unlike a plain method, this fails to parse as any member at
-//!     all in tsc, not a semantic TS1024. tsz previously mis-parsed `get`/`set`
-//!     as the property name and reported a spurious TS1005 at the accessor's
-//!     own property name.
+//!   * A run of one or more `private`/`protected`/`public`/`static`/
+//!     `accessor`/`export`/`readonly` modifiers directly followed by a
+//!     `get`/`set` accessor → one TS1131 per modifier in the run (each
+//!     anchored at its own token), then a clean (modifier-less) accessor. No
+//!     modifier at all may precede an accessor signature in an interface or
+//!     type literal — unlike a plain method, this fails to parse as any
+//!     member at all in tsc, not a semantic TS1024/TS1070. tsz previously
+//!     mis-parsed `get`/`set` as the property name (single `readonly`, TS1005)
+//!     or reported the uniform semantic TS1070 (every other modifier in the
+//!     set, single or stacked).
 //!
 //! `readonly` on a property / index signature stays legal, and `export` / `in`
 //! / `out` used as a member *name* (`export: T`, `export(): void`) stay clean —
 //! matching tsc. `import` / `const` / `default` are not type-member modifiers in
 //! tsc (they take a parser-recovery path) and are intentionally not covered.
 //!
-//! Left as follow-up (a separate, larger defect, not fixed here): tsc rejects
-//! *any* modifier before an interface/type-literal accessor with the same
-//! TS1131-plus-retry parse failure — `static`/`public`/`declare`/`abstract` all
-//! reproduce it (with `declare`/`abstract` additionally cascading into
-//! TS1434/TS1005/TS1128 on tsc, since the retry re-parses the accessor's own
-//! name as a fresh statement). tsz currently reports the uniform semantic
-//! TS1070 for those instead. A stacked-modifier chain before an accessor
-//! (`export readonly get x()`) is also unfixed. Both are pre-existing,
-//! unrelated code paths that this change does not touch.
+//! Left as follow-up (a separate, larger defect, not fixed here): `declare`/
+//! `abstract`/`override`/`in`/`out` before an interface/type-literal accessor
+//! also fail to parse in tsc, but the recovery is a different shape entirely —
+//! it cascades into TS1434/TS1005/TS1128 (the retry re-parses the accessor's
+//! own name as a fresh top-level statement) rather than a single TS1131 per
+//! modifier. tsz still reports the uniform semantic TS1070 for those; they are
+//! deliberately excluded from the qualifying modifier set (see
+//! `look_ahead_modifier_run_before_accessor`), a pre-existing, unrelated code
+//! path this change does not touch.
 
 use crate::parser::test_fixture::parse_source;
 use tsz_common::diagnostics::diagnostic_codes;
@@ -482,4 +485,148 @@ fn multi_modifier_run_is_not_keyed_to_a_binder_name() {
     ] {
         assert_eq!(codes(src), vec![TS1070], "structural rule: {src}");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Any "clean" modifier (not just `readonly`) directly before an accessor:
+// one TS1131, anchored at the modifier, then a clean accessor retry.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn clean_modifiers_before_accessor_report_ts1131_not_ts1070() {
+    for modifier in [
+        "private",
+        "protected",
+        "public",
+        "static",
+        "accessor",
+        "export",
+    ] {
+        let source = format!("interface I {{ {modifier} get x(): number; }}");
+        assert_eq!(codes(&source), vec![TS1131], "modifier `{modifier}`");
+
+        let source = format!("interface I {{ {modifier} set x(v: number); }}");
+        assert_eq!(codes(&source), vec![TS1131], "modifier `{modifier}` (set)");
+    }
+}
+
+#[test]
+fn clean_modifier_before_accessor_on_type_literal_reports_ts1131() {
+    assert_eq!(codes("type T = { static get x(): number; };"), vec![TS1131],);
+}
+
+#[test]
+fn clean_modifier_before_accessor_recovers_a_working_accessor() {
+    // Exactly one diagnostic; the accessor itself is not lost to a cascade,
+    // and a following member still parses.
+    assert_eq!(
+        codes("interface I { static get x(): number; y: string; }"),
+        vec![TS1131],
+    );
+}
+
+#[test]
+fn stacked_clean_modifiers_before_accessor_report_one_ts1131_each() {
+    // tsc reports a SEPARATE TS1131 per modifier in the run — unlike the
+    // TS1070 family, this one does not collapse to a single diagnostic naming
+    // only the first modifier.
+    assert_eq!(
+        fingerprints("interface I { public static get x(): number; }"),
+        vec![
+            (TS1131, 1, 15, "Property or signature expected.".to_string(),),
+            (TS1131, 1, 22, "Property or signature expected.".to_string(),),
+        ],
+    );
+}
+
+#[test]
+fn three_stacked_clean_modifiers_before_accessor_report_three_ts1131() {
+    assert_eq!(
+        codes("interface I { export static readonly get x(): number; }"),
+        vec![TS1131, TS1131, TS1131],
+    );
+}
+
+#[test]
+fn readonly_mixed_into_a_clean_modifier_run_before_accessor_still_reports_each() {
+    // `readonly` participates in the run like any other clean modifier when
+    // it is not the sole/first modifier — distinct from the dedicated
+    // single-`readonly` case, but going through the same generalized path.
+    assert_eq!(
+        codes("interface I { static readonly get x(): number; }"),
+        vec![TS1131, TS1131],
+    );
+    assert_eq!(
+        codes("interface I { readonly static get x(): number; }"),
+        vec![TS1131, TS1131],
+    );
+}
+
+#[test]
+fn clean_modifier_run_is_not_keyed_to_a_binder_name() {
+    // Structural, not tied to any identifier spelling (renamed binders + a
+    // stacked run, in one pass).
+    assert_eq!(
+        codes("interface Alpha { static get beta(): number; }"),
+        vec![TS1131],
+    );
+    assert_eq!(
+        codes("type Gamma = { public static get delta(): number; };"),
+        vec![TS1131, TS1131],
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Cascade-shaped modifiers stay OUT of scope: `declare`/`abstract`/`override`/
+// `in`/`out` before an accessor keep reporting the pre-existing semantic
+// TS1070, not the new TS1131 path (see the module doc comment).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cascade_modifiers_before_accessor_still_report_ts1070_not_ts1131() {
+    for modifier in ["declare", "abstract", "override"] {
+        let source = format!("interface I {{ {modifier} get x(): number; }}");
+        assert_eq!(codes(&source), vec![TS1070], "modifier `{modifier}`");
+    }
+}
+
+#[test]
+fn in_out_before_accessor_on_generic_interface_still_report_ts1070() {
+    for modifier in ["in", "out"] {
+        let source = format!("interface I<T> {{ {modifier} get x(): number; }}");
+        assert_eq!(codes(&source), vec![TS1070], "modifier `{modifier}`");
+    }
+}
+
+#[test]
+fn cascade_modifier_poisons_a_run_with_a_leading_clean_modifier() {
+    // `declare` anywhere in the run keeps the WHOLE run out of the TS1131
+    // path, even when a clean modifier (`static`) leads it — matches tsc,
+    // where the clean modifier still fails to recover once `declare` follows
+    // (tsc itself reports a 5-diagnostic TS1131/TS1128/TS1434/TS1005/TS1128
+    // cascade for this exact shape). tsz's existing (unrelated, pre-existing)
+    // multi-modifier TS1070 handling consumes the whole illegal-modifier run
+    // and reports once, which this change does not touch or improve.
+    assert_eq!(
+        codes("interface I { static declare get x(): number; }"),
+        vec![TS1070],
+    );
+}
+
+#[test]
+fn line_break_before_accessor_is_unaffected_for_any_clean_modifier() {
+    // A line break between the last modifier and `get`/`set` takes tsc down a
+    // different (out-of-scope) ASI path; the lookahead must not fire.
+    let with_break = "interface I {\n  static\n  get x(): number\n}";
+    let without_break = "interface I {\n  static get x(): number\n}";
+    assert_ne!(codes(with_break), codes(without_break));
+}
+
+#[test]
+fn clean_modifier_used_as_accessor_own_name_stays_ts1070() {
+    // `static get(): number` — a method literally *named* `get`, not an
+    // accessor — is unaffected by the new lookahead and keeps the pre-existing
+    // semantic TS1070.
+    assert_eq!(codes("interface I { static get(): number; }"), vec![TS1070]);
+    assert_eq!(codes("interface I { static get: number; }"), vec![TS1070]);
 }

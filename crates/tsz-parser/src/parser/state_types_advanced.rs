@@ -1372,24 +1372,26 @@ impl ParserState {
                 return mapped_type;
             }
 
-            // `readonly` directly followed by a `get`/`set` accessor is grammar-invalid
-            // in tsc: no modifier may precede an accessor signature in a type literal,
-            // matching the same restriction in an interface body (see
-            // `parse_type_members`'s identical check). tsc's parser cannot build any
-            // member starting at `readonly` here, reports TS1131 anchored at the
-            // modifier, and retries from the accessor keyword.
-            if self.is_token(SyntaxKind::ReadonlyKeyword)
-                && self.look_ahead_is_accessor_after_readonly()
-            {
-                let ro_start = self.token_pos();
-                let ro_end = self.token_end();
-                self.next_token(); // consume `readonly`
-                self.parse_error_at(
-                    ro_start,
-                    ro_end.saturating_sub(ro_start),
-                    tsz_common::diagnostics::diagnostic_messages::PROPERTY_OR_SIGNATURE_EXPECTED,
-                    tsz_common::diagnostics::diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED,
-                );
+            // A run of one or more type-member modifiers directly followed by a
+            // `get`/`set` accessor is grammar-invalid in tsc, matching the same
+            // restriction in an interface body (see `parse_type_members`'s identical
+            // check and `look_ahead_modifier_run_before_accessor` for the exact
+            // qualifying modifier set). tsc's parser cannot build any member starting
+            // at the first modifier, reports one TS1131 per modifier in the run, and
+            // retries from the accessor keyword.
+            let modifier_run_len = self.look_ahead_modifier_run_before_accessor();
+            if modifier_run_len > 0 {
+                for _ in 0..modifier_run_len {
+                    let mod_start = self.token_pos();
+                    let mod_end = self.token_end();
+                    self.next_token();
+                    self.parse_error_at(
+                        mod_start,
+                        mod_end.saturating_sub(mod_start),
+                        tsz_common::diagnostics::diagnostic_messages::PROPERTY_OR_SIGNATURE_EXPECTED,
+                        tsz_common::diagnostics::diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED,
+                    );
+                }
                 continue;
             }
 
@@ -1901,25 +1903,66 @@ impl ParserState {
         is_property_name
     }
 
-    /// Check if `readonly` (the current token) is directly followed, on the same
-    /// line, by a `get`/`set` accessor signature (`readonly get x()`), as opposed
-    /// to `get`/`set` used as an ordinary property/method name
-    /// (`readonly get(): void`, `readonly get: number`). Used by
-    /// `parse_type_members` to detect tsc's "no modifier before an interface/type
-    /// literal accessor" grammar restriction before the normal readonly-property
-    /// parse path misreads `get`/`set` as the property name.
-    pub(crate) fn look_ahead_is_accessor_after_readonly(&mut self) -> bool {
+    /// Check whether the current token starts a run of one or more type-member
+    /// modifiers directly followed, each on the same line, by a `get`/`set`
+    /// accessor signature (`static get x()`, `public static get x()`,
+    /// `readonly export get x()`, ...), as opposed to a modifier or `get`/`set`
+    /// used as an ordinary property/method name (`static get(): void`,
+    /// `static get: number`). No modifier at all may precede an accessor
+    /// signature in an interface or type-literal body: tsc's parser cannot
+    /// build any member starting at the first modifier, and reports one
+    /// TS1131 per modifier in the run (each anchored at its own token) before
+    /// recovering by retrying at the accessor keyword, which then parses as a
+    /// bare (modifier-less) accessor.
+    ///
+    /// Only `private`/`protected`/`public`/`static`/`accessor`/`export`/
+    /// `readonly` qualify — oracle-verified (`typescript@7.0.2`) to recover
+    /// this way. `declare`/`abstract`/`override`/`in`/`out` are deliberately
+    /// excluded: preceding an accessor, tsc's recovery for those cascades
+    /// into a different diagnostic set (TS1434/TS1005/TS1128) rather than one
+    /// TS1131 per modifier, a distinct and out-of-scope shape. Returns the
+    /// number of modifiers in the qualifying run, or `0` if this token does
+    /// not start one.
+    pub(crate) fn look_ahead_modifier_run_before_accessor(&mut self) -> usize {
+        const fn is_clean_type_member_modifier(kind: SyntaxKind) -> bool {
+            matches!(
+                kind,
+                SyntaxKind::PrivateKeyword
+                    | SyntaxKind::ProtectedKeyword
+                    | SyntaxKind::PublicKeyword
+                    | SyntaxKind::StaticKeyword
+                    | SyntaxKind::AccessorKeyword
+                    | SyntaxKind::ExportKeyword
+                    | SyntaxKind::ReadonlyKeyword
+            )
+        }
+
         let snapshot = self.scanner.save_state();
         let current = self.current_token;
 
-        self.next_token(); // skip `readonly`
-        let is_accessor = !self.scanner.has_preceding_line_break()
+        let mut count = 0usize;
+        loop {
+            if !is_clean_type_member_modifier(self.token())
+                || self.look_ahead_is_property_name_after_keyword()
+            {
+                break;
+            }
+            self.next_token();
+            count += 1;
+            if self.scanner.has_preceding_line_break() {
+                count = 0;
+                break;
+            }
+        }
+
+        let ends_in_accessor = count > 0
             && (self.is_token(SyntaxKind::GetKeyword) || self.is_token(SyntaxKind::SetKeyword))
             && !self.look_ahead_is_property_name_after_keyword();
 
         self.scanner.restore_state(snapshot);
         self.current_token = current;
-        is_accessor
+
+        if ends_in_accessor { count } else { 0 }
     }
 
     /// Check if there is a line break between the current keyword and the next token.
