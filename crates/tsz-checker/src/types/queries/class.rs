@@ -1254,13 +1254,6 @@ impl<'a> CheckerState<'a> {
                 let is_declared = self.is_ambient_declaration(fn_idx);
                 // Use func.is_async as the parser stores async as a flag, not a modifier
                 let is_async = func.is_async;
-                // TSC reports TS2389/TS2391 at the function name, not the declaration.
-                let name_node = func.name;
-                let error_node = if name_node.is_some() {
-                    name_node
-                } else {
-                    stmt_idx
-                };
 
                 // TS1040: 'async' modifier cannot be used in an ambient context
                 // The parser emits TS1040 at the 'async' keyword for both
@@ -1272,21 +1265,13 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if is_declared {
-                    if let Some(name) = self.get_function_name_from_node(fn_idx) {
-                        let (has_impl, impl_name, impl_stmt_idx) =
-                            self.find_function_impl(statements, i + 1, &name);
-                        if has_impl
-                            && impl_name.as_deref() == Some(name.as_str())
-                            && let Some(impl_stmt_idx) = impl_stmt_idx
-                            && !self.is_ambient_declaration(impl_stmt_idx)
-                        {
-                            self.error_at_node(
-                                error_node,
-                                crate::diagnostics::diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_AMBIENT_OR_NON_AMBIENT,
-                                crate::diagnostics::diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_AMBIENT_OR_NON_AMBIENT,
-                            );
-                        }
-                    }
+                    // Ambient signatures never join the TS2391 missing-
+                    // implementation grouping. Their ambient/non-ambient
+                    // disagreement with an implementation (TS2384) is owned by
+                    // the symbol-level flag-agreement pass in
+                    // `check_duplicate_identifiers`, which also sees
+                    // cross-container groups and yields precedence to an
+                    // export deviation (TS2383) exactly like tsc.
                     i += 1;
                     continue;
                 }
@@ -1340,34 +1325,31 @@ impl<'a> CheckerState<'a> {
                                     "Function implementation is missing or not immediately following the declaration.",
                                     diagnostic_codes::FUNCTION_IMPLEMENTATION_IS_MISSING_OR_NOT_IMMEDIATELY_FOLLOWING_THE_DECLARATION
                                 );
-                    } else if let Some(impl_stmt_idx) = impl_stmt_idx {
-                        if impl_name.as_deref() != Some(name.as_str()) {
-                            // Wrong (or missing) implementation name — report at the
-                            // implementation name. An anonymous default-exported
-                            // implementation has no name node; tsc anchors at the
-                            // whole declaration statement then.
-                            let impl_error_node = self
-                                .statement_function_declaration_view(impl_stmt_idx)
-                                .and_then(|(f, _)| self.ctx.arena.get(f))
-                                .and_then(|n| self.ctx.arena.get_function(n))
-                                .map(|f| f.name)
-                                .filter(|n| n.is_some())
-                                .unwrap_or(impl_stmt_idx);
-                            self.error_at_node(
-                                impl_error_node,
-                                &format!("Function implementation name must be '{name}'."),
-                                diagnostic_codes::FUNCTION_IMPLEMENTATION_NAME_MUST_BE,
-                            );
-                        } else {
-                            let impl_is_declared = self.is_ambient_declaration(impl_stmt_idx);
-                            if is_declared != impl_is_declared {
-                                self.error_at_node(
-                                    report_error_node,
-                                    crate::diagnostics::diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_AMBIENT_OR_NON_AMBIENT,
-                                    crate::diagnostics::diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_AMBIENT_OR_NON_AMBIENT,
-                                );
-                            }
-                        }
+                    } else if let Some(impl_stmt_idx) = impl_stmt_idx
+                        && impl_name.as_deref() != Some(name.as_str())
+                    {
+                        // Wrong (or missing) implementation name — report at the
+                        // implementation name. An anonymous default-exported
+                        // implementation has no name node; tsc anchors at the
+                        // whole declaration statement then.
+                        //
+                        // A same-named run's ambient disagreement with its
+                        // implementation (TS2384) is owned by the symbol-level
+                        // flag-agreement pass in `check_duplicate_identifiers`,
+                        // which blames every deviating signature rather than
+                        // only the last of the run.
+                        let impl_error_node = self
+                            .statement_function_declaration_view(impl_stmt_idx)
+                            .and_then(|(f, _)| self.ctx.arena.get(f))
+                            .and_then(|n| self.ctx.arena.get_function(n))
+                            .map(|f| f.name)
+                            .filter(|n| n.is_some())
+                            .unwrap_or(impl_stmt_idx);
+                        self.error_at_node(
+                            impl_error_node,
+                            &format!("Function implementation name must be '{name}'."),
+                            diagnostic_codes::FUNCTION_IMPLEMENTATION_NAME_MUST_BE,
+                        );
                     }
                     // Skip past all overloads we already processed
                     i = last_overload_i + 1;

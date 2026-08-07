@@ -171,15 +171,18 @@ function overload(value: string | number): void {}
 }
 
 #[test]
-fn all_function_group_still_reports_default_non_default_overlap() {
-    // The all-function exception suppresses ordinary TS2395 overload noise,
-    // not the default/non-default declaration-space invariant.
+fn all_function_group_reports_no_merge_family_diagnostics() {
+    // A group made entirely of function declarations is one overload group,
+    // not a merged declaration: its default/non-default disagreement is
+    // overload flag-agreement territory (oracle typescript@7.0.2: TS2383 at
+    // the deviating plain signature, plus TS2391 — both outside this file's
+    // merge-family filter), never TS2652/TS2395 (#16742).
     let source = r#"
 export default function Execute(): void;
 function Execute(): void;
 "#;
 
-    assert_merge_diagnostics(source, "Execute", &[(TS2652, 0), (TS2652, 1)]);
+    assert_merge_diagnostics(source, "Execute", &[]);
 }
 
 #[test]
