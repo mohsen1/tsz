@@ -23,14 +23,17 @@ impl<'a> CheckerState<'a> {
         } else {
             None
         };
-        let mut source_str = if depth == 0 && self.diagnostic_source_annotation_is_keyof_any(idx) {
-            // `keyof any` reduces to the canonical primitive key union, which
-            // shares its `TypeId` with the registered `PropertyKey` alias body;
-            // the general display path below keeps that alias for other
-            // `PropertyKey`-typed surfaces (`Object.groupBy<K extends
-            // PropertyKey, T>`). tsc always shows `keyof any` expanded, so a
-            // confirmed `keyof any` annotation renders through the
-            // always-expanded formatter instead.
+        let mut source_str = if depth == 0
+            && self.diagnostic_source_annotation_is_keyof_degenerate_operand(idx)
+        {
+            // `keyof any`/`keyof never` reduce to the canonical primitive key
+            // union, which shares its `TypeId` with the registered
+            // `PropertyKey` alias body; the general display path below keeps
+            // that alias for other `PropertyKey`-typed surfaces
+            // (`Object.groupBy<K extends PropertyKey, T>`). tsc always shows
+            // these expanded, so a confirmed degenerate-operand `keyof`
+            // annotation renders through the always-expanded formatter
+            // instead.
             let evaluated = self.evaluate_type_for_assignability(source);
             self.format_type_diagnostic_keyof_any_source(evaluated)
         } else if depth == 0 {

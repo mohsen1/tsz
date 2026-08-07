@@ -1151,13 +1151,16 @@ impl<'a> CheckerState<'a> {
     }
 
     /// `true` when the assignment/return source at `anchor_idx` was written as
-    /// a `keyof any` type annotation. `keyof any` reduces to the canonical
-    /// primitive key union, which shares its `TypeId` with the registered
-    /// `PropertyKey` alias body — the general display path keeps that alias for
-    /// other `PropertyKey`-typed surfaces (`Object.groupBy<K extends
-    /// PropertyKey, T>`), so this is checked structurally, from the written
-    /// annotation, before opting into the always-expanded formatter.
-    pub(super) fn diagnostic_source_annotation_is_keyof_any(
+    /// a `keyof any`/`keyof unknown`/`keyof never` type annotation. Each
+    /// reduces to a fixed, degenerate key-space result (`string | number |
+    /// symbol` for `any`/`never`, `never` for `unknown`) that tsc's
+    /// `getIndexType` resolves at type-construction time; the `any`/`never`
+    /// case additionally shares its `TypeId` with the registered `PropertyKey`
+    /// alias body, and the general display path keeps that alias for other
+    /// `PropertyKey`-typed surfaces (`Object.groupBy<K extends PropertyKey,
+    /// T>`) — so this is checked structurally, from the written annotation,
+    /// before opting into the always-expanded formatter.
+    pub(super) fn diagnostic_source_annotation_is_keyof_degenerate_operand(
         &self,
         anchor_idx: tsz_parser::parser::NodeIndex,
     ) -> bool {
@@ -1169,7 +1172,7 @@ impl<'a> CheckerState<'a> {
         };
         self.declared_type_annotation_node_for_expression(expr_idx)
             .is_some_and(|(arena, annotation_idx)| {
-                Self::annotation_is_keyof_any(arena, annotation_idx)
+                Self::annotation_is_keyof_over_degenerate_operand(arena, annotation_idx)
             })
     }
 
