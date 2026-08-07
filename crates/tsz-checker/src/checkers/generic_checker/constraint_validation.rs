@@ -1686,7 +1686,8 @@ impl CheckerState<'_> {
                             type_params,
                             type_args_list,
                         )
-                    });
+                    })
+                    .or_else(|| self.written_primitive_key_union_alias_display(constraint));
                 let constraint =
                     self.instantiate_constraint_with_subst(constraint, &type_arg_subst);
                 let constraint = self.resolve_lazy_type(constraint);
