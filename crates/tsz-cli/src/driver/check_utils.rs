@@ -686,6 +686,24 @@ const fn is_parser_grammar_code(code: u32) -> bool {
                // error (`let x: = 1;`) elsewhere in the file drops TS1326
                // entirely on the real compiler. Sole emission site, no
                // checker-side counterpart, so no double-emission risk.
+        | 2499 // An interface can only extend an identifier/qualified-name
+               // with optional type arguments. tsc's checker rejects a
+               // parenthesized or bracketed `extends` operand
+               // (`interface I extends (1 + 2) {}`); tsz's parser
+               // (`parse_interface_heritage_type_reference`,
+               // `state_statements_class_declarations.rs`) already
+               // special-cases that shape and reports TS2499 itself, at the
+               // same position the checker's independent generic heritage
+               // walk (`heritage.rs`) also reports it — a genuine
+               // double-emission this list alone cannot fix (see
+               // `post_process_checker_diagnostics`'s TS2499 position-match
+               // filter for that half). Oracle-confirmed
+               // (`typescript@7.0.2`) — Direction A, `interface I extends
+               // (1 + 2) {}` alone reports TS2499 exactly once; Direction B,
+               // the same line plus an unrelated real syntax error
+               // (`let x: = 1;`) elsewhere in the file drops TS2499
+               // entirely on the real compiler, which tsz's parser-emitted
+               // copy did not (round 7 of the #16279 audit).
     )
 }
 
