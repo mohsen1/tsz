@@ -345,6 +345,10 @@ mod node_modifiers_tests;
 mod this_param_modifier_tests;
 
 #[cfg(test)]
+#[path = "../../tests/parameter_modifier_grammar_tests.rs"]
+mod parameter_modifier_grammar_tests;
+
+#[cfg(test)]
 #[path = "../../tests/legacy_octal_bigint_continuation_tests.rs"]
 mod legacy_octal_bigint_continuation_tests;
 

@@ -196,10 +196,15 @@ fn test_private_member_prevents_structural_assignment() {
 
 /// Test that protected members are also nominal.
 /// Protected members create a brand just like private members.
+///
+/// Oracle-verified against `typescript@7.0.2`: unlike modifier-`private`,
+/// tsc never reports a "separate declarations" wording for `protected` — it
+/// runs the declaring-class derivation check (`isValidOverrideOf`) and
+/// reports `TS2443` naming each side's declaring class.
 #[test]
 fn test_protected_members_are_nominal() {
     // TS2322: Type 'B' is not assignable to type 'A'.
-    //   Types have separate declarations of a protected property 'x'.
+    //   Property 'x' is protected but type 'B' is not a class derived from 'A'.
     let source = r"
         class A { protected x: number = 1; }
         class B { protected x: number = 1; }
@@ -215,8 +220,49 @@ fn test_protected_members_are_nominal() {
     assert!(
         ts2322.related_information.iter().any(|info| info
             .message_text
-            .contains("Types have separate declarations of a protected property 'x'.")),
-        "Expected nominal protected-property detail in TS2322 related info, got: {ts2322:?}"
+            .contains("Property 'x' is protected but type 'B' is not a class derived from 'A'.")),
+        "Expected TS2443 protected-derivation detail in TS2322 related info, got: {ts2322:?}"
+    );
+}
+
+/// A subclass narrowing an inherited protected member is a *valid* override
+/// (`isValidOverrideOf` succeeds since the source's declaring class — the
+/// subclass — is derived from the target's declaring class). tsc reports no
+/// protected-mismatch elaboration at all here; oracle-verified against
+/// `typescript@7.0.2`.
+#[test]
+fn test_protected_member_valid_override_has_no_mismatch_elaboration() {
+    let source = r"
+        class Base { protected s: number = 1; }
+        class Derived extends Base { protected s: number = 2; }
+        let b: Base = new Derived();
+        ";
+
+    test_private_brands(source, 0);
+}
+
+/// The same `TS2443` derivation check applies to the call-argument (`TS2345`)
+/// path, which routes through the same `private_brand_mismatch_error`.
+/// Oracle-verified against `typescript@7.0.2`.
+#[test]
+fn test_protected_member_mismatch_elaborates_ts2345() {
+    let source = r"
+        class M3 { protected s = 1; }
+        class N3 { protected s = 1; }
+        declare function g(n: N3): void;
+        g(new M3());
+        ";
+
+    let diagnostics = collect_private_brand_diagnostics(source);
+    let ts2345 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2345)
+        .expect("expected TS2345 for protected nominal mismatch on a call argument");
+    assert!(
+        ts2345.related_information.iter().any(|info| info
+            .message_text
+            .contains("Property 's' is protected but type 'M3' is not a class derived from 'N3'.")),
+        "Expected TS2443 protected-derivation detail in TS2345 related info, got: {ts2345:?}"
     );
 }
 
@@ -1221,6 +1267,76 @@ fn modifier_private_nominal_mismatch_keeps_separate_declarations_wording() {
     );
 }
 
+/// Instantiated generic classes: two *unrelated* generic classes with a
+/// same-spelled `#v` still get the TS18015 "refers to a different member"
+/// elaboration, and tsc names the *uninstantiated* class in that detail
+/// (`'G'`/`'H'`, not `'G<number>'`/`'H<number>'`) even though the enclosing
+/// TS2322 head names the instantiated form.
+#[test]
+fn es_private_identifier_nominal_mismatch_uses_ts18015_wording_for_generic_classes() {
+    let source = r"
+        class G<T> { #v: T; constructor(v: T) { this.#v = v; } }
+        class H<T> { #v: T; constructor(v: T) { this.#v = v; } }
+        const h: H<number> = new G(1);
+        ";
+
+    test_private_brands(source, 1);
+    let diagnostics = collect_private_brand_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .expect("expected TS2322 for generic ES private identifier nominal mismatch");
+    assert_eq!(
+        ts2322.message_text, "Type 'G<number>' is not assignable to type 'H<number>'.",
+        "the head names the instantiated forms"
+    );
+    assert!(
+        ts2322.related_information.iter().any(|info| info
+            .message_text
+            .contains("Property '#v' in type 'G' refers to a different member that cannot be accessed from within type 'H'.")),
+        "Expected TS18015 wording naming the uninstantiated classes in TS2322 related info, got: {ts2322:?}"
+    );
+    assert!(
+        !ts2322
+            .related_information
+            .iter()
+            .any(|info| info.message_text.contains("separate declarations")),
+        "ES private identifiers must not use the modifier-private 'separate declarations' wording, got: {ts2322:?}"
+    );
+}
+
+/// Same rule for modifier-`private` generic classes: the "separate
+/// declarations" wording, not TS18015, and still the uninstantiated class
+/// names.
+#[test]
+fn modifier_private_nominal_mismatch_generic_classes_keeps_separate_declarations_wording() {
+    let source = r"
+        class G<T> { private v: T; constructor(v: T) { this.v = v; } }
+        class H<T> { private v: T; constructor(v: T) { this.v = v; } }
+        const h: H<number> = new G(1);
+        ";
+
+    test_private_brands(source, 1);
+    let diagnostics = collect_private_brand_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .expect("expected TS2322 for generic modifier-private nominal mismatch");
+    assert!(
+        ts2322.related_information.iter().any(|info| info
+            .message_text
+            .contains("Types have separate declarations of a private property 'v'.")),
+        "Expected 'separate declarations' wording in TS2322 related info, got: {ts2322:?}"
+    );
+    assert!(
+        !ts2322
+            .related_information
+            .iter()
+            .any(|info| info.message_text.contains("refers to a different member")),
+        "Modifier-private members must not use the TS18015 wording, got: {ts2322:?}"
+    );
+}
+
 /// Negative control: a derived class (with or without a redeclared `#x`)
 /// stays assignable to its base — the per-class slot is inherited.
 #[test]
@@ -1259,5 +1375,168 @@ fn source_without_es_private_member_stays_missing_property() {
                     .iter()
                     .any(|info| info.message_text.contains("refers to a different member"))),
         "TS18015 wording must not fire when the source has no same-spelled ES private member, got: {diagnostics:?}"
+    );
+}
+
+// =============================================================================
+// #16769 — nominal private-member elaboration on the TS2345 argument path and
+// on instantiated generic classes.
+//
+// The nominal-mismatch elaboration must attach wherever the relation failure is
+// rendered, not only on the assignment (TS2322) surface. Two unrelated classes
+// that each declare a same-spelled `private`/`#private` member are nominally
+// distinct; tsc attaches "Types have separate declarations of a private
+// property 'x'." (modifier-private) or TS18015 "Property '#x' in type 'A'
+// refers to a different member ..." (ES-private) to both TS2322 and TS2345, and
+// names the *uninstantiated* declaring class in the TS18015 detail even for an
+// instantiated generic.
+// =============================================================================
+
+fn related_or_message_contains(diagnostics: &[Diagnostic], code: u32, needle: &str) -> bool {
+    diagnostics.iter().filter(|d| d.code == code).any(|d| {
+        d.message_text.contains(needle)
+            || d.related_information
+                .iter()
+                .any(|info| info.message_text.contains(needle))
+    })
+}
+
+/// Leg 1, modifier-`private`: the TS2345 argument path carries the same
+/// "separate declarations" elaboration as the assignment path.
+#[test]
+fn ts2345_argument_modifier_private_carries_separate_declarations() {
+    let source = r"
+        class M2 { private s = 1; }
+        class N2 { private s = 1; }
+        declare function g(n: N2): void;
+        g(new M2());
+        ";
+    let diagnostics = collect_private_brand_diagnostics(source);
+    assert!(
+        related_or_message_contains(
+            &diagnostics,
+            2345,
+            "Types have separate declarations of a private property 's'."
+        ),
+        "TS2345 argument mismatch must carry the nominal elaboration, got: {diagnostics:?}"
+    );
+}
+
+/// Leg 1, ES-private (`#name`) via a `new`-expression argument: TS2345 carries
+/// the TS18015 detail naming each side's declaring class.
+#[test]
+fn ts2345_argument_es_private_carries_ts18015() {
+    let source = r"
+        class Alpha { #s = 1; }
+        class Beta { #s = 1; }
+        declare function takeBeta(b: Beta): void;
+        takeBeta(new Alpha());
+        ";
+    let diagnostics = collect_private_brand_diagnostics(source);
+    assert!(
+        related_or_message_contains(
+            &diagnostics,
+            2345,
+            "Property '#s' in type 'Alpha' refers to a different member that cannot be accessed from within type 'Beta'."
+        ),
+        "TS2345 argument mismatch must carry the TS18015 detail, got: {diagnostics:?}"
+    );
+}
+
+/// Renamed binders must not matter — the rule is structural, keyed on the
+/// nominal member, not on the class/parameter identifiers.
+#[test]
+fn ts2345_argument_modifier_private_renamed_binders() {
+    let source = r"
+        class Zeta { private q = 1; }
+        class Omega { private q = 1; }
+        declare function needOmega(o: Omega): void;
+        needOmega(new Zeta());
+        ";
+    let diagnostics = collect_private_brand_diagnostics(source);
+    assert!(
+        related_or_message_contains(
+            &diagnostics,
+            2345,
+            "Types have separate declarations of a private property 'q'."
+        ),
+        "renamed binders must still carry the nominal elaboration, got: {diagnostics:?}"
+    );
+}
+
+/// Leg 2, ES-private on instantiated generic classes: the TS2322 elaboration
+/// names the *uninstantiated* declaring classes (`G`/`H`) even though the
+/// top-level line shows `G<number>`/`H<string>`.
+#[test]
+fn ts2322_generic_es_private_names_uninstantiated_classes() {
+    let source = r"
+        class G<T> { #v: T; constructor(v: T) { this.#v = v; } }
+        class H<T> { #v: T; constructor(v: T) { this.#v = v; } }
+        const h: H<string> = new G<number>(1);
+        ";
+    let diagnostics = collect_private_brand_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .expect("expected TS2322 for the generic nominal mismatch");
+    assert!(
+        ts2322.message_text.contains("G<number>") && ts2322.message_text.contains("H<string>"),
+        "top-level line keeps the instantiated spelling, got: {ts2322:?}"
+    );
+    assert!(
+        ts2322.related_information.iter().any(|info| info.message_text.contains(
+            "Property '#v' in type 'G' refers to a different member that cannot be accessed from within type 'H'."
+        )),
+        "elaboration must name the uninstantiated declaring classes, got: {ts2322:?}"
+    );
+}
+
+/// Leg 2, modifier-`private` on instantiated generic classes: the TS2322
+/// assignment path now also carries the "separate declarations" elaboration
+/// (previously dropped because the brand query could not see through the
+/// instantiated form).
+#[test]
+fn ts2322_generic_modifier_private_carries_separate_declarations() {
+    let source = r"
+        class G<T> { private v: T; constructor(v: T) { this.v = v; } }
+        class H<T> { private v: T; constructor(v: T) { this.v = v; } }
+        const h: H<string> = new G<number>(1);
+        ";
+    let diagnostics = collect_private_brand_diagnostics(source);
+    assert!(
+        related_or_message_contains(
+            &diagnostics,
+            2322,
+            "Types have separate declarations of a private property 'v'."
+        ),
+        "instantiated generic modifier-private assignment must carry the nominal elaboration, got: {diagnostics:?}"
+    );
+}
+
+/// Negative control: a structural argument failure with no shared nominal
+/// member keeps its ordinary missing-property elaboration (TS2741) and never
+/// grows a spurious nominal line.
+#[test]
+fn ts2345_argument_structural_failure_has_no_nominal_line() {
+    let source = r"
+        class P { a = 1; }
+        declare function needsB(x: { b: number }): void;
+        needsB(new P());
+        ";
+    let diagnostics = collect_private_brand_diagnostics(source);
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2345 || d.code == 2741),
+        "expected a structural argument failure, got: {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|d| {
+            d.message_text.contains("separate declarations")
+                || d.message_text.contains("refers to a different member")
+                || d.related_information.iter().any(|info| {
+                    info.message_text.contains("separate declarations")
+                        || info.message_text.contains("refers to a different member")
+                })
+        }),
+        "a purely structural failure must not carry a nominal elaboration, got: {diagnostics:?}"
     );
 }
