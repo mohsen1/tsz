@@ -1029,6 +1029,8 @@ mod variance_property_function_bivariance_tests;
 mod verbatim_module_syntax_export_default_alias_ts1284_tests;
 #[path = "tests/verbatim_module_syntax_export_default_type_only_import_ts1284_tests.rs"]
 mod verbatim_module_syntax_export_default_type_only_import_ts1284_tests;
+#[path = "tests/verbatim_module_syntax_type_only_reexport_code_tests.rs"]
+mod verbatim_module_syntax_type_only_reexport_code_tests;
 #[path = "tests/void_undefined_discriminant_narrowing_tests.rs"]
 mod void_undefined_discriminant_narrowing_tests;
 #[path = "tests/window_self_globalthis_resolution_tests.rs"]
