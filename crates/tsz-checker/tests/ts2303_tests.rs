@@ -525,3 +525,296 @@ declare module "borrows" {
         "Only the circular ambient module may report TS2303; its non-circular siblings' `export =` must stay clean"
     );
 }
+
+// =============================================================================
+// Local `export { X as Y }` companion sites (no `from` clause)
+// =============================================================================
+//
+// A local export specifier does not get its own alias symbol in this binder:
+// `bind_export_declaration` publishes the exported name onto the *local* symbol
+// it names, so a cyclic import alias and every local re-export of it share one
+// `SymbolId`. tsc gives each specifier its own alias symbol, puts it on the same
+// cycle, and reports TS2303 at every member. All expectations below are pinned
+// against tsc 7.0.2.
+
+/// Sorted `(file, offset, message)` triples for every TS2303 in a project.
+///
+/// Position and message are both pinned: a set that discards either cannot tell
+/// "two members of the cycle" from "one member reported twice", and the exported
+/// name is exactly what distinguishes the import site from its companion.
+fn ts2303_sites(files: &[(&str, &str)]) -> Vec<(String, u32, String)> {
+    let mut sites: Vec<(String, u32, String)> = get_project_diagnostics_positioned(files)
+        .into_iter()
+        .filter(|(_, code, _, _)| *code == 2303)
+        .map(|(file, _, start, message)| (file, start, message))
+        .collect();
+    sites.sort();
+    sites
+}
+
+fn circular_alias_message(name: &str) -> String {
+    format!("Circular definition of import alias '{name}'.")
+}
+
+fn site(files: &[(&str, &str)], file: &str, needle: &str, alias: &str) -> (String, u32, String) {
+    let source = files
+        .iter()
+        .find_map(|(name, source)| (*name == file).then_some(*source))
+        .unwrap_or_else(|| panic!("{file} is not in the fixture"));
+    (
+        file.to_string(),
+        nth_offset(source, needle, 0),
+        circular_alias_message(alias),
+    )
+}
+
+#[test]
+fn local_export_specifier_on_an_import_alias_cycle_reports_its_own_site() {
+    // `conformance/externalModules/typeOnly/circular3.ts`. tsc 7.0.2:
+    //   a.ts(1,15) TS2303 'A'   <- import type { A } from './b';
+    //   a.ts(2,15) TS2303 'B'   <- export type { A as B };
+    //   b.ts(1,15) TS2303 'B'   <- import type { B } from './a';
+    //   b.ts(2,15) TS2303 'A'   <- export type { B as A };
+    const FILES: &[(&str, &str)] = &[
+        (
+            "a.ts",
+            "import type { A } from './b';\nexport type { A as B };\n",
+        ),
+        (
+            "b.ts",
+            "import type { B } from './a';\nexport type { B as A };\n",
+        ),
+    ];
+
+    assert_eq!(
+        ts2303_sites(FILES),
+        vec![
+            site(FILES, "a.ts", "A } from", "A"),
+            site(FILES, "a.ts", "A as B", "B"),
+            site(FILES, "b.ts", "B } from", "B"),
+            site(FILES, "b.ts", "B as A", "A"),
+        ],
+        "each of the four alias declarations on the cycle reports at its own anchor"
+    );
+}
+
+#[test]
+fn local_export_specifier_cycle_is_unchanged_by_renamed_binders() {
+    // Same shape as above with every binder renamed. The rule is structural, so
+    // the site set must be identical modulo the names.
+    const FILES: &[(&str, &str)] = &[
+        (
+            "a.ts",
+            "import type { Zeta } from './b';\nexport type { Zeta as Omega };\n",
+        ),
+        (
+            "b.ts",
+            "import type { Omega } from './a';\nexport type { Omega as Zeta };\n",
+        ),
+    ];
+
+    assert_eq!(
+        ts2303_sites(FILES),
+        vec![
+            site(FILES, "a.ts", "Zeta } from", "Zeta"),
+            site(FILES, "a.ts", "Zeta as Omega", "Omega"),
+            site(FILES, "b.ts", "Omega } from", "Omega"),
+            site(FILES, "b.ts", "Omega as Zeta", "Zeta"),
+        ],
+        "renaming every binder must not change which sites report"
+    );
+}
+
+#[test]
+fn local_export_specifier_without_a_rename_reports_the_exported_name() {
+    // `export type { A };` — property_name is absent, so the local name and the
+    // exported name coincide and both reports read 'A'.
+    const FILES: &[(&str, &str)] = &[
+        (
+            "a.ts",
+            "import type { A } from './b';\nexport type { A };\n",
+        ),
+        (
+            "b.ts",
+            "import type { A } from './a';\nexport type { A };\n",
+        ),
+    ];
+
+    assert_eq!(
+        ts2303_sites(FILES),
+        vec![
+            site(FILES, "a.ts", "A } from", "A"),
+            site(FILES, "a.ts", "A };", "A"),
+            site(FILES, "b.ts", "A } from", "A"),
+            site(FILES, "b.ts", "A };", "A"),
+        ],
+        "a bare specifier still gets its own site"
+    );
+}
+
+#[test]
+fn value_form_local_export_specifier_cycle_reports_its_own_site() {
+    // The rule is about the alias graph, not about type-only syntax: the plain
+    // `import`/`export` form reports the same four sites.
+    const FILES: &[(&str, &str)] = &[
+        ("a.ts", "import { A } from './b';\nexport { A as B };\n"),
+        ("b.ts", "import { B } from './a';\nexport { B as A };\n"),
+    ];
+
+    assert_eq!(
+        ts2303_sites(FILES),
+        vec![
+            site(FILES, "a.ts", "A } from", "A"),
+            site(FILES, "a.ts", "A as B", "B"),
+            site(FILES, "b.ts", "B } from", "B"),
+            site(FILES, "b.ts", "B as A", "A"),
+        ],
+        "the value form is on the same alias cycle as the type-only form"
+    );
+}
+
+#[test]
+fn a_local_export_specifier_off_the_cycle_is_not_reported() {
+    // `export type { A as B, A as C };` — the cycle re-enters a.ts under 'B'
+    // only. 'C' aliases the same local but is a branch off the cycle: tsc
+    // resolves it through an already-resolved alias and never revisits it.
+    const FILES: &[(&str, &str)] = &[
+        (
+            "a.ts",
+            "import type { A } from './b';\nexport type { A as B, A as C };\n",
+        ),
+        (
+            "b.ts",
+            "import type { B } from './a';\nexport type { B as A };\n",
+        ),
+    ];
+
+    let sites = ts2303_sites(FILES);
+    assert_eq!(
+        sites,
+        vec![
+            site(FILES, "a.ts", "A } from", "A"),
+            site(FILES, "a.ts", "A as B", "B"),
+            site(FILES, "b.ts", "B } from", "B"),
+            site(FILES, "b.ts", "B as A", "A"),
+        ],
+        "only the specifier the cycle re-enters under is a member of it"
+    );
+    assert!(
+        !sites.iter().any(|(_, _, message)| message.contains("'C'")),
+        "the second specifier for the same local aliases a resolved symbol, not a cyclic one: {sites:#?}"
+    );
+}
+
+#[test]
+fn a_local_export_specifier_over_a_resolvable_alias_stays_clean() {
+    // Same syntax, no cycle: `A` resolves to a real declaration, so neither the
+    // import nor its companion specifier may report.
+    const FILES: &[(&str, &str)] = &[
+        (
+            "a.ts",
+            "import type { A } from './b';\nexport type { A as B };\n",
+        ),
+        ("b.ts", "export type A = string;\n"),
+    ];
+
+    assert_eq!(
+        ts2303_sites(FILES),
+        Vec::new(),
+        "a resolvable alias is not circular at either site"
+    );
+}
+
+#[test]
+fn a_local_export_specifier_over_a_plain_local_stays_clean() {
+    // No alias at all — the specifier names a type declared in the same file.
+    const FILES: &[(&str, &str)] = &[("a.ts", "type A = string;\nexport type { A as B };\n")];
+
+    assert_eq!(
+        ts2303_sites(FILES),
+        Vec::new(),
+        "a specifier over a non-alias local is never circular"
+    );
+}
+
+#[test]
+fn a_healthy_re_export_beside_a_cyclic_one_stays_clean() {
+    // Two specifiers in the same file, one on the cycle and one not. Only the
+    // cyclic one reports, which is what keeps the scan from being file-scoped.
+    const FILES: &[(&str, &str)] = &[
+        (
+            "a.ts",
+            "import type { A } from './b';\nimport type { Ok } from './c';\nexport type { A as B };\nexport type { Ok as Fine };\n",
+        ),
+        (
+            "b.ts",
+            "import type { B } from './a';\nexport type { B as A };\n",
+        ),
+        ("c.ts", "export type Ok = string;\n"),
+    ];
+
+    assert_eq!(
+        ts2303_sites(FILES),
+        vec![
+            site(FILES, "a.ts", "A } from", "A"),
+            site(FILES, "a.ts", "A as B", "B"),
+            site(FILES, "b.ts", "B } from", "B"),
+            site(FILES, "b.ts", "B as A", "A"),
+        ],
+        "the resolvable re-export in the same file must stay clean"
+    );
+}
+
+#[test]
+fn a_three_file_local_export_specifier_cycle_reports_every_member() {
+    // The cycle is longer than one hop out and back, so the walk has to carry
+    // the re-entry name across more than a single file.
+    const FILES: &[(&str, &str)] = &[
+        (
+            "a.ts",
+            "import type { A } from './b';\nexport type { A as B };\n",
+        ),
+        (
+            "b.ts",
+            "import type { B } from './c';\nexport type { B as A };\n",
+        ),
+        (
+            "c.ts",
+            "import type { B } from './a';\nexport type { B };\n",
+        ),
+    ];
+
+    assert_eq!(
+        ts2303_sites(FILES),
+        vec![
+            site(FILES, "a.ts", "A } from", "A"),
+            site(FILES, "a.ts", "A as B", "B"),
+            site(FILES, "b.ts", "B } from", "B"),
+            site(FILES, "b.ts", "B as A", "A"),
+            site(FILES, "c.ts", "B } from", "B"),
+            site(FILES, "c.ts", "B };", "B"),
+        ],
+        "every alias declaration around the three-file cycle reports once"
+    );
+}
+
+#[test]
+fn an_export_specifier_with_a_from_clause_keeps_its_single_site() {
+    // `conformance/externalModules/typeOnly/circular1.ts`. A specifier that
+    // carries `from` sets ALIAS + import_module and is already its own entry in
+    // the collection scan, so the companion scan must leave it alone — two
+    // sites, not four.
+    const FILES: &[(&str, &str)] = &[
+        ("a.ts", "export type { A } from './b';\n"),
+        ("b.ts", "export type { A } from './a';\n"),
+    ];
+
+    assert_eq!(
+        ts2303_sites(FILES),
+        vec![
+            site(FILES, "a.ts", "A } from", "A"),
+            site(FILES, "b.ts", "A } from", "A"),
+        ],
+        "a re-export specifier must not be double-counted by the companion scan"
+    );
+}
