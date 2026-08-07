@@ -1122,6 +1122,9 @@ path = "tests/well_known_symbol_syntactic_key_parity_tests.rs"
 name = "wide_symbol_computed_member_index_signature_tests"
 path = "tests/wide_symbol_computed_member_index_signature_tests.rs"
 [[test]]
+name = "wide_computed_index_source_display_tests"
+path = "tests/wide_computed_index_source_display_tests.rs"
+[[test]]
 name = "well_known_symbol_type_query_alias_key_tests"
 path = "tests/well_known_symbol_type_query_alias_key_tests.rs"
 [[test]]

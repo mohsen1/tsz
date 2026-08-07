@@ -33,7 +33,6 @@ const DIAGNOSTIC_CONSTRUCTION_MODULES: &[&str] = &[
 const DIAGNOSTIC_FUNCTION_CONSTRUCTION_MODULES: &[&str] = &["src/error_reporter/render_failure.rs"];
 const DIAGNOSTIC_SOURCE_COLLECTION_MODULES: &[&str] = &[
     "src/error_reporter/core/identifier_source_display.rs",
-    "src/error_reporter/core/diagnostic_source/contextual_index_display.rs",
     "src/error_reporter/core/diagnostic_source/computed_index_source_display.rs",
     "src/error_reporter/core/diagnostic_source/collection_source_display.rs",
     "src/error_reporter/core/diagnostic_source/tuple_source_display.rs",

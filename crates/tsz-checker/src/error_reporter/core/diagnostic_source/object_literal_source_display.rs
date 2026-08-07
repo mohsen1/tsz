@@ -62,11 +62,6 @@ impl<'a> CheckerState<'a> {
 
         let literal = self.ctx.arena.get_literal_expr(node)?;
         let target = target.map(|target| self.evaluate_type_for_assignability(target));
-        if let Some(display) =
-            self.computed_index_signature_object_literal_source_display(expr_idx, target)
-        {
-            return Some(display);
-        }
         let preserve_literal_source_for_normalized_union =
             target.is_some_and(|target| self.target_is_normalized_object_literal_union(target));
         let target_shape = target.and_then(|target| {
@@ -78,9 +73,6 @@ impl<'a> CheckerState<'a> {
         // `push_object_literal_display_member`).
         let mut member_slots: rustc_hash::FxHashMap<tsz_common::Atom, usize> =
             rustc_hash::FxHashMap::default();
-        let mut contextual_index_key_kind: Option<&'static str> = None;
-        let mut contextual_index_value_types = Vec::new();
-        let mut all_contextual_index_properties = !literal.elements.nodes.is_empty();
         for child_idx in literal.elements.nodes.iter().copied() {
             let child = self.ctx.arena.get(child_idx)?;
             let (name_idx, value_idx) = if child.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
@@ -120,13 +112,6 @@ impl<'a> CheckerState<'a> {
                 }
                 _ => return None,
             };
-            let computed_index_kind =
-                self.contextual_computed_index_key_kind(name_idx, target_shape.as_deref());
-            match (contextual_index_key_kind, computed_index_kind) {
-                (None, Some(kind)) => contextual_index_key_kind = Some(kind),
-                (Some(existing), Some(kind)) if existing == kind => {}
-                _ => all_contextual_index_properties = false,
-            }
             let property_name = self
                 .get_property_name(name_idx)
                 .map(|name| self.ctx.types.intern_string(&name));
@@ -290,9 +275,6 @@ impl<'a> CheckerState<'a> {
                 self.widen_function_like_display_type(value_display_type);
             let value_display =
                 self.format_type_for_assignability_message(widened_value_display_type);
-            if computed_index_kind.is_some() {
-                contextual_index_value_types.push(widened_value_display_type);
-            }
             push_object_literal_display_member(
                 &mut parts,
                 &mut member_slots,
@@ -303,14 +285,6 @@ impl<'a> CheckerState<'a> {
 
         if parts.is_empty() {
             return Some("{}".to_string());
-        }
-
-        if let Some(index_display) = self.contextual_index_signature_source_display(
-            all_contextual_index_properties,
-            contextual_index_key_kind,
-            contextual_index_value_types,
-        ) {
-            return Some(index_display);
         }
 
         Some(format!("{{ {}; }}", parts.join("; ")))
