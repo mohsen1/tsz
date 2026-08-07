@@ -268,15 +268,18 @@ function h() { const holder = { emit() { throw await 1; } }; }
 /// now correct and pinned below (`class_member_body_await_reports_ts1308`):
 /// #16070 made a class member body a `ctx.function_depth` boundary.
 ///
-/// A class static block is deliberately *not* asserted, and the reason is
-/// narrower than it looks. `class K { static { await 1; } }` is correct
-/// through the CLI on any target — tsc and tsz both answer TS18037 — but
-/// through this suite's `check_source_codes` (which uses
-/// `CheckerOptions::default()`) tsz answers `[TS1375, TS1378]`, the
-/// top-level-await pair, i.e. it treats the static block as the top level of
-/// the file. That is a real defect, visible only under the unit harness's
-/// default options, and it is tracked on its own issue rather than pinned
-/// red here.
+/// A class static block was once wrong here in the same way: through this
+/// suite's parse-health-blind `check_source_codes` (which uses
+/// `CheckerOptions::default()`) `class K { static { await 1; } }` answered
+/// `[TS1375, TS1378]`, the top-level-await pair, as if the static block were
+/// the top level of the file. That is fixed. #16367 made
+/// `checkAwaitExpression`'s class-static-block branch exclusive at the source
+/// (`await_container_is_class_static_block` in `core_statement_checks.rs`), so
+/// this walk now declines and the parser's TS18037 stands alone. It is pinned
+/// in its own suite, `await_static_block_grammar_tests.rs` — in particular
+/// `static_block_await_is_silent_in_the_checker_walk_without_suppression`,
+/// which asserts that the same blind `check_source_codes` helper now reports
+/// none of TS1308/TS1375/TS1378 — rather than restated here.
 #[test]
 fn while_condition_await_in_function_expression_reports_ts1308() {
     let source = r"
