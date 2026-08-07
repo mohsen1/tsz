@@ -217,6 +217,30 @@ pub(super) fn post_process_checker_diagnostics(
         });
     }
 
+    // TS2499 ("An interface can only extend an identifier/qualified-name
+    // with optional type arguments") is grammar-decidable at parse time for
+    // a parenthesized or bracketed heritage expression
+    // (`interface I extends (1 + 2) {}`), and the parser
+    // (`parse_interface_heritage_type_reference`) already reports it there
+    // at tsc's own position. The checker's independent, more general
+    // heritage walk (`heritage.rs`) does not know the parser already
+    // flagged that exact node — it structurally rejects anything that is
+    // not an identifier/qualified-name chain — so it reports TS2499 again
+    // for the same span. tsc emits this diagnostic exactly once; drop the
+    // checker's copy wherever a parser TS2499 already covers the same
+    // position, keeping any TS2499 the checker alone finds (e.g. non-paren
+    // heritage shapes the parser's grammar check does not special-case).
+    let parser_ts2499_positions: std::collections::HashSet<u32> = file
+        .parse_diagnostics
+        .iter()
+        .filter(|d| d.code == 2499)
+        .map(|d| d.start)
+        .collect();
+    if !parser_ts2499_positions.is_empty() {
+        checker_diagnostics
+            .retain(|diag| diag.code != 2499 || !parser_ts2499_positions.contains(&diag.start));
+    }
+
     // When TS5107/TS5101 deprecation diagnostics are present, suppress the most
     // common type relationship errors that tsc would not emit. Parser errors
     // (<2000) are handled separately and not affected by this filter.
