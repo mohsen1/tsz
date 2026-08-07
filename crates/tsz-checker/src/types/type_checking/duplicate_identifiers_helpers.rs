@@ -12,6 +12,24 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 
 impl<'a> CheckerState<'a> {
+    /// The enclosing statement-list container of a top-level/namespace-member
+    /// function declaration, for the TS2383 "same container" canonical-overload
+    /// check. The parser wraps an exported statement (`export function foo() {}`)
+    /// in an `EXPORT_DECLARATION` node that sits between the declaration and its
+    /// real statement-list parent, so a raw `.parent` comparison sees an exported
+    /// declaration and a non-exported one in the same block as having different
+    /// parents even though tsc's AST (which has no such wrapper — `export` is
+    /// just a modifier) puts them in the same container. Unwrapping one
+    /// `EXPORT_DECLARATION` level recovers that shared container.
+    pub(super) fn effective_declaration_container(&self, decl_idx: NodeIndex) -> Option<NodeIndex> {
+        let parent = self.ctx.arena.get_extended(decl_idx)?.parent;
+        let parent_node = self.ctx.arena.get(parent)?;
+        if parent_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+            return self.ctx.arena.get_extended(parent).map(|ext| ext.parent);
+        }
+        Some(parent)
+    }
+
     pub(super) fn extend_duplicate_symbol_ids_with_local_augmentation_decls(
         &self,
         symbol_ids: &mut FxHashSet<tsz_binder::SymbolId>,
