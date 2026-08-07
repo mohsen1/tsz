@@ -1000,17 +1000,6 @@ FILE_LINE_LIMIT_CHECKS = [
         2032,
     ),
     (
-        "Core boundary: parallel/core/parse_and_libs.rs size ratchet",
-        ROOT
-        / "crates"
-        / "tsz-core"
-        / "src"
-        / "parallel"
-        / "core"
-        / "parse_and_libs.rs",
-        2029,
-    ),
-    (
         "Binder boundary: state/core.rs size ratchet",
         ROOT / "crates" / "tsz-binder" / "src" / "state" / "core.rs",
         2006,
