@@ -276,26 +276,10 @@ impl<'a> CheckerState<'a> {
             .and_then(|getter_node| self.ctx.arena.get_accessor(getter_node))
             .is_some_and(|getter| getter.type_annotation.is_some() || getter.body.is_some());
         let accessor_name = accessor.name;
-
-        if accessor.parameters.nodes.is_empty() {
-            // A zero-parameter setter (`set a() {}` in an interface/type
-            // literal) is grammatically invalid (`TS1049` fires separately)
-            // but still "lacks a parameter type annotation" for `TS7032`
-            // purposes — the loop below never runs for this shape.
-            if !paired_getter_supplies_type
-                && let Some(prop_name) = self.property_name_for_error(accessor_name)
-            {
-                let message = format!(
-                    "Property '{prop_name}' implicitly has type 'any', because its set accessor lacks a parameter type annotation."
-                );
-                self.error_at_node(
-                    accessor_name,
-                    &message,
-                    diagnostic_codes::PROPERTY_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_ITS_SET_ACCESSOR_LACKS_A_PARAMETER_TYPE,
-                );
-            }
-            return;
-        }
+        // A set accessor gives its property no type when it has no parameter at
+        // all, or a parameter with no type annotation — "no parameter" subsumes
+        // "no annotation", so both halves feed one decision and one blame site.
+        let mut setter_lacks_property_type = accessor.parameters.nodes.is_empty();
 
         for (param_index, &param_idx) in accessor.parameters.nodes.iter().enumerate() {
             let Some(param_node) = self.ctx.arena.get(param_idx) else {
@@ -308,21 +292,37 @@ impl<'a> CheckerState<'a> {
             // TS7006 on the parameter: a paired getter contextually types it.
             self.maybe_report_implicit_any_parameter(param, paired_getter.is_some(), param_index);
 
-            // TS7032 on the setter name: nothing gave the property a type.
-            if param.type_annotation.is_none()
-                && !paired_getter_supplies_type
-                && let Some(prop_name) = self.property_name_for_error(accessor_name)
-            {
-                let message = format!(
-                    "Property '{prop_name}' implicitly has type 'any', because its set accessor lacks a parameter type annotation."
-                );
-                self.error_at_node(
-                    accessor_name,
-                    &message,
-                    diagnostic_codes::PROPERTY_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_ITS_SET_ACCESSOR_LACKS_A_PARAMETER_TYPE,
-                );
+            if param.type_annotation.is_none() {
+                setter_lacks_property_type = true;
             }
         }
+
+        // TS7032 on the setter name: nothing gave the property a type. A paired
+        // getter that supplies the type (an annotation, or a body it can infer
+        // from) suppresses it.
+        if setter_lacks_property_type
+            && !paired_getter_supplies_type
+            && let Some(prop_name) = self.property_name_for_error(accessor_name)
+        {
+            self.report_set_accessor_lacks_parameter_type_annotation(accessor_name, &prop_name);
+        }
+    }
+
+    /// Emit `TS7032` on a `set` accessor's name — the single blame site for a
+    /// setter that leaves its property implicitly `any` (it has no parameter, or
+    /// an unannotated one). Centralizes the message and code shared by the
+    /// class, object-literal, interface, and type-literal accessor paths so the
+    /// diagnostic template is owned in one place.
+    pub(crate) fn report_set_accessor_lacks_parameter_type_annotation(
+        &mut self,
+        name_idx: NodeIndex,
+        prop_name: &str,
+    ) {
+        self.error_at_node_msg(
+            name_idx,
+            diagnostic_codes::PROPERTY_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_ITS_SET_ACCESSOR_LACKS_A_PARAMETER_TYPE,
+            &[prop_name],
+        );
     }
 
     pub(crate) fn contextual_getter_return_type_for_class_accessor(
@@ -639,30 +639,11 @@ impl<'a> CheckerState<'a> {
         accessor_jsdoc: Option<&str>,
         accessor_name: Option<NodeIndex>,
     ) {
-        if parameters.is_empty() {
-            // A zero-parameter setter (`set y() {}`) is grammatically invalid
-            // (`TS1049` fires separately, from `check_setter_parameter_grammar`)
-            // but `tsc` still reports `TS7032`: "lacks a parameter type
-            // annotation" is true of a setter with no parameter at all, not
-            // only of one whose sole parameter is unannotated. The loop below
-            // never runs for this shape, so the check needs its own arm.
-            let property_type_supplied = has_paired_getter && paired_getter_supplies_type;
-            if !property_type_supplied
-                && self.ctx.no_implicit_any()
-                && let Some(name_idx) = accessor_name
-            {
-                let prop_name = self.parameter_name_for_error(name_idx);
-                let message = format!(
-                    "Property '{prop_name}' implicitly has type 'any', because its set accessor lacks a parameter type annotation."
-                );
-                self.error_at_node(
-                    name_idx,
-                    &message,
-                    diagnostic_codes::PROPERTY_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_ITS_SET_ACCESSOR_LACKS_A_PARAMETER_TYPE,
-                );
-            }
-            return;
-        }
+        // A set accessor gives its property no type when it has no parameter at
+        // all, or a parameter with no type annotation (and no JSDoc supplying
+        // one) — "no parameter" subsumes "no annotation", so both halves feed
+        // one decision and one blame site below.
+        let mut setter_lacks_property_type = parameters.is_empty();
 
         for &param_idx in parameters {
             let Some(param_node) = self.ctx.arena.get(param_idx) else {
@@ -686,33 +667,26 @@ impl<'a> CheckerState<'a> {
             let has_jsdoc = has_paired_getter || jsdoc_declares_type;
             self.maybe_report_implicit_any_parameter(param, has_jsdoc, 0);
 
-            // Also report TS7032 on the setter name if the parameter implicitly has type any.
-            //
-            // A paired getter suppresses this only when it actually supplies the
-            // property's type. `declare class A { get g(); set g(v); }` has a
-            // paired getter and still reports TS7032 on the setter, because
-            // neither accessor names a type — the pair shares one property type
-            // and nothing provides it. The TS7006 flag above cannot be reused
-            // here: it folds in `has_paired_getter` unconditionally, which is
-            // right for contextually typing the parameter and wrong for deciding
-            // whether the property has a type at all.
-            let property_type_supplied =
-                jsdoc_declares_type || (has_paired_getter && paired_getter_supplies_type);
-            if param.type_annotation.is_none()
-                && !property_type_supplied
-                && self.ctx.no_implicit_any()
-                && let Some(name_idx) = accessor_name
-            {
-                let prop_name = self.parameter_name_for_error(name_idx);
-                let message = format!(
-                    "Property '{prop_name}' implicitly has type 'any', because its set accessor lacks a parameter type annotation."
-                );
-                self.error_at_node(
-                        name_idx,
-                        &message,
-                        diagnostic_codes::PROPERTY_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_ITS_SET_ACCESSOR_LACKS_A_PARAMETER_TYPE,
-                    );
+            if param.type_annotation.is_none() && !jsdoc_declares_type {
+                setter_lacks_property_type = true;
             }
+        }
+
+        // TS7032 on the setter name: nothing gave the property a type. A paired
+        // getter suppresses this only when it actually supplies the property's
+        // type — `declare class A { get g(); set g(v); }` (or `set g()`) has a
+        // paired getter and still reports, because the pair shares one property
+        // type and neither accessor names it. The TS7006 flag above cannot be
+        // reused here: it folds in `has_paired_getter` unconditionally, which is
+        // right for contextually typing the parameter and wrong for deciding
+        // whether the property has a type at all.
+        if setter_lacks_property_type
+            && !(has_paired_getter && paired_getter_supplies_type)
+            && self.ctx.no_implicit_any()
+            && let Some(name_idx) = accessor_name
+        {
+            let prop_name = self.parameter_name_for_error(name_idx);
+            self.report_set_accessor_lacks_parameter_type_annotation(name_idx, &prop_name);
         }
     }
 
