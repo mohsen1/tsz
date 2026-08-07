@@ -194,3 +194,74 @@ class B extends A { get x(): number { return 1; } set x(v: number) {} }
         diags(source)
     );
 }
+
+// ---------------------------------------------------------------------------
+// 4. Unannotated bodyless (abstract / ambient) getter has implicit type `any`,
+//    not `void` — a derived override must not spuriously fail TS2416.
+//    Conformance: compiler/noImplicitAnyMissingSetAccessor.ts. Every type is
+//    assignable to an `any` base member, so the override is always compatible.
+//    Binder names vary across cases so the fix cannot be pinned to a spelling.
+// ---------------------------------------------------------------------------
+
+/// Reported repro: abstract getter with no return annotation, derived getter
+/// returns `string`. Base member type is implicit `any`, so no TS2416.
+#[test]
+fn abstract_unannotated_getter_is_any_derived_getter_no_ts2416() {
+    let source = r#"
+abstract class Parent { public abstract get message(); }
+class Child extends Parent { public get message() { return ""; } }
+"#;
+    assert_eq!(
+        ts2416_count(source),
+        0,
+        "an unannotated abstract getter is implicit `any`, not `void`; got: {:#?}",
+        diags(source)
+    );
+}
+
+/// Same rule when the derived member is a plain property rather than a getter.
+#[test]
+fn abstract_unannotated_getter_is_any_derived_property_no_ts2416() {
+    let source = r#"
+abstract class Shape { abstract get area(); }
+class Square extends Shape { area = 4; }
+"#;
+    assert_eq!(
+        ts2416_count(source),
+        0,
+        "derived property over an `any` base getter must not report TS2416; got: {:#?}",
+        diags(source)
+    );
+}
+
+/// The base member really is `any`: a derived getter returning an object type
+/// is just as compatible as one returning a primitive.
+#[test]
+fn abstract_unannotated_getter_is_any_derived_object_no_ts2416() {
+    let source = r#"
+abstract class Repo { abstract get handle(); }
+class FileRepo extends Repo { get handle() { return { fd: 1 }; } }
+"#;
+    assert_eq!(
+        ts2416_count(source),
+        0,
+        "every type is assignable to an `any` base member; got: {:#?}",
+        diags(source)
+    );
+}
+
+/// An explicitly annotated abstract getter still drives a real TS2416 when the
+/// override genuinely disagrees — the fix must not blanket-suppress the check.
+#[test]
+fn abstract_annotated_getter_mismatch_still_reports_ts2416() {
+    let source = r#"
+abstract class Provider { abstract get token(): string; }
+class NumProvider extends Provider { get token() { return 1; } }
+"#;
+    assert_eq!(
+        ts2416_count(source),
+        1,
+        "a real getter-type mismatch against an annotated base must still report TS2416; got: {:#?}",
+        diags(source)
+    );
+}
