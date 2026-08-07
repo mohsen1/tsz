@@ -246,6 +246,25 @@ LINE_LIMIT_CHECKS = [
         ROOT / "crates" / "tsz-checker" / "src" / "types" / "computation",
         3100,
     ),
+    (
+        "Binder boundary: src files must stay under 2000 LOC (#16733)",
+        ROOT / "crates" / "tsz-binder" / "src",
+        2000,
+        # (empty — all files are under the 2000-line limit; #16733 split
+        # `state/core.rs` into `state/core.rs` + `state/core_incremental.rs`
+        # to bring the crate into compliance)
+        set(),
+    ),
+    (
+        "CLI boundary: src files must stay under 2000 LOC (#16733)",
+        ROOT / "crates" / "tsz-cli" / "src",
+        2000,
+        # (empty — all files are under the 2000-line limit; #16733 split
+        # `bin/tsz_server/main.rs` into `bracket_match.rs` and
+        # `driver/check_utils/tests.rs` into `tests_part2.rs` to bring the
+        # crate into compliance)
+        set(),
+    ),
 ]
 
 # Ratcheted 1901 -> 1740 by the #15643 arch-health paydown: FunctionShape

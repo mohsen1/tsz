@@ -757,6 +757,24 @@ class ArchGuardRatchetDirectionTests(unittest.TestCase):
                     f"Remove it from the exclusion list.",
                 )
 
+    def test_line_limit_checks_cover_at_least_these_crates(self):
+        """#16733: CLAUDE.md states the 2000-LOC cap repo-wide, but only
+
+        `tsz-checker` was ever wired into `LINE_LIMIT_CHECKS`, leaving every
+        other crate's drift invisible to `arch-size`. This does not (yet)
+        require full repo coverage — that is a crate-by-crate campaign this
+        pins as it lands — but it locks in the crates already brought into
+        compliance so a future edit cannot silently drop one back out.
+        """
+        covered_bases = {entry[1] for entry in self.arch_guard.LINE_LIMIT_CHECKS}
+        for crate in ("tsz-checker", "tsz-binder", "tsz-cli"):
+            expected = ROOT / "crates" / crate / "src"
+            self.assertIn(
+                expected,
+                covered_bases,
+                f"crates/{crate}/src dropped out of LINE_LIMIT_CHECKS coverage.",
+            )
+
 
 class ArchGuardStructFieldCountTests(unittest.TestCase):
     """Cover `STRUCT_FIELD_COUNT_CHECKS` + `scan_struct_field_count`.
