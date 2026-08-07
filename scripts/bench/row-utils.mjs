@@ -40,6 +40,45 @@ export function isIncompleteCompat(row) {
   return !hasCompletePhaseMetadata(compatibility);
 }
 
+function hasNonZeroExitCode(codes) {
+  if (codes == null) return false;
+  const list = Array.isArray(codes) ? codes : [codes];
+  return list.some((code) => {
+    const value = Number(code);
+    return Number.isFinite(value) && value !== 0;
+  });
+}
+
+// A row "did not finish" when a speed ratio between tsz and tsgo would be
+// fabricated rather than measured: at least one compiler was killed at the
+// timeout ceiling or exited non-zero, so its recorded wall time is a
+// ceiling/error sentinel and any `tsz_ms`/`tsgo_ms` ratio derived from it is
+// `ceiling / other_time`, containing no measurement of the losing side. Such a
+// row must render as DNF and never contribute a per-row ratio or an aggregate
+// datapoint (see #16196: a killed `large-ts-repo` row reported "42.99x faster"
+// that was exactly `1500s / tsgo_time`, and three "narrowing" datapoints that
+// tracked only tsgo's own runtime drift against the fixed ceiling).
+//
+// Keyed entirely on flags the row data already carries, so the exclusion is
+// structural rather than incidental to the slowdown-failure heuristic: the
+// merge step's explicit `winner: "error"` stub, the compatibility artifact's
+// `exit_class` (`timeout`/`nonzero exit`), or a non-zero recorded exit code for
+// either compiler.
+export function didNotFinish(row) {
+  if (!row) return false;
+  if (row.winner === "error") return true;
+  const compatibility = row.compatibility;
+  if (!compatibility) return false;
+  if (compatibility.exit_class === "timeout" || compatibility.exit_class === "nonzero exit") {
+    return true;
+  }
+  const exitCodes = compatibility.exit_codes;
+  if (exitCodes && (hasNonZeroExitCode(exitCodes.tsz) || hasNonZeroExitCode(exitCodes.tsgo))) {
+    return true;
+  }
+  return false;
+}
+
 export const GREEN_COMPAT = {
   state: "green",
   phase: "check",
