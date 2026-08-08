@@ -816,6 +816,16 @@ impl<'a> CheckerState<'a> {
             if getter_body == NodeIndex::NONE {
                 continue;
             }
+            // A getter body that doesn't return on every path is owned by the
+            // completeness check (TS2355/TS2366 in `check_accessor_declaration`),
+            // which treats the setter's type as the getter's effective declared
+            // type. `infer_getter_return_type` below folds that missing path in
+            // as an implicit `undefined` member, which would otherwise make this
+            // compatibility check double-report the same root cause as a
+            // spurious TS2322 against a type that was never actually reached.
+            if self.ctx.strict_null_checks() && self.function_body_falls_through(getter_body) {
+                continue;
+            }
 
             let getter_return_type = self.infer_getter_return_type(getter_body);
             let setter_param_type = self.get_type_from_type_node(setter_type_ann);
@@ -916,6 +926,12 @@ impl<'a> CheckerState<'a> {
             }
             // Skip abstract accessors — no body to anchor the diagnostic.
             if getter_body == NodeIndex::NONE {
+                continue;
+            }
+            // See the class-accessor variant above: a getter body that doesn't
+            // return on every path is owned by the completeness check, not this
+            // compatibility check.
+            if self.ctx.strict_null_checks() && self.function_body_falls_through(getter_body) {
                 continue;
             }
 
