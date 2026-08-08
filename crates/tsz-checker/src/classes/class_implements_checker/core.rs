@@ -1719,11 +1719,40 @@ impl<'a> CheckerState<'a> {
                     // to concrete classes (matching tsc).
                     let extends_same_base =
                         is_class && self.class_extends_same_base(class_data, &interface_name);
-                    let check_whole_type = !is_abstract_class
+                    // A class instance can never provide a call or construct
+                    // signature, so an implemented interface that carries one is
+                    // always incorrectly implemented (TS2420). Member-by-member
+                    // comparison only inspects named members, so — exactly like an
+                    // index signature — this gap is invisible to it and must be
+                    // caught by the whole-type assignability check below.
+                    //
+                    // Unlike the index-signature and extends-same-base triggers,
+                    // this one applies to abstract classes too: `abstract` may
+                    // defer an ordinary member (it can be implemented in a
+                    // subclass), but no class instance — abstract or concrete —
+                    // can ever be callable/constructable, so the signature gap can
+                    // never be closed. Fire only when the signature is the sole
+                    // outstanding gap for a concrete class; a concrete class with a
+                    // missing member already reports TS2420 through the
+                    // missing-member path, whereas for an abstract class that path
+                    // is silent, so the signature gap must drive the report even
+                    // when ordinary members are also missing.
+                    let class_cannot_provide_signature = !is_class
+                        && incompatible_members.is_empty()
+                        && (missing_members.is_empty() || is_abstract_class)
+                        && (crate::query_boundaries::checkers::generic::has_call_signatures(
+                            self.ctx.types,
+                            interface_type,
+                        ) || crate::query_boundaries::lib_augmentations::has_construct_signatures(
+                            self.ctx.types,
+                            interface_type,
+                        ));
+                    let check_whole_type = (!is_abstract_class
                         && (extends_same_base
                             || (interface_has_index_signature
                                 && missing_members.is_empty()
-                                && incompatible_members.is_empty()));
+                                && incompatible_members.is_empty())))
+                        || class_cannot_provide_signature;
                     if check_whole_type {
                         let class_instance_type =
                             self.get_class_instance_type(class_idx, class_data);
