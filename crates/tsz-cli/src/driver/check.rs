@@ -203,7 +203,15 @@ pub(super) fn collect_diagnostics(
     cache: Option<&mut CompilationCache>,
     type_cache_output: &std::sync::Mutex<FxHashMap<PathBuf, TypeCache>>,
 ) -> CollectDiagnosticsResult {
-    collect_diagnostics_with_source_resolutions(input, cache, type_cache_output, None, None, None)
+    collect_diagnostics_with_source_resolutions(
+        input,
+        cache,
+        type_cache_output,
+        None,
+        None,
+        None,
+        None,
+    )
 }
 
 pub(super) fn collect_diagnostics_with_source_resolutions(
@@ -215,6 +223,7 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
     >,
     source_module_resolution_misses: Option<&FxHashSet<SourceModuleResolutionKey>>,
     explicit_root_paths: Option<&FxHashSet<PathBuf>>,
+    depth_skipped_js_paths: Option<&FxHashSet<PathBuf>>,
 ) -> CollectDiagnosticsResult {
     let &CollectDiagnosticsInput {
         program,
@@ -331,6 +340,7 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
         program_file_index: &program_file_index,
         program_paths: &program_paths,
         root_file_paths: explicit_root_paths,
+        depth_skipped_js_paths,
         package_redirects: &package_redirects,
         resolution_cache: &mut resolution_cache,
     });

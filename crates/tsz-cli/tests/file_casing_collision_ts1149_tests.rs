@@ -37,6 +37,52 @@ fn parse_args(args: &[&str]) -> CliArgs {
     CliArgs::try_parse_from(args).expect("test args should parse")
 }
 
+/// Whether the filesystem backing `dir` distinguishes filenames by case.
+///
+/// Two cases below require two root files whose names differ only in casing
+/// (`foo.ts` and `Foo.ts`) to exist as *distinct* files. On a case-insensitive
+/// filesystem — the macOS (APFS) and Windows default — those two names address
+/// one file, so the collision the TS1149 scan exists to catch cannot be
+/// constructed there: the compiler is correct to stay silent, and the
+/// `exactly one TS1149` assertion cannot hold. The compiler behaves the same
+/// on both filesystems (TS1149 on the root-file list is unconditional, not a
+/// `useCaseSensitiveFileNames` host check); only the *fixture* is
+/// unrepresentable.
+///
+/// This is detected at runtime and used to skip only the two unrepresentable
+/// cases, rather than registering them in `scripts/ci/known-failures.txt`. A
+/// blanket known-failures entry would be wrong: on a case-sensitive filesystem
+/// (Linux CI) these tests must run and pass, and tolerating them everywhere
+/// would mask a genuine Linux regression.
+///
+/// The probe writes a uniquely-named upper-case file and confirms the
+/// lower-cased path reads back the same marker — proving the two names alias
+/// one file — which is stronger than a bare `exists` check (a stale or
+/// unrelated lower-case file cannot spoof it). It fails safe toward
+/// "case-sensitive": any I/O hiccup runs the tests rather than skipping them,
+/// because a spuriously-run test fails loudly while a spuriously-skipped one
+/// silently hides a regression.
+fn fs_is_case_sensitive(dir: &Path) -> bool {
+    use std::fs;
+    let upper = dir.join("TszCaseProbe.tmp");
+    let lower = dir.join("tszcaseprobe.tmp");
+    // Clear any prior probe artifacts so a stale file can't skew the result.
+    let _ = fs::remove_file(&upper);
+    let _ = fs::remove_file(&lower);
+
+    let marker = "tsz-case-probe";
+    if fs::write(&upper, marker).is_err() {
+        return true;
+    }
+    // If the lower-cased path reads back our marker, both names resolve to the
+    // same file and the filesystem is case-insensitive.
+    let case_insensitive = matches!(fs::read_to_string(&lower), Ok(contents) if contents == marker);
+
+    let _ = fs::remove_file(&upper);
+    let _ = fs::remove_file(&lower);
+    !case_insensitive
+}
+
 /// Two real, distinct root files whose names differ only in casing must
 /// report TS1149, anchored nowhere (no `file`/`start`/`length`), with the
 /// "Root file specified for compilation" reason repeated once per file.
@@ -44,6 +90,11 @@ fn parse_args(args: &[&str]) -> CliArgs {
 fn two_root_files_differing_only_in_casing_report_ts1149() {
     let temp = tempfile::TempDir::new().expect("temp dir");
     let base = temp.path();
+
+    if !fs_is_case_sensitive(base) {
+        // Unrepresentable on a case-insensitive FS; see `fs_is_case_sensitive`.
+        return;
+    }
 
     write_file(&base.join("foo.ts"), "export const a = 1;\n");
     write_file(&base.join("Foo.ts"), "export const b = 2;\n");
@@ -99,6 +150,11 @@ fn two_root_files_differing_only_in_casing_report_ts1149() {
 fn casing_collision_message_order_follows_root_file_argument_order() {
     let temp = tempfile::TempDir::new().expect("temp dir");
     let base = temp.path();
+
+    if !fs_is_case_sensitive(base) {
+        // Unrepresentable on a case-insensitive FS; see `fs_is_case_sensitive`.
+        return;
+    }
 
     write_file(&base.join("foo.ts"), "export const a = 1;\n");
     write_file(&base.join("Foo.ts"), "export const b = 2;\n");

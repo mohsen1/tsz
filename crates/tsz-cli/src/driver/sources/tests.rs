@@ -378,6 +378,47 @@ fn read_source_files_skips_body_of_non_root_js_under_node_modules() {
         entry.text.is_none(),
         "non-root JS file beyond maxNodeModuleJsDepth must stay skipped"
     );
+    assert!(
+        result.depth_skipped_js_paths.contains(&entry.path),
+        "depth-skipped stub must be recorded so downstream CJS export \
+         inference does not treat it as a normal resolved target (#16934)"
+    );
+}
+
+#[test]
+fn read_source_files_root_js_under_node_modules_is_not_depth_skipped() {
+    // The explicit-root counterpart: a root JS file under `node_modules`
+    // (see `read_source_files_reads_body_of_explicit_root_js_under_node_modules`
+    // above) has its body read and must never land in
+    // `depth_skipped_js_paths`, even though its path shape would otherwise
+    // match `should_skip_js_in_node_modules`.
+    let dir = tempdir().unwrap();
+    let root_js = dir.path().join("node_modules/untyped/index.js");
+    std::fs::create_dir_all(root_js.parent().unwrap()).unwrap();
+    std::fs::write(&root_js, "module.exports = { hello: function() {} };\n").unwrap();
+
+    let options = ResolvedCompilerOptions {
+        allow_js: true,
+        checker: tsz::checker::context::CheckerOptions {
+            allow_js: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    let result = read_source_files(
+        std::slice::from_ref(&root_js),
+        dir.path(),
+        &options,
+        None,
+        None,
+    )
+    .expect("read source files");
+
+    assert!(
+        !result.depth_skipped_js_paths.contains(&root_js),
+        "an explicit program root must never be treated as depth-skipped"
+    );
 }
 
 #[test]
