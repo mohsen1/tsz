@@ -937,6 +937,44 @@ impl<'a> CheckerState<'a> {
             })
             .or_else(|| self.ctx.resolve_import_target(module_name));
 
+        // An untyped JavaScript module — a `node_modules` `.js` file above
+        // `maxNodeModuleJsDepth`, resolvable but deliberately left out of the
+        // type graph — has value type `any` in tsc, whatever CommonJS export
+        // shape its source happens to spell out. The driver marks such a
+        // specifier in `untyped_module_paths` (so `require()` binds and TS2307
+        // stays silent) but does not bind its `module.exports` assignments for
+        // types, so no export surface can be synthesized from it. Without this
+        // gate the checker falls through to an empty `typeof import("mod")` and
+        // reports a spurious TS2339 on every real member — a message strictly
+        // worse than the pre-suppression TS7016 it replaced.
+        //
+        // The surface check is load-bearing. The driver records an
+        // `untyped_module_paths` entry for *every* JS-extension resolution —
+        // including admitted first-party `.js` and `node_modules` JS within
+        // `maxNodeModuleJsDepth` — so the checker's TS2665 augmentation gate
+        // can key on the resolution extension. Those admitted files ARE bound
+        // for types and DO yield a real CommonJS export surface, which must
+        // still be synthesized below; only a JS module marked untyped that
+        // yields no surface (either unresolved to a program file, or resolved
+        // to a depth-excluded file the driver left unbound) is the `any` case.
+        // Keeping the untyped condition (rather than returning `any` for every
+        // shapeless module) preserves the TS2307/error path for genuinely
+        // missing modules.
+        if self
+            .ctx
+            .untyped_module_path_for_file(
+                source_file_idx.unwrap_or(self.ctx.current_file_idx),
+                module_name,
+            )
+            .is_some()
+            && !target_file_idx.is_some_and(|target_idx| {
+                self.resolve_js_export_surface(target_idx)
+                    .has_commonjs_exports
+            })
+        {
+            return Some(TypeId::ANY);
+        }
+
         let exports_table = self
             .resolve_effective_module_exports_from_file(module_name, source_file_idx)
             .or_else(|| {

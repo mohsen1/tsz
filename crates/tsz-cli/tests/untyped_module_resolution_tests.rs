@@ -65,6 +65,37 @@ fn write_tsconfig(base: &Path, extra_options: &str, files: &[&str]) {
     );
 }
 
+/// A tsconfig using Node16 resolution with `allowJs` enabled. Unlike
+/// `write_tsconfig`, admitting JavaScript files makes the `maxNodeModuleJsDepth`
+/// boundary observable: at the default depth of 0 a `node_modules` JS file is
+/// resolved but left unbound for types (`any`), while a raised depth pulls it
+/// into the type graph so its `module.exports` shape is inferred.
+fn write_node16_untyped_tsconfig(base: &Path, extra_options: &str, files: &[&str]) {
+    let files_json = files
+        .iter()
+        .map(|f| format!("\"{f}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    write_file(
+        &base.join("tsconfig.json"),
+        &format!(
+            r#"{{
+              "compilerOptions": {{
+                "target": "es2020",
+                "module": "node16",
+                "moduleResolution": "node16",
+                "allowJs": true,
+                "strict": false,
+                "noImplicitAny": false,
+                "noEmit": true,
+                "types": []{extra_options}
+              }},
+              "files": [{files_json}]
+            }}"#
+        ),
+    );
+}
+
 /// An untyped package: a `node_modules` entry whose only file is JavaScript,
 /// with no `package.json` `types` entry and no sibling declaration file.
 fn write_untyped_package(base: &Path, package_name: &str) {
@@ -453,5 +484,141 @@ fn require_only_exports_still_reports_ts2307_for_esm_dynamic_import() {
     assert!(
         unresolved[0].message_text.contains("require-only-pkg"),
         "TS2307 names the require-only package, got: {unresolved:#?}"
+    );
+}
+
+const PROPERTY_DOES_NOT_EXIST: u32 = 2339;
+
+/// #16934: once TS7016 is correctly suppressed (`noImplicitAny: false`), a real
+/// member access on an untyped `node_modules` JS module must stay clean. The
+/// module is left out of the type graph, so `tsc` binds it as `any` and reports
+/// nothing — regardless of the CommonJS export shape the source spells out. The
+/// pre-fix behavior fell through to an empty `typeof import("mod")` and reported
+/// a spurious TS2339 on every real member, a message strictly worse than the
+/// TS7016 it replaced.
+///
+/// The matrix varies the package name, the local alias, the exported member
+/// name, AND the `module.exports` shape (object literal, property assignment,
+/// bare `exports`, callable, and require re-export) so no name-shaped or
+/// shape-shaped rule can pass it by accident.
+#[test]
+fn untyped_node_modules_member_access_binds_as_any_across_export_shapes() {
+    let cases: &[(&str, &str, &str, &str)] = &[
+        // (package, alias, exported source, access expression)
+        (
+            "obj-literal-pkg",
+            "objLit",
+            "module.exports = { readValue: function () { return 1; } };\n",
+            "objLit.readValue()",
+        ),
+        (
+            "prop-assign-pkg",
+            "propAssign",
+            "module.exports.compute = function () { return 2; };\n",
+            "propAssign.compute()",
+        ),
+        (
+            "bare-exports-pkg",
+            "bareExports",
+            "exports.emit = function () { return 3; };\n",
+            "bareExports.emit()",
+        ),
+        (
+            "callable-pkg",
+            "callable",
+            "module.exports = function () { return 4; };\n",
+            "callable()",
+        ),
+        (
+            "reexport-pkg",
+            "reexported",
+            "module.exports = require(\"./inner\");\n",
+            "reexported.anything",
+        ),
+    ];
+
+    for (package, alias, source, access) in cases {
+        let temp = tempfile::TempDir::new().expect("temp dir");
+        let base = temp.path();
+
+        write_file(
+            &base.join(format!("node_modules/{package}/index.js")),
+            source,
+        );
+        // Backing file for the require re-export shape; harmless for the rest.
+        write_file(
+            &base.join(format!("node_modules/{package}/inner.js")),
+            "module.exports = { deep: 1 };\n",
+        );
+
+        write_file(
+            &base.join("consumer.ts"),
+            &format!("import {alias} = require(\"{package}\");\n{access};\n"),
+        );
+
+        // `allowJs` + `node16` reproduces #16934 exactly: the JS file is
+        // admitted to the program for resolution (so `require()` binds and
+        // TS7016 is suppressed under `noImplicitAny: false`) yet stays above the
+        // default `maxNodeModuleJsDepth` of 0, so it is not bound for types.
+        write_node16_untyped_tsconfig(base, "", &["consumer.ts"]);
+
+        let args = parse_args(&["tsz", "--noEmit"]);
+        let result = compile(&args, base).expect("compile should succeed");
+
+        let missing_member = diagnostics_with_code(&result.diagnostics, PROPERTY_DOES_NOT_EXIST);
+        assert!(
+            missing_member.is_empty(),
+            "untyped `{package}` binds as `any`, so `{access}` is clean, got: {missing_member:#?}"
+        );
+        let unresolved = diagnostics_with_code(&result.diagnostics, CANNOT_FIND_MODULE);
+        assert!(
+            unresolved.is_empty(),
+            "untyped `{package}` still resolves (no TS2307), got: {unresolved:#?}"
+        );
+    }
+}
+
+/// Positive guard against over-correcting to a blanket `any`. Raising
+/// `maxNodeModuleJsDepth` pulls the same `node_modules` JS file into the type
+/// graph, where `tsc` DOES infer its `module.exports` shape. A member the file
+/// does not export must then report TS2339 — proving the untyped→`any` gate
+/// keys on "no synthesizable export surface", not on the `node_modules` path or
+/// the JS extension alone. The binder names differ from the negative matrix so
+/// the two tests cannot share an accidental fast path.
+#[test]
+fn node_modules_js_admitted_within_depth_infers_export_shape() {
+    let temp = tempfile::TempDir::new().expect("temp dir");
+    let base = temp.path();
+
+    write_file(
+        &base.join("node_modules/admitted-pkg/index.js"),
+        "module.exports = { present: function () { return 1; } };\n",
+    );
+
+    write_file(
+        &base.join("consumer.ts"),
+        "import admitted = require(\"admitted-pkg\");\nadmitted.present();\nadmitted.missing();\n",
+    );
+
+    // `maxNodeModuleJsDepth: 1` raises the `node_modules` JS file into the type
+    // graph; `allowJs` lets it in. Now its `module.exports` shape IS inferred.
+    write_node16_untyped_tsconfig(
+        base,
+        ",\n                \"maxNodeModuleJsDepth\": 1",
+        &["consumer.ts"],
+    );
+
+    let args = parse_args(&["tsz", "--noEmit"]);
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let missing_member = diagnostics_with_code(&result.diagnostics, PROPERTY_DOES_NOT_EXIST);
+    assert_eq!(
+        missing_member.len(),
+        1,
+        "the admitted module infers `{{ present }}`, so only `missing` reports TS2339, got: {missing_member:#?}"
+    );
+    assert!(
+        missing_member[0].message_text.contains("missing"),
+        "TS2339 names the genuinely-absent member, got: {missing_member:#?}"
     );
 }
