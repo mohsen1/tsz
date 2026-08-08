@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import {
+  COMPATIBILITY_CORPUS_ROW_NAMES,
   COMPILE_CANARY_PROJECT_ROWS,
   PROJECT_ROW_DEFINITIONS,
   REQUIRED_COMPATIBILITY_FIELDS,
@@ -459,6 +460,26 @@ function validateMeasurementProfileConsistency(profiles) {
 //     primary content. The genuinely-unsafe TIMING conditions (fewer than the
 //     expected shards, a missing REQUIRED timing row) are enforced independently
 //     by the bench.yml shard-count gate and check-artifact-readiness.mjs.
+// Enumerate every DEFINED compatibility corpus row that carries no measured row,
+// so coverage can never silently shrink (#16310). This spans the FULL corpus —
+// the 20 `category:"application"` rows included — a strictly wider scope than
+// `collectProjectCompatibilityFailures` below, which validates only the
+// required ∪ compile-canary subset (`PROJECT_COMPATIBILITY_ROW_SET`). Previously
+// the missing-row advisory walked only `REQUIRED_PROJECT_ROWS`, so an unmeasured
+// application row was indistinguishable downstream from a row that does not
+// exist. Keyed on the full set of measured row names, and gated on the artifact
+// actually carrying at least one corpus row so unrelated timing-only/standalone
+// artifacts are not spuriously advised against the whole corpus.
+function collectMissingCorpusRows(rows) {
+  const measuredNames = new Set(rows.map((row) => row?.name).filter(Boolean));
+  if (!COMPATIBILITY_CORPUS_ROW_NAMES.some((name) => measuredNames.has(name))) {
+    return [];
+  }
+  return COMPATIBILITY_CORPUS_ROW_NAMES
+    .filter((name) => !measuredNames.has(name))
+    .map((name) => `${name}: missing project row`);
+}
+
 function collectProjectCompatibilityFailures(rows) {
   const blocking = [];
   const advisory = [];
@@ -479,14 +500,6 @@ function collectProjectCompatibilityFailures(rows) {
   // artifact double-counts a benchmark, which corrupts win/timing totals.
   for (const name of [...duplicateNames].sort()) {
     blocking.push(`${name}: duplicate project row`);
-  }
-
-  if (projectRows.some((row) => REQUIRED_PROJECT_ROW_SET.has(row.name))) {
-    for (const name of REQUIRED_PROJECT_ROWS) {
-      if (!seenNames.has(name)) {
-        advisory.push(`${name}: missing project row`);
-      }
-    }
   }
 
   for (const row of projectRows) {
@@ -642,6 +655,7 @@ function main() {
   );
 
   const { blocking: compatBlocking, advisory: compatAdvisory } = collectProjectCompatibilityFailures(results);
+  compatAdvisory.push(...collectMissingCorpusRows(results));
   if (compatAdvisory.length > 0) {
     // Advisory project-compatibility gaps must NOT block publishing benchmark
     // timing data (issue #13607). Surface them as GitHub annotations and keep

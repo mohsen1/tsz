@@ -521,9 +521,12 @@ try {
   assert.match(compatibilityDashboard, /type-challenges solutions[\s\S]*compat-state green/);
   assert.match(compatibilityDashboard, /umami[\s\S]*compat-state green[\s\S]*204 files[\s\S]*200 MiB peak/);
   assert.doesNotMatch(compatibilityDashboard, /type-challenges assertions/);
-  // Unmeasured (gray) rows are excluded entirely; the dashboard never renders "Not measured".
-  assert.doesNotMatch(compatibilityDashboard, /Not measured/);
-  assert.doesNotMatch(compatibilityDashboard, /compat-state gray/);
+  // Unmeasured (gray) rows are rendered explicitly as "Not measured" (#16310) so
+  // shrinking coverage is visible instead of silently dropped, and the dashboard
+  // publishes a coverage summary of measured-vs-defined rows.
+  assert.match(compatibilityDashboard, /Not measured/);
+  assert.match(compatibilityDashboard, /compat-state gray/);
+  assert.match(compatibilityDashboard, /defined corpus rows measured/);
 
   process.env.TSZ_WEBSITE_BENCHMARK_ARTIFACT = failedOnlyArtifact;
   const failedOnlyCharts = getBenchmarkCharts();
@@ -544,10 +547,11 @@ try {
   assert.match(failedOnlyCompatibility, /data-compat-sort="files"/);
   assert.match(failedOnlyCompatibility, /data-compat-sort="peak"/);
   assert.match(failedOnlyCompatibility, /RxJS[\s\S]*compat-state yellow[\s\S]*diagnostic mismatch[\s\S]*12 files[\s\S]*100 MiB peak/);
-  // Gray "oracle unavailable" / unmeasured rows (e.g. large-ts-repo) are excluded.
-  assert.doesNotMatch(failedOnlyCompatibility, /large-ts-repo/);
-  assert.doesNotMatch(failedOnlyCompatibility, /Not measured/);
-  assert.doesNotMatch(failedOnlyCompatibility, /compat-state gray/);
+  // Gray "oracle unavailable" / unmeasured rows (e.g. large-ts-repo) are now
+  // rendered explicitly as "Not measured" rather than excluded (#16310).
+  assert.match(failedOnlyCompatibility, /large-ts-repo/);
+  assert.match(failedOnlyCompatibility, /Not measured/);
+  assert.match(failedOnlyCompatibility, /compat-state gray/);
   assert.match(failedOnlyCompatibility, /utility-types[\s\S]*compat-state red[\s\S]*exit success[\s\S]*10 files[\s\S]*—/);
 
   const slugs = new Map();

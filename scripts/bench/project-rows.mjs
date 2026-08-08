@@ -1311,3 +1311,8 @@ export const COMPATIBILITY_CORPUS_ROWS = PROJECT_ROW_DEFINITIONS
     family: row.family,
     readme_candidates: row.readme_candidates,
   }));
+
+// The names of every defined compatibility corpus row, kept beside its sibling
+// derived name-lists so consumers (the merge advisory, the website dashboard)
+// share one canonical source instead of re-deriving `.map(row => row.name)`.
+export const COMPATIBILITY_CORPUS_ROW_NAMES = COMPATIBILITY_CORPUS_ROWS.map((row) => row.name);

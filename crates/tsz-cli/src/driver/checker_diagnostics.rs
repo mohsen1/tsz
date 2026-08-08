@@ -327,6 +327,11 @@ mod tests {
         assert!(!keep_checker_diagnostic_when_program_has_real_syntax_errors(1314));
         assert!(!keep_checker_diagnostic_when_program_has_real_syntax_errors(1315));
         assert!(!keep_checker_diagnostic_when_program_has_real_syntax_errors(1316));
+        // #16279 audit round 9: `in`/`out` as a class member's own modifier
+        // (`class C { in x }`) is checker-emitted
+        // (`check_variance_modifier_not_on_class_member_node`); tsc's oracle
+        // suppresses it alongside an unrelated real syntax error.
+        assert!(!keep_checker_diagnostic_when_program_has_real_syntax_errors(1274));
         assert!(keep_checker_diagnostic_when_program_has_real_syntax_errors(
             1005
         ));
