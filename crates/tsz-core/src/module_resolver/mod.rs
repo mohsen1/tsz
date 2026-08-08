@@ -696,7 +696,7 @@ impl ModuleResolver {
         request: &ModuleLookupRequest<'_>,
         fallback_resolve: impl FnOnce(&str, &Path) -> Option<PathBuf>,
         is_ambient_module: impl Fn(&str) -> bool,
-        _known_files: Option<&rustc_hash::FxHashSet<std::path::PathBuf>>,
+        known_files: Option<&rustc_hash::FxHashSet<std::path::PathBuf>>,
     ) -> ModuleLookupResult {
         let specifier = request.specifier;
         let containing_file = request.containing_file;
@@ -871,8 +871,30 @@ impl ModuleResolver {
                 //    not flagged as "missing declaration file".
                 let is_imported_js =
                     resolved_module.extension.is_javascript() && request.no_implicit_any;
-                let is_external_cjs_require =
-                    resolved_module.is_external && matches!(import_kind, ImportKind::CjsRequire);
+                // A `node_modules`-hosted JS file that is itself an explicit
+                // program root (tsc's `rootNames`, e.g. `files`/CLI-argument
+                // entries - the TypeScript test-harness convention of turning
+                // every `@Filename` including node_modules ones into a root)
+                // is never `isExternalLibraryImport` in tsc's model: the file
+                // already has a `SourceFile` from being processed as a root,
+                // so a later `require()` of it resolves to that existing file
+                // rather than being (re)classified as an external dependency.
+                // Confirmed against the pinned oracle (typescript@7.0.2):
+                // `require("foo")` of an unrooted `node_modules/foo` JS file
+                // reports TS7016, but the identical `require()` is clean once
+                // `foo`'s resolved JS file is *also* passed as a root -
+                // independent of `maxNodeModuleJsDepth`, which is unset in
+                // both cases. `compiler/importNonExportedMember12.ts` and
+                // `conformance/salsa/namespaceAssignmentToRequireAlias.ts`
+                // are exactly this shape (their `.js` fixtures are declared
+                // via `@Filename` under `node_modules/`, which the conformance
+                // harness turns into explicit `files` roots - see
+                // `needs_explicit_root_files` in `crates/conformance/src/tsz_wrapper.rs`).
+                let is_explicit_root =
+                    known_files.is_some_and(|roots| roots.contains(&resolved_module.resolved_path));
+                let is_external_cjs_require = resolved_module.is_external
+                    && matches!(import_kind, ImportKind::CjsRequire)
+                    && !is_explicit_root;
                 // tsc's augmentation-target check (TS2665) keys on the
                 // *resolution extension*, not on whether the import site was
                 // diagnosed: a specifier resolving to a `.js`/`.jsx` file is an

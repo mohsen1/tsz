@@ -630,6 +630,10 @@ fn compile_inner_impl(
     }
 
     let root_file_paths = file_paths.clone();
+    let explicit_root_paths: FxHashSet<PathBuf> = root_file_paths
+        .iter()
+        .map(|path| canonicalize_or_owned(path))
+        .collect();
 
     // TS1149: two root files whose real on-disk paths are identical except
     // for casing (e.g. `foo.ts` and `Foo.ts` both specified as roots). tsc
@@ -1149,6 +1153,7 @@ fn compile_inner_impl(
         &parallel_type_caches,
         Some(&module_resolutions),
         Some(&module_resolution_misses),
+        Some(&explicit_root_paths),
     );
     let mut diagnostics: Vec<Diagnostic> = collected.diagnostics;
     let check_duration = collect_diagnostics_start.elapsed();

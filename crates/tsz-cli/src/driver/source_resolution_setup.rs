@@ -39,6 +39,12 @@ pub(super) struct SourceResolutionSetupInput<'a> {
     pub(super) source_module_resolution_misses: Option<&'a FxHashSet<SourceModuleResolutionKey>>,
     pub(super) program_file_index: &'a ProgramFileIndex,
     pub(super) program_paths: &'a FxHashSet<PathBuf>,
+    /// Canonicalized paths of files that are explicit program roots (tsc's
+    /// `rootNames` - `files`/CLI-argument entries), as opposed to files only
+    /// reached transitively through import/require resolution. `None` when
+    /// the caller has no such distinction available (falls back to the old
+    /// behavior of never treating a resolution as root-explicit).
+    pub(super) root_file_paths: Option<&'a FxHashSet<PathBuf>>,
     pub(super) package_redirects: &'a FxHashMap<PathBuf, PathBuf>,
     pub(super) resolution_cache: &'a mut ModuleResolutionCache,
 }
@@ -95,6 +101,7 @@ pub(super) fn prepare_source_resolution_setup(
         source_module_resolution_misses,
         program_file_index,
         program_paths,
+        root_file_paths,
         package_redirects,
         resolution_cache,
     } = input;
@@ -407,7 +414,7 @@ pub(super) fn prepare_source_resolution_setup(
                         program.declared_modules.contains(spec)
                             || program.shorthand_ambient_modules.contains(spec)
                     },
-                    Some(program_paths),
+                    root_file_paths,
                 );
 
                 // Classify the lookup result into a driver-facing outcome.
@@ -584,7 +591,7 @@ pub(super) fn prepare_source_resolution_setup(
                         program.declared_modules.contains(spec)
                             || program.shorthand_ambient_modules.contains(spec)
                     },
-                    Some(program_paths),
+                    root_file_paths,
                 );
                 let outcome = result.classify();
                 if let Some(ref untyped_path) = outcome.untyped_module_path {
