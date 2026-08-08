@@ -118,3 +118,59 @@ y.staticCanary;
         "Static member access via constructor type must not report TS2341. Got: {codes:?}"
     );
 }
+
+/// Regression: `is_constructor_type` treats an unresolved `Lazy(DefId)`
+/// reference to a class symbol as always-constructor (correct for its other
+/// callers, e.g. heritage-clause validation). A plain instance-typed
+/// parameter can still be represented that way before it is materialized —
+/// here, forward-referencing `C5` in `C4`'s own method signature is enough to
+/// keep `C4`'s type lazy at the point `C5`'s method checks a `C4`-typed
+/// parameter. Without resolving the lazy reference first,
+/// `resolve_class_for_access` misclassified `c4` as a *static* receiver and
+/// silently skipped the protected-access check entirely (a false negative —
+/// tsc rejects this). Reduced from `conformance/classes/mixinAccessModifiers.ts`.
+#[test]
+fn protected_access_still_denied_when_receiver_class_is_forward_referenced() {
+    let source = "\
+class Base {
+    protected p: string = \"\";
+}
+class Fwd extends Base {
+    f(other: Other) {}
+}
+class Other {
+    f(fwd: Fwd) {
+        fwd.p;
+    }
+}
+";
+    let codes = diag_codes(source);
+    assert!(
+        codes.contains(&2445),
+        "Expected TS2445 for protected access via a forward-referenced instance receiver. Got: {codes:?}"
+    );
+}
+
+/// Anti-hardcoding cover for the forward-reference regression: renamed
+/// classes/members/methods, private instead of protected.
+#[test]
+fn private_access_still_denied_when_receiver_class_is_forward_referenced_renamed() {
+    let source = "\
+class Root {
+    private secret: number = 0;
+}
+class Node extends Root {
+    link(peer: Leaf) {}
+}
+class Leaf {
+    visit(node: Node) {
+        node.secret;
+    }
+}
+";
+    let codes = diag_codes(source);
+    assert!(
+        codes.contains(&2341),
+        "Expected TS2341 for private access via a forward-referenced instance receiver. Got: {codes:?}"
+    );
+}

@@ -1488,7 +1488,18 @@ impl<'a> CheckerState<'a> {
         }
 
         if object_type != TypeId::ANY && object_type != TypeId::ERROR {
-            let is_static = self.is_constructor_type(object_type);
+            // `is_constructor_type` treats an unresolved `Lazy(DefId)` reference to
+            // a class symbol as always-constructor (correct for its other callers,
+            // e.g. heritage-clause validation, where such a lazy ref denotes a
+            // value used as a base-class expression). But the *same* lazy
+            // representation is also how an ordinary instance-type annotation
+            // (`param: SomeClass`) reads before it is materialized — most often
+            // when a forward-referenced class hasn't been resolved to its
+            // instance shape yet. Resolving the lazy reference first ensures
+            // `is_constructor_type` sees the real (materialized) shape here,
+            // so a plain instance receiver isn't misclassified as static.
+            let resolved_object_type = self.resolve_lazy_type(object_type);
+            let is_static = self.is_constructor_type(resolved_object_type);
             if let Some(class_idx) = self.get_class_decl_from_type(object_type) {
                 return Some((class_idx, is_static));
             }
