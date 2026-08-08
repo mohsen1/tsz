@@ -81,6 +81,51 @@ fn test_index_access_array_with_number_type() {
     assert_eq!(result, TypeId::NUMBER, "array[number] should be number");
 }
 
+#[test]
+fn test_index_access_array_with_unique_symbol_key_is_undefined() {
+    let interner = TypeInterner::new();
+
+    // `arr[Symbol.isConcatSpreadable]`-shaped access: a well-known symbol (or any
+    // `unique symbol`-typed key) never matches an array's numeric index
+    // signature. Regression guard for the `ArrayKeyVisitor::evaluate` fallback,
+    // which used to return the array's element type for any unhandled key shape
+    // (including `UniqueSymbol`) instead of `UNDEFINED`.
+    let array = interner.array(TypeId::STRING);
+    let unique_key = interner.unique_symbol(crate::types::SymbolRef(7));
+    let index_access = interner.index_access(array, unique_key);
+
+    let result = evaluate_type(&interner, index_access);
+    assert_eq!(
+        result,
+        TypeId::UNDEFINED,
+        "array[uniqueSymbol] must not fall back to the element type"
+    );
+}
+
+#[test]
+fn test_index_access_tuple_with_unique_symbol_key_is_undefined() {
+    let interner = TypeInterner::new();
+
+    // Sibling of the array case above: tuples already reject a unique-symbol
+    // key correctly. Pinned here so the two visitors cannot silently diverge
+    // again.
+    let tuple = interner.tuple(vec![TupleElement {
+        type_id: TypeId::STRING,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+    let unique_key = interner.unique_symbol(crate::types::SymbolRef(7));
+    let index_access = interner.index_access(tuple, unique_key);
+
+    let result = evaluate_type(&interner, index_access);
+    assert_eq!(
+        result,
+        TypeId::UNDEFINED,
+        "tuple[uniqueSymbol] must not fall back to an element type"
+    );
+}
+
 // =============================================================================
 // Index Access on Tuples
 // =============================================================================

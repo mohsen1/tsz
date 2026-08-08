@@ -178,6 +178,16 @@ impl TypeVisitor for ArrayKeyVisitor<'_> {
         }
     }
 
+    // A `unique symbol` key (a well-known symbol like `Symbol.isConcatSpreadable`,
+    // or a `declare const s: unique symbol` binding) never matches an array's
+    // numeric index signature, so it must not fall through to `element_type` via
+    // `evaluate`'s default fallback the way an unresolved generic key does.
+    // Mirrors the `IntrinsicKind::Symbol` arm of `visit_intrinsic` above, which
+    // already returns `UNDEFINED` for the widened `symbol` type.
+    fn visit_unique_symbol(&mut self, _symbol_ref: u32) -> Self::Output {
+        Some(TypeId::UNDEFINED)
+    }
+
     /// Signal "use the default fallback" for unhandled type variants.
     fn default_output() -> Self::Output {
         None
