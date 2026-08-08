@@ -273,6 +273,13 @@ pub(super) struct SourceReadResult {
     /// TS1453: Invalid `resolution-mode` values in `/// <reference types="..." />` directives.
     /// Tuples of (`file_path`, `byte_offset`, `span_length`).
     pub(super) resolution_mode_errors: Vec<(PathBuf, usize, usize)>,
+    /// Canonical paths of `node_modules`-hosted JS files the BFS depth-gated out
+    /// of the program under `maxNodeModuleJsDepth` (i.e. `should_skip_js_in_node_modules`
+    /// returned true and the file was not an explicit program root). Consumers
+    /// reconcile the resolver's conservative untyped-JS TS7016 against this set:
+    /// a resolved JS file absent from it is a genuine program member, so the
+    /// diagnostic is dropped and the import binds to the file's JS type.
+    pub(super) depth_skipped_js: FxHashSet<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -680,6 +687,7 @@ pub(super) fn read_source_files(
         FxHashMap::default();
     let mut module_resolution_misses: FxHashSet<SourceModuleResolutionKey> = FxHashSet::default();
     let mut seen = FxHashSet::default();
+    let mut depth_skipped_js: FxHashSet<PathBuf> = FxHashSet::default();
     let mut discovery_order: FxHashMap<PathBuf, usize> = FxHashMap::default();
     let mut next_discovery_order = 0usize;
     let mut pending = VecDeque::new();
@@ -707,9 +715,17 @@ pub(super) fn read_source_files(
         canonical
     };
 
+    // Explicit program roots (the `files`/`include` set tsc seeds the program
+    // with) are always admitted, even a `node_modules`-hosted `.js` file that
+    // `maxNodeModuleJsDepth` would exclude when reached through resolution.
+    // tsc's depth gate applies only to JS files *discovered* by following
+    // imports, never to files the user listed directly. Track the canonical
+    // roots so the depth skip below can exempt them.
+    let mut root_paths: FxHashSet<PathBuf> = FxHashSet::default();
     for path in paths {
         let canonical = normalize(path, options);
         outfile_bundle_paths.insert(canonical.clone());
+        root_paths.insert(canonical.clone());
         if seen.insert(canonical.clone()) {
             discovery_order.insert(canonical.clone(), next_discovery_order);
             next_discovery_order += 1;
@@ -761,7 +777,9 @@ pub(super) fn read_source_files(
                     });
                 if cached {
                     BatchAction::Cached
-                } else if should_skip_js_in_node_modules(path, options.max_node_module_js_depth) {
+                } else if !root_paths.contains(path)
+                    && should_skip_js_in_node_modules(path, options.max_node_module_js_depth)
+                {
                     BatchAction::SkipJs
                 } else {
                     BatchAction::Read
@@ -813,6 +831,9 @@ pub(super) fn read_source_files(
                     continue;
                 }
                 BatchAction::SkipJs => {
+                    // Record the depth-gated JS file so the diagnostic pass can
+                    // tell it apart from a genuinely admitted program member.
+                    depth_skipped_js.insert(path.clone());
                     sources.insert(path.clone(), (None, false, false));
                     continue;
                 }
@@ -1136,6 +1157,7 @@ pub(super) fn read_source_files(
         module_resolution_misses,
         type_reference_errors,
         resolution_mode_errors,
+        depth_skipped_js,
     })
 }
 

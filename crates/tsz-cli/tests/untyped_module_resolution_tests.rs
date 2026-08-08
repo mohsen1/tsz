@@ -455,3 +455,121 @@ fn require_only_exports_still_reports_ts2307_for_esm_dynamic_import() {
         "TS2307 names the require-only package, got: {unresolved:#?}"
     );
 }
+
+/// `maxNodeModuleJsDepth` gate — positive direction. A `node_modules`-hosted
+/// `.js` dependency reached through `require()` is admitted into the program
+/// once its resolution depth is within `maxNodeModuleJsDepth`, so `tsc` binds
+/// the import to the file's inferred JS type and reports no TS7016 — even under
+/// `noImplicitAny`. Before this fix `maxNodeModuleJsDepth` was parsed but never
+/// consulted by the untyped-JS diagnostic, so the depth-1 dependency kept a
+/// spurious TS7016.
+#[test]
+fn node_modules_js_within_max_depth_is_admitted_without_ts7016() {
+    let temp = tempfile::TempDir::new().expect("temp dir");
+    let base = temp.path();
+
+    write_untyped_package(base, "depth-pkg");
+
+    write_file(
+        &base.join("main.ts"),
+        "import viaRequire = require(\"depth-pkg\");\nexport const a = viaRequire;\n",
+    );
+
+    write_tsconfig(
+        base,
+        ",\n                \"allowJs\": true,\n                \"noImplicitAny\": true,\n                \"maxNodeModuleJsDepth\": 1",
+        &["main.ts"],
+    );
+
+    let args = parse_args(&["tsz", "--noEmit"]);
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let missing_declaration =
+        diagnostics_with_code(&result.diagnostics, COULD_NOT_FIND_DECLARATION_FILE);
+    assert!(
+        missing_declaration.is_empty(),
+        "a node_modules JS dependency within maxNodeModuleJsDepth is admitted, so no TS7016, got: {missing_declaration:#?}"
+    );
+    let unresolved = diagnostics_with_code(&result.diagnostics, CANNOT_FIND_MODULE);
+    assert!(
+        unresolved.is_empty(),
+        "an admitted dependency is not a resolution failure, got: {unresolved:#?}"
+    );
+}
+
+/// `maxNodeModuleJsDepth` gate — negative direction (matrix row 1). With
+/// `allowJs` on but `maxNodeModuleJsDepth` left at its default of 0, a
+/// `node_modules` JS dependency reached only through `require()` is *not*
+/// admitted, so `tsc` still reports TS7016 under `noImplicitAny`. `allowJs`
+/// alone must never be mistaken for admission — the reconciliation only drops
+/// the diagnostic for files the BFS actually kept.
+#[test]
+fn node_modules_js_at_default_depth_still_reports_ts7016_with_allow_js() {
+    let temp = tempfile::TempDir::new().expect("temp dir");
+    let base = temp.path();
+
+    write_untyped_package(base, "shallow-pkg");
+
+    write_file(
+        &base.join("app.ts"),
+        "import loaded = require(\"shallow-pkg\");\nexport const v = loaded;\n",
+    );
+
+    write_tsconfig(
+        base,
+        ",\n                \"allowJs\": true,\n                \"noImplicitAny\": true",
+        &["app.ts"],
+    );
+
+    let args = parse_args(&["tsz", "--noEmit"]);
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let missing_declaration =
+        diagnostics_with_code(&result.diagnostics, COULD_NOT_FIND_DECLARATION_FILE);
+    assert_eq!(
+        missing_declaration.len(),
+        1,
+        "a node_modules JS dependency at the default maxNodeModuleJsDepth (0) is not admitted, so TS7016 stands, got: {missing_declaration:#?}"
+    );
+}
+
+/// Explicit-root gate (matrix row 5). A `node_modules`-hosted `.js` file listed
+/// directly in the program's `files` is an explicit root, so it is admitted
+/// regardless of `maxNodeModuleJsDepth` and a `require()` of it reports no
+/// TS7016 — matching `tsc`'s program-membership gate (its checker probes
+/// `host.getSourceFile(resolvedFileName)`). This is the fixture-shape behind the
+/// TS test-harness cases `importNonExportedMember12.ts` /
+/// `namespaceAssignmentToRequireAlias.ts`.
+#[test]
+fn node_modules_js_listed_as_explicit_root_is_admitted_without_ts7016() {
+    let temp = tempfile::TempDir::new().expect("temp dir");
+    let base = temp.path();
+
+    write_untyped_package(base, "root-pkg");
+
+    write_file(
+        &base.join("main.ts"),
+        "import rooted = require(\"root-pkg\");\nexport const r = rooted;\n",
+    );
+
+    write_tsconfig(
+        base,
+        ",\n                \"allowJs\": true,\n                \"noImplicitAny\": true",
+        &["main.ts", "node_modules/root-pkg/index.js"],
+    );
+
+    let args = parse_args(&["tsz", "--noEmit"]);
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let missing_declaration =
+        diagnostics_with_code(&result.diagnostics, COULD_NOT_FIND_DECLARATION_FILE);
+    assert!(
+        missing_declaration.is_empty(),
+        "a node_modules JS file listed as an explicit root is admitted, so no TS7016, got: {missing_declaration:#?}"
+    );
+    let unresolved = diagnostics_with_code(&result.diagnostics, CANNOT_FIND_MODULE);
+    assert!(
+        unresolved.is_empty(),
+        "an explicit-root dependency is not a resolution failure, got: {unresolved:#?}"
+    );
+}
