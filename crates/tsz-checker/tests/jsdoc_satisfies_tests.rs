@@ -6,6 +6,70 @@
 
 use crate::test_utils::{check_js_source_diagnostics, diagnostic_codes};
 
+/// A `@satisfies` tag with no `{TypeExpression}` braces at all never enters
+/// brace-parsing mode, so `tsc` reports a single `'{' expected` (TS1005) per
+/// occurrence — there is no opened brace to pair with a `'}' expected`
+/// companion. Regression test for a prior double-report bug where tsz also
+/// emitted a spurious `'}' expected` anchored at the comment's closing `*/`.
+#[test]
+fn malformed_satisfies_missing_braces_reports_single_open_brace_expected() {
+    let source = r#"
+/**
+ * @satisfies T1
+ */
+const t1 = { a: 1 };
+"#;
+    let diagnostics = check_js_source_diagnostics(source);
+    let codes = diagnostic_codes(&diagnostics);
+    let ts1005_count = codes.iter().filter(|code| **code == 1005).count();
+    assert_eq!(
+        ts1005_count, 1,
+        "Expected exactly one TS1005 ('{{' expected) for a braceless @satisfies tag, got: {codes:?}",
+    );
+}
+
+/// Two malformed `@satisfies` tags in the same comment each get their own
+/// single `'{' expected`, not a paired `'}' expected` for either.
+#[test]
+fn malformed_satisfies_missing_braces_reports_one_per_occurrence() {
+    let source = r#"
+/**
+ * @satisfies Foo
+ * @satisfies Bar
+ */
+const t1 = { a: 1 };
+"#;
+    let diagnostics = check_js_source_diagnostics(source);
+    let codes = diagnostic_codes(&diagnostics);
+    let ts1005_count = codes.iter().filter(|code| **code == 1005).count();
+    assert_eq!(
+        ts1005_count, 2,
+        "Expected one TS1005 per malformed @satisfies occurrence, got: {codes:?}",
+    );
+}
+
+/// Control: a well-formed `@satisfies {T1}` tag stays clean (no TS1005),
+/// confirming the fix only touches the missing-brace path.
+#[test]
+fn well_formed_satisfies_braces_reports_no_ts1005() {
+    let source = r#"
+/**
+ * @typedef {Object} T1
+ * @property {number} a
+ */
+/**
+ * @satisfies {T1}
+ */
+const t1 = { a: 1 };
+"#;
+    let diagnostics = check_js_source_diagnostics(source);
+    let codes = diagnostic_codes(&diagnostics);
+    assert!(
+        !codes.contains(&1005),
+        "Expected well-formed @satisfies {{T1}} to report no TS1005, got: {codes:?}",
+    );
+}
+
 #[test]
 fn invalid_satisfies_prefix_is_not_a_jsdoc_satisfies_tag() {
     let source = r#"

@@ -1032,19 +1032,13 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::CANNOT_FIND_NAME,
             );
         }
-        for (open_pos, close_pos) in
+        for open_pos in
             Self::malformed_jsdoc_satisfies_positions(source_text, comment_pos, comment_end)
         {
             self.ctx.error(
                 open_pos,
                 0,
                 format_message(diagnostic_messages::EXPECTED, &["{"]),
-                diagnostic_codes::EXPECTED,
-            );
-            self.ctx.error(
-                close_pos,
-                0,
-                format_message(diagnostic_messages::EXPECTED, &["}"]),
                 diagnostic_codes::EXPECTED,
             );
         }
@@ -1256,11 +1250,15 @@ impl<'a> CheckerState<'a> {
         results
     }
 
+    /// Byte positions where a `@satisfies` tag is missing its required `{TypeExpression}`
+    /// braces entirely (no `{` follows the tag at all). `tsc`'s JSDoc tag parser never enters
+    /// brace-parsing mode in this shape, so it reports a single `'{' expected` per occurrence —
+    /// there is no opened brace to pair with a `'}' expected` companion.
     fn malformed_jsdoc_satisfies_positions(
         source_text: &str,
         comment_pos: u32,
         comment_end: u32,
-    ) -> Vec<(u32, u32)> {
+    ) -> Vec<u32> {
         let raw = &source_text[comment_pos as usize..comment_end as usize];
         let mut result = Vec::new();
         for tag_start in Self::jsdoc_tag_offsets(raw, "satisfies") {
@@ -1269,8 +1267,7 @@ impl<'a> CheckerState<'a> {
             let skipped = raw[after_tag..].len() - ws_trimmed.len();
             if !ws_trimmed.starts_with('{') {
                 let open_pos = comment_pos + (after_tag + skipped) as u32;
-                let close_pos = comment_end.saturating_sub(2);
-                result.push((open_pos, close_pos));
+                result.push(open_pos);
             }
         }
         result
