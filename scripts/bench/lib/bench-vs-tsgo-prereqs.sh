@@ -393,6 +393,42 @@ hyperfine_exit_status_for() {
     return 0
 }
 
+# Print hyperfine's own captured comparison output for a two-command run.
+#
+# hyperfine prints its "Summary\n  <faster> ran\n  N.NN times faster than
+# <slower>" comparison unconditionally whenever `--ignore-failure` let a
+# killed-by-timeout or non-zero-exit command finish "successfully" alongside
+# a clean one: that comparison is `ceiling_or_error_time / other_time`, not a
+# measurement of the losing side, the exact "42.99x faster" fabrication
+# #16196 found from a killed `large-ts-repo` row. #16196's own fix
+# (`row-utils.mjs`'s `didNotFinish`) only reaches the structured JSON/CSV
+# path — hyperfine's raw stdout is a distinct emitter of the same fabricated
+# number and streams straight to the console/CI log before this script ever
+# inspects an exit code, so the JSON-side gate can't intercept it. When `ok`
+# is not "true", strip the trailing Summary block (detected on a
+# color-code-stripped copy so the line count still matches the original,
+# still-colored text) and print an explicit note instead; the per-benchmark
+# timing lines above it stay, since those are real per-command
+# wall-clock measurements even when one side was killed or errored.
+print_hyperfine_comparison_output() {
+    local output="$1"
+    local ok="$2"
+    if [ "$ok" = true ]; then
+        printf '%s\n' "$output"
+        return
+    fi
+    local plain
+    plain="$(printf '%s\n' "$output" | sed 's/\x1b\[[0-9;]*m//g')"
+    local summary_line
+    summary_line="$(printf '%s\n' "$plain" | grep -n '^Summary$' | head -1 | cut -d: -f1)"
+    if [ -n "$summary_line" ] && [ "$summary_line" -gt 1 ]; then
+        printf '%s\n' "$output" | sed -n "1,$((summary_line - 1))p"
+        echo "  (comparison ratio suppressed: a killed/errored run makes it ceiling/other_time, not a measurement — see #16196)"
+    else
+        printf '%s\n' "$output"
+    fi
+}
+
 project_failure_class() {
     local status="$1"
     shift || true
