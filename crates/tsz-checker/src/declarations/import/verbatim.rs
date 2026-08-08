@@ -145,29 +145,51 @@ impl<'a> CheckerState<'a> {
         // detection requires), so there is no adjustable variant to pick.
         // Emit on the import clause and skip ESM-specific checks below. TSC
         // skips this check for .d.ts files.
-        if self.is_current_file_commonjs_for_vms() && !self.ctx.is_declaration_file() {
+        //
+        // An import clause that carries no runtime binding is exempt, exactly
+        // like a bare side-effect `import "./m"` (which has no clause at all
+        // and returns above): `import {} from "./m"` — an empty named-imports
+        // list with no default and no namespace binding — is erased in emit
+        // and tsc reports nothing. A default (`import x, {} from`) or
+        // namespace (`import * as ns from`) binding still counts as ESM
+        // syntax and reports. (Oracle-verified against `typescript@7.0.2`:
+        // `import {} from "./m";` is clean; `import def, {} from "./m";`
+        // fires TS1295 anchored at the default binding.)
+        // `get_named_imports` covers both a namespace import (its `name` is the
+        // `ns` in `* as ns`) and a named-imports list (its `elements` are the
+        // specifiers). Resolve it once and reuse for both the binding check and
+        // the error anchor below.
+        let named_imports = self
+            .ctx
+            .arena
+            .get(clause.named_bindings)
+            .and_then(|bindings_node| self.ctx.arena.get_named_imports(bindings_node));
+        // Either shape carrying content is a binding; an empty named-imports
+        // list (`import {}`) is not.
+        let clause_has_binding = clause.name.is_some()
+            || named_imports.is_some_and(|b| b.name.is_some() || !b.elements.nodes.is_empty());
+        if clause_has_binding
+            && self.is_current_file_commonjs_for_vms()
+            && !self.ctx.is_declaration_file()
+        {
             // TSC positions the error at the binding NAME:
             // - Default import `import X from ...` → at X
             // - Namespace import `import * as X from ...` → at X
             // - Named imports `import { X } from ...` → at X (first specifier name)
             let error_node = if clause.named_bindings.is_some() {
-                if let Some(bindings_node) = self.ctx.arena.get(clause.named_bindings) {
-                    if let Some(ns_import) = self.ctx.arena.get_named_imports(bindings_node) {
-                        if ns_import.name.is_some() {
-                            // Namespace import: use the name (esmy2 in `* as esmy2`)
-                            ns_import.name
-                        } else if let Some(&first_spec) = ns_import.elements.nodes.first() {
-                            // Named imports: use first specifier's local name
-                            if let Some(spec_node) = self.ctx.arena.get(first_spec)
-                                && let Some(spec) = self.ctx.arena.get_specifier(spec_node)
-                            {
-                                if spec.name.is_some() {
-                                    spec.name
-                                } else {
-                                    spec.property_name
-                                }
+                if let Some(ns_import) = named_imports {
+                    if ns_import.name.is_some() {
+                        // Namespace import: use the name (esmy2 in `* as esmy2`)
+                        ns_import.name
+                    } else if let Some(&first_spec) = ns_import.elements.nodes.first() {
+                        // Named imports: use first specifier's local name
+                        if let Some(spec_node) = self.ctx.arena.get(first_spec)
+                            && let Some(spec) = self.ctx.arena.get_specifier(spec_node)
+                        {
+                            if spec.name.is_some() {
+                                spec.name
                             } else {
-                                clause.named_bindings
+                                spec.property_name
                             }
                         } else {
                             clause.named_bindings
