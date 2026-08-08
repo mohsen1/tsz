@@ -670,6 +670,29 @@ const fn is_parser_grammar_code(code: u32) -> bool {
         | 1213 // Identifier expected. '{0}' is a reserved word in strict mode. Class definitions are automatically in strict mode.
         | 1024 // 'readonly' modifier can only appear on a property declaration or index signature
         | 1242 // 'abstract' modifier can only appear on a class, method, or property declaration
+        | 1274 // '{0}' modifier can only appear on a type parameter of a class,
+                // interface or type alias. tsc's checkGrammarModifiers reports
+                // this for `in`/`out` used as a PARAMETER modifier (e.g.
+                // `function f(in x: number) {}`); tsz emits that shape from
+                // the parser's `parameter_modifier_grammar_error`
+                // (`state_statements_class.rs`). #16279 audit round 9:
+                // oracle-confirmed against `typescript@7.0.2` — Direction A,
+                // `function f(in x: number) {}` (and the `out` sibling)
+                // alone reports TS1274 exactly once; Direction B, the same
+                // line plus an unrelated real syntax error (`let x: = 1;`)
+                // elsewhere in the file drops TS1274 entirely on the real
+                // compiler, which tsz's parser-emitted copy did not.
+                //
+                // TS1274 has a SECOND, independent emission shape this list
+                // does not cover: `in`/`out` used as a class member's own
+                // modifier (`class C { in x }`) is checker-emitted, from
+                // `check_variance_modifier_not_on_class_member_node`
+                // (`class_type_param_checks.rs`) — a `CheckerDiagnostic`,
+                // never a `ParseDiagnostic`, so it never reaches this list or
+                // `filtered_parse_diagnostics`. That shape's suppression gap
+                // is fixed separately via `is_checker_routed_ts1xxx_grammar`
+                // below. No double-emission between the two: a parameter and
+                // a class member are disjoint node kinds.
         | 1243 // '{0}' modifier cannot be used with '{1}' modifier
         | 1246 // An interface property cannot have an initializer
         | 1247 // A type literal property cannot have an initializer
@@ -914,6 +937,19 @@ pub(super) const fn is_checker_routed_ts1xxx_grammar(code: u32) -> bool {
         | 1314 // Global module exports may only appear in module files.
         | 1315 // Global module exports may only appear in declaration files.
         | 1316 // Global module exports may only appear at top level.
+        // `in`/`out` used as a class member's own modifier (`class C { in x }`,
+        // as opposed to a parameter modifier — see the parser-emitted 1274 arm
+        // in `is_parser_grammar_code` above for that shape). tsc's
+        // `checkGrammarModifiers` reports this from the checker; tsz's
+        // `check_variance_modifier_not_on_class_member_node`
+        // (`class_type_param_checks.rs`) does too, but unconditionally, with
+        // no `hasParseDiagnostics`-equivalent gate. #16279 audit round 9:
+        // oracle-confirmed against `typescript@7.0.2` — Direction A,
+        // `class C { in x = 1; }` (and `out`) alone reports TS1274 exactly
+        // once; Direction B, the same line plus an unrelated real syntax
+        // error (`let x: = 1;`) elsewhere in the file drops TS1274 entirely,
+        // which tsz's checker-emitted copy did not.
+        | 1274 // '{0}' modifier can only appear on a type parameter of a class, interface or type alias
     )
 }
 
@@ -1887,6 +1923,10 @@ mod for_in_of_single_declaration_grammar_tests;
 #[cfg(test)]
 #[path = "check_utils/audit_round_3_grammar_tests.rs"]
 mod audit_round_3_grammar_tests;
+
+#[cfg(test)]
+#[path = "check_utils/audit_round_9_grammar_tests.rs"]
+mod audit_round_9_grammar_tests;
 
 #[cfg(test)]
 #[path = "check_utils/parser_grammar_non_suppressing_tests.rs"]
