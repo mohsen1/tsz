@@ -24,7 +24,8 @@
 //! binder case below writes the same shape with different identifiers and
 //! expects the same two diagnostics.
 
-use crate::test_utils::check_source_non_strict;
+use crate::context::CheckerOptions;
+use crate::test_utils::{check_source_non_strict, check_source_with_libs, load_default_lib_files};
 
 /// `(code, anchor byte offset, anchored source text, message)` for every
 /// diagnostic, in source order.
@@ -478,4 +479,154 @@ fn a_rest_element_that_is_not_last_makes_no_positional_judgement() {
         "\n[b0, b1, b2] = tb;\n"
     );
     assert_eq!(ts2322(source), vec![]);
+}
+
+// ---------------------------------------------------------------------------
+// Rest element of an array destructuring **assignment** whose source is a
+// non-array iterable (a custom `[Symbol.iterator]()` object, a generator, …).
+//
+// Structural rule: the rest target of `[a, ...b] = src` binds to an array of
+// `src`'s element type. For a tuple that is the tuple slice; for an
+// `Array<T>`/`T[]` it is `T[]`; for a non-array iterable it is
+// `Array<IteratedType>` (tsc's `checkArrayLiteralDestructuringElementAssignment`
+// and the binding-pattern rest walk). tsz previously typed the rest as the whole
+// iterable, so it judged the iterable itself against `b`'s declared array type
+// and produced a spurious TS2740 ("… is missing the following properties from
+// type 'T[]': length, pop, …"). Witness:
+// `conformance/es6/destructuring/iterableArrayPattern4.ts` (`@strict: false`).
+//
+// These need the ES2015 iterable/generator lib (`Symbol.iterator`,
+// `Generator`), so they load the default lib bundle rather than running with
+// no lib like the tuple/array rows above.
+// ---------------------------------------------------------------------------
+
+/// Non-strict diagnostic codes with the ES2015+ lib bundle loaded, mirroring
+/// the witness fixture's `@strict: false` and its need for the iterator types.
+fn lib_codes_non_strict(source: &str) -> Vec<u32> {
+    let libs = load_default_lib_files();
+    check_source_with_libs(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: false,
+            ..CheckerOptions::default()
+        },
+        &libs,
+    )
+    .into_iter()
+    .map(|diagnostic| diagnostic.code)
+    .collect()
+}
+
+#[test]
+fn iterable_rest_source_compatible_does_not_report_ts2740() {
+    // Feed yields `Derived`; the rest target is `Base[]`. `Derived[]` is
+    // assignable to `Base[]`, so no diagnostic — previously tsz compared the
+    // whole `Feed` against `Base[]` and emitted TS2740.
+    let source = concat!(
+        "\nclass Base { b: number = 1; }",
+        "\nclass Derived extends Base { d: number = 2; }",
+        "\nclass Feed {",
+        "\n    next() { return { value: new Derived(), done: false }; }",
+        "\n    [Symbol.iterator]() { return this; }",
+        "\n}",
+        "\nvar first: Base, rest: Base[];",
+        "\n[first, ...rest] = new Feed();\n"
+    );
+    let codes = lib_codes_non_strict(source);
+    assert!(
+        !codes.contains(&2740),
+        "iterable rest source should not report TS2740, got: {codes:?}"
+    );
+}
+
+#[test]
+fn iterable_rest_source_compatible_varied_binders_does_not_report_ts2740() {
+    // Same shape with different identifiers: the fix is structural (iterated
+    // element type), never keyed on a binder's name.
+    let source = concat!(
+        "\nclass Widget { w: number = 1; }",
+        "\nclass Gadget extends Widget { g: number = 2; }",
+        "\nclass Stream {",
+        "\n    next() { return { value: new Gadget(), done: false }; }",
+        "\n    [Symbol.iterator]() { return this; }",
+        "\n}",
+        "\nvar lead: Widget, tail: Widget[];",
+        "\n[lead, ...tail] = new Stream();\n"
+    );
+    let codes = lib_codes_non_strict(source);
+    assert!(
+        !codes.contains(&2740),
+        "iterable rest source (varied binders) should not report TS2740, got: {codes:?}"
+    );
+}
+
+#[test]
+fn iterable_rest_only_target_does_not_report_ts2740() {
+    let source = concat!(
+        "\nclass Item {}",
+        "\nclass Feed {",
+        "\n    next() { return { value: new Item(), done: false }; }",
+        "\n    [Symbol.iterator]() { return this; }",
+        "\n}",
+        "\nvar all: Item[];",
+        "\n[...all] = new Feed();\n"
+    );
+    let codes = lib_codes_non_strict(source);
+    assert!(
+        !codes.contains(&2740),
+        "rest-only iterable destructuring should not report TS2740, got: {codes:?}"
+    );
+}
+
+#[test]
+fn iterable_rest_source_incompatible_does_not_report_ts2740() {
+    // Feed yields `string`; the rest target is `number[]`. The rest type is now
+    // `string[]`, so the mismatch is element-level — tsz no longer reports the
+    // whole-iterable TS2740 it produced before (tsc reports TS2322 here; the
+    // element-level code/anchor is asserted by the conformance corpus rather
+    // than pinned to a message here).
+    let source = concat!(
+        "\nclass Feed {",
+        "\n    next() { return { value: \"s\", done: false }; }",
+        "\n    [Symbol.iterator]() { return this; }",
+        "\n}",
+        "\nvar h: string, t: number[];",
+        "\n[h, ...t] = new Feed();\n"
+    );
+    let codes = lib_codes_non_strict(source);
+    assert!(
+        !codes.contains(&2740),
+        "incompatible iterable rest should not report the whole-iterable TS2740, got: {codes:?}"
+    );
+}
+
+#[test]
+fn generator_rest_source_compatible_does_not_report_ts2740() {
+    // A generator is iterable; the rest of `Generator<number>` is `number[]`.
+    let source = concat!(
+        "\nfunction* g() { yield 1; yield 2; }",
+        "\nvar a: number, b: number[];",
+        "\n[a, ...b] = g();\n"
+    );
+    let codes = lib_codes_non_strict(source);
+    assert!(
+        !codes.contains(&2740),
+        "generator rest source should not report TS2740, got: {codes:?}"
+    );
+}
+
+#[test]
+fn array_rest_source_still_clean() {
+    // Regression guard: the unchanged `Array<T>` path still types the rest as
+    // `T[]` and reports nothing for a matching assignment.
+    let source = concat!(
+        "\nvar a: number, b: number[];",
+        "\n[a, ...b] = [1, 2, 3];\n"
+    );
+    let codes = lib_codes_non_strict(source);
+    assert!(
+        !codes.contains(&2740) && !codes.contains(&2322),
+        "array rest source should stay clean, got: {codes:?}"
+    );
 }
