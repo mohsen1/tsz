@@ -1,5 +1,5 @@
 {
-  "detailFingerprint": "sha256:ca6e86f0bee18963ca2370d8923b5cd7d633d86aece5575bd662950a9e2a23a7",
+  "detailFingerprint": "sha256:290e4331ff63590a0ce21c4bce185b9ae0f73c749fd3eaf7333e559281415c19",
   "detailResultCount": 11564,
   "summary": {
     "jsTotal": 11563,
@@ -9,10 +9,10 @@
     "jsTimeout": 0,
     "jsPassRate": 100,
     "dtsTotal": 1390,
-    "dtsPass": 1375,
-    "dtsFail": 15,
+    "dtsPass": 1377,
+    "dtsFail": 13,
     "dtsSkip": 10174,
-    "dtsPassRate": 98.9
+    "dtsPassRate": 99.1
   },
-  "timestamp": "2026-07-25T03:09:28.521Z"
+  "timestamp": "2026-08-08T16:42:03.871Z"
 }
