@@ -643,90 +643,10 @@ import { from as fromObservable } from "./from";
     );
 }
 
-/// Mirror of `import_specifier_string_literal_binding_names_emit_ts1003` for the
-/// *export* side. Without a `from` clause, the local name of an export specifier
-/// (the part before `as`, i.e. the `property_name`) must be an identifier; a
-/// string literal there is TS1003 "Identifier expected." in `tsc`. The exported
-/// alias (after `as`) and a bare `{ "q" }` name may be string literals, so only
-/// the `property_name` position is flagged.
-#[test]
-fn export_specifier_string_literal_local_names_without_from_emit_ts1003() {
-    // Names are varied so nothing keys on a specific identifier.
-    let source = r#"
-export { "aa" as bb };
-export type { "cc" as dd };
-export { ee, "ff" as gg };
-export { "hh" as "ii" };
-"#;
-    let (parser, _root) = parse_source(source);
-    let diagnostics = parser.get_diagnostics();
-    let ts1003_count = diagnostics
-        .iter()
-        .filter(|d| d.code == diagnostic_codes::IDENTIFIER_EXPECTED)
-        .count();
-    assert_eq!(
-        ts1003_count, 4,
-        "expected TS1003 for every string-literal export local name, got {diagnostics:?}"
-    );
-}
-
-/// The TS1003 anchor must sit on the offending string literal itself, exactly
-/// where `tsc` points it.
-#[test]
-fn export_specifier_string_local_name_ts1003_anchors_on_the_string() {
-    // `export { "q" as y };` — the `"q"` literal begins at byte offset 9.
-    let (parser, _root) = parse_source(r#"export { "q" as y };"#);
-    let diagnostics = parser.get_diagnostics();
-    assert!(
-        diagnostics
-            .iter()
-            .any(|d| d.code == diagnostic_codes::IDENTIFIER_EXPECTED && d.start == 9),
-        "expected TS1003 anchored at the string literal (offset 9), got {diagnostics:?}"
-    );
-}
-
-/// With a `from` clause the string local name re-exports a string-named module
-/// binding, which `tsc` accepts — so no TS1003.
-#[test]
-fn export_specifier_string_local_name_is_valid_with_from() {
-    let source = r#"
-export { "aa" as bb } from "./m";
-export type { "cc" as dd } from "./m";
-export { "hh" as "ii" } from "./m";
-"#;
-    let (parser, _root) = parse_source(source);
-    let ts1003_count = parser
-        .get_diagnostics()
-        .iter()
-        .filter(|d| d.code == diagnostic_codes::IDENTIFIER_EXPECTED)
-        .count();
-    assert_eq!(
-        ts1003_count, 0,
-        "a string local name re-exporting through `from` must not emit TS1003"
-    );
-}
-
-/// Negative controls without a `from` clause: a string *alias* (after `as`), a
-/// bare string name with no `as`, and all-identifier specifiers are each valid.
-#[test]
-fn export_specifier_string_alias_and_bare_string_without_from_are_valid() {
-    let source = r#"
-const jj = 1;
-export { jj as "kk" };
-export { "ll" };
-export { jj as nn };
-"#;
-    let (parser, _root) = parse_source(source);
-    let ts1003_count = parser
-        .get_diagnostics()
-        .iter()
-        .filter(|d| d.code == diagnostic_codes::IDENTIFIER_EXPECTED)
-        .count();
-    assert_eq!(
-        ts1003_count, 0,
-        "string aliases and bare string export names must not emit TS1003"
-    );
-}
+// TS1003 for a string-literal export-specifier property name without a `from`
+// clause is a *checker* grammar diagnostic, owned by
+// `crates/tsz-checker/src/declarations/module_export_names.rs`; its coverage
+// lives in the checker suite `string_literal_module_export_name_grammar_tests`.
 
 #[test]
 fn conditional_tuple_element_inside_conditional_extends_type_parses() {
