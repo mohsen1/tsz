@@ -1010,3 +1010,91 @@ declare const m: M;
         get_diagnostics(source)
     );
 }
+
+// =========================================================================
+// Union widening: a constituent absorbed into a sibling constituent
+// =========================================================================
+
+#[test]
+fn enum_member_absorbed_into_number_in_union_matches_numeric_enum_index() {
+    // A union constituent that is a subtype of a sibling constituent is
+    // absorbed into it when tsc constructs the union type -- `Suit | number`
+    // is the type `number`, not a two-member union (confirmed against tsc
+    // 7.0.2: `let s: string = suitOrNumber` reports "Type 'number' is not
+    // assignable to type 'string'", not "Type 'Suit | number'"). A property
+    // of that union is therefore checked against a numeric-enum index the
+    // same way a bare `number` property is -- no TS2411.
+    let source = r#"
+enum Suit { Hearts, Spades }
+enum Rank { Ace }
+interface Hand {
+    [x: string]: Rank;
+    card: Suit | number;
+}
+"#;
+    assert!(
+        !has_error_with_code(source, 2411),
+        "`Suit | number` collapses to `number`, which a numeric enum index accepts: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn distinct_enum_union_without_number_sibling_still_reports_ts2411() {
+    // Negative control: without a `number` (or matching-enum) sibling to
+    // absorb into, a different enum's member type is still not assignable to
+    // this index's enum -- the widen step must not silently accept every
+    // enum union.
+    let source = r#"
+enum Suit { Hearts, Spades }
+enum Rank { Ace }
+enum Season { Summer }
+interface Hand {
+    [x: string]: Rank;
+    card: Suit | Season;
+}
+"#;
+    assert!(
+        has_error_with_code(source, 2411),
+        "`Suit | Season` has no `number` sibling to collapse into, and neither is `Rank`: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn numeric_literal_absorbed_into_number_in_union_matches_numeric_enum_index_renamed() {
+    // Same shape as the enum case above but with a numeric literal type and
+    // renamed binders, confirming the widen step is not keyed to a specific
+    // enum/interface/property name.
+    let source = r#"
+enum Level { Low, Mid, High }
+interface Config {
+    [k: string]: Level;
+    threshold: 1 | number;
+}
+"#;
+    assert!(
+        !has_error_with_code(source, 2411),
+        "`1 | number` collapses to `number`, matching the numeric enum index: {:?}",
+        get_diagnostics(source)
+    );
+}
+
+#[test]
+fn union_still_reports_ts2411_when_a_constituent_genuinely_mismatches() {
+    // Positive control: the widen step must not blanket-suppress TS2411 -- a
+    // union that still contains a genuinely incompatible constituent after
+    // widening (`string`, which has no relation to a `number` index) keeps
+    // reporting.
+    let source = r#"
+interface Bag {
+    [k: string]: number;
+    label: string | number;
+}
+"#;
+    assert!(
+        has_error_with_code(source, 2411),
+        "`string | number` still has `string`, incompatible with the `number` index: {:?}",
+        get_diagnostics(source)
+    );
+}
