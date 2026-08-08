@@ -1759,6 +1759,9 @@ path = "tests/ts2374_jsx_runtime_self_import_no_false_positive_tests.rs"
 name = "generic_overload_shared_type_param_contextual_tests"
 path = "tests/generic_overload_shared_type_param_contextual_tests.rs"
 [[test]]
+name = "generic_overload_signature_erasure_tests"
+path = "tests/generic_overload_signature_erasure_tests.rs"
+[[test]]
 name = "large_union_index_merge_regression_tests"
 path = "tests/large_union_index_merge_regression_tests.rs"
 [[test]]

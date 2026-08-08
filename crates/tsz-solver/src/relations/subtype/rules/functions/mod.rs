@@ -14,8 +14,7 @@ use crate::inference::infer::InferenceContext;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::type_param_info;
 use crate::types::{
-    CallSignature, FunctionShape, InferencePriority, ParamInfo, TypeData, TypeId, TypeParamInfo,
-    TypePredicate,
+    FunctionShape, InferencePriority, ParamInfo, TypeData, TypeId, TypeParamInfo, TypePredicate,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::Atom;
@@ -29,102 +28,8 @@ struct CallbackParameterPair {
     enters_callback_mode: bool,
 }
 
-/// Build a `TypeSubstitution` that maps each type parameter to its constraint
-/// (or `unknown` if unconstrained). This corresponds to tsc's `getCanonicalSignature`
-/// behavior — used when generic signatures need to be compared structurally after
-/// erasing their type parameter identities.
-pub(super) fn erase_type_params_to_constraints(type_params: &[TypeParamInfo]) -> TypeSubstitution {
-    let mut sub = TypeSubstitution::for_signature_domain(type_params);
-    for tp in type_params {
-        sub.insert(tp.name, tp.constraint.unwrap_or(TypeId::UNKNOWN));
-    }
-    sub
-}
-
-/// Build a `TypeSubstitution` that maps each type parameter to `any`.
-/// This matches tsc's `getErasedSignature` / `createTypeEraser` behavior, which
-/// maps type parameters to `any` (NOT to their constraints). Used in the N×M
-/// signature comparison path (`signaturesRelatedTo` with `erase = true`) where
-/// multiple overloaded signatures are compared against a target.
-pub(super) fn erase_type_params_to_any(type_params: &[TypeParamInfo]) -> TypeSubstitution {
-    let mut sub = TypeSubstitution::for_signature_domain(type_params);
-    for tp in type_params {
-        sub.insert(tp.name, TypeId::ANY);
-    }
-    sub
-}
-
-/// Erase a call signature's type parameters to `any`, producing a non-generic
-/// `FunctionShape`. Used by the N×M signature comparison path.
-pub(super) fn erase_call_sig_to_any(
-    sig: &CallSignature,
-    interner: &dyn crate::construction::TypeDatabase,
-) -> FunctionShape {
-    use crate::instantiation::instantiate::instantiate_type;
-    if sig.type_params.is_empty() {
-        return FunctionShape {
-            type_params: Vec::new(),
-            params: sig.params.clone(),
-            this_type: sig.this_type,
-            return_type: sig.return_type,
-            type_predicate: sig.type_predicate,
-            is_constructor: false,
-            is_method: sig.is_method,
-        };
-    }
-    let sub = erase_type_params_to_any(&sig.type_params);
-    let erased_params: Vec<_> = sig
-        .params
-        .iter()
-        .map(|p| ParamInfo {
-            name: p.name,
-            type_id: instantiate_type(interner, p.type_id, &sub),
-            optional: p.optional,
-            rest: p.rest,
-        })
-        .collect();
-    FunctionShape {
-        type_params: Vec::new(),
-        params: erased_params,
-        this_type: sig.this_type,
-        return_type: instantiate_type(interner, sig.return_type, &sub),
-        type_predicate: sig.type_predicate,
-        is_constructor: false,
-        is_method: sig.is_method,
-    }
-}
-
-/// Erase a function shape's type parameters to `any`, producing a non-generic
-/// `FunctionShape`. Used by the N×M signature comparison path.
-pub(super) fn erase_fn_shape_to_any(
-    f: &FunctionShape,
-    interner: &dyn crate::construction::TypeDatabase,
-) -> FunctionShape {
-    use crate::instantiation::instantiate::instantiate_type;
-    if f.type_params.is_empty() {
-        return f.clone();
-    }
-    let sub = erase_type_params_to_any(&f.type_params);
-    let erased_params: Vec<_> = f
-        .params
-        .iter()
-        .map(|p| ParamInfo {
-            name: p.name,
-            type_id: instantiate_type(interner, p.type_id, &sub),
-            optional: p.optional,
-            rest: p.rest,
-        })
-        .collect();
-    FunctionShape {
-        type_params: Vec::new(),
-        params: erased_params,
-        this_type: f.this_type,
-        return_type: instantiate_type(interner, f.return_type, &sub),
-        type_predicate: f.type_predicate,
-        is_constructor: f.is_constructor,
-        is_method: f.is_method,
-    }
-}
+mod erasure;
+use erasure::{erase_call_sig_to_any, erase_fn_shape_to_any, erase_type_params_to_constraints};
 
 pub(super) fn resolve_contextual_source_inference_candidate(
     lower_bounds: &[TypeId],
