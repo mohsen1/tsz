@@ -251,9 +251,122 @@ function test(arg: string | number, whatever: any) {
     );
 }
 
-// Note: Inherited member vs index signature is tested via conformance tests
-// (e.g. inheritedMembersAndIndexSignaturesFromDifferentBases.ts) since it
-// requires full lib type resolution that unit tests don't provide.
+// =========================================================================
+// Inherited member vs index signature: computed-name display (#16866)
+//
+// tsc's `declarationNameToString` renders a computed member name
+// (`["get1"]`) as verbatim source text. tsz's own-member TS2411 path already
+// did this (`diag_prop_name`), but the INHERITED-member path
+// (`check_inherited_properties_against_index_signatures`) used the bare
+// resolved property name instead, dropping the brackets for a member
+// inherited from a base class/interface.
+// =========================================================================
+
+#[test]
+fn test_ts2411_inherited_computed_name_class_keeps_brackets() {
+    let source = r#"
+class Foo { x: number = 0; }
+class Foo2 { x: number = 0; y: number = 0; }
+class C {
+    get ["get1"]() { return new Foo(); }
+}
+class D extends C {
+    [s: string]: Foo2;
+}
+"#;
+    let diags = get_diagnostics(source);
+    let ts2411 = diags
+        .iter()
+        .find(|d| d.0 == 2411)
+        .expect("expected TS2411 for inherited computed-name getter vs string index");
+    assert!(
+        ts2411.1.contains("[\"get1\"]"),
+        "TS2411 must render the inherited computed name as `[\"get1\"]` (tsc's \
+         declarationNameToString), got: {}",
+        ts2411.1
+    );
+}
+
+#[test]
+fn test_ts2411_inherited_plain_identifier_has_no_brackets() {
+    // Adjacent case: a plain (non-computed) inherited member name must NOT
+    // gain brackets -- only computed names get the verbatim-source treatment.
+    let source = r#"
+class Foo { x: number = 0; }
+class Foo2 { x: number = 0; y: number = 0; }
+class C {
+    get plainGetter() { return new Foo(); }
+}
+class D extends C {
+    [s: string]: Foo2;
+}
+"#;
+    let diags = get_diagnostics(source);
+    let ts2411 = diags
+        .iter()
+        .find(|d| d.0 == 2411)
+        .expect("expected TS2411 for inherited plain getter vs string index");
+    assert!(
+        ts2411.1.contains("Property 'plainGetter'"),
+        "TS2411 for a plain inherited identifier must not gain brackets, got: {}",
+        ts2411.1
+    );
+}
+
+#[test]
+fn test_ts2411_inherited_computed_name_interface_keeps_brackets() {
+    // Adjacent case: the same fix applies to `interface extends`, not just
+    // `class extends` (the shared function handles both declaration kinds).
+    let source = r#"
+class Foo { x: number = 0; }
+class Foo2 { x: number = 0; y: number = 0; }
+interface IBase {
+    ["ifaceGet"]: Foo;
+}
+interface IDerived extends IBase {
+    [s: string]: Foo2;
+}
+"#;
+    let diags = get_diagnostics(source);
+    let ts2411 = diags
+        .iter()
+        .find(|d| d.0 == 2411)
+        .expect("expected TS2411 for inherited interface computed name vs string index");
+    assert!(
+        ts2411.1.contains("[\"ifaceGet\"]"),
+        "TS2411 must render the inherited interface computed name as \
+         `[\"ifaceGet\"]`, got: {}",
+        ts2411.1
+    );
+}
+
+#[test]
+fn test_ts2411_inherited_computed_name_multi_level_class_chain() {
+    // Adjacent case: the computed name lives two `extends` hops up
+    // (D -> C -> B), exercising the heritage-walk recursion.
+    let source = r#"
+class Foo { x: number = 0; }
+class Foo2 { x: number = 0; y: number = 0; }
+class B {
+    get ["deep"]() { return new Foo(); }
+}
+class C extends B {}
+class D extends C {
+    [s: string]: Foo2;
+}
+"#;
+    let diags = get_diagnostics(source);
+    let ts2411 = diags
+        .iter()
+        .find(|d| d.0 == 2411)
+        .expect("expected TS2411 for a two-level-inherited computed name vs string index");
+    assert!(
+        ts2411.1.contains("[\"deep\"]"),
+        "TS2411 must render the two-level-inherited computed name as \
+         `[\"deep\"]`, got: {}",
+        ts2411.1
+    );
+}
 
 #[test]
 fn test_ts2411_method_overload_displays_merged_signatures() {

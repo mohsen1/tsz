@@ -1279,6 +1279,16 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // tsc's `declarationNameToString` renders a computed member name
+            // (e.g. `["get1"]`) as verbatim source text; `prop_name` here is
+            // just the resolved atom (`get1`) with no such formatting. Walk the
+            // heritage chain to find the base declaration that actually
+            // introduced this inherited property, falling back to the resolved
+            // name when the base declaration can't be located (e.g. a lib type).
+            let diag_prop_name = self
+                .inherited_member_display_name(iface_node, &prop_name)
+                .unwrap_or_else(|| prop_name.clone());
+
             // Symbol-keyed inherited properties (e.g. [Symbol.iterator]) are
             // checked against the symbol index signature, NOT string/number.
             let is_symbol_property =
@@ -1294,7 +1304,7 @@ impl<'a> CheckerState<'a> {
                     self.error_at_node_msg(
                         error_node,
                         diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
-                        &[&prop_name, &prop_type_str, "symbol", &index_type_str],
+                        &[&diag_prop_name, &prop_type_str, "symbol", &index_type_str],
                     );
                 }
                 continue;
@@ -1316,7 +1326,7 @@ impl<'a> CheckerState<'a> {
                 self.error_at_node_msg(
                     error_node,
                     diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
-                    &[&prop_name, &prop_type_str, "number", &index_type_str],
+                    &[&diag_prop_name, &prop_type_str, "number", &index_type_str],
                 );
             }
 
@@ -1352,7 +1362,12 @@ impl<'a> CheckerState<'a> {
                 self.error_at_node_msg(
                     error_node,
                     diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
-                    &[&prop_name, &prop_type_str, &index_kind_str, &index_type_str],
+                    &[
+                        &diag_prop_name,
+                        &prop_type_str,
+                        &index_kind_str,
+                        &index_type_str,
+                    ],
                 );
             }
         }
