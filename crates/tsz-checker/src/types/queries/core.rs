@@ -961,11 +961,35 @@ impl<'a> CheckerState<'a> {
 
         if let Some(sym_id) = self.resolve_identifier_symbol(idx)
             && !self.ctx.binder.lib_symbol_ids.contains(&sym_id)
+            && !self.symbol_is_global_this_namespace_merge(sym_id)
         {
             return false;
         }
 
         true
+    }
+
+    /// Whether `sym_id` is a `declare global { namespace globalThis { ... } }`
+    /// augmentation of the built-in global object rather than a same-file
+    /// shadow of it.
+    ///
+    /// tsc merges a reopened `namespace globalThis` into the single
+    /// `globalThisSymbol`, so property access on it keeps the global-object
+    /// semantics (`checker.ts`'s `leftType.symbol === globalThisSymbol` branch:
+    /// a missing member is `any`/`TS7017`, never a `TS2551` "did you mean"
+    /// suggestion). tsz binds the reopening as its own user namespace symbol
+    /// instead, so [`Self::is_global_this_expression`] would otherwise treat the
+    /// augmented receiver as a shadow and route it through generic property
+    /// resolution, over-reporting `TS2551`/`TS2339`. A genuine value shadow
+    /// (`const globalThis = ...`, `function globalThis() {}`) or an alias
+    /// import carries no module meaning and is correctly still treated as a
+    /// shadow.
+    fn symbol_is_global_this_namespace_merge(&self, sym_id: tsz_binder::SymbolId) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        symbol.has_any_flags(symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE)
+            && !symbol.has_any_flags(symbol_flags::ALIAS)
     }
 
     /// Check if a node is an ambient global object alias that should resolve through
