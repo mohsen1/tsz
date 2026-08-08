@@ -4,10 +4,47 @@
 
 use super::extractors::{collect_single_or_union_no_reduce, extract_param_type_at_for_call};
 use crate::construction::TypeDatabase;
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::types::{
-    CallableShapeId, FunctionShapeId, IntrinsicKind, LiteralValue, ParamInfo, TypeId, TypeListId,
+    CallSignature, CallableShapeId, FunctionShapeId, IntrinsicKind, LiteralValue, ParamInfo,
+    TypeId, TypeListId, TypeParamInfo,
 };
 use crate::visitor::TypeVisitor;
+
+/// When two or more overloaded call signatures are all generic and share the
+/// same type-parameter arity, `tsc` compares/merges them as if the later
+/// signatures' type parameters were the same binders as the first signature's
+/// (its `createTypeMapper`/`combineIntersectionParameters` machinery). Without
+/// this, contextually typing a parameter shared across such overloads unions
+/// each overload's own, distinct type-parameter identity together (`T | T`
+/// display) instead of collapsing to the single shared `T`, which then fails
+/// downstream relation checks that a real bare `T` would pass.
+///
+/// Returns `sig`'s params unchanged when its type-parameter list doesn't match
+/// `canonical` in length (mismatched arity isn't this shared-identity case) or
+/// is empty (nothing to map).
+fn signature_params_mapped_to_canonical(
+    db: &dyn TypeDatabase,
+    canonical: &[TypeParamInfo],
+    sig: &CallSignature,
+) -> Vec<ParamInfo> {
+    if sig.type_params.is_empty() || sig.type_params.len() != canonical.len() {
+        return sig.params.clone();
+    }
+    let mut sub = TypeSubstitution::for_signature_domain(&sig.type_params);
+    for (tp, canon) in sig.type_params.iter().zip(canonical.iter()) {
+        sub.insert(tp.name, db.type_param(*canon));
+    }
+    sig.params
+        .iter()
+        .map(|p| ParamInfo {
+            name: p.name,
+            type_id: instantiate_type(db, p.type_id, &sub),
+            optional: p.optional,
+            rest: p.rest,
+        })
+        .collect()
+}
 
 /// Visitor to extract parameter type from callable types for a call site.
 /// Filters signatures by arity (`arg_count`) to handle overloaded functions.
@@ -124,10 +161,26 @@ impl TypeVisitor for ParameterForCallExtractor<'_> {
             }
         }
 
+        // Same-arity generic overloads share one canonical type-parameter
+        // identity (the first matching signature's), so every later
+        // signature's params are read through that mapping before extraction
+        // — see `signature_params_mapped_to_canonical`.
+        let canonical_type_params = matching_call_signatures
+            .iter()
+            .find(|sig| !sig.type_params.is_empty())
+            .map(|sig| sig.type_params.clone());
+
         for sig in matching_call_signatures {
             matched = true;
+            let mapped_params;
+            let params = if let Some(canonical) = canonical_type_params.as_deref() {
+                mapped_params = signature_params_mapped_to_canonical(self.db, canonical, sig);
+                &mapped_params
+            } else {
+                &sig.params
+            };
             if let Some(param_type) =
-                extract_param_type_at_for_call(self.db, &sig.params, self.index, self.arg_count)
+                extract_param_type_at_for_call(self.db, params, self.index, self.arg_count)
             {
                 param_types.push(param_type);
             }
