@@ -1056,6 +1056,9 @@ path = "tests/ts1203_node_esm_tests.rs"
 name = "ts2309_export_default_conflict_tests"
 path = "tests/ts2309_export_default_conflict_tests.rs"
 [[test]]
+name = "ts2309_import_equals_alias_conflict_tests"
+path = "tests/ts2309_import_equals_alias_conflict_tests.rs"
+[[test]]
 name = "noimplicitany_ambient_member_surface_tests"
 path = "tests/noimplicitany_ambient_member_surface_tests.rs"
 [[test]]

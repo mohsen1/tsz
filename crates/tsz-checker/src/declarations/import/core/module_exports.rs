@@ -120,6 +120,17 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
+        // `export import a = x.c;` parses as an EXPORT_DECLARATION whose
+        // clause is the inner IMPORT_EQUALS_DECLARATION (parser's
+        // `parse_export_import_equals`). It counts as an "other exported
+        // element" only when the aliased entity has value meaning — an alias
+        // that resolves purely to a type (e.g. `x.c` naming an interface)
+        // carries no runtime export. Verified against tsc 7.0.2: aliasing an
+        // interface is clean alongside `export =`; aliasing a class (or any
+        // other value) still reports TS2309.
+        if clause_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+            return self.import_equals_declaration_has_value_meaning(export_data.export_clause);
+        }
         if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
             return true;
         }
