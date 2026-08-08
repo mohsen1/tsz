@@ -27,7 +27,7 @@ fn validate_json_syntax(source: &str) -> Vec<ParseDiagnostic> {
     // Leading trivia (whitespace and comments) is skipped first, so a bare
     // identifier root preceded by a `// header` comment still triggers the
     // recovery rather than being masked by the unrecognized `/`.
-    let j = skip_json_trivia(bytes, 0, len);
+    let j = skip_trivia(bytes, 0);
     if j < len && is_ident_start(bytes[j]) {
         let mut spans: Vec<(usize, usize)> = Vec::new();
         let mut k = j;
@@ -41,7 +41,7 @@ fn validate_json_syntax(source: &str) -> Vec<ParseDiagnostic> {
             // Trivia (whitespace and comments alike) separates identifiers in
             // this recovery run, matching how tsc's scanner tokenizes the same
             // bytes — so `foo /*c*/ bar` recovers identically to `foo bar`.
-            k = skip_json_trivia(bytes, k, len);
+            k = skip_trivia(bytes, k);
 
             if k < len && is_ident_start(bytes[k]) {
                 continue;
@@ -107,10 +107,9 @@ fn validate_json_syntax(source: &str) -> Vec<ParseDiagnostic> {
         // TS1328. Strings are consumed atomically by the string-skip block
         // further down, so a `//` or `/* */` *inside* a string never reaches
         // this point and stays part of the value.
-        let after_trivia = skip_json_trivia(bytes, i, len);
-        if after_trivia != i {
-            i = after_trivia;
-            continue;
+        i = skip_trivia(bytes, i);
+        if i >= len {
+            break;
         }
 
         let b = bytes[i];
@@ -209,19 +208,12 @@ fn validate_json_syntax(source: &str) -> Vec<ParseDiagnostic> {
         // When expecting a property name, check what we got
         if expecting_property_name && object_depth > 0 {
             if b == b'"' {
-                // Valid double-quoted property name - skip past the string
+                // Valid double-quoted property name - skip past the string via
+                // the shared quoted-literal primitive (honors `\` escapes and
+                // terminates a single-line string at a raw newline, so an
+                // unterminated name does not swallow following lines/comments).
                 expecting_property_name = false;
-                i += 1;
-                while i < len {
-                    if bytes[i] == b'\\' {
-                        i += 2; // skip escape sequence
-                    } else if bytes[i] == b'"' {
-                        i += 1;
-                        break;
-                    } else {
-                        i += 1;
-                    }
-                }
+                i = skip_quoted_literal(bytes, i, b'"');
                 continue;
             }
 
@@ -236,20 +228,13 @@ fn validate_json_syntax(source: &str) -> Vec<ParseDiagnostic> {
             expecting_property_name = false;
         }
 
-        // Skip over strings (double-, single-, and back-quoted) to avoid their
-        // contents being misread as structural tokens (braces, commas, colons).
+        // Skip over strings (double-, single-, and back-quoted) via the shared
+        // quoted-literal primitive so their contents are never misread as
+        // structural tokens (braces, commas, colons) — and so a `//` or `/*`
+        // inside a string is left as text, never treated as a comment on the
+        // next top-of-loop trivia skip.
         if b == b'"' || b == b'\'' || b == b'`' {
-            i += 1;
-            while i < len {
-                if bytes[i] == b'\\' {
-                    i += 2;
-                } else if bytes[i] == b {
-                    i += 1;
-                    break;
-                } else {
-                    i += 1;
-                }
-            }
+            i = skip_quoted_literal(bytes, i, b);
             continue;
         }
 
@@ -257,45 +242,6 @@ fn validate_json_syntax(source: &str) -> Vec<ParseDiagnostic> {
     }
 
     diagnostics
-}
-
-/// Advance `idx` past JSON trivia: ASCII whitespace and `//` line / `/* */`
-/// block comments, which tsc's JSON scanner skips as trivia. Stops at the
-/// first byte that begins neither. A `/` not followed by `/` or `*` is not a
-/// comment and is left in place for the caller to classify. An unterminated
-/// block comment consumes to end of input, matching the scanner treating the
-/// rest of the file as comment.
-///
-/// Callers must only invoke this outside of string literals: a `//` or `/* */`
-/// appearing inside a JSON string is ordinary string content, and the caller's
-/// string handling is responsible for consuming the string whole before this
-/// runs.
-fn skip_json_trivia(bytes: &[u8], mut idx: usize, len: usize) -> usize {
-    loop {
-        idx = tsz_common::text_scan::skip_ascii_whitespace(bytes, idx);
-
-        if idx + 1 < len && bytes[idx] == b'/' && bytes[idx + 1] == b'/' {
-            idx += 2;
-            while idx < len && bytes[idx] != b'\n' {
-                idx += 1;
-            }
-            continue;
-        }
-
-        if idx + 1 < len && bytes[idx] == b'/' && bytes[idx + 1] == b'*' {
-            idx += 2;
-            while idx + 1 < len && !(bytes[idx] == b'*' && bytes[idx + 1] == b'/') {
-                idx += 1;
-            }
-            // Consume the closing `*/`, or run to end of input if the block
-            // comment is unterminated.
-            idx = (idx + 2).min(len);
-            continue;
-        }
-
-        break;
-    }
-    idx
 }
 
 /// Returns whether `bytes[i..]` starts with the exact keyword `word` (`true`,

@@ -56,6 +56,7 @@ use std::sync::Arc;
 use std::sync::Once;
 use tsz_common::interner::{AstAtom, Interner};
 use tsz_common::options::module_detection::ModuleDetectionKind;
+use tsz_common::text_scan::{skip_quoted_literal, skip_trivia};
 use tsz_scanner::SyntaxKind;
 
 include!("core/json_validation.rs");
