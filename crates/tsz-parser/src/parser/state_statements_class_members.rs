@@ -33,6 +33,13 @@ pub(crate) struct ClassMemberModifierSet {
     pub(crate) has_declare: bool,
     pub(crate) has_accessor: bool,
     pub(crate) has_async: bool,
+    /// `declare` appears before `override` in source order (e.g. `declare
+    /// override p`). Distinct from the reverse order (`override declare p`),
+    /// which is already diagnosed eagerly while scanning modifiers regardless
+    /// of member kind (TS1040) — this flag exists because the `declare`-first
+    /// conflict's diagnostic depends on the member kind, which isn't known
+    /// until after modifier scanning finishes. See `construct_class_member`.
+    pub(crate) declare_before_override: bool,
     /// `declare` appears before `async` in source order (e.g. `declare async
     /// p`). Distinct from the reverse order (`async declare p`), which is
     /// already diagnosed eagerly while scanning modifiers regardless of member
@@ -222,15 +229,13 @@ impl ParserState {
                         diagnostic_codes::MODIFIER_ALREADY_SEEN,
                     );
                 }
-                // TS1040: 'override' modifier cannot be used in an ambient context
-                // Handles `declare override` ordering (override after declare on same member)
-                if seen_declare {
-                    use tsz_common::diagnostics::diagnostic_codes;
-                    self.parse_error_at_current_token(
-                        "'override' modifier cannot be used in an ambient context.",
-                        diagnostic_codes::MODIFIER_CANNOT_BE_USED_IN_AN_AMBIENT_CONTEXT,
-                    );
-                }
+                // `declare override` ordering (declare before override) is NOT
+                // reported here: unlike the reverse order, tsc's actual
+                // diagnostic depends on the member kind, which is not known
+                // until later (TS1031 on a method/accessor/constructor — the
+                // existing `has_declare` check in `construct_class_member`
+                // already covers that; TS1243 on a property, handled once the
+                // member kind is confirmed — see `declare_before_override`).
                 if seen_accessor || seen_async || seen_readonly {
                     use tsz_common::diagnostics::diagnostic_codes;
                     let other = if seen_accessor {
@@ -1088,9 +1093,11 @@ impl ParserState {
         let mut has_declare = false;
         let mut has_accessor = false;
         let mut has_async = false;
-        // Source-order index of the first `declare`/`async` modifier, used
-        // below to detect `declare` appearing before `async`.
+        // Source-order index of the first `declare`/`override`/`async`
+        // modifier, used below to detect `declare` appearing before
+        // `override`/`async`.
         let mut declare_index: Option<usize> = None;
+        let mut override_index: Option<usize> = None;
         let mut async_index: Option<usize> = None;
         if let Some(ref mods) = combined {
             for (i, &idx) in mods.nodes.iter().enumerate() {
@@ -1110,11 +1117,16 @@ impl ParserState {
                             has_async = true;
                             async_index.get_or_insert(i);
                         }
+                        SyntaxKind::OverrideKeyword => {
+                            override_index.get_or_insert(i);
+                        }
                         _ => {}
                     }
                 }
             }
         }
+        let declare_before_override =
+            matches!((declare_index, override_index), (Some(d), Some(o)) if d < o);
         let declare_before_async =
             matches!((declare_index, async_index), (Some(d), Some(a)) if d < a);
 
@@ -1127,6 +1139,7 @@ impl ParserState {
             has_declare,
             has_accessor,
             has_async,
+            declare_before_override,
             declare_before_async,
             diag_len_before_modifiers,
         }
@@ -2161,6 +2174,20 @@ impl ParserState {
             // Return NONE to indicate this is not a valid member
             NodeIndex::NONE
         } else {
+            // TS1243: 'override' modifier cannot be used with 'declare' modifier.
+            // `declare override p` — the member kind is only known now (a plain
+            // property), which is the one member-local-`declare` host tsc
+            // allows for `override` to coexist with at all. The reverse order
+            // (`override declare p`) is already reported eagerly while scanning
+            // modifiers (TS1040, ambient conflict), regardless of member kind.
+            if mods.declare_before_override {
+                self.emit_modifier_error_on_constructor(
+                    &mods.modifiers,
+                    SyntaxKind::OverrideKeyword,
+                    "'override' modifier cannot be used with 'declare' modifier.",
+                    diagnostic_codes::MODIFIER_CANNOT_BE_USED_WITH_MODIFIER,
+                );
+            }
             // TS1040: 'async' modifier cannot be used in an ambient context.
             // `declare async p` — the member kind is only known now (a plain
             // property), which is the one member-local-`declare` host tsc

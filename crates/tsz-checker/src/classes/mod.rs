@@ -4,6 +4,7 @@ pub mod class_checker;
 pub(crate) mod class_checker_compat;
 pub(crate) mod class_checker_compat_overloads;
 pub(crate) mod class_checker_compat_this;
+pub(crate) mod class_checker_constructor_overrides;
 pub(crate) mod class_helpers;
 pub(crate) mod class_implements_checker;
 pub(crate) mod class_implements_helpers;

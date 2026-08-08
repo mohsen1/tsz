@@ -307,8 +307,13 @@ class D extends B {
 }
 
 #[test]
-fn declare_override_produces_ts1040() {
-    // Reverse order `declare override` also → TS1040
+fn declare_override_produces_ts1243_not_ts1040() {
+    // Reverse order `declare override` on a property → TS1243 ("'override'
+    // modifier cannot be used with 'declare' modifier"), NOT TS1040. Oracle
+    // (typescript@7.0.2): tsc's `checkGrammarModifiers` resolves the
+    // `declare`-first conflict once the member kind is known — a property is
+    // the one member-local-`declare` host it allows, and there it reports the
+    // pairwise TS1243, distinct from the `override`-first order's TS1040.
     let source = r"
 class B { p: number = 1; }
 class D extends B {
@@ -316,8 +321,14 @@ class D extends B {
 }
 ";
     assert!(
-        has_error(source, 1040),
-        "`declare override` should produce TS1040 — override cannot be in ambient context"
+        has_error(source, 1243),
+        "`declare override` on a property should produce TS1243, not TS1040: {:?}",
+        parse_diagnostics(source)
+    );
+    assert!(
+        !has_error(source, 1040),
+        "`declare override` on a property must not also produce TS1040: {:?}",
+        parse_diagnostics(source)
     );
 }
 
