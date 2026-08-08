@@ -273,6 +273,16 @@ pub(super) struct SourceReadResult {
     /// TS1453: Invalid `resolution-mode` values in `/// <reference types="..." />` directives.
     /// Tuples of (`file_path`, `byte_offset`, `span_length`).
     pub(super) resolution_mode_errors: Vec<(PathBuf, usize, usize)>,
+    /// Canonical paths of non-root `node_modules` JS files that the
+    /// `maxNodeModuleJsDepth` BFS gate skipped (`BatchAction::SkipJs`): the
+    /// path is registered as a real program file (a real `target_idx` exists)
+    /// but its body was never read, so it permanently has an empty statement
+    /// list. A resolution that lands on one of these paths must not be
+    /// treated as a normal same-program target downstream — see #16934,
+    /// where mapping a `require()` specifier to a depth-skipped stub let the
+    /// checker synthesize an empty CJS export surface (`{}`) instead of
+    /// falling back to `any`, unlike the `noImplicitAny`/TS7016 sibling case.
+    pub(super) depth_skipped_js_paths: FxHashSet<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -687,6 +697,7 @@ pub(super) fn read_source_files(
     let mut module_resolver = ModuleResolver::new(options);
     let mut type_reference_errors = Vec::new();
     let mut resolution_mode_errors = Vec::new();
+    let mut depth_skipped_js_paths: FxHashSet<PathBuf> = FxHashSet::default();
     let use_cache = cache.is_some() && changed_paths.is_some();
 
     // PERF: cache `normalize_resolved_path` results for the BFS lifetime.
@@ -815,6 +826,15 @@ pub(super) fn read_source_files(
                         .expect("cached arm only fires when dependencies entry exists");
                     dependencies.insert(path.clone(), cached_deps.clone());
                     sources.insert(path.clone(), (None, false, false));
+                    // A depth-skipped stub can itself be reused from a prior
+                    // incremental build's bind cache (it was still a real,
+                    // if permanently empty, program file) — reclassify it here
+                    // too so a cached rebuild does not lose this signal.
+                    if !root_paths.contains(&path)
+                        && should_skip_js_in_node_modules(&path, options.max_node_module_js_depth)
+                    {
+                        depth_skipped_js_paths.insert(path.clone());
+                    }
                     if let Some(cached_bundle_deps) = cache.outfile_bundle_dependencies.get(&path) {
                         outfile_bundle_paths.extend(cached_bundle_deps.iter().cloned());
                     }
@@ -829,6 +849,7 @@ pub(super) fn read_source_files(
                 }
                 BatchAction::SkipJs => {
                     sources.insert(path.clone(), (None, false, false));
+                    depth_skipped_js_paths.insert(path.clone());
                     continue;
                 }
                 BatchAction::Read => {}
@@ -1151,6 +1172,7 @@ pub(super) fn read_source_files(
         module_resolution_misses,
         type_reference_errors,
         resolution_mode_errors,
+        depth_skipped_js_paths,
     })
 }
 
