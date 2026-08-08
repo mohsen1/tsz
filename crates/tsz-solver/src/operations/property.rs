@@ -531,6 +531,18 @@ impl<'a> PropertyAccessEvaluator<'a> {
             })
     }
 
+    /// Resolve a property against `unknown`'s non-strict apparent surface.
+    ///
+    /// `unknown` itself has no members, but when `strictNullChecks` is off
+    /// tsc does not treat `unknown` as `any` for member access — it still
+    /// requires the property to exist on `unknown`'s apparent type, which is
+    /// the same `Object.prototype` surface `IntrinsicKind::Object` resolves
+    /// through. The checker calls this only after its own strict-mode gate
+    /// (`TS18046`/`TS2571`) has already declined to fire.
+    pub fn resolve_unknown_non_strict_member(&self, prop_atom: Atom) -> PropertyAccessResult {
+        self.resolve_object_member_or_not_found(TypeId::UNKNOWN, prop_atom)
+    }
+
     pub(crate) fn is_deferred_any_fallback_member(&self, type_id: TypeId) -> bool {
         if type_id.is_intrinsic() {
             return false;

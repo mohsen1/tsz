@@ -176,6 +176,156 @@ class A {
     );
 }
 
+/// Structural rule: when `strictNullChecks` is off, property access on
+/// `unknown` resolves against `unknown`'s apparent type — the
+/// `Object.prototype` surface (`toString`, `valueOf`, `hasOwnProperty`, ...)
+/// — instead of either always failing (dot access) or masking every key to
+/// `any` (element access). A genuinely missing member still reports TS2339
+/// for dot access; `strictNullChecks` on is unaffected (TS18046/TS2571 still
+/// fire unconditionally, matching tsc's `unknown` restriction).
+mod unknown_non_strict_apparent_member_access {
+    use super::*;
+    use crate::test_utils::{check_source_non_strict, check_source_non_strict_codes};
+
+    #[test]
+    fn dot_access_to_object_prototype_member_is_clean() {
+        let diags = check_source_non_strict(
+            r#"
+declare var call: { <T>(): T };
+call().toString();
+call().valueOf();
+call().hasOwnProperty("x");
+"#,
+        );
+        assert!(
+            semantic_errors(&diags).is_empty(),
+            "Expected no diagnostics for Object.prototype members on non-strict unknown, got: {:?}",
+            semantic_errors(&diags)
+        );
+    }
+
+    #[test]
+    fn dot_access_to_missing_member_still_reports_ts2339() {
+        let codes = check_source_non_strict_codes(
+            r#"
+declare var call: { <T>(): T };
+call().nonexistent();
+"#,
+        );
+        assert_eq!(
+            codes,
+            vec![2339],
+            "A member absent from Object.prototype must still be TS2339 under non-strict unknown"
+        );
+    }
+
+    #[test]
+    fn dot_access_renamed_binder_still_resolves() {
+        // Same shape with different identifiers, to rule out a name-string check.
+        let diags = check_source_non_strict(
+            r#"
+declare var produce: { <Widget>(): Widget };
+produce().toString();
+"#,
+        );
+        assert!(
+            semantic_errors(&diags).is_empty(),
+            "Renamed binder must not change resolution: {:?}",
+            semantic_errors(&diags)
+        );
+    }
+
+    #[test]
+    fn bracket_access_to_object_prototype_member_resolves_real_type() {
+        // If tsz masked the member to `any` (its pre-fix behavior), this
+        // assignment would be silently accepted instead of reporting TS2322.
+        let codes = check_source_non_strict_codes(
+            r#"
+declare var call: { <T>(): T };
+var mismatch: number = call()["toString"]();
+"#,
+        );
+        assert_eq!(
+            codes,
+            vec![2322],
+            "Bracket access must resolve the real Object.prototype member type, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn bracket_access_to_missing_member_stays_implicit_any() {
+        // Unchanged pre-fix behavior: a non-Object member via bracket access
+        // on non-strict `unknown` still falls back to implicit `any`, not TS2339.
+        let diags = check_source_non_strict(
+            r#"
+declare var call: { <T>(): T };
+call()["nonexistent"]();
+"#,
+        );
+        assert!(
+            semantic_errors(&diags).is_empty(),
+            "Bracket access to a missing member should stay implicit any under non-strict unknown: {:?}",
+            semantic_errors(&diags)
+        );
+    }
+
+    #[test]
+    fn general_index_access_on_unknown_is_unaffected() {
+        // A non-literal (dynamic) index has no fixed name to check against
+        // Object.prototype, so this path is untouched by the fix.
+        let diags = check_source_non_strict(
+            r#"
+declare var call: { <T>(): T };
+declare var key: string;
+call()[key];
+"#,
+        );
+        assert!(
+            semantic_errors(&diags).is_empty(),
+            "General index access on non-strict unknown must stay unaffected: {:?}",
+            semantic_errors(&diags)
+        );
+    }
+
+    #[test]
+    fn strict_null_checks_still_rejects_object_prototype_member() {
+        // Regression guard: the strict-mode gate must still fire
+        // unconditionally, even for a genuine Object.prototype member. A
+        // plain identifier receiver gets the named TS18046 form; the call
+        // expression in the sibling test below gets the unnamed TS2571 form
+        // (no printable base name) — both are the strict-mode block, neither
+        // falls through to the non-strict apparent-member resolution.
+        let diags = check_source_with_default_libs(
+            r#"
+declare var u: unknown;
+u.toString();
+"#,
+        );
+        let errors = semantic_errors(&diags);
+        assert_eq!(
+            errors,
+            vec![18046],
+            "strictNullChecks must still block unknown member access unconditionally: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn strict_null_checks_still_rejects_object_prototype_member_no_printable_name() {
+        let diags = check_source_with_default_libs(
+            r#"
+declare var call: { <T>(): T };
+call().toString();
+"#,
+        );
+        let errors = semantic_errors(&diags);
+        assert_eq!(
+            errors,
+            vec![2571],
+            "strictNullChecks must still block unknown member access without a printable base name: {errors:?}"
+        );
+    }
+}
+
 #[test]
 fn inherited_static_member_element_access_emits_ts2576() {
     let diags = check_source_with_default_libs(
