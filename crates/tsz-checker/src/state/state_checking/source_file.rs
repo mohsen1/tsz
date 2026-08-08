@@ -883,13 +883,10 @@ impl CheckerState<'_> {
                 || !is_same_display_assignability_message(&diag.message_text)
         });
 
-        self.rewrite_infer_generic_return_fingerprints(&sf.text);
         self.rewrite_conditional_types1_fingerprints(&sf.text);
         self.align_awaited_type_instantiation_diagnostics(&sf.text);
         self.align_evolving_array_inference_diagnostics(&sf.text);
-        self.align_type_inference_literal_union_diagnostics(&sf.text);
         self.align_complex_recursive_collections_diagnostics(&sf.text);
-        self.align_jsx_element_type_diagnostics(&sf.text);
     }
 
     /// Grammar pass for misplaced `unique symbol` type operators — the
@@ -1038,33 +1035,6 @@ impl CheckerState<'_> {
 
     fn fixture_has_markers(source: &str, markers: &[&str]) -> bool {
         markers.iter().all(|marker| source.contains(marker))
-    }
-
-    fn rewrite_infer_generic_return_fingerprints(&mut self, source_text: &str) {
-        use tsz_common::diagnostics::diagnostic_codes;
-
-        if !(source_text.contains("inferFromGenericFunctionReturnTypes3")
-            || source_text.contains("Repros from #5487")
-                && source_text.contains("Breaking change repros from #29478")
-                && source_text.contains("Promise.all(["))
-        {
-            return;
-        }
-
-        // Residual divergence-A only (tracked on #14141): the contextual return
-        // type of `f1: F = () => Promise.all([...])` is not propagated into the
-        // `Promise.all` reverse-mapped-tuple argument, so `tsz` widens the tuple
-        // element and emits a spurious `() => Promise<[...]>` vs `F` TS2322. Drop
-        // it until reverse-mapped contextual argument inference lands.
-        //
-        // The former `bar(() => cond ? [A] : [B])` TS2345→TS2322 rewrite is gone:
-        // the arrow-conditional-body return mismatch now drills to the inner
-        // conditional as `tsc` does, natively (`elaborate_expression_body_return_mismatch`).
-        self.ctx.diagnostics.retain(|diag| {
-            !(diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                && diag.message_text.contains("Type '() => Promise<[")
-                && diag.message_text.contains("not assignable to type 'F'"))
-        });
     }
 
     fn rewrite_conditional_types1_fingerprints(&mut self, source_text: &str) {
@@ -1278,39 +1248,6 @@ impl CheckerState<'_> {
         ));
     }
 
-    fn align_type_inference_literal_union_diagnostics(&mut self, source_text: &str) {
-        use tsz_common::diagnostics::diagnostic_codes;
-
-        if !Self::fixture_has_markers(
-            source_text,
-            &[
-                "export function extent<T extends Numeric>",
-                "class NumCoercible",
-                "extentMixed = extent([new NumCoercible(10), 13, '12', true]);",
-            ],
-        ) {
-            return;
-        }
-
-        let Some(line_start) =
-            source_text.find("extentMixed = extent([new NumCoercible(10), 13, '12', true]);")
-        else {
-            return;
-        };
-        let line_end = source_text[line_start..]
-            .find('\n')
-            .map(|offset| line_start + offset)
-            .unwrap_or(source_text.len());
-        self.ctx.diagnostics.retain(|diag| {
-            diag.code != diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                || !((diag.start as usize) >= line_start
-                    && (diag.start as usize) < line_end
-                    && diag
-                        .message_text
-                        .contains("[Primitive | Numeric, Primitive | Numeric]"))
-        });
-    }
-
     fn align_complex_recursive_collections_diagnostics(&mut self, source_text: &str) {
         use tsz_common::diagnostics::diagnostic_codes;
 
@@ -1337,57 +1274,6 @@ impl CheckerState<'_> {
                     .iter()
                     .any(|message| diag.message_text == *message)
         });
-    }
-
-    fn align_jsx_element_type_diagnostics(&mut self, source_text: &str) {
-        use tsz_common::diagnostics::{Diagnostic, diagnostic_codes};
-
-        if !Self::fixture_has_markers(
-            source_text,
-            &[
-                "type NewReactJSXElementConstructor<P>",
-                "class RenderStringClass extends React.Component",
-                "<RenderStringClass excessProp />;",
-            ],
-        ) {
-            return;
-        }
-
-        self.ctx.diagnostics.retain(|diag| {
-            !(diag.code == diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
-                && diag.message_text
-                    == "Property 'props' does not exist on type 'RenderStringClass'.")
-        });
-
-        let overload_code = diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL;
-        let overload_message = "No overload matches this call.";
-        let anchors = [
-            ("<RenderStringClass />;", "RenderStringClass"),
-            ("<RenderStringClass excessProp />;", "excessProp"),
-        ];
-        for (line_marker, anchor) in anchors {
-            let Some(line_start) = source_text.find(line_marker) else {
-                continue;
-            };
-            let Some(anchor_offset) = source_text[line_start..].find(anchor) else {
-                continue;
-            };
-            let start = (line_start + anchor_offset) as u32;
-            if self.ctx.diagnostics.iter().any(|existing| {
-                existing.code == overload_code
-                    && existing.start == start
-                    && existing.message_text == overload_message
-            }) {
-                continue;
-            }
-            self.ctx.diagnostics.push(Diagnostic::error(
-                self.ctx.file_name.clone(),
-                start,
-                1,
-                overload_message,
-                overload_code,
-            ));
-        }
     }
 
     fn has_ts_nocheck_pragma(&self, source: &str) -> bool {
