@@ -1550,10 +1550,9 @@ impl<'a> CheckerState<'a> {
             &m.parameters.nodes
         } else if let Some(c) = self.ctx.arena.get_constructor(fn_node) {
             &c.parameters.nodes
-        } else if let Some(a) = self.ctx.arena.get_accessor(fn_node) {
-            &a.parameters.nodes
         } else {
-            return None;
+            let a = self.ctx.arena.get_accessor(fn_node)?;
+            &a.parameters.nodes
         };
         let annotation = self.get_explicit_this_type_annotation(params)?;
         let this_type = self.get_type_from_type_node(annotation);
