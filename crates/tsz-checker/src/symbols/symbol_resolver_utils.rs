@@ -1528,17 +1528,63 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Resolve the class established by the nearest enclosing non-arrow
+    /// function's explicit `this: T` parameter, independent of any specific
+    /// receiver expression.
+    ///
+    /// A free function's declared `this` parameter type is the accessibility
+    /// context for *every* receiver checked inside its body, not only a bare
+    /// `this.x` access: `function f<T extends B>(this: T, arg: B) { arg.b() }`
+    /// must see `B` as the current class the same way a method body would.
+    /// Mirrors `resolve_class_for_access`'s constraint walk so a generic
+    /// `this: T extends Foo` resolves through `T`'s constraint to `Foo`.
+    pub(crate) fn resolve_this_parameter_class_context(
+        &mut self,
+        idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let enclosing_fn = self.find_enclosing_non_arrow_function(idx)?;
+        let fn_node = self.ctx.arena.get(enclosing_fn)?;
+        let params: &[NodeIndex] = if let Some(f) = self.ctx.arena.get_function(fn_node) {
+            &f.parameters.nodes
+        } else if let Some(m) = self.ctx.arena.get_method_decl(fn_node) {
+            &m.parameters.nodes
+        } else if let Some(c) = self.ctx.arena.get_constructor(fn_node) {
+            &c.parameters.nodes
+        } else if let Some(a) = self.ctx.arena.get_accessor(fn_node) {
+            &a.parameters.nodes
+        } else {
+            return None;
+        };
+        let annotation = self.get_explicit_this_type_annotation(params)?;
+        let this_type = self.get_type_from_type_node(annotation);
+        if let Some(class_idx) = self.get_class_decl_from_type(this_type) {
+            return Some(class_idx);
+        }
+        let constraint =
+            crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, this_type)?;
+        if constraint == this_type {
+            return None;
+        }
+        self.get_class_decl_from_type(constraint)
+    }
+
     /// Resolve the receiver class for a member access expression.
     ///
     /// Similar to `resolve_class_for_access`, but returns only the class node.
     /// Used for determining what class the receiver belongs to.
     pub(crate) fn resolve_receiver_class_for_access(
-        &self,
+        &mut self,
         expr_idx: NodeIndex,
         object_type: TypeId,
     ) -> Option<NodeIndex> {
         if self.is_this_expression(expr_idx) || self.is_super_expression(expr_idx) {
-            return self.ctx.enclosing_class.as_ref().map(|info| info.class_idx);
+            if let Some(class_idx) = self.ctx.enclosing_class.as_ref().map(|info| info.class_idx) {
+                return Some(class_idx);
+            }
+            // No literal enclosing class: fall back to the nearest enclosing
+            // free function's own `this` parameter type, which is what the
+            // receiver's runtime type is bound by in that case.
+            return self.resolve_this_parameter_class_context(expr_idx);
         }
 
         if self
