@@ -5,7 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { COMPILE_CANARY_PROJECT_ROWS, REQUIRED_PROJECT_ROWS } from "./project-rows.mjs";
+import {
+  COMPILE_CANARY_PROJECT_ROWS,
+  PROJECT_ROW_DEFINITIONS,
+  REQUIRED_PROJECT_ROWS,
+} from "./project-rows.mjs";
 import { GREEN_COMPAT, YELLOW_COMPAT, RED_COMPAT } from "./row-utils.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -246,6 +250,31 @@ withTempDir((dir) => {
   assert.ok(
     merged.validation.project_compatibility_advisory.includes(`${missingRow}: missing project row`),
     "advisory gap must be recorded in merged.validation.project_compatibility_advisory",
+  );
+});
+
+// Issue #16310: the missing-project-row advisory must span the FULL defined
+// compatibility corpus, not just REQUIRED_PROJECT_ROWS. A `category:"application"`
+// row (guard_set:"canary", never in REQUIRED) that is absent from every shard
+// must be advised, otherwise unmeasured application coverage shrinks silently.
+withTempDir((dir) => {
+  const applicationRow = PROJECT_ROW_DEFINITIONS.find(
+    (row) => row.category === "application" && !REQUIRED_PROJECT_ROWS.includes(row.name),
+  );
+  assert.ok(applicationRow, "test fixture expects at least one application corpus row");
+  // A complete REQUIRED set (so no required row is itself missing) plus the
+  // application row absent from the artifact entirely.
+  const rows = REQUIRED_PROJECT_ROWS.map((name) => projectRow(name));
+  const result = runMerge(dir, rows);
+  assert.equal(result.status, 0, result.stderr);
+  const merged = JSON.parse(fs.readFileSync(result.output, "utf8"));
+  assert.ok(
+    merged.validation.project_compatibility_advisory.includes(`${applicationRow.name}: missing project row`),
+    `an unmeasured application corpus row must be advised (${applicationRow.name})`,
+  );
+  assert.match(
+    result.stderr,
+    new RegExp(`::warning::[\\s\\S]*${applicationRow.name}: missing project row`),
   );
 });
 
