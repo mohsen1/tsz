@@ -11,6 +11,21 @@ impl<'a> CheckerState<'a> {
         prop_type: TypeId,
         index_value_type: TypeId,
     ) -> bool {
+        // Materialize the property type before the constraint decision. tsc
+        // checks `getTypeOfSymbol(prop)`, which is the *reduced* type, against
+        // the index type; the raw annotation union may still carry constituents
+        // that a sibling constituent subsumes. In particular a numeric enum is a
+        // subtype of `number`, so `E | number` reduces to `number` — but the
+        // union arrives here as `Lazy(E) | number`, and union subtype reduction
+        // skips lazy members at intern time, so the collapse only happens on
+        // evaluation. Judging the unmaterialized union member-by-member makes the
+        // absorbed `E` constituent spuriously fail `E → indexType` and emit a
+        // false TS2411 (the diagnostic then even renders the *reduced* type,
+        // because `format_ts2411_type` evaluates while this check did not). This
+        // is the apparent-type materialize-before-decide gateway (#15396):
+        // evaluate first so the decision and the rendered type agree, and match
+        // tsc's reduced operand.
+        let prop_type = self.evaluate_type_with_env(prop_type);
         if let Some(list_id) = crate::query_boundaries::common::union_list_id(
             self.ctx.types,
             self.resolve_lazy_type(prop_type),
