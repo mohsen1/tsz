@@ -882,6 +882,9 @@ path = "tests/class_reserved_word_diagnostics_tests.rs"
 name = "reserved_await_multiple_ts1262_tests"
 path = "tests/reserved_await_multiple_ts1262_tests.rs"
 [[test]]
+name = "import_equals_entity_name_not_module_ts1262_tests"
+path = "tests/import_equals_entity_name_not_module_ts1262_tests.rs"
+[[test]]
 name = "interface_heritage_display_tests"
 path = "tests/interface_heritage_display_tests.rs"
 [[test]]

@@ -767,10 +767,25 @@ impl BinderState {
             };
             match stmt.kind {
                 syntax_kind_ext::IMPORT_DECLARATION
-                | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                 | syntax_kind_ext::EXPORT_DECLARATION
                 | syntax_kind_ext::EXPORT_ASSIGNMENT => {
                     return true;
+                }
+                syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                    // Only `import X = require("...")` (an external module
+                    // reference) is a module indicator, matching tsc's
+                    // `isAnExternalModuleIndicatorNode`
+                    // (`isImportEqualsDeclaration(node) &&
+                    // isExternalModuleReference(node.moduleReference)`). An
+                    // internal `import X = A.B` (entity-name reference) is a
+                    // namespace alias, not external module syntax, so it must
+                    // not force its file to be a module — otherwise an
+                    // `await`/`yield`-as-identifier at the top level wrongly
+                    // becomes reserved (TS1262) in a file tsc treats as a
+                    // script.
+                    if Self::import_equals_is_external_module_reference(arena, stmt) {
+                        return true;
+                    }
                 }
                 _ => {}
             }
@@ -780,6 +795,26 @@ impl BinderState {
         }
 
         Self::source_file_contains_import_meta(arena, root)
+    }
+
+    /// Whether an `import X = ...` statement references an external module
+    /// (`= require("...")`) rather than an entity name (`= A.B`). tsz's parser
+    /// currently flattens the `require` argument to a bare `StringLiteral`
+    /// stored as the `module_specifier`; an entity-name reference is an
+    /// `Identifier`/`QualifiedName` instead. `EXTERNAL_MODULE_REFERENCE` is
+    /// also accepted so this stays correct if the parser is later changed to
+    /// wrap `require(...)` in that node the way tsc's AST does.
+    fn import_equals_is_external_module_reference(
+        arena: &NodeArena,
+        stmt: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        let Some(import) = arena.get_import_decl(stmt) else {
+            return false;
+        };
+        arena.get(import.module_specifier).is_some_and(|spec| {
+            spec.kind == SyntaxKind::StringLiteral as u16
+                || spec.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE
+        })
     }
 
     /// The `moduleDetection: auto` predicate — module syntax, plus the formats
