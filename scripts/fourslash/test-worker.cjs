@@ -35,8 +35,9 @@ function preloadLibFiles(builtLocal) {
     } catch { /* best-effort */ }
 }
 
-// Per-test timeout (ms) - tests taking longer are killed
-const TEST_TIMEOUT_MS = 15000;
+// Per-test timeout (ms) - tests taking longer are killed. Fallback only:
+// runner.cjs always passes testTimeout explicitly (see its own default).
+const TEST_TIMEOUT_MS = 25000;
 // Memory threshold per worker (bytes) - restart bridge if exceeded
 const MEMORY_THRESHOLD_BYTES = 512 * 1024 * 1024; // 512MB
 // Check memory every N tests
