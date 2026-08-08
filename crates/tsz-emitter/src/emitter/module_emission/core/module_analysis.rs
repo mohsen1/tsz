@@ -722,4 +722,63 @@ impl<'a> Printer<'a> {
     pub(in crate::emitter) fn source_has_dynamic_import_call(&self, statements: &NodeList) -> bool {
         crate::core::module_facts::source_has_dynamic_import_call(self.arena, statements)
     }
+
+    /// Collect every bare `export { local [as exportName] }` (no `from`) whose
+    /// exported name binds an import-bound local, keyed by local name in
+    /// specifier source order. tsc's CommonJS transform emits these bindings
+    /// right after the import's own `require(...)` line, not at the `export { }`
+    /// statement's position, so `emit_import_declaration_commonjs` drains this
+    /// map at each import site instead of leaving it for the export statement.
+    /// Whether a given local actually turns out to be import-bound (vs. a plain
+    /// local declaration) is decided later, when the import populates
+    /// `commonjs_named_import_substitutions` — this pass only records candidates.
+    pub(in crate::emitter) fn collect_bare_reexported_import_locals(
+        &self,
+        statements: &NodeList,
+    ) -> rustc_hash::FxHashMap<String, Vec<String>> {
+        let mut result: rustc_hash::FxHashMap<String, Vec<String>> =
+            rustc_hash::FxHashMap::default();
+        for &stmt_idx in &statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            }
+            let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                continue;
+            };
+            if export.is_type_only || export.module_specifier.is_some() {
+                continue;
+            }
+            let Some(clause_node) = self.arena.get(export.export_clause) else {
+                continue;
+            };
+            if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+                continue;
+            }
+            let Some(named_exports) = self.arena.get_named_imports(clause_node) else {
+                continue;
+            };
+            for spec_idx in self.collect_local_export_value_specifiers(&named_exports.elements) {
+                let Some(spec_node) = self.arena.get(spec_idx) else {
+                    continue;
+                };
+                let Some(spec) = self.arena.get_specifier(spec_node) else {
+                    continue;
+                };
+                let Some(export_name) = self.get_specifier_name_text(spec.name) else {
+                    continue;
+                };
+                let local_name = if spec.property_name.is_some() {
+                    self.get_specifier_name_text(spec.property_name)
+                        .unwrap_or_else(|| export_name.clone())
+                } else {
+                    export_name.clone()
+                };
+                result.entry(local_name).or_default().push(export_name);
+            }
+        }
+        result
+    }
 }

@@ -1306,6 +1306,15 @@ impl<'a> Printer<'a> {
                                     .get(&local_name)
                                     .cloned()
                                 {
+                                    // Already emitted right after this import's own
+                                    // `require(...)` line (tsc parity) — do not
+                                    // duplicate it here at the `export { }` position.
+                                    if self
+                                        .commonjs_import_reexports_emitted
+                                        .contains(&export_name)
+                                    {
+                                        continue;
+                                    }
                                     if self
                                         .commonjs_default_import_local_names
                                         .contains(&local_name)

@@ -292,6 +292,112 @@ export { payload as renamed };
     );
 }
 
+// ── Position: the re-export binding follows its own import's require() ─────
+//
+// tsc's CommonJS transform emits a bare `export { x }` re-export of an import
+// binding immediately after that import's own `require(...)` line, not at the
+// `export { }` statement's source position. #16924.
+
+/// A statement (`export const a = 1;`) sitting between the import and the
+/// bare re-export must not push the getter to the tail — it stays right after
+/// the `require(...)` it belongs to.
+#[test]
+fn import_reexport_getter_follows_its_own_require_not_trailing_export_clause() {
+    let source = r#"import { readFile } from "fs";
+export const a = 1;
+export function f() { return a; }
+export { readFile };
+"#;
+    let output = emit_commonjs(source);
+    let require_pos = output
+        .find("require(\"fs\")")
+        .expect("require(\"fs\") should be emitted");
+    let getter_pos = output
+        .find(r#"Object.defineProperty(exports, "readFile""#)
+        .expect("readFile getter should be emitted");
+    let a_pos = output
+        .find("exports.a = 1;")
+        .expect("exports.a assignment should be emitted");
+    assert!(
+        getter_pos < a_pos,
+        "readFile getter must come right after its own require(), before the \
+         unrelated `exports.a = 1;` that sits between the import and the \
+         export clause in source order.\nOutput:\n{output}"
+    );
+    assert!(
+        require_pos < getter_pos,
+        "readFile getter must come after its own require() line.\nOutput:\n{output}"
+    );
+}
+
+/// Two imports, each re-exported: each binding follows its OWN `require()`,
+/// not one trailing block after both requires.
+#[test]
+fn two_import_reexports_each_follow_their_own_require() {
+    let source = r#"import { x1 as x } from "./a";
+import { y1 as y } from "./b";
+export { x, y };
+"#;
+    let output = emit_commonjs(source);
+    let require_a = output.find("require(\"./a\")").unwrap();
+    let require_b = output.find("require(\"./b\")").unwrap();
+    let getter_x = output
+        .find(r#"Object.defineProperty(exports, "x""#)
+        .unwrap();
+    let getter_y = output
+        .find(r#"Object.defineProperty(exports, "y""#)
+        .unwrap();
+    assert!(
+        require_a < getter_x && getter_x < require_b,
+        "x's getter must land between a's require() and b's require(), not \
+         after both.\nOutput:\n{output}"
+    );
+    assert!(
+        require_b < getter_y,
+        "y's getter must come after b's require().\nOutput:\n{output}"
+    );
+}
+
+/// A default-import re-export (plain assignment, not a getter) also follows
+/// its own `require()`, matching the getter-form rule above.
+#[test]
+fn default_import_reexport_assignment_follows_its_own_require() {
+    let source = r#"import data from "./mod";
+export const a = 1;
+export { data };
+"#;
+    let output = emit_commonjs(source);
+    let require_pos = output.find("require(\"./mod\")").unwrap();
+    let assign_pos = output.find("exports.data = mod_1.default;").unwrap();
+    let a_pos = output.find("exports.a = 1;").unwrap();
+    assert!(
+        require_pos < assign_pos && assign_pos < a_pos,
+        "data's re-export assignment must come right after its own require(), \
+         before the unrelated `exports.a = 1;`.\nOutput:\n{output}"
+    );
+}
+
+/// A local (non-import) re-export in the same clause as an import re-export
+/// is unaffected: it still emits at the `export { }` statement's own position.
+#[test]
+fn local_reexport_still_emits_at_export_clause_position_alongside_import_reexport() {
+    let source = r#"import { v1 as v } from "./mod";
+var local = 2;
+export { v, local };
+"#;
+    let output = emit_commonjs(source);
+    let require_pos = output.find("require(\"./mod\")").unwrap();
+    let getter_pos = output
+        .find(r#"Object.defineProperty(exports, "v""#)
+        .unwrap();
+    let local_pos = output.find("exports.local = local;").unwrap();
+    assert!(
+        require_pos < getter_pos && getter_pos < local_pos,
+        "v's getter follows its own require(); local's static assignment \
+         stays at the export clause's own position, after it.\nOutput:\n{output}"
+    );
+}
+
 /// A combined `import def, { a, b as bb }` re-exported as `export { def, a, bb as cc }`
 /// mixes both forms: the default binding `def` assigns, while the named
 /// specifiers `a`/`cc` keep their live-binding getters.
