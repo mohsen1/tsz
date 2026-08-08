@@ -258,14 +258,13 @@ impl<'a> CheckerState<'a> {
                 }
                 self.get_type_of_function(elem_idx);
 
-                // Extract setter write type from first parameter.
+                // Extract setter write type from its value parameter (skipping
+                // a leading explicit `this` parameter, which is separately
+                // illegal via TS2784 and never the write type).
                 // When no type annotation, fall back to the paired getter's
                 // return type (mirroring tsc's inference behavior).
-                accessor
-                    .parameters
-                    .nodes
-                    .first()
-                    .and_then(|&param_idx| {
+                self.setter_value_parameter(&accessor.parameters)
+                    .and_then(|(_, param_idx)| {
                         let param = self.ctx.arena.get_parameter_at(param_idx)?;
                         if param.type_annotation.is_none() {
                             None

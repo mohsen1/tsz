@@ -17,6 +17,8 @@
 //! here — several of them use `use super::*` and must stay children of the
 //! crate root for that to resolve.
 
+#[path = "tests/accessor_this_parameter_pairing_tests.rs"]
+mod accessor_this_parameter_pairing_tests;
 #[path = "tests/alias_application_display_retention_tests.rs"]
 mod alias_application_display_retention_tests;
 #[path = "tests/ambient_declare_async_modifier_tests.rs"]
@@ -871,6 +873,8 @@ mod syntax_constraint_relation_routing_arch_tests;
 mod synthetic_unique_atom_union_display_tests;
 #[path = "tests/this_context_self_type_tests.rs"]
 mod this_context_self_type_tests;
+#[path = "tests/this_lexical_global_type_tests.rs"]
+mod this_lexical_global_type_tests;
 #[path = "tests/this_parameter_placement_tests.rs"]
 mod this_parameter_placement_tests;
 #[path = "tests/this_prop_nullish_operand_code_tests.rs"]

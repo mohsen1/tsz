@@ -48,10 +48,64 @@ impl<'a> CheckerState<'a> {
         let current_type_str = self
             .ts2403_typeof_fundule_initializer_display(idx)
             .unwrap_or_else(|| self.format_type_for_redeclaration_message(current_display));
+        // Render-equality here is only a cross-binder-duplicate fallback: the same
+        // declared type can resolve to distinct `TypeId`s in separate binder
+        // contexts (a user re-`declare`ing a lib global like
+        // `var window: Window & typeof globalThis`, or a lib interface such as
+        // `Document`) that the primary identity check cannot unify. It must not
+        // swallow genuinely distinct declarations that merely render to the same
+        // simple name, so it is gated behind a structural nominal-distinctness
+        // check. The cheap string compare is tested first so the nominal check is
+        // skipped whenever the renders already differ.
+        if prev_type_str == current_type_str
+            && !self.redeclaration_types_are_distinct_nominals(prev_type, current_type)
+        {
+            return;
+        }
         let message = format!(
             "Subsequent variable declarations must have the same type.  Variable '{name}' must be of type '{prev_type_str}', but here has type '{current_type_str}'."
         );
         self.error_at_node(idx, &message, diagnostic_codes::SUBSEQUENT_VARIABLE_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_VARIABLE_MUST_BE_OF_TYP);
+    }
+
+    /// Whether two redeclaration operands carry distinct *nominal* identities.
+    ///
+    /// Class instance types are nominal through their private/protected brand and
+    /// enums through their declaration, so same-simple-name declarations from
+    /// different namespaces (`A.Foo`/`B.Foo`, `A.E`/`B.E`) are genuinely distinct
+    /// types `tsc` flags with TS2403 even though their rendered form collapses to
+    /// the bare name. Interfaces and other structural shapes carry no such handle
+    /// and stay `false` here, leaving the cross-binder render fallback in charge.
+    ///
+    /// Distinctness is read from identity handles (`brand` / `DefId`), never from
+    /// rendered text, so a cross-binder duplicate — which shares both handles — is
+    /// never reported as distinct.
+    fn redeclaration_types_are_distinct_nominals(
+        &self,
+        prev_type: TypeId,
+        current_type: TypeId,
+    ) -> bool {
+        use crate::query_boundaries::common::{enum_def_id, get_private_brand_name};
+
+        // Distinct class brands (`Some(a) != Some(b)`, or a brand on one side
+        // only) => instance types from different class declarations. `None`/`None`
+        // compares equal, so a brandless cross-binder duplicate stays structural.
+        if get_private_brand_name(self.ctx.types, prev_type)
+            != get_private_brand_name(self.ctx.types, current_type)
+        {
+            return true;
+        }
+
+        // Distinct enum declarations => distinct nominal enums.
+        if let (Some(prev_def), Some(current_def)) = (
+            enum_def_id(self.ctx.types, prev_type),
+            enum_def_id(self.ctx.types, current_type),
+        ) && prev_def != current_def
+        {
+            return true;
+        }
+
+        false
     }
 
     fn format_type_for_redeclaration_message(&self, type_id: TypeId) -> String {
