@@ -30,8 +30,8 @@ impl<'a> CheckerState<'a> {
         // (`{ x: number; y: number; }` not `{ x: 0; y: 0; }`), matching tsc.
         // But preserve top-level literal/union-of-literal types so explicit
         // annotations like `var x: 5; var x: 6;` keep their literal form
-        // (`'5'` / `'6'`) instead of collapsing to `number`/`number` (which
-        // would also self-suppress via the equal-display short-circuit below).
+        // (`'5'` / `'6'`) instead of collapsing to `number`/`number`, matching
+        // the exact type names tsc renders for this pair.
         //
         // Use the widened formatter (no display-property side-table fallback)
         // so the widened shape is actually rendered — `format_type_diagnostic`
@@ -49,14 +49,17 @@ impl<'a> CheckerState<'a> {
         let current_type_str = self
             .ts2403_typeof_fundule_initializer_display(idx)
             .unwrap_or_else(|| self.format_type_for_redeclaration_message(current_display));
-        // Suppress when both types format to the same name. This handles cross-binder
-        // scenarios where a lib_checker resolves a type annotation (e.g., `Document`)
-        // to a separate DefId from the main checker's version. Interface declaration
-        // merging means both annotations semantically refer to the same type, but
-        // different internal TypeIds prevent the structural check from recognizing this.
-        if prev_type_str == current_type_str {
-            return;
-        }
+        // Whether these two declarations share a type is owned entirely by
+        // `are_var_decl_types_compatible` — the caller only reaches this reporter after
+        // it returned `false`. This reporter renders; it must not re-judge identity, and
+        // must not key on the rendered names. Two genuinely distinct nominal types
+        // routinely share a simple display name (`A.Foo` vs `B.Foo`, distinct only by
+        // their private brands), and tsc reports TS2403 for them regardless of the shared
+        // name. Suppressing on `prev_type_str == current_type_str` dropped exactly that
+        // diagnostic — the "formatted diagnostic string used as a semantic predicate" the
+        // Anti-Hardcoding Gate forbids. A cross-binder pair that truly refers to one merged
+        // type (e.g. two `Document` annotations resolved by separate checkers) is unified
+        // structurally in `are_types_identical_for_redeclaration`, so it never reaches here.
         let message = format!(
             "Subsequent variable declarations must have the same type. Variable '{name}' must be of type '{prev_type_str}', but here has type '{current_type_str}'."
         );
