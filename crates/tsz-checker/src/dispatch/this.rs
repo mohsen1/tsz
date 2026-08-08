@@ -203,8 +203,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 TypeId::ANY
             } else {
                 // Fall through to TS2683 / TS7041 checks below
-                // Suppress if the nested function has an explicit `this` parameter
-                // or a contextual `this` type from a parent type annotation
+                // Suppress if the nested function has an explicit `this` parameter,
+                // a contextual `this` type from a parent type annotation, or is
+                // itself the direct RHS of an assignment (`x.y = function () {}`
+                // does not warn, even though `this` still resolves to `any` below).
                 if self.checker.ctx.no_implicit_this()
                     && !self
                         .checker
@@ -212,6 +214,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     && !self
                         .checker
                         .enclosing_function_has_contextual_this_type(idx)
+                    && !self.checker.enclosing_function_is_assignment_rhs(idx)
                 {
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.checker.error_at_node(
@@ -245,8 +248,8 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             // function's `this` has no declared receiver either way); only
             // the *warning* about that implicit `any` is gated by the flag.
             // Suppress the warning if the enclosing function has an explicit
-            // `this` parameter or a contextual `this` type from a parent
-            // type annotation.
+            // `this` parameter, a contextual `this` type from a parent type
+            // annotation, or is itself the direct RHS of an assignment.
             if self.checker.ctx.no_implicit_this()
                 && !self
                     .checker
@@ -254,6 +257,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 && !self
                     .checker
                     .enclosing_function_has_contextual_this_type(idx)
+                && !self.checker.enclosing_function_is_assignment_rhs(idx)
             {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                 self.checker.error_at_node(

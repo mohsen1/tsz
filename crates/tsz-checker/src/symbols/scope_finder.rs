@@ -299,30 +299,6 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        if fn_node.kind == FUNCTION_EXPRESSION {
-            let mut current = enclosing_fn;
-            for _ in 0..3 {
-                let Some(parent) = self.ctx.arena.parent_of(current) else {
-                    break;
-                };
-                let Some(parent_node) = self.ctx.arena.get(parent) else {
-                    break;
-                };
-                if parent_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-                    current = parent;
-                    continue;
-                }
-                if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
-                    && let Some(binary) = self.ctx.arena.get_binary_expr(parent_node)
-                    && binary.right == current
-                    && self.is_assignment_operator(binary.operator_token)
-                {
-                    return false;
-                }
-                break;
-            }
-        }
-
         if self.is_js_file()
             && self
                 .ctx
@@ -344,6 +320,59 @@ impl<'a> CheckerState<'a> {
         // function still creates its own `this` binding unless one of the
         // explicit/contextual receiver checks above already claimed ownership.
         true
+    }
+
+    /// Whether the nearest enclosing non-arrow function *expression* is the
+    /// direct right-hand side of an assignment (`x.y = function () {}`,
+    /// optionally parenthesized), regardless of what `x.y`'s type is.
+    ///
+    /// This is a purely syntactic assignment-target check: tsc does not warn
+    /// about the resulting implicit-`any` `this` in that position (see
+    /// `property_assignment_any_receiver_no_ts2683`), but assignment position
+    /// alone does not establish a contextual `this` TYPE — a real contextual
+    /// receiver still requires `enclosing_function_has_contextual_this_type`
+    /// (e.g. the target actually carries a `this`-parameterized signature).
+    /// Callers must use this only to gate the TS2683 diagnostic, never to
+    /// decide whether the function has its own `this` binding — conflating
+    /// the two previously caused a nested `this.` (e.g.
+    /// `obj.onload = function () { this. }` inside a class method) to
+    /// silently resolve to the *enclosing class's* instance type instead of
+    /// `any`.
+    pub(crate) fn enclosing_function_is_assignment_rhs(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION;
+
+        let Some(enclosing_fn) = self.find_enclosing_non_arrow_function(idx) else {
+            return false;
+        };
+        let Some(fn_node) = self.ctx.arena.get(enclosing_fn) else {
+            return false;
+        };
+        if fn_node.kind != FUNCTION_EXPRESSION {
+            return false;
+        }
+
+        let mut current = enclosing_fn;
+        for _ in 0..3 {
+            let Some(parent) = self.ctx.arena.parent_of(current) else {
+                break;
+            };
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                break;
+            };
+            if parent_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                current = parent;
+                continue;
+            }
+            if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                && let Some(binary) = self.ctx.arena.get_binary_expr(parent_node)
+                && binary.right == current
+                && self.is_assignment_operator(binary.operator_token)
+            {
+                return true;
+            }
+            break;
+        }
+        false
     }
 
     /// Find the nearest enclosing class declaration/expression by walking parents.
