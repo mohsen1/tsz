@@ -1823,38 +1823,74 @@ impl<'a> CheckerState<'a> {
         init_type: TypeId,
         anchor: NodeIndex,
     ) -> Option<Vec<crate::diagnostics::DiagnosticRelatedInformation>> {
-        let lib_binders = self.get_lib_binders();
-        let disposable_sym = self
-            .ctx
-            .binder
-            .get_global_type_with_libs("Disposable", &lib_binders)?;
-        // Build the `Disposable` target exactly as a `: Disposable` annotation
-        // would: prime the `DefId` (registering the lib interface body in the type
-        // environment) and intern it as `Lazy(DefId)`. A bare `get_type_of_symbol`
-        // here yields an unresolved/member-less shell when nothing else in the file
-        // referenced `Disposable` (the `using` initializer is the only consumer),
-        // so the relation would see no `[Symbol.dispose]` member.
-        let def_id = self.ensure_def_ready_for_lowering(disposable_sym, "Disposable");
-        let disposable_type = self.ctx.types.lazy(def_id);
+        let disposable_type = self.resolve_disposable_interface_type(false)?;
         let analysis = self.analyze_assignability_failure(init_type, disposable_type);
         let reason = analysis.failure_reason?;
         let rendered = self.render_failure_reason(&reason, init_type, disposable_type, anchor, 0);
-        // The rendered reason's top message is the first elaboration line; its own
-        // nested chain re-seats one level deeper beneath it.
-        let mut related = vec![crate::diagnostics::Diagnostic::related_message(
-            rendered.code,
-            rendered.file,
-            rendered.start,
-            rendered.length,
-            rendered.message_text,
-        )];
-        related.extend(
-            rendered
-                .related_information
-                .into_iter()
-                .map(|info| info.with_depth_shift(1)),
-        );
+        // `tsc` reports this failure through `checkTypeAssignableTo(initType,
+        // Disposable, headMessage = TS2850)`. In its `reportRelationError`, a
+        // supplied head message *replaces* the generic outer
+        // `Type 'S' is not assignable to type 'T'.` frame rather than nesting
+        // beneath it — the TS2850 wording ("must be … an object with a
+        // '[Symbol.dispose]()' method …") already conveys that relationship, so
+        // the tail drills straight to the specific nested reason.
+        //
+        // `render_failure_reason` at depth 0 reproduces that generic frame as
+        // the rendered *top* message (code `TYPE_IS_NOT_ASSIGNABLE_TO_TYPE`)
+        // whenever the reason is an object-structural mismatch that carries a
+        // deeper chain (e.g. a `[Symbol.dispose]` whose signature is
+        // incompatible). Mirror `tsc`: drop that redundant frame and promote its
+        // already-correctly-nested children directly beneath the head message.
+        // A self-heading leaf reason instead renders as its own specific message
+        // (e.g. `Property '[Symbol.dispose]' is missing … required in type
+        // 'Disposable'.`, code TS2741) with no generic frame to replace, so keep
+        // it as the first tail line with its own chain one level deeper.
+        let top_is_generic_frame = rendered.code
+            == crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+            && !rendered.related_information.is_empty();
+        let related = if top_is_generic_frame {
+            rendered.related_information
+        } else {
+            let mut related = vec![crate::diagnostics::Diagnostic::related_message(
+                rendered.code,
+                rendered.file,
+                rendered.start,
+                rendered.length,
+                rendered.message_text,
+            )];
+            related.extend(
+                rendered
+                    .related_information
+                    .into_iter()
+                    .map(|info| info.with_depth_shift(1)),
+            );
+            related
+        };
         Some(related)
+    }
+
+    /// Resolve the `Disposable`/`AsyncDisposable` global interface as a
+    /// `Lazy(DefId)` type, primed for lowering exactly as a `: Disposable`
+    /// annotation would be. Returns `None` when the current lib does not
+    /// declare the interface (e.g. `--lib` without `esnext.disposable`).
+    ///
+    /// A bare `get_type_of_symbol` here would yield an unresolved/member-less
+    /// shell when nothing else in the file references the interface (a
+    /// `using` initializer is often its only consumer), so the relation
+    /// would see no `[Symbol.dispose]`/`[Symbol.asyncDispose]` member.
+    fn resolve_disposable_interface_type(&mut self, want_async: bool) -> Option<TypeId> {
+        let name = if want_async {
+            "AsyncDisposable"
+        } else {
+            "Disposable"
+        };
+        let lib_binders = self.get_lib_binders();
+        let sym = self
+            .ctx
+            .binder
+            .get_global_type_with_libs(name, &lib_binders)?;
+        let def_id = self.ensure_def_ready_for_lowering(sym, name);
+        Some(self.ctx.types.lazy(def_id))
     }
 
     /// Check if a type has the appropriate dispose method.
@@ -1915,19 +1951,26 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // Check for the dispose method on the object type
-        let has_dispose = has_property(self, type_id, &["[Symbol.dispose]", "Symbol.dispose"]);
+        // Check the object type against the full `Disposable`/`AsyncDisposable`
+        // structural shape (`tsc`'s `checkTypeAssignableTo`), not mere property
+        // existence — a `[Symbol.dispose]`/`[Symbol.asyncDispose]` method with an
+        // incompatible signature (extra required params, wrong parameter types,
+        // or for the async case a non-`PromiseLike` return type) must still be
+        // rejected, while the ordinary void-return exception (a `(): number`
+        // dispose method) must still be accepted, exactly as the relation
+        // already implements for every other assignability check.
+        let is_disposable = self
+            .resolve_disposable_interface_type(false)
+            .is_some_and(|target| self.is_assignable_to(type_id, target));
 
         if is_await_using {
             // await using accepts either Symbol.asyncDispose or Symbol.dispose
-            return has_dispose
-                || has_property(
-                    self,
-                    type_id,
-                    &["[Symbol.asyncDispose]", "Symbol.asyncDispose"],
-                );
+            return is_disposable
+                || self
+                    .resolve_disposable_interface_type(true)
+                    .is_some_and(|target| self.is_assignable_to(type_id, target));
         }
 
-        has_dispose
+        is_disposable
     }
 }

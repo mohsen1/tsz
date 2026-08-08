@@ -1172,10 +1172,22 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::TARGET_SIGNATURE_PROVIDES_TOO_FEW_ARGUMENTS_EXPECTED_OR_MORE_BUT_GOT,
                     &[&source_count.to_string(), &target_count.to_string()],
                 );
+                // The arity leaf sits one level under this reason's own
+                // `Type 'S' is not assignable to type 'T'.` line. At the top
+                // level that line is the diagnostic's primary message, so the
+                // leaf is the first elaboration (depth 0). When this reason is
+                // drilled beneath a property/member header (e.g. a method
+                // property whose signature takes too few target arguments), the
+                // `Type 'S' …` line is re-seated at `depth` by the parent chain,
+                // so the leaf must follow at `depth + 1` — mirroring the
+                // absolute-depth convention every other nested `render_*` arm
+                // honors. Authoring it at a fixed `0` collapsed it up to the
+                // property-header level (issue #16859).
+                let leaf_depth = if depth == 0 { 0 } else { depth + 1 };
                 diag.push_elaboration(
                     elaboration,
                     diagnostic_codes::TARGET_SIGNATURE_PROVIDES_TOO_FEW_ARGUMENTS_EXPECTED_OR_MORE_BUT_GOT,
-                    0,
+                    leaf_depth,
                 );
                 diag
             }
