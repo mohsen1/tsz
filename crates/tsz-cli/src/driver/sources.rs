@@ -274,11 +274,10 @@ pub(super) struct SourceReadResult {
     /// Tuples of (`file_path`, `byte_offset`, `span_length`).
     pub(super) resolution_mode_errors: Vec<(PathBuf, usize, usize)>,
     /// Canonical paths of `node_modules`-hosted JS files the BFS depth-gated out
-    /// of the program under `maxNodeModuleJsDepth` (i.e. `should_skip_js_in_node_modules`
-    /// returned true and the file was not an explicit program root). Consumers
-    /// reconcile the resolver's conservative untyped-JS TS7016 against this set:
-    /// a resolved JS file absent from it is a genuine program member, so the
-    /// diagnostic is dropped and the import binds to the file's JS type.
+    /// of the program under `maxNodeModuleJsDepth` — `should_skip_js_in_node_modules`
+    /// returned true and the file was not an explicit program root. The
+    /// resolution-setup pass consults this to reconcile untyped-JS TS7016 against
+    /// program admission (see `SourceResolutionSetupInput::depth_skipped_js`).
     pub(super) depth_skipped_js: FxHashSet<PathBuf>,
 }
 
@@ -831,8 +830,15 @@ pub(super) fn read_source_files(
                     continue;
                 }
                 BatchAction::SkipJs => {
-                    // Record the depth-gated JS file so the diagnostic pass can
-                    // tell it apart from a genuinely admitted program member.
+                    // Record the depth-gated JS file in a side set so the
+                    // diagnostic pass can tell it apart from a genuinely admitted
+                    // member. tsc would leave the file out of the program
+                    // entirely; tsz still inserts an empty stub below because
+                    // dropping it would change the discovery-order-based
+                    // `SymbolId` assignment (see `SourceReadResult::dependencies`)
+                    // and risk conformance/reproducibility drift. The stub makes
+                    // program membership alone ambiguous, which is why membership
+                    // consumers consult this set rather than `program_file_index`.
                     depth_skipped_js.insert(path.clone());
                     sources.insert(path.clone(), (None, false, false));
                     continue;

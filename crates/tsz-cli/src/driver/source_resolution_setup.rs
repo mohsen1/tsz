@@ -442,37 +442,32 @@ pub(super) fn prepare_source_resolution_setup(
                     );
                 }
 
-                // tsc reports TS7016 ("Could not find a declaration file for
-                // module ...") for a JavaScript module only when the resolved
-                // `.js` file is *not* part of the program: its checker probes
-                // `host.getSourceFile(resolvedFileName)` and falls through to the
-                // diagnostic only when that returns nothing. Once the file is
-                // admitted, the import binds to the file's inferred JS type and
-                // no diagnostic is produced.
-                //
-                // A `node_modules`-hosted JS file is admitted when it is an
-                // explicit program root, or when it is reached through resolution
-                // within `maxNodeModuleJsDepth` (default 0). The source-discovery
-                // BFS is the authority on that decision — it records every JS file
-                // it depth-gated out in `depth_skipped_js`. The resolver, running
-                // before the program is finalized, cannot see admission and
-                // conservatively flags every external untyped-JS `require()` with
-                // TS7016. Reconcile it here against the BFS decision: if the
-                // resolved JS file was *not* depth-skipped, it is a real program
-                // member, so clear the error and let the binding below wire it —
-                // exactly as tsc does. Files the BFS excluded (beyond depth), and
-                // untyped-JS results that carry no resolved path (`allowJs` off),
-                // keep the diagnostic.
+                // Reconcile the resolver's untyped-JS TS7016 against real program
+                // admission (default 0), mirroring tsc's checker-side
+                // `host.getSourceFile(resolvedFileName)` gate — see the
+                // `depth_skipped_js` field docs. The resolver runs before the
+                // program is finalized and conservatively flags every external
+                // untyped-JS `require()` with TS7016; a resolved `.js` file the
+                // source-discovery BFS did *not* depth-skip is a genuine program
+                // member, so drop the diagnostic and let the binding below wire it
+                // to the file's inferred JS type. Files excluded beyond depth, and
+                // untyped-JS results with no resolved path (`allowJs` off), keep
+                // the diagnostic. `resolved_canonical` is memoized so the
+                // realpath/symlink walk in `normalize_resolved_path` runs at most
+                // once per specifier (the membership check below reuses it).
+                let mut resolved_canonical: Option<PathBuf> = None;
                 if outcome
                     .error
                     .as_ref()
                     .is_some_and(|error| error.code == 7016)
                     && let Some(ref resolved_path) = outcome.resolved_path
-                    && depth_skipped_js.is_some_and(|skipped| {
-                        !skipped.contains(&normalize_resolved_path(resolved_path, options))
-                    })
+                    && let Some(skipped) = depth_skipped_js
                 {
-                    outcome.error = None;
+                    let canonical = normalize_resolved_path(resolved_path, options);
+                    if !skipped.contains(&canonical) {
+                        outcome.error = None;
+                    }
+                    resolved_canonical = Some(canonical);
                 }
 
                 // Map resolved path to file index.
@@ -483,7 +478,8 @@ pub(super) fn prepare_source_resolution_setup(
                 if outcome.error.is_none() {
                     if let Some(ref resolved_path) = outcome.resolved_path {
                         resolved_module_specifiers.insert((file_idx, specifier.clone()));
-                        let canonical = normalize_resolved_path(resolved_path, options);
+                        let canonical = resolved_canonical
+                            .unwrap_or_else(|| normalize_resolved_path(resolved_path, options));
                         // Apply duplicate package redirect
                         let canonical = if should_apply_duplicate_package_redirect(file_path) {
                             package_redirects
