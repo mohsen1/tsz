@@ -103,6 +103,7 @@ impl<'a> CheckerState<'a> {
                                 has_dynamic_name: false,
                                 has_computed_non_literal_name: false,
                                 from_interface: false,
+                                has_declare: false,
                             };
                             return Some(info);
                         }

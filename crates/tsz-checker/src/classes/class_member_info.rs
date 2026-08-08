@@ -2,10 +2,7 @@
 
 use std::borrow::Cow;
 
-use crate::class_checker::{
-    ClassMemberInfo, MemberVisibility, base_class_name_for_diagnostic,
-    format_property_name_for_diagnostic,
-};
+use crate::class_checker::{base_class_name_for_diagnostic, format_property_name_for_diagnostic};
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 use crate::query_boundaries::class::{
     should_report_member_type_mismatch_bivariant, should_report_own_member_type_mismatch,
@@ -16,6 +13,48 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+
+/// Extracted info about a single class member (property, method, or accessor).
+#[derive(Clone)]
+pub(crate) struct ClassMemberInfo {
+    pub(crate) name: String,
+    pub(crate) type_id: TypeId,
+    pub(crate) name_idx: NodeIndex,
+    pub(crate) visibility: MemberVisibility,
+    pub(crate) is_method: bool,
+    pub(crate) is_static: bool,
+    pub(crate) is_accessor: bool,
+    /// True when this entry comes from a `SET_ACCESSOR` declaration (always
+    /// implies `is_accessor`). Used to recognize the setter half of an accessor
+    /// pair: tsc treats an accessor pair as one property whose type is the
+    /// getter return type, so override-compat (TS2416/TS2417) must run once
+    /// per pair instead of independently on the setter parameter type.
+    pub(crate) is_setter: bool,
+    pub(crate) is_abstract: bool,
+    pub(crate) has_override: bool,
+    /// True when `override` comes from a JSDoc `@override` tag (not the keyword).
+    /// Used to emit TS4118-4123 (JSDoc variants) instead of TS4112-4117.
+    pub(crate) is_jsdoc_override: bool,
+    /// `override`+`declare` together get `tsc`'s TS1040 alone; other override
+    /// checks must not also fire.
+    pub(crate) has_declare: bool,
+    pub(crate) has_dynamic_name: bool,
+    /// True when the member name is a computed property whose expression is NOT
+    /// a direct string/number literal. tsc uses this (`isComputedNonLiteralName`)
+    /// to skip `noImplicitOverride` checks for computed names like `[someVar]`.
+    pub(crate) has_computed_non_literal_name: bool,
+    /// True when the member comes from a merged interface declaration (not a class
+    /// property declaration). Used to skip TS2610/TS2611 accessor/property mismatch
+    /// checks, since interface-sourced members can be freely overridden by accessors.
+    pub(crate) from_interface: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MemberVisibility {
+    Public,
+    Protected,
+    Private,
+}
 
 impl<'a> CheckerState<'a> {
     /// Determine if a class member name is dynamic (e.g. `[foo]` or computed expressions),
@@ -303,6 +342,13 @@ impl<'a> CheckerState<'a> {
                 } else {
                     base_instance_member_names.contains(&info.name)
                 }) || member_exists_via_type);
+
+            // See the matching guard in `check_property_inheritance_compatibility`:
+            // `override`+`declare` on one member is always TS1040 alone in `tsc`,
+            // which never also runs the override-legality checks for it.
+            if info.has_override && info.has_declare {
+                continue;
+            }
 
             if info.has_dynamic_name {
                 if info.has_override {
@@ -679,6 +725,14 @@ impl<'a> CheckerState<'a> {
             if !info.has_override {
                 continue;
             }
+            // See the matching guard in `check_property_inheritance_compatibility`:
+            // `override`+`declare` on one member is always TS1040 alone in `tsc`,
+            // which never also runs the override-legality checks for it — not even
+            // TS4112 ("does not extend another class"), the one this function exists
+            // to report.
+            if info.has_declare {
+                continue;
+            }
             if info.has_dynamic_name {
                 self.error_at_node(
                     info.name_idx,
@@ -825,6 +879,7 @@ impl<'a> CheckerState<'a> {
                     has_dynamic_name: self.is_computed_name_dynamic(prop.name),
                     has_computed_non_literal_name: self.is_computed_non_literal_name(prop.name),
                     from_interface: false,
+                    has_declare: self.has_declare_modifier(&prop.modifiers),
                 })
             }
             k if k == syntax_kind_ext::METHOD_DECLARATION => {
@@ -861,6 +916,7 @@ impl<'a> CheckerState<'a> {
                                     has_dynamic_name: true,
                                     has_computed_non_literal_name: true,
                                     from_interface: false,
+                                    has_declare: self.has_declare_modifier(&method.modifiers),
                                 });
                             }
                             return None;
@@ -899,6 +955,7 @@ impl<'a> CheckerState<'a> {
                     has_dynamic_name: self.is_computed_name_dynamic(method.name),
                     has_computed_non_literal_name: self.is_computed_non_literal_name(method.name),
                     from_interface: false,
+                    has_declare: self.has_declare_modifier(&method.modifiers),
                 })
             }
             k if k == syntax_kind_ext::GET_ACCESSOR => {
@@ -944,6 +1001,7 @@ impl<'a> CheckerState<'a> {
                     has_dynamic_name: self.is_computed_name_dynamic(accessor.name),
                     has_computed_non_literal_name: self.is_computed_non_literal_name(accessor.name),
                     from_interface: false,
+                    has_declare: self.has_declare_modifier(&accessor.modifiers),
                 })
             }
             k if k == syntax_kind_ext::SET_ACCESSOR => {
@@ -996,6 +1054,7 @@ impl<'a> CheckerState<'a> {
                     has_dynamic_name: self.is_computed_name_dynamic(accessor.name),
                     has_computed_non_literal_name: self.is_computed_non_literal_name(accessor.name),
                     from_interface: false,
+                    has_declare: self.has_declare_modifier(&accessor.modifiers),
                 })
             }
             _ => None,

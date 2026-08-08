@@ -73,44 +73,10 @@ pub(crate) const fn base_class_name_for_diagnostic(name: &str) -> Cow<'_, str> {
     Cow::Borrowed(name)
 }
 
-/// Extracted info about a single class member (property, method, or accessor).
-#[derive(Clone)]
-pub(crate) struct ClassMemberInfo {
-    pub(crate) name: String,
-    pub(crate) type_id: TypeId,
-    pub(crate) name_idx: NodeIndex,
-    pub(crate) visibility: MemberVisibility,
-    pub(crate) is_method: bool,
-    pub(crate) is_static: bool,
-    pub(crate) is_accessor: bool,
-    /// True when this entry comes from a `SET_ACCESSOR` declaration (always
-    /// implies `is_accessor`). Used to recognize the setter half of an accessor
-    /// pair: tsc treats an accessor pair as one property whose type is the
-    /// getter return type, so override-compat (TS2416/TS2417) must run once
-    /// per pair instead of independently on the setter parameter type.
-    pub(crate) is_setter: bool,
-    pub(crate) is_abstract: bool,
-    pub(crate) has_override: bool,
-    /// True when `override` comes from a JSDoc `@override` tag (not the keyword).
-    /// Used to emit TS4118-4123 (JSDoc variants) instead of TS4112-4117.
-    pub(crate) is_jsdoc_override: bool,
-    pub(crate) has_dynamic_name: bool,
-    /// True when the member name is a computed property whose expression is NOT
-    /// a direct string/number literal. tsc uses this (`isComputedNonLiteralName`)
-    /// to skip `noImplicitOverride` checks for computed names like `[someVar]`.
-    pub(crate) has_computed_non_literal_name: bool,
-    /// True when the member comes from a merged interface declaration (not a class
-    /// property declaration). Used to skip TS2610/TS2611 accessor/property mismatch
-    /// checks, since interface-sourced members can be freely overridden by accessors.
-    pub(crate) from_interface: bool,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum MemberVisibility {
-    Public,
-    Protected,
-    Private,
-}
+// `ClassMemberInfo` and `MemberVisibility` live in `class_member_info.rs`
+// (re-exported here so existing `crate::class_checker::` paths keep working)
+// to keep this file under the 2000-line split threshold.
+pub(crate) use crate::classes_domain::class_member_info::{ClassMemberInfo, MemberVisibility};
 
 /// Build the elaboration line tsc appends to TS2415 (class incorrectly extends
 /// base class) when the conflict is purely a visibility/branding mismatch on a
@@ -854,6 +820,11 @@ impl<'a> CheckerState<'a> {
                     .lookup(&member_name, is_static, true)
                     .cloned()
             };
+
+            // `override`+`declare` is TS1040 alone in `tsc`; skip the checks below.
+            if has_override && info.has_declare {
+                continue;
+            }
 
             if has_override {
                 // Cannot use `override` when name is computed dynamically.

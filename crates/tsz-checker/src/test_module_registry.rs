@@ -743,6 +743,8 @@ mod overload_union_context_callback_tests;
 mod overloaded_callable_param_no_implicit_any_tests;
 #[path = "tests/overloaded_contextual_rest_tuple_tests.rs"]
 mod overloaded_contextual_rest_tuple_tests;
+#[path = "tests/override_declare_member_ambient_grammar_tests.rs"]
+mod override_declare_member_ambient_grammar_tests;
 #[path = "tests/override_incompatibility_elaboration_tests.rs"]
 mod override_incompatibility_elaboration_tests;
 #[path = "tests/parameter_checker_tests.rs"]
