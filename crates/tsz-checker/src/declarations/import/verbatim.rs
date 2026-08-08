@@ -110,6 +110,33 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Whether an import clause binds at least one runtime name — a default
+    /// import (`import x from ...`), a `* as ns` namespace binding, or a
+    /// non-empty named-imports list (`import { a } from ...`). A specifier-less
+    /// `import {} from "./m";` binds nothing.
+    ///
+    /// tsc raises the ESM-in-CJS diagnostic per binding: `checkImportBinding`
+    /// for the default and `* as ns` forms, and
+    /// `forEach(namedBindings.elements, checkImportBinding)` for named imports.
+    /// The empty named-imports clause reaches none of those, so tsc stays
+    /// silent; this gate mirrors that.
+    fn import_clause_binds_runtime_name(
+        &self,
+        clause: &tsz_parser::parser::node::ImportClauseData,
+    ) -> bool {
+        if clause.name.is_some() {
+            return true;
+        }
+        let Some(bindings_node) = self.ctx.arena.get(clause.named_bindings) else {
+            return false;
+        };
+        let Some(named) = self.ctx.arena.get_named_imports(bindings_node) else {
+            return false;
+        };
+        // `* as ns` populates `name`; `{ a, b }` populates `elements`.
+        named.name.is_some() || !named.elements.nodes.is_empty()
+    }
+
     /// Check named import specifiers under `verbatimModuleSyntax`.
     pub(crate) fn check_verbatim_module_syntax_imports(
         &mut self,
@@ -145,7 +172,17 @@ impl<'a> CheckerState<'a> {
         // detection requires), so there is no adjustable variant to pick.
         // Emit on the import clause and skip ESM-specific checks below. TSC
         // skips this check for .d.ts files.
-        if self.is_current_file_commonjs_for_vms() && !self.ctx.is_declaration_file() {
+        //
+        // Mirror the export side: tsc raises this per import *binding*
+        // (`checkImportBinding` for a default or `* as ns` binding, or
+        // `forEach(namedBindings.elements, checkImportBinding)` for named
+        // imports). A specifier-less `import {} from "./m";` — the empty
+        // named-imports clause — reaches none of those, so tsc stays silent.
+        // Only fire when the clause actually binds something.
+        if self.is_current_file_commonjs_for_vms()
+            && !self.ctx.is_declaration_file()
+            && self.import_clause_binds_runtime_name(clause)
+        {
             // TSC positions the error at the binding NAME:
             // - Default import `import X from ...` → at X
             // - Namespace import `import * as X from ...` → at X

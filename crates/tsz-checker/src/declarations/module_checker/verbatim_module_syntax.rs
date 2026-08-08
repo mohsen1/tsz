@@ -48,9 +48,20 @@ impl<'a> CheckerState<'a> {
         // specifier's SOURCE name (before `as`, matching tsc); this takes
         // priority over the per-specifier type-only checks below exactly like
         // the import side does.
+        //
+        // tsc raises this diagnostic per export *specifier* (in
+        // `checkAliasSymbol`, reached only from `forEach(exportClause.elements,
+        // checkExportSpecifier)`). A bare `export {};` — or a specifier-less
+        // re-export `export {} from "./m";` — has no specifiers, so the walk
+        // never reaches the check and tsc stays silent: the empty export
+        // declaration is the conventional "make this file a module" marker and
+        // carries no ECMAScript binding to forbid. Requiring at least one
+        // specifier here keeps `export { something }` reporting while exempting
+        // the empty clause.
         let vms = self.ctx.compiler_options.verbatim_module_syntax;
         let preserve_isolated = self.preserve_isolated_modules_cjs_check_active();
-        if (vms || preserve_isolated) && self.is_current_file_commonjs_for_vms() {
+        let has_specifiers = !named_exports.elements.nodes.is_empty();
+        if (vms || preserve_isolated) && self.is_current_file_commonjs_for_vms() && has_specifiers {
             let anchor = named_exports
                 .elements
                 .nodes
