@@ -17,6 +17,8 @@
 //! here — several of them use `use super::*` and must stay children of the
 //! crate root for that to resolve.
 
+#[path = "tests/accessor_this_parameter_pairing_tests.rs"]
+mod accessor_this_parameter_pairing_tests;
 #[path = "tests/alias_application_display_retention_tests.rs"]
 mod alias_application_display_retention_tests;
 #[path = "tests/ambient_declare_async_modifier_tests.rs"]

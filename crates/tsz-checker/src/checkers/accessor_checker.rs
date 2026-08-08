@@ -74,6 +74,31 @@ impl<'a> CheckerState<'a> {
         self.contextual_setter_parameter_types_in_members(&members, setter_accessor)
     }
 
+    /// The setter's own *value* parameter — the parameter `tsc`'s
+    /// `getSetAccessorValueParameter` reads for property-type and
+    /// contextual-typing purposes — skipping a leading explicit `this`
+    /// parameter.
+    ///
+    /// A `this` parameter on an accessor is separately illegal (`TS2784`),
+    /// but it is still syntactically present at index 0 and must not be
+    /// mistaken for the value parameter: `set x(this: Foo, n: number)`'s
+    /// value parameter is `n`, not `this: Foo`. Mirrors the same skip
+    /// already applied in `check_setter_parameter_grammar`.
+    pub(crate) fn setter_value_parameter(
+        &self,
+        params: &tsz_parser::parser::NodeList,
+    ) -> Option<(usize, NodeIndex)> {
+        params.nodes.iter().enumerate().find_map(|(i, &param_idx)| {
+            let is_this = self
+                .ctx
+                .arena
+                .get(param_idx)
+                .and_then(|node| self.ctx.arena.get_parameter(node))
+                .is_some_and(|param| self.is_this_parameter_name(param.name));
+            (!is_this).then_some((i, param_idx))
+        })
+    }
+
     /// The contextual types of `setter_accessor`'s parameters, given the
     /// accessor's sibling `members`.
     ///
@@ -87,8 +112,9 @@ impl<'a> CheckerState<'a> {
         members: &[NodeIndex],
         setter_accessor: &tsz_parser::parser::node::AccessorData,
     ) -> Option<Vec<Option<tsz_solver::TypeId>>> {
-        let &first_param_idx = setter_accessor.parameters.nodes.first()?;
-        let param = self.ctx.arena.get_parameter_at(first_param_idx)?;
+        let (value_index, value_param_idx) =
+            self.setter_value_parameter(&setter_accessor.parameters)?;
+        let param = self.ctx.arena.get_parameter_at(value_param_idx)?;
         if param.type_annotation.is_some() && !self.ctx.is_js_file() {
             return None;
         }
@@ -106,7 +132,7 @@ impl<'a> CheckerState<'a> {
         };
 
         let mut contextual_types = vec![None; setter_accessor.parameters.nodes.len()];
-        contextual_types[0] = Some(getter_type);
+        contextual_types[value_index] = Some(getter_type);
         Some(contextual_types)
     }
 
@@ -352,8 +378,8 @@ impl<'a> CheckerState<'a> {
         let setter_member_idx = self.paired_setter_in_members(members, getter_accessor)?;
         let setter_node = self.ctx.arena.get(setter_member_idx)?;
         let setter = self.ctx.arena.get_accessor(setter_node)?;
-        let &first_param_idx = setter.parameters.nodes.first()?;
-        let param = self.ctx.arena.get_parameter_at(first_param_idx)?;
+        let (_, value_param_idx) = self.setter_value_parameter(&setter.parameters)?;
+        let param = self.ctx.arena.get_parameter_at(value_param_idx)?;
         if param.type_annotation.is_none() {
             return None;
         }
@@ -761,11 +787,11 @@ impl<'a> CheckerState<'a> {
                 pairs.entry(name).or_default().0 =
                     Some((accessor.name, accessor.body, accessor.type_annotation));
             } else if node.kind == syntax_kind_ext::SET_ACCESSOR
-                && let Some(&first_param) = accessor.parameters.nodes.first()
-                && let Some(param_node) = self.ctx.arena.get(first_param)
-                && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                && let Some((_, value_param_idx)) =
+                    self.setter_value_parameter(&accessor.parameters)
+                && let Some(param) = self.ctx.arena.get_parameter_at(value_param_idx)
             {
-                pairs.entry(name).or_default().1 = Some((param.type_annotation, first_param));
+                pairs.entry(name).or_default().1 = Some((param.type_annotation, value_param_idx));
             }
         }
 
@@ -864,11 +890,11 @@ impl<'a> CheckerState<'a> {
                 pairs.entry(name).or_default().0 =
                     Some((accessor.name, accessor.body, accessor.type_annotation));
             } else if node.kind == syntax_kind_ext::SET_ACCESSOR
-                && let Some(&first_param) = accessor.parameters.nodes.first()
-                && let Some(param_node) = self.ctx.arena.get(first_param)
-                && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                && let Some((_, value_param_idx)) =
+                    self.setter_value_parameter(&accessor.parameters)
+                && let Some(param) = self.ctx.arena.get_parameter_at(value_param_idx)
             {
-                pairs.entry(name).or_default().1 = Some((param.type_annotation, first_param));
+                pairs.entry(name).or_default().1 = Some((param.type_annotation, value_param_idx));
             }
         }
 
