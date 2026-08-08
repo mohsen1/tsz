@@ -11,6 +11,16 @@ impl<'a> CheckerState<'a> {
         prop_type: TypeId,
         index_value_type: TypeId,
     ) -> bool {
+        // A union constituent that is itself a subtype of a sibling constituent
+        // (a numeric enum member type alongside a plain `number`, for example)
+        // is absorbed into that sibling when tsc constructs the union -- `e |
+        // number` is the type `number`, not a two-member union, so per-member
+        // decomposition below must see it that way too. `evaluate_type_with_env`
+        // is the same widen/reduce step `format_ts2411_type` already applies
+        // before formatting this property's type for the diagnostic message;
+        // reusing it here keeps the checked type and the displayed type in
+        // agreement instead of the message alone looking reduced.
+        let prop_type = self.evaluate_type_with_env(prop_type);
         if let Some(list_id) = crate::query_boundaries::common::union_list_id(
             self.ctx.types,
             self.resolve_lazy_type(prop_type),
