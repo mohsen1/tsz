@@ -1824,6 +1824,14 @@ impl<'a> CheckerState<'a> {
         anchor: NodeIndex,
     ) -> Option<Vec<crate::diagnostics::DiagnosticRelatedInformation>> {
         let disposable_type = self.resolve_disposable_interface_type(false)?;
+        // Widen freshness before running the relation, mirroring the gate in
+        // `type_has_disposable_method`: `tsc` never excess-property-checks a
+        // `using` initializer (#16862), so a fresh object literal that carries a
+        // *signature-incompatible* `[Symbol.dispose]` alongside extra properties
+        // must elaborate the signature failure, not a leaked "Object literal may
+        // only specify known properties" tail. The gate and the tail must see
+        // the same regular type or they disagree on the fresh-plus-extra case.
+        let init_type = crate::query_boundaries::common::widen_freshness(self.ctx.types, init_type);
         let analysis = self.analyze_assignability_failure(init_type, disposable_type);
         let reason = analysis.failure_reason?;
         let rendered = self.render_failure_reason(&reason, init_type, disposable_type, anchor, 0);
@@ -1959,16 +1967,29 @@ impl<'a> CheckerState<'a> {
         // rejected, while the ordinary void-return exception (a `(): number`
         // dispose method) must still be accepted, exactly as the relation
         // already implements for every other assignability check.
+        // Widen freshness first. A disposable only has to *carry* a
+        // `[Symbol.dispose]` method; properties beyond it are fine, and tsc
+        // does not excess-property-check a `using` initializer. Passing the
+        // fresh literal type straight into the relation turns
+        // `using x = { [Symbol.dispose]() {}, extra: 1 }` into a `TS2850`
+        // whose tail reads "Object literal may only specify known properties",
+        // which is the freshness check leaking into a position tsc never runs
+        // it (#16862). The same object bound to a variable first was always
+        // accepted, which is the tell. Widening here mirrors tsc reaching this
+        // relation with `getRegularTypeOfObjectLiteral`, and leaves every
+        // signature-shape rejection above intact.
+        let source = crate::query_boundaries::common::widen_freshness(self.ctx.types, type_id);
+
         let is_disposable = self
             .resolve_disposable_interface_type(false)
-            .is_some_and(|target| self.is_assignable_to(type_id, target));
+            .is_some_and(|target| self.is_assignable_to(source, target));
 
         if is_await_using {
             // await using accepts either Symbol.asyncDispose or Symbol.dispose
             return is_disposable
                 || self
                     .resolve_disposable_interface_type(true)
-                    .is_some_and(|target| self.is_assignable_to(type_id, target));
+                    .is_some_and(|target| self.is_assignable_to(source, target));
         }
 
         is_disposable

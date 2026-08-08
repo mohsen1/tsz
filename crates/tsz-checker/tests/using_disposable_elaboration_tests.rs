@@ -336,3 +336,129 @@ async function f() { await using r = { [Symbol.asyncDispose](): void {} }; }
             .collect::<Vec<_>>()
     );
 }
+
+/// #16862: a `using` initializer is not excess-property checked. A fresh object
+/// literal carrying `[Symbol.dispose]` plus extra properties is a perfectly good
+/// disposable, and `tsc` accepts it — #16858 passed the fresh literal type
+/// straight into the relation, so freshness leaked in and produced a `TS2850`
+/// whose tail read "Object literal may only specify known properties".
+#[test]
+fn using_object_literal_with_extra_properties_is_clean() {
+    let diags = check(
+        r#"
+function f() { using r = { [Symbol.dispose]() {}, extra: 1 }; }
+"#,
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 2850),
+        "extra properties beyond `[Symbol.dispose]` must not raise TS2850, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// The same object bound to a variable first was always accepted, because a
+/// non-fresh source never reaches the excess-property check. Pairing the two
+/// is what identifies the mechanism as freshness rather than a structural
+/// mismatch — without this row, the fixture above only says "no error here".
+#[test]
+fn using_the_same_object_via_a_variable_is_also_clean() {
+    let diags = check(
+        r#"
+const o = { [Symbol.dispose]() {}, extra: 1 };
+function f() { using r = o; }
+"#,
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 2850),
+        "a non-fresh disposable with extra properties must not raise TS2850, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// `await using` rides the same relation against `AsyncDisposable`, so it needs
+/// its own row — the sync arm is checked first and can mask the async one.
+#[test]
+fn await_using_object_literal_with_extra_properties_is_clean() {
+    let diags = check(
+        r#"
+async function f() { await using r = { async [Symbol.asyncDispose]() {}, extra: 1 }; }
+"#,
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 2851),
+        "extra properties beyond `[Symbol.asyncDispose]` must not raise TS2851, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Guard against over-correcting back to presence-only checking: widening
+/// freshness must not weaken the signature-shape rejections #16858 added. A
+/// non-callable `[Symbol.dispose]` is still an error.
+#[test]
+fn using_with_a_non_callable_dispose_still_errors() {
+    let diags = check(
+        r#"
+function f() { using r = { [Symbol.dispose]: 42 }; }
+"#,
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2850),
+        "a non-callable `[Symbol.dispose]` must still raise TS2850, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// The other half of that guard: a `[Symbol.dispose]` with a required parameter
+/// is structurally incompatible with `Disposable` and must stay rejected.
+#[test]
+fn using_with_a_required_parameter_on_dispose_still_errors() {
+    let diags = check(
+        r#"
+function f() { using r = { [Symbol.dispose](x: number) {} }; }
+"#,
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2850),
+        "a `[Symbol.dispose]` with a required parameter must still raise TS2850, got: {:?}",
+        diags.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+
+/// Combined case: a fresh object literal carrying BOTH a signature-incompatible
+/// `[Symbol.dispose]` and an extra property. `tsc` does not excess-property-check
+/// a `using` initializer (#16862), so the tail must elaborate the signature
+/// failure — never a leaked "Object literal may only specify known properties".
+/// This is what pins the gate and the tail to the same freshness-widened source.
+#[test]
+fn using_type_mismatch_with_extra_properties_reports_signature_tail() {
+    let lines = elaboration_with_depths(
+        r#"
+function f() { using r = { [Symbol.dispose](x: number) {}, extra: 1 }; }
+"#,
+        2850,
+    );
+    assert_eq!(
+        lines,
+        vec![
+            (
+                0u8,
+                "The initializer of a 'using' declaration must be either an object with a \
+                 '[Symbol.dispose]()' method, or be 'null' or 'undefined'."
+                    .to_string(),
+            ),
+            (
+                1,
+                "Types of property '[Symbol.dispose]' are incompatible.".to_string(),
+            ),
+            (
+                2,
+                "Type '(x: number) => void' is not assignable to type '() => void'.".to_string(),
+            ),
+            (
+                3,
+                "Target signature provides too few arguments. Expected 1 or more, but got 0."
+                    .to_string(),
+            ),
+        ],
+    );
+}
