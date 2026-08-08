@@ -783,6 +783,13 @@ impl<'a> Printer<'a> {
             self.cjs_destr_hoist_line = self.writer.current_line();
             self.cjs_destructuring_export_temps.clear();
 
+            // Bare `export { x }` re-exports of import-bound locals emit at their
+            // import's `require(...)` site, not the `export { }` statement's own
+            // position (tsc parity). Drained by `emit_import_declaration_commonjs`.
+            self.pending_bare_import_reexports =
+                self.collect_bare_reexported_import_locals(&source.statements);
+            self.commonjs_import_reexports_emitted.clear();
+
             // Emit __esModule if this is an ES module.
             // Also emit it when JSX auto-import synthesizes a require() — tsc
             // considers the synthesized import as ESM syntax that triggers __esModule.

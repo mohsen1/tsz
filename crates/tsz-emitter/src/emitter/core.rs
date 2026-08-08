@@ -777,6 +777,20 @@ pub struct Printer<'a> {
     /// is what distinguishes the two at the re-export site.
     pub(crate) commonjs_default_import_local_names: FxHashSet<String>,
 
+    /// Bare `export { x }` (no `from`) re-export names of an import-bound local,
+    /// keyed by the local name, populated once per file before statements are
+    /// printed. tsc emits these bindings immediately after the import's own
+    /// `require(...)` line rather than at the `export { }` statement's source
+    /// position; `emit_import_declaration_commonjs` drains this map as it emits
+    /// each import's `require(...)`, and `emit_export_declaration_commonjs` skips
+    /// any name already recorded in `commonjs_import_reexports_emitted`.
+    pub(crate) pending_bare_import_reexports: FxHashMap<String, Vec<String>>,
+
+    /// Export names already emitted at their import's `require(...)` site via
+    /// `pending_bare_import_reexports`, so the `export { }` statement's own
+    /// handler does not emit them a second time.
+    pub(crate) commonjs_import_reexports_emitted: FxHashSet<String>,
+
     /// Module expressions for wrapped AMD re-export declarations, keyed by node start.
     /// AMD binds dependencies as factory parameters instead of body-local `require()` calls.
     pub(crate) wrapped_export_module_substitutions: FxHashMap<u32, String>,

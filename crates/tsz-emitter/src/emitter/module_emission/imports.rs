@@ -955,7 +955,8 @@ impl<'a> Printer<'a> {
         // This must come after the namespace-only check to avoid wasting
         // counter values on imports that use their own namespace name.
         let module_var = self.next_commonjs_module_var(&module_spec);
-        self.register_commonjs_named_import_substitutions(node, &module_var);
+        let import_local_names =
+            self.register_commonjs_named_import_substitutions(node, &module_var);
         let has_runtime_named_bindings =
             self.import_clause_has_runtime_named_bindings(node, clause);
         let is_default_only_ast = clause.name.is_some() && !has_runtime_named_bindings;
@@ -1007,6 +1008,7 @@ impl<'a> Printer<'a> {
                 self.write("\");");
             }
             self.write_line();
+            self.emit_pending_import_reexports(&import_local_names);
             return;
         }
 
@@ -1034,17 +1036,62 @@ impl<'a> Printer<'a> {
             self.write("\");");
         }
         self.write_line();
+        self.emit_pending_import_reexports(&import_local_names);
     }
 
-    fn register_commonjs_named_import_substitutions(&mut self, node: &Node, module_var: &str) {
+    /// Emit any bare `export { local }` re-export bindings queued for this
+    /// import's local names (see `pending_bare_import_reexports`), immediately
+    /// after the import's own `require(...)` line — matching tsc's CommonJS
+    /// transform. Each emitted export name is recorded so the `export { }`
+    /// statement's own handler skips re-emitting it.
+    fn emit_pending_import_reexports(&mut self, local_names: &[String]) {
+        for local_name in local_names {
+            let Some(export_names) = self.pending_bare_import_reexports.remove(local_name) else {
+                continue;
+            };
+            let Some(substitution) = self
+                .commonjs_named_import_substitutions
+                .get(local_name)
+                .cloned()
+            else {
+                continue;
+            };
+            let is_default_binding = self
+                .commonjs_default_import_local_names
+                .contains(local_name);
+            for export_name in export_names {
+                if is_default_binding {
+                    self.write_export_property_access(&export_name);
+                    self.write(" = ");
+                    self.write(&substitution);
+                    self.write(";");
+                } else {
+                    self.write("Object.defineProperty(exports, \"");
+                    self.write(&export_name);
+                    self.write("\", { enumerable: true, get: function () { return ");
+                    self.write(&substitution);
+                    self.write("; } });");
+                }
+                self.write_line();
+                self.commonjs_import_reexports_emitted.insert(export_name);
+            }
+        }
+    }
+
+    fn register_commonjs_named_import_substitutions(
+        &mut self,
+        node: &Node,
+        module_var: &str,
+    ) -> Vec<String> {
+        let mut local_names = Vec::new();
         let Some(import) = self.arena.get_import_decl(node) else {
-            return;
+            return local_names;
         };
         let Some(clause_node) = self.arena.get(import.import_clause) else {
-            return;
+            return local_names;
         };
         let Some(clause) = self.arena.get_import_clause(clause_node) else {
-            return;
+            return local_names;
         };
         if clause.name.is_some()
             && let Some(default_name_node) = self.arena.get(clause.name)
@@ -1059,20 +1106,21 @@ impl<'a> Printer<'a> {
             // rather than a named-specifier live-binding getter.
             self.commonjs_default_import_local_names
                 .insert(default_ident.escaped_text.to_string());
+            local_names.push(default_ident.escaped_text.to_string());
         }
         if !clause.named_bindings.is_some() {
-            return;
+            return local_names;
         }
         let Some(bindings_node) = self.arena.get(clause.named_bindings) else {
-            return;
+            return local_names;
         };
         let Some(named_imports) = self.arena.get_named_imports(bindings_node) else {
-            return;
+            return local_names;
         };
 
         // Skip namespace imports (`import * as ns from "x"`).
         if named_imports.name.is_some() && named_imports.elements.nodes.is_empty() {
-            return;
+            return local_names;
         }
 
         let mut value_specs = self.collect_value_specifiers(&named_imports.elements);
@@ -1127,7 +1175,9 @@ impl<'a> Printer<'a> {
                 };
             self.commonjs_named_import_substitutions
                 .insert(local_ident.escaped_text.to_string(), substitution);
+            local_names.push(local_ident.escaped_text.to_string());
         }
+        local_names
     }
 
     fn import_clause_has_runtime_named_bindings(
