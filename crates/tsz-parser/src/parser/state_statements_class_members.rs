@@ -33,6 +33,13 @@ pub(crate) struct ClassMemberModifierSet {
     pub(crate) has_declare: bool,
     pub(crate) has_accessor: bool,
     pub(crate) has_async: bool,
+    /// `declare` appears before `async` in source order (e.g. `declare async
+    /// p`). Distinct from the reverse order (`async declare p`), which is
+    /// already diagnosed eagerly while scanning modifiers regardless of member
+    /// kind — this flag exists because the `declare`-first ambient conflict is
+    /// legal to report only on a property, and the member kind isn't known
+    /// until after modifier scanning finishes. See `construct_class_member`.
+    pub(crate) declare_before_async: bool,
     /// Diagnostic-list length captured just before modifier parsing, used to
     /// selectively roll back modifier-ordering diagnostics when a static block
     /// is discovered after modifiers were already parsed.
@@ -325,7 +332,15 @@ impl ParserState {
                         .create_modifier(SyntaxKind::OverrideKeyword, start_pos)
                 }
                 SyntaxKind::AsyncKeyword => {
-                    // TS1040: 'async' modifier cannot be used in an ambient context
+                    // TS1040: 'async' modifier cannot be used in an ambient context.
+                    // Only the enclosing-ambient-context case (`declare
+                    // class`/`declare namespace`) is decidable here. A
+                    // member-local `declare` seen earlier in this same list
+                    // (`declare async p`) is legal only on a property — whose
+                    // kind isn't known until the member name/parameter list is
+                    // parsed — so that combination is handled later in
+                    // `scan_class_member_modifier_phase` /
+                    // `construct_class_member`, once the member kind is final.
                     if self.in_ambient_context() {
                         use tsz_common::diagnostics::diagnostic_codes;
                         self.parse_error_at_current_token(
@@ -344,6 +359,18 @@ impl ParserState {
                         use tsz_common::diagnostics::diagnostic_codes;
                         self.parse_error_at_current_token(
                             "'override' modifier cannot be used in an ambient context.",
+                            diagnostic_codes::MODIFIER_CANNOT_BE_USED_IN_AN_AMBIENT_CONTEXT,
+                        );
+                    }
+                    // TS1040: 'async' modifier cannot be used in an ambient context.
+                    // When `async` precedes `declare` (`async declare p`), the
+                    // ambient conflict is only known once `declare` is reached, so
+                    // — mirroring the `override` case above — report here rather
+                    // than at `async`'s own position.
+                    if seen_async {
+                        use tsz_common::diagnostics::diagnostic_codes;
+                        self.parse_error_at_current_token(
+                            "'async' modifier cannot be used in an ambient context.",
                             diagnostic_codes::MODIFIER_CANNOT_BE_USED_IN_AN_AMBIENT_CONTEXT,
                         );
                     }
@@ -1061,8 +1088,12 @@ impl ParserState {
         let mut has_declare = false;
         let mut has_accessor = false;
         let mut has_async = false;
+        // Source-order index of the first `declare`/`async` modifier, used
+        // below to detect `declare` appearing before `async`.
+        let mut declare_index: Option<usize> = None;
+        let mut async_index: Option<usize> = None;
         if let Some(ref mods) = combined {
-            for &idx in &mods.nodes {
+            for (i, &idx) in mods.nodes.iter().enumerate() {
                 if let Some(node) = self.arena.get(idx)
                     && let Some(kind) = SyntaxKind::try_from_u16(node.kind)
                 {
@@ -1070,14 +1101,22 @@ impl ParserState {
                         SyntaxKind::VarKeyword | SyntaxKind::LetKeyword => has_var_let = true,
                         SyntaxKind::StaticKeyword => has_static = true,
                         SyntaxKind::ExportKeyword => has_export = true,
-                        SyntaxKind::DeclareKeyword => has_declare = true,
+                        SyntaxKind::DeclareKeyword => {
+                            has_declare = true;
+                            declare_index.get_or_insert(i);
+                        }
                         SyntaxKind::AccessorKeyword => has_accessor = true,
-                        SyntaxKind::AsyncKeyword => has_async = true,
+                        SyntaxKind::AsyncKeyword => {
+                            has_async = true;
+                            async_index.get_or_insert(i);
+                        }
                         _ => {}
                     }
                 }
             }
         }
+        let declare_before_async =
+            matches!((declare_index, async_index), (Some(d), Some(a)) if d < a);
 
         ClassMemberModifierSet {
             modifiers: combined,
@@ -1088,6 +1127,7 @@ impl ParserState {
             has_declare,
             has_accessor,
             has_async,
+            declare_before_async,
             diag_len_before_modifiers,
         }
     }
@@ -2121,6 +2161,21 @@ impl ParserState {
             // Return NONE to indicate this is not a valid member
             NodeIndex::NONE
         } else {
+            // TS1040: 'async' modifier cannot be used in an ambient context.
+            // `declare async p` — the member kind is only known now (a plain
+            // property), which is the one member-local-`declare` host tsc
+            // allows, so this is where the ambient conflict is decidable. The
+            // reverse order (`async declare p`) is already reported eagerly
+            // while scanning modifiers, regardless of member kind, since tsc
+            // resolves that conflict before member kind is even relevant.
+            if mods.declare_before_async {
+                self.emit_modifier_error_on_constructor(
+                    &mods.modifiers,
+                    SyntaxKind::AsyncKeyword,
+                    "'async' modifier cannot be used in an ambient context.",
+                    diagnostic_codes::MODIFIER_CANNOT_BE_USED_IN_AN_AMBIENT_CONTEXT,
+                );
+            }
             self.construct_class_member_property(
                 start_pos,
                 mods,
