@@ -486,8 +486,17 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         }
 
-        let mut concrete_string_or_number = Vec::new();
-        let mut dynamic_string_or_number = Vec::new();
+        // A JS numeric property key is also reachable through the string
+        // index (engines coerce numeric keys to strings), so `tsc` folds
+        // every string- and number-keyed member's value type into one
+        // `[x: string]` union, in source declaration order across both
+        // kinds. A single ordered pass (rather than a concrete/dynamic
+        // split concatenated back together) is required to preserve that
+        // order: splitting into "concrete-kind" and "dynamic-kind" buckets
+        // and appending the dynamic bucket after the concrete one silently
+        // reorders a mixed `'x': 0, 'a'+'b': 1, [1]: 2, [1+2]: 3` into
+        // `0 | 2 | 1 | 3` instead of `0 | 1 | 2 | 3`.
+        let mut string_or_number_values = Vec::new();
         let mut number_values = Vec::new();
         let mut symbol_values = Vec::new();
         let mut dynamic_names = Vec::new();
@@ -495,23 +504,23 @@ impl<'a> DeclarationEmitter<'a> {
         for member in &members {
             match member.kind {
                 ComputedObjectIndexKeyKind::ConcreteString => {
-                    Self::push_unique_type_text(&mut concrete_string_or_number, &member.value_type);
+                    Self::push_unique_type_text(&mut string_or_number_values, &member.value_type);
                 }
                 ComputedObjectIndexKeyKind::ConcreteNumber => {
-                    Self::push_unique_type_text(&mut concrete_string_or_number, &member.value_type);
+                    Self::push_unique_type_text(&mut string_or_number_values, &member.value_type);
                     Self::push_unique_type_text(&mut number_values, &member.value_type);
                 }
                 ComputedObjectIndexKeyKind::ConcreteSymbol => {
                     Self::push_unique_type_text(&mut symbol_values, &member.value_type);
                 }
                 ComputedObjectIndexKeyKind::DynamicString => {
-                    Self::push_unique_type_text(&mut dynamic_string_or_number, &member.value_type);
+                    Self::push_unique_type_text(&mut string_or_number_values, &member.value_type);
                     if let Some(name_text) = member.name_text.as_deref() {
                         dynamic_names.push(name_text.to_string());
                     }
                 }
                 ComputedObjectIndexKeyKind::DynamicNumber => {
-                    Self::push_unique_type_text(&mut dynamic_string_or_number, &member.value_type);
+                    Self::push_unique_type_text(&mut string_or_number_values, &member.value_type);
                     Self::push_unique_type_text(&mut number_values, &member.value_type);
                     if let Some(name_text) = member.name_text.as_deref() {
                         dynamic_names.push(name_text.to_string());
@@ -539,14 +548,11 @@ impl<'a> DeclarationEmitter<'a> {
 
         let mut new_index_lines = Vec::new();
         let indent = "    ".repeat((self.indent_level + 1) as usize);
-        if has_dynamic_string {
-            let mut values = concrete_string_or_number.clone();
-            for value in &dynamic_string_or_number {
-                Self::push_unique_type_text(&mut values, value);
-            }
-            if !values.is_empty() {
-                new_index_lines.push(format!("{indent}[x: string]: {};", values.join(" | ")));
-            }
+        if has_dynamic_string && !string_or_number_values.is_empty() {
+            new_index_lines.push(format!(
+                "{indent}[x: string]: {};",
+                string_or_number_values.join(" | ")
+            ));
         }
         if has_dynamic_number && !number_values.is_empty() {
             new_index_lines.push(format!(
