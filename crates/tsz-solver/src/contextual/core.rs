@@ -4,13 +4,14 @@
 
 use crate::construction::TypeDatabase;
 use crate::contextual::extractors::{
-    ApplicationArgExtractor, ArrayElementExtractor, ParameterExtractor, ParameterForCallExtractor,
-    PropertyExtractor, RestOrOptionalTailPositionExtractor, RestParameterExtractor,
-    RestPositionCheckExtractor, ReturnTypeExtractor, ThisTypeExtractor, ThisTypeMarkerExtractor,
-    TupleElementExtractor, UnionSpreadMode, collect_from_intersection, collect_single_or_union,
+    ApplicationArgExtractor, ArrayElementExtractor, ParameterExtractor, PropertyExtractor,
+    RestOrOptionalTailPositionExtractor, RestParameterExtractor, RestPositionCheckExtractor,
+    ReturnTypeExtractor, ThisTypeExtractor, ThisTypeMarkerExtractor, TupleElementExtractor,
+    UnionSpreadMode, collect_from_intersection, collect_single_or_union,
     collect_single_or_union_no_reduce, collect_single_or_union_preserve,
     extract_param_type_at_for_call,
 };
+use crate::contextual::extractors_for_call::ParameterForCallExtractor;
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{IntrinsicKind, TypeData, TypeId};
@@ -688,7 +689,8 @@ impl<'a> ContextualTypeContext<'a> {
         }
 
         // Use visitor for Function/Callable types
-        let mut extractor = ParameterForCallExtractor::new(self.interner, index, arg_count);
+        let mut extractor =
+            ParameterForCallExtractor::new(self.interner, index, arg_count, self.no_implicit_any);
         extractor.extract(expected)
     }
 

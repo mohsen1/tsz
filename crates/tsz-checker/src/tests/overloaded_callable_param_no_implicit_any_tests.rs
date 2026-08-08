@@ -90,6 +90,39 @@ var f4: {
 }
 
 #[test]
+fn disagreeing_overload_params_stay_untyped_unused_type_param() {
+    // Same fixture's `f2`: an unused `<T>` on each overload still counts as
+    // "generic" by shape, but the arity-filtered `ParameterForCallExtractor`
+    // path must apply the same `noImplicitAny` gate as the plain path —
+    // previously it lacked the gate entirely and unioned `x: string | number`.
+    no_errors(
+        r#"
+var f2: {
+    <T>(x: string): string;
+    <T>(x: number): number;
+} = (x) => x;
+"#,
+    );
+}
+
+#[test]
+fn disagreeing_overload_params_stay_untyped_shared_type_param_position() {
+    // Same fixture's `f3`: both overloads use their own type parameter `T`
+    // at the parameter position. `ParameterForCallExtractor` previously
+    // unioned the two distinct `T` `TypeId`s into an undeduped `T | T` and
+    // checked the arrow's returned `x` against a plain `string` return type,
+    // producing a spurious TS2322.
+    no_errors(
+        r#"
+var f3: {
+    <T>(x: T): string;
+    <T>(x: T): number;
+} = (x) => x;
+"#,
+    );
+}
+
+#[test]
 fn reassigned_overloaded_target_property_access_no_error() {
     // TypeScript/tests/cases/compiler/contextualTypingOfLambdaWithMultipleSignatures2.ts
     // `a` must stay implicit `any`, so `a.asdf` does not report TS2339.
