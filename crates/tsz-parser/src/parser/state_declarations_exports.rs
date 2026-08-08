@@ -579,13 +579,17 @@ impl ParserState {
             NodeIndex::NONE
         };
 
-        // TS1003: without a `from` clause, the *local* name of an export specifier
-        // (the part before `as`) must be an identifier, not a string literal. This is
-        // the export mirror of the import-specifier string-binding check; see
-        // `report_export_specifier_string_local_names` for the full rule.
-        if module_specifier.is_none() {
-            self.report_export_specifier_string_local_names(export_clause);
-        }
+        // TS1003 for a string-literal export local name without a `from` clause
+        // (`export { "q" as y }`) is intentionally NOT reported here. Unlike the
+        // import-specifier binding check above it, tsc routes this one through the
+        // *checker* (`checkExportSpecifier` -> `checkModuleExportName` with
+        // `allowStringLiteral = !!moduleSpecifier`), not the parser, so it is a
+        // semantic diagnostic that the batch compiler suppresses program-wide once
+        // any file has a real syntax error. Emitting it here would misclassify it
+        // as syntactic: it would survive that suppression and, worse, make an
+        // otherwise-clean file with only this construct count as having a "real
+        // syntax error" and silence unrelated semantic diagnostics elsewhere.
+        // The single owner is `CheckerState::check_export_declaration_module_export_names`.
 
         // Parse optional import attributes: with { ... } or assert { ... }
         let attributes = if module_specifier.is_none() {

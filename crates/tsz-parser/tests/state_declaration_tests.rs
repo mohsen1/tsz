@@ -643,14 +643,19 @@ import { from as fromObservable } from "./from";
     );
 }
 
-/// Mirror of `import_specifier_string_literal_binding_names_emit_ts1003` for the
-/// *export* side. Without a `from` clause, the local name of an export specifier
-/// (the part before `as`, i.e. the `property_name`) must be an identifier; a
-/// string literal there is TS1003 "Identifier expected." in `tsc`. The exported
-/// alias (after `as`) and a bare `{ "q" }` name may be string literals, so only
-/// the `property_name` position is flagged.
+/// The *export* side is asymmetric with the import side above. A string-literal
+/// export local name without a `from` clause (`export { "q" as y }`) is TS1003 in
+/// `tsc`, but `tsc` reports it from the **checker**
+/// (`checkExportSpecifier` -> `checkModuleExportName`), not the parser — so the
+/// parser must stay silent here. Emitting it as a parse diagnostic would
+/// misclassify a semantic grammar check as syntactic: it would survive the
+/// program-wide suppression `tsc` applies to semantic diagnostics once any file
+/// has a real syntax error, and would itself make an otherwise-clean file count
+/// as having a "real syntax error". The checker owns this diagnostic in
+/// `check_export_declaration_module_export_names`; its full oracle-pinned matrix
+/// lives in `tsz-checker`'s `string_literal_module_export_name_grammar_tests`.
 #[test]
-fn export_specifier_string_literal_local_names_without_from_emit_ts1003() {
+fn export_specifier_string_literal_local_names_without_from_are_not_a_parse_error() {
     // Names are varied so nothing keys on a specific identifier.
     let source = r#"
 export { "aa" as bb };
@@ -665,23 +670,24 @@ export { "hh" as "ii" };
         .filter(|d| d.code == diagnostic_codes::IDENTIFIER_EXPECTED)
         .count();
     assert_eq!(
-        ts1003_count, 4,
-        "expected TS1003 for every string-literal export local name, got {diagnostics:?}"
+        ts1003_count, 0,
+        "the export-side string-local-name TS1003 is a checker diagnostic, not a parse error, got {diagnostics:?}"
     );
 }
 
-/// The TS1003 anchor must sit on the offending string literal itself, exactly
-/// where `tsc` points it.
+/// The import side keeps its parser-level check: `import { foo as "bar" }` is a
+/// genuine syntactic error in `tsc` (`parseImportOrExportSpecifier`). This pins
+/// that removing the export-side parser emission did not disturb the import side,
+/// which shares `parse_import_or_export_specifier`.
 #[test]
-fn export_specifier_string_local_name_ts1003_anchors_on_the_string() {
-    // `export { "q" as y };` — the `"q"` literal begins at byte offset 9.
-    let (parser, _root) = parse_source(r#"export { "q" as y };"#);
+fn import_specifier_string_local_name_stays_a_parse_error() {
+    let (parser, _root) = parse_source(r#"import { foo as "bar" } from "./m";"#);
     let diagnostics = parser.get_diagnostics();
     assert!(
         diagnostics
             .iter()
-            .any(|d| d.code == diagnostic_codes::IDENTIFIER_EXPECTED && d.start == 9),
-        "expected TS1003 anchored at the string literal (offset 9), got {diagnostics:?}"
+            .any(|d| d.code == diagnostic_codes::IDENTIFIER_EXPECTED),
+        "an import binding written as a string literal is a parse error, got {diagnostics:?}"
     );
 }
 

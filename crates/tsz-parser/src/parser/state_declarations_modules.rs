@@ -1358,51 +1358,10 @@ impl ParserState {
         self.parse_import_or_export_specifier(syntax_kind_ext::IMPORT_SPECIFIER)
     }
 
-    /// TS1003 for export specifiers whose local name is a string literal, the
-    /// export mirror of the string-binding check in
-    /// `parse_import_or_export_specifier`.
-    ///
-    /// In an export declaration with NO module specifier (`from`), the *local*
-    /// name of an export specifier — the part before `as`, stored as
-    /// `property_name` — must be an identifier, not a string literal. Unlike the
-    /// import check (imports always have a `from`, so their binding can never be a
-    /// string), this one is gated on the absence of `from`: with a module
-    /// specifier the string re-exports a string-named module binding
-    /// (`export { "q" as y } from "m"`), which tsc accepts. The exported alias may
-    /// itself be a string (`export { x as "s" }`), and a bare `{ "q" }` with no
-    /// `as` is also allowed — matching tsc's `checkExportSpecifier` /
-    /// `checkModuleExportName`. Callers must invoke this only when there is no
-    /// module specifier; `export_clause` is the `NAMED_EXPORTS` node.
-    pub(crate) fn report_export_specifier_string_local_names(&mut self, export_clause: NodeIndex) {
-        use tsz_common::diagnostics::diagnostic_codes;
-        let specifiers: Vec<NodeIndex> = self
-            .arena
-            .get_named_imports_at(export_clause)
-            .map(|named| named.elements.nodes.clone())
-            .unwrap_or_default();
-        for spec in specifiers {
-            let Some(property_name) = self
-                .arena
-                .get_specifier_at(spec)
-                .map(|data| data.property_name)
-            else {
-                continue;
-            };
-            let Some(name_node) = self.arena.get(property_name) else {
-                continue;
-            };
-            if name_node.is_string_literal() {
-                let name_start = name_node.pos;
-                let name_len = name_node.end.saturating_sub(name_node.pos);
-                self.parse_error_at(
-                    name_start,
-                    name_len,
-                    "Identifier expected.",
-                    diagnostic_codes::IDENTIFIER_EXPECTED,
-                );
-            }
-        }
-    }
+    // Export string-local-name TS1003 was removed from the parser (#16702): it is
+    // a checker diagnostic, owned by
+    // `CheckerState::check_export_declaration_module_export_names`. See the call
+    // site in `parse_export_named` (state_declarations_exports.rs) for the rule.
 
     // Export declarations and control flow statements → state_declarations_exports.rs
 }
