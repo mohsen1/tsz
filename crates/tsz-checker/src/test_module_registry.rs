@@ -939,6 +939,8 @@ mod ts2323_mixed_exportedness_two_table_tests;
 mod ts2323_variable_redeclaration_two_pass_tests;
 #[path = "tests/ts2339_js_this_function_name_display_tests.rs"]
 mod ts2339_js_this_function_name_display_tests;
+#[path = "tests/ts2339_private_access_via_constructor_type_tests.rs"]
+mod ts2339_private_access_via_constructor_type_tests;
 #[path = "tests/ts2341_private_access_via_type_param_constraint_tests.rs"]
 mod ts2341_private_access_via_type_param_constraint_tests;
 #[path = "tests/ts2345_private_brand_argument_elaboration_tests.rs"]
