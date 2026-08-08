@@ -242,16 +242,17 @@ fn return_type_annotation_produces_no_suggestion() {
 }
 
 #[test]
-#[ignore = "known divergence (#16840, pre-existing and older than #16834): a \
-            *declared static* named in a type position still reports TS2662 \
-            where tsc reports the bare TS2304. That name binds to a real \
-            symbol, so it never reaches resolve_truly_unknown_identifier — it \
-            is emitted from the resolved-symbol paths in \
-            types/computation/identifier/resolved.rs and \
-            types/computation/helpers.rs, which need the same value-position \
-            guard applied at their own sites"]
 fn a_static_member_in_a_type_position_produces_no_suggestion() {
     let libs = load_default_lib_files();
+    // The residual #16844 deferred (#16840): a *declared static* named in a
+    // type position binds to a real symbol, so it never reaches
+    // `resolve_truly_unknown_identifier` — the `TS2662` came from the
+    // resolved-symbol arm in `types/computation/identifier/resolved.rs`. That
+    // arm now applies the same `is_in_type_query` value-position guard, so a
+    // `typeof s` in a type annotation reports the bare `TS2304`. (The sibling
+    // static arm in `types/computation/helpers.rs` fires only for an
+    // assignment *target* — the LHS of `=` — which a `typeof` operand can
+    // never be, so it needs no guard.)
     assert_suggestions(
         "class C { static s: number = 1; b: typeof s = 1 as any; }",
         &libs,

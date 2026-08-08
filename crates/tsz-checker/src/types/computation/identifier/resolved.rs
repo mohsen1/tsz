@@ -461,6 +461,20 @@ impl CheckerState<'_> {
                 // emitting TS2662.
                 return Some(self.get_type_of_symbol(outer_sym_id));
             }
+            // The `TS2662` suggestion is value-position only (#16840, the
+            // residual #16844 deferred). A static member is placed in class
+            // scope by tsz's binder but is not in tsc's value scope chain, so a
+            // type-position `typeof StaticName` never reaches
+            // `checkAndReportErrorForMissingPrefix` — tsc reports the bare
+            // `TS2304`. Route it back to the shared not-found boundary instead
+            // of offering the `Class.member` suggestion. `is_in_type_query` is
+            // the same purely-syntactic marker #16844 applied on the
+            // unresolved-name path, so the two resolution passes agree.
+            if self.is_in_type_query(idx) {
+                use crate::query_boundaries::name_resolution::NameLookupKind;
+                self.report_not_found_at_boundary(name, idx, NameLookupKind::Value);
+                return Some(TypeId::ERROR);
+            }
             // Get the class name from the symbol's parent for the error message
             let class_name = if let Some(parent_sym) = self.ctx.binder.get_symbol(
                 self.ctx
