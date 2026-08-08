@@ -118,7 +118,9 @@ impl<'a> CheckerState<'a> {
     ) {
         use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
-        if !self.ctx.compiler_options.verbatim_module_syntax {
+        let vms = self.ctx.compiler_options.verbatim_module_syntax;
+        let preserve_isolated = self.preserve_isolated_modules_cjs_check_active();
+        if !vms && !preserve_isolated {
             return;
         }
 
@@ -132,9 +134,17 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // TS1286/TS1295: In CJS+VMS mode, ESM import syntax is forbidden entirely.
-        // Emit TS1286 (extension-locked) or TS1295 (adjustable) on the import
-        // clause and skip ESM-specific checks. TSC skips this check for .d.ts files.
+        // TS1286/TS1295/TS1293: In a CJS file, ESM import syntax carrying a
+        // binding (default/namespace/named import clause) is forbidden
+        // entirely. `verbatimModuleSyntax` picks TS1286 (extension-locked) or
+        // TS1295 (adjustable via `package.json`); `module: "preserve"` +
+        // `isolatedModules` (without VMS) always reports TS1293 — under
+        // `preserve`, per-file CJS-ness only ever comes from the `.cts`/
+        // `.cjs` extension (never `package.json`, since `preserve` cannot
+        // pair with the `node16`/`nodenext` `moduleResolution` that package.json-based
+        // detection requires), so there is no adjustable variant to pick.
+        // Emit on the import clause and skip ESM-specific checks below. TSC
+        // skips this check for .d.ts files.
         if self.is_current_file_commonjs_for_vms() && !self.ctx.is_declaration_file() {
             // TSC positions the error at the binding NAME:
             // - Default import `import X from ...` → at X
@@ -173,7 +183,12 @@ impl<'a> CheckerState<'a> {
             } else {
                 import.import_clause
             };
-            let (message, code) = if self.current_file_commonjs_is_extension_locked() {
+            let (message, code) = if preserve_isolated {
+                (
+                    diagnostic_messages::ECMASCRIPT_MODULE_SYNTAX_IS_NOT_ALLOWED_IN_A_COMMONJS_MODULE_WHEN_MODULE_IS_SET,
+                    diagnostic_codes::ECMASCRIPT_MODULE_SYNTAX_IS_NOT_ALLOWED_IN_A_COMMONJS_MODULE_WHEN_MODULE_IS_SET,
+                )
+            } else if self.current_file_commonjs_is_extension_locked() {
                 (
                     diagnostic_messages::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT,
                     diagnostic_codes::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT,
@@ -185,6 +200,14 @@ impl<'a> CheckerState<'a> {
                 )
             };
             self.error_at_node(error_node, message, code);
+            return;
+        }
+
+        // `module: "preserve"` + `isolatedModules` (without VMS) has no
+        // ESM-file-mode checks of its own — TS1484/TS1485/TS2748 below are
+        // verbatimModuleSyntax-exclusive (isolatedModules alone only requires
+        // marking *re-exports* type-only, via TS1448, checked elsewhere).
+        if preserve_isolated {
             return;
         }
 
@@ -618,6 +641,16 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::AN_EXPORT_DECLARATION_MUST_REFERENCE_A_VALUE_WHEN_VERBATIMMODULESYNTAX_IS_ENABLE,
             );
         }
+    }
+
+    /// TS1293's gate: `module: "preserve"` with `isolatedModules` enabled and
+    /// `verbatimModuleSyntax` OFF. When VMS is also on, TS1286/TS1295/TS1287
+    /// take priority (oracle-confirmed: `typescript@7.0.2` reports TS1286 for
+    /// a CJS+VMS+preserve file, never TS1293).
+    pub(crate) fn preserve_isolated_modules_cjs_check_active(&self) -> bool {
+        !self.ctx.compiler_options.verbatim_module_syntax
+            && self.ctx.compiler_options.isolated_modules
+            && self.ctx.compiler_options.module == tsz_common::common::ModuleKind::Preserve
     }
 
     /// Determine if the current file is treated as CommonJS for VMS checks.

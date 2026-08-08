@@ -41,6 +41,50 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // TS1286/TS1295/TS1293: `export { ... }` (with or without `from`)
+        // carries a runtime export/re-export clause, forbidden in a CommonJS
+        // file the same way an import clause is — see the sibling check in
+        // `check_verbatim_module_syntax_imports`. Anchor at the first
+        // specifier's SOURCE name (before `as`, matching tsc); this takes
+        // priority over the per-specifier type-only checks below exactly like
+        // the import side does.
+        let vms = self.ctx.compiler_options.verbatim_module_syntax;
+        let preserve_isolated = self.preserve_isolated_modules_cjs_check_active();
+        if (vms || preserve_isolated) && self.is_current_file_commonjs_for_vms() {
+            let anchor = named_exports
+                .elements
+                .nodes
+                .first()
+                .and_then(|&first_idx| self.ctx.arena.get(first_idx))
+                .and_then(|n| self.ctx.arena.get_specifier(n))
+                .map(|spec| {
+                    if spec.property_name.is_some() {
+                        spec.property_name
+                    } else {
+                        spec.name
+                    }
+                })
+                .unwrap_or(named_exports_idx);
+            let (message, code) = if preserve_isolated {
+                (
+                    diagnostic_messages::ECMASCRIPT_MODULE_SYNTAX_IS_NOT_ALLOWED_IN_A_COMMONJS_MODULE_WHEN_MODULE_IS_SET,
+                    diagnostic_codes::ECMASCRIPT_MODULE_SYNTAX_IS_NOT_ALLOWED_IN_A_COMMONJS_MODULE_WHEN_MODULE_IS_SET,
+                )
+            } else if self.current_file_commonjs_is_extension_locked() {
+                (
+                    diagnostic_messages::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT,
+                    diagnostic_codes::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT,
+                )
+            } else {
+                (
+                    diagnostic_messages::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT_2,
+                    diagnostic_codes::ECMASCRIPT_IMPORTS_AND_EXPORTS_CANNOT_BE_WRITTEN_IN_A_COMMONJS_FILE_UNDER_VERBAT_2,
+                )
+            };
+            self.error_at_node(anchor, message, code);
+            return;
+        }
+
         let module_specifier_text = if module_specifier_idx.is_some() {
             self.ctx
                 .arena
