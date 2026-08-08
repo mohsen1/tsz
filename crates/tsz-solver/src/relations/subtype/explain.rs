@@ -176,7 +176,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Resolve `type_id` to its apparent structural form, resolving lazy
     /// aliases and expanding a generic application one level.
-    fn apparent_type_for_keys(&mut self, type_id: TypeId) -> TypeId {
+    pub(super) fn apparent_type_for_keys(&mut self, type_id: TypeId) -> TypeId {
         let mut resolved = self.resolve_lazy_type(type_id);
         if let Some(app_id) = application_id(self.interner, resolved)
             && let Some(expanded) = self.try_expand_application_type(resolved, app_id)
@@ -190,7 +190,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// aliases / expanding generic applications and folding intersection
     /// members. Used to score union-member overlap the way tsc's
     /// `findMostOverlappyType` intersects `keyof source` with `keyof member`.
-    fn object_like_property_names(&mut self, type_id: TypeId) -> Vec<tsz_common::interner::Atom> {
+    pub(super) fn object_like_property_names(
+        &mut self,
+        type_id: TypeId,
+    ) -> Vec<tsz_common::interner::Atom> {
         use crate::type_queries::data::get_intersection_members;
 
         let resolved = self.apparent_type_for_keys(type_id);
@@ -1088,34 +1091,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
 
             // Structural union target: select the best-matching member the way
-            // tsc's `getBestMatchingType` -> `findMostOverlappyType` does — the
-            // member sharing the most property-name keys with the source, ties
-            // broken by the *last* such member (tsc compares overlap with `>=`).
-            // Any case where a discriminant would prefer a different member than
-            // overlap necessarily carries an excess property, which surfaces as
-            // the separate TS2353 elaboration, so overlap selection is faithful
-            // for the missing-property path handled here.
-            let source_names = self.object_like_property_names(resolved_source);
-            let mut best_member: Option<TypeId> = None;
-            let mut best_overlap = 0usize;
-            for &member in members.iter() {
-                if self.check_subtype(resolved_source, member).is_true() {
-                    continue;
-                }
-                let overlap = if source_names.is_empty() {
-                    0
-                } else {
-                    let member_names = self.object_like_property_names(member);
-                    source_names
-                        .iter()
-                        .filter(|name| member_names.contains(name))
-                        .count()
-                };
-                if best_member.is_none() || overlap >= best_overlap {
-                    best_overlap = overlap;
-                    best_member = Some(member);
-                }
-            }
+            // tsc's `getBestMatchingType` does — discriminant first, then
+            // key-overlap, and no member at all when nothing overlaps. See
+            // [`SubtypeChecker::select_union_target_best_member`].
+            let best_member: Option<TypeId> =
+                self.select_union_target_best_member(resolved_source, &members);
 
             // Elaborate against the best member, but only when its failure is a
             // missing required property. Property-type mismatches and excess
