@@ -23,6 +23,8 @@ mod alias_application_display_retention_tests;
 mod ambient_declare_async_modifier_tests;
 #[path = "tests/ambient_declare_async_static_modifier_tests.rs"]
 mod ambient_declare_async_static_modifier_tests;
+#[path = "tests/ambient_declare_override_modifier_tests.rs"]
+mod ambient_declare_override_modifier_tests;
 #[path = "tests/any_parameter_never_opposite_tests.rs"]
 mod any_parameter_never_opposite_tests;
 #[path = "tests/application_arg_concrete_index_access_display_tests.rs"]
@@ -349,6 +351,8 @@ mod generator_declaration_yield_star_inference_tests;
 mod generator_default_type_argument_relation_tests;
 #[path = "tests/generator_inferred_yield_star_array_generic_call_tests.rs"]
 mod generator_inferred_yield_star_array_generic_call_tests;
+#[path = "tests/generator_nested_class_diagnostics_tests.rs"]
+mod generator_nested_class_diagnostics_tests;
 #[path = "tests/generator_yield_identity_tests.rs"]
 mod generator_yield_identity_tests;
 #[path = "tests/generator_yield_invalid_thenable_tests.rs"]

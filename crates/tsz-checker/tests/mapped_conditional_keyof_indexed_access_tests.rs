@@ -116,7 +116,7 @@ const ok: Pick2<'row'> = 'alpha'
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// The failing shape (ignored red signal).
+// The formerly-failing shape (now fixed; #15983 / #15396).
 // ──────────────────────────────────────────────────────────────────────────
 
 /// A generic mapped type whose conditional *check* is
@@ -127,12 +127,14 @@ const ok: Pick2<'row'> = 'alpha'
 /// Oracle (`tsc` 7.0.2, `--strict`): `FieldLookup<Store, 'row', 'kind'>` is
 /// `'alpha' | 'beta'`, so `const ok = 'alpha'` is accepted.
 ///
-/// tsz today collapses the member to `never` (the extends type
-/// `keyof Store['row']` is judged without materialising it), rejecting every
-/// value. Un-ignore when the unmaterialised-`keyof(IndexAccess(Lazy))` branch
-/// relation is fixed (#15396 family; driver row in #15983).
+/// Fixed by the materialize-or-defer gateway in the solver's conditional
+/// evaluator (`keyof_inner_is_unresolvable_lazy` now evaluates an `IndexAccess`
+/// inner): `Store['row']` reduces to the nested-only interface `StoreRow`, which
+/// that pure-solver evaluation context cannot materialise, so `keyof Store['row']`
+/// stays a deferred `KeyOf`. The conditional now defers instead of judging the
+/// branch against the un-materialised operand, so a later pass takes the true
+/// branch (#15983 / #15396).
 #[test]
-#[ignore = "keyof(IndexAccess(Lazy)) conditional check collapses to never inside a mapped body — #15983 / #15396"]
 fn mapped_conditional_keyof_mapped_key_check_resolves() {
     assert_resolves(
         r#"
@@ -152,7 +154,6 @@ const ok: Looked = 'alpha'
 /// concrete-literal `Tb` form. Oracle (`tsc` 7.0.2, `--strict`):
 /// `FieldLookup<Store, keyof Store, 'kind'>` is `'alpha' | 'beta'`.
 #[test]
-#[ignore = "keyof(IndexAccess(Lazy)) conditional check collapses to never inside a mapped body — #15983 / #15396"]
 fn mapped_conditional_keyof_mapped_key_check_keyof_arg_resolves() {
     assert_resolves(
         r#"
@@ -164,5 +165,51 @@ type Looked = FieldLookup<Store, keyof Store, 'kind'>
 const ok: Looked = 'alpha'
 "#,
         "FieldLookup<Store, keyof Store, 'kind'> must resolve to 'alpha' | 'beta', not never",
+    );
+}
+
+/// Binder-name independence (`.claude/CLAUDE.md` §25): the fix must key on the
+/// structural shape, not on the `Store`/`StoreRow`/`FieldLookup` identifiers.
+/// Renaming every binder — and reordering the type parameters — still resolves.
+#[test]
+fn mapped_conditional_keyof_renamed_binders_resolves() {
+    assert_resolves(
+        r#"
+interface Cell { label: string; tag: 'x' | 'y' }
+interface Grid { cell: Cell }
+type Pluck<Key, Tbl extends keyof Db2, Db2> =
+  { [Q in Tbl]: Key extends keyof Db2[Q] ? Db2[Q][Key] : never }[Tbl]
+type Got = Pluck<'tag', 'cell', Grid>
+const ok: Got = 'x'
+const ok2: Got = 'y'
+"#,
+        "renamed FieldLookup with reordered params must still resolve to 'x' | 'y'",
+    );
+}
+
+/// Negative control: a genuinely-absent member must still take the *false*
+/// branch and yield `never`, so the deferral fix does not over-accept. Oracle
+/// (`tsc` 7.0.2, `--strict`): `FieldLookup<Store, 'row', 'nope'>` is `never`, so
+/// `const bad: Looked = 'alpha'` is a `TS2322`.
+#[test]
+fn mapped_conditional_keyof_absent_member_stays_never() {
+    let codes: Vec<u32> = check_source_strict(
+        r#"
+interface StoreRow { title: string; kind: 'alpha' | 'beta' }
+interface Store { row: StoreRow }
+type FieldLookup<Db, Tb extends keyof Db, Name> =
+  { [P in Tb]: Name extends keyof Db[P] ? Db[P][Name] : never }[Tb]
+type Looked = FieldLookup<Store, 'row', 'nope'>
+const bad: Looked = 'alpha'
+"#,
+    )
+    .iter()
+    .map(|d| d.code)
+    .filter(|&c| c == 2322)
+    .collect();
+    assert_eq!(
+        codes,
+        vec![2322],
+        "an absent member must collapse to never and reject the assignment (TS2322)"
     );
 }

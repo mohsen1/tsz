@@ -253,7 +253,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// True when `ty` is — or a union/intersection member of `ty` is — a
-    /// `Lazy(DefId)` the resolver returns `None` for (cannot expand).
+    /// `Lazy(DefId)` the resolver returns `None` for (cannot expand), or a
+    /// meta-operation (`IndexAccess`/`Application`) that *reduces* to such a
+    /// `Lazy`.
+    ///
+    /// The `IndexAccess`/`Application` arm covers `keyof Obj["k"]`: the operand
+    /// `Obj["k"]` is not itself a `Lazy`, but reducing it can yield a member
+    /// interface (`Obj`'s `"k"` property type) that the current resolver cannot
+    /// materialize — a nested-only interface no use site independently requested,
+    /// so it lives only as an unregistered `Lazy(DefId)` in this evaluation
+    /// context. Without evaluating the operand the `keyof` reads as reducible and
+    /// the branch relation commits a schedule-dependent `false`, collapsing a
+    /// mapped member to `never` (#15983 / #15396). Evaluation is memoized (the
+    /// enclosing `resolve_operands` already reduced this operand), and the
+    /// `evaluated != ty` productivity guard plus the depth bound keep a
+    /// non-reducing self-map from recursing.
     fn keyof_inner_is_unresolvable_lazy(&mut self, ty: TypeId, depth: u32) -> bool {
         match unresolvable_keyof_lazy_depth_state(depth) {
             UnresolvableKeyofLazyDepthState::Continue => {}
@@ -269,6 +283,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 members
                     .iter()
                     .any(|&m| self.keyof_inner_is_unresolvable_lazy(m, depth + 1))
+            }
+            Some(TypeData::IndexAccess(_, _) | TypeData::Application(_)) => {
+                let evaluated = self.evaluate(ty);
+                evaluated != ty && self.keyof_inner_is_unresolvable_lazy(evaluated, depth + 1)
             }
             _ => false,
         }

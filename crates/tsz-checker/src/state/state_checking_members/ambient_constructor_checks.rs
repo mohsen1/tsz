@@ -39,7 +39,13 @@ impl<'a> CheckerState<'a> {
         }
 
         // Error 1089: 'override' modifier cannot appear on a constructor declaration.
-        if let Some(override_mod_idx) = self.find_override_modifier(&ctor.modifiers) {
+        // Suppressed when the constructor also carries `declare`: that combination
+        // already produces its own single grammar diagnostic (TS1031 or TS1040 —
+        // see `parse_class_member_modifiers`), and tsc's `checkGrammarModifiers`
+        // walk stops there rather than also reporting TS1089.
+        if let Some(override_mod_idx) = self.find_override_modifier(&ctor.modifiers)
+            && !self.has_declare_modifier(&ctor.modifiers)
+        {
             self.error_at_node_msg(
                 override_mod_idx,
                 diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_CONSTRUCTOR_DECLARATION,

@@ -679,6 +679,12 @@ impl<'a> CheckerState<'a> {
             if !info.has_override {
                 continue;
             }
+            // See the identical guard in `check_property_inheritance_compatibility`:
+            // `override`+`declare` together already produced one grammar
+            // diagnostic (TS1031/TS1040/TS1243), which suppresses TS4112 too.
+            if info.has_declare {
+                continue;
+            }
             if info.has_dynamic_name {
                 self.error_at_node(
                     info.name_idx,
@@ -825,6 +831,7 @@ impl<'a> CheckerState<'a> {
                     has_dynamic_name: self.is_computed_name_dynamic(prop.name),
                     has_computed_non_literal_name: self.is_computed_non_literal_name(prop.name),
                     from_interface: false,
+                    has_declare: self.has_declare_modifier(&prop.modifiers),
                 })
             }
             k if k == syntax_kind_ext::METHOD_DECLARATION => {
@@ -861,6 +868,7 @@ impl<'a> CheckerState<'a> {
                                     has_dynamic_name: true,
                                     has_computed_non_literal_name: true,
                                     from_interface: false,
+                                    has_declare: self.has_declare_modifier(&method.modifiers),
                                 });
                             }
                             return None;
@@ -899,6 +907,7 @@ impl<'a> CheckerState<'a> {
                     has_dynamic_name: self.is_computed_name_dynamic(method.name),
                     has_computed_non_literal_name: self.is_computed_non_literal_name(method.name),
                     from_interface: false,
+                    has_declare: self.has_declare_modifier(&method.modifiers),
                 })
             }
             k if k == syntax_kind_ext::GET_ACCESSOR => {
@@ -944,6 +953,7 @@ impl<'a> CheckerState<'a> {
                     has_dynamic_name: self.is_computed_name_dynamic(accessor.name),
                     has_computed_non_literal_name: self.is_computed_non_literal_name(accessor.name),
                     from_interface: false,
+                    has_declare: self.has_declare_modifier(&accessor.modifiers),
                 })
             }
             k if k == syntax_kind_ext::SET_ACCESSOR => {
@@ -996,6 +1006,7 @@ impl<'a> CheckerState<'a> {
                     has_dynamic_name: self.is_computed_name_dynamic(accessor.name),
                     has_computed_non_literal_name: self.is_computed_non_literal_name(accessor.name),
                     from_interface: false,
+                    has_declare: self.has_declare_modifier(&accessor.modifiers),
                 })
             }
             _ => None,

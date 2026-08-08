@@ -429,7 +429,16 @@ impl<'a> CheckerState<'a> {
         // function boundaries, so a class's statics are suggestable from a nested
         // function too; the `this`-rebind boundary is enforced on the instance
         // arm below.
-        if let Some(class_idx) = self.nearest_enclosing_class(idx)
+        // Only from a *value* position. In a type position — `b: typeof a`,
+        // `m(x: typeof a)`, `m(): typeof a` — tsc reports the bare `TS2304`
+        // even when the name matches a member, because `this.a` is not
+        // writable there. In tsc this falls out of call-site placement:
+        // `checkAndReportErrorForMissingPrefix` is reached from
+        // `checkIdentifier`, while a type-position name resolves through the
+        // type-reference path. Here both paths share this function, so the
+        // position has to be asked for explicitly.
+        if !self.is_in_type_query(idx)
+            && let Some(class_idx) = self.nearest_enclosing_class(idx)
             && let Some((member_nodes, class_name)) = self.class_members_and_name(class_idx)
         {
             // Static (TS2662): a declared static, or a member of `Function`
