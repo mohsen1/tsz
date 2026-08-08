@@ -59,9 +59,11 @@
 //! tail re-parses as top-level statements (TS1434/TS1005/TS1128) rather than a
 //! bare-accessor recovery. That family is now handled and lives, with full
 //! fingerprint parity, in `type_member_hard_modifier_accessor_cascade_tests`
-//! (see `look_ahead_hard_modifier_run_before_accessor`). `in`/`out` remain on
-//! the pre-existing semantic TS1070 path: `in` is a reserved operator whose
-//! statement re-parse differs, and both carry variance-position idiosyncrasies.
+//! (see `look_ahead_hard_modifier_run_before_accessor`). The `out` variance
+//! modifier in the confined `[clean]* out (get|set)` shape shares that cascade
+//! (`type_member_out_variance_accessor_cascade_tests`); `in` alone remains on
+//! the pre-existing semantic TS1070 path — it is a reserved operator whose
+//! statement re-parse differs.
 
 use crate::parser::test_fixture::parse_source;
 use tsz_common::diagnostics::diagnostic_codes;
@@ -607,10 +609,11 @@ fn clean_modifier_run_is_not_keyed_to_a_binder_name() {
 // ---------------------------------------------------------------------------
 // Hard-cascade modifiers (`async`/`declare`/`abstract`/`override`) before an
 // accessor now derail into tsc's abandon-body statement re-parse cascade,
-// covered in full by `type_member_hard_modifier_accessor_cascade_tests`. Only
-// `in`/`out` remain on the pre-existing semantic TS1070 path (see the module
-// doc comment); guarded here so they are not accidentally swept into the hard
-// set.
+// covered in full by `type_member_hard_modifier_accessor_cascade_tests`. The
+// `out` variance modifier shares that cascade in its confined shape
+// (`type_member_out_variance_accessor_cascade_tests`); only `in` remains on the
+// pre-existing semantic TS1070 path (see the module doc comment), guarded here
+// so it is not accidentally swept into the cascade.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -633,14 +636,26 @@ fn hard_cascade_modifiers_before_accessor_now_cascade_not_ts1070() {
 }
 
 #[test]
-fn in_out_before_accessor_on_generic_interface_still_report_ts1070() {
-    // `in` is a reserved operator (different statement re-parse) and both
-    // `in`/`out` carry variance-position idiosyncrasies, so they are excluded
-    // from the hard set and keep the pre-existing semantic TS1070.
-    for modifier in ["in", "out"] {
-        let source = format!("interface I<T> {{ {modifier} get x(): number; }}");
-        assert_eq!(codes(&source), vec![TS1070], "modifier `{modifier}`");
-    }
+fn in_before_accessor_on_generic_interface_still_reports_ts1070() {
+    // `in` is a reserved operator whose statement re-parse differs from the
+    // `out`/hard cascade, so it is excluded and keeps the pre-existing semantic
+    // TS1070. (`out` in the same position now derails into the cascade — see
+    // `in_before_accessor_stays_ts1070` /
+    // `type_member_out_variance_accessor_cascade_tests`.)
+    let source = "interface I<T> { in get x(): number; }";
+    assert_eq!(codes(source), vec![TS1070]);
+}
+
+#[test]
+fn out_before_accessor_on_generic_interface_now_cascades() {
+    // `out` is a contextual keyword, so before an accessor it shares tsc's
+    // hard-modifier abandon-body cascade. Full fingerprint parity lives in
+    // `type_member_out_variance_accessor_cascade_tests`.
+    const TS1434: u32 = diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER;
+    const TS1005: u32 = diagnostic_codes::EXPECTED;
+    const TS1128: u32 = diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED;
+    let source = "interface I<T> { out get x(): number; }";
+    assert_eq!(codes(source), vec![TS1131, TS1434, TS1005, TS1128]);
 }
 
 #[test]

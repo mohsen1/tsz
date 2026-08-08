@@ -197,9 +197,11 @@ impl ParserState {
     /// A "hard" type-member modifier before an accessor: one `tsc` does NOT
     /// recover into a bare accessor. Instead it abandons the type-member body
     /// after one TS1131 per modifier and re-parses the accessor's own tail as
-    /// top-level statements (TS1434/TS1005/TS1128). `in`/`out` are deliberately
-    /// excluded — `in` is a reserved operator whose statement re-parse differs,
-    /// and both carry variance-position idiosyncrasies; they keep the
+    /// top-level statements (TS1434/TS1005/TS1128). The `out` variance modifier
+    /// behaves identically in the confined `[clean]* out (get|set)` shape, but is
+    /// handled by [`Self::look_ahead_clean_prefixed_out_before_accessor`] rather
+    /// than listed here so its stacked-position idiosyncrasies stay excluded.
+    /// `in` is a reserved operator whose statement re-parse differs and keeps the
     /// pre-existing semantic TS1070 path.
     pub(crate) const fn is_hard_accessor_cascade_modifier(kind: SyntaxKind) -> bool {
         matches!(
@@ -291,6 +293,83 @@ impl ParserState {
 
         let ends_in_accessor = count > 0
             && saw_hard
+            && (self.is_token(SyntaxKind::GetKeyword) || self.is_token(SyntaxKind::SetKeyword))
+            && !self.look_ahead_is_property_name_after_keyword();
+
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+
+        if ends_in_accessor { count } else { 0 }
+    }
+
+    /// Look ahead for a run of type-member modifiers of the exact shape
+    /// `[clean-modifier]* out` directly before a `get`/`set` accessor — i.e. the
+    /// `out` variance modifier is the accessor's immediate predecessor, preceded
+    /// only by "clean" modifiers (`static`/`readonly`/`public`/…). Returns the
+    /// run length (clean modifiers plus the trailing `out`), or 0.
+    ///
+    /// `tsc` treats `out` in this position exactly like a "hard" modifier: it
+    /// parses `out` as a (variance) modifier, reports one TS1131 per modifier in
+    /// the run, then abandons the type-member body and re-parses the accessor's
+    /// own tail as top-level statements (TS1434/TS1005/TS1128). `out` is a
+    /// contextual keyword, so its statement re-parse is byte-identical to the
+    /// hard-modifier cascade; this method therefore feeds
+    /// [`Self::report_hard_modifier_run_before_accessor`] unchanged.
+    ///
+    /// The shape is deliberately confined to `out` as the *last* modifier before
+    /// the accessor, preceded only by clean modifiers. The excluded shapes have
+    /// idiosyncratic `tsc` recoveries that this uniform cascade cannot reproduce
+    /// and that are left on their pre-existing paths:
+    /// - a modifier *after* `out` (`out readonly get`, `out async get`): `tsc`
+    ///   stops parsing modifiers at `out`, so the trailing modifier falls into
+    ///   the statement re-parse (TS1128/TS1434), not a second TS1131;
+    /// - `out` *after* a hard modifier (`async out get`): `tsc` stops at the
+    ///   hard modifier, so `out` itself falls into the statement re-parse;
+    /// - the `in` variance modifier in any position: `in` is a reserved binary
+    ///   operator, so its statement re-parse differs (it folds the following
+    ///   `get` into an `in`-expression and yields "Expression expected", not the
+    ///   "Unexpected keyword or identifier" the hard cascade produces).
+    pub(crate) fn look_ahead_clean_prefixed_out_before_accessor(&mut self) -> usize {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+
+        let mut count = 0usize;
+        let mut saw_out = false;
+        loop {
+            let kind = self.token();
+            // `out` is the trigger and must be the final modifier in the run:
+            // once consumed, only the accessor keyword may follow.
+            if !saw_out
+                && kind == SyntaxKind::OutKeyword
+                && !self.look_ahead_is_property_name_after_keyword()
+            {
+                saw_out = true;
+                self.next_token();
+                count += 1;
+                if self.scanner.has_preceding_line_break() {
+                    count = 0;
+                }
+                break;
+            }
+            // Only clean modifiers may precede `out`. A hard modifier, `in`, a
+            // second `out`, or a non-modifier token disqualifies the run.
+            if !saw_out
+                && Self::is_clean_type_member_modifier(kind)
+                && !self.look_ahead_is_property_name_after_keyword()
+            {
+                self.next_token();
+                count += 1;
+                if self.scanner.has_preceding_line_break() {
+                    count = 0;
+                    break;
+                }
+                continue;
+            }
+            break;
+        }
+
+        let ends_in_accessor = count > 0
+            && saw_out
             && (self.is_token(SyntaxKind::GetKeyword) || self.is_token(SyntaxKind::SetKeyword))
             && !self.look_ahead_is_property_name_after_keyword();
 

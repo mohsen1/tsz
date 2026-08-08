@@ -1402,6 +1402,16 @@ impl ParserState {
                 break;
             }
 
+            // The `out` variance modifier in the confined `[clean]* out
+            // (get|set)` shape shares the hard-modifier abandon-body cascade —
+            // see `parse_type_members`'s identical check and
+            // `look_ahead_clean_prefixed_out_before_accessor`.
+            let out_run_len = self.look_ahead_clean_prefixed_out_before_accessor();
+            if out_run_len > 0 {
+                self.report_hard_modifier_run_before_accessor(out_run_len);
+                break;
+            }
+
             let modifier_run_len = self.look_ahead_modifier_run_before_accessor();
             if modifier_run_len > 0 {
                 for _ in 0..modifier_run_len {
