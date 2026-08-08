@@ -153,3 +153,89 @@ fn an_inner_signatures_binding_does_not_leak_outward() {
         "an inner signature's binding is not in the outer signature's scope; got {codes:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// The "renamed-from" property may be spelled with any property-name kind.
+//
+// `tsc` reports TS2842 for a destructuring rename regardless of how the
+// property is written — identifier (`a`), string literal (`"a"`), numeric
+// literal (`2`), or computed (`["a"]`, `[2]`) — rendering the property name
+// verbatim (quotes and brackets preserved). Oracled against
+// `renamingDestructuredPropertyInFunctionType` at tsc 7.0.2.
+// ---------------------------------------------------------------------------
+
+fn ts2842_messages(source: &str) -> Vec<String> {
+    tsz_checker::test_utils::check_source_non_strict(source)
+        .into_iter()
+        .filter(|d| d.code == TS2842_UNUSED_RENAMING)
+        .map(|d| d.message_text)
+        .collect()
+}
+
+#[test]
+fn rename_from_string_literal_property_reports_ts2842() {
+    let msgs = ts2842_messages("type F = ({ \"a\": renamed }) => void;");
+    assert_eq!(msgs.len(), 1, "a string-literal property rename is flagged");
+    assert!(
+        msgs[0].contains("unused renaming of '\"a\"'"),
+        "the property name renders with its quotes; got {msgs:?}"
+    );
+}
+
+#[test]
+fn rename_from_numeric_property_reports_ts2842() {
+    let msgs = ts2842_messages("type F = ({ 2: renamed }) => void;");
+    assert_eq!(msgs.len(), 1, "a numeric property rename is flagged");
+    assert!(
+        msgs[0].contains("unused renaming of '2'"),
+        "the numeric property renders verbatim; got {msgs:?}"
+    );
+}
+
+#[test]
+fn rename_from_computed_property_reports_ts2842() {
+    let msgs = ts2842_messages("type F = ({ [\"a\"]: renamed }) => void;");
+    assert_eq!(msgs.len(), 1, "a computed property rename is flagged");
+    assert!(
+        msgs[0].contains("unused renaming of '[\"a\"]'"),
+        "the computed name renders with its brackets; got {msgs:?}"
+    );
+}
+
+#[test]
+fn rename_from_string_literal_property_in_value_signature_reports_ts2842() {
+    // The value-position path (bodyless function declaration) flags the same
+    // non-identifier property-name kinds as the type-position path.
+    let codes = check_source_non_strict_codes(
+        "type O = { a?: string; b: number };\ndeclare function f({ \"a\": renamed }: O): void;",
+    );
+    assert!(
+        codes.contains(&TS2842_UNUSED_RENAMING),
+        "a string-literal rename in a bodyless declaration is flagged; got {codes:?}"
+    );
+}
+
+#[test]
+fn non_identifier_rename_referenced_by_type_query_reports_nothing() {
+    // The "unused" gate still applies: a `typeof` reference to the renamed
+    // binding silences TS2842 even when the property is a string literal.
+    let codes = check_source_non_strict_codes("type F = ({ \"a\": renamed }) => typeof renamed;");
+    assert!(
+        codes.is_empty(),
+        "`typeof renamed` uses the renaming, so no TS2842; got {codes:?}"
+    );
+}
+
+#[test]
+fn string_literal_rename_is_binder_name_invariant() {
+    // The diagnostic depends on the structural rename, not on the chosen local
+    // name — a different binder name produces the same single TS2842.
+    for local in ["renamed", "zzz", "alias"] {
+        let msgs = ts2842_messages(&format!("type F = ({{ \"a\": {local} }}) => void;"));
+        assert_eq!(
+            msgs.len(),
+            1,
+            "renaming `\"a\"` to `{local}` is flagged once; got {msgs:?}"
+        );
+    }
+}
