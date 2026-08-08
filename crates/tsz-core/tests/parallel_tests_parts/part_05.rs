@@ -1181,6 +1181,31 @@ fn test_parse_file_single_json_slashes_inside_string_are_not_a_comment() {
     );
 }
 
+/// An escaped quote inside a string value must not close the string early, so
+/// a trailing `//` stays string content rather than starting a comment that
+/// would swallow the closing brace. Guards the shared `skip_quoted_literal`
+/// path used for value strings: the escape is honored and the following
+/// property (`"b": undefined`) is still classified, reporting its own TS1328.
+#[test]
+fn test_parse_file_single_json_escaped_quote_in_string_keeps_slashes_as_content() {
+    let result = parse_file_single(
+        "settings.json".to_string(),
+        r#"{ "a": "x\"// still text", "b": undefined }"#.to_string(),
+    );
+
+    let got: Vec<(u32, u32)> = result
+        .parse_diagnostics
+        .iter()
+        .map(|d| (d.code, d.start))
+        .collect();
+    assert_eq!(
+        got,
+        vec![(1328, 32)],
+        "escaped quote must not end the string early; trailing invalid value still reports, got: {:?}",
+        result.parse_diagnostics
+    );
+}
+
 /// A commented-out property line — the practical case in a hand-maintained
 /// `tsconfig.json` — is trivia and leaves the real properties untouched.
 #[test]

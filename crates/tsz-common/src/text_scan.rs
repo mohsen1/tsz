@@ -171,6 +171,72 @@ pub fn skip_ascii_whitespace(bytes: &[u8], from: usize) -> usize {
     pos
 }
 
+/// If a `//` line comment or a `/* */` block comment opens at `from`, return
+/// the index just past it; otherwise return `None`.
+///
+/// Policy (one source of truth for every byte-level comment skip):
+/// - A line comment (`//`) runs to — but not past — the next line terminator,
+///   so the returned index points *at* the `\n`/`\r` (the caller then consumes
+///   it as whitespace). At end of input the returned index is `bytes.len()`.
+/// - A block comment (`/* */`) runs through its closing `*/`; the returned
+///   index points just past the `/`. An unterminated block comment runs to end
+///   of input (`bytes.len()`), matching a scanner that consumes the rest of the
+///   file as comment trivia.
+/// - A lone `/` that is not followed by `/` or `*` is not a comment: `None`.
+///
+/// This is a *leading-trivia* primitive: it never inspects string-literal
+/// contents, so callers must not invoke it while positioned inside a string
+/// (a `//` inside `"http://..."` is only a comment if the scanner is not first
+/// skipping the enclosing string via [`skip_quoted_literal`]).
+#[inline]
+#[must_use]
+pub fn skip_comment(bytes: &[u8], from: usize) -> Option<usize> {
+    if bytes.get(from) != Some(&b'/') {
+        return None;
+    }
+    match bytes.get(from + 1) {
+        Some(b'/') => {
+            let mut pos = from + 2;
+            while pos < bytes.len() && bytes[pos] != b'\n' && bytes[pos] != b'\r' {
+                pos += 1;
+            }
+            Some(pos)
+        }
+        Some(b'*') => {
+            let mut pos = from + 2;
+            while pos < bytes.len() {
+                if bytes[pos] == b'*' && bytes.get(pos + 1) == Some(&b'/') {
+                    return Some(pos + 2);
+                }
+                pos += 1;
+            }
+            Some(bytes.len())
+        }
+        _ => None,
+    }
+}
+
+/// Skip any run of ASCII whitespace and `//` / `/* */` comment trivia starting
+/// at `from`, returning the index of the first byte that is neither. Whitespace
+/// is [`skip_ascii_whitespace`]'s set; comments are [`skip_comment`]'s two
+/// forms. Interleaved whitespace and comments in any order are all consumed.
+///
+/// Like the primitives it composes, this never recognizes a comment inside a
+/// string literal — it is a leading-trivia skip, so callers must not invoke it
+/// while positioned inside a string.
+#[inline]
+#[must_use]
+pub fn skip_trivia(bytes: &[u8], from: usize) -> usize {
+    let mut pos = from;
+    loop {
+        let after_ws = skip_ascii_whitespace(bytes, pos);
+        match skip_comment(bytes, after_ws) {
+            Some(next) => pos = next,
+            None => return after_ws,
+        }
+    }
+}
+
 /// Return the byte offset of the first occurrence of `needle` in `haystack`
 /// that appears as a standalone (whole-word) ASCII identifier token — i.e. not
 /// flanked by identifier-continue bytes on either side.
@@ -212,7 +278,8 @@ mod tests {
     use super::{
         contains_standalone_token, find_standalone_token, is_ascii_identifier_continue,
         is_ascii_identifier_continue_char, is_ascii_identifier_start,
-        is_ascii_identifier_start_char, leading_window, skip_ascii_whitespace, skip_quoted_literal,
+        is_ascii_identifier_start_char, leading_window, skip_ascii_whitespace, skip_comment,
+        skip_quoted_literal, skip_trivia,
     };
 
     #[test]
@@ -312,6 +379,67 @@ mod tests {
         assert!(contains_standalone_token("react", "react"));
         // Empty needle never matches.
         assert!(!contains_standalone_token("anything", ""));
+    }
+
+    #[test]
+    fn skip_comment_line_stops_at_line_terminator() {
+        let s = b"// comment\nrest";
+        // Returns the index *at* the newline (10), not past it.
+        assert_eq!(skip_comment(s, 0), Some(10));
+        assert_eq!(s[10], b'\n');
+    }
+
+    #[test]
+    fn skip_comment_line_runs_to_eof_when_unterminated() {
+        let s = b"// trailing to end";
+        assert_eq!(skip_comment(s, 0), Some(s.len()));
+    }
+
+    #[test]
+    fn skip_comment_block_returns_past_close() {
+        let s = b"/* c */rest";
+        // Closing `*/` ends at index 7; returns 7 (the `r`).
+        assert_eq!(skip_comment(s, 0), Some(7));
+        assert_eq!(&s[7..], b"rest");
+    }
+
+    #[test]
+    fn skip_comment_block_unterminated_runs_to_eof() {
+        let s = b"/* never closed";
+        assert_eq!(skip_comment(s, 0), Some(s.len()));
+    }
+
+    #[test]
+    fn skip_comment_rejects_non_comment() {
+        // Lone slash (division/regex), not a comment.
+        assert_eq!(skip_comment(b"/ x", 0), None);
+        // A trailing slash at EOF has no second byte.
+        assert_eq!(skip_comment(b"/", 0), None);
+        // Not positioned on a slash at all.
+        assert_eq!(skip_comment(b"abc", 0), None);
+    }
+
+    #[test]
+    fn skip_trivia_consumes_interleaved_whitespace_and_comments() {
+        // Whitespace, a line comment, more whitespace, a block comment, then
+        // the first real token `x` at the end.
+        let s = b"  // a\n\t/* b */ x";
+        let pos = skip_trivia(s, 0);
+        assert_eq!(s[pos], b'x');
+        assert_eq!(pos, s.len() - 1);
+    }
+
+    #[test]
+    fn skip_trivia_is_a_noop_on_a_real_token() {
+        // A lone `/` is not trivia, so the cursor does not advance.
+        assert_eq!(skip_trivia(b"/ rest", 0), 0);
+        assert_eq!(skip_trivia(b"xyz", 0), 0);
+    }
+
+    #[test]
+    fn skip_trivia_runs_to_end_on_all_trivia() {
+        let s = b"  /* only */ // comment\n  ";
+        assert_eq!(skip_trivia(s, 0), s.len());
     }
 
     #[test]
