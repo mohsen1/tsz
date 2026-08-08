@@ -2340,10 +2340,10 @@ impl ParserState {
             return None;
         }
 
-        let mut missing = None;
-        let mut paren_depth = 0i32;
+        // Under `v`, a nested `[` in a class opens ANOTHER class needing its own `]`.
+        let unicode_sets_mode = bytes[body_end + 1..].contains(&b'v');
+        let (mut paren_depth, mut class_depth) = (0i32, 0i32);
         in_escape = false;
-        in_character_class = false;
         for &ch in &bytes[1..body_end] {
             if in_escape {
                 in_escape = false;
@@ -2353,28 +2353,28 @@ impl ParserState {
                 in_escape = true;
                 continue;
             }
-            if in_character_class {
+            if class_depth > 0 {
                 if ch == b']' {
-                    in_character_class = false;
+                    class_depth -= 1;
+                } else if unicode_sets_mode && ch == b'[' {
+                    class_depth += 1;
                 }
                 continue;
             }
             match ch {
-                b'[' => in_character_class = true,
+                b'[' => class_depth = 1,
                 b'(' => paren_depth += 1,
                 b')' if paren_depth > 0 => paren_depth -= 1,
                 _ => {}
             }
         }
-
-        if in_character_class {
-            missing = Some(b']');
+        if class_depth > 0 {
+            Some(b']')
+        } else if paren_depth > 0 {
+            Some(b')')
+        } else {
+            None
         }
-        if missing.is_none() && paren_depth > 0 {
-            missing = Some(b')');
-        }
-
-        missing
     }
 }
 
