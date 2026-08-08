@@ -1490,8 +1490,34 @@ impl<'a> CheckerState<'a> {
             let rest_elems: Vec<_> = elems[from_index..].to_vec();
             let rest_tuple = self.ctx.types.tuple(rest_elems);
             Some(rest_tuple)
-        } else {
+        } else if crate::query_boundaries::common::is_array_type(self.ctx.types, source_type) {
+            // An `Array<T>`/`T[]` source already *is* the rest's array type, so
+            // reuse it directly (avoids re-minting a structurally identical type).
             Some(source_type)
+        } else {
+            // A non-tuple, non-array *iterable* source — e.g. a custom object
+            // with `[Symbol.iterator]()` — binds the rest element to an array of
+            // its iterated element type, matching tsc's
+            // `checkArrayLiteralDestructuringElementAssignment` (and the
+            // binding-pattern rest walk in `state/variable_checking/binding_rest.rs`).
+            // Previously the whole iterable was returned as the rest type, so
+            // `[a, ...b] = iterable` judged the iterable itself against `b`'s
+            // declared array type and produced a spurious TS2740.
+            //
+            // A non-iterable source yields `any`/`error` here; keep the prior
+            // whole-source fallback for it (its "not iterable" error, if any, is
+            // owned elsewhere).
+            let iterated = self.for_of_element_type(source_type, false);
+            if iterated == TypeId::ANY || iterated == TypeId::ERROR {
+                Some(source_type)
+            } else {
+                Some(
+                    crate::query_boundaries::binding_patterns::binding_rest_array_type(
+                        self.ctx.types,
+                        iterated,
+                    ),
+                )
+            }
         }
     }
 }
