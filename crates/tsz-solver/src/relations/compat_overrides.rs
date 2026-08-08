@@ -762,6 +762,25 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return res;
         }
 
+        // 4b. Private/protected brand identity check.
+        //
+        // `are_types_identical_for_redeclaration` delegates to `self.subtype.is_subtype_of`
+        // below, which is the raw structural (Judge) relation and knows nothing about
+        // TypeScript's nominal private/protected member rule — that rule lives in
+        // `private_brand_assignability_override` (the Lawyer/`CompatChecker` layer) and is
+        // otherwise only reached via `is_assignable_with_overrides`. Two classes with a
+        // private member of the same name are structurally identical (bidirectional
+        // subtypes) yet tsc's `isTypeIdenticalTo` still rejects them as different
+        // declaration surfaces, exactly like `isTypeAssignableTo` does. Without this check,
+        // `declare module 'a' { class Foo { private n; } }` and an unrelated `declare
+        // module 'b' { class Foo { private n; } }` are wrongly treated as the same type,
+        // silently dropping TS2403 for `var x: a.Foo; var x: b.Foo;`.
+        if self.private_brand_assignability_override(a, b) == Some(false)
+            || self.private_brand_assignability_override(b, a) == Some(false)
+        {
+            return false;
+        }
+
         if let Some(result) = self.array_redeclaration_identity(a, b) {
             return result;
         }
