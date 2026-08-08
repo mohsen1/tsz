@@ -62,6 +62,21 @@ impl CheckerState<'_> {
         let saved_cf_context = self.ctx.enter_function_like_control_flow();
         let saved_yield_collection = std::mem::take(&mut self.ctx.generator_yield_operand_types);
         let saved_had_ts7057 = std::mem::replace(&mut self.ctx.generator_had_ts7057, false);
+        // `checked_classes` is not part of `snapshot_return_type`. This
+        // suppressed pass walks the whole body, so any nested class it reaches
+        // gets marked there as fully checked — but with its diagnostics rolled
+        // back below. Left in place, that mark makes the later real declaration
+        // check treat the class as "already checked" and skip it, silently
+        // dropping every diagnostic its members owe (TS2322 on a member body,
+        // TS1308/TS1166 on a computed name, TS2507 on the heritage, ...).
+        // Snapshot it and restore past the rollback so classes checked
+        // speculatively are re-checked for real. A generator never draws its
+        // yield type from a nested class body (classes own their own yields),
+        // so un-memoizing them costs the signature pass nothing. `checking_classes`
+        // needs no snapshot: it is a recursion guard that `check_class_declaration`
+        // balances (every insert has a matching remove on completion), so a pass
+        // that runs to completion leaves it exactly as it found it.
+        let saved_checked_classes = self.ctx.checked_classes.clone();
 
         let body_request = self.function_body_statement_request(false, contextual_type);
         self.check_function_body_statement_with_own_literal_context(body, &body_request);
@@ -88,6 +103,7 @@ impl CheckerState<'_> {
         self.ctx.generator_had_ts7057 = saved_had_ts7057;
         self.ctx.exit_function_like_control_flow(saved_cf_context);
         yield_snapshot.rollback(&mut self.ctx.speculation_state());
+        self.ctx.checked_classes = saved_checked_classes;
         InferredGeneratorYield {
             yield_type: final_yield,
             delegated_next_type,
