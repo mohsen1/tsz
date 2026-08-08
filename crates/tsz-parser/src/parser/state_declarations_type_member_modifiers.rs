@@ -121,6 +121,23 @@ impl ParserState {
                 );
             }
             self.next_token();
+
+            // `tsc` reports a single diagnostic for the member's whole
+            // leading-modifier run and returns immediately, so any illegal
+            // modifier trailing `async` (`async static m()`, `async static
+            // public m()`, ...) must still be consumed silently so the
+            // member parses cleanly — mirroring
+            // `parse_type_member_visibility_modifier_error`'s and
+            // `parse_type_member_property_or_method`'s equivalent "consume
+            // the whole run" steps. `readonly` is deliberately excluded (as
+            // elsewhere): it is legal on a property/index signature and is
+            // left for `parse_type_member_property_or_method` to handle.
+            while Self::is_illegal_type_member_modifier(self.token())
+                && !self.look_ahead_is_property_name_after_keyword()
+            {
+                self.next_token();
+            }
+
             true
         } else {
             false

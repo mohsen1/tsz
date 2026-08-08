@@ -1001,3 +1001,111 @@ fn readonly_second_modifier_used_as_method_name_reports_ts1024() {
         vec![TS1024]
     );
 }
+
+// ---------------------------------------------------------------------------
+// `async` before a second illegal modifier (`static`/`public`/`private`/
+// `protected`/`accessor`/`override`/`abstract`/`declare`/`export`/`in`/`out`):
+// unlike `readonly`, `async` is illegal on a type member regardless of the
+// member's own kind (property or method), so `checkGrammarModifiers` reports
+// TS1070 at `async` itself in every case, oracle-verified (`typescript@7.0.2`)
+// across the full set. Previously the second modifier mis-parsed as the
+// property/method name instead of being consumed (bogus TS1005), since
+// `parse_async_type_member_restriction` only consumed the single leading
+// `async` token — the same class of bug #16827 fixed for `readonly`-first.
+// ---------------------------------------------------------------------------
+
+const ASYNC_SECOND_MODIFIERS: [&str; 11] = [
+    "static",
+    "public",
+    "private",
+    "protected",
+    "accessor",
+    "override",
+    "abstract",
+    "declare",
+    "export",
+    "in",
+    "out",
+];
+
+#[test]
+fn async_before_second_modifier_method_reports_ts1070_at_async() {
+    for modifier in ASYNC_SECOND_MODIFIERS {
+        let source = format!("interface F {{ async {modifier} m(): void; }}");
+        assert_eq!(
+            fingerprints(&source),
+            vec![(
+                TS1070,
+                1,
+                15,
+                "'async' modifier cannot appear on a type member.".to_string()
+            )],
+            "source: {source}",
+        );
+    }
+}
+
+#[test]
+fn async_before_second_modifier_property_reports_ts1070_at_async() {
+    for modifier in ASYNC_SECOND_MODIFIERS {
+        let source = format!("interface I {{ async {modifier} p: number; }}");
+        assert_eq!(
+            fingerprints(&source),
+            vec![(
+                TS1070,
+                1,
+                15,
+                "'async' modifier cannot appear on a type member.".to_string()
+            )],
+            "source: {source}",
+        );
+    }
+}
+
+#[test]
+fn async_before_second_modifier_keeps_following_member() {
+    // Exactly one diagnostic; the following `y` member is not lost.
+    assert_eq!(
+        codes("interface I { async static p: number; y: string; }"),
+        vec![TS1070],
+    );
+}
+
+#[test]
+fn async_three_modifier_chain_reports_ts1070_once_at_async() {
+    assert_eq!(
+        fingerprints("interface I { async static public m(): void; }"),
+        vec![(
+            TS1070,
+            1,
+            15,
+            "'async' modifier cannot appear on a type member.".to_string()
+        )],
+    );
+}
+
+#[test]
+fn async_second_modifier_reordered_still_names_async() {
+    // `async` is always the offender regardless of what follows it in
+    // source order — unlike the `readonly`-first family, there is no
+    // "legal on a property" carve-out for `async`.
+    assert_eq!(
+        codes("interface I { async public static p: number; }"),
+        vec![TS1070],
+    );
+}
+
+#[test]
+fn async_second_modifier_used_as_property_name_still_reports_ts1070_at_async() {
+    // `static` immediately followed by `:` is the property's own name, not a
+    // modifier — but `async` itself is still illegal here and still reports.
+    assert_eq!(
+        fingerprints("interface I { async static: number; }"),
+        vec![(
+            TS1070,
+            1,
+            15,
+            "'async' modifier cannot appear on a type member.".to_string()
+        )],
+    );
+}
