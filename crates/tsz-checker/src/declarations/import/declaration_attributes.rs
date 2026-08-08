@@ -57,6 +57,49 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Whether an import/export declaration's attributes clause uses the removed
+    /// `assert` keyword rather than `with`.
+    ///
+    /// In TypeScript 7 the `assert` import-attribute keyword has been removed:
+    /// `tsc` reports TS2880 at the `assert` keyword and then *abandons the entire
+    /// declaration* — it never resolves the module specifier (no TS2307), never
+    /// checks the attribute values (no TS2858/TS2322), and never runs the
+    /// module-support / type-only / CommonJS attribute grammar. This holds at
+    /// every module mode (`esnext`, `node18`, `node20`, `nodenext`, `preserve`,
+    /// and even the attribute-unsupported `commonjs`), so it takes precedence
+    /// over all of them. Callers use this to short-circuit before any of those
+    /// checks run. Oracle-confirmed against `typescript@7.0.2`.
+    pub(crate) fn import_attributes_use_removed_assert(&self, attributes_idx: NodeIndex) -> bool {
+        if attributes_idx.is_none() {
+            return false;
+        }
+        let Some(attr_node) = self.ctx.arena.get(attributes_idx) else {
+            return false;
+        };
+        let Some(attrs_data) = self.ctx.arena.get_import_attributes_data(attr_node) else {
+            return false;
+        };
+        attrs_data.token == SyntaxKind::AssertKeyword as u16
+    }
+
+    /// TS2880: report the removed `assert` import-attribute keyword.
+    ///
+    /// Anchored at the `assert` keyword — the attributes clause start — with
+    /// length 6 (`assert`), matching `tsc`. The caller is responsible for
+    /// abandoning the rest of the declaration after this fires; see
+    /// [`Self::import_attributes_use_removed_assert`].
+    pub(crate) fn report_removed_import_assert(&mut self, attributes_idx: NodeIndex) {
+        let Some(attr_node) = self.ctx.arena.get(attributes_idx) else {
+            return;
+        };
+        self.error_at_position(
+            attr_node.pos,
+            6, // length of "assert"
+            diagnostic_messages::IMPORT_ASSERTIONS_HAVE_BEEN_REPLACED_BY_IMPORT_ATTRIBUTES_USE_WITH_INSTEAD_OF_AS,
+            diagnostic_codes::IMPORT_ASSERTIONS_HAVE_BEEN_REPLACED_BY_IMPORT_ATTRIBUTES_USE_WITH_INSTEAD_OF_AS,
+        );
+    }
+
     /// Grammar validation for an import/export declaration's attributes clause
     /// (`with { ... }` / `assert { ... }`).
     ///
@@ -64,6 +107,15 @@ impl<'a> CheckerState<'a> {
     /// matters because each step *returns* (suppressing later steps), and the
     /// diagnostic code depends on whether the deprecated `assert` keyword or the
     /// `with` keyword was used:
+    ///
+    /// In TypeScript 7 the removed `assert` keyword is a hard error that
+    /// abandons the whole declaration (TS2880) *before* this function is
+    /// reached — see [`Self::import_attributes_use_removed_assert`] and the
+    /// early return in `check_import_declaration` / `check_export_declaration`.
+    /// So on the normal (parse-error-free) path this function only ever sees a
+    /// `with` clause; the `assert` arms below remain solely as the fallback for
+    /// the parse-error edge (where the upstream abandon is suppressed) and
+    /// mirror `tsc`'s historical `checkImportAttributes` cascade:
     ///
     /// 1. A type-only declaration carrying an *effective* `resolution-mode`
     ///    override is allowed — nothing else is reported.
