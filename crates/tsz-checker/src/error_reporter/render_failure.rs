@@ -1155,6 +1155,11 @@ impl<'a> CheckerState<'a> {
                 source_count,
                 target_count,
             } => {
+                // Unlike the arity-only `TupleElementMismatch`/`TupleArityMismatch`
+                // siblings below, a function-signature arity mismatch keeps its
+                // "Type S is not assignable to type T." header at every nesting
+                // depth — that line names the two *function* types being compared,
+                // which a property/member header one level up does not restate.
                 let (source_str, target_str) =
                     self.format_top_level_assignability_message_types_at(source, target, idx);
                 let message = format_message(
@@ -1172,11 +1177,18 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::TARGET_SIGNATURE_PROVIDES_TOO_FEW_ARGUMENTS_EXPECTED_OR_MORE_BUT_GOT,
                     &[&source_count.to_string(), &target_count.to_string()],
                 );
-                diag.push_elaboration(
-                    elaboration,
-                    diagnostic_codes::TARGET_SIGNATURE_PROVIDES_TOO_FEW_ARGUMENTS_EXPECTED_OR_MORE_BUT_GOT,
-                    0,
-                );
+                // `depth` is the absolute depth at which THIS diag's own
+                // `message` will be seated by the caller (0 when this render is
+                // the diagnostic's root, unembedded). The arity elaboration is
+                // one level deeper than that: depth 0 (the first elaboration
+                // level) at the root, `depth + 1` when this reason is itself a
+                // nested chain link — `push_nested_chain` appends a nested
+                // diag's `related_information` unshifted, on the invariant that
+                // it already carries depths absolute from its own render, so
+                // hardcoding 0 here (as before) collapsed this leaf to the same
+                // depth as its embedding parent instead of one deeper.
+                let elaboration_depth = if depth == 0 { 0 } else { depth + 1 };
+                diag.push_elaboration(elaboration, diagnostic_codes::TARGET_SIGNATURE_PROVIDES_TOO_FEW_ARGUMENTS_EXPECTED_OR_MORE_BUT_GOT, elaboration_depth);
                 diag
             }
             SubtypeFailureReason::TupleElementMismatch {

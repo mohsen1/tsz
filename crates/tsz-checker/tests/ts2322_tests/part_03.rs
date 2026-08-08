@@ -1654,6 +1654,75 @@ fn test_ts2322_too_many_parameters_emits_chained_target_signature_elaboration() 
     );
 }
 
+/// The same `TS2849` chain nested one level deeper, under a `Types of property
+/// 'm' are incompatible.` header (a member-function arity mismatch, not a
+/// top-level one). `tsc` keeps the same three-line shape at every nesting
+/// depth — property header, then the member's own function-vs-function "Type X
+/// is not assignable to Y." line, then the arity leaf one level deeper still —
+/// oracle-verified (`typescript@7.0.2`):
+///
+/// ```text
+/// error TS2322: Type '{ m: (extra: number) => void; }' is not assignable to type 'HasMethod'.
+///   Types of property 'm' are incompatible.
+///     Type '(extra: number) => void' is not assignable to type '() => void'.
+///       Target signature provides too few arguments. Expected 1 or more, but got 0.
+/// ```
+///
+/// Regression test for #16859: `render_failure_reason`'s `TooManyParameters`
+/// arm pushed its arity elaboration at a hardcoded absolute depth `0` — correct
+/// only when the reason itself is the diagnostic's un-embedded root (`depth ==
+/// 0`). Nested one level under a property header (`depth == 1`), the elaboration
+/// needs `depth + 1` to land one level under this reason's own "Type X is not
+/// assignable to Y." message, not flush with the property header itself.
+///
+/// Asserts depths and codes only, not the middle line's exact type text: this
+/// shape (an identifier `src` assigned to a named interface target) hits a
+/// separate, pre-existing display bug where that line's source type renders as
+/// the outer object instead of the property's own function type — unrelated to
+/// nesting depth (unaffected by this fix; not scoped here, flagged separately).
+#[test]
+fn test_ts2322_too_many_parameters_nested_under_property_keeps_correct_depth() {
+    let source = r#"
+        interface HasMethod { m(): void }
+        declare const src: { m: (extra: number) => void };
+        declare let tgt: HasMethod;
+        tgt = src;
+    "#;
+
+    let diags = diagnostics_for_source(source);
+    let mismatch = diagnostics_with_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| panic!("expected TS2322, got: {diags:#?}"));
+
+    let shape: Vec<(u8, u32)> = mismatch
+        .related_information
+        .iter()
+        .map(|r| (r.depth, r.code))
+        .collect();
+    assert_eq!(
+        shape,
+        vec![
+            (0, diagnostic_codes::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE),
+            (1, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+            (
+                2,
+                diagnostic_codes::TARGET_SIGNATURE_PROVIDES_TOO_FEW_ARGUMENTS_EXPECTED_OR_MORE_BUT_GOT
+            ),
+        ],
+        "expected the property-header -> signature-mismatch -> arity-leaf chain \
+         at depths 0/1/2 respectively; got: {:#?}",
+        mismatch.related_information
+    );
+    assert!(
+        mismatch.related_information[2]
+            .message_text
+            .contains("Expected 1 or more, but got 0"),
+        "got: {:#?}",
+        mismatch.related_information
+    );
+}
+
 #[test]
 fn test_reverse_mapped_contextual_target_display_uses_inferred_application_args() {
     let source = r#"

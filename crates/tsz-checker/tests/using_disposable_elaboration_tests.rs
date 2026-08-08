@@ -162,6 +162,41 @@ function f() { using r = x; }
     );
 }
 
+/// Sync `using` whose initializer HAS `[Symbol.dispose]`, but with an
+/// incompatible signature (an extra required parameter): the relation fails on
+/// a property TYPE mismatch rather than a missing property, and `tsc`'s tail
+/// drills straight into the property-then-signature chain with no leading
+/// `Type '{...}' is not assignable to type 'Disposable'.` wrapper (the top-line
+/// TS2850 message already carries that relationship) — unlike the
+/// missing-property tail above, whose sole line already *is* the specific
+/// reason and needs no such trimming. Regression test for #16859.
+///
+/// Ignored: `type_has_disposable_method` (the `check_using_declaration_disposable`
+/// gate this test's own `using` statement runs through) currently only checks
+/// `[Symbol.dispose]` for PRESENCE, not signature-assignability, so this
+/// initializer is accepted with zero diagnostics on current `main` and this
+/// path in `disposable_relation_tail` — fixed here regardless, since it is
+/// exercised by the (independently verified) plain-object nested case below —
+/// stays unreachable until #16858 lands the gate fix. Un-ignore once merged.
+#[test]
+#[ignore = "blocked on #16858 (disposable gate is presence-only, not signature-checked)"]
+fn using_dispose_signature_mismatch_tail_has_no_wrapper_and_correct_nesting() {
+    let text = elaboration(
+        r#"
+function f() { using x = { [Symbol.dispose](extra: number) {} }; }
+"#,
+        2850,
+    );
+    assert_eq!(
+        text,
+        "The initializer of a 'using' declaration must be either an object with a \
+         '[Symbol.dispose]()' method, or be 'null' or 'undefined'.\n\
+         Types of property '[Symbol.dispose]' are incompatible.\n\
+         Type '(extra: number) => void' is not assignable to type '() => void'.\n\
+         Target signature provides too few arguments. Expected 1 or more, but got 0.",
+    );
+}
+
 /// The broader explain fix: a plain assignment to `Disposable` whose source lacks
 /// only the symbol member now produces the symbol-keyed TS2741 (matching `tsc`),
 /// instead of collapsing to a flat `TypeMismatch` with no member listed. This is

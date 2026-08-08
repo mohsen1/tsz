@@ -1839,22 +1839,27 @@ impl<'a> CheckerState<'a> {
         let analysis = self.analyze_assignability_failure(init_type, disposable_type);
         let reason = analysis.failure_reason?;
         let rendered = self.render_failure_reason(&reason, init_type, disposable_type, anchor, 0);
-        // The rendered reason's top message is the first elaboration line; its own
-        // nested chain re-seats one level deeper beneath it.
-        let mut related = vec![crate::diagnostics::Diagnostic::related_message(
-            rendered.code,
-            rendered.file,
-            rendered.start,
-            rendered.length,
-            rendered.message_text,
-        )];
-        related.extend(
-            rendered
-                .related_information
-                .into_iter()
-                .map(|info| info.with_depth_shift(1)),
-        );
-        Some(related)
+        // A leaf reason (e.g. a missing property) has no nested chain of its own:
+        // `rendered.message_text` IS the specific line `tsc` shows, so it becomes
+        // the tail's only line. A reason that drills further (e.g. a property
+        // whose value type itself mismatches) renders `rendered.message_text` as
+        // a generic top-level "Type S is not assignable to type T." wrapper that
+        // `tsc` never repeats here — the top-line TS2850/TS2851 message already
+        // carries that relationship — so the tail starts directly at the real
+        // chain in `rendered.related_information`, whose entries already carry
+        // depths absolute from that first line (the same invariant
+        // `push_nested_chain` relies on elsewhere), unshifted.
+        if rendered.related_information.is_empty() {
+            Some(vec![crate::diagnostics::Diagnostic::related_message(
+                rendered.code,
+                rendered.file,
+                rendered.start,
+                rendered.length,
+                rendered.message_text,
+            )])
+        } else {
+            Some(rendered.related_information)
+        }
     }
 
     /// Check if a type has the appropriate dispose method.
